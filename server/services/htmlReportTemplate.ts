@@ -40,6 +40,7 @@ import {
   type EChartsTheme,
   type ExtractedChart,
 } from "./echartsServerRender";
+import { analyzeStoryboardPanelStats, getGridDimensions } from "../../shared/storyboardPanelCount.js";
 
 // ESM (package.json type=module) 下没有 __dirname，要用 import.meta.url 反推
 const __filename = fileURLToPath(import.meta.url);
@@ -63,11 +64,18 @@ export interface HtmlReportCover {
   abstract?: string;
 }
 
-/** 可選：平台橫版分鏡表等「純圖 URL」— 報告內以 DOM 疊字，避免像素中文（Cam4-1） */
+/** 可選：平台橫版分鏡表等「純圖 URL」— 報告內以 DOM 疊字，避免像素中文（Cam4-1 / Cam5） */
 export interface HtmlReportStoryboardSheet {
   imageUrl: string;
   /** 疊加標題；缺省時用 {@link HtmlReportOpts.documentTitle} 或 cover.title */
   reportTitle?: string;
+  /** 燈光／執行細節（與平台頁 executionDetails 對齊） */
+  lightingDetails?: string;
+  executionDetails?: string;
+  /** 與生圖相同之劇本全文，PDF 網格格數與 prompt 一致（優先於 storyboardSteps） */
+  scriptContextForPanels?: string;
+  /** 僅分鏡步驟文本；無 scriptContextForPanels 時用於算格數 */
+  storyboardSteps?: string;
 }
 
 export interface HtmlReportOpts {
@@ -77,6 +85,64 @@ export interface HtmlReportOpts {
   documentTitle?: string;
   /** 封面與正文之間可選插入分鏡表區塊（底圖 + 絕對定位標題） */
   storyboardSheet?: HtmlReportStoryboardSheet;
+}
+
+/**
+ * Cam7：從作品 `metadata`（及可選的匯出請求覆寫）還原分鏡表區塊參數，供 HTML 內
+ * `analyzeStoryboardPanelStats` 與線上 Platform 預覽使用同一套格數。
+ *
+ * 讀取順序：
+ * - 巢狀 `metadata.storyboardSheetExport`（建議寫入格式）
+ * - 扁平欄位 `storyboardSheetImageUrl`、`storyboardSheetScriptContextForPanels` 等（腳本/兼容）
+ * - `requestOverride` 中非空字串欄位覆寫對應鍵（最後一哩強制對齊）
+ */
+export function resolveHtmlReportStoryboardSheet(
+  meta: Record<string, unknown> | null | undefined,
+  requestOverride?: Partial<HtmlReportStoryboardSheet> | null,
+): HtmlReportStoryboardSheet | undefined {
+  const m =
+    meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
+  const nestedRaw = m["storyboardSheetExport"];
+  const n =
+    nestedRaw && typeof nestedRaw === "object" && !Array.isArray(nestedRaw)
+      ? (nestedRaw as Record<string, unknown>)
+      : {};
+
+  const pickStr = (v: unknown) => String(v ?? "").trim();
+
+  let imageUrl = pickStr(n["imageUrl"] ?? m["storyboardSheetImageUrl"]);
+  let scriptContextForPanels = pickStr(
+    n["scriptContextForPanels"] ?? m["storyboardSheetScriptContextForPanels"],
+  );
+  let storyboardSteps = pickStr(n["storyboardSteps"] ?? m["storyboardSheetStoryboardSteps"]);
+  let lightingDetails = pickStr(n["lightingDetails"] ?? m["storyboardSheetLightingDetails"]);
+  let executionDetailsPick = pickStr(n["executionDetails"] ?? m["storyboardSheetExecutionDetails"]);
+  let reportTitle = pickStr(n["reportTitle"] ?? m["storyboardSheetReportTitle"]);
+
+  if (requestOverride && typeof requestOverride === "object") {
+    const o = requestOverride;
+    if (pickStr(o.imageUrl)) imageUrl = pickStr(o.imageUrl);
+    if (pickStr(o.scriptContextForPanels)) scriptContextForPanels = pickStr(o.scriptContextForPanels);
+    if (pickStr(o.storyboardSteps)) storyboardSteps = pickStr(o.storyboardSteps);
+    if (pickStr(o.lightingDetails)) lightingDetails = pickStr(o.lightingDetails);
+    if (pickStr(o.executionDetails)) executionDetailsPick = pickStr(o.executionDetails);
+    if (pickStr(o.reportTitle)) reportTitle = pickStr(o.reportTitle);
+  }
+
+  if (!imageUrl) return undefined;
+
+  const sheet: HtmlReportStoryboardSheet = { imageUrl };
+  if (reportTitle) sheet.reportTitle = reportTitle;
+  if (lightingDetails) sheet.lightingDetails = lightingDetails;
+  if (executionDetailsPick) sheet.executionDetails = executionDetailsPick;
+
+  if (scriptContextForPanels) {
+    sheet.scriptContextForPanels = scriptContextForPanels;
+  } else if (storyboardSteps) {
+    sheet.storyboardSteps = storyboardSteps;
+  }
+
+  return sheet;
 }
 
 // ─── 5 套主题色（与 client/components/ReportRenderer.tsx THEME_PALETTES 对齐） ─
@@ -283,12 +349,40 @@ function buildHtmlStoryboardSheetSection(data: HtmlReportStoryboardSheet, fallba
     .trim()
     .replace(/"/g, "&quot;");
   if (!safeUrl) return "";
-  const safeH2 = escapeHtml(String(data.reportTitle || fallbackTitle || "战略情报报告").trim());
-  return `<section class="report-storyboard-sheet" aria-label="镜头执行分镜表">
-  <div class="storyboard-container">
-    <img src="${safeUrl}" alt="Storyboard canvas" class="storyboard-canvas-img" />
-    <div class="storyboard-dom-overlay">
-      <h2 class="storyboard-overlay-title">${safeH2} - 镜头执行分镜表</h2>
+  const safeTitle = escapeHtml(String(data.reportTitle || fallbackTitle || "战略情报报告").trim());
+  const executionRaw = String(
+    data.lightingDetails || data.executionDetails || "高端医学美学风格，冷静与温度的完美平衡。",
+  )
+    .trim()
+    .slice(0, 2000);
+  const executionInfo = escapeHtml(executionRaw);
+
+  const panelSource = String(data.scriptContextForPanels ?? data.storyboardSteps ?? "").trim();
+  const stats = analyzeStoryboardPanelStats(panelSource);
+  const dims = getGridDimensions(stats.overlayPanelCount);
+
+  let gridCellsHtml = "";
+  for (let i = 0; i < stats.overlayPanelCount; i++) {
+    const shotNum = String(i + 1).padStart(2, "0");
+    gridCellsHtml += `<div style="position:relative;width:100%;height:100%;min-height:0;"><span style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.7);color:#fff;padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;border:1px solid rgba(255,255,255,0.2);">SHOT ${shotNum}</span></div>`;
+  }
+
+  return `<section class="report-storyboard-matrix" aria-label="高定执行矩阵" style="padding:40px;background:#0a0a0a;border-radius:20px;margin:40px 0;page-break-inside:avoid;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;border-left:6px solid #10B981;padding-left:20px;">
+    <h2 style="color:#fff;margin:0;font-size:24px;font-family:'Noto Serif CJK SC',Georgia,serif;">${safeTitle} - 高定执行矩阵</h2>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start;">
+    <div style="flex:2;min-width:280px;position:relative;">
+      <img src="${safeUrl}" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid rgba(255,255,255,0.1);display:block;" />
+      <div style="position:absolute;inset:0;padding:8px;display:grid;grid-template-columns:repeat(${dims.cols},minmax(0,1fr));grid-template-rows:repeat(${dims.rows},minmax(0,1fr));gap:8px;pointer-events:none;">
+        ${gridCellsHtml}
+      </div>
+    </div>
+    <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:20px;">
+      <div style="background:rgba(255,255,255,0.05);padding:20px;border-radius:12px;border:1px solid rgba(255,255,255,0.05);">
+        <strong style="color:#10B981;font-size:11px;display:block;margin-bottom:10px;">情绪表达 &amp; 视觉设定</strong>
+        <p style="color:#cbd5e1;font-size:12px;line-height:1.6;margin:0;">${executionInfo}</p>
+      </div>
     </div>
   </div>
 </section>`;

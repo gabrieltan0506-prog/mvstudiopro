@@ -17,6 +17,7 @@ import type {
   GrowthTitleExecution,
 } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
+import { analyzeStoryboardPanelStats, getGridDimensions } from "@shared/storyboardPanelCount";
 import {
   Activity,
   ArrowLeft,
@@ -392,6 +393,30 @@ function buildPlatformSheetScriptContext(item: {
   return parts.join("\n\n").slice(0, 12000);
 }
 
+/** 合成生圖：燈光／環境彙總，供後端寫入 [EMOTION & LIGHTING]（Cam5） */
+function buildPlatformExecutionDetailsPayload(item: {
+  executionDetails?: { lightingAndCamera?: string; environmentAndWardrobe?: string };
+}): string {
+  const lighting = String(item.executionDetails?.lightingAndCamera || "").trim();
+  const env = String(item.executionDetails?.environmentAndWardrobe || "").trim();
+  if (!lighting && !env) {
+    return "高端医学权威风格，Rembrandt lighting, cinematic softbox, intellectual authority.";
+  }
+  return `[灯光机位]: ${lighting || "—"} | [环境与服化]: ${env || "—"} | [情绪设定]: 高端医学权威 · Rembrandt · 电影级软光`.slice(
+    0,
+    4000,
+  );
+}
+
+/** Cam8：從網址 `?reportId=<user_creations.id>` 綁定戰報，生圖扣點成功後寫入該筆 metadata */
+function readOptionalReportBindingCreationId(): number | undefined {
+  if (typeof window === "undefined") return undefined;
+  const raw = new URLSearchParams(window.location.search).get("reportId");
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
@@ -425,7 +450,7 @@ export default function PlatformPage() {
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
     sceneId: string;
-    kind: "storyboard_sheet_portrait" | "xiaohongshu_dual_note";
+    kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
   /** 整批生圖計價與引擎 mode：與後端 `platformType` 對齊 */
   const [platformBatchType, setPlatformBatchType] = useState<"video" | "graphic">("video");
@@ -515,12 +540,15 @@ export default function PlatformPage() {
     },
     onSuccess: (res, variables) => {
       if (!res.imageUrl) return;
-      if (variables.kind === "storyboard_sheet_portrait") {
+      if (variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape") {
         setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
       } else {
         setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
       }
-      const label = variables.kind === "storyboard_sheet_portrait" ? "横版分镜表" : "小红书双笔记图";
+      const label =
+        variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
+          ? "横版分镜表"
+          : "小红书双笔记图";
       toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
     },
     onError: (err) => toast.error(err.message || "合成生图失败"),
@@ -2134,6 +2162,22 @@ export default function PlatformPage() {
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const digest = copyFlat.slice(0, 60);
+                      const fullScriptContext = buildPlatformSheetScriptContext(item as any);
+                      const panelStats = analyzeStoryboardPanelStats(fullScriptContext);
+                      const overlayDims = getGridDimensions(panelStats.overlayPanelCount);
+                      const parsedShots = panelStats.overlayPanelCount;
+                      const exSteps = (item as any).executionDetails;
+                      const storyboardStepsDisplay =
+                        Array.isArray(exSteps?.stepByStepScript) && exSteps.stepByStepScript.length > 0
+                          ? exSteps.stepByStepScript.map((t: string, i: number) => `${i + 1}. ${t}`).join("\n")
+                          : ((item as any).detailedScript || "").trim() || "脚本解析中...";
+                      const lightingLine =
+                        String(exSteps?.lightingAndCamera || "").trim() || "高端風格 · Rembrandt · 电影级软光箱";
+                      const showStoryboardMatrix =
+                        !!platformStoryboardSheetMap[item.id] ||
+                        (pendingCompositeSheet?.sceneId === item.id &&
+                          (pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ||
+                            pendingCompositeSheet?.kind === "storyboard_sheet_landscape"));
                       return (
                       <div key={item.id} className="group flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
                         <div className="flex items-center justify-between gap-2">
@@ -2293,13 +2337,16 @@ export default function PlatformPage() {
                                   title: item.title,
                                   scriptContext: script,
                                   kind: "storyboard_sheet_portrait",
+                                  executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                   jobId: analysisJobId || undefined,
+                                  creationRecordId: readOptionalReportBindingCreationId(),
                                 });
                               }}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-3 py-2 text-xs font-bold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
                             >
                               {pendingCompositeSheet?.sceneId === item.id &&
-                              pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ? (
+                              (pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ||
+                                pendingCompositeSheet?.kind === "storyboard_sheet_landscape") ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : (
                                 <Film className="h-3.5 w-3.5" />
@@ -2331,6 +2378,8 @@ export default function PlatformPage() {
                                   scriptContext: script,
                                   kind: "xiaohongshu_dual_note",
                                   jobId: analysisJobId || undefined,
+                                  executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                                  creationRecordId: readOptionalReportBindingCreationId(),
                                 });
                               }}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/40 bg-[#ff4fb8]/10 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/20 disabled:opacity-45"
@@ -2344,42 +2393,78 @@ export default function PlatformPage() {
                               小红书双笔记 · {CREDIT_COSTS.platformXhsDualNote} 点
                             </button>
                           </div>
-                          {platformStoryboardSheetMap[item.id] ? (
-                            <div className="mt-1 overflow-hidden rounded-xl border border-white/5 shadow-2xl">
-                              <div className="group relative aspect-video w-full overflow-hidden rounded-xl bg-black/40">
-                                <TrialWatermarkImage
-                                  src={platformStoryboardSheetMap[item.id]}
-                                  isTrial={isTrial}
-                                  className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
-                                  alt="Storyboard Sheet"
-                                />
-                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
-                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
-                                    {item.title}
-                                    <span className="ml-2 text-xs font-normal text-gray-300">| 镜头执行分镜表</span>
+                          {showStoryboardMatrix ? (
+                            <div className="mt-4 rounded-3xl border border-white/10 bg-[#0a0a0a] p-4 shadow-2xl sm:p-6">
+                              <div className="mb-5 flex flex-col justify-between gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-center">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="h-10 w-1 shrink-0 rounded-full bg-[#10B981]" />
+                                  <h3 className="text-lg font-bold tracking-tight text-white sm:text-xl">
+                                    {item.title}{" "}
+                                    <span className="ml-2 text-sm font-normal text-gray-500">| 高定执行矩阵</span>
                                   </h3>
                                 </div>
-                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
-                                  {isTrial ? (
-                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
-                                      Trial Preview
-                                    </span>
-                                  ) : null}
-                                  <span className="rounded border border-white/10 bg-black/60 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm">
-                                    高定视觉引擎
-                                  </span>
+                                <div className="shrink-0 text-right">
+                                  <p className="text-[10px] font-bold tracking-widest text-[#10B981]">视觉参数</p>
+                                  <p className="mt-1 max-w-[280px] truncate text-xs text-white/70 sm:max-w-sm">{lightingLine}</p>
                                 </div>
                               </div>
-                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-                                <ImageUpscaleBar
-                                  imageUrl={platformStoryboardSheetMap[item.id]}
-                                  baseCreditKey="forgeImage"
-                                  className="mt-1"
-                                  onUpscaled={(url) =>
-                                    setPlatformStoryboardSheetMap((prev) => ({ ...prev, [item.id]: url }))
-                                  }
-                                />
+                              <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:gap-8">
+                                <div className="relative aspect-video overflow-hidden rounded-2xl bg-black shadow-2xl lg:col-span-8">
+                                  {platformStoryboardSheetMap[item.id] ? (
+                                    <>
+                                      <TrialWatermarkImage
+                                        src={platformStoryboardSheetMap[item.id]}
+                                        isTrial={isTrial}
+                                        className="h-full w-full object-cover"
+                                        alt="Storyboard sheet"
+                                      />
+                                      <div
+                                        className="pointer-events-none absolute inset-0 z-[21] gap-1 p-2 sm:gap-2 sm:p-3"
+                                        style={{
+                                          display: "grid",
+                                          gridTemplateColumns: `repeat(${overlayDims.cols}, minmax(0, 1fr))`,
+                                          gridTemplateRows: `repeat(${overlayDims.rows}, minmax(0, 1fr))`,
+                                        }}
+                                      >
+                                        {Array.from({ length: parsedShots }, (_, i) => (
+                                          <div key={i} className="relative min-h-0">
+                                            <span className="absolute left-1 top-1 rounded border border-white/10 bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm sm:left-2 sm:top-2 sm:px-2.5">
+                                              SHOT {String(i + 1).padStart(2, "0")}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="flex h-full flex-col items-center justify-center text-gray-500">
+                                      <Loader2 className="mb-2 h-8 w-8 animate-spin text-[#10B981]" />
+                                      <span className="text-xs">渲染中...</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="space-y-4 lg:col-span-4">
+                                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                    <h4 className="mb-3 text-[10px] font-bold tracking-widest text-[#10B981]">
+                                      执行脚本 (SCRIPT)
+                                    </h4>
+                                    <div className="max-h-60 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-300">
+                                      {storyboardStepsDisplay}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
+                              {platformStoryboardSheetMap[item.id] ? (
+                                <div className="mt-3 border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                  <ImageUpscaleBar
+                                    imageUrl={platformStoryboardSheetMap[item.id]}
+                                    baseCreditKey="forgeImage"
+                                    className="mt-1"
+                                    onUpscaled={(url) =>
+                                      setPlatformStoryboardSheetMap((prev) => ({ ...prev, [item.id]: url }))
+                                    }
+                                  />
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
                           {platformXhsNoteMap[item.id] ? (

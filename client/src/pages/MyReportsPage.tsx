@@ -188,6 +188,15 @@ interface Report {
   coverUrl?: string | null;
   summary?: string | null;
   duration?: string | null;
+  /** Cam7：與 DB metadata 同源，下載 HTML 時透傳以對齊分鏡網格 */
+  storyboardSheetExport?: {
+    imageUrl?: string;
+    scriptContextForPanels?: string;
+    storyboardSteps?: string;
+    lightingDetails?: string;
+    executionDetails?: string;
+    reportTitle?: string;
+  } | null;
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
@@ -461,12 +470,22 @@ export default function MyReportsPage() {
     if (htmlDownloadingCardId) return;
     setHtmlDownloadingCardId(report.id);
     toast.info("正在生成 HTML 交互版（≤10 MB 直接下载，>10 MB 自动压缩 zip）…");
+    const sheet = report.storyboardSheetExport;
+    const hasSheetPayload =
+      sheet &&
+      typeof sheet === "object" &&
+      (String(sheet.imageUrl || "").trim() ||
+        String(sheet.scriptContextForPanels || "").trim() ||
+        String(sheet.storyboardSteps || "").trim() ||
+        String(sheet.lightingDetails || "").trim() ||
+        String(sheet.executionDetails || "").trim());
     exportInteractiveHtmlMutation.mutate({
       creationId: report.id,
       pdfStyle: styleOf(report.id),
+      ...(hasSheetPayload ? { storyboardSheet: sheet } : {}),
     });
     // styleOf 在下面才声明，但 React closure 顺序无影响（runtime read）
-  }, [exportInteractiveHtmlMutation, htmlDownloadingCardId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [exportInteractiveHtmlMutation, htmlDownloadingCardId, styleOf]);
 
   // 软删除：失败 / 已弃置作品的清理入口（仅状态改 deleted，可恢复）
   const softDeleteMutation = trpc.creations.softDelete.useMutation({
@@ -1438,6 +1457,28 @@ function ReportCoverCard({
               {isHtmlDownloading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
               {isHtmlDownloading ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
             </button>
+            <a
+              href={`/creator-growth-camp/platform?reportId=${report.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "9px 0",
+                borderRadius: 10,
+                background: "rgba(15,118,110,0.08)",
+                border: "1px solid rgba(15,118,110,0.35)",
+                color: "#0f766e",
+                fontWeight: 800,
+                fontSize: 11.5,
+                textDecoration: "none",
+              }}
+              title="Cam8：在此页生成分镜表将写回本报告 metadata，HTML 下载网格永对齐"
+            >
+              📡 平台分析（绑定本报告）
+            </a>
             <div style={{ display: "flex", gap: 6 }}>
               <button
                 onClick={onRead}

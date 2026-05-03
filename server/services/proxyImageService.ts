@@ -1,3 +1,4 @@
+import { analyzeStoryboardPanelStats } from "../../shared/storyboardPanelCount.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import { generateImagenVertexPredict } from "./imageGenerationService";
 
@@ -97,74 +98,50 @@ Aspect Ratio: 9:16. 8k resolution, masterpiece.
 }
 
 /**
- * 根據劇本上下文粗估分鏡條數，寫入 prompt 讓生圖與文字敘述對齊（不強行 8 鏡）。
- */
-function buildStoryboardShotCountGuidance(scriptContext: string): string {
-  const s = scriptContext.slice(0, 12000);
-  let best = 0;
-  const reLine = /(?:^|\n)\s*(\d{1,2})[\.、:：]\s+\S/gm;
-  let m: RegExpExecArray | null;
-  while ((m = reLine.exec(s)) !== null) {
-    const v = parseInt(m[1], 10);
-    if (v >= 1 && v <= 24) best = Math.max(best, v);
-  }
-  const reJing = /第\s*(\d{1,2})\s*镜/g;
-  while ((m = reJing.exec(s)) !== null) {
-    const v = parseInt(m[1], 10);
-    if (v >= 1 && v <= 24) best = Math.max(best, v);
-  }
-  const lineStarts = (s.match(/(?:^|\n)\s*\d{1,2}[\.、]\s+/gm) ?? []).length;
-  if (lineStarts > best) best = lineStarts;
-  best = Math.min(best, 14);
-  if (lineStarts > best) best = lineStarts;
-  best = Math.min(best, 14);
-
-  if (best >= 3) {
-    return `PANEL COUNT (from CONTEXT): exactly ${best} visually distinct cinematic frames in story order. Do NOT paint shot numbers, digits, or any labels on the image — visuals only. Do NOT pad to 8; do NOT add blank panels; no duplicate art.`;
-  }
-  if (best === 1 || best === 2) {
-    return `PANEL COUNT: CONTEXT implies ${best} key beat(s) — render exactly ${best} distinct panel(s). No typography on image. Forbidden: duplicating art; forbidden: padding to eight.`;
-  }
-  return `PANEL COUNT: Derive from CONTEXT — one distinct panel per described shot (about 2–12 on one 16:9 sheet). No typography on image. Never clone the same frame to fill space.`;
-}
-
-/**
- * @description 橫版 16:9 分鏡合成 — **畫內零文字**；格線/鏡號/「分镜参考图」由前端或 PDF HTML 疊加。
+ * @description 橫版 16:9 分鏡合成 — **畫內零文字**；畫格數與 {@link analyzeStoryboardPanelStats} 對齊（含單行超過 30 字元 +1 格）。
  */
 export function buildStoryboardSheetLandscapePrompt(options: {
   title: string;
   scriptContext: string;
-  /** 保留相容：浮水印不進 prompt，由前端试读叠层叠加 */
+  /** 保留相容：浮水印不進 prompt */
   isTrial?: boolean;
+  /** 燈光與情緒（平台頁彙總後下發） */
+  executionDetails?: string;
 }): string {
   void options.title;
   void options.isTrial;
-  const { scriptContext } = options;
-  const raw = String(scriptContext || "").trim();
-  const shotCountGuidance = buildStoryboardShotCountGuidance(raw);
+  const raw = String(options.scriptContext || "").trim();
+  const { overlayPanelCount } = analyzeStoryboardPanelStats(raw);
+  const n = Math.min(Math.max(overlayPanelCount, 1), 16);
   const scriptSlice =
     raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
       ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
       : raw;
+  const staging = String(options.executionDetails || "").trim()
+    || "High-end intellectual authority, Rembrandt lighting, cinematic softbox";
 
   return `
 Model: GPT-Image-2
-TASK: Create a professional, LANDSCAPE-oriented composite storyboard sheet (16:9).
+TASK: Create a high-end 16:9 Landscape Storyboard Grid (Professional Masterpiece).
+
+🛑 DYNAMIC GRID EXACT MAPPING:
+1. You MUST generate EXACTLY ${n} image panels in a neat, balanced grid.
+2. DO NOT hallucinate extra scenes or duplicate panels to fill space.
+3. Panel count follows the same rules as our pipeline: each shot line may expand to an extra panel when that line is longer than 30 characters (already baked into ${n} when derived from CONTEXT).
+
+Additionally: do NOT draw shot tables, 「分镜参考图」legends, film-strip perforations, or sprocket holes — any lower band is wordless imagery only.
 
 ${NO_TEXT_ON_IMAGE_BLOCK}
 
-🧠 VISUAL CONTEXT & LUMINANCE (PIXELS ONLY):
-[LUMINANCE & TENSION]: High-end medical aesthetic commercial standards. Use dramatic Rembrandt lighting, film-level soft boxes, and cinematic depth of field.
-[SCRIPT_DETAILS]: Visualize the script: ${scriptSlice}. Translate this entirely into VISUAL panels.
+🛑 STAGING RULES (NO TYPOGRAPHY):
+1. Render a CLEAN grid of images only.
+2. DO NOT render ANY text, script, tables, numbers, or watermarks on the image. System overlays labels via DOM / print CSS.
 
-${shotCountGuidance}
+🧠 VISUAL CONTEXT:
+[EMOTION & LIGHTING]: ${staging}.
+[SCENES]: Visualize: ${scriptSlice}.
 
-Additionally: do NOT draw shot tables, 「分镜参考图」legends, film-strip perforations, or sprocket holes — reference row is wordless thumbnails only.
-
-🛑 ANTI-PADDING INSTRUCTION:
-ONLY generate panels for actual valid shots. DO NOT duplicate images, and DO NOT fill space with random artifacts.
-
-STYLE: Dark gold renaissance medical aesthetic, Vogue magazine elegance, 8k resolution, masterpiece.
+STYLE: Dark gold renaissance medical aesthetic, Vogue magazine elegance, 8k.
 Aspect Ratio: 16:9.
 `.trim();
 }
@@ -174,6 +151,7 @@ export function buildStoryboardSheetPortraitPrompt(options: {
   title: string;
   scriptContext: string;
   isTrial?: boolean;
+  executionDetails?: string;
 }): string {
   return buildStoryboardSheetLandscapePrompt(options);
 }
@@ -300,7 +278,10 @@ export async function generateGptImage2(options: {
   return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase(), {});
 }
 
-export type PlatformCompositeSheetKind = "storyboard_sheet_portrait" | "xiaohongshu_dual_note";
+export type PlatformCompositeSheetKind =
+  | "storyboard_sheet_portrait"
+  | "storyboard_sheet_landscape"
+  | "xiaohongshu_dual_note";
 
 /**
  * 平台頁：單次 gpt-image-2（橫版 16:9 分鏡表 或 9:16 小紅書雙卡）+ Imagen 兜底。
@@ -310,13 +291,20 @@ export async function generatePlatformCompositeSheetImage(options: {
   title: string;
   scriptContext: string;
   isTrial?: boolean;
+  executionDetails?: string;
 }): Promise<string | null> {
-  const isStoryboard = options.kind === "storyboard_sheet_portrait";
+  const k = options.kind;
+  const isStoryboard = k === "storyboard_sheet_portrait" || k === "storyboard_sheet_landscape";
+  const isXhs = k === "xiaohongshu_dual_note";
+  if (!isStoryboard && !isXhs) {
+    throw new Error(`Unsupported sheet kind: ${String(k)}`);
+  }
   const prompt = isStoryboard
     ? buildStoryboardSheetLandscapePrompt({
         title: options.title,
         scriptContext: options.scriptContext,
         isTrial: options.isTrial,
+        executionDetails: options.executionDetails,
       })
     : buildXiaohongshuDualNotePrompt({
         title: options.title,
