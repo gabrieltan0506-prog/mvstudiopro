@@ -2925,14 +2925,17 @@ ${JSON.stringify(platformEvidence, null, 2)}
           sceneId: z.string().min(1),
           title: z.string().min(1).max(220),
           scriptContext: z.string().min(1).max(12000),
-          kind: z.enum(["storyboard_sheet_portrait", "xiaohongshu_dual_note"]),
+          kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
+          executionDetails: z.string().max(4000).optional(),
+          /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
+          creationRecordId: z.number().int().positive().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const cost =
-          input.kind === "storyboard_sheet_portrait"
+          input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? CREDIT_COSTS.platformStoryboardSheet
             : CREDIT_COSTS.platformXhsDualNote;
 
@@ -2948,7 +2951,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             userId,
             cost,
             "platformCompositeSheet",
-            input.kind === "storyboard_sheet_portrait"
+            input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `平台横版分镜表 · ${input.title.slice(0, 48)}`
               : `平台小红书双笔记 · ${input.title.slice(0, 48)}`,
           );
@@ -2967,6 +2970,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           title: input.title,
           scriptContext: input.scriptContext,
           isTrial,
+          executionDetails: input.executionDetails,
         });
 
         if (!imageUrl) {
@@ -2977,6 +2981,29 @@ ${JSON.stringify(platformEvidence, null, 2)}
             code: "INTERNAL_SERVER_ERROR",
             message: "生图失败，请稍后重试（积分已退回）",
           });
+        }
+
+        try {
+          const { persistStoryboardSheetExportAfterGeneration } = await import(
+            "./services/storyboardSheetExportPersistence"
+          );
+          await persistStoryboardSheetExportAfterGeneration({
+            userId,
+            creationRecordId: input.creationRecordId,
+            jobId: input.jobId,
+            sceneId: input.sceneId,
+            payload: {
+              imageUrl,
+              scriptContextForPanels: input.scriptContext,
+              executionDetails: input.executionDetails,
+              reportTitle: input.title,
+              kind: input.kind,
+              sceneId: input.sceneId,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+        } catch (e: any) {
+          console.error("[mvAnalysis.generatePlatformCompositeSheet] metadata persist failed:", e?.message || e);
         }
 
         return {
@@ -6529,6 +6556,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               coverUrl: r.thumbnailUrl || null,
               summary: meta.summary || null,
               duration: meta.duration || null,
+              storyboardSheetExport:
+                meta.storyboardSheetExport && typeof meta.storyboardSheetExport === "object"
+                  ? meta.storyboardSheetExport
+                  : null,
             };
           }),
         };
@@ -6672,6 +6703,11 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               coverUrl: r.thumbnailUrl || null,
               summary: meta.summary || null,
               duration: meta.duration || null,
+              /** Cam7：HTML 匯出用分鏡同步 payload（與 metadata.storyboardSheetExport 同源） */
+              storyboardSheetExport:
+                meta.storyboardSheetExport && typeof meta.storyboardSheetExport === "object"
+                  ? meta.storyboardSheetExport
+                  : null,
             };
           }),
         };

@@ -509,6 +509,17 @@ export const creationsRouter = router({
     .input(z.object({
       creationId: z.number().int().positive(),
       pdfStyle: z.enum(["spring-mint", "neon-tech", "sunset-coral", "ocean-fresh", "business-bright"]).optional(),
+      /** Cam7：與 DB metadata 合併；非空欄位覆寫 metadata（所見即所得最後一哩） */
+      storyboardSheet: z
+        .object({
+          imageUrl: z.string().max(8000).optional(),
+          scriptContextForPanels: z.string().max(12000).optional(),
+          storyboardSteps: z.string().max(12000).optional(),
+          lightingDetails: z.string().max(4000).optional(),
+          executionDetails: z.string().max(4000).optional(),
+          reportTitle: z.string().max(220).optional(),
+        })
+        .optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const database = await db();
@@ -531,7 +542,9 @@ export const creationsRouter = router({
       const title = String(meta.lighthouseTitle || row.title || "战略情报研报").slice(0, 80);
 
       try {
-        const { generateInteractiveHtml } = await import("../services/htmlReportTemplate");
+        const { generateInteractiveHtml, resolveHtmlReportStoryboardSheet } = await import(
+          "../services/htmlReportTemplate"
+        );
         // 用户决策（2026-05-01）：HTML 离线打开也要看到封面 → HTTP 签名 URL 在导出时
         // 抓下来内联成 base64 data URI（>8MB 或失败时 fallback 原 URL）
         // 用户决策续（2026-05-01）：thumbnailUrl=NULL（主流程 6 次重试全败）时，
@@ -542,6 +555,16 @@ export const creationsRouter = router({
           resolvedCoverUrl = await ensureCoverForCreation(input.creationId, title);
         }
         const inlinedCoverUrl = await inlineCoverIfHttp(resolvedCoverUrl);
+        const storyboardSheet = resolveHtmlReportStoryboardSheet(meta, input.storyboardSheet ?? null);
+        if (
+          storyboardSheet &&
+          !storyboardSheet.scriptContextForPanels?.trim() &&
+          !storyboardSheet.storyboardSteps?.trim()
+        ) {
+          console.warn(
+            `[creations.exportInteractiveHtml] creationId=${input.creationId} 有分鏡底圖 URL 但缺少 scriptContextForPanels/storyboardSteps，HTML 網格將降級為預設 6 格`,
+          );
+        }
         const html = generateInteractiveHtml(md, {
           style: style as any,
           documentTitle: title,
@@ -553,6 +576,7 @@ export const creationsRouter = router({
             date: new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" }),
             abstract: meta.summary || undefined,
           },
+          storyboardSheet,
         });
 
         const sizeBytes = Buffer.byteLength(html, "utf8");
