@@ -24,6 +24,30 @@ export type SessionPayload = {
   name: string;
 };
 
+/**
+ * `DATABASE_URL` 未設定時的單機 Session 使用者，須與 `drizzle/schema` 的 `users` 表
+ * {@link User} 保持欄位一致（新增欄位時請同步更新此函數）。
+ */
+function buildLocalDevUser(session: SessionPayload, signedInAt: Date): User {
+  return {
+    id: 0,
+    openId: session.openId,
+    name: session.name || "Local Dev User",
+    email: null,
+    loginMethod: "local_dev",
+    role: "admin",
+    credits: 9999,
+    roleTag: "normal",
+    contactWechat: null,
+    contactPhone: null,
+    verifyStatus: "approved",
+    enterpriseTrialPaid: false,
+    createdAt: signedInAt,
+    updatedAt: signedInAt,
+    lastSignedIn: signedInAt,
+  };
+}
+
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
 const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
 const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
@@ -275,22 +299,7 @@ class SDKServer {
     let user = await db.getUserByOpenId(sessionUserId);
 
     if (!user && !ENV.databaseUrl) {
-      return {
-        id: 0,
-        openId: session.openId,
-        name: session.name || "Local Dev User",
-        email: null,
-        loginMethod: "local_dev",
-        role: "admin",
-        credits: 9999,
-        roleTag: "normal",
-        contactWechat: null,
-        contactPhone: null,
-        verifyStatus: "approved",
-        createdAt: signedInAt,
-        updatedAt: signedInAt,
-        lastSignedIn: signedInAt,
-      } satisfies User;
+      return buildLocalDevUser(session, signedInAt);
     }
 
     // If user not in DB, sync from OAuth server automatically
