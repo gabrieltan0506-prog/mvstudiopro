@@ -1,14 +1,12 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Bug, XCircle, AlertCircle } from "lucide-react";
-import VoiceInputButton from "@/components/VoiceInputButton";
+import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug, XCircle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
+import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useIsMobile } from "@/hooks/useMobile";
-import TrialWatermarkImage from "@/components/TrialWatermarkImage";
-import { TRIAL_READ_WATERMARK_LINE } from "@shared/const";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -165,27 +163,11 @@ export default function GodViewPage() {
   const [showIpModal, setShowIpModal] = useState(false);
   // 当前正在轮询的 jobId（从 launchMutation.data 取出）
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
-  const PDF_EXPORT_JOB_DEBUG_KEY = "mvs-godview-pdf-export-job-id";
-  const [pdfExportJobIdForDebug, setPdfExportJobIdForDebug] = useState(() => {
-    try {
-      return localStorage.getItem(PDF_EXPORT_JOB_DEBUG_KEY) || "";
-    } catch {
-      return "";
-    }
-  });
-
   // 普通用户轮询：dispatched 后每 20s 检查一次 job 状态
-  /** 扉页画廊：每张 chapter.id → 签名图 URL */
-  const [chapterPosterMap, setChapterPosterMap] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    setChapterPosterMap({});
-  }, [pollingJobId]);
-
   const jobDoneQuery = trpc.deepResearch.status.useQuery(
     { jobId: pollingJobId! },
     {
-      enabled: !!pollingJobId && (phase === "dispatched" || phase === "done"),
+      enabled: phase === "dispatched" && !!pollingJobId,
       refetchInterval: (query) => {
         const s = query.state.data?.status;
         if (s === "completed" || s === "awaiting_review" || s === "failed") return false;
@@ -197,7 +179,6 @@ export default function GodViewPage() {
     },
   );
   // 感知完成/失败/等待计划审核
-  const failureToastFiredRef = useRef<string | null>(null);
   useEffect(() => {
     const s = jobDoneQuery.data?.status;
     if (!s) return;
@@ -209,37 +190,9 @@ export default function GodViewPage() {
     }
     if (s === "failed") {
       setPhase("failed");
-      const err = jobDoneQuery.data?.error || "";
-      setErrorMsg(
-        err ||
-          "当前算力资源紧张或服务暂时不可用，请稍后再试。相关积分已退还至您的账户。",
-      );
-      const jobId = jobDoneQuery.data?.jobId ?? "";
-      // 同一 jobId 只弹一次 toast；用户点「取消」时已在 onSuccess 中预占 jobId，避免与轮询 failed 重复弹窗
-      if (jobId && failureToastFiredRef.current !== jobId) {
-        failureToastFiredRef.current = jobId;
-        const noRefundCancel =
-          /不退还积分|用户主动取消任务（不退还/.test(err) || err.includes("按规则不退还");
-        const refundedCancel = err.includes("您已取消任务") && err.includes("退还");
-        const creditsUsed = jobDoneQuery.data?.creditsUsed;
-        if (noRefundCancel) {
-          toast.error(
-            "任务已取消。按平台规则，主动取消不退还积分（仅涉及积分账户调整，无法币退款）。",
-            { duration: 8000 },
-          );
-        } else if (refundedCancel) {
-          toast.message("任务已取消，相关积分已退还至您的账户。", { duration: 5500 });
-        } else if (typeof creditsUsed === "number" && creditsUsed > 0) {
-          toast.message(
-            "任务未成功完成，相关积分已退还至您的账户。当前算力资源可能紧张，请稍后再试。",
-            { duration: 6500 },
-          );
-        } else {
-          toast.error("任务未成功完成，请稍后再试。", { duration: 5000 });
-        }
-      }
+      setErrorMsg(jobDoneQuery.data?.error || "研报生成失败，积分已返还到您的账户");
     }
-  }, [jobDoneQuery.data?.status, jobDoneQuery.data?.error, jobDoneQuery.data?.jobId, jobDoneQuery.data?.creditsUsed, phase]);
+  }, [jobDoneQuery.data?.status]);
 
   // 计划批准 mutation
   const [planFeedback, setPlanFeedback] = useState("");
@@ -250,26 +203,14 @@ export default function GodViewPage() {
 
   // 取消正在跑 / 等待审核的任务
   // ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
-  //    系统故障 / 部署中断 / 进程崩溃才会幂等退还积分。
+  //    系统故障 / 部署中断 / 进程崩溃才会幂等返还。
   const [isCancellingJob, setIsCancellingJob] = useState(false);
   const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
     onSuccess: (result) => {
       setIsCancellingJob(false);
-      if (pollingJobId) failureToastFiredRef.current = pollingJobId;
-      if (result.refundReason === "user_cancelled_no_refund") {
-        toast.error(
-          "取消已提交：按平台规则，主动取消不退还积分（仅为积分调整，无法币退款）。请留意任务状态。",
-          { duration: 8500 },
-        );
-        setErrorMsg("任务已取消（按规则不退还积分）");
-      } else {
-        toast.message(
-          result?.message || "取消已提交，相关积分将退还至您的账户。",
-          { duration: 6500 },
-        );
-        setErrorMsg(result?.message || "任务已取消");
-      }
+      toast.success(result?.message || "任务已取消（按规则不退还积分）");
       setPhase("failed");
+      setErrorMsg("任务已取消（按规则不退还积分）");
     },
     onError: (err) => {
       setIsCancellingJob(false);
@@ -288,7 +229,7 @@ export default function GodViewPage() {
         `⚠️ 重要：用户主动取消的任务不退还积分。\n` +
         `   此规则用于防止恶意消耗算力，请谨慎操作。\n\n` +
         `如因系统故障 / 部署中断导致任务失败，\n` +
-        `相关积分将按规则退还至您的账户（退积分，非现金）。\n\n` +
+        `积分会自动幂等返还到您的账户。\n\n` +
         `确认主动取消？（不退还积分）`,
     );
     if (!ok) return;
@@ -296,9 +237,22 @@ export default function GodViewPage() {
     cancelJobMutation.mutate({ jobId: pollingJobId });
   }, [pollingJobId, isCancellingJob, cancelJobMutation, topic]);
 
-  // PR pdf-v2-platformpage-mode：服务端 PDF 路径已下线。GodView 完成研报后只保留
-  // 「前往作品库」入口，让用户在 MyReportsPage 阅读模式下载（DOM 快照 → pdf-worker
-  // 路径稳定且支持 5 套模板色 + 9:16 封面）。
+  // 战略 PDF 导出 · 5 套活泼模板
+  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
+  const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
+    onSuccess: (result) => {
+      const url = result?.signedUrl;
+      if (!url) { toast.error("黑金 PDF 已生成但未拿到签名链接"); return; }
+      try {
+        navigator.clipboard?.writeText(url).catch(() => {});
+        window.open(url, "_blank", "noopener,noreferrer");
+        toast.success("黑金 PDF 已生成 · 链接已复制（72 小时签名）");
+      } catch {
+        toast.success("黑金 PDF 已生成，签名链接：" + url);
+      }
+    },
+    onError: (err) => toast.error("黑金 PDF 生成失败：" + err.message),
+  });
 
   // ── 半月刊 10 天提醒
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -311,6 +265,12 @@ export default function GodViewPage() {
   });
   const reminder = reminderQuery.data;
   const showReminder = !reminderDismissed && reminder?.reminderDue === true && phase === "idle";
+
+  // voice recording
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
@@ -370,7 +330,6 @@ export default function GodViewPage() {
 
   const launchMutation = trpc.deepResearch.launch.useMutation({
     onSuccess: (data) => {
-      failureToastFiredRef.current = null;
       const firstKey = PRODUCT_FIRST_KEYS[selectedProduct];
       if (!localStorage.getItem(firstKey)) {
         localStorage.setItem(firstKey, "1");
@@ -385,62 +344,6 @@ export default function GodViewPage() {
       setErrorMsg(err.message || "任务启动失败");
     },
   });
-
-  /** GodView 完成态：按 ## 章节免费生成战略扉页（后端不扣费；水印与任务 strategicImagesTrialWatermark 一致） */
-  const generateChapterPostersMutation = trpc.mvAnalysis.generateGodViewChapterPosters.useMutation({
-    onSuccess: (data) => {
-      const ok = data.results.filter((r) => r.url).length;
-      if (ok === data.results.length) {
-        toast.success("品牌战略扉页已全部就绪！");
-      } else {
-        toast.success(`已生成 ${ok} / ${data.results.length} 张扉页，可再次点击补全失败项`);
-      }
-      setChapterPosterMap((prev) => {
-        const next = { ...prev };
-        for (const r of data.results) {
-          if (r.url) next[r.id] = r.url;
-        }
-        return next;
-      });
-    },
-    onError: (err) => toast.error(err.message || "扉页生成失败"),
-  });
-
-  const strategicChapters = useMemo(() => {
-    const md = jobDoneQuery.data?.reportMarkdown;
-    if (!md) return [] as { id: string; title: string; context: string }[];
-    const lines = md.split("\n");
-    const out: { id: string; title: string; context: string }[] = [];
-    let i = 0;
-    let idx = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-      if (line.startsWith("## ")) {
-        const title = line.replace(/^##\s+/, "").trim();
-        if (!title) {
-          i++;
-          continue;
-        }
-        const body: string[] = [];
-        let j = i + 1;
-        while (j < lines.length && !lines[j].startsWith("## ")) {
-          body.push(lines[j]);
-          j++;
-        }
-        let context = body.join("\n").trim().replace(/\s+/g, " ");
-        if (context.length > 500) context = context.slice(0, 500);
-        const id = `h2_${idx}`;
-        out.push({ id, title, context: context || title });
-        idx++;
-        i = j;
-      } else {
-        i++;
-      }
-    }
-    return out;
-  }, [jobDoneQuery.data?.reportMarkdown]);
-
-  const coverTrialWatermark = !!jobDoneQuery.data?.strategicImagesTrialWatermark;
 
   const handleProductChange = (id: ProductType) => {
     setSelectedProduct(id);
@@ -492,24 +395,71 @@ export default function GodViewPage() {
     },
   );
 
-  /** 異步 PDF（pdf_export 隊列）步驟時間線 — 僅 supervisor + DEBUG 展開且有 jobId */
-  const pdfExportJobQuery = trpc.mvAnalysis.getPdfExportJob.useQuery(
-    { jobId: pdfExportJobIdForDebug.trim() },
-    {
-      enabled: isSupervisor && showDebug && pdfExportJobIdForDebug.trim().length > 0,
-      refetchInterval: (query) => {
-        const st = query.state.data?.status;
-        if (st === "succeeded" || st === "failed") return false;
-        return 3000;
-      },
-      retry: false,
-    },
-  );
+  const toggleVoice = useCallback(async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("当前浏览器不支持录音，请使用 Chrome 或 Safari");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "audio/mp4";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (!blob.size) { toast.error("录音内容为空，请重试"); return; }
+        setIsTranscribing(true);
+        try {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          const r = await fetch("/api/google?op=transcribeAudio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audioBase64: base64, mimeType: mimeType.split(";")[0] }),
+          });
+          const data = await r.json().catch(() => ({}));
+          const text = String(data?.text || "").trim();
+          if (text) {
+            setTopic(text);
+            toast.success("转录成功");
+          } else {
+            toast.error("转录结果为空，请重试");
+          }
+        } catch (e: any) {
+          toast.error(`转录失败：${e?.message}`);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch (e: any) {
+      toast.error(`录音失败：${e?.message}`);
+    }
+  }, [isRecording]);
 
   return (
     <div
       style={{
-        minHeight: "100dvh",
+        minHeight: "100vh",
         // 卡布奇諾深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
@@ -957,24 +907,24 @@ export default function GodViewPage() {
                 onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(168,118,27,0.35)"; }}
                 disabled={phase === "launching"}
               />
-              <div
+              <button
+                onClick={toggleVoice}
+                disabled={isTranscribing || phase === "launching"}
+                title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入课题"}
                 style={{
-                  position: "absolute",
-                  top: isMobile ? 6 : 10,
-                  right: isMobile ? 6 : 10,
+                  position: "absolute", top: isMobile ? 6 : 10, right: isMobile ? 6 : 10,
+                  width: isMobile ? 44 : 34, height: isMobile ? 44 : 34, borderRadius: isMobile ? 10 : 8, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isRecording ? "rgba(220,38,38,0.10)" : isTranscribing ? "rgba(217,119,6,0.10)" : "rgba(168,118,27,0.12)",
+                  border: isRecording ? "1px solid rgba(220,38,38,0.5)" : isTranscribing ? "1px solid rgba(217,119,6,0.4)" : "1px solid rgba(168,118,27,0.4)",
+                  color: isRecording ? "#dc2626" : isTranscribing ? "#d97706" : "#7a5410",
+                  cursor: isTranscribing || phase === "launching" ? "not-allowed" : "pointer",
+                  transition: "all 0.2s",
+                  animation: isRecording ? "godview-mic-pulse 1.2s ease-in-out infinite" : "none",
                 }}
               >
-                <VoiceInputButton
-                  onTranscript={(t) => setTopic((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t))}
-                  disabled={phase === "launching"}
-                  size={isMobile ? 18 : 14}
-                  className="!rounded-[10px] !p-2 md:!rounded-lg md:!p-1.5"
-                />
-              </div>
+                {isRecording ? <MicOff size={isMobile ? 18 : 14} /> : isTranscribing ? <Loader2 size={isMobile ? 18 : 14} className="animate-spin" /> : <Mic size={isMobile ? 18 : 14} />}
+              </button>
             </div>
-            <p style={{ fontSize: 11, color: "rgba(122,84,16,0.45)", margin: "6px 0 0", fontWeight: 600 }}>
-              🎤 与平台分析页相同：Chrome / Edge / Safari；识别走服务端 Speech API
-            </p>
             {/* ── 补充资料区（3 类产品共享） ── */}
             {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub" || selectedProduct === "personalized" || selectedProduct === "enterprise_flagship") && (
               <div style={{ marginTop: 12, border: "1px solid rgba(168,118,27,0.2)", borderRadius: 12, overflow: "hidden" }}>
@@ -1041,7 +991,7 @@ export default function GodViewPage() {
                           <span style={{ wordBreak: "break-word", flex: 1, minWidth: 0 }}>{lastUploadInfo.text}</span>
                           <button
                             onClick={() => setLastUploadInfo(null)}
-                            style={{ background: "none", border: "none", color: "inherit", fontSize: 16, cursor: "pointer", lineHeight: 1, opacity: 0.6, minWidth: isMobile ? 32 : undefined, minHeight: isMobile ? 32 : undefined, flexShrink: 0 }}
+                            style={{ background: "none", border: "none", color: "inherit", fontSize: 16, cursor: "pointer", lineHeight: 1, opacity: 0.6, minWidth: isMobile ? 44 : undefined, minHeight: isMobile ? 44 : undefined, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
                             aria-label="关闭"
                           >
                             ×
@@ -1054,7 +1004,7 @@ export default function GodViewPage() {
                             <span>{f.type === "image" ? "🖼️" : "📄"}</span>
                             <span style={{ maxWidth: isMobile ? 140 : 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>{f.name}</span>
                             <span style={{ fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#15803d" }}>✓ 已上传</span>
-                            <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, minWidth: isMobile ? 28 : undefined, minHeight: isMobile ? 28 : undefined }}>×</button>
+                            <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, minWidth: isMobile ? 44 : undefined, minHeight: isMobile ? 44 : undefined, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                           </div>
                         ))}
                         {suppUploading && (
@@ -1080,27 +1030,11 @@ export default function GodViewPage() {
 
             <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {isFirst ? (
-                  <div className="mb-2 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-                    <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
-                    <div className="text-sm text-amber-200/80">
-                      <span className="font-bold text-amber-400">首购九折价：</span>
-                      您当前仍适用定价卡上的<strong className="text-amber-100/95">首购优惠价（九折）</strong>，下单后积分将按该价扣除（与后端计费一致）。
-                      为便于验货，首购一单报告封面与内文场景图会叠加与首页试读样本一致的「{TRIAL_READ_WATERMARK_LINE}」对角水印；
-                      复购同档走标准价，一般不再强制该水印（以产品规则 / 后续对账为准）。
-                      {selectedProduct === "magazine_single" && isBundlePromo ? (
-                        <span className="mt-2 block text-xs text-amber-200/70">
-                          您已勾选「满月老用户双本促销」：扣费以<strong>双本促销价</strong>为准，不与上段九折文案混用。
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
                 <p style={{ fontSize: 12, color: "rgba(61,44,20,0.60)", margin: 0, fontWeight: 600, lineHeight: 1.6 }}>
                   ⏱ 异步重算力推演，约 15-30 分钟，派发后可关闭页面到「战略作品快照库」查看
                 </p>
                 {selectedProduct === "magazine_single" && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: isMobile ? 12 : 11, color: "rgba(61,44,20,0.70)", cursor: "pointer", fontWeight: 600, minHeight: isMobile ? 32 : undefined }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: isMobile ? 12 : 11, color: "rgba(61,44,20,0.70)", cursor: "pointer", fontWeight: 600, minHeight: isMobile ? 44 : undefined }}>
                     <input
                       type="checkbox"
                       checked={isBundlePromo}
@@ -1128,96 +1062,37 @@ export default function GodViewPage() {
           </div>
         )}
 
-        {/* ── 研报已完成：扉页画廊 + 内嵌正文 ── */}
+        {/* ── 研报已完成 ── */}
         {phase === "done" && (
-          <div style={{ padding: isMobile ? "24px 16px 40px" : "40px 28px 48px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#050d02,#081a04)", borderRadius: 20, border: "1px solid rgba(0,200,80,0.25)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", boxShadow: "0 8px 32px rgba(22,163,74,0.4)", fontSize: 34 }}>✅</div>
-              <h2 style={{ fontSize: isMobile ? 22 : 26, fontWeight: 900, color: "#f0fdf4", marginBottom: 10 }}>战略研报已生成</h2>
-              <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: isMobile ? "100%" : 520, margin: "0 auto 28px" }}>
-                深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
-                您可先在下方预览正文与章节扉页，再进入快照库选择封面色板并下载 PDF / HTML。
-              </p>
-              <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: isMobile ? "stretch" : "center", marginBottom: strategicChapters.length > 0 || jobDoneQuery.data?.reportMarkdown ? 28 : 0 }}>
-                <button type="button" onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
-                  <Sparkles size={16} />前往「战略作品快照库」查阅 / 下载
-                </button>
-                <button type="button" onClick={() => { setPhase("idle"); setTopic(""); setPollingJobId(null); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 24px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)", color: "rgba(134,239,172,0.8)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                  再发起一个新课题
-                </button>
-              </div>
+          <div style={{ textAlign: "center", padding: isMobile ? "32px 18px" : "48px 24px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#050d02,#081a04)", borderRadius: 20, border: "1px solid rgba(0,200,80,0.25)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+            <div style={{ width: 80, height: 80, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 8px 32px rgba(22,163,74,0.4)", fontSize: 36 }}>✅</div>
+            <h2 style={{ fontSize: isMobile ? 22 : 26, fontWeight: 900, color: "#f0fdf4", marginBottom: 12 }}>战略研报已生成</h2>
+            <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: isMobile ? "100%" : 480, margin: "0 auto 32px" }}>
+              深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
+            </p>
+            {/* 模板选择器（带封面 + 内文页缩略预览） */}
+            <div style={{ marginBottom: 18, padding: isMobile ? "14px 14px" : "16px 20px", borderRadius: 14, background: "rgba(255,250,240,0.06)", border: "1px solid rgba(184,134,11,0.20)" }}>
+              <TemplatePicker value={pdfStyle} onChange={setPdfStyle} />
             </div>
-
-            {strategicChapters.length > 0 && pollingJobId ? (
-              <div className="mb-10 rounded-3xl border border-amber-500/30 bg-black/40 p-6 shadow-2xl">
-                <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                  <div className="text-left">
-                    <div className="flex items-center gap-2 text-lg font-bold text-amber-500">
-                      <Crown className="h-6 w-6" /> 品牌战略扉页提炼（Brand Book Dividers）
-                    </div>
-                    <div className="mt-1 text-sm text-gray-400">
-                      自动提取报告 <code className="text-amber-200/80">##</code> 核心章节，生成杂志级 9:16 战略扉页。
-                      {coverTrialWatermark ? (
-                        <span> 本单为首购尝鲜，交互扉页叠加与首页试读一致的「{TRIAL_READ_WATERMARK_LINE}」水印（0 积分）。</span>
-                      ) : (
-                        <span> 本单交互扉页不额外叠前端水印（0 积分）。</span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      generateChapterPostersMutation.mutate({
-                        jobId: pollingJobId,
-                        chapters: strategicChapters.map((c) => ({ id: c.id, title: c.title, context: c.context })),
-                      })
-                    }
-                    disabled={
-                      generateChapterPostersMutation.isPending ||
-                      strategicChapters.every((c) => !!chapterPosterMap[c.id])
-                    }
-                    className="flex-shrink-0 rounded-full bg-gradient-to-r from-amber-600 to-yellow-500 px-6 py-2 font-black text-black shadow-lg transition hover:scale-105 disabled:opacity-50"
-                  >
-                    {generateChapterPostersMutation.isPending ? "顶级渲染中…" : "一键生成专属战略扉页（免费）"}
-                  </button>
-                </div>
-
-                <div className="godview-gallery-scroll flex snap-x gap-5 overflow-x-auto pb-6">
-                  {strategicChapters.map((ch) => (
-                    <div
-                      key={ch.id}
-                      className={`group relative flex aspect-[9/16] w-[220px] min-w-[220px] max-w-[220px] snap-center flex-col items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/5 to-white/10 text-center shadow-lg ${chapterPosterMap[ch.id] ? "p-0" : "p-4"}`}
-                    >
-                      {chapterPosterMap[ch.id] ? (
-                        <TrialWatermarkImage
-                          src={chapterPosterMap[ch.id]}
-                          alt={ch.title}
-                          isTrial={coverTrialWatermark}
-                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
-                          className="transition-transform duration-700 group-hover:scale-105"
-                        />
-                      ) : (
-                        <>
-                          <Sparkles className="mb-3 h-6 w-6 text-amber-600/50" />
-                          <span className="text-sm font-bold leading-relaxed text-amber-100/80">{ch.title}</span>
-                          <div className="absolute bottom-4 text-[10px] uppercase tracking-widest text-gray-500">Awaiting Render</div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div style={{ textAlign: "left", maxWidth: 920, margin: "0 auto", paddingTop: 8 }}>
-              {jobDoneQuery.data?.reportMarkdown ? (
-                <>
-                  <p style={{ color: "rgba(212,168,64,0.85)", fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", marginBottom: 14 }}>报告正文预览</p>
-                  <ReportRenderer markdown={jobDoneQuery.data.reportMarkdown} />
-                </>
-              ) : (
-                <p style={{ color: "rgba(240,253,244,0.55)", fontSize: 14, textAlign: "center" }}>正在加载报告正文…</p>
-              )}
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: isMobile ? "stretch" : "center" }}>
+              <button
+                onClick={() => {
+                  if (!pollingJobId) { toast.error("缺少 jobId"); return; }
+                  exportBlackGoldPdfMutation.mutate({ jobId: pollingJobId, style: pdfStyle });
+                }}
+                disabled={exportBlackGoldPdfMutation.isPending || !pollingJobId}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
+                title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
+              >
+                {exportBlackGoldPdfMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Crown size={16} />}
+                {exportBlackGoldPdfMutation.isPending ? "正在压制 PDF…" : "导出战略 PDF（GCS 签名链接）"}
+              </button>
+              <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
+                <Sparkles size={16} />前往「战略作品快照库」查阅
+              </button>
+              <button onClick={() => { setPhase("idle"); setTopic(""); setPollingJobId(null); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 24px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)", color: "rgba(134,239,172,0.8)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                再发起一个新课题
+              </button>
             </div>
           </div>
         )}
@@ -1345,14 +1220,14 @@ export default function GodViewPage() {
         {phase === "failed" && (
           <div style={{ padding: isMobile ? "14px 16px" : "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
             <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", gap: isMobile ? 10 : 0 }}>
-              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700, wordBreak: "break-word" }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已退还至账户余额"}</p>
+              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700, wordBreak: "break-word" }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已返还到您的账户"}</p>
               <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "10px 16px" : "7px 16px", minHeight: isMobile ? 44 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
                 <RotateCcw size={12} />重试
               </button>
             </div>
             {(jobDoneQuery.data as any)?.errorDetail && (
               <details style={{ marginTop: 12 }}>
-                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: isMobile ? 12 : 11, fontWeight: 700, padding: "4px 0", minHeight: isMobile ? 32 : undefined }}>查看详细原因（含 API 响应）</summary>
+                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: isMobile ? 12 : 11, fontWeight: 700, padding: "8px 0", minHeight: isMobile ? 44 : undefined, display: "flex", alignItems: "center" }}>查看详细原因（含 API 响应）</summary>
                 <pre style={{ marginTop: 10, fontSize: 11, color: "#7c2d2d", background: "rgba(220,38,38,0.04)", border: "1px solid rgba(220,38,38,0.18)", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 280, overflowY: "auto", lineHeight: 1.6 }}>
                   {(jobDoneQuery.data as any).errorDetail}
                 </pre>
@@ -1395,181 +1270,6 @@ export default function GodViewPage() {
             {showDebug && (
               <div style={{ marginTop: 10, background: "#000", border: "1px solid rgba(0,255,70,0.25)", borderRadius: 12, padding: "18px 20px", fontFamily: "monospace", fontSize: 11, color: "#00ff46", lineHeight: 1.7 }}>
                 <p style={{ color: "rgba(0,255,70,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 12 }}>▶ DEEP RESEARCH DEBUG TERMINAL</p>
-
-                <p style={{ color: "rgba(0,180,255,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 8 }}>▶ 異步 PDF（pdf_export 隊列 · 步驟時間線）</p>
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                  <input
-                    placeholder="粘贴 pdf_export jobId，失焦写入本地…"
-                    value={pdfExportJobIdForDebug}
-                    onChange={(e) => setPdfExportJobIdForDebug(e.target.value)}
-                    onBlur={() => {
-                      try {
-                        localStorage.setItem(PDF_EXPORT_JOB_DEBUG_KEY, pdfExportJobIdForDebug.trim());
-                      } catch {}
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        (e.target as HTMLInputElement).blur();
-                      }
-                    }}
-                    style={{ flex: 1, minWidth: 200, maxWidth: 420, background: "rgba(0,40,80,0.35)", border: "1px solid rgba(0,180,255,0.25)", borderRadius: 8, color: "#7dd3fc", fontSize: 11, fontFamily: "monospace", padding: "6px 12px", outline: "none" }}
-                  />
-                  {pdfExportJobIdForDebug.trim().length > 0 && (
-                    <span style={{ fontSize: 10, color: "rgba(0,180,255,0.5)", fontFamily: "monospace" }}>
-                      轮询 {pdfExportJobQuery.isFetching ? "⏳" : "✓"} 约 3s
-                    </span>
-                  )}
-                </div>
-                {pdfExportJobQuery.data && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-                      <span
-                        style={{
-                          padding: "3px 12px",
-                          borderRadius: 99,
-                          fontSize: 11,
-                          fontWeight: 800,
-                          background:
-                            pdfExportJobQuery.data.status === "succeeded"
-                              ? "rgba(0,255,70,0.12)"
-                              : pdfExportJobQuery.data.status === "failed"
-                                ? "rgba(255,50,50,0.12)"
-                                : "rgba(0,180,255,0.12)",
-                          color:
-                            pdfExportJobQuery.data.status === "succeeded"
-                              ? "#00ff46"
-                              : pdfExportJobQuery.data.status === "failed"
-                                ? "#ff5050"
-                                : "#7dd3fc",
-                          border: `1px solid ${
-                            pdfExportJobQuery.data.status === "succeeded"
-                              ? "rgba(0,255,70,0.28)"
-                              : pdfExportJobQuery.data.status === "failed"
-                                ? "rgba(255,50,50,0.28)"
-                                : "rgba(0,180,255,0.28)"
-                          }`,
-                        }}
-                      >
-                        PDF JOB · {pdfExportJobQuery.data.status === "queued" ? "排队" : pdfExportJobQuery.data.status === "running" ? "运行中" : pdfExportJobQuery.data.status === "succeeded" ? "成功" : pdfExportJobQuery.data.status === "failed" ? "失败" : pdfExportJobQuery.data.status}
-                      </span>
-                      {(pdfExportJobQuery.data.pdfDebug as { currentStep?: string; updatedAt?: string } | null)?.currentStep && (
-                        <span style={{ fontSize: 10, color: "rgba(0,180,255,0.55)", fontFamily: "monospace" }}>
-                          当前步：{(pdfExportJobQuery.data.pdfDebug as { currentStep?: string }).currentStep}
-                          {(pdfExportJobQuery.data.pdfDebug as { updatedAt?: string }).updatedAt
-                            ? ` · ${new Date((pdfExportJobQuery.data.pdfDebug as { updatedAt?: string }).updatedAt!).toLocaleTimeString("zh-CN")}`
-                            : ""}
-                        </span>
-                      )}
-                    </div>
-                    {(() => {
-                      const steps = (pdfExportJobQuery.data.pdfDebug as { steps?: Array<{ step: string; detail?: string; at: string }> } | null)?.steps;
-                      if (!steps?.length) {
-                        return (
-                          <p style={{ margin: 0, fontSize: 10, color: "rgba(0,180,255,0.35)" }}>
-                            尚无步骤打点（任務未開始或舊任務）；出錯請看下方 error。
-                          </p>
-                        );
-                      }
-                      return (
-                        <div>
-                          <p style={{ color: "rgba(0,180,255,0.4)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>PDF ASYNC STEPS</p>
-                          <div style={{ background: "rgba(0,180,255,0.05)", border: "1px solid rgba(0,180,255,0.14)", borderRadius: 8, padding: "10px 14px", maxHeight: 220, overflowY: "auto" }}>
-                            {steps.map((row, i) => (
-                              <div
-                                key={`${row.at}-${i}`}
-                                style={{
-                                  color:
-                                    row.step === "job_failed"
-                                      ? "#ff9090"
-                                      : row.step === "complete"
-                                        ? "#00ff46"
-                                        : "rgba(125,211,252,0.85)",
-                                  marginBottom: 2,
-                                  wordBreak: "break-all",
-                                  fontSize: 10,
-                                }}
-                              >
-                                <span style={{ color: "rgba(0,180,255,0.4)" }}>{new Date(row.at).toLocaleTimeString("zh-CN")} </span>
-                                <strong>{row.step}</strong>
-                                {row.detail ? ` · ${row.detail}` : ""}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    {pdfExportJobQuery.data.error && (
-                      <div style={{ marginTop: 10 }}>
-                        <p style={{ color: "rgba(255,80,80,0.6)", fontSize: 9, fontWeight: 700, marginBottom: 4 }}>PDF JOB ERROR</p>
-                        <div style={{ background: "rgba(255,50,50,0.06)", border: "1px solid rgba(255,50,50,0.2)", borderRadius: 8, padding: "8px 12px", color: "#ff9090", wordBreak: "break-all", fontSize: 10 }}>
-                          {pdfExportJobQuery.data.error}
-                        </div>
-                      </div>
-                    )}
-                    {pdfExportJobQuery.data.status === "succeeded"
-                      ? (() => {
-                          const out = pdfExportJobQuery.data.output;
-                          if (!out || typeof out !== "object" || !("downloadUrl" in out)) return null;
-                          const downloadUrl = String((out as Record<string, unknown>).downloadUrl);
-                          const pdfGcsUri =
-                            "pdfGcsUri" in out ? String((out as Record<string, unknown>).pdfGcsUri) : "";
-                          const expiresRaw = (out as Record<string, unknown>).expiresInSeconds;
-                          const expires = typeof expiresRaw === "number" ? expiresRaw : null;
-                          return (
-                            <div style={{ marginTop: 10 }}>
-                              <p style={{ color: "rgba(0,180,255,0.45)", fontSize: 9, fontWeight: 700, marginBottom: 6 }}>
-                                PDF OUTPUT
-                              </p>
-                              <div
-                                style={{
-                                  background: "rgba(0,255,70,0.06)",
-                                  border: "1px solid rgba(0,255,70,0.2)",
-                                  borderRadius: 8,
-                                  padding: "10px 12px",
-                                }}
-                              >
-                                <a
-                                  href={downloadUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{
-                                    color: "#7dff9a",
-                                    fontSize: 11,
-                                    wordBreak: "break-all",
-                                    display: "block",
-                                    marginBottom: 8,
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  下載 PDF（簽名連結，新分頁）→
-                                </a>
-                                {expires != null ? (
-                                  <p style={{ margin: 0, fontSize: 10, color: "rgba(0,255,70,0.45)" }}>
-                                    簽名約 {expires}s 內有效；過期需重新導出
-                                  </p>
-                                ) : null}
-                                {pdfGcsUri ? (
-                                  <p
-                                    style={{
-                                      margin: "8px 0 0",
-                                      fontSize: 9,
-                                      color: "rgba(0,180,255,0.4)",
-                                      wordBreak: "break-all",
-                                    }}
-                                  >
-                                    gs: {pdfGcsUri}
-                                  </p>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })()
-                      : null}
-                  </div>
-                )}
-                {pdfExportJobQuery.error && (
-                  <p style={{ color: "#ff9090", fontSize: 10, marginBottom: 12 }}>PDF 任務查詢錯誤：{pdfExportJobQuery.error.message}</p>
-                )}
 
                 {/* 基础字段 */}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
@@ -1691,11 +1391,6 @@ export default function GodViewPage() {
           0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.4)}
           50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}
         }
-        .godview-gallery-scroll { scrollbar-width: thin; scrollbar-color: rgba(245,158,11,0.35) rgba(255,255,255,0.04); }
-        .godview-gallery-scroll::-webkit-scrollbar { height: 4px; }
-        .godview-gallery-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
-        .godview-gallery-scroll::-webkit-scrollbar-thumb { background: rgba(245,158,11,0.2); border-radius: 10px; }
-        .godview-gallery-scroll::-webkit-scrollbar-thumb:hover { background: rgba(245,158,11,0.4); }
       `}</style>
     </div>
   );
