@@ -2915,8 +2915,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * 平台页：单张合成图 — 竖版执行分镜表（镜数随文案，10 点）或 小红书双笔记卡（12 点）。
-     * gpt-image-2 主路径 + Imagen 兜底；试读用户按 resolveWatermark 叠水印。
+     * 平台页：单张合成图 — 横版 16:9 执行分镜表（镜数随文案；`kind` 仍为 storyboard_sheet_portrait 以保持 API 兼容）或 小红书双笔记卡（12 点）。
+     * gpt-image-2 主路径 + Imagen 兜底；试读水印仅在前端 DOM 叠加（prompt 内零水印指令）。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
@@ -2949,7 +2949,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             cost,
             "platformCompositeSheet",
             input.kind === "storyboard_sheet_portrait"
-              ? `平台竖版分镜表 · ${input.title.slice(0, 48)}`
+              ? `平台横版分镜表 · ${input.title.slice(0, 48)}`
               : `平台小红书双笔记 · ${input.title.slice(0, 48)}`,
           );
         }
