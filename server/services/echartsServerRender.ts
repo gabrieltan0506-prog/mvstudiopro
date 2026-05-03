@@ -203,8 +203,8 @@ export function buildEChartsOption(spec: DerivedChartSpec, theme?: EChartsTheme)
     axisLabel: {
       color: palette.axis,
       fontSize: 11,
-      interval: 0,
-      rotate: labels.some((s) => s.length > 6) ? 18 : 0,
+      hideOverlap: true,
+      rotate: labels.some((s) => s.length > 6) ? 25 : 0,
     },
     axisLine: { lineStyle: { color: palette.grid } },
     axisTick: { lineStyle: { color: palette.grid } },

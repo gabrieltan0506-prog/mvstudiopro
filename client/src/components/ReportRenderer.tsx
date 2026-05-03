@@ -616,9 +616,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
       <div style={{ width: "100%", height: 280, minWidth: 0 }}>
         <ResponsiveContainer width="100%" height="100%">
           {chart.type === "bar" ? (
-            <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
+            <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
               {commonGrid}
-              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
+              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval="preserveStartEnd" angle={-25} textAnchor="end" height={60} />
               <YAxis tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
@@ -627,9 +627,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </BarChart>
           ) : chart.type === "line" ? (
-            <LineChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
+            <LineChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
               {commonGrid}
-              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} />
+              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval="preserveStartEnd" angle={-25} textAnchor="end" height={60} />
               <YAxis tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
