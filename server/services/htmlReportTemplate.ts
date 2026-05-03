@@ -540,7 +540,7 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   table { width: 100%; min-width: max-content; border-collapse: collapse; margin: 0; font-size: 13px; table-layout: auto; }
   thead th { background: var(--th-bg); color: var(--th-text); padding: 11px 13px; text-align: left; font-weight: 700; font-size: 12px; letter-spacing: 0.05em; border-right: 1px solid rgba(255,255,255,0.10); white-space: nowrap; }
   thead th:last-child { border-right: none; }
-  tbody td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--text-main); }
+  tbody td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--text-main); white-space: nowrap; }
   tbody tr:nth-child(even) td { background-color: var(--row-alt); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.num.pos { color: #15803D; font-weight: 700; }

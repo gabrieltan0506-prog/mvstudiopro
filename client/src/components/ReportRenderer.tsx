@@ -529,6 +529,7 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
                     textAlign: "left",
                     letterSpacing: "0.04em",
                     borderRight: i < headers.length - 1 ? "1px solid rgba(255,255,255,0.18)" : "none",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {renderInline(h, colors)}
@@ -550,6 +551,7 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
                       color: ci === 0 ? colors.goldDeep : colors.inkSoft,
                       fontWeight: ci === 0 ? 700 : 500,
                       lineHeight: 1.65,
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {renderInline(cell, colors)}
