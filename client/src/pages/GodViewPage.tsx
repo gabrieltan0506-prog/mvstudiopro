@@ -241,7 +241,7 @@ export default function GodViewPage() {
   const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
     onSuccess: (result) => {
-      const url = result?.signedUrl;
+      const url = (result as { signedUrl?: string } | undefined)?.signedUrl;
       if (!url) { toast.error("黑金 PDF 已生成但未拿到签名链接"); return; }
       try {
         navigator.clipboard?.writeText(url).catch(() => {});

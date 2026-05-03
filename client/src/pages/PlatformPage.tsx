@@ -16,6 +16,7 @@ import type {
   GrowthSnapshot,
   GrowthTitleExecution,
 } from "@shared/growth";
+import { CREDIT_COSTS } from "@shared/plans";
 import {
   Activity,
   ArrowLeft,
@@ -357,6 +358,40 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
+/** 供分鏡表 / 小紅書雙卡單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
+function buildPlatformSheetScriptContext(item: {
+  title: string;
+  hook: string;
+  copywriting: string;
+  production?: string;
+  detailedScript?: string;
+  publishingAdvice?: string;
+  actionableSteps?: string[];
+  executionDetails?: {
+    environmentAndWardrobe?: string;
+    lightingAndCamera?: string;
+    stepByStepScript?: string[];
+  };
+}): string {
+  const parts: string[] = [];
+  parts.push(`【选题】${item.title}`);
+  if (item.hook) parts.push(`【钩子】${item.hook}`);
+  if (item.copywriting) parts.push(`【文案与结构】${item.copywriting}`);
+  if (item.production) parts.push(`【制作】${item.production}`);
+  const ex = item.executionDetails;
+  if (ex?.environmentAndWardrobe) parts.push(`【环境与服装】${ex.environmentAndWardrobe}`);
+  if (ex?.lightingAndCamera) parts.push(`【灯光机位】${ex.lightingAndCamera}`);
+  if (Array.isArray(ex?.stepByStepScript) && ex.stepByStepScript.length) {
+    parts.push(`【分镜步骤】\n${ex.stepByStepScript.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+  }
+  if (item.actionableSteps?.length) {
+    parts.push(`【落地步骤】\n${item.actionableSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+  }
+  if (item.detailedScript) parts.push(`【详细脚本】${item.detailedScript}`);
+  if (item.publishingAdvice) parts.push(`【发布建议】${item.publishingAdvice}`);
+  return parts.join("\n\n").slice(0, 12000);
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
@@ -384,6 +419,14 @@ export default function PlatformPage() {
   const [isContentLoading, setIsContentLoading] = useState(false);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
+  /** 豎版分鏡執行表（單張合成） */
+  const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
+  /** 小紅書雙筆記卡（單張合成） */
+  const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
+  const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
+    sceneId: string;
+    kind: "storyboard_sheet_portrait" | "xiaohongshu_dual_note";
+  } | null>(null);
   /** 整批生圖計價與引擎 mode：與後端 `platformType` 對齊 */
   const [platformBatchType, setPlatformBatchType] = useState<"video" | "graphic">("video");
 
@@ -464,6 +507,24 @@ export default function PlatformPage() {
       toast.success(`已生成 ${ok}/${res.results.length} 张配图${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
     },
     onError: (err) => toast.error(err.message || "批量生图失败"),
+  });
+
+  const generatePlatformCompositeSheetMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
+    onMutate: (input) => {
+      setPendingCompositeSheet({ sceneId: input.sceneId, kind: input.kind });
+    },
+    onSuccess: (res, variables) => {
+      if (!res.imageUrl) return;
+      if (variables.kind === "storyboard_sheet_portrait") {
+        setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
+      } else {
+        setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
+      }
+      const label = variables.kind === "storyboard_sheet_portrait" ? "竖版分镜表" : "小红书双笔记图";
+      toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
+    },
+    onError: (err) => toast.error(err.message || "合成生图失败"),
+    onSettled: () => setPendingCompositeSheet(null),
   });
 
   // ── Async Job Queue mutations ──────────────────────────────────────────────
@@ -1039,6 +1100,11 @@ export default function PlatformPage() {
     if (!contentExecutionCards.length) return;
     const graphicN = contentExecutionCards.filter((c) => cardImageKind(c.format) === "graphic").length;
     setPlatformBatchType(graphicN > contentExecutionCards.length / 2 ? "graphic" : "video");
+  }, [contentExecutionCardsKey]);
+
+  useEffect(() => {
+    setPlatformStoryboardSheetMap({});
+    setPlatformXhsNoteMap({});
   }, [contentExecutionCardsKey]);
 
   const platformBulkImageEstimate = useMemo(
@@ -2112,6 +2178,126 @@ export default function PlatformPage() {
                               Awaiting Batch Render
                             </div>
                           )}
+                        </div>
+
+                        <div className="mt-4 space-y-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.55)] p-3">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">
+                            合成生图（单张 gpt-image-2 · 细节仍在下方折叠）
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={
+                                !isAuthenticated ||
+                                generatePlatformCompositeSheetMutation.isPending ||
+                                isDashboardLoading ||
+                                isContentLoading
+                              }
+                              onClick={() => {
+                                if (!isAuthenticated) {
+                                  toast.error("请先登录");
+                                  return;
+                                }
+                                const cost = CREDIT_COSTS.platformStoryboardSheet;
+                                const note = supervisorAccess
+                                  ? ""
+                                  : `将消耗 ${cost} 积分生成竖版执行分镜表（2×4 共八镜），是否继续？`;
+                                if (!supervisorAccess && !window.confirm(note)) return;
+                                const script = buildPlatformSheetScriptContext(item as any);
+                                generatePlatformCompositeSheetMutation.mutate({
+                                  sceneId: item.id,
+                                  title: item.title,
+                                  scriptContext: script,
+                                  kind: "storyboard_sheet_portrait",
+                                  jobId: analysisJobId || undefined,
+                                });
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-3 py-2 text-xs font-bold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
+                            >
+                              {pendingCompositeSheet?.sceneId === item.id &&
+                              pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Film className="h-3.5 w-3.5" />
+                              )}
+                              竖版分镜表 · {CREDIT_COSTS.platformStoryboardSheet} 点
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                !isAuthenticated ||
+                                generatePlatformCompositeSheetMutation.isPending ||
+                                isDashboardLoading ||
+                                isContentLoading
+                              }
+                              onClick={() => {
+                                if (!isAuthenticated) {
+                                  toast.error("请先登录");
+                                  return;
+                                }
+                                const cost = CREDIT_COSTS.platformXhsDualNote;
+                                const note = supervisorAccess
+                                  ? ""
+                                  : `将消耗 ${cost} 积分生成小红书风双笔记卡（单张竖图），是否继续？`;
+                                if (!supervisorAccess && !window.confirm(note)) return;
+                                const script = buildPlatformSheetScriptContext(item as any);
+                                generatePlatformCompositeSheetMutation.mutate({
+                                  sceneId: item.id,
+                                  title: item.title,
+                                  scriptContext: script,
+                                  kind: "xiaohongshu_dual_note",
+                                  jobId: analysisJobId || undefined,
+                                });
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/40 bg-[#ff4fb8]/10 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/20 disabled:opacity-45"
+                            >
+                              {pendingCompositeSheet?.sceneId === item.id &&
+                              pendingCompositeSheet?.kind === "xiaohongshu_dual_note" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Heart className="h-3.5 w-3.5" />
+                              )}
+                              小红书双笔记 · {CREDIT_COSTS.platformXhsDualNote} 点
+                            </button>
+                          </div>
+                          {platformStoryboardSheetMap[item.id] ? (
+                            <div className="overflow-hidden rounded-xl border border-white/10 shadow-xl">
+                              <TrialWatermarkImage
+                                src={platformStoryboardSheetMap[item.id]}
+                                isTrial={isTrial}
+                                className="w-full object-contain bg-black/40"
+                              />
+                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                <ImageUpscaleBar
+                                  imageUrl={platformStoryboardSheetMap[item.id]}
+                                  baseCreditKey="forgeImage"
+                                  className="mt-1"
+                                  onUpscaled={(url) =>
+                                    setPlatformStoryboardSheetMap((prev) => ({ ...prev, [item.id]: url }))
+                                  }
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                          {platformXhsNoteMap[item.id] ? (
+                            <div className="overflow-hidden rounded-xl border border-white/10 shadow-xl">
+                              <TrialWatermarkImage
+                                src={platformXhsNoteMap[item.id]}
+                                isTrial={isTrial}
+                                className="w-full object-contain bg-black/40"
+                              />
+                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                <ImageUpscaleBar
+                                  imageUrl={platformXhsNoteMap[item.id]}
+                                  baseCreditKey="forgeImage"
+                                  className="mt-1"
+                                  onUpscaled={(url) =>
+                                    setPlatformXhsNoteMap((prev) => ({ ...prev, [item.id]: url }))
+                                  }
+                                />
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                         <details className="mt-4 rounded-xl border border-white/10 bg-[rgba(255,255,255,0.03)] p-3 text-left">
                           <summary className="cursor-pointer text-xs font-semibold text-[#9ddcff]">执行细项、分镜与发布（展开）</summary>

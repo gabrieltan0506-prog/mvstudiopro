@@ -2915,6 +2915,79 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
+     * 平台页：单张合成图 — 竖版 2×4 执行分镜表（10 点）或 小红书双笔记卡（12 点）。
+     * gpt-image-2 主路径 + Imagen 兜底；试读用户按 resolveWatermark 叠水印。
+     */
+    generatePlatformCompositeSheet: protectedProcedure
+      .input(
+        z.object({
+          jobId: z.string().max(128).optional(),
+          sceneId: z.string().min(1),
+          title: z.string().min(1).max(220),
+          scriptContext: z.string().min(1).max(12000),
+          kind: z.enum(["storyboard_sheet_portrait", "xiaohongshu_dual_note"]),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost =
+          input.kind === "storyboard_sheet_portrait"
+            ? CREDIT_COSTS.platformStoryboardSheet
+            : CREDIT_COSTS.platformXhsDualNote;
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformCompositeSheet",
+            input.kind === "storyboard_sheet_portrait"
+              ? `平台竖版分镜表 · ${input.title.slice(0, 48)}`
+              : `平台小红书双笔记 · ${input.title.slice(0, 48)}`,
+          );
+        }
+
+        if (input.jobId) {
+          console.log(
+            `[mvAnalysis.generatePlatformCompositeSheet] jobId=${input.jobId} kind=${input.kind} sceneId=${input.sceneId} userId=${userId}`,
+          );
+        }
+
+        const { generatePlatformCompositeSheetImage } = await import("./services/proxyImageService");
+        const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
+        const imageUrl = await generatePlatformCompositeSheetImage({
+          kind: input.kind,
+          title: input.title,
+          scriptContext: input.scriptContext,
+          isTrial,
+        });
+
+        if (!imageUrl) {
+          if (!isAdminUser) {
+            await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
+          }
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "生图失败，请稍后重试（积分已退回）",
+          });
+        }
+
+        return {
+          success: true as const,
+          imageUrl,
+          totalCost: isAdminUser ? 0 : cost,
+          kind: input.kind,
+        };
+      }),
+
+    /**
      * GodView 研报完成后：按章节一键生成「战略扉页」竖版海报（STRATEGIC / gpt-image-2 + Imagen 兜底）。
      * 不扣积分；水印严格跟随该任务的 `strategicImagesTrialWatermark`（首购尝鲜），不信任客户端传参绕过。
      */
