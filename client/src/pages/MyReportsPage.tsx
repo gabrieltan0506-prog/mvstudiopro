@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 
+import { cn } from "@/lib/utils";
+
 /** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
@@ -1048,52 +1050,39 @@ export default function MyReportsPage() {
     const coverImageUrl = matchingReport?.coverUrl || null;
     const isBusy = downloadStage !== "idle";
     return (
-      <div
-        data-pdf-reading-shell="true"
-        style={{ minHeight: "100vh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 30%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif" }}
-      >
-        <div data-pdf-exclude="true" style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
-          <button onClick={() => setSelectedReport(null)} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700 }}>
-            <ChevronLeft size={16} />返回作品快照库
+      <div className="min-h-screen font-sans bg-gradient-to-b from-[#f5e9d7] via-[#ede0c9] to-[#dfcaa9]">
+        <div data-pdf-exclude="true" className="sticky top-0 z-50 flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3 sm:py-3.5 bg-[#fffaf0]/90 backdrop-blur-md border-b border-[#7a5410]/20 shadow-sm">
+          <button onClick={() => setSelectedReport(null)} className="flex shrink-0 items-center gap-1 text-[#7a5410] font-bold text-xs sm:text-sm bg-transparent border-none cursor-pointer">
+            <ChevronLeft size={16} className="hidden sm:block" />返回<span className="hidden sm:inline">作品快照库</span>
           </button>
-          <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
-          <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <span className="text-[#7a5410]/40 shrink-0">/</span>
+          <span className="text-[#3d2c14] text-xs sm:text-sm font-extrabold max-w-[120px] sm:max-w-md truncate">{selectedReport.title}</span>
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={handleDownloadMd}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-[#a8761b]/10 border border-[#a8761b]/30 text-[#7a5410] font-bold text-xs cursor-pointer hover:bg-[#a8761b]/20"
               title="下载原始 Markdown"
             >
-              <FileText size={12} />Markdown
+              <FileText size={12} className="hidden sm:block" />MD
             </button>
             <button
               onClick={() => void handleDownloadFromReadingMode()}
               disabled={isBusy}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 16px",
-                borderRadius: 8,
-                background: isBusy
-                  ? "rgba(168,118,27,0.30)"
-                  : "linear-gradient(135deg,#a8761b,#7a5410)",
-                border: "1px solid rgba(168,118,27,0.65)",
-                color: "#fff7df",
-                fontWeight: 800,
-                fontSize: 12,
-                cursor: isBusy ? "not-allowed" : "pointer",
-                boxShadow: isBusy ? "none" : "0 3px 10px rgba(168,118,27,0.30)",
-              }}
+              className={cn(
+                "flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs font-bold transition-all",
+                isBusy
+                  ? "bg-[#a8761b]/30 text-[#fff7df]/70 cursor-not-allowed border border-[#a8761b]/30"
+                  : "bg-gradient-to-br from-[#a8761b] to-[#7a5410] text-[#fff7df] border border-[#a8761b]/60 cursor-pointer shadow-sm hover:shadow-md"
+              )}
               title="一般 1～3 分钟内自动下载；超大报告自动改走云端队列，完成后也会自动下载"
             >
               {isBusy ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
-              {downloadStage === "ensuring-cover" ? "生成封面…" :
-               downloadStage === "rendering"      ? "等待渲染…" :
-               downloadStage === "snapshotting"   ? "上传快照…" :
-               downloadStage === "sync_pdf"       ? "生成 PDF…" :
-               downloadStage === "pdf_queued"     ? "云端排队中…" :
-                                                    "下载 PDF"}
+              {downloadStage === "ensuring-cover" ? "封面…" :
+               downloadStage === "rendering"      ? "渲染…" :
+               downloadStage === "snapshotting"   ? "上传…" :
+               downloadStage === "sync_pdf"       ? "生成…" :
+               downloadStage === "pdf_queued"     ? "排队…" :
+                                                    "PDF"}
             </button>
           </div>
         </div>
@@ -1102,7 +1091,7 @@ export default function MyReportsPage() {
           id={MYREPORTS_PDF_SNAPSHOT_ROOT_ID}
           data-report-root
           data-myreports-read-layout
-          style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}
+          className="max-w-[1100px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-20"
         >
           {/* PDF 第一屏：9:16 封面 hero（有 coverUrl 才渲染）。
               `.cover-page.cover-image-only` 类与 ReportRenderer 的 @media print
@@ -1130,7 +1119,7 @@ export default function MyReportsPage() {
           )}
 
           {/* 5 套封面色板：data-pdf-exclude 让快照剔除（PDF 里不需要这条工具栏） */}
-          <div data-pdf-exclude="true">
+          <div data-pdf-exclude="true" className="mb-6">
             <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="online" />
           </div>
 
@@ -1172,63 +1161,69 @@ export default function MyReportsPage() {
         <div style={{ position: "absolute", inset: 0, opacity: 0.25, mixBlendMode: "overlay", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0 0.10  0 0 0 0.45 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")" }} />
       </div>
 
-      <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.90)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
-        <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700 }}>
+      <div className="sticky top-0 z-50 flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-3.5 bg-[#fffaf0]/90 backdrop-blur-md border-b border-[#7a5410]/20 shadow-sm relative">
+        <button onClick={() => navigate("/")} className="flex shrink-0 items-center gap-1 text-[#7a5410] font-bold text-xs sm:text-sm bg-transparent border-none cursor-pointer">
           <ChevronLeft size={16} />首页
         </button>
-        <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
-        <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800 }}>战略作品快照库</span>
+        <span className="text-[#7a5410]/40 shrink-0">/</span>
+        <span className="text-[#3d2c14] text-xs sm:text-sm font-extrabold truncate">战略作品快照库</span>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.30)", color: isFetching ? "rgba(122,84,16,0.5)" : "#7a5410", fontSize: 12, fontWeight: 700, cursor: isFetching ? "not-allowed" : "pointer" }}
+          className={cn(
+            "ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border",
+            isFetching
+              ? "bg-[#a8761b]/10 text-[#7a5410]/50 border-[#a8761b]/30 cursor-not-allowed"
+              : "bg-[#a8761b]/10 text-[#7a5410] border-[#a8761b]/30 cursor-pointer hover:bg-[#a8761b]/20"
+          )}
         >
-          <RefreshCw size={13} style={{ animation: isFetching ? "spin 1s linear infinite" : "none" }} />刷新
+          <RefreshCw size={13} className={cn(isFetching && "animate-spin")} />
+          <span className="hidden sm:inline">刷新</span>
         </button>
       </div>
 
-      <div style={{ maxWidth: 1600, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 36 }}>
-          <div style={{ width: 50, height: 50, borderRadius: 14, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 6px 20px rgba(122,84,16,0.30)", flexShrink: 0 }}>
-            <Crown size={22} color="#fff7df" />
-          </div>
-          <div>
-            <h1 style={{ fontSize: 28, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
-              战略作品快照库
-            </h1>
-            <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 12, margin: "4px 0 0", fontWeight: 600 }}>AI 上帝视角 · 全景行业战报 · 历史数据资产</p>
-          </div>
-          <button
-            onClick={() => navigate("/god-view")}
-            style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, padding: "11px 22px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: "pointer", boxShadow: "0 6px 20px rgba(168,118,27,0.30)", flexShrink: 0 }}
-          >
-            <Sparkles size={14} />发起新战报
-          </button>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 pb-20 relative z-10">
+      <div className="flex items-center gap-3 sm:gap-4 mb-8 sm:mb-10 relative z-10">
+        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-[#a8761b] to-[#7a5410] flex items-center justify-center shadow-[0_6px_20px_rgba(122,84,16,0.30)] shrink-0">
+          <Crown className="text-[#fff7df]" size={20} />
         </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-[#3d2c14] tracking-tight m-0">
+            战略作品快照库
+          </h1>
+          <p className="text-xs sm:text-sm text-[#3d2c14]/55 font-semibold mt-1">AI 上帝视角 · 全景行业战报 · 历史数据资产</p>
+        </div>
+        <button
+          onClick={() => navigate("/god-view")}
+          className="ml-auto flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-gradient-to-br from-[#a8761b] to-[#7a5410] text-[#fff7df] font-black text-xs sm:text-sm border-none cursor-pointer shadow-[0_6px_20px_rgba(168,118,27,0.30)] hover:-translate-y-0.5 transition-transform shrink-0"
+        >
+          <Sparkles size={14} className="hidden sm:block" />发起新战报
+        </button>
+      </div>
 
         {isLoading && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "80px 0", color: "#7a5410" }}>
-            <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
-            <span style={{ fontSize: 14, fontWeight: 600 }}>加载作品库…</span>
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-[#7a5410]">
+            <Loader2 size={24} className="animate-spin" />
+            <span className="text-sm font-bold">加载作品库…</span>
           </div>
         )}
 
         {!isLoading && reports.length === 0 && (
-          <div style={{ textAlign: "center", padding: "80px 24px" }}>
-            <div style={{ fontSize: 52, marginBottom: 16 }}>📭</div>
-            <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 15, marginBottom: 24, fontWeight: 600 }}>作品库还是空的，发起第一份战报吧</p>
+          <div className="text-center py-20 px-6">
+            <div className="text-5xl mb-4">📭</div>
+            <p className="text-[#3d2c14]/55 text-sm sm:text-base font-semibold mb-6">作品库还是空的，发起第一份战报吧</p>
             <button
               onClick={() => navigate("/god-view")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 20px rgba(168,118,27,0.30)" }}
+              className="inline-flex items-center gap-2 px-6 sm:px-7 py-3 rounded-xl bg-gradient-to-br from-[#a8761b] to-[#7a5410] text-[#fff7df] font-black text-sm cursor-pointer shadow-[0_6px_20px_rgba(168,118,27,0.30)] hover:-translate-y-0.5 transition-transform"
             >
-              <Crown size={15} />立即发起首份战报
+              <Crown size={16} />立即发起首份战报
             </button>
           </div>
         )}
 
         {!isLoading && reports.length > 0 && (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 24 }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {[...reports]
                 .sort((a, b) => {
                   const order: Record<string, number> = { processing: 1, awaiting_review: 2, completed: 2, failed: 3 };
@@ -1308,28 +1303,9 @@ function ReportCoverCard({
   const displayTitle = report.lighthouseTitle || report.title;
 
   return (
-    <div
-      style={{
-        background: "linear-gradient(180deg,#fffaf0 0%,#f5ecda 100%)",
-        border: "1px solid rgba(168,118,27,0.30)",
-        borderRadius: 18,
-        overflow: "hidden",
-        transition: "border-color 0.25s, box-shadow 0.25s, transform 0.25s",
-        cursor: "default",
-        boxShadow: "0 4px 18px rgba(122,84,16,0.08)",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.65)";
-        (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 32px rgba(168,118,27,0.22)";
-        (e.currentTarget as HTMLElement).style.transform = "translateY(-3px)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.30)";
-        (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 18px rgba(122,84,16,0.08)";
-        (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
-      }}
-    >
-      <div style={{ position: "relative", width: "100%", paddingTop: "133.33%", background: "linear-gradient(160deg,#3d2c14 0%,#1c1407 100%)", overflow: "hidden" }}>
+    <div className="bg-gradient-to-b from-[#fffaf0] to-[#f5ecda] border border-[#a8761b]/30 rounded-2xl overflow-hidden transition-all duration-300 cursor-default hover:border-[#a8761b]/60 hover:-translate-y-1 hover:shadow-xl group flex flex-col h-full shadow-[0_4px_18px_rgba(122,84,16,0.08)]">
+      {/* 1. 封面占位 / 容器区 (保持 3:4 比例) */}
+      <div className="relative w-full pt-[133.33%] bg-gradient-to-br from-[#3d2c14] to-[#1c1407] overflow-hidden shrink-0">
         {report.coverUrl ? (
           <img
             src={report.coverUrl}
@@ -1367,97 +1343,86 @@ function ReportCoverCard({
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 80, background: "linear-gradient(to top, rgba(28,20,7,0.85) 0%, transparent 100%)" }} />
       </div>
 
-      <div style={{ padding: "14px 16px 16px" }}>
-        <h3 style={{ fontSize: 14, fontWeight: 800, color: "#3d2c14", margin: "0 0 8px", lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+      <div className="p-4 sm:p-5 flex flex-col flex-1">
+        <h3 className="text-sm font-extrabold text-[#3d2c14] mb-2 leading-snug line-clamp-2">
           {displayTitle}
         </h3>
 
         {report.summary && (
-          <p style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", margin: "0 0 10px", lineHeight: 1.6, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          <p className="text-[11px] text-[#3d2c14]/65 mb-3 leading-relaxed line-clamp-3">
             {report.summary}
           </p>
         )}
 
         {report.error && report.status === "failed" && (
-          <p style={{ fontSize: 11, color: "#dc2626", margin: "0 0 10px" }}>原因：{report.error.slice(0, 60)}</p>
+          <p className="text-[11px] text-red-600 mb-3">原因：{report.error.slice(0, 60)}</p>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, color: "rgba(61,44,20,0.45)", fontWeight: 600 }}>
+        <div className="flex items-center justify-between mb-auto pb-4">
+          <span className="inline-flex items-center gap-1 text-[10px] text-[#3d2c14]/45 font-semibold">
             <Clock size={10} />
             {new Date(report.createdAt).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}
           </span>
           {report.creditsUsed > 0 && (
-            <span style={{ fontSize: 10, color: "#7a5410", fontWeight: 700 }}>{report.creditsUsed.toLocaleString()} 点</span>
+            <span className="text-[10px] text-[#7a5410] font-bold">{report.creditsUsed.toLocaleString()} 点</span>
           )}
         </div>
 
         {/* 已出刊（含后端仍为 awaiting_review 的条目）：模板选择 + 阅览 / 下载 PDF / 下载 HTML 交互版 / 修订 */}
         {showPublishedActions && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="flex flex-col gap-2 mt-2">
             {/* 5 套封面模板紧凑选择条：用户挑封面 → 立即套用到下载 */}
             <CompactStyleSwatches value={pdfStyle} onChange={onPdfStyleChange} />
             <button
               onClick={onDownload}
               disabled={isDownloading}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
-              onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+              className={cn(
+                "flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl text-xs font-black transition-all",
+                isDownloading
+                  ? "bg-[#a8761b]/30 text-[#fff7df]/70 cursor-not-allowed border border-[#a8761b]/30"
+                  : "bg-gradient-to-br from-[#a8761b] to-[#7a5410] text-[#fff7df] border border-[#a8761b]/60 cursor-pointer shadow-md hover:shadow-lg hover:-translate-y-0.5"
+              )}
               title="进入阅览后生成 PDF：一般自动下载；超大报告会走云端队列"
             >
-              {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
+              {isDownloading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
               {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF"}
             </button>
             {/* HTML 交互版：内联 echarts，浏览器里可 hover / 切 legend / 缩放 */}
             <button
               onClick={onDownloadHtml}
               disabled={isHtmlDownloading}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                padding: "10px 0",
-                borderRadius: 10,
-                background: isHtmlDownloading
-                  ? "rgba(37,99,235,0.20)"
-                  : "linear-gradient(135deg,#1e3a8a,#2563eb)",
-                border: "1px solid rgba(37,99,235,0.55)",
-                color: "#f0f9ff",
-                fontWeight: 900,
-                fontSize: 12.5,
-                cursor: isHtmlDownloading ? "not-allowed" : "pointer",
-                transition: "all 0.2s",
-                boxShadow: isHtmlDownloading ? "none" : "0 4px 14px rgba(37,99,235,0.30)",
-              }}
-              onMouseEnter={(e) => { if (!isHtmlDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+              className={cn(
+                "flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl text-xs font-black transition-all",
+                isHtmlDownloading
+                  ? "bg-blue-600/20 text-blue-100/70 cursor-not-allowed border border-blue-600/30"
+                  : "bg-gradient-to-br from-blue-900 to-blue-600 text-blue-50 border border-blue-600/50 cursor-pointer shadow-md hover:shadow-lg hover:-translate-y-0.5"
+              )}
               title="下载交互版 HTML（含 echarts，可 hover / 切 legend）；≤10 MB 直下载，>10 MB 自动压缩 zip"
             >
-              {isHtmlDownloading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              {isHtmlDownloading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
               {isHtmlDownloading ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
             </button>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div className="flex gap-2 mt-1">
               <button
                 onClick={onRead}
-                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}
+                className="flex-1 flex items-center justify-center gap-1.5 min-h-[40px] rounded-xl bg-[#a8761b]/10 border border-[#a8761b]/30 text-[#7a5410] font-bold text-xs hover:bg-[#a8761b]/20 transition-colors cursor-pointer"
               >
-                <FileText size={11} />全息阅览
+                <FileText size={14} />全息阅览
               </button>
               <button
                 onClick={onEdit}
                 title="重新修订"
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
+                className="flex items-center justify-center min-h-[40px] min-w-[44px] rounded-xl bg-[#a8761b]/10 border border-[#a8761b]/30 text-[#7a5410] hover:bg-[#a8761b]/20 transition-colors cursor-pointer"
               >
-                <Pencil size={11} />
+                <Pencil size={14} />
               </button>
             </div>
           </div>
         )}
 
         {report.status === "processing" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
-            <div style={{ fontSize: 11, color: "#d97706", textAlign: "center", padding: "4px 0 0", fontStyle: "italic" }}>
+          <div className="flex flex-col gap-2 items-stretch mt-auto">
+            <div className="text-[11px] text-amber-600 text-center pt-1 italic">
               约 15-30 分钟，完成后自动更新
             </div>
             {report.jobId && (
@@ -1465,23 +1430,14 @@ function ReportCoverCard({
                 onClick={onCancel}
                 disabled={isCancelling}
                 title="主动取消任务（不退还积分，防止算力恶意消耗）"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                  padding: "8px 0",
-                  borderRadius: 9,
-                  background: isCancelling ? "rgba(220,38,38,0.30)" : "rgba(220,38,38,0.10)",
-                  border: "1px solid rgba(220,38,38,0.40)",
-                  color: isCancelling ? "rgba(220,38,38,0.60)" : "#dc2626",
-                  fontSize: 11.5,
-                  fontWeight: 800,
-                  cursor: isCancelling ? "not-allowed" : "pointer",
-                  transition: "all 0.2s",
-                }}
+                className={cn(
+                  "flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl text-xs font-bold transition-all",
+                  isCancelling
+                    ? "bg-red-600/20 text-red-600/60 border border-red-600/40 cursor-not-allowed"
+                    : "bg-red-600/10 text-red-600 border border-red-600/40 hover:bg-red-600/20 cursor-pointer"
+                )}
               >
-                {isCancelling ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />}
+                {isCancelling ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
                 {isCancelling ? "取消中…" : "✕ 取消任务（不退还积分）"}
               </button>
             )}
@@ -1536,8 +1492,8 @@ function CompactStyleSwatches({
     { key: "business-bright", label: "高端商务亮", primary: "#1F3A5F", accent: "#C9A858" },
   ];
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 6px", borderRadius: 8, background: "rgba(168,118,27,0.04)", border: "1px solid rgba(168,118,27,0.16)" }} title="选择 PDF 封面模板">
-      <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(122,84,16,0.65)", letterSpacing: "0.04em", marginRight: 2, flexShrink: 0 }}>封面</span>
+    <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-[#a8761b]/5 border border-[#a8761b]/20" title="选择 PDF 封面模板">
+      <span className="text-[10px] font-bold text-[#7a5410]/70 tracking-wide mr-1 shrink-0">封面</span>
       {swatches.map((s) => {
         const selected = s.key === value;
         return (
@@ -1546,17 +1502,12 @@ function CompactStyleSwatches({
             type="button"
             onClick={(e) => { e.stopPropagation(); onChange(s.key); }}
             title={s.label}
+            className="flex-1 min-w-0 h-6 rounded border cursor-pointer transition-all p-0"
             style={{
-              flex: 1,
-              minWidth: 0,
-              height: 22,
-              borderRadius: 5,
-              border: selected ? `2px solid ${s.accent}` : "1px solid rgba(168,118,27,0.30)",
+              borderColor: selected ? s.accent : "rgba(168,118,27,0.30)",
+              borderWidth: selected ? 2 : 1,
               background: `linear-gradient(135deg, ${s.primary} 0%, ${s.primary} 55%, ${s.accent} 100%)`,
-              cursor: "pointer",
-              padding: 0,
               boxShadow: selected ? `0 0 0 2px ${s.accent}40` : "none",
-              transition: "all 0.15s",
             }}
           />
         );

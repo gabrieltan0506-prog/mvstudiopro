@@ -250,7 +250,7 @@ function parseMarkdownToHtml(markdownContent: string): string {
 }
 
 function enhanceTables(html: string): string {
-  return html.replace(
+  const withEnhancedCells = html.replace(
     /<(td|th)>([\s\S]*?)<\/\1>/g,
     (m, tag: string, inner: string) => {
       const text = inner.replace(/<[^>]+>/g, "").trim();
@@ -264,6 +264,12 @@ function enhanceTables(html: string): string {
       if (isPctChange) cls.push(text.startsWith("-") ? "neg" : "pos");
       return `<${tag}${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</${tag}>`;
     },
+  );
+  
+  // Wrap table in overflow-x: auto container for mobile
+  return withEnhancedCells.replace(
+    /<table>([\s\S]*?)<\/table>/g,
+    '<div class="table-wrapper"><table>$1</table></div>'
   );
 }
 
@@ -530,7 +536,8 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   li { margin: 4px 0; line-height: 1.78; }
   li::marker { color: var(--primary); font-weight: 700; }
   /* ── 表格 ── */
-  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
+  .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 20px 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+  table { width: 100%; min-width: 500px; border-collapse: collapse; margin: 0; font-size: 13px; }
   thead th { background: var(--th-bg); color: var(--th-text); padding: 11px 13px; text-align: left; font-weight: 700; font-size: 12px; letter-spacing: 0.05em; border-right: 1px solid rgba(255,255,255,0.10); white-space: nowrap; }
   thead th:last-child { border-right: none; }
   tbody td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--text-main); }
