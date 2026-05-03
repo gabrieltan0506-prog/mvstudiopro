@@ -13,8 +13,8 @@ export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
  */
 export const PROXY_IMAGE_HEADING_MAX_CHARS = 35;
 export const PROXY_IMAGE_CONTEXT_MAX_CHARS = 500;
-/** 分鏡表 / 小紅書雙卡：單圖內多格，允許較長劇本上下文供模型拆成多鏡 */
-export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 900;
+/** 分鏡表 / 小紅書雙卡：單圖內多格，需保留足夠劇本以統計鏡數與細節 */
+export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
 
 /**
  * gpt-image-2 官方尺寸約束：最長邊 ≤3840、兩邊皆 16 倍數、長寬比 ≤3:1、總像素 ∈ [655360, 8294400]。
@@ -92,7 +92,40 @@ Aspect Ratio: 9:16. 8k resolution, masterpiece.
 `.trim();
 }
 
-/** 豎版專業執行分鏡表：單張 9:16 內含 2×4 共八鏡 + 每格下方欄位表 */
+/**
+ * 根據劇本上下文粗估分鏡條數，寫入 prompt 讓生圖與文字敘述對齊（不強行 8 鏡）。
+ */
+function buildStoryboardShotCountGuidance(scriptContext: string): string {
+  const s = scriptContext.slice(0, 12000);
+  let best = 0;
+  const reLine = /(?:^|\n)\s*(\d{1,2})[\.、:：]\s+\S/gm;
+  let m: RegExpExecArray | null;
+  while ((m = reLine.exec(s)) !== null) {
+    const v = parseInt(m[1], 10);
+    if (v >= 1 && v <= 24) best = Math.max(best, v);
+  }
+  const reJing = /第\s*(\d{1,2})\s*镜/g;
+  while ((m = reJing.exec(s)) !== null) {
+    const v = parseInt(m[1], 10);
+    if (v >= 1 && v <= 24) best = Math.max(best, v);
+  }
+  const lineStarts = (s.match(/(?:^|\n)\s*\d{1,2}[\.、]\s+/gm) ?? []).length;
+  if (lineStarts > best) best = lineStarts;
+  best = Math.min(best, 14);
+  if (lineStarts > best) best = lineStarts;
+  best = Math.min(best, 14);
+
+  if (best >= 3) {
+    const hi = String(best).padStart(2, "0");
+    return `SHOT COUNT (hint from CONTEXT numbering/lists): ${best} distinct beats — render EXACTLY ${best} panels, 镜号 01 … ${hi} in story order. Do NOT pad to 8; do NOT add blank panels.`;
+  }
+  if (best === 1 || best === 2) {
+    return `SHOT COUNT: CONTEXT implies ${best} key beat(s) — render exactly ${best} panel(s) only (e.g. vertical stack). Forbidden: duplicating art to fill a grid; forbidden: padding to eight.`;
+  }
+  return `SHOT COUNT: Derive from CONTEXT — one panel per clearly described shot (practical range about 2–12 on one 9:16 sheet). There is NO required count of 8. If the prose only supports 4 shots, draw 4. Never clone the same frame to fill space.`;
+}
+
+/** 豎版專業執行分鏡表：單張 9:16、鏡數隨文字敘述；每格下方七欄位表 */
 export function buildStoryboardSheetPortraitPrompt(options: {
   title: string;
   scriptContext: string;
@@ -104,24 +137,42 @@ export function buildStoryboardSheetPortraitPrompt(options: {
     raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
       ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
       : raw;
+  const shotGuidance = buildStoryboardShotCountGuidance(raw);
   const watermarkInstruction = options.isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
   return `
 Model: GPT-Image-2
-Task: Create ONE vertical 9:16 professional Chinese video EXECUTION STORYBOARD SHEET (执行分镜表), like a premium streaming drama production document.
+Task: Render ONE printable vertical Chinese cinematography EXECUTION STORYBOARD SHEET (镜头执行分镜表)— premium streaming / feature-film prep document, NOT a social collage.
 
-LAYOUT (strict):
-- Top: document header; natively render EXACTLY this title as the main headline: "${displayHeading}"
-- Below: a 2 columns × 4 rows grid = 8 shot panels total, read top-to-bottom. Each panel:
-  * Upper: cinematic key frame (consistent lead character appearance & wardrobe across all 8 panels, matching CONTEXT)
-  * Lower: compact table in readable Chinese with rows: 镜号, 景别, 画面内容, 情绪, 运镜, 台词/声音, 时长
-- Keep Chinese text legible; shorten cell copy if needed, never replace structure with a wall of tiny text.
+${shotGuidance}
 
-Derive eight sequential shots from CONTEXT (do NOT paste the whole CONTEXT as one paragraph on the image):
+DOCUMENT LAYOUT (non-negotiable):
+1) TOP HEADER STRIP
+   - Main line (large): natively render EXACT headline: "${displayHeading}"
+   - Sub-header lines (smaller Chinese, 2–4 short lines): infer from CONTEXT — 场次, 视觉风格, 视频约束 (e.g. 单镜时长 ≤ 5 秒). If a field is missing, invent concise on-tone text; never leave blank.
+
+2) BODY — variable grid of shot panels (NOT fixed 2×4 unless CONTEXT happens to need 8 shots).
+   - Choose a readable layout for the shot count above: e.g. 2 columns × k rows, or 1 column × n rows if few shots, so everything fits one 9:16 page with legible tables.
+   - Reading order: top-to-bottom within a column, then next column (or pure top-to-bottom if single column). 镜号 must be consecutive from 01 upward for however many panels you draw.
+   - EACH panel:
+     (A) UPPER: one cinematic keyframe (must match CONTEXT world / era / wardrobe).
+     (B) LOWER: compact LEGIBLE Chinese mini-table with row labels exactly:
+         镜号 | 景别 | 画面内容 | 情绪 | 运镜 | 台词/声音 | 时长
+       Fill every field for that shot; no empty shells, no replacing the table with a prose blob.
+
+ANTI-LAZY / ANTI-DRIFT:
+- NO modern office / business look UNLESS CONTEXT says contemporary workplace.
+- Every pair of adjacent panels MUST differ clearly in at least two of: 景别, 人物站位/动作, 构图, 运镜 — unless CONTEXT explicitly calls for an intentional match cut.
+- FORBIDDEN: copy-pasting the same artwork across multiple panels; FORBIDDEN: filler duplicate frames.
+- FORBIDDEN: microscopic unreadable glyphs.
+
+STORY: Sequence and beats come strictly from CONTEXT; panel count follows CONTEXT, not a default number.
+
+CONTEXT (do NOT paste as one wall of tiny text on the sheet):
 ${visualContext}
 
-STYLE: High-end Chinese drama stills, clean grid, optional light paper/parchment tone, no phone or browser chrome.
+STYLE: Match CONTEXT genre lighting (e.g. snow / palace lantern contrast for period drama); crisp grid; parchment optional; no phone or browser UI.
 ${watermarkInstruction}
-Aspect Ratio: 9:16 portrait. 8k, masterpiece.
+Aspect ratio 9:16 portrait; table typography must stay human-readable.
 `.trim();
 }
 
@@ -157,6 +208,7 @@ Aspect Ratio: 9:16 portrait. 8k, masterpiece.
 async function postGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
+  opts: { maxAttempts?: number } = {},
 ): Promise<string | null> {
   const apiKey = String(process.env.PROXY_OPENAI_API_KEY || "").trim();
   if (!apiKey) {
@@ -164,7 +216,13 @@ async function postGptImage2AndUpload(
     return null;
   }
 
-  for (const size of GPT_IMAGE2_PORTRAIT_SIZES) {
+  const maxAttempts = Math.min(
+    Math.max(1, opts.maxAttempts ?? GPT_IMAGE2_PORTRAIT_SIZES.length),
+    GPT_IMAGE2_PORTRAIT_SIZES.length,
+  );
+  const sizes = GPT_IMAGE2_PORTRAIT_SIZES.slice(0, maxAttempts);
+
+  for (const size of sizes) {
     try {
       const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
         method: "POST",
@@ -236,7 +294,7 @@ export async function generateGptImage2(options: {
     isTrial: options.isTrial,
     forImagenFallback: false,
   });
-  return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase());
+  return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase(), {});
 }
 
 export type PlatformCompositeSheetKind = "storyboard_sheet_portrait" | "xiaohongshu_dual_note";
@@ -265,10 +323,12 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const subdir =
     options.kind === "storyboard_sheet_portrait" ? "platform_storyboard_sheet" : "platform_xhs_dual";
-  const primary = await postGptImage2AndUpload(prompt, subdir);
+  // 平台合成單張：只打一次 gpt-image-2（首個尺寸），避免「尺寸降級重試」連出兩張、雙倍計費與雙倍延遲。
+  // 若失敗再交給 Imagen 兜底一次。
+  const primary = await postGptImage2AndUpload(prompt, subdir, { maxAttempts: 1 });
   if (primary) return primary;
 
-  const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 1400);
+  const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 2400);
   const model =
     String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
     "imagen-4.0-ultra-generate-001";

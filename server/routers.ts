@@ -2915,7 +2915,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * 平台页：单张合成图 — 竖版 2×4 执行分镜表（10 点）或 小红书双笔记卡（12 点）。
+     * 平台页：单张合成图 — 竖版执行分镜表（镜数随文案，10 点）或 小红书双笔记卡（12 点）。
      * gpt-image-2 主路径 + Imagen 兜底；试读用户按 resolveWatermark 叠水印。
      */
     generatePlatformCompositeSheet: protectedProcedure
