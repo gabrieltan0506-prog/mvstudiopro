@@ -63,11 +63,20 @@ export interface HtmlReportCover {
   abstract?: string;
 }
 
+/** 可選：平台橫版分鏡表等「純圖 URL」— 報告內以 DOM 疊字，避免像素中文（Cam4-1） */
+export interface HtmlReportStoryboardSheet {
+  imageUrl: string;
+  /** 疊加標題；缺省時用 {@link HtmlReportOpts.documentTitle} 或 cover.title */
+  reportTitle?: string;
+}
+
 export interface HtmlReportOpts {
   style?: HtmlPdfStyle;
   cover?: HtmlReportCover;
   /** 自定义 title（写到 <title>） */
   documentTitle?: string;
+  /** 封面與正文之間可選插入分鏡表區塊（底圖 + 絕對定位標題） */
+  storyboardSheet?: HtmlReportStoryboardSheet;
 }
 
 // ─── 5 套主题色（与 client/components/ReportRenderer.tsx THEME_PALETTES 对齐） ─
@@ -269,25 +278,43 @@ function enhanceTables(html: string): string {
 
 // ─── 封面（HTML 离线版，9:16 杂志风；样式简化到屏幕阅读） ───────────────────
 
+function buildHtmlStoryboardSheetSection(data: HtmlReportStoryboardSheet, fallbackTitle: string): string {
+  const safeUrl = String(data.imageUrl || "")
+    .trim()
+    .replace(/"/g, "&quot;");
+  if (!safeUrl) return "";
+  const safeH2 = escapeHtml(String(data.reportTitle || fallbackTitle || "战略情报报告").trim());
+  return `<section class="report-storyboard-sheet" aria-label="镜头执行分镜表">
+  <div class="storyboard-container">
+    <img src="${safeUrl}" alt="Storyboard canvas" class="storyboard-canvas-img" />
+    <div class="storyboard-dom-overlay">
+      <h2 class="storyboard-overlay-title">${safeH2} - 镜头执行分镜表</h2>
+    </div>
+  </div>
+</section>`;
+}
+
 function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: HtmlPdfStyle): string {
   const safeBg = String(cover.imageUrl || "").replace(/"/g, "&quot;");
-  // 用户决策（2026-05-01 第三次）："封面最好能用原始生成的部分就好，不要添加什麼字"
-  // → 有封面图时只渲染纯图，不再叠任何模板文字（cover-pill / cover-mega /
-  // cover-title 等）。Nano Banana Pro 9:16 已经把杂志风装饰、标题、出版信息都
-  // 画进图里，再叠 HTML 文字反而双重曝光。
-  // 没封面图时回退到旧文字框（防止纯空白）— 调用方应当先尝试 on-demand 生成。
-  //
-  // 用户反馈（2026-05-01 第四次）："被砍了一半"——之前用 background:cover 把 9:16
-  // 图强行铺满横向容器，上下被裁掉（INNOVATIONS 标头 + 底部 GLOBAL VISIONS 文字
-  // 消失）。改用真正的 <img> + object-fit: contain，保持 9:16 完整显示。
+  const safeTitle = escapeHtml(cover.title || "战略情报报告");
+  const safeSubtitle = escapeHtml(cover.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE");
+
+  // GPT-Image-2 / DALL-E 等模型无法在像素层稳定渲染中文：封面底图仅作「纯视觉」；
+  // 标题与副标题由本段 HTML + CSS 叠加入 PDF/HTML，由系统字体渲染清晰中文。
   if (safeBg) {
-    return `<section class="cover-page cover-image-only">
-  <img src="${safeBg}" alt="封面" class="cover-image" />
+    return `<section class="cover-page cover-image-with-overlay">
+  <div class="cover-image-stack">
+    <img src="${safeBg}" alt="" class="cover-image" />
+    <div class="cover-dom-overlay">
+      <div class="cover-dom-overlay-inner">
+        <h1 class="cover-overlay-h1">${safeTitle}</h1>
+        <p class="cover-overlay-sub">${safeSubtitle}</p>
+      </div>
+    </div>
+  </div>
 </section>`;
   }
 
-  const safeTitle = escapeHtml(cover.title || "战略情报报告");
-  const safeSubtitle = escapeHtml(cover.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE");
   const safeIssue = escapeHtml(cover.issue || "ISSUE · 战略情报局");
   const safeDate = escapeHtml(
     cover.date ||
@@ -332,13 +359,6 @@ function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: Htm
   };
 
   const isDark = style === "neon-tech" || style === "ocean-fresh";
-  // Bug fix 2026-05-01：原本 url("${safeBg}") 用双引号，跟外层 HTML attribute
-  // 的 style="..." 双引号嵌套冲突 → 浏览器在 url(" 处直接关闭 attribute，
-  // 后面 2 MB base64 全乱掉，封面 div 不渲染图片，只剩调色板回退。
-  // 改成 CSS 不带引号的 url(...) 形式（data URI 不含空格 / 括号 / 引号，合法）。
-  const bgLayer = safeBg
-    ? `linear-gradient(180deg, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0.10) 38%, rgba(0,0,0,0.40) 100%), url(${safeBg}) center/cover no-repeat`
-    : layers[style];
 
   const lightStyles = !isDark
     ? `
@@ -360,18 +380,8 @@ function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: Htm
     : style === "ocean-fresh" ? "OCEAN BUSINESS BRIEF"
     : "BUSINESS PLAN";
 
-  // 用户决策（2026-05-01 截图二）：Nano Banana Pro 生成的封面图本身已含金色立体
-  // 主标题 + STRATEGIC INTELLIGENCE 杂志标头 + 出品日期等元素，AI 排版已经够漂亮。
-  // 不要再叠 cover-frame 文字框（cover-pill / cover-mega / cover-title / cover-bottom）
-  // 把 AI 自己画好的标题盖掉。
-  // 仅当**没有封面图**时才回退到旧文字框（避免纯空白）。
-  if (safeBg) {
-    return `<section class="cover-page cover-image-only">
-  <div class="cover-bg" style="background: ${bgLayer};"></div>
-</section>`;
-  }
   return `<section class="cover-page">
-  <div class="cover-bg" style="background: ${bgLayer};"></div>
+  <div class="cover-bg" style="background: ${layers[style]};"></div>
   <div class="cover-frame">
     <div class="cover-top">
       <div class="cover-pill">✓ 战略情报局 · INTELLIGENCE BUREAU</div>
@@ -414,10 +424,15 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   // 2. marked → HTML（raw HTML 透传，与 PR #330 修复一致；GFM 默认开启）
   const htmlBody = enhanceTables(parseMarkdownToHtml(mdWithMounts));
 
-  // 3. 封面
+  // 3. 封面 + 可選分鏡表（Cam4-1：圖內零字、標題 DOM 疊加）
+  const reportTitleFallback = String(opts?.documentTitle || opts?.cover?.title || "战略情报报告").trim();
   const coverHtml = opts?.cover
     ? buildHtmlCover(palette, opts.cover, style)
     : "";
+  const storyboardSheetHtml =
+    opts?.storyboardSheet && String(opts.storyboardSheet.imageUrl || "").trim()
+      ? buildHtmlStoryboardSheetSection(opts.storyboardSheet, reportTitleFallback)
+      : "";
 
   // 4. 内联 echarts.min.js（约 1MB），失败时降级 CDN（保证 HTML 至少能用）
   const { script: echartsScript } = readEchartsScript();
@@ -504,6 +519,18 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
      由 @media print 控制成 A4 单页。 */
   .cover-page.cover-image-only { display: flex; justify-content: center; align-items: center; min-height: auto; padding: 0; background: #0a0a0a; }
   .cover-page.cover-image-only .cover-image { display: block; width: auto; height: auto; max-width: 100%; max-height: 95vh; object-fit: contain; }
+  /* 有 URL 封面图时：底图纯视觉 + DOM 叠字（与 gpt-image-2 零画内文字策略一致） */
+  .cover-page.cover-image-with-overlay { display: flex; justify-content: center; align-items: center; min-height: auto; padding: 0; background: #0a0a0a; }
+  .cover-image-stack { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+  .cover-page.cover-image-with-overlay .cover-image { display: block; width: auto; height: auto; max-width: 100%; max-height: 95vh; object-fit: contain; }
+  .cover-dom-overlay { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; justify-content: flex-start; pointer-events: none;
+    padding: clamp(28px, 7vw, 64px) clamp(22px, 5vw, 52px);
+    background: linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.12) 42%, rgba(0,0,0,0.68) 100%); }
+  .cover-dom-overlay-inner { max-width: 92%; }
+  .cover-overlay-h1 { margin: 0 0 14px; font-family: "Noto Serif CJK SC", Georgia, serif; font-size: clamp(26px, 3.8vw, 46px); font-weight: 900; line-height: 1.12; color: #fff;
+    text-shadow: 0 4px 28px rgba(0,0,0,0.55); letter-spacing: 0.02em; }
+  .cover-overlay-sub { margin: 0; font-size: clamp(13px, 1.9vw, 20px); font-weight: 700; color: var(--primary); letter-spacing: 0.06em; line-height: 1.45;
+    text-shadow: 0 2px 16px rgba(0,0,0,0.45); }
   .cover-frame { position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: space-between; min-height: 70vh; padding: 48px 44px; }
   .cover-top { display: flex; justify-content: space-between; align-items: center; }
   .cover-pill { background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.22); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.10em; }
@@ -551,6 +578,14 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   figure.scene-figure { margin: 22px auto 16px; padding: 0; max-width: 100%; text-align: center; }
   figure.scene-figure img { display: block; margin: 0 auto; max-width: 100%; max-height: 540px; object-fit: cover; border-radius: 10px; border: 1px solid var(--rule); box-shadow: 0 6px 24px rgba(0,0,0,0.10); }
   figure.scene-figure figcaption { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; font-style: italic; max-width: 90%; margin-left: auto; margin-right: auto; }
+  /* ── 報告內橫版分鏡表（純圖 + 疊加標題，與 gpt-image-2 零畫內文字一致） ── */
+  .report-storyboard-sheet { margin: 28px 0 36px; }
+  .storyboard-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; page-break-inside: avoid; border: 1px solid var(--rule); }
+  .storyboard-canvas-img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; }
+  .storyboard-dom-overlay { position: absolute; top: 0; left: 0; width: 100%; padding: 20px; box-sizing: border-box;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.82), rgba(0,0,0,0.35) 45%, transparent); color: #fff; pointer-events: none; z-index: 2; }
+  .storyboard-overlay-title { margin: 0; font-size: 1.25rem; font-weight: 800; line-height: 1.35; letter-spacing: 0.04em;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.55); font-family: "Noto Serif CJK SC", Georgia, serif; }
   /* ── 数据可视化 figure（echarts mount） ── */
   figure.chart-figure { margin: 22px auto 18px; padding: 14px 16px 12px; max-width: 100%; text-align: center; background: var(--bg-elev); border: 1px solid var(--rule); border-radius: 10px; }
   figure.chart-figure .echart-mount { width: 100% !important; min-height: 320px; }
@@ -574,6 +609,7 @@ ${echartsScriptTag}
   </div>
   <div class="doc-shell">
     ${coverHtml}
+    ${storyboardSheetHtml}
     <article class="report-body">
       ${htmlBody}
     </article>

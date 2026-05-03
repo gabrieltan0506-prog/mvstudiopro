@@ -1,15 +1,12 @@
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import { generateImagenVertexPredict } from "./imageGenerationService";
-import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
 
 /**
- * 視覺排版防禦常數（與 `buildTypographyImagePrompt` / gpt-image-2+Imagen 雙路一致）
- * - 主標題：畫內唯一大字，超長必截斷，避免 DALL·E 系排版崩壞
- * - 上下文：僅作靈感，禁止整段貼成螞蟻字
+ * 視覺防禦常數 — **畫內零文字**：標題與文案由前端 / HTML 疊加，gpt-image-2 只出純畫面。
  */
 export const PROXY_IMAGE_HEADING_MAX_CHARS = 35;
 export const PROXY_IMAGE_CONTEXT_MAX_CHARS = 500;
@@ -18,9 +15,11 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
 
 /**
  * gpt-image-2 官方尺寸約束：最長邊 ≤3840、兩邊皆 16 倍數、長寬比 ≤3:1、總像素 ∈ [655360, 8294400]。
- * 下列為豎版（與本檔 9:16 prompt 一致）；由前到後嘗試，代理拒絕某一組時自動換下一組，無需產品側指定比例。
+ * 下列為豎版（與本檔多數 9:16 prompt 一致）；橫版 16:9 分鏡合成表見 GPT_IMAGE2_LANDSCAPE_SIZES。由前到後嘗試，代理拒絕某一組時自動換下一組。
  */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1792", "1024x1536", "1536x2304"] as const;
+/** 16:9 橫版分鏡合成表 — 與 `buildStoryboardSheetLandscapePrompt` 一致 */
+const GPT_IMAGE2_LANDSCAPE_SIZES = ["1792x1024", "1536x864", "1344x768"] as const;
 
 function shouldAbortGptImage2SizeRetries(status: number): boolean {
   return status === 401 || status === 403 || status === 429;
@@ -39,6 +38,7 @@ function sliceVisualContext(copywriting: string): string {
   return c.length > PROXY_IMAGE_CONTEXT_MAX_CHARS ? c.slice(0, PROXY_IMAGE_CONTEXT_MAX_CHARS) : c;
 }
 
+/** 與 gpt-image-2 / Imagen 兜底：僅控制畫風，不得要求模型在像素上畫字 */
 function styleForMode(mode: ProxyImageTypographyMode): string {
   switch (mode) {
     case "STRATEGIC":
@@ -51,7 +51,16 @@ function styleForMode(mode: ProxyImageTypographyMode): string {
   }
 }
 
-/** 與 OhMyGPT gpt-image-2 與 Imagen 兜底共用同一套截斷與版式指令，避免兩路畫風不一致 */
+/**
+ * 🛑 視圖解耦最高防禦指令 (Cam4-1)
+ * 嚴禁模型在畫面上生成任何文字、數字或浮水印；試讀水印由前端 DOM / CSS 疊加，不得寫入 prompt。
+ */
+export const NO_TEXT_ON_IMAGE_BLOCK = `
+🛑 FATAL ERROR PREVENTION (STRICTLY NO TEXT/TYPOGRAPHY):
+DO NOT render ANY text, letters, numbers, watermarks, spreadsheets, or characters on the image. DO NOT simulate text or documents. The output MUST be a completely clean visual canvas containing ONLY pixels. All readable text will be added later by our system UI.
+`.trim();
+
+/** 與 OhMyGPT gpt-image-2 與 Imagen 兜底：畫內零文字；字由 UI / 報告 HTML 疊加 */
 export function buildTypographyImagePrompt(options: {
   title: string;
   copywriting: string;
@@ -60,34 +69,29 @@ export function buildTypographyImagePrompt(options: {
   /** 兜底模型用稍短前綴即可，語義與 gpt-image-2 一致 */
   forImagenFallback?: boolean;
 }): string {
-  const { title, copywriting, mode, isTrial, forImagenFallback } = options;
+  const { title, copywriting, mode, forImagenFallback } = options;
   const displayHeading = sliceHeading(title);
   const visualContext = sliceVisualContext(copywriting);
   const stylePrompt = styleForMode(mode);
 
-  const watermarkInstruction = isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
-
   if (forImagenFallback) {
     return [
-      "Professional 9:16 editorial image with native typography (fallback render).",
-      `VISUAL CONTEXT INSPIRATION (Do NOT render this block as tiny paragraph text on the image): ${visualContext}`,
-      `TYPOGRAPHY INSTRUCTION: Natively render EXACTLY this text directly into the image as the primary headline: "${displayHeading}".`,
+      "Professional 9:16 editorial vertical scene — pure visuals only, absolutely no typography on the image.",
+      `VISUAL BRIEF (translate into imagery only; do NOT paint as readable text): ${visualContext}`,
+      `SUBJECT / MOOD ANCHOR (for composition only; do NOT spell as text): ${displayHeading}`,
       `STYLE: ${stylePrompt}`,
-      watermarkInstruction,
+      NO_TEXT_ON_IMAGE_BLOCK,
       "Aspect ratio 9:16 vertical. 8k resolution, masterpiece, no browser or phone UI mockups.",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    ].join("\n");
   }
 
   return `
 Model: GPT-Image-2
-Task: Create a professional image with typography.
-VISUAL CONTEXT INSPIRATION (Do NOT render this text): ${visualContext}
-
-TYPOGRAPHY INSTRUCTION: You MUST natively render EXACTLY this text directly into the image: "${displayHeading}".
+Task: Create a professional 9:16 vertical image — **pure cinematic/editorial visuals only; zero readable characters on the canvas**.
+VISUAL BRIEF (inspiration for pixels only — do NOT render this block as typography): ${visualContext}
+MOOD ANCHOR (for setting & subject only — do NOT write as text): ${displayHeading}
 STYLE: ${stylePrompt}
-${watermarkInstruction}
+${NO_TEXT_ON_IMAGE_BLOCK}
 Aspect Ratio: 9:16. 8k resolution, masterpiece.
 `.trim();
 }
@@ -116,90 +120,89 @@ function buildStoryboardShotCountGuidance(scriptContext: string): string {
   best = Math.min(best, 14);
 
   if (best >= 3) {
-    const hi = String(best).padStart(2, "0");
-    return `SHOT COUNT (hint from CONTEXT numbering/lists): ${best} distinct beats — render EXACTLY ${best} panels, 镜号 01 … ${hi} in story order. Do NOT pad to 8; do NOT add blank panels.`;
+    return `PANEL COUNT (from CONTEXT): exactly ${best} visually distinct cinematic frames in story order. Do NOT paint shot numbers, digits, or any labels on the image — visuals only. Do NOT pad to 8; do NOT add blank panels; no duplicate art.`;
   }
   if (best === 1 || best === 2) {
-    return `SHOT COUNT: CONTEXT implies ${best} key beat(s) — render exactly ${best} panel(s) only (e.g. vertical stack). Forbidden: duplicating art to fill a grid; forbidden: padding to eight.`;
+    return `PANEL COUNT: CONTEXT implies ${best} key beat(s) — render exactly ${best} distinct panel(s). No typography on image. Forbidden: duplicating art; forbidden: padding to eight.`;
   }
-  return `SHOT COUNT: Derive from CONTEXT — one panel per clearly described shot (practical range about 2–12 on one 9:16 sheet). There is NO required count of 8. If the prose only supports 4 shots, draw 4. Never clone the same frame to fill space.`;
+  return `PANEL COUNT: Derive from CONTEXT — one distinct panel per described shot (about 2–12 on one 16:9 sheet). No typography on image. Never clone the same frame to fill space.`;
 }
 
 /**
- * 豎版「鏡頭執行分鏡表」— 極簡畫內文字（僅表頭 + 每格鏡號/景別），其餘劇本只做隱形視覺上下文，
- * 避免逼模型畫多欄小表導致亂碼假表格與畫質崩壞。
+ * @description 橫版 16:9 分鏡合成 — **畫內零文字**；格線/鏡號/「分镜参考图」由前端或 PDF HTML 疊加。
  */
+export function buildStoryboardSheetLandscapePrompt(options: {
+  title: string;
+  scriptContext: string;
+  /** 保留相容：浮水印不進 prompt，由前端试读叠层叠加 */
+  isTrial?: boolean;
+}): string {
+  void options.title;
+  void options.isTrial;
+  const { scriptContext } = options;
+  const raw = String(scriptContext || "").trim();
+  const shotCountGuidance = buildStoryboardShotCountGuidance(raw);
+  const scriptSlice =
+    raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
+      ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
+      : raw;
+
+  return `
+Model: GPT-Image-2
+TASK: Create a professional, LANDSCAPE-oriented composite storyboard sheet (16:9).
+
+${NO_TEXT_ON_IMAGE_BLOCK}
+
+🧠 VISUAL CONTEXT & LUMINANCE (PIXELS ONLY):
+[LUMINANCE & TENSION]: High-end medical aesthetic commercial standards. Use dramatic Rembrandt lighting, film-level soft boxes, and cinematic depth of field.
+[SCRIPT_DETAILS]: Visualize the script: ${scriptSlice}. Translate this entirely into VISUAL panels.
+
+${shotCountGuidance}
+
+Additionally: do NOT draw shot tables, 「分镜参考图」legends, film-strip perforations, or sprocket holes — reference row is wordless thumbnails only.
+
+🛑 ANTI-PADDING INSTRUCTION:
+ONLY generate panels for actual valid shots. DO NOT duplicate images, and DO NOT fill space with random artifacts.
+
+STYLE: Dark gold renaissance medical aesthetic, Vogue magazine elegance, 8k resolution, masterpiece.
+Aspect Ratio: 16:9.
+`.trim();
+}
+
+/** @deprecated 平台分鏡表已改橫版 16:9，請使用 {@link buildStoryboardSheetLandscapePrompt} */
 export function buildStoryboardSheetPortraitPrompt(options: {
   title: string;
   scriptContext: string;
   isTrial?: boolean;
 }): string {
-  const raw = String(options.scriptContext || "").trim();
-  const visualContext =
-    raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
-      ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
-      : raw;
-  const displayHeading = sliceHeading(options.title);
-  const shotCountGuidance = buildStoryboardShotCountGuidance(raw);
-  const watermarkInstruction = options.isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
-
-  return `
-Model: GPT-Image-2
-TASK: Create a professional, portrait-oriented composite storyboard sheet (9:16 vertical layout).
-
-TYPOGRAPHY INSTRUCTION (STRICT LIMIT):
-1. TOP HEADER: You MUST prominently render ONLY "${displayHeading} - 镜头执行分镜表" at the top (clear, large Chinese; no extra subtitle paragraphs under the title).
-2. GRID LABELS: Underneath each image panel, you are ONLY allowed ONE compact label line: two-digit shot index and shot type (e.g. "01 - 特写", "02 - 中景") in story order.
-FATAL — DO NOT render: complex tables, spreadsheets, multi-column field rows, script dialogue, voiceover quotes, or any five-field «分镜表» summaries under panels. Extra micro-typography corrupts the image into unreadable glyph grids — forbidden.
-
-VISUAL CONTEXT & LUMINANCE (CRITICAL — PIXELS ONLY, DO NOT RENDER AS TEXT):
-[LUMINANCE & TENSION]: High-end commercial / cinematic standards — dramatic Rembrandt modeling, film-grade soft key, controlled contrast, cinematic depth of field, extreme visual tension. Tripod-stable premium look unless the script clearly demands handheld.
-
-[SCRIPT_DETAILS]: Visualize the following — for IMAGERY ONLY; translate entirely into panel artwork (wardrobe, set, blocking, lens feel). NEVER write this prose onto the image.
-
-${visualContext}
-
-(End of non-printed script — do not paste onto the sheet.)
-
-${shotCountGuidance}
-
-GRID LAYOUT: Natively render a variable vertical grid (e.g. 2 columns × N rows, or 1 column × N rows) from the shot count so everything fits ONE 9:16 page with breathing room.
-
-CELL CONTENT: Each cell MUST contain a high-fidelity cinematic still matching [SCRIPT_DETAILS] and beat order, followed by ONLY the minimal label from TYPOGRAPHY #2. No other text inside the cell.
-
-ANTI-LAZY: Do NOT duplicate the same image to fill slots. Do NOT leave empty white gaps. Adjacent panels must be visually distinct unless the script explicitly calls for a match cut.
-
-STYLE: Dark gold renaissance medical book divider aesthetic, Vogue magazine elegance, optional crisp panel dividers, no phone or browser UI, 8k resolution, masterpiece.
-${watermarkInstruction}
-Aspect Ratio: 9:16 portrait.
-`.trim();
+  return buildStoryboardSheetLandscapePrompt(options);
 }
-
-/** 小紅書風：單張 9:16 內上下兩條筆記卡片（圖+標題短文案），一次生圖 */
+/** 小紅書風：單張 9:16 內兩段生活方式畫面 — **畫內零文字**；標題由前端疊加 */
 export function buildXiaohongshuDualNotePrompt(options: {
   title: string;
   scriptContext: string;
+  /** 保留相容：浮水印不進 prompt */
   isTrial?: boolean;
 }): string {
-  const displayHeading = sliceHeading(options.title);
+  void options.title;
+  void options.isTrial;
   const raw = String(options.scriptContext || "").trim();
   const visualContext =
     raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
       ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
       : raw;
-  const watermarkInstruction = options.isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
   return `
 Model: GPT-Image-2
-Task: Create ONE vertical 9:16 image with TWO stacked Xiaohongshu-style note cards (小红书图文笔记), lifestyle editorial, soft shadows, rounded cards.
+Task: Create ONE vertical 9:16 image with TWO stacked note-card shaped lifestyle/editorial photo regions (rounded card look, soft shadows) — **zero readable text on the image**.
 
-STRUCTURE:
-- Card A (upper): hero lifestyle/cover-style photo + natively render a punchy short Chinese title (max 18 chars) distilled from: "${displayHeading}"
-- Card B (lower): complementary scene or detail + a second short catchy Chinese caption (max 22 chars) from the theme
-- Use CONTEXT for visual and copy ideas (do NOT paste full CONTEXT as tiny text):
+${NO_TEXT_ON_IMAGE_BLOCK}
+
+Use CONTEXT only to inspire subjects, props, and palette (do NOT paste CONTEXT as typography):
 ${visualContext}
 
-STYLE: authentic 小红书 aesthetic, bright premium mobile feed, emoji sparingly OK, no app UI frame.
-${watermarkInstruction}
+STRUCTURE: Upper card — hero lifestyle scene; lower card — complementary scene or product detail. Distinct compositions; no duplicate photo pasted twice.
+
+STYLE: Authentic 小红书 feed aesthetic, bright premium mobile editorial, no app UI frame.
 Aspect Ratio: 9:16 portrait. 8k, masterpiece.
 `.trim();
 }
@@ -207,7 +210,7 @@ Aspect Ratio: 9:16 portrait. 8k, masterpiece.
 async function postGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
-  opts: { maxAttempts?: number } = {},
+  opts: { maxAttempts?: number; sizes?: readonly string[] } = {},
 ): Promise<string | null> {
   const apiKey = String(process.env.PROXY_OPENAI_API_KEY || "").trim();
   if (!apiKey) {
@@ -215,11 +218,12 @@ async function postGptImage2AndUpload(
     return null;
   }
 
+  const sizeList = opts.sizes ?? GPT_IMAGE2_PORTRAIT_SIZES;
   const maxAttempts = Math.min(
-    Math.max(1, opts.maxAttempts ?? GPT_IMAGE2_PORTRAIT_SIZES.length),
-    GPT_IMAGE2_PORTRAIT_SIZES.length,
+    Math.max(1, opts.maxAttempts ?? sizeList.length),
+    sizeList.length,
   );
-  const sizes = GPT_IMAGE2_PORTRAIT_SIZES.slice(0, maxAttempts);
+  const sizes = sizeList.slice(0, maxAttempts);
 
   for (const size of sizes) {
     try {
@@ -299,7 +303,7 @@ export async function generateGptImage2(options: {
 export type PlatformCompositeSheetKind = "storyboard_sheet_portrait" | "xiaohongshu_dual_note";
 
 /**
- * 平台頁：單次 gpt-image-2（9:16）產「豎版分鏡表」或「小紅書雙筆記卡」+ Imagen 兜底。
+ * 平台頁：單次 gpt-image-2（橫版 16:9 分鏡表 或 9:16 小紅書雙卡）+ Imagen 兜底。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -307,24 +311,24 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
 }): Promise<string | null> {
-  const prompt =
-    options.kind === "storyboard_sheet_portrait"
-      ? buildStoryboardSheetPortraitPrompt({
-          title: options.title,
-          scriptContext: options.scriptContext,
-          isTrial: options.isTrial,
-        })
-      : buildXiaohongshuDualNotePrompt({
-          title: options.title,
-          scriptContext: options.scriptContext,
-          isTrial: options.isTrial,
-        });
+  const isStoryboard = options.kind === "storyboard_sheet_portrait";
+  const prompt = isStoryboard
+    ? buildStoryboardSheetLandscapePrompt({
+        title: options.title,
+        scriptContext: options.scriptContext,
+        isTrial: options.isTrial,
+      })
+    : buildXiaohongshuDualNotePrompt({
+        title: options.title,
+        scriptContext: options.scriptContext,
+        isTrial: options.isTrial,
+      });
 
-  const subdir =
-    options.kind === "storyboard_sheet_portrait" ? "platform_storyboard_sheet" : "platform_xhs_dual";
-  // 平台合成單張：只打一次 gpt-image-2（首個尺寸），避免「尺寸降級重試」連出兩張、雙倍計費與雙倍延遲。
-  // 若失敗再交給 Imagen 兜底一次。
-  const primary = await postGptImage2AndUpload(prompt, subdir, { maxAttempts: 1 });
+  const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
+  const primary = await postGptImage2AndUpload(prompt, subdir, {
+    maxAttempts: 1,
+    sizes: isStoryboard ? GPT_IMAGE2_LANDSCAPE_SIZES : undefined,
+  });
   if (primary) return primary;
 
   const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 2400);
@@ -335,7 +339,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const r = await generateImagenVertexPredict({
     prompt: imagenPrompt,
     model,
-    aspectRatio: "9:16",
+    aspectRatio: isStoryboard ? "16:9" : "9:16",
     imageSize: "2K",
     numberOfImages: 1,
     personGeneration: "ALLOW_ADULT",
@@ -372,7 +376,7 @@ async function uploadImagenDataUrlToSignedUrl(dataUrl: string): Promise<string |
  * @param options.title 畫面主標題來源（將強制截斷至 {@link PROXY_IMAGE_HEADING_MAX_CHARS} 字）
  * @param options.copywriting 畫面上下文 / 靈感（將強制截斷至 {@link PROXY_IMAGE_CONTEXT_MAX_CHARS} 字，不得整段渲染上圖）
  * @param options.mode STRATEGIC | STORYBOARD | GRAPHIC
- * @param options.isTrial 為 true 時附加 `TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION`（`MVSTUDIOPRO.COM · 试读` 對角試讀水印，與全站試讀樣本一致）
+ * @param options.isTrial 保留相容；文字/試讀水印由前端 DOM 疊加，不再寫入像素圖 prompt
  */
 export async function generateImageGpt2WithImagenFallback(options: {
   title: string;

@@ -419,7 +419,7 @@ export default function PlatformPage() {
   const [isContentLoading, setIsContentLoading] = useState(false);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
-  /** 豎版分鏡執行表（單張合成） */
+  /** 橫版 16:9 執行分鏡表（單張合成）；API kind 仍為 storyboard_sheet_portrait */
   const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
   /** 小紅書雙筆記卡（單張合成） */
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
@@ -520,7 +520,7 @@ export default function PlatformPage() {
       } else {
         setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
       }
-      const label = variables.kind === "storyboard_sheet_portrait" ? "竖版分镜表" : "小红书双笔记图";
+      const label = variables.kind === "storyboard_sheet_portrait" ? "横版分镜表" : "小红书双笔记图";
       toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
     },
     onError: (err) => toast.error(err.message || "合成生图失败"),
@@ -2151,8 +2151,8 @@ export default function PlatformPage() {
                             {copyFlat.length > 60 ? "…" : ""}
                           </p>
                         ) : null}
-                        <details className="mt-3 text-xs text-gray-500">
-                          <summary className="cursor-pointer leading-relaxed transition-colors hover:text-[#ff4fb8]">
+                        <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
+                          <summary className="leading-relaxed font-semibold transition-colors hover:text-[#ff4fb8]">
                             执行细项、分镜与发布（展开）
                           </summary>
                           <div className="mt-3 space-y-2.5 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
@@ -2223,7 +2223,29 @@ export default function PlatformPage() {
                         <div className="mt-4">
                           {platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
-                              <TrialWatermarkImage src={platformImageMap[item.id]} isTrial={isTrial} className="w-full object-cover" />
+                              <div className="group relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-black/40">
+                                <TrialWatermarkImage
+                                  src={platformImageMap[item.id]}
+                                  isTrial={isTrial}
+                                  className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
+                                />
+                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
+                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
+                                    {item.title}
+                                    <span className="ml-2 text-xs font-normal text-gray-300">| 批量视觉执行帧</span>
+                                  </h3>
+                                </div>
+                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
+                                  {isTrial ? (
+                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
+                                      Trial Preview
+                                    </span>
+                                  ) : null}
+                                  <span className="rounded border border-white/10 bg-black/60 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm">
+                                    高定视觉引擎
+                                  </span>
+                                </div>
+                              </div>
                               <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
                                 <ImageUpscaleBar
                                   imageUrl={platformImageMap[item.id]}
@@ -2236,8 +2258,8 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : (
-                            <div className="flex aspect-[9/16] items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20 text-xs text-gray-600">
-                              Awaiting Batch Render
+                            <div className="flex aspect-[9/16] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 text-[11px] uppercase tracking-widest text-gray-600">
+                              Awaiting Batch Render...
                             </div>
                           )}
                         </div>
@@ -2263,7 +2285,7 @@ export default function PlatformPage() {
                                 const cost = CREDIT_COSTS.platformStoryboardSheet;
                                 const note = supervisorAccess
                                   ? ""
-                                  : `将消耗 ${cost} 积分生成竖版执行分镜表（镜数随当前文案，单张合成），是否继续？`;
+                                  : `将消耗 ${cost} 积分生成横版 16:9 执行分镜表（镜数随当前文案，单张合成），是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const script = buildPlatformSheetScriptContext(item as any);
                                 generatePlatformCompositeSheetMutation.mutate({
@@ -2282,7 +2304,7 @@ export default function PlatformPage() {
                               ) : (
                                 <Film className="h-3.5 w-3.5" />
                               )}
-                              竖版分镜表 · {CREDIT_COSTS.platformStoryboardSheet} 点
+                              横版分镜表 · {CREDIT_COSTS.platformStoryboardSheet} 点
                             </button>
                             <button
                               type="button"
@@ -2323,12 +2345,31 @@ export default function PlatformPage() {
                             </button>
                           </div>
                           {platformStoryboardSheetMap[item.id] ? (
-                            <div className="overflow-hidden rounded-xl border border-white/10 shadow-xl">
-                              <TrialWatermarkImage
-                                src={platformStoryboardSheetMap[item.id]}
-                                isTrial={isTrial}
-                                className="w-full object-contain bg-black/40"
-                              />
+                            <div className="mt-1 overflow-hidden rounded-xl border border-white/5 shadow-2xl">
+                              <div className="group relative aspect-video w-full overflow-hidden rounded-xl bg-black/40">
+                                <TrialWatermarkImage
+                                  src={platformStoryboardSheetMap[item.id]}
+                                  isTrial={isTrial}
+                                  className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
+                                  alt="Storyboard Sheet"
+                                />
+                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
+                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
+                                    {item.title}
+                                    <span className="ml-2 text-xs font-normal text-gray-300">| 镜头执行分镜表</span>
+                                  </h3>
+                                </div>
+                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
+                                  {isTrial ? (
+                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
+                                      Trial Preview
+                                    </span>
+                                  ) : null}
+                                  <span className="rounded border border-white/10 bg-black/60 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm">
+                                    高定视觉引擎
+                                  </span>
+                                </div>
+                              </div>
                               <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
                                 <ImageUpscaleBar
                                   imageUrl={platformStoryboardSheetMap[item.id]}
@@ -2343,11 +2384,29 @@ export default function PlatformPage() {
                           ) : null}
                           {platformXhsNoteMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-xl">
-                              <TrialWatermarkImage
-                                src={platformXhsNoteMap[item.id]}
-                                isTrial={isTrial}
-                                className="w-full object-contain bg-black/40"
-                              />
+                              <div className="group relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-black/40">
+                                <TrialWatermarkImage
+                                  src={platformXhsNoteMap[item.id]}
+                                  isTrial={isTrial}
+                                  className="h-full w-full object-contain transition-transform duration-700 group-hover:scale-[1.02]"
+                                />
+                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
+                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
+                                    {item.title}
+                                    <span className="ml-2 text-xs font-normal text-pink-200">| 小红书双笔记卡</span>
+                                  </h3>
+                                </div>
+                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
+                                  {isTrial ? (
+                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
+                                      Trial Preview
+                                    </span>
+                                  ) : null}
+                                  <span className="rounded border border-[#ff4fb8]/30 bg-black/60 px-2 py-1 text-[10px] text-[#ff9fe0]/95 backdrop-blur-sm">
+                                    高定视觉引擎
+                                  </span>
+                                </div>
+                              </div>
                               <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
                                 <ImageUpscaleBar
                                   imageUrl={platformXhsNoteMap[item.id]}
