@@ -16,6 +16,16 @@ export const PROXY_IMAGE_CONTEXT_MAX_CHARS = 500;
 /** 分鏡表 / 小紅書雙卡：單圖內多格，允許較長劇本上下文供模型拆成多鏡 */
 export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 900;
 
+/**
+ * gpt-image-2 官方尺寸約束：最長邊 ≤3840、兩邊皆 16 倍數、長寬比 ≤3:1、總像素 ∈ [655360, 8294400]。
+ * 下列為豎版（與本檔 9:16 prompt 一致）；由前到後嘗試，代理拒絕某一組時自動換下一組，無需產品側指定比例。
+ */
+const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1792", "1024x1536", "1536x2304"] as const;
+
+function shouldAbortGptImage2SizeRetries(status: number): boolean {
+  return status === 401 || status === 403 || status === 429;
+}
+
 /** ⚠️ 核心防禦：畫內可讀大字與長文案分離，避免整段貼成螞蟻字或亂碼排版 */
 function sliceHeading(title: string): string {
   const t = String(title || "").trim();
@@ -153,47 +163,60 @@ async function postGptImage2AndUpload(
     console.warn("[proxyImageService] PROXY_OPENAI_API_KEY missing, skip gpt-image-2");
     return null;
   }
-  try {
-    const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-image-2",
-        prompt,
-        n: 1,
-        size: "1024x1792",
-        response_format: "b64_json",
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    const json: unknown = await r.json().catch(() => ({}));
-    const anyJson = json as { data?: Array<{ b64_json?: string }> };
-    if (!r.ok) {
-      console.warn(
-        "[proxyImageService] gpt-image-2 HTTP error:",
-        r.status,
-        JSON.stringify(json).slice(0, 400),
-      );
-      return null;
-    }
-    const b64 = anyJson?.data?.[0]?.b64_json;
-    if (!b64 || typeof b64 !== "string") return null;
 
-    const buffer = Buffer.from(b64, "base64");
-    const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
-    const { gcsUri } = await uploadBufferToGcs({
-      objectName: path,
-      buffer,
-      contentType: "image/jpeg",
-    });
-    return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
-  } catch (e: unknown) {
-    console.warn("[proxyImageService] gpt-image-2 exception:", e instanceof Error ? e.message : e);
-    return null;
+  for (const size of GPT_IMAGE2_PORTRAIT_SIZES) {
+    try {
+      const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-image-2",
+          prompt,
+          n: 1,
+          size,
+          response_format: "b64_json",
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const json: unknown = await r.json().catch(() => ({}));
+      const anyJson = json as { data?: Array<{ b64_json?: string }> };
+      if (!r.ok) {
+        console.warn(
+          "[proxyImageService] gpt-image-2 HTTP error:",
+          r.status,
+          `size=${size}`,
+          JSON.stringify(json).slice(0, 400),
+        );
+        if (shouldAbortGptImage2SizeRetries(r.status)) return null;
+        continue;
+      }
+      const b64 = anyJson?.data?.[0]?.b64_json;
+      if (!b64 || typeof b64 !== "string") {
+        console.warn("[proxyImageService] gpt-image-2 missing b64_json, size=", size);
+        continue;
+      }
+
+      const buffer = Buffer.from(b64, "base64");
+      const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+      const { gcsUri } = await uploadBufferToGcs({
+        objectName: path,
+        buffer,
+        contentType: "image/jpeg",
+      });
+      return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+    } catch (e: unknown) {
+      console.warn(
+        "[proxyImageService] gpt-image-2 exception:",
+        e instanceof Error ? e.message : e,
+        "size=",
+        size,
+      );
+    }
   }
+  return null;
 }
 
 /**
