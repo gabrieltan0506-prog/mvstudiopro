@@ -41,6 +41,10 @@ import {
   type ExtractedChart,
 } from "./echartsServerRender";
 import { analyzeStoryboardPanelStats, getGridDimensions } from "../../shared/storyboardPanelCount.js";
+import {
+  extractXhsDualBulletsFromScriptContext,
+  XHS_DUAL_NOTE_DEFAULT_BULLETS,
+} from "../../shared/xhsDualNoteBullets.js";
 
 // ESM (package.json type=module) 下没有 __dirname，要用 import.meta.url 反推
 const __filename = fileURLToPath(import.meta.url);
@@ -78,6 +82,17 @@ export interface HtmlReportStoryboardSheet {
   storyboardSteps?: string;
 }
 
+/** Cam9：小紅書圖文雙卡 — 純圖底 + HTML 疊加標籤（與分鏡表同級視圖解耦） */
+export interface HtmlReportXhsDualNote {
+  imageUrl: string;
+  reportTitle?: string;
+  /** X11：價值卡兩條（可選；缺省由 scriptContext 或通用回退推算） */
+  xhsBullet1Title?: string;
+  xhsBullet1Desc?: string;
+  xhsBullet2Title?: string;
+  xhsBullet2Desc?: string;
+}
+
 export interface HtmlReportOpts {
   style?: HtmlPdfStyle;
   cover?: HtmlReportCover;
@@ -85,6 +100,8 @@ export interface HtmlReportOpts {
   documentTitle?: string;
   /** 封面與正文之間可選插入分鏡表區塊（底圖 + 絕對定位標題） */
   storyboardSheet?: HtmlReportStoryboardSheet;
+  /** 小紅書雙筆記卡（16:9 雙區視覺），畫內零字、標題 DOM 疊加 */
+  xhsDualNote?: HtmlReportXhsDualNote;
 }
 
 /**
@@ -109,6 +126,9 @@ export function resolveHtmlReportStoryboardSheet(
       : {};
 
   const pickStr = (v: unknown) => String(v ?? "").trim();
+
+  const kindForBlock = pickStr(n["kind"]);
+  if (kindForBlock === "xiaohongshu_dual_note") return undefined;
 
   let imageUrl = pickStr(n["imageUrl"] ?? m["storyboardSheetImageUrl"]);
   let scriptContextForPanels = pickStr(
@@ -143,6 +163,65 @@ export function resolveHtmlReportStoryboardSheet(
   }
 
   return sheet;
+}
+
+/**
+ * Cam9：從 metadata.storyboardSheetExport（kind=xiaohongshu_dual_note）或請求覆寫還原小紅書區塊。
+ */
+export function resolveHtmlReportXhsDualNote(
+  meta: Record<string, unknown> | null | undefined,
+  requestOverride?: Partial<HtmlReportXhsDualNote> | null,
+): HtmlReportXhsDualNote | undefined {
+  const m =
+    meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
+  const nestedRaw = m["storyboardSheetExport"];
+  const n =
+    nestedRaw && typeof nestedRaw === "object" && !Array.isArray(nestedRaw)
+      ? (nestedRaw as Record<string, unknown>)
+      : {};
+
+  const pickStr = (v: unknown) => String(v ?? "").trim();
+
+  let kind = pickStr(n["kind"]);
+  let imageUrl = pickStr(n["imageUrl"]);
+  let reportTitle = pickStr(n["reportTitle"] ?? m["xhsDualNoteReportTitle"]);
+  let xhsBullet1Title = pickStr(n["xhsBullet1Title"] ?? m["xhsBullet1Title"]);
+  let xhsBullet1Desc = pickStr(n["xhsBullet1Desc"] ?? m["xhsBullet1Desc"]);
+  let xhsBullet2Title = pickStr(n["xhsBullet2Title"] ?? m["xhsBullet2Title"]);
+  let xhsBullet2Desc = pickStr(n["xhsBullet2Desc"] ?? m["xhsBullet2Desc"]);
+
+  if (requestOverride && typeof requestOverride === "object") {
+    const o = requestOverride;
+    if (pickStr(o.imageUrl)) imageUrl = pickStr(o.imageUrl);
+    if (pickStr(o.reportTitle)) reportTitle = pickStr(o.reportTitle);
+    if (pickStr(o.xhsBullet1Title)) xhsBullet1Title = pickStr(o.xhsBullet1Title);
+    if (pickStr(o.xhsBullet1Desc)) xhsBullet1Desc = pickStr(o.xhsBullet1Desc);
+    if (pickStr(o.xhsBullet2Title)) xhsBullet2Title = pickStr(o.xhsBullet2Title);
+    if (pickStr(o.xhsBullet2Desc)) xhsBullet2Desc = pickStr(o.xhsBullet2Desc);
+  }
+
+  if (!imageUrl) return undefined;
+
+  const isXhsKind = kind === "xiaohongshu_dual_note";
+  const explicitXhsOverride = !!(requestOverride && pickStr(requestOverride.imageUrl));
+  if (!isXhsKind && !explicitXhsOverride) return undefined;
+
+  const scriptCtx = pickStr(n["scriptContextForPanels"]);
+  const auto = extractXhsDualBulletsFromScriptContext(scriptCtx);
+  const b1t = xhsBullet1Title || auto[0].title || XHS_DUAL_NOTE_DEFAULT_BULLETS[0].title;
+  const b1d = xhsBullet1Desc || auto[0].desc || XHS_DUAL_NOTE_DEFAULT_BULLETS[0].desc;
+  const b2t = xhsBullet2Title || auto[1].title || XHS_DUAL_NOTE_DEFAULT_BULLETS[1].title;
+  const b2d = xhsBullet2Desc || auto[1].desc || XHS_DUAL_NOTE_DEFAULT_BULLETS[1].desc;
+
+  const base: HtmlReportXhsDualNote = {
+    imageUrl,
+    xhsBullet1Title: b1t,
+    xhsBullet1Desc: b1d,
+    xhsBullet2Title: b2t,
+    xhsBullet2Desc: b2d,
+  };
+  if (reportTitle) base.reportTitle = reportTitle;
+  return base;
 }
 
 // ─── 5 套主题色（与 client/components/ReportRenderer.tsx THEME_PALETTES 对齐） ─
@@ -388,6 +467,47 @@ function buildHtmlStoryboardSheetSection(data: HtmlReportStoryboardSheet, fallba
 </section>`;
 }
 
+/** Cam9 + X10 + X11：小紅書雙卡 — HTML 雙軌疊加；價值點由 data 動態欄位注入（已 escape） */
+export function buildHtmlXhsNoteSection(data: HtmlReportXhsDualNote, fallbackTitle: string): string {
+  if (!data || !String(data.imageUrl || "").trim()) return "";
+  const safeUrl = String(data.imageUrl).trim().replace(/"/g, "&quot;");
+  const safeHeading = escapeHtml(String(data.reportTitle || fallbackTitle || "战略情报报告").trim());
+  const bullet1Title = escapeHtml(
+    String(data.xhsBullet1Title || "").trim() || XHS_DUAL_NOTE_DEFAULT_BULLETS[0].title,
+  );
+  const bullet1Desc = escapeHtml(
+    String(data.xhsBullet1Desc || "").trim() || XHS_DUAL_NOTE_DEFAULT_BULLETS[0].desc,
+  );
+  const bullet2Title = escapeHtml(
+    String(data.xhsBullet2Title || "").trim() || XHS_DUAL_NOTE_DEFAULT_BULLETS[1].title,
+  );
+  const bullet2Desc = escapeHtml(
+    String(data.xhsBullet2Desc || "").trim() || XHS_DUAL_NOTE_DEFAULT_BULLETS[1].desc,
+  );
+
+  return `<section class="report-xhs-dual-note" aria-label="小红书图文双笔记矩阵" style="padding:40px;background:#0a0a0a;border-radius:20px;margin:40px 0;page-break-inside:avoid;border:1px solid rgba(255,36,66,0.1);">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:30px;border-left:6px solid #ff2442;padding-left:20px;">
+    <h2 style="color:#fff;margin:0;font-size:24px;font-family:'Noto Serif CJK SC',Georgia,serif;">小红书图文双笔记矩阵</h2>
+  </div>
+  <div style="position:relative;width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000;">
+    <img src="${safeUrl}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;" />
+    <div style="position:absolute;inset:0;display:flex;z-index:10;pointer-events:none;">
+      <div style="flex:1;position:relative;display:flex;flex-direction:column;justify-content:flex-end;padding:24px 30px;border-right:1px solid rgba(255,255,255,0.1);background:linear-gradient(to top, rgba(0,0,0,0.9), transparent);">
+        <span style="background:#ff2442;color:#fff;padding:4px 8px;font-size:10px;border-radius:4px;align-self:flex-start;margin-bottom:15px;">封面视觉</span>
+        <h3 style="color:#fff;font-size:22px;margin:0;line-height:1.4;text-shadow:0 2px 4px rgba(0,0,0,0.8);font-family:'Noto Serif CJK SC',Georgia,serif;">${safeHeading}</h3>
+      </div>
+      <div style="flex:1;position:relative;display:flex;flex-direction:column;justify-content:center;padding:32px 28px;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);">
+        <span style="border:1px solid rgba(255,255,255,0.2);color:#fff;padding:4px 8px;font-size:10px;border-radius:4px;align-self:flex-start;margin-bottom:20px;">核心价值拆解</span>
+        <p style="color:#10B981;font-weight:bold;font-size:14px;margin:0 0 5px 0;">▶ ${bullet1Title}</p>
+        <p style="color:#cbd5e1;font-size:13px;margin:0 0 20px 0;padding-left:10px;border-left:2px solid #10B981;">${bullet1Desc}</p>
+        <p style="color:#10B981;font-weight:bold;font-size:14px;margin:0 0 5px 0;">▶ ${bullet2Title}</p>
+        <p style="color:#cbd5e1;font-size:13px;margin:0;padding-left:10px;border-left:2px solid #10B981;">${bullet2Desc}</p>
+      </div>
+    </div>
+  </div>
+</section>`;
+}
+
 function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: HtmlPdfStyle): string {
   const safeBg = String(cover.imageUrl || "").replace(/"/g, "&quot;");
   const safeTitle = escapeHtml(cover.title || "战略情报报告");
@@ -526,6 +646,10 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   const storyboardSheetHtml =
     opts?.storyboardSheet && String(opts.storyboardSheet.imageUrl || "").trim()
       ? buildHtmlStoryboardSheetSection(opts.storyboardSheet, reportTitleFallback)
+      : "";
+  const xhsDualNoteHtml =
+    opts?.xhsDualNote && String(opts.xhsDualNote.imageUrl || "").trim()
+      ? buildHtmlXhsNoteSection(opts.xhsDualNote, reportTitleFallback)
       : "";
 
   // 4. 内联 echarts.min.js（约 1MB），失败时降级 CDN（保证 HTML 至少能用）
@@ -704,6 +828,7 @@ ${echartsScriptTag}
   <div class="doc-shell">
     ${coverHtml}
     ${storyboardSheetHtml}
+    ${xhsDualNoteHtml}
     <article class="report-body">
       ${htmlBody}
     </article>

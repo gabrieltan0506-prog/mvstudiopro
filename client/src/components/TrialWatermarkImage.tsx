@@ -6,6 +6,8 @@ interface TrialWatermarkImageProps {
   alt?: string;
   isTrial?: boolean;
   className?: string;
+  /** 底圖 object-fit；預設 cover（小紅書 16:9 雙卡建議 contain） */
+  objectFit?: "contain" | "cover";
   style?: React.CSSProperties;
 }
 
@@ -18,6 +20,7 @@ export default function TrialWatermarkImage({
   alt = "",
   isTrial = false,
   className = "",
+  objectFit = "cover",
   style,
 }: TrialWatermarkImageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,7 +43,7 @@ export default function TrialWatermarkImage({
         draggable={isTrial ? false : undefined}
         onContextMenu={preventAction}
         onDragStart={preventAction}
-        style={{ display: "block", width: "100%", height: "100%", objectFit: "cover", pointerEvents: isTrial ? "none" : undefined }}
+        style={{ display: "block", width: "100%", height: "100%", objectFit: objectFit, pointerEvents: isTrial ? "none" : undefined }}
       />
 
       {isTrial && (

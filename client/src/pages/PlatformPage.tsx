@@ -18,6 +18,7 @@ import type {
 } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
 import { analyzeStoryboardPanelStats, getGridDimensions } from "@shared/storyboardPanelCount";
+import { extractXhsDualBulletsFromActionableStepsOrCopy } from "@shared/xhsDualNoteBullets";
 import {
   Activity,
   ArrowLeft,
@@ -2173,13 +2174,26 @@ export default function PlatformPage() {
                           : ((item as any).detailedScript || "").trim() || "脚本解析中...";
                       const lightingLine =
                         String(exSteps?.lightingAndCamera || "").trim() || "高端風格 · Rembrandt · 电影级软光箱";
+                      const [xhsBullet0, xhsBullet1] = extractXhsDualBulletsFromActionableStepsOrCopy(
+                        (item as { actionableSteps?: string[] }).actionableSteps,
+                        String(item.copywriting || ""),
+                      );
                       const showStoryboardMatrix =
                         !!platformStoryboardSheetMap[item.id] ||
                         (pendingCompositeSheet?.sceneId === item.id &&
                           (pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ||
                             pendingCompositeSheet?.kind === "storyboard_sheet_landscape"));
+                      const showXhsDualNote =
+                        !!platformXhsNoteMap[item.id] ||
+                        (pendingCompositeSheet?.sceneId === item.id &&
+                          pendingCompositeSheet?.kind === "xiaohongshu_dual_note");
                       return (
-                      <div key={item.id} className="group flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
+                      <div
+                        key={item.id}
+                        className={`group flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5${
+                          showXhsDualNote ? " col-span-1 md:col-span-2 lg:col-span-3" : ""
+                        }`}
+                      >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
                             {item.format === "图文" ? <Image className="h-4 w-4 shrink-0 text-[#ff7fd5]" /> : <Video className="h-4 w-4 shrink-0 text-[#49e6ff]" />}
@@ -2467,41 +2481,84 @@ export default function PlatformPage() {
                               ) : null}
                             </div>
                           ) : null}
-                          {platformXhsNoteMap[item.id] ? (
-                            <div className="overflow-hidden rounded-xl border border-white/10 shadow-xl">
-                              <div className="group relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-black/40">
-                                <TrialWatermarkImage
-                                  src={platformXhsNoteMap[item.id]}
-                                  isTrial={isTrial}
-                                  className="h-full w-full object-contain transition-transform duration-700 group-hover:scale-[1.02]"
-                                />
-                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
-                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
-                                    {item.title}
-                                    <span className="ml-2 text-xs font-normal text-pink-200">| 小红书双笔记卡</span>
+                          {showXhsDualNote ? (
+                            <div className="mt-4 mb-8 rounded-3xl border border-[#ff2442]/20 bg-[#0a0a0a] p-6 shadow-2xl sm:p-8">
+                              <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="h-6 w-1 shrink-0 rounded-full bg-[#ff2442]" />
+                                  <h3 className="min-w-0 text-xl font-bold tracking-tight text-white">
+                                    <span className="truncate">{item.title}</span>
+                                    <span className="ml-2 font-light text-gray-500">| 小红书双笔记矩阵</span>
                                   </h3>
                                 </div>
-                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
-                                  {isTrial ? (
-                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
-                                      Trial Preview
-                                    </span>
-                                  ) : null}
-                                  <span className="rounded border border-[#ff4fb8]/30 bg-black/60 px-2 py-1 text-[10px] text-[#ff9fe0]/95 backdrop-blur-sm">
-                                    高定视觉引擎
-                                  </span>
+                                <span className="shrink-0 rounded-full border border-[#ff2442]/30 px-3 py-1 text-[10px] text-[#ff2442]">
+                                  高定视觉策略
+                                </span>
+                              </div>
+                              <div className="relative mx-auto aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-inner">
+                                {platformXhsNoteMap[item.id] ? (
+                                  <>
+                                    <div className="absolute inset-0 z-0">
+                                      <TrialWatermarkImage
+                                        src={platformXhsNoteMap[item.id]}
+                                        isTrial={isTrial}
+                                        objectFit="cover"
+                                        style={{ width: "100%", height: "100%" }}
+                                        className="h-full min-h-0 w-full"
+                                        alt="Xiaohongshu dual note"
+                                      />
+                                    </div>
+                                    <div className="pointer-events-none absolute inset-0 z-[15] grid grid-cols-2 gap-3 p-3 md:gap-4 md:p-8">
+                                      <div className="relative flex flex-col justify-end overflow-hidden rounded-xl border border-white/10 p-4 md:p-6">
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                                        <div className="relative z-10">
+                                          <span className="mb-2 inline-block rounded bg-[#ff2442] px-2 py-1 text-[10px] font-bold text-white shadow-md">
+                                            封面视觉
+                                          </span>
+                                          <h4 className="text-base font-bold leading-snug text-white drop-shadow-lg md:text-2xl">
+                                            {item.title}
+                                          </h4>
+                                        </div>
+                                      </div>
+                                      <div className="relative flex flex-col justify-center overflow-hidden rounded-xl border border-white/10 bg-black/40 p-4 backdrop-blur-sm md:p-6">
+                                        <div className="relative z-10 space-y-3 md:space-y-4">
+                                          <span className="mb-1 inline-block rounded border border-white/20 bg-white/10 px-2 py-1 text-[10px] text-white">
+                                            核心价值传递
+                                          </span>
+                                          <div className="space-y-2 text-xs leading-relaxed text-gray-200 md:text-sm">
+                                            <p className="font-bold text-[#10B981]">▶ {xhsBullet0.title}</p>
+                                            <p className="border-l-2 border-[#10B981] pl-2 text-gray-300">{xhsBullet0.desc}</p>
+                                            <p className="mt-2 font-bold text-[#10B981] md:mt-3">▶ {xhsBullet1.title}</p>
+                                            <p className="border-l-2 border-[#10B981] pl-2 text-gray-300">{xhsBullet1.desc}</p>
+                                          </div>
+                                          {isTrial ? (
+                                            <span className="inline-block rounded-full border border-white/20 bg-black/50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                                              Trial Preview
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="flex h-full w-full flex-col items-center justify-center text-gray-500">
+                                    <Loader2 className="mb-3 h-8 w-8 animate-spin text-[#ff2442]" />
+                                    <span className="text-xs tracking-widest">高定图文渲染中...</span>
+                                  </div>
+                                )}
+                              </div>
+                              {platformXhsNoteMap[item.id] ? (
+                                <div className="mt-3 border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                  <ImageUpscaleBar
+                                    imageUrl={platformXhsNoteMap[item.id]}
+                                    baseCreditKey="forgeImage"
+                                    className="mt-1"
+                                    onUpscaled={(url) =>
+                                      setPlatformXhsNoteMap((prev) => ({ ...prev, [item.id]: url }))
+                                    }
+                                  />
                                 </div>
-                              </div>
-                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-                                <ImageUpscaleBar
-                                  imageUrl={platformXhsNoteMap[item.id]}
-                                  baseCreditKey="forgeImage"
-                                  className="mt-1"
-                                  onUpscaled={(url) =>
-                                    setPlatformXhsNoteMap((prev) => ({ ...prev, [item.id]: url }))
-                                  }
-                                />
-                              </div>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>

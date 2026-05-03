@@ -196,6 +196,7 @@ interface Report {
     lightingDetails?: string;
     executionDetails?: string;
     reportTitle?: string;
+    kind?: string;
   } | null;
 }
 
@@ -471,6 +472,7 @@ export default function MyReportsPage() {
     setHtmlDownloadingCardId(report.id);
     toast.info("正在生成 HTML 交互版（≤10 MB 直接下载，>10 MB 自动压缩 zip）…");
     const sheet = report.storyboardSheetExport;
+    const isXhs = sheet && typeof sheet === "object" && sheet.kind === "xiaohongshu_dual_note";
     const hasSheetPayload =
       sheet &&
       typeof sheet === "object" &&
@@ -482,7 +484,15 @@ export default function MyReportsPage() {
     exportInteractiveHtmlMutation.mutate({
       creationId: report.id,
       pdfStyle: styleOf(report.id),
-      ...(hasSheetPayload ? { storyboardSheet: sheet } : {}),
+      ...(hasSheetPayload && !isXhs ? { storyboardSheet: sheet as any } : {}),
+      ...(hasSheetPayload && isXhs && String(sheet?.imageUrl || "").trim()
+        ? {
+            xhsDualNote: {
+              imageUrl: String(sheet!.imageUrl),
+              reportTitle: String(sheet?.reportTitle || report.lighthouseTitle || report.title || ""),
+            },
+          }
+        : {}),
     });
     // styleOf 在下面才声明，但 React closure 顺序无影响（runtime read）
   }, [exportInteractiveHtmlMutation, htmlDownloadingCardId, styleOf]);
