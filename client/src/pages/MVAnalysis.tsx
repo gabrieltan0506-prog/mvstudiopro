@@ -2992,7 +2992,7 @@ export default function MVAnalysisPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-[#08111f] text-[#f7f4ef]">
+      <div className="flex min-h-dvh flex-col items-center justify-center bg-[#08111f] text-[#f7f4ef]">
         <Loader2 className="h-8 w-8 animate-spin text-[#ff8a3d]" />
         <span className="mt-4 text-white/60">检查登录状态...</span>
       </div>
@@ -3002,7 +3002,7 @@ export default function MVAnalysisPage() {
   if (!isAuthenticated && !supervisorAccess) return null;
 
   return (
-    <div className="min-h-screen bg-[#08111f] text-[#f7f4ef]">
+    <div className="min-h-dvh bg-[#08111f] text-[#f7f4ef]">
       <div className="mx-auto max-w-[1760px] px-4 py-8">
         <UsageQuotaBanner
           featureType="analysis"

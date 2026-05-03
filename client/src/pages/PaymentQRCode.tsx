@@ -94,7 +94,7 @@ export default function PaymentQRCode() {
   const qrCodePath = `/payment/${params.paymentMethod}-qr.jpg`;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="overflow-y-auto pb-10">
         <div className="px-6 pt-8 pb-6">
           <button onClick={() => window.history.back()} className="mb-4 text-blue-400 text-base">

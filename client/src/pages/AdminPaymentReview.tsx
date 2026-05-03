@@ -163,7 +163,7 @@ export default function AdminPaymentReview() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
         <p className="text-gray-400 ml-2">加载中...</p>
       </div>
@@ -171,7 +171,7 @@ export default function AdminPaymentReview() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="overflow-y-auto pb-10">
         <div className="px-6 pt-8 pb-6 flex flex-row items-center justify-between">
           <div className="flex-1">

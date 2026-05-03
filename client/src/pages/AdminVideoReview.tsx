@@ -80,7 +80,7 @@ export default function AdminVideoReview() {
   // ─── 权限检查 ──────────────────────────────
   if (!isAuthenticated || user?.role !== "admin") {
     return (
-      <div className="min-h-screen bg-background text-foreground">
+      <div className="min-h-dvh bg-background text-foreground">
         <div>
           <span>⚡</span> /* TODO: replace MaterialIcons lock */
           <span>无权限访问</span>
@@ -208,7 +208,7 @@ export default function AdminVideoReview() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       {/* 顶部导航 */}
       <div>
         <button onClick={() => window.history.back()}>

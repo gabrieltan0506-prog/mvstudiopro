@@ -106,7 +106,7 @@ export default function EnterpriseAgentDetail() {
 
 function InvalidIdState({ onBack }: { onBack: () => void }) {
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center px-4">
+    <div className="min-h-dvh bg-zinc-950 text-zinc-100 flex items-center justify-center px-4">
       <div className="text-center max-w-md">
         <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-4" />
         <h2 className="text-lg sm:text-xl font-semibold mb-2">无效的 Agent ID</h2>
@@ -135,7 +135,7 @@ function DetailInner({ agentId, onBack }: { agentId: number; onBack: () => void 
 
   if (detailQuery.isLoading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-dvh bg-zinc-950 flex items-center justify-center">
         <Loader2 className="h-8 w-8 text-amber-400 animate-spin" />
       </div>
     );
@@ -143,7 +143,7 @@ function DetailInner({ agentId, onBack }: { agentId: number; onBack: () => void 
 
   if (detailQuery.error || !detailQuery.data) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center px-4">
+      <div className="min-h-dvh bg-zinc-950 text-zinc-100 flex items-center justify-center px-4">
         <div className="text-center max-w-md">
           <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-4" />
           <h2 className="text-lg sm:text-xl font-semibold mb-2">无法加载 Agent</h2>
@@ -164,7 +164,7 @@ function DetailInner({ agentId, onBack }: { agentId: number; onBack: () => void 
   const trialDays = daysUntil(agent.trialUntil);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="min-h-dvh bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10">
         {/* 顶栏：返回 + 标题 + 危险操作 */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 sm:mb-8">

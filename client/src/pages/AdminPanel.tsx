@@ -121,7 +121,7 @@ export default function AdminPanel() {
   // Redirect non-admin / non-supervisor（supervisor URL bypass 例外）
   if (!isSupervisorUrl && isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
     return (
-      <div className="min-h-screen bg-background text-foreground">
+      <div className="min-h-dvh bg-background text-foreground">
         <Navbar />
         <div className="pt-32 text-center container">
           <Shield className="h-16 w-16 text-red-400 mx-auto mb-6" />
@@ -134,7 +134,7 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <Navbar />
       <div className="pt-24 pb-16 container max-w-6xl">
         <div className="mb-8">

@@ -74,7 +74,7 @@ export default function Contact() {
   // 提交成功页面
   if (isSubmitted) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-8 gap-3 text-center">
+      <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-8 gap-3 text-center">
         <div className="mb-2">
           <CheckCircle2 size={64} className="text-green-500" />
         </div>
@@ -96,7 +96,7 @@ export default function Contact() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="w-full max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 pb-10">
         {/* Header */}
         <header className="flex items-center justify-between px-4 py-3">

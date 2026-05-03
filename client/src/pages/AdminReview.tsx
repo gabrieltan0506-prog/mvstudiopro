@@ -87,7 +87,7 @@ export default function AdminReview() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex flex-col items-center justify-center text-[#F7F4EF]">
+      <div className="min-h-dvh bg-[#0A0A0C] flex flex-col items-center justify-center text-[#F7F4EF]">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
         <p className="text-white/50 mt-4">检查登录状态...</p>
       </div>
@@ -214,7 +214,7 @@ export default function AdminReview() {
   const isAllSelected = pendingStoryboardsQuery.data && selectedIds.length === pendingStoryboardsQuery.data.length;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="flex-1">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-white/10">

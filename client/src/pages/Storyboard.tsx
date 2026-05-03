@@ -679,7 +679,7 @@ export default function StoryboardPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-dvh bg-background flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="mt-4 text-muted-foreground">检查登录状态...</p>
       </div>
@@ -689,7 +689,7 @@ export default function StoryboardPage() {
   if (!isAuthenticated) return null;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       {/* CSS for smooth transitions */}
       <style>{`
         .style-card {

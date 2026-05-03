@@ -51,7 +51,7 @@ export default function RedeemPage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex items-center justify-center p-6">
+      <div className="min-h-dvh bg-[#0A0A0C] flex items-center justify-center p-6">
         <Loader2 className="h-12 w-12 animate-spin text-[#FF6B6B]" />
       </div>
     );
@@ -59,7 +59,7 @@ export default function RedeemPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex flex-col items-center justify-center p-6 gap-4">
+      <div className="min-h-dvh bg-[#0A0A0C] flex flex-col items-center justify-center p-6 gap-4">
         <Lock className="h-12 w-12 text-gray-500" />
         <p className="text-base text-gray-400">请先登录后再兑换内测码</p>
         <Link href="/login">
@@ -72,7 +72,7 @@ export default function RedeemPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="flex-grow overflow-y-auto">
         <div className="container mx-auto max-w-lg p-4 pb-10">
           {/* Header */}

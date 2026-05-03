@@ -289,7 +289,7 @@ export default function VirtualIdol() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#08080A] flex flex-col items-center justify-center">
+      <div className="min-h-dvh bg-[#08080A] flex flex-col items-center justify-center">
         <div className="relative">
           <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 rounded-full blur-2xl animate-pulse" />
           <Loader2 className="h-12 w-12 animate-spin text-white/60 relative" />
@@ -302,7 +302,7 @@ export default function VirtualIdol() {
   if (!isAuthenticated) return null;
 
   return (
-    <div className="min-h-screen bg-[#08080A] text-white/90">
+    <div className="min-h-dvh bg-[#08080A] text-white/90">
       {/* Ambient background glow */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-gradient-to-br from-cyan-500/[0.04] to-purple-500/[0.02] rounded-full blur-[120px]" />

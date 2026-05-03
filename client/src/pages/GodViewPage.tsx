@@ -509,7 +509,7 @@ export default function GodViewPage() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         // 卡布奇諾深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),

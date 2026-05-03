@@ -39,7 +39,7 @@ export default function RemixLanding() {
     return (
       <div
         style={{
-          minHeight: "100vh",
+          minHeight: "100dvh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -54,7 +54,7 @@ export default function RemixLanding() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         background:
           "radial-gradient(circle at 20% 20%, rgba(244,114,182,0.14), transparent 35%), radial-gradient(circle at 80% 60%, rgba(139,92,246,0.15), transparent 35%), linear-gradient(180deg,#0a0814 0%,#0a0d1f 60%,#090915 100%)",
         color: "#f7f4ef",

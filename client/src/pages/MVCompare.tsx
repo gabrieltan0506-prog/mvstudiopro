@@ -2,7 +2,7 @@ import { ArrowLeftRight } from "lucide-react";
 
 export default function MVCompare() {
   return (
-    <div className="min-h-screen bg-[#0A0A0C] flex flex-col items-center justify-center p-8">
+    <div className="min-h-dvh bg-[#0A0A0C] flex flex-col items-center justify-center p-8">
       <div className="flex flex-col items-center">
         <div className="w-20 h-20 rounded-2xl bg-[rgba(232,130,94,0.12)] flex items-center justify-center mb-6">
           <ArrowLeftRight size={48} color="#E8825E" />

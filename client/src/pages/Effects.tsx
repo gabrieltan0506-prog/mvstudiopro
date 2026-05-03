@@ -132,7 +132,7 @@ export default function EffectsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0D0D0F] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0D0D0F] text-[#F7F4EF]">
       <input
         ref={fileInputRef}
         type="file"

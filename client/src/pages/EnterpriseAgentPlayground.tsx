@@ -210,14 +210,14 @@ export default function EnterpriseAgentPlayground() {
   }
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950">
+      <div className="flex h-dvh items-center justify-center bg-zinc-950">
         <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
       </div>
     );
   }
   if (error || !data) {
     return (
-      <div className="p-8 text-red-400 flex flex-col items-start gap-4 bg-zinc-950 min-h-screen">
+      <div className="p-8 text-red-400 flex flex-col items-start gap-4 bg-zinc-950 min-h-dvh">
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5" />
           {error?.message || "无法加载 Agent 信息"}
@@ -233,7 +233,7 @@ export default function EnterpriseAgentPlayground() {
   const isActive = agent.status === "active";
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100 font-sans">
+    <div className="flex h-dvh flex-col bg-zinc-950 text-zinc-100 font-sans">
       {/* 顶栏 */}
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-amber-500/20 px-4 sm:px-6 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-3">

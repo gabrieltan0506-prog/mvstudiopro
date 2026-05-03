@@ -514,8 +514,8 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
         overflow: "hidden",
       }}
     >
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ width: "100%", minWidth: 500, borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
           <thead>
             <tr style={{ background: colors.tableHeadGradient }}>
               {headers.map((h, i) => (
@@ -834,6 +834,27 @@ export default function ReportRenderer({
         .report-raw-html figure img { max-width: 100%; height: auto; border-radius: 10px; box-shadow: ${colors.cardShadow}; }
         .report-raw-html figcaption { margin-top: 8px; font-size: 12.5px; color: ${colors.inkSoft}; font-style: italic; line-height: 1.65; }
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
+
+        /* Mobile Typography Optimization */
+        @media (max-width: 640px) {
+          [data-report-surface] {
+            padding: 24px 20px !important;
+            font-size: 14.5px !important;
+          }
+          [data-pdf-accent-bar] {
+            margin: -24px -20px 24px !important;
+          }
+          [data-report-surface] p,
+          [data-report-surface] li {
+            font-size: 14.5px !important;
+            line-height: 1.8 !important;
+            word-break: break-word !important;
+          }
+          [data-report-surface] h1 { font-size: 22px !important; }
+          [data-report-surface] h2 { font-size: 19px !important; margin-top: 24px !important; }
+          [data-report-surface] h3 { font-size: 16px !important; margin-top: 18px !important; }
+          [data-report-surface] blockquote { font-size: 13.5px !important; padding: 12px 16px !important; margin: 12px 0 !important; }
+        }
 
         @media print {
           /* 紙張可列印區：與 pdf-worker page.pdf margin:0 對齊，盡量滿版 */

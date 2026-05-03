@@ -220,7 +220,7 @@ export default function MyVideosPage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0A0A0C] flex items-center justify-center">
         <Loader2 size={32} className="text-orange-500 animate-spin" />
       </div>
     );
@@ -228,7 +228,7 @@ export default function MyVideosPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex flex-col items-center justify-center p-6 gap-3">
+      <div className="min-h-dvh bg-[#0A0A0C] flex flex-col items-center justify-center p-6 gap-3">
         <Lock size={48} className="text-gray-600" />
         <h2 className="text-lg font-bold text-[#ECEDEE] mt-2">请先登录</h2>
         <p className="text-sm text-[#9BA1A6]">登录后即可查看您的视频提交记录</p>
@@ -246,7 +246,7 @@ export default function MyVideosPage() {
   const isLoading = videosQuery.isPending;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       {/* 顶部导航 */}
       <header className="flex items-center justify-between p-4 border-b border-white/10 sticky top-0 bg-[#0A0A0C]/80 backdrop-blur-sm z-10">
         <button

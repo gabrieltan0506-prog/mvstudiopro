@@ -47,7 +47,7 @@ export default function PaymentMethod() {
 
   if (!currentPackage) {
     return (
-      <div className="min-h-screen bg-background text-foreground">
+      <div className="min-h-dvh bg-background text-foreground">
         <div className="flex-1 items-center justify-center p-8">
           <span className="text-muted-foreground">套餐不存在或正在加载...</span>
         </div>
@@ -56,7 +56,7 @@ export default function PaymentMethod() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <div className="max-w-md mx-auto p-6">
         <h1 className="text-2xl font-bold mb-6">选择支付方式</h1>
         <p className="text-muted-foreground mb-8">

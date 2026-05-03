@@ -141,7 +141,7 @@ export default function StudentVerificationScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="overflow-y-auto pb-10">
         {/* Header */}
         <div className="px-6 pt-8 pb-6">

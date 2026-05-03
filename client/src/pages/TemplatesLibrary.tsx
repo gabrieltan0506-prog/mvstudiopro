@@ -51,14 +51,14 @@ export default function TemplatesLibraryPage() {
 
   if (loading || workspacesQuery.isLoading || templatesQuery.isLoading) {
     return (
-      <div className="min-h-screen bg-[#0C1117] text-white flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0C1117] text-white flex items-center justify-center">
         <Loader2 className="h-7 w-7 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0C1117] text-[#E8EDF2] p-4 md:p-6">
+    <div className="min-h-dvh bg-[#0C1117] text-[#E8EDF2] p-4 md:p-6">
       <div className="max-w-6xl mx-auto">
         <div className="rounded-xl border border-white/10 bg-[#111827] p-4 mb-4">
           <h1 className="text-xl font-semibold">Template Library V1</h1>

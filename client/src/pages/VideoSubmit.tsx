@@ -443,7 +443,7 @@ export default function VideoSubmit() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] p-4 sm:p-8 flex items-center justify-center">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] p-4 sm:p-8 flex items-center justify-center">
         {verificationStatus.isPending ? <Loader2 className="animate-spin h-12 w-12" /> : renderContent()}
     </div>
   );

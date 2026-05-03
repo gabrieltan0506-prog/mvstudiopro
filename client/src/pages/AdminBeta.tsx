@@ -103,7 +103,7 @@ export default function AdminBeta() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0A0A0C] flex items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-[#FF6B6B]" />
       </div>
     );
@@ -111,7 +111,7 @@ export default function AdminBeta() {
 
   if (!isAuthenticated || user?.role !== "admin") {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex flex-col items-center justify-center p-6 text-center">
+      <div className="min-h-dvh bg-[#0A0A0C] flex flex-col items-center justify-center p-6 text-center">
         <Lock className="h-12 w-12 text-gray-500" />
         <p className="mt-4 text-lg font-semibold text-[#F7F4EF]">仅管理员可访问此页面</p>
         <button
@@ -290,7 +290,7 @@ export default function AdminBeta() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] p-4 sm:p-6 lg:p-8">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] p-4 sm:p-6 lg:p-8">
       <div className="max-w-4xl mx-auto">
         <header className="flex items-center justify-between mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold text-white">管理员面板</h1>

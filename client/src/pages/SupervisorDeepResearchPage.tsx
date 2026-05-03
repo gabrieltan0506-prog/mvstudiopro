@@ -55,7 +55,7 @@ export default function SupervisorDeepResearchPage() {
   // 权限拦截
   if (!isSupervisor) {
     return (
-      <div style={{ minHeight: "100vh", background: "#050300", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
+      <div style={{ minHeight: "100dvh", background: "#050300", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
         <AlertTriangle size={40} color="#f87171" />
         <p style={{ color: "#f87171", fontSize: 16, fontWeight: 700 }}>无访问权限</p>
         <button onClick={() => navigate("/")} style={{ color: "rgba(245,200,80,0.6)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>返回首页</button>
@@ -70,7 +70,7 @@ export default function SupervisorDeepResearchPage() {
   // ─── 阅读模式 ──────────────────────────────────────────────────────────────
   if (selectedReport) {
     return (
-      <div style={{ minHeight: "100vh", background: "#050300", fontFamily: "'Inter',sans-serif" }}>
+      <div style={{ minHeight: "100dvh", background: "#050300", fontFamily: "'Inter',sans-serif" }}>
         <div style={{ borderBottom: "1px solid rgba(180,130,0,0.20)", background: "rgba(5,3,0,0.97)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
           <button onClick={() => setSelectedReport(null)} style={{ color: "rgba(245,200,80,0.6)", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
             <ChevronLeft size={16} />返回工作台
@@ -94,7 +94,7 @@ export default function SupervisorDeepResearchPage() {
 
   // ─── 工作台主页 ────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#050300", fontFamily: "'Inter',sans-serif" }}>
+    <div style={{ minHeight: "100dvh", background: "#050300", fontFamily: "'Inter',sans-serif" }}>
       <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
 
       {/* 顶部导航 */}

@@ -1050,9 +1050,9 @@ export default function MyReportsPage() {
     const coverImageUrl = matchingReport?.coverUrl || null;
     const isBusy = downloadStage !== "idle";
     return (
-      <div className="min-h-screen font-sans bg-gradient-to-b from-[#f5e9d7] via-[#ede0c9] to-[#dfcaa9]">
+      <div className="min-h-dvh font-sans bg-gradient-to-b from-[#f5e9d7] via-[#ede0c9] to-[#dfcaa9]">
         <div data-pdf-exclude="true" className="sticky top-0 z-50 flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3 sm:py-3.5 bg-[#fffaf0]/90 backdrop-blur-md border-b border-[#7a5410]/20 shadow-sm">
-          <button onClick={() => setSelectedReport(null)} className="flex shrink-0 items-center gap-1 text-[#7a5410] font-bold text-xs sm:text-sm bg-transparent border-none cursor-pointer">
+          <button onClick={() => setSelectedReport(null)} className="flex shrink-0 items-center min-h-[44px] gap-1 text-[#7a5410] font-bold text-xs sm:text-sm bg-transparent border-none cursor-pointer">
             <ChevronLeft size={16} className="hidden sm:block" />返回<span className="hidden sm:inline">作品快照库</span>
           </button>
           <span className="text-[#7a5410]/40 shrink-0">/</span>
@@ -1060,7 +1060,7 @@ export default function MyReportsPage() {
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               onClick={handleDownloadMd}
-              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-[#a8761b]/10 border border-[#a8761b]/30 text-[#7a5410] font-bold text-xs cursor-pointer hover:bg-[#a8761b]/20"
+              className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 min-h-[44px] rounded-lg bg-[#a8761b]/10 border border-[#a8761b]/30 text-[#7a5410] font-bold text-xs cursor-pointer hover:bg-[#a8761b]/20"
               title="下载原始 Markdown"
             >
               <FileText size={12} className="hidden sm:block" />MD
@@ -1069,7 +1069,7 @@ export default function MyReportsPage() {
               onClick={() => void handleDownloadFromReadingMode()}
               disabled={isBusy}
               className={cn(
-                "flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs font-bold transition-all",
+                "flex items-center gap-1.5 px-2 sm:px-3 py-1.5 sm:py-2 min-h-[44px] rounded-lg text-xs font-bold transition-all",
                 isBusy
                   ? "bg-[#a8761b]/30 text-[#fff7df]/70 cursor-not-allowed border border-[#a8761b]/30"
                   : "bg-gradient-to-br from-[#a8761b] to-[#7a5410] text-[#fff7df] border border-[#a8761b]/60 cursor-pointer shadow-sm hover:shadow-md"
@@ -1134,7 +1134,7 @@ export default function MyReportsPage() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         // 与 god-view 同款：卡布奇诺深焙渐变（奶泡米色 → 焦糖核心 → 深拿铁底）
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),

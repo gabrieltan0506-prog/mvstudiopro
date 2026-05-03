@@ -72,7 +72,7 @@ export default function Pricing() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex flex-col">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] flex flex-col">
       {/* ── 顶部标题 ── */}
       <div className="px-6 pt-8 pb-3">
         <h1 className="text-3xl font-extrabold text-white">Credits 加值</h1>

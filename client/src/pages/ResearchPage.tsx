@@ -231,7 +231,7 @@ export default function ResearchPage() {
 
   return (
     <div style={{
-      minHeight: "100vh",
+      minHeight: "100dvh",
       fontFamily: "'Inter', sans-serif",
       // 琥珀暗金底：极深棕黑 + 暗琥珀渐变
       background: "linear-gradient(145deg, #0E0700 0%, #160B00 25%, #1E1000 50%, #160900 75%, #0C0600 100%)",
