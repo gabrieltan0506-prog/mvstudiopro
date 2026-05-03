@@ -252,10 +252,10 @@ export const CREDIT_COSTS = {
 
   // ─── 平台趋势·参考图生成 ─────────────────────
   platformRefImage: 12,
-  /** 平台页：竖版执行分镜表（单张 gpt-image-2 含多格） */
-  platformStoryboardSheet: 10,
-  /** 平台页：小红书风双笔记卡（单张 9:16） */
-  platformXhsDualNote: 12,
+  /** 平台页：分镜 / 小红书 2×4（双语编导 → 英文 prompt；生图采用 GPT-IMAGE-2，单次统一定价） */
+  platformStoryboardSheet: 16,
+  /** 平台页：同上，小红书图文笔记整条管线 */
+  platformXhsDualNote: 16,
 } as const;
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */

@@ -18,7 +18,11 @@ import {
   type PaidJobRefundReason,
 } from "./paidJobLedger";
 import { generateAndStoreStrategicImage } from "./imageGenerationService";
-import { generateDeepResearchSceneIllustration } from "./proxyImageService";
+import {
+  buildStrategicCoverGeminiTask,
+  runGemini31ProPreviewText,
+} from "./geminiPlatformCompositeTranslation.js";
+import { generateDeepResearchSceneIllustration, generateGptImage2FromRawEnglishPrompt } from "./proxyImageService";
 import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
 
 // Storage root for job state. Default = Fly persistent volume. Override via env var
@@ -68,7 +72,7 @@ function appendMagazineCoverDateInstructions(promptBase: string): string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gemini Consumer API key 生图（generativelanguage…:generateContent?key=）。
-// 戰略智庫主流程封面：**Fly 端直連 Vertex**（`generateAndStoreStrategicImage` → GCS 簽名 URL）。
+// 戰略智庫主流程封面：**Gemini 3.1 Pro 英文指令 → GPT-IMAGE-2**；失败则 Fly 直連 Vertex（`generateAndStoreStrategicImage`），再败 **Consumer Nano Banana 2**（需 `GEMINI_API_KEY`）。
 // 正文场景配图：**OhMyGPT gpt-image-2** 主路径 + Imagen Ultra 兜底（`proxyImageService`）。
 // Vertex 全敗時封面可走本函式 **Consumer Nano Banana 2 · 2K**（需 `GEMINI_API_KEY`）。
 // ─────────────────────────────────────────────────────────────────────────────
@@ -848,9 +852,9 @@ async function getDbAndSchema() {
 
 // ── on-demand 封面补生（HTML / PDF 下载触发） ──────────────────────────────
 //
-// 用户决策（2026-05-02）：
-//   主路径：Vertex Nano Banana Pro · **4K**、9:16。
-//   **Fallback**：Fly/Vertex 全败后 → Consumer **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· **2K**、9:16（需 `GEMINI_API_KEY`）。
+// 用户决策（2026-05-02，迭代）：
+//   主路径：**Gemini 3.1 Pro → 英文 prompt → GPT-IMAGE-2**（9:16）+ Imagen 兜底（见 proxyImageService）。
+//   **Fallback**：GPT-IMAGE-2 全败后 → Fly/Vertex **Nano Banana Pro · 4K**；再败 → Consumer **Nano Banana 2 · 2K**（`GEMINI_API_KEY`）。
 //
 // 设计要点：
 //   - 已有封面直接返回（幂等）
@@ -878,9 +882,10 @@ export async function ensureCoverForCreation(
       return existing;
     }
 
-    // 关键：要求模型把标题作为金色印刷字直接画进图，因为下载模板里不再叠任何文字
-    // （PR #356 / #357 之后，有封面图时模板纯图，不再有 cover-pill / cover-mega 文字层）
     const safeTitle = String(lighthouseTitle || "战略情报报告").trim().slice(0, 60);
+    const englishMonthYear = formatMagazineCoverMonthYearEnAsia();
+    const chinesePublicationDate = formatPublicationDateZhAsia();
+
     const promptBase =
       `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
       `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
@@ -888,13 +893,44 @@ export async function ensureCoverForCreation(
       `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
       `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
       `Topic / title to render: ${safeTitle}`;
-    const prompt = appendMagazineCoverDateInstructions(promptBase);
+    const vertexFallbackPrompt = appendMagazineCoverDateInstructions(promptBase);
 
     let imageUrl: string | undefined;
+
+    for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
+      try {
+        console.log(
+          `[ensureCoverForCreation] 主路径：Gemini 英文指令 → GPT-IMAGE-2（第 ${attempt}/2 次）creationId=${creationId}`,
+        );
+        const geminiTask = buildStrategicCoverGeminiTask({
+          chineseTitle: safeTitle,
+          englishMonthYear,
+          chinesePublicationDate,
+        });
+        const englishPrompt = await runGemini31ProPreviewText(geminiTask);
+        const url = await generateGptImage2FromRawEnglishPrompt({
+          englishPrompt,
+          aspectRatio: "9:16",
+          gcsSubdir: "strategic_cover_gpt_image2",
+        });
+        if (url) {
+          imageUrl = url;
+          console.log(
+            `[ensureCoverForCreation] ✅ GPT-IMAGE-2 参考封面，第 ${attempt}/2 次 creationId=${creationId}`,
+          );
+        }
+      } catch (e: any) {
+        console.warn(
+          `[ensureCoverForCreation] ⚠️ GPT-IMAGE-2 主路径第 ${attempt}/2 次失败: ${e?.message ?? e} creationId=${creationId}`,
+        );
+        if (attempt < 2) await sleep(1000);
+      }
+    }
+
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
       try {
         console.log(`[ensureCoverForCreation] 開始 Fly/Vertex 4K 封面（第 ${attempt}/2 次）creationId=${creationId}`);
-        imageUrl = await generateAndStoreStrategicImage(prompt, "COVER");
+        imageUrl = await generateAndStoreStrategicImage(vertexFallbackPrompt, "COVER");
         console.log(
           `[ensureCoverForCreation] ✅ on-demand 封面 Fly/Vertex Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${attempt}/2 次 creationId=${creationId}`,
         );
@@ -908,7 +944,7 @@ export async function ensureCoverForCreation(
 
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
       try {
-        const flashPrompt = `${prompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}`;
+        const flashPrompt = `${vertexFallbackPrompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}`;
         imageUrl = await generateImageViaGeminiApiKey({
           prompt: flashPrompt,
           aspectRatio: "9:16",
@@ -2188,19 +2224,49 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图：Fly 直連 **Vertex** Pro 9:16 **4K**（本地 `generateAndStoreStrategicImage`，3 次）；全败则 Consumer **Nano Banana 2 · 2K**（2 次）。单次 120s。
+    // 2. 封面图：主路径 Gemini 3.1 Pro 英文指令 → GPT-IMAGE-2；失败则 Fly/Vertex Pro 4K；再败 Consumer Flash 2K。
+    const coverEnglishMonth = formatMagazineCoverMonthYearEnAsia();
+    const coverZhDate = formatPublicationDateZhAsia();
     const coverPromptBase =
       `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
-    const coverPrompt = appendMagazineCoverDateInstructions(coverPromptBase);
+    const coverVertexPrompt = appendMagazineCoverDateInstructions(coverPromptBase);
     const coverPromise: Promise<string | undefined> = (async () => {
       const latestCoverJob = (await readJob(jobId)) ?? job;
       const trialWm = !!latestCoverJob.strategicImagesTrialWatermark;
       let cover: string | undefined;
 
+      for (let i = 1; i <= 2 && !cover; i++) {
+        try {
+          console.log(
+            `[deepResearch][async-cover] 主路径 Gemini → GPT-IMAGE-2 参考封面${trialWm ? "（试用水印）" : ""}… 第 ${i}/2 次 jobId=${jobId}`,
+          );
+          const geminiTask = buildStrategicCoverGeminiTask({
+            chineseTitle: lighthouseTitle,
+            englishMonthYear: coverEnglishMonth,
+            chinesePublicationDate: coverZhDate,
+          });
+          const englishPrompt = await runGemini31ProPreviewText(geminiTask);
+          const url = await generateGptImage2FromRawEnglishPrompt({
+            englishPrompt,
+            aspectRatio: "9:16",
+            gcsSubdir: "strategic_cover_gpt_image2",
+            trialWatermarkPromptSuffix: trialWm ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : undefined,
+          });
+          if (url) {
+            cover = url;
+            console.log(`[deepResearch][async-cover] ✅ GPT-IMAGE-2 参考封面，第 ${i}/2 次 jobId=${jobId}`);
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(`[deepResearch][async-cover] ⚠️ GPT-IMAGE-2 主路径第 ${i}/2 次失败：${msg} jobId=${jobId}`);
+          if (i < 2) await sleep(2000);
+        }
+      }
+
       for (let i = 1; i <= 3 && !cover; i++) {
         try {
-          console.log(`[deepResearch][async-cover] 開始在 Fly 本地生成 4K 封面${trialWm ? "（试用水印）" : ""}… 第 ${i}/3 次 jobId=${jobId}`);
-          cover = await generateAndStoreStrategicImage(coverPrompt, "COVER", { coverTrialWatermark: trialWm });
+          console.log(`[deepResearch][async-cover] Fly/Vertex 4K 封面兜底${trialWm ? "（试用水印）" : ""}… 第 ${i}/3 次 jobId=${jobId}`);
+          cover = await generateAndStoreStrategicImage(coverVertexPrompt, "COVER", { coverTrialWatermark: trialWm });
           console.log(
             `[deepResearch][async-cover] ✅ Fly/Vertex Nano Banana Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${i}/3 次 jobId=${jobId}`,
           );
@@ -2213,7 +2279,7 @@ ${job.topic}
 
       for (let i = 1; i <= 2 && !cover; i++) {
         try {
-          const flashPrompt = `${coverPrompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}${
+          const flashPrompt = `${coverVertexPrompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}${
             trialWm
               ? `\n\n${TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION}`
               : ""
@@ -2235,7 +2301,7 @@ ${job.topic}
       }
 
       if (!cover) {
-        console.warn(`[deepResearch][async-cover] Fly/Vertex Pro 与 Consumer 2K 均失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
+        console.warn(`[deepResearch][async-cover] GPT-IMAGE-2 / Vertex Pro / Consumer 2K 均失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
       }
       return cover;
     })();

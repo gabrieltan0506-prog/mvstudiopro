@@ -267,6 +267,44 @@ async function postGptImage2AndUpload(
 }
 
 /**
+ * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **GPT-IMAGE-2**（9:16 或 16:9）→ Vertex Imagen 兜底。图像 API **不**执行翻译。
+ */
+export async function generateGptImage2FromRawEnglishPrompt(options: {
+  englishPrompt: string;
+  aspectRatio: "9:16" | "16:9";
+  gcsSubdir: string;
+  /** 试读等：追加到 prompt 末尾（仅像素出图） */
+  trialWatermarkPromptSuffix?: string;
+}): Promise<string | null> {
+  const raw = String(options.englishPrompt || "").trim();
+  if (!raw) return null;
+  const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
+  const prompt = suffix ? `${raw}\n\n${suffix}` : raw;
+  const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
+  const primary = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes });
+  if (primary) return primary;
+
+  const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 2400);
+  const model =
+    String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
+    "imagen-4.0-ultra-generate-001";
+  const r = await generateImagenVertexPredict({
+    prompt: imagenPrompt,
+    model,
+    aspectRatio: options.aspectRatio === "16:9" ? "16:9" : "9:16",
+    imageSize: "2K",
+    numberOfImages: 1,
+    personGeneration: "ALLOW_ADULT",
+    guidanceScale: 4.0,
+  });
+  if (!r.ok || !r.imageUrl) {
+    console.warn("[proxyImageService] raw-prompt imagen fallback failed:", r.error);
+    return null;
+  }
+  return uploadImagenDataUrlToSignedUrl(r.imageUrl);
+}
+
+/**
  * OhMyGPT `gpt-image-2` 主路径；需配置 `PROXY_OPENAI_API_KEY`（Bearer）。
  * 失败返回 null，由调用方走 Imagen Ultra 等 fallback。
  */
@@ -292,7 +330,7 @@ export type PlatformCompositeSheetKind =
   | "xiaohongshu_dual_note";
 
 /**
- * 平台頁：單次 gpt-image-2（橫版 16:9 分鏡表 或 16:9 小紅書雙卡）+ Imagen 兜底。
+ * 平台页：由 Gemini **双语编导**任务产出英文视觉 prompt，再送 **GPT-IMAGE-2**（横版 16:9，原生 2×4）+ Imagen 兜底。GPT-IMAGE-2 **只**吃英文 prompt，不翻译。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -307,19 +345,23 @@ export async function generatePlatformCompositeSheetImage(options: {
   if (!isStoryboard && !isXhs) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
-  const prompt = isStoryboard
-    ? buildStoryboardSheetLandscapePrompt({
-        title: options.title,
-        scriptContext: options.scriptContext,
-        isTrial: options.isTrial,
-        executionDetails: options.executionDetails,
-      })
-    : buildXiaohongshuDualNotePrompt({
-        title: options.title,
-        scriptContext: options.scriptContext,
-        isTrial: options.isTrial,
-        executionDetails: options.executionDetails,
-      });
+
+  let prompt: string;
+  try {
+    const { translatePlatformCompositeToEnglishPrompt } = await import(
+      "./geminiPlatformCompositeTranslation.js"
+    );
+    prompt = await translatePlatformCompositeToEnglishPrompt({
+      kind: k,
+      scriptContext: options.scriptContext,
+    });
+  } catch (e: unknown) {
+    console.warn(
+      "[proxyImageService] platform composite prompt translation failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
 
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   const primary = await postGptImage2AndUpload(prompt, subdir, {
@@ -328,7 +370,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   });
   if (primary) return primary;
 
-  const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 2400);
+  const imagenPrompt = String(prompt || "").replace(/\s+/g, " ").slice(0, 2400);
   const model =
     String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
     "imagen-4.0-ultra-generate-001";
