@@ -459,21 +459,27 @@ function deriveChartFromTable(headers: string[], rows: string[][]): ChartData {
   if (headers.length < 2 || rows.length < 2) {
     return { type: null, data: [], numericKeys: [], labelKey: "" };
   }
-  const labelKey = headers[0];
+  
+  const cleanMarkdown = (s: string) => s.replace(/[*_~`]/g, "");
+  
+  const cleanHeaders = headers.map(cleanMarkdown);
+  const cleanRows = rows.map(r => r.map(cleanMarkdown));
+
+  const labelKey = cleanHeaders[0];
   const numericKeys: string[] = [];
-  for (let c = 1; c < headers.length; c++) {
-    const colVals = rows.map((r) => parseNumber(r[c] || ""));
+  for (let c = 1; c < cleanHeaders.length; c++) {
+    const colVals = cleanRows.map((r) => parseNumber(r[c] || ""));
     const nums = colVals.filter((v): v is number => v !== null);
-    if (nums.length >= Math.max(2, Math.floor(rows.length * 0.6))) {
-      numericKeys.push(headers[c]);
+    if (nums.length >= Math.max(2, Math.floor(cleanRows.length * 0.6))) {
+      numericKeys.push(cleanHeaders[c]);
     }
   }
   if (numericKeys.length === 0) return { type: null, data: [], numericKeys: [], labelKey };
 
-  const data: Array<Record<string, unknown>> = rows
+  const data: Array<Record<string, unknown>> = cleanRows
     .map((r) => {
       const item: Record<string, unknown> = { [labelKey]: r[0] || "" };
-      headers.slice(1).forEach((h, idx) => {
+      cleanHeaders.slice(1).forEach((h, idx) => {
         if (numericKeys.includes(h)) {
           item[h] = parseNumber(r[idx + 1] || "") ?? 0;
         }
@@ -484,7 +490,7 @@ function deriveChartFromTable(headers: string[], rows: string[][]): ChartData {
 
   if (data.length < 2) return { type: null, data: [], numericKeys: [], labelKey };
 
-  const headerStr = headers.join(" ");
+  const headerStr = cleanHeaders.join(" ");
   const labelStr = data.map((d) => String(d[labelKey])).join(" ");
   let type: "bar" | "line" | "radar" = "bar";
   if (/雷达|维度|能力|评分|短板|画像|象限/.test(headerStr + labelStr)) type = "radar";
@@ -638,9 +644,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </LineChart>
           ) : (
-            <RadarChart data={chart.data} margin={{ top: 12, right: 24, left: 24, bottom: 12 }}>
+            <RadarChart data={chart.data} margin={{ top: 12, right: 24, left: 24, bottom: 12 }} outerRadius="55%">
               <PolarGrid stroke={colors.divider} />
-              <PolarAngleAxis dataKey={chart.labelKey} tick={{ fill: colors.ink, fontSize: 11 }} />
+              <PolarAngleAxis dataKey={chart.labelKey} tick={{ fill: colors.ink, fontSize: 10 }} />
               <PolarRadiusAxis tick={{ fill: colors.inkSoft, fontSize: 10 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />

@@ -173,12 +173,12 @@ export function buildEChartsOption(spec: DerivedChartSpec, theme?: EChartsTheme)
       tooltip: { trigger: "item" },
       radar: {
         indicator,
-        radius: "62%",
+        radius: "50%",
         center: ["50%", "55%"],
         splitLine: { lineStyle: { color: palette.grid } },
         splitArea: { areaStyle: { color: ["rgba(255,255,255,0.6)", "rgba(255,255,255,0.3)"] } },
         axisLine: { lineStyle: { color: palette.grid } },
-        axisName: { color: palette.text, fontSize: 11 },
+        axisName: { color: palette.text, fontSize: 10, lineHeight: 14 },
       },
       series: [
         {
@@ -259,7 +259,10 @@ function splitTableRow(line: string): string[] {
   let raw = line.trim();
   if (raw.startsWith("|")) raw = raw.slice(1);
   if (raw.endsWith("|")) raw = raw.slice(0, -1);
-  return raw.split("|").map((c) => c.trim());
+  return raw.split("|").map((c) => {
+    // Strip markdown bold/italic before processing for charts
+    return c.trim().replace(/[*_~`]/g, "");
+  });
 }
 
 function escapeHtml(text: string): string {
