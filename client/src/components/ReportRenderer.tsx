@@ -613,8 +613,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
           根据上方表格自动生成 · 仅展示数值列对比
         </span>
       </div>
-      <div style={{ width: "100%", height: 280, minWidth: 0 }}>
-        <ResponsiveContainer width="100%" height="100%">
+      <div style={{ width: "100%", height: 280, minWidth: 320, overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ minWidth: 400, height: "100%" }}>
+          <ResponsiveContainer width="100%" height="100%">
           {chart.type === "bar" ? (
             <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
               {commonGrid}
@@ -664,7 +665,8 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </RadarChart>
           )}
-        </ResponsiveContainer>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );

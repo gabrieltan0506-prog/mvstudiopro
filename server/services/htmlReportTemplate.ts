@@ -268,6 +268,9 @@ function enhanceTables(html: string): string {
   
   // Wrap table in overflow-x: auto container for mobile
   return withEnhancedCells.replace(
+    /<figure class="chart-figure">([\s\S]*?)<\/figure>/g,
+    '<div class="chart-wrapper"><figure class="chart-figure">$1</figure></div>'
+  ).replace(
     /<table>([\s\S]*?)<\/table>/g,
     '<div class="table-wrapper"><table>$1</table></div>'
   );
@@ -555,7 +558,8 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   figure.scene-figure img { display: block; margin: 0 auto; max-width: 100%; max-height: 540px; object-fit: cover; border-radius: 10px; border: 1px solid var(--rule); box-shadow: 0 6px 24px rgba(0,0,0,0.10); }
   figure.scene-figure figcaption { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; font-style: italic; max-width: 90%; margin-left: auto; margin-right: auto; }
   /* ── 数据可视化 figure（echarts mount） ── */
-  figure.chart-figure { margin: 22px auto 18px; padding: 14px 16px 12px; width: 100%; max-width: 100%; text-align: center; background: var(--bg-elev); border: 1px solid var(--rule); border-radius: 10px; box-sizing: border-box; }
+  .chart-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 22px 0 18px; border-radius: 10px; border: 1px solid var(--rule); background: var(--bg-elev); }
+  figure.chart-figure { margin: 0; padding: 14px 16px 12px; width: 100%; min-width: 400px; text-align: center; box-sizing: border-box; }
   figure.chart-figure .echart-mount { width: 100% !important; min-height: 320px; }
   figure.chart-figure figcaption { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; }
   /* ── 工具栏（右上角，提示交互版 + 主题）── */
