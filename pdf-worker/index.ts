@@ -152,9 +152,14 @@ const MYREPORTS_SNAPSHOT_PRINT_CSS = `
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
-  .cover-page img, .cover-page.cover-image-only img {
-    page-break-inside: auto !important;
-    break-inside: auto !important;
+  figure:not(.cover-page) img,
+  .report-raw-html figure:not(.cover-page) img,
+  img:not(:is(.cover-page img)) {
+    max-height: 277mm !important;
+    max-width: 100% !important;
+    width: auto !important;
+    height: auto !important;
+    object-fit: contain !important;
   }
   .cover-page, .cover-page.cover-image-only {
     page-break-before: avoid !important;
@@ -165,16 +170,16 @@ const MYREPORTS_SNAPSHOT_PRINT_CSS = `
     break-inside: avoid !important;
     display: flex !important;
     flex-direction: column !important;
-    align-items: center !important;
-    justify-content: center !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
     box-sizing: border-box !important;
     margin: 0 !important;
     padding: 0 !important;
     border: none !important;
     background-color: #fff !important;
     width: 100% !important;
-    height: 262mm !important;
-    max-height: 262mm !important;
+    height: 297mm !important;
+    max-height: 297mm !important;
     min-height: 0 !important;
     overflow: hidden !important;
     position: relative !important;
@@ -182,12 +187,17 @@ const MYREPORTS_SNAPSHOT_PRINT_CSS = `
   .cover-page img, .cover-page.cover-image-only img {
     position: static !important;
     display: block !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
     flex-shrink: 0 !important;
-    max-width: 100% !important;
-    max-height: 100% !important;
-    width: auto !important;
-    height: auto !important;
-    object-fit: contain !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    object-position: center !important;
     aspect-ratio: auto !important;
     margin: 0 !important;
     padding: 0 !important;

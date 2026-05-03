@@ -895,11 +895,21 @@ export default function ReportRenderer({
           /* 标题尽量不在页底孤立，强制把标题与下一段绑在一起 */
           h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
 
-          /* 图片 / 图表 figure 不被中间切断；封面 figure.cover-page 豁免（避免 ~整頁高
-             + break-inside:avoid 被整塊推到第 2 頁 → PDF 第 1 頁空白） */
+          /* 图片 / 图表 figure 不被中间切断 */
           figure:not(.cover-page), img:not(:is(.cover-page img)), .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 封面：與快照注入對齊（Gemini 校對：首塊 break-before avoid + position 容器） */
+          /* 正文內大圖：限制單頁高度，避免超過一頁時被硬切兩頁（break-inside:avoid 對超高塊無效） */
+          figure:not(.cover-page) img,
+          .report-raw-html figure:not(.cover-page) img,
+          img:not(:is(.cover-page img)) {
+            max-height: 277mm !important;
+            max-width: 100% !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+          }
+
+          /* 封面：整頁滿版（A4 210×297mm）、object-fit: cover 铺满略裁切，白边趋近零；禁止图内分页 */
           .cover-page, .cover-page.cover-image-only {
             page-break-before: avoid !important;
             break-before: avoid !important;
@@ -909,16 +919,16 @@ export default function ReportRenderer({
             break-inside: avoid !important;
             display: flex !important;
             flex-direction: column !important;
-            align-items: center !important;
-            justify-content: center !important;
+            align-items: stretch !important;
+            justify-content: flex-start !important;
             box-sizing: border-box !important;
             margin: 0 !important;
             padding: 0 !important;
             border: none !important;
             background-color: #fff !important;
             width: 100% !important;
-            height: 262mm !important;
-            max-height: 262mm !important;
+            height: 297mm !important;
+            max-height: 297mm !important;
             min-height: 0 !important;
             overflow: hidden !important;
             position: relative !important;
@@ -926,14 +936,17 @@ export default function ReportRenderer({
           .cover-page img, .cover-page.cover-image-only img {
             position: static !important;
             display: block !important;
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
             flex-shrink: 0 !important;
-            page-break-inside: auto !important;
-            break-inside: auto !important;
-            max-width: 100% !important;
-            max-height: 100% !important;
-            width: auto !important;
-            height: auto !important;
-            object-fit: contain !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: none !important;
+            max-height: none !important;
+            object-fit: cover !important;
+            object-position: center !important;
             aspect-ratio: auto !important;
             margin: 0 !important;
             padding: 0 !important;

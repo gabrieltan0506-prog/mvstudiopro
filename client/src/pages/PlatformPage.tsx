@@ -2146,16 +2146,78 @@ export default function PlatformPage() {
                           </div>
                         </div>
                         {digest ? (
-                          <div className="mt-2 line-clamp-2 text-sm text-gray-400">
-                            摘要：{digest}
+                          <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-gray-400">
+                            {digest}
                             {copyFlat.length > 60 ? "…" : ""}
-                          </div>
+                          </p>
                         ) : null}
-                        <details className="mt-2 text-xs text-gray-500">
-                          <summary className="cursor-pointer transition-colors hover:text-[#ff4fb8]">查看完整腳本內容</summary>
-                          <div className="mt-2 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
-                            {item.hook ? <div className="mb-2 border-b border-white/10 pb-2 text-sm leading-7 text-[#8cefff]">{item.hook}</div> : null}
-                            <div className="whitespace-pre-wrap">{renderHighlightText(item.copywriting || "")}</div>
+                        <details className="mt-3 text-xs text-gray-500">
+                          <summary className="cursor-pointer leading-relaxed transition-colors hover:text-[#ff4fb8]">
+                            执行细项、分镜与发布（展开）
+                          </summary>
+                          <div className="mt-3 space-y-2.5 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
+                            {item.production ? (
+                              <p>
+                                <strong className="text-[#9ddcff]">制作：</strong>
+                                {item.production}
+                              </p>
+                            ) : null}
+                            {(item as any).executionDetails?.environmentAndWardrobe ? (
+                              <p>
+                                <strong className="text-[#9ddcff]">拍摄环境 &amp; 服装道具：</strong>
+                                {(item as any).executionDetails.environmentAndWardrobe}
+                              </p>
+                            ) : null}
+                            {(item as any).executionDetails?.lightingAndCamera ? (
+                              <p>
+                                <strong className="text-[#9ddcff]">灯光 &amp; 机位：</strong>
+                                {(item as any).executionDetails.lightingAndCamera}
+                              </p>
+                            ) : null}
+                            {Array.isArray((item as any).executionDetails?.stepByStepScript) &&
+                            (item as any).executionDetails.stepByStepScript.length > 0 ? (
+                              <div>
+                                <strong className="text-[#9ddcff]">逐步执行脚本：</strong>
+                                <div className="mt-1 space-y-1">
+                                  {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
+                                    <div key={si}>{step}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {Array.isArray((item as any).actionableSteps) && (item as any).actionableSteps.length > 0 ? (
+                              <div>
+                                <strong className="text-[#9ddcff]">落地三步曲：</strong>
+                                <div className="mt-1 space-y-1">
+                                  {(item as any).actionableSteps.map((step: string, si: number) => (
+                                    <div key={si}>
+                                      {si + 1}. {step}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {(item as any).publishingAdvice ? (
+                              <p>
+                                <strong className="text-[#9ddcff]">发布建议：</strong>
+                                {(item as any).publishingAdvice}
+                              </p>
+                            ) : null}
+                            {(item as any).detailedScript ? (
+                              <div>
+                                <strong className="text-[#9ddcff]">详细脚本与大纲：</strong>
+                                <div className="mt-1 whitespace-pre-wrap text-sm">{(item as any).detailedScript}</div>
+                              </div>
+                            ) : null}
+                            {item.hook || item.copywriting ? (
+                              <div className="border-t border-white/10 pt-2.5">
+                                <strong className="text-[#9ddcff]">钩子与完整文案</strong>
+                                {item.hook ? (
+                                  <div className="mt-1 text-sm leading-7 text-[#8cefff]">{item.hook}</div>
+                                ) : null}
+                                <div className="mt-1 whitespace-pre-wrap text-sm">{renderHighlightText(item.copywriting || "")}</div>
+                              </div>
+                            ) : null}
                           </div>
                         </details>
                         <div className="mt-4">
@@ -2182,7 +2244,7 @@ export default function PlatformPage() {
 
                         <div className="mt-4 space-y-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.55)] p-3">
                           <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">
-                            合成生图（单张 gpt-image-2 · 细节仍在下方折叠）
+                            合成生图（单张 gpt-image-2 · 执行细项见上方折叠）
                           </div>
                           <div className="flex flex-wrap gap-2">
                             <button
@@ -2299,59 +2361,6 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                         </div>
-                        <details className="mt-4 rounded-xl border border-white/10 bg-[rgba(255,255,255,0.03)] p-3 text-left">
-                          <summary className="cursor-pointer text-xs font-semibold text-[#9ddcff]">执行细项、分镜与发布（展开）</summary>
-                          <div className="mt-3 space-y-3">
-                            {item.production ? (
-                              <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
-                                {item.production}
-                              </div>
-                            ) : null}
-                            {(item as any).executionDetails?.environmentAndWardrobe ? (
-                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
-                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">拍摄环境 &amp; 服装道具</div>
-                                <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.environmentAndWardrobe}</div>
-                              </div>
-                            ) : null}
-                            {(item as any).executionDetails?.lightingAndCamera ? (
-                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
-                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">灯光 &amp; 机位</div>
-                                <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.lightingAndCamera}</div>
-                              </div>
-                            ) : null}
-                            {Array.isArray((item as any).executionDetails?.stepByStepScript) && (item as any).executionDetails.stepByStepScript.length > 0 ? (
-                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-1">
-                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">逐步执行脚本</div>
-                                {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
-                                  <div key={si} className="text-sm leading-7 text-[#d3caef]">{step}</div>
-                                ))}
-                              </div>
-                            ) : null}
-                            {Array.isArray((item as any).actionableSteps) && (item as any).actionableSteps.length > 0 ? (
-                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
-                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">落地三步曲</div>
-                                {(item as any).actionableSteps.map((step: string, si: number) => (
-                                  <div key={si} className="flex items-start gap-2 text-sm leading-7 text-white">
-                                    <span className="mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#3a2b6a] text-[10px] text-[#c9c0e6]">{si + 1}</span>
-                                    {step}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                            {(item as any).detailedScript ? (
-                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
-                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">详细脚本与大纲</div>
-                                <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{(item as any).detailedScript}</div>
-                              </div>
-                            ) : null}
-                            {(item as any).publishingAdvice ? (
-                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
-                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">发布建议</div>
-                                <div className="mt-1 text-sm leading-7 text-[#d3caef]">{(item as any).publishingAdvice}</div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </details>
                       </div>
                       );
                     })
