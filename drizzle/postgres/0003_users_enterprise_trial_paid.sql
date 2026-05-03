@@ -7,6 +7,7 @@
 --
 -- 應用：Neon Console SQL Editor（先 BEGIN … ROLLBACK 演練，再 COMMIT），
 --       流程見 drizzle/postgres/README.md。
+-- 生產環境亦可不手動執行：server/db.ts 在首次連庫時會自動 ALTER IF NOT EXISTS。
 -- ============================================================================
 
 ALTER TABLE "users"

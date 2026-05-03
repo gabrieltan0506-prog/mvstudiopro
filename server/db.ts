@@ -7,12 +7,28 @@ import { isSupervisorEmail } from "./services/access-policy";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
+/** 與 drizzle/schema 對齊；舊庫缺列時補上，避免所有 users 查詢失敗（登入報錯）。幂等。 */
+async function ensureUsersEnterpriseTrialPaidColumn(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "enterpriseTrialPaid" boolean NOT NULL DEFAULT false
+    `);
+  } catch (e) {
+    console.warn(
+      "[Database] ensure enterpriseTrialPaid column (non-fatal):",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
       const sql_conn = neon(process.env.DATABASE_URL);
       _db = drizzle(sql_conn);
+      await ensureUsersEnterpriseTrialPaidColumn(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
