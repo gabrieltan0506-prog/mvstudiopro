@@ -13,7 +13,8 @@
 | 文件 | 用途 | PR |
 |------|------|-----|
 | `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（已合并） |
-| `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（本次） |
+| `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（已合并） |
+| `0003_users_enterprise_trial_paid.sql` | `users` 表加 `enterpriseTrialPaid`（与 `drizzle/schema.ts` 一致） | 未执行会导致查询 users 失败、易被重定向登录 |
 
 ## 应用流程（生产 Neon）
 
@@ -78,8 +79,31 @@ SELECT column_name, data_type, is_nullable
 COMMIT;
 ```
 
-兼容性：
-- 0002 为纯 ADD COLUMN，对已部署 PR-2 代码（不读 extractedTextFull）零影响
+### Step 3b — 应用 0003（users.enterpriseTrialPaid）
+
+部署含 `drizzle/schema.ts` 中 `enterpriseTrialPaid` 的代码**之前**，必须在 Neon 执行（可先 `BEGIN` … `ROLLBACK` 演练）：
+
+```sql
+ALTER TABLE "users"
+ADD COLUMN IF NOT EXISTS "enterpriseTrialPaid" boolean NOT NULL DEFAULT false;
+```
+
+验证：
+
+```sql
+SELECT column_name, data_type, column_default
+  FROM information_schema.columns
+ WHERE table_schema = 'public'
+   AND table_name = 'users'
+   AND column_name = 'enterpriseTrialPaid';
+-- 期望：1 行，data_type=boolean, column_default=false
+```
+
+兼容性：已有行自动为 `false`，无需 backfill。
+
+---
+
+兼容性（0002）：
 - 默认 NULL，无需 backfill
 - 上线后 PR-3 代码上传新 KB 文件时会同时写 preview + full 两列
 
