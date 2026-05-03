@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
-import { COOKIE_NAME } from "../shared/const.js";
+import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
@@ -2825,17 +2825,46 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const { generateImageGpt2WithImagenFallback } = await import("./services/proxyImageService");
-        const mode = input.format === "图文" ? "GRAPHIC" : "STORYBOARD";
+        const {
+          buildPlatformTopicReferenceGeminiTask,
+          runGemini31ProPreviewText,
+        } = await import("./services/geminiPlatformCompositeTranslation.js");
+        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
+          "./services/proxyImageService",
+        );
+        const formatLabel = input.format === "图文" ? "图文笔记" : "短视频";
         const title = String(input.topicHook || "").trim().slice(0, 80);
         const ctx = String(input.context || "").trim();
         const copywriting = ctx ? `${input.topicHook}\n${ctx}` : input.topicHook;
-        const imageUrl = await generateImageGpt2WithImagenFallback({
-          title: title || "Content",
-          copywriting,
-          mode,
-          isTrial: false,
-        });
+        const mode = input.format === "图文" ? "GRAPHIC" : "STORYBOARD";
+
+        let imageUrl: string | null = null;
+        try {
+          const geminiTask = buildPlatformTopicReferenceGeminiTask({
+            topicHook: input.topicHook,
+            formatLabel,
+            context: ctx,
+          });
+          const englishPrompt = await runGemini31ProPreviewText(geminiTask);
+          imageUrl = await generateGptImage2FromRawEnglishPrompt({
+            englishPrompt,
+            aspectRatio: "9:16",
+            gcsSubdir: "platform_topic_reference",
+          });
+        } catch (e: unknown) {
+          console.warn(
+            "[mvAnalysis.generateTopicImage] Gemini→GPT-IMAGE-2 失败，走旧版指令:",
+            e instanceof Error ? e.message : e,
+          );
+        }
+        if (!imageUrl) {
+          imageUrl = await generateImageGpt2WithImagenFallback({
+            title: title || "Content",
+            copywriting,
+            mode,
+            isTrial: false,
+          });
+        }
         if (!imageUrl) {
           throw new Error("generateTopicImage failed: gpt-image-2 与 Imagen 兜底均未返回图片");
         }
@@ -2898,25 +2927,52 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
-        const { generateImageGpt2WithImagenFallback } = await import("./services/proxyImageService");
+        const {
+          buildPlatformTopicReferenceGeminiTask,
+          runGemini31ProPreviewText,
+        } = await import("./services/geminiPlatformCompositeTranslation.js");
+        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
+          "./services/proxyImageService",
+        );
         const mode = isVideo ? "STORYBOARD" : "GRAPHIC";
+        const formatLabel = isVideo ? "短视频" : "图文笔记";
         const results: { id: string; url: string | null }[] = [];
         for (const s of input.scenes) {
           const body = String(s.text ?? s.copywriting ?? "").trim();
-          const url = await generateImageGpt2WithImagenFallback({
-            title: s.title,
-            copywriting: body,
-            mode,
-            isTrial: false,
-          });
+          let url: string | null = null;
+          try {
+            const geminiTask = buildPlatformTopicReferenceGeminiTask({
+              topicHook: s.title,
+              formatLabel,
+              context: body,
+            });
+            const englishPrompt = await runGemini31ProPreviewText(geminiTask);
+            url = await generateGptImage2FromRawEnglishPrompt({
+              englishPrompt,
+              aspectRatio: "9:16",
+              gcsSubdir: "platform_topic_batch_reference",
+            });
+          } catch (e: unknown) {
+            console.warn(
+              `[mvAnalysis.generateAllPlatformTopicImages] Gemini→GPT-IMAGE-2 失败 scene=${s.id}:`,
+              e instanceof Error ? e.message : e,
+            );
+          }
+          if (!url) {
+            url = await generateImageGpt2WithImagenFallback({
+              title: s.title,
+              copywriting: body,
+              mode,
+              isTrial: false,
+            });
+          }
           results.push({ id: s.id, url });
         }
         return { success: true as const, results, totalCost: isAdminUser ? 0 : totalCost };
       }),
 
     /**
-     * 平台页：单张合成图 — 横版 16:9 执行分镜表（镜数随文案；`kind` 仍为 storyboard_sheet_portrait 以保持 API 兼容）或 小红书双笔记卡（12 点）。
-     * gpt-image-2 主路径 + Imagen 兜底；试读水印仅在前端 DOM 叠加（prompt 内零水印指令）。
+     * 平台页：单张原生 2×4 大图 — 双语编导（Gemini）产出英文视觉 prompt → GPT-IMAGE-2 + 系统兜底；统一定价 16 Credits/次。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
@@ -2952,8 +3008,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
             cost,
             "platformCompositeSheet",
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-              ? `平台横版分镜表 · ${input.title.slice(0, 48)}`
-              : `平台小红书双笔记 · ${input.title.slice(0, 48)}`,
+              ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
+              : `小红书图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`,
           );
         }
 
@@ -3015,7 +3071,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * GodView 研报完成后：按章节一键生成「战略扉页」竖版海报（STRATEGIC / gpt-image-2 + Imagen 兜底）。
+     * GodView 研报完成后：按章节一键生成战略扉页竖版海报（Gemini 英文指令 → GPT-IMAGE-2 + Imagen 兜底；试用水印跟任务走）。
      * 不扣积分；水印严格跟随该任务的 `strategicImagesTrialWatermark`（首购尝鲜），不信任客户端传参绕过。
      */
     generateGodViewChapterPosters: protectedProcedure
@@ -3041,16 +3097,40 @@ ${JSON.stringify(platformEvidence, null, 2)}
           throw new TRPCError({ code: "BAD_REQUEST", message: "报告正文不可用" });
         }
         const isTrial = !!job.strategicImagesTrialWatermark;
-        const { generateImageGpt2WithImagenFallback } = await import("./services/proxyImageService");
+        const { buildChapterPosterGeminiTask, runGemini31ProPreviewText } = await import(
+          "./services/geminiPlatformCompositeTranslation.js",
+        );
+        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
+          "./services/proxyImageService",
+        );
         const results: { id: string; title: string; url: string | null }[] = [];
         for (const ch of input.chapters) {
           const ctxText = String(ch.context || "").trim() || ch.title;
-          const url = await generateImageGpt2WithImagenFallback({
-            title: ch.title,
-            copywriting: ctxText,
-            mode: "STRATEGIC",
-            isTrial,
-          });
+          let url: string | null = null;
+          try {
+            const englishPrompt = await runGemini31ProPreviewText(
+              buildChapterPosterGeminiTask(ch.title, ctxText),
+            );
+            url = await generateGptImage2FromRawEnglishPrompt({
+              englishPrompt,
+              aspectRatio: "9:16",
+              gcsSubdir: "godview_chapter_poster_gpt2",
+              trialWatermarkPromptSuffix: isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : undefined,
+            });
+          } catch (e: unknown) {
+            console.warn(
+              `[mvAnalysis.generateGodViewChapterPosters] Gemini→GPT-IMAGE-2 失败 chapter=${ch.id}:`,
+              e instanceof Error ? e.message : e,
+            );
+          }
+          if (!url) {
+            url = await generateImageGpt2WithImagenFallback({
+              title: ch.title,
+              copywriting: ctxText,
+              mode: "STRATEGIC",
+              isTrial,
+            });
+          }
           results.push({ id: ch.id, title: ch.title, url });
         }
         const okCount = results.filter((r) => r.url).length;

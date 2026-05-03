@@ -257,8 +257,8 @@ export const CREDIT_COSTS = {
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 
   // ─── 平台页·合成生图（单张多格 / 双笔记）──────────────────
-  platformStoryboardSheet: 10,  // 竖版执行分镜表（gpt-image-2 单张）
-  platformXhsDualNote: 12,      // 小红书风双笔记（gpt-image-2 单张）
+  platformStoryboardSheet: 16,  // 分镜 2×4（双语编导；生图采用 GPT-IMAGE-2）
+  platformXhsDualNote: 16,       // 小红书同类管线（同价）
 } as const;
 
 export interface CreditFeatureBreakdownRow {
@@ -280,10 +280,10 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   // ─── 平台趋势分析 ─────────────────────────────────────────
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 6 cr；试用包不支持" },
-  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: 5, note: "每张 5 cr，gpt-image-2 主路径 · Imagen 兜底" },
-  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: 6, note: "每张 6 cr，gpt-image-2 主路径 · Imagen 兜底" },
-  { product: "平台数据分析", subFeature: "竖版分镜执行表（单张）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "gpt-image-2 · Imagen 兜底" },
-  { product: "平台数据分析", subFeature: "小红书双笔记图（单张）", credits: CREDIT_COSTS.platformXhsDualNote, note: "gpt-image-2 · Imagen 兜底" },
+  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: 5, note: "每张 5 cr，生图采用 GPT-IMAGE-2 主路径 · Imagen 兜底" },
+  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: 6, note: "每张 6 cr，生图采用 GPT-IMAGE-2 主路径 · Imagen 兜底" },
+  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
+  { product: "平台数据分析", subFeature: "小红书图文参考（原生 2×4）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },
   { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },
   { product: "平台数据分析", subFeature: "参考图高清放大 4×", credits: CREDIT_COSTS.platformRefImageUpscale4x },

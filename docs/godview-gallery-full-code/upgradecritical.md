@@ -1,42 +1,47 @@
-# GodView 战略扉页画廊 · 关键升级说明（upgradecritical）
+# GodView 戰略扉頁畫廊 · 關鍵升級說明（upgradecritical）
 
-## 目标
+## 目標
 
-补齐 **GodView 完成后** 的「交互式战略扉页画廊」：从报告 Markdown 的 `##` 章节自动提炼标题与至多 500 字上下文，一键调用 **免积分** 生图路由，生成 STRATEGIC 模式 9:16 扉页；试读水印与整单 `strategicImagesTrialWatermark`（首购尝鲜）严格对齐，避免仅靠正文内嵌图带来的视觉张力不足。
+補齊 **GodView 完成後** 的「交互式戰略扉頁畫廊」：從報告 Markdown 的 `##` 章節自動提煉標題與至多 500 字上下文，一鍵調用 **免積分** 生圖路由，生成 STRATEGIC 模式 9:16 扉頁；試讀水印與整單 `strategicImagesTrialWatermark`（首購嘗鮮）嚴格對齊，避免僅靠正文內嵌圖帶來的視覺張力不足。
 
-## 后端
+## 後端
 
 ### `mvAnalysis.generateGodViewChapterPosters`（`server/routers.ts`）
 
-- **鉴权**：`protectedProcedure`，必须登录。
-- **输入**：`jobId` + `chapters[]`，每项含稳定 `id`、`title`、`context?`（最多 24 章）。
-- **护栏**：
+- **鑑權**：`protectedProcedure`，必須登入。
+- **輸入**：`jobId` + `chapters[]`，每項含穩定 `id`、`title`、`context?`（最多 24 章）。
+- **護欄**：
   - `readJob(jobId)` 且 `userId` 匹配；
-  - 仅允许 `completed` / `awaiting_review`；
-  - `reportMarkdown` 过短则拒绝（防滥用占用生图算力）。
-- **水印**：**不信任**客户端「是否首购」传参；以任务落盘字段 `strategicImagesTrialWatermark` 为准，传入 `generateImageGpt2WithImagenFallback({ mode: "STRATEGIC", isTrial })`。
-- **扣费**：**不扣积分**；`totalCost` 恒为 `0`。
-- **输出**：`{ ok, totalCost, results: { id, title, url | null }[], isTrial }`；若全部失败则抛错。
+  - 僅允許 `completed` / `awaiting_review`；
+  - `reportMarkdown` 過短則拒絕（防濫用占用生圖算力）。
+- **主路徑（文生圖職責，補記）**：
+  - **Gemini**：`buildChapterPosterGeminiTask` + `runGemini31ProPreviewText` — **雙語編導**人設，讀中文標題與節選，產出 **一條英文視覺 prompt**（**GPT-IMAGE-2 不翻譯、只接收英文**）。
+  - **GPT-IMAGE-2**：`generateGptImage2FromRawEnglishPrompt`（9:16 + 可選試讀 prompt 尾綴），失敗則 Imagen 兜底（見 `proxyImageService`）。
+- **兜底**：若 Gemini 或主路徑出圖失敗，回退 **`generateImageGpt2WithImagenFallback`（`mode: "STRATEGIC"`, `isTrial`；畫內零字策略）**。
+- **水印**：**不信任**客戶端「是否首購」傳參；以任務落盤欄位 `strategicImagesTrialWatermark` 為準；試讀時在 **英文** raw prompt 末尾追加 `TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION`。
+- **扣費**：**不扣積分**；`totalCost` 恆為 `0`。
+- **輸出**：`{ ok, totalCost, results: { id, title, url | null }[], isTrial }`；若全部失敗則拋錯。
 
-### `deepResearch.status` 扩展
+### `deepResearch.status` 擴展
 
-- 增加 **`strategicImagesTrialWatermark`**，供前端画廊文案与 `TrialWatermarkImage` 叠加逻辑与后端一致。
+- 增加 **`strategicImagesTrialWatermark`**，供前端畫廊文案與 `TrialWatermarkImage` 疊加邏輯與後端一致。
 
 ## 前端（`client/src/pages/GodViewPage.tsx`）
 
-- **`deepResearch.status` 轮询**：`enabled` 在 `dispatched` 与 **`done`** 下均保持（仍在终态停止 `refetchInterval`），确保完成页能读到 `reportMarkdown` 与新字段。
-- **`strategicChapters`**：`useMemo` 扫描 `## `，正文拼至下一段 `##` 前，上下文压到 **500 字**；`id` 为 `h2_${index}` 保证与后端回写一致。
-- **状态**：`chapterPosterMap[id] → url`；`pollingJobId` 变化时清空，避免跨任务串图。
-- **UI**：完成卡片上方为 **横向滚动画廊** +「一键生成专属战略扉页（免费）」；下方为 **报告正文预览**（原有 `ReportRenderer`）。
-- **试读叠图**：已生成缩略图用 **`TrialWatermarkImage`**，当且仅当 `coverTrialWatermark === true`（与任务首购尝鲜一致）；文案引用 `TRIAL_READ_WATERMARK_LINE`（`MVSTUDIOPRO.COM · 试读`），与生图 prompt 常量一致。
+- **`deepResearch.status` 輪詢**：`enabled` 在 `dispatched` 與 **`done`** 下均保持（仍在終態停止 `refetchInterval`），確保完成頁能讀到 `reportMarkdown` 與新欄位。
+- **`strategicChapters`**：`useMemo` 掃描 `## `，正文拼至下一段 `##` 前，上下文壓到 **500 字**；`id` 為 `h2_${index}` 保證與後端回寫一致。
+- **狀態**：`chapterPosterMap[id] → url`；`pollingJobId` 變化時清空，避免跨任務串圖。
+- **UI**：完成卡片上方為 **橫向滾動畫廊** +「一鍵生成專屬戰略扉頁（免費）」；下方為 **報告正文預覽**（原有 `ReportRenderer`）。
+- **試讀疊圖**：已生成縮略圖用 **`TrialWatermarkImage`**，當且僅當 `coverTrialWatermark === true`（與任務首購嘗鮮一致）；文案引用 `TRIAL_READ_WATERMARK_LINE`（`MVSTUDIOPRO.COM · 試讀`），與生圖 prompt 常量一致。
 
-## 验收要点
+## 驗收要點
 
-1. 完成一单 GodView 后，首屏下方出现画廊；点击一键生成后卡片逐个出现 9:16 图。
-2. 浏览器网络面板：`generateGodViewChapterPosters` 请求成功，无积分扣减相关错误。
-3. 首购尝鲜单：生图与水印 overlay 均体现试读水印；非首购单：生图 `isTrial: false` 且前端不叠 `TrialReadWatermarkOverlay`。
-4. `npx tsc --noEmit` 通过。
+1. 完成一單 GodView 後，首屏下方出現畫廊；點擊一鍵生成後卡片逐個出現 9:16 圖。
+2. 瀏覽器網路面板：`generateGodViewChapterPosters` 請求成功，無積分扣減相關錯誤。
+3. 首購嘗鮮單：生圖與水印 overlay 均體現試讀水印；非首購單：生圖不追加試讀 prompt 尾綴且前端不疊 `TrialReadWatermarkOverlay`。
+4. `npx tsc --noEmit` 通過。
 
-## 依赖能力
+## 依賴能力
 
-- `PROXY_OPENAI_API_KEY`（gpt-image-2）+ 可选 Vertex Imagen 兜底（与 Platform 批量生图同栈）。
+- **`GEMINI_API_KEY`**：扉頁 **英文視覺 prompt**（雙語編導文本任務）。
+- **`PROXY_OPENAI_API_KEY`（GPT-IMAGE-2）** + 可選 Vertex **Imagen** 兜底（與 Platform 批量生圖同棧）。
