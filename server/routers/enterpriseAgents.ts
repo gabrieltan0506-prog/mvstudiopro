@@ -27,6 +27,7 @@ import {
   enterpriseAgents,
   enterpriseAgentKnowledgeBase,
   enterpriseAgentSessions,
+  users,
 } from "../../drizzle/schema";
 import { assertMaintenanceOff } from "../services/maintenanceMode";
 import { recordCreation } from "./creations";
@@ -241,12 +242,24 @@ export const enterpriseAgentsRouter = router({
       // 部署窗口禁新部署 — agent-dev.md L281 硬约束
       await assertMaintenanceOff("企业Agent部署");
 
-      // Pro 档位限制：仅 admin 可创建（避免普通用户白嫖大配额）
-      if (input.tier === "pro" && !isAdminUser(ctx.user!.role)) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Pro 档需联系商务对接，无法在自助界面创建",
-        });
+      // Trial / Pro 权限判断
+      if (!isAdminUser(ctx.user!.role)) {
+        if (input.tier === "pro") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Pro 档需联系商务对接，无法在自助界面创建",
+          });
+        }
+        
+        // Trial 档位限制：必须在管理后台标记已支付
+        const d = await db();
+        const userRows = await d.select({ enterpriseTrialPaid: users.enterpriseTrialPaid }).from(users).where(eq(users.id, ctx.user!.id)).limit(1);
+        if (!userRows[0]?.enterpriseTrialPaid) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "您还未开通企业智能体试用。请进行对公转账或联系客户经理后，由后台为您开通权限。",
+          });
+        }
       }
 
       try {
@@ -530,6 +543,18 @@ export const enterpriseAgentsRouter = router({
   // 9. admin sub-router — admin 后台用（PR-4 准备）
   // ═════════════════════════════════════════════════════════════════════
   admin: router({
+    /** 标记用户已线下支付 15k 试用费（方案一） */
+    markTrialPaid: adminProcedure
+      .input(z.object({ userId: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const d = await db();
+        await d
+          .update(users)
+          .set({ enterpriseTrialPaid: true })
+          .where(eq(users.id, input.userId));
+        return { ok: true, message: `User ${input.userId} marked as enterprise_trial_paid` };
+      }),
+
     /** 列出所有 agents（不论 owner / 状态），供 admin 监控 / 审计 */
     listAll: adminProcedure
       .input(
