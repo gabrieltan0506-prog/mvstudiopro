@@ -518,6 +518,19 @@ export const creationsRouter = router({
           lightingDetails: z.string().max(4000).optional(),
           executionDetails: z.string().max(4000).optional(),
           reportTitle: z.string().max(220).optional(),
+          kind: z
+            .enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"])
+            .optional(),
+        })
+        .optional(),
+      xhsDualNote: z
+        .object({
+          imageUrl: z.string().max(8000).optional(),
+          reportTitle: z.string().max(220).optional(),
+          xhsBullet1Title: z.string().max(80).optional(),
+          xhsBullet1Desc: z.string().max(400).optional(),
+          xhsBullet2Title: z.string().max(80).optional(),
+          xhsBullet2Desc: z.string().max(400).optional(),
         })
         .optional(),
     }))
@@ -542,9 +555,8 @@ export const creationsRouter = router({
       const title = String(meta.lighthouseTitle || row.title || "战略情报研报").slice(0, 80);
 
       try {
-        const { generateInteractiveHtml, resolveHtmlReportStoryboardSheet } = await import(
-          "../services/htmlReportTemplate"
-        );
+        const { generateInteractiveHtml, resolveHtmlReportStoryboardSheet, resolveHtmlReportXhsDualNote } =
+          await import("../services/htmlReportTemplate");
         // 用户决策（2026-05-01）：HTML 离线打开也要看到封面 → HTTP 签名 URL 在导出时
         // 抓下来内联成 base64 data URI（>8MB 或失败时 fallback 原 URL）
         // 用户决策续（2026-05-01）：thumbnailUrl=NULL（主流程 6 次重试全败）时，
@@ -556,6 +568,7 @@ export const creationsRouter = router({
         }
         const inlinedCoverUrl = await inlineCoverIfHttp(resolvedCoverUrl);
         const storyboardSheet = resolveHtmlReportStoryboardSheet(meta, input.storyboardSheet ?? null);
+        const xhsDualNote = resolveHtmlReportXhsDualNote(meta, input.xhsDualNote ?? null);
         if (
           storyboardSheet &&
           !storyboardSheet.scriptContextForPanels?.trim() &&
@@ -577,6 +590,7 @@ export const creationsRouter = router({
             abstract: meta.summary || undefined,
           },
           storyboardSheet,
+          xhsDualNote,
         });
 
         const sizeBytes = Buffer.byteLength(html, "utf8");

@@ -155,33 +155,41 @@ export function buildStoryboardSheetPortraitPrompt(options: {
 }): string {
   return buildStoryboardSheetLandscapePrompt(options);
 }
-/** 小紅書風：單張 9:16 內兩段生活方式畫面 — **畫內零文字**；標題由前端疊加 */
+/** 小紅書雙卡：16:9 **幾何鎖定**（左右 50/50 垂直卡）+ **畫內零文字**（X10 / Geometric Straightjacket） */
 export function buildXiaohongshuDualNotePrompt(options: {
   title: string;
   scriptContext: string;
   /** 保留相容：浮水印不進 prompt */
   isTrial?: boolean;
+  executionDetails?: string;
 }): string {
   void options.title;
   void options.isTrial;
   const raw = String(options.scriptContext || "").trim();
-  const visualContext =
-    raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
-      ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
-      : raw;
+  const content = raw.length > 3000 ? raw.slice(0, 3000) : raw;
+  const executionDetails = String(options.executionDetails || "").trim()
+    || "High-net-worth IP style, minimalist luxury, cinematic lighting.";
+
   return `
 Model: GPT-Image-2
-Task: Create ONE vertical 9:16 image with TWO stacked note-card shaped lifestyle/editorial photo regions (rounded card look, soft shadows) — **zero readable text on the image**.
+TASK: Create a strict geometric layout for Xiaohongshu (Little Red Book) inside a 16:9 canvas.
+
+🛑 GEOMETRIC LAYOUT RULES (FATAL IF IGNORED):
+1. You MUST divide the 16:9 canvas into EXACTLY TWO distinct vertical panels of equal width (50% left, 50% right), placed side-by-side. Each half is one tall vertical "note card" (approximate 3:4 portrait feel within that column) — two clean cards, not a random collage.
+2. The Left panel is the "Cover Card" (visual hook, hero scene). The Right panel is the "Value Card" (inner content visualization — supporting detail, atmosphere, or secondary focal scene).
+3. DO NOT draw messy collages, overlapping polaroids on a table, scattered stickers, or scrapbook chaos. Keep the vertical split between cards sharp and straight with a clean gutter.
 
 ${NO_TEXT_ON_IMAGE_BLOCK}
 
-Use CONTEXT only to inspire subjects, props, and palette (do NOT paste CONTEXT as typography):
-${visualContext}
+🛑 STAGING RULES (NO TYPOGRAPHY):
+1. DO NOT render ANY text, titles, watermarks, logos, UI, or readable characters on the image. The output MUST be a clean visual canvas. The system UI will overlay typography via DOM.
 
-STRUCTURE: Upper card — hero lifestyle scene; lower card — complementary scene or product detail. Distinct compositions; no duplicate photo pasted twice.
+🧠 VISUAL CONTEXT:
+[AESTHETIC & LIGHTING — translate to pixels only; never spell as text]: ${executionDetails.slice(0, 2000)}
+[CONTENT — visualize this logic as imagery only; do NOT paste as typography]: ${content}
 
-STYLE: Authentic 小红书 feed aesthetic, bright premium mobile editorial, no app UI frame.
-Aspect Ratio: 9:16 portrait. 8k, masterpiece.
+STYLE: Editorial magazine photography, Vogue aesthetic, 8k resolution, masterpiece.
+Aspect Ratio: 16:9.
 `.trim();
 }
 
@@ -284,7 +292,7 @@ export type PlatformCompositeSheetKind =
   | "xiaohongshu_dual_note";
 
 /**
- * 平台頁：單次 gpt-image-2（橫版 16:9 分鏡表 或 9:16 小紅書雙卡）+ Imagen 兜底。
+ * 平台頁：單次 gpt-image-2（橫版 16:9 分鏡表 或 16:9 小紅書雙卡）+ Imagen 兜底。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -310,12 +318,13 @@ export async function generatePlatformCompositeSheetImage(options: {
         title: options.title,
         scriptContext: options.scriptContext,
         isTrial: options.isTrial,
+        executionDetails: options.executionDetails,
       });
 
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   const primary = await postGptImage2AndUpload(prompt, subdir, {
     maxAttempts: 1,
-    sizes: isStoryboard ? GPT_IMAGE2_LANDSCAPE_SIZES : undefined,
+    sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
   });
   if (primary) return primary;
 
@@ -327,7 +336,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const r = await generateImagenVertexPredict({
     prompt: imagenPrompt,
     model,
-    aspectRatio: isStoryboard ? "16:9" : "9:16",
+    aspectRatio: "16:9",
     imageSize: "2K",
     numberOfImages: 1,
     personGeneration: "ALLOW_ADULT",
