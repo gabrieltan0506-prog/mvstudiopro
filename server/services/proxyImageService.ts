@@ -125,54 +125,53 @@ function buildStoryboardShotCountGuidance(scriptContext: string): string {
   return `SHOT COUNT: Derive from CONTEXT — one panel per clearly described shot (practical range about 2–12 on one 9:16 sheet). There is NO required count of 8. If the prose only supports 4 shots, draw 4. Never clone the same frame to fill space.`;
 }
 
-/** 豎版專業執行分鏡表：單張 9:16、鏡數隨文字敘述；每格下方七欄位表 */
+/**
+ * 豎版「鏡頭執行分鏡表」— 極簡畫內文字（僅表頭 + 每格鏡號/景別），其餘劇本只做隱形視覺上下文，
+ * 避免逼模型畫多欄小表導致亂碼假表格與畫質崩壞。
+ */
 export function buildStoryboardSheetPortraitPrompt(options: {
   title: string;
   scriptContext: string;
   isTrial?: boolean;
 }): string {
-  const displayHeading = sliceHeading(options.title);
   const raw = String(options.scriptContext || "").trim();
   const visualContext =
     raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
       ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
       : raw;
-  const shotGuidance = buildStoryboardShotCountGuidance(raw);
+  const displayHeading = sliceHeading(options.title);
+  const shotCountGuidance = buildStoryboardShotCountGuidance(raw);
   const watermarkInstruction = options.isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
+
   return `
 Model: GPT-Image-2
-Task: Render ONE printable vertical Chinese cinematography EXECUTION STORYBOARD SHEET (镜头执行分镜表)— premium streaming / feature-film prep document, NOT a social collage.
+TASK: Create a professional, portrait-oriented composite storyboard sheet (9:16 vertical layout).
 
-${shotGuidance}
+TYPOGRAPHY INSTRUCTION (STRICT LIMIT):
+1. TOP HEADER: You MUST prominently render ONLY "${displayHeading} - 镜头执行分镜表" at the top (clear, large Chinese; no extra subtitle paragraphs under the title).
+2. GRID LABELS: Underneath each image panel, you are ONLY allowed ONE compact label line: two-digit shot index and shot type (e.g. "01 - 特写", "02 - 中景") in story order.
+FATAL — DO NOT render: complex tables, spreadsheets, multi-column field rows, script dialogue, voiceover quotes, or any five-field «分镜表» summaries under panels. Extra micro-typography corrupts the image into unreadable glyph grids — forbidden.
 
-DOCUMENT LAYOUT (non-negotiable):
-1) TOP HEADER STRIP
-   - Main line (large): natively render EXACT headline: "${displayHeading}"
-   - Sub-header lines (smaller Chinese, 2–4 short lines): infer from CONTEXT — 场次, 视觉风格, 视频约束 (e.g. 单镜时长 ≤ 5 秒). If a field is missing, invent concise on-tone text; never leave blank.
+VISUAL CONTEXT & LUMINANCE (CRITICAL — PIXELS ONLY, DO NOT RENDER AS TEXT):
+[LUMINANCE & TENSION]: High-end commercial / cinematic standards — dramatic Rembrandt modeling, film-grade soft key, controlled contrast, cinematic depth of field, extreme visual tension. Tripod-stable premium look unless the script clearly demands handheld.
 
-2) BODY — variable grid of shot panels (NOT fixed 2×4 unless CONTEXT happens to need 8 shots).
-   - Choose a readable layout for the shot count above: e.g. 2 columns × k rows, or 1 column × n rows if few shots, so everything fits one 9:16 page with legible tables.
-   - Reading order: top-to-bottom within a column, then next column (or pure top-to-bottom if single column). 镜号 must be consecutive from 01 upward for however many panels you draw.
-   - EACH panel:
-     (A) UPPER: one cinematic keyframe (must match CONTEXT world / era / wardrobe).
-     (B) LOWER: compact LEGIBLE Chinese mini-table with row labels exactly:
-         镜号 | 景别 | 画面内容 | 情绪 | 运镜 | 台词/声音 | 时长
-       Fill every field for that shot; no empty shells, no replacing the table with a prose blob.
+[SCRIPT_DETAILS]: Visualize the following — for IMAGERY ONLY; translate entirely into panel artwork (wardrobe, set, blocking, lens feel). NEVER write this prose onto the image.
 
-ANTI-LAZY / ANTI-DRIFT:
-- NO modern office / business look UNLESS CONTEXT says contemporary workplace.
-- Every pair of adjacent panels MUST differ clearly in at least two of: 景别, 人物站位/动作, 构图, 运镜 — unless CONTEXT explicitly calls for an intentional match cut.
-- FORBIDDEN: copy-pasting the same artwork across multiple panels; FORBIDDEN: filler duplicate frames.
-- FORBIDDEN: microscopic unreadable glyphs.
-
-STORY: Sequence and beats come strictly from CONTEXT; panel count follows CONTEXT, not a default number.
-
-CONTEXT (do NOT paste as one wall of tiny text on the sheet):
 ${visualContext}
 
-STYLE: Match CONTEXT genre lighting (e.g. snow / palace lantern contrast for period drama); crisp grid; parchment optional; no phone or browser UI.
+(End of non-printed script — do not paste onto the sheet.)
+
+${shotCountGuidance}
+
+GRID LAYOUT: Natively render a variable vertical grid (e.g. 2 columns × N rows, or 1 column × N rows) from the shot count so everything fits ONE 9:16 page with breathing room.
+
+CELL CONTENT: Each cell MUST contain a high-fidelity cinematic still matching [SCRIPT_DETAILS] and beat order, followed by ONLY the minimal label from TYPOGRAPHY #2. No other text inside the cell.
+
+ANTI-LAZY: Do NOT duplicate the same image to fill slots. Do NOT leave empty white gaps. Adjacent panels must be visually distinct unless the script explicitly calls for a match cut.
+
+STYLE: Dark gold renaissance medical book divider aesthetic, Vogue magazine elegance, optional crisp panel dividers, no phone or browser UI, 8k resolution, masterpiece.
 ${watermarkInstruction}
-Aspect ratio 9:16 portrait; table typography must stay human-readable.
+Aspect Ratio: 9:16 portrait.
 `.trim();
 }
 
