@@ -40,6 +40,7 @@ const CompetitorRadarPage = lazy(() => import("./pages/CompetitorRadarPage"));
 const VipTrackerPage = lazy(() => import("./pages/VipTrackerPage"));
 const EnterpriseAgentManager = lazy(() => import("./pages/EnterpriseAgentManager"));
 const EnterpriseAgentDetail = lazy(() => import("./pages/EnterpriseAgentDetail"));
+const EnterpriseAgentPlayground = lazy(() => import("./pages/EnterpriseAgentPlayground"));
 
 function PageLoader() {
   return (
@@ -97,6 +98,7 @@ function Router() {
         <Route path={"/agent/vip-tracker"} component={VipTrackerPage} />
         <Route path={"/enterprise-agent"} component={EnterpriseAgentManager} />
         <Route path={"/enterprise-agent/:agentId"} component={EnterpriseAgentDetail} />
+        <Route path={"/enterprise-agent/:agentId/play"} component={EnterpriseAgentPlayground} />
         <Route path={"/login"} component={Login} />
 
         <Route path={"/404"} component={NotFound} />
