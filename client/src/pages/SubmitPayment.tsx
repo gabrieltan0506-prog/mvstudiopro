@@ -33,7 +33,7 @@ export default function SubmitPaymentPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-5">
+      <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-5">
         <Lock size={64} className="text-white/30" />
         <h1 className="text-2xl font-semibold mt-4 mb-2 text-white">请先登录</h1>
         <p className="text-base text-white/50 mb-6">您需要登录才能提交付款截屏</p>
@@ -102,7 +102,7 @@ export default function SubmitPaymentPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="overflow-y-auto p-5 max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <button onClick={() => window.history.back()} className="p-2">

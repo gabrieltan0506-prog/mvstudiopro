@@ -1323,7 +1323,7 @@ export default function PlatformPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0b0620] text-white">
+      <div className="flex min-h-dvh items-center justify-center bg-[#0b0620] text-white">
         <Loader2 className="h-8 w-8 animate-spin text-[#49e6ff]" />
       </div>
     );
@@ -1331,7 +1331,7 @@ export default function PlatformPage() {
 
   if (!isAuthenticated && !supervisorAccess) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#080618_0%,#13092e_48%,#090715_100%)] px-6 text-white">
+      <div className="flex min-h-dvh items-center justify-center bg-[linear-gradient(180deg,#080618_0%,#13092e_48%,#090715_100%)] px-6 text-white">
         <div className="max-w-lg rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-8 text-center shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
           <div className="text-sm uppercase tracking-[0.24em] text-[#8cefff]">Platform Intelligence</div>
           <div className="mt-4 text-3xl font-black">需要先登录</div>
@@ -1350,7 +1350,7 @@ export default function PlatformPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
+    <div className="min-h-dvh bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}`}</style>
 
       {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}

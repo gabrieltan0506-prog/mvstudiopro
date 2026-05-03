@@ -621,7 +621,7 @@ export default function Showcase() {
   const detailVideo = detailVideoId != null ? videos.find((v: any) => v.id === detailVideoId) : null;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <Navbar />
 
       <main className="container pt-24 pb-16">

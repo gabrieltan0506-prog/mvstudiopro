@@ -21,7 +21,7 @@ export default function PaymentHistory() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-background text-foreground">
+      <div className="min-h-dvh bg-background text-foreground">
         <Navbar />
         <div className="pt-24 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
       </div>
@@ -30,7 +30,7 @@ export default function PaymentHistory() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background text-foreground">
+      <div className="min-h-dvh bg-background text-foreground">
         <Navbar />
         <div className="pt-24 pb-16 container max-w-2xl text-center">
           <Receipt className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
@@ -43,7 +43,7 @@ export default function PaymentHistory() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <Navbar />
       <div className="pt-24 pb-16 container max-w-4xl">
         <div className="flex items-center gap-3 mb-8">

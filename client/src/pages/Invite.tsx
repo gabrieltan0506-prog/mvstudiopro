@@ -91,7 +91,7 @@ export default function InvitePage() {
   // Auth guard
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="min-h-dvh bg-background flex items-center justify-center p-6">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     );
@@ -99,7 +99,7 @@ export default function InvitePage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="min-h-dvh bg-background flex flex-col items-center justify-center gap-3 p-6 text-center">
           <Lock className="h-12 w-12 text-gray-500" />
           <h2 className="text-xl font-bold text-text">请先登录以查看邀请信息</h2>
           <Link href="/login">
@@ -111,7 +111,7 @@ export default function InvitePage() {
 
   if (!myStatus) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="min-h-dvh bg-background flex flex-col items-center justify-center gap-3 p-6 text-center">
           <Hourglass className="h-12 w-12 text-gray-500" />
           <h2 className="text-xl font-bold text-text">尚未加入内测</h2>
           <p className="text-sm text-gray-400">您目前不是内测用户，请联系管理员获取内测资格</p>
@@ -127,7 +127,7 @@ export default function InvitePage() {
   const Icon = currentLevel.icon;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       <div className="overflow-y-auto flex-grow">
         <div className="max-w-lg mx-auto px-4 pb-10 w-full">
           {/* Header */}

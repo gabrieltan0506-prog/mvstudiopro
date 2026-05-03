@@ -92,7 +92,7 @@ export default function CompetitorRadarPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0c0a08", color: "rgba(245,235,210,0.92)" }}>
+    <div style={{ minHeight: "100dvh", background: "#0c0a08", color: "rgba(245,235,210,0.92)" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px 80px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
           <button onClick={() => navigate("/god-view")} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 13, fontWeight: 700 }}>

@@ -17,7 +17,7 @@ export default function SupervisorAccess() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#08111f] text-[#f7f4ef]">
+    <div className="min-h-dvh bg-[#08111f] text-[#f7f4ef]">
       <div className="mx-auto max-w-5xl px-4 py-10">
         <div className="rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,138,61,0.22),transparent_32%),linear-gradient(180deg,#101d31_0%,#08111f_78%)] p-8 md:p-10">
           <div className="inline-flex rounded-full border border-[#ff8a3d]/25 bg-[#ff8a3d]/10 px-3 py-1 text-xs font-semibold tracking-[0.24em] text-[#ffb37f]">

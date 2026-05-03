@@ -27,7 +27,7 @@ export default function AnalysisView() {
 
   if (authLoading || isLoading) {
     return (
-      <div className="min-h-screen bg-[#090915] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#090915] flex items-center justify-center">
         <RefreshCw className="animate-spin text-purple-400 w-8 h-8" />
       </div>
     );
@@ -35,7 +35,7 @@ export default function AnalysisView() {
 
   if (error || !item) {
     return (
-      <div className="min-h-screen bg-[#090915] flex flex-col items-center justify-center gap-4 text-white/50">
+      <div className="min-h-dvh bg-[#090915] flex flex-col items-center justify-center gap-4 text-white/50">
         <FileText className="w-12 h-12 opacity-30" />
         <p>找不到此分析记录</p>
         <button onClick={() => navigate("/my-works")} className="text-purple-400 text-sm underline">
@@ -60,7 +60,7 @@ export default function AnalysisView() {
 
   return (
     <div
-      className="min-h-screen"
+      className="min-h-dvh"
       style={{ background: `linear-gradient(160deg, ${colors.from} 0%, ${colors.to} 40%, #090915 100%)` }}
     >
       {/* Header */}

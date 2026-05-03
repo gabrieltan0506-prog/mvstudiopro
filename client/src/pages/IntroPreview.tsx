@@ -140,7 +140,7 @@ export default function IntroPreviewPage() {
   }, [playingVideo]);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="flex-grow pb-10">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3">

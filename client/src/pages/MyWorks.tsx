@@ -78,13 +78,13 @@ export default function MyWorks() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-[#06040f] flex items-center justify-center">
+    <div className="min-h-dvh bg-[#06040f] flex items-center justify-center">
       <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#06040f] text-white">
+    <div className="min-h-dvh bg-[#06040f] text-white">
       {/* Header */}
       <div className="sticky top-0 z-20 border-b border-white/8 bg-[rgba(6,4,15,0.85)] backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">

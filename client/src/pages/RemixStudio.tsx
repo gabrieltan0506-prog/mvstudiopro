@@ -78,7 +78,7 @@ type NodeItem = {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: "100vh",
+  minHeight: "100dvh",
   background: "radial-gradient(circle at top left, rgba(103,64,255,0.16), transparent 24%), linear-gradient(180deg, #060b18 0%, #0a1222 100%)",
   padding: 20,
 };

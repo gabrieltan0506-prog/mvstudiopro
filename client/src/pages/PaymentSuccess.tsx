@@ -45,7 +45,7 @@ export default function PaymentSuccess() {
   const isSubscription = !!plan;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="flex-grow flex justify-center items-center px-8 py-10">
         <div className="w-full max-w-md flex flex-col items-center">
           {/* Success Icon */}

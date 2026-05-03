@@ -71,7 +71,7 @@ export default function AdminVideoReviewPage() {
 
   if (!isAuthenticated || user?.role !== "admin") {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-6">
+      <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-6">
         <div className="flex flex-col items-center justify-center gap-4 text-center">
           <Lock size={64} className="text-red-500" />
           <h1 className="text-2xl font-bold">无权限访问</h1>
@@ -199,7 +199,7 @@ export default function AdminVideoReviewPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       {/* Header */}
       <header className="sticky top-0 z-10 flex items-center justify-between p-4 bg-[#0A0A0C]/80 backdrop-blur-md border-b border-white/10">
         <button onClick={() => window.history.back()} className="w-10 h-10 rounded-full bg-[#1C1C1E] flex items-center justify-center hover:bg-gray-700 transition-colors">

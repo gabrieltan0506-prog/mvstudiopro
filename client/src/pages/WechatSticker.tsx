@@ -88,7 +88,7 @@ export default function WechatSticker() {
   const selectedStyleData = STYLES.find(s => s.id === selectedStyle);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] font-sans">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] font-sans">
       <div className="container mx-auto max-w-3xl pb-20">
         {/* Header */}
         <header className="flex items-center p-4 sticky top-0 bg-[#0A0A0C]/80 backdrop-blur-sm z-10">

@@ -168,7 +168,7 @@ export default function VFXEngine() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] page-enter">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] page-enter">
       <div className="ambient-glow" />
       <div className="overflow-y-auto">
         {/* ===== Header ===== */}

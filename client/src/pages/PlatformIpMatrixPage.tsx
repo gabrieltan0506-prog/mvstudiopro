@@ -86,7 +86,7 @@ export default function PlatformIpMatrixPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0c0a08", color: "rgba(245,235,210,0.92)" }}>
+    <div style={{ minHeight: "100dvh", background: "#0c0a08", color: "rgba(245,235,210,0.92)" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px 80px" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>

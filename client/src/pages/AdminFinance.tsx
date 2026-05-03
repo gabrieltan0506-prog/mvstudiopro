@@ -58,7 +58,7 @@ export default function AdminFinance() {
 
   if (authLoading || !isAuthenticated || user?.role !== "admin") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0A0A0C]">
+      <div className="flex min-h-dvh items-center justify-center bg-[#0A0A0C]">
         {authLoading ? <Loader2 className="h-8 w-8 animate-spin text-gray-400" /> : <p className="text-gray-400">无权限访问</p>}
       </div>
     );
@@ -96,7 +96,7 @@ export default function AdminFinance() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="overflow-y-auto p-6 pb-20">
         {/* Header */}
         <header className="flex items-center">

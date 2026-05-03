@@ -291,7 +291,7 @@ export default function ReportEditor({
     if (cloneBody) {
       cloneBody.innerHTML = "";
       const wrapper = document.createElement("div");
-      wrapper.style.cssText = "padding: 24px; background: #f7ede0; min-height: 100vh;";
+      wrapper.style.cssText = "padding: 24px; background: #f7ede0; min-height: 100dvh;";
       wrapper.innerHTML = previewRef.current.innerHTML;
       cloneBody.appendChild(wrapper);
     }
@@ -318,7 +318,7 @@ export default function ReportEditor({
   const fullPreview = useMemo(() => markdown, [markdown]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 30%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif" }}>
+    <div style={{ minHeight: "100dvh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 30%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif" }}>
       {/* 顶部工具栏 */}
       <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.95)", backdropFilter: "blur(14px)", padding: "12px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 8px rgba(122,84,16,0.05)" }}>
         <button onClick={onClose} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700 }}>
@@ -403,7 +403,7 @@ export default function ReportEditor({
         </div>
 
         {/* ── 右栏：实时预览（粘性） ── */}
-        <div style={{ position: "sticky", top: 90, height: "calc(100vh - 110px)", overflow: "auto", borderRadius: 14, border: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.55)", boxShadow: "0 4px 16px rgba(122,84,16,0.08)" }}>
+        <div style={{ position: "sticky", top: 90, height: "calc(100dvh - 110px)", overflow: "auto", borderRadius: 14, border: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.55)", boxShadow: "0 4px 16px rgba(122,84,16,0.08)" }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(122,84,16,0.15)", background: "rgba(255,250,240,0.85)", display: "flex", alignItems: "center", gap: 8, position: "sticky", top: 0, zIndex: 5, backdropFilter: "blur(8px)" }}>
             <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.10em", color: "#7a5410", textTransform: "uppercase" }}>所见即所得 · 实时预览</span>
             <span style={{ fontSize: 11, color: "rgba(61,44,20,0.55)", marginLeft: "auto", fontWeight: 600 }}>

@@ -209,7 +209,7 @@ export default function WorkspaceStudioPage() {
 
   if (loading || workspacesQuery.isLoading) {
     return (
-      <div className="min-h-screen bg-[#0C1117] text-white flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0C1117] text-white flex items-center justify-center">
         <Loader2 className="h-7 w-7 animate-spin" />
       </div>
     );
@@ -305,7 +305,7 @@ export default function WorkspaceStudioPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0C1117] text-[#E8EDF2] p-4 md:p-6">
+    <div className="min-h-dvh bg-[#0C1117] text-[#E8EDF2] p-4 md:p-6">
       <div className="max-w-[1400px] mx-auto grid grid-cols-1 lg:grid-cols-[280px_340px_1fr] gap-4">
         <section className="rounded-xl border border-white/10 bg-[#111827] p-4">
           <h2 className="text-sm uppercase tracking-wider text-white/70 mb-3">工作区管理</h2>

@@ -2003,7 +2003,7 @@ export default function WorkflowNodes() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050816] text-white">
+    <div className="min-h-dvh bg-[#050816] text-white">
       <Navbar />
       <main className="px-4 pb-8 pt-24 md:px-6">
         <div className="mx-auto max-w-[1880px]">

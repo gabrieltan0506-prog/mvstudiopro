@@ -375,7 +375,7 @@ export default function AudioLabPage() {
   const isGenerating = status === "generating" || status === "polling";
 
   return (
-    <div className="flex flex-col h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="flex flex-col h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b border-white/10">
         <Link href="/">

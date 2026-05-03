@@ -174,7 +174,7 @@ export default function MVGallery() {
   const [selectedMV, setSelectedMV] = useState<typeof MV_LIST[0] | null>(null);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <Navbar />
 
       <section className="pt-24 pb-10">

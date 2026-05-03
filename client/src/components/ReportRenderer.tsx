@@ -514,8 +514,8 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
         overflow: "hidden",
       }}
     >
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
+      <div style={{ width: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
           <thead>
             <tr style={{ background: colors.tableHeadGradient }}>
               {headers.map((h, i) => (
@@ -529,6 +529,7 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
                     textAlign: "left",
                     letterSpacing: "0.04em",
                     borderRight: i < headers.length - 1 ? "1px solid rgba(255,255,255,0.18)" : "none",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {renderInline(h, colors)}
@@ -550,6 +551,7 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
                       color: ci === 0 ? colors.goldDeep : colors.inkSoft,
                       fontWeight: ci === 0 ? 700 : 500,
                       lineHeight: 1.65,
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {renderInline(cell, colors)}
@@ -611,12 +613,12 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
           根据上方表格自动生成 · 仅展示数值列对比
         </span>
       </div>
-      <div style={{ width: "100%", height: 280 }}>
-        <ResponsiveContainer>
+      <div style={{ width: "100%", height: 280, minWidth: 0 }}>
+        <ResponsiveContainer width="100%" height="100%">
           {chart.type === "bar" ? (
-            <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
+            <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
               {commonGrid}
-              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
+              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval="preserveStartEnd" angle={-25} textAnchor="end" height={60} />
               <YAxis tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
@@ -625,9 +627,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </BarChart>
           ) : chart.type === "line" ? (
-            <LineChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
+            <LineChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
               {commonGrid}
-              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} />
+              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval="preserveStartEnd" angle={-25} textAnchor="end" height={60} />
               <YAxis tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
@@ -834,6 +836,27 @@ export default function ReportRenderer({
         .report-raw-html figure img { max-width: 100%; height: auto; border-radius: 10px; box-shadow: ${colors.cardShadow}; }
         .report-raw-html figcaption { margin-top: 8px; font-size: 12.5px; color: ${colors.inkSoft}; font-style: italic; line-height: 1.65; }
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
+
+        /* Mobile Typography Optimization */
+        @media (max-width: 640px) {
+          [data-report-surface] {
+            padding: 24px 20px !important;
+            font-size: 14.5px !important;
+          }
+          [data-pdf-accent-bar] {
+            margin: -24px -20px 24px !important;
+          }
+          [data-report-surface] p,
+          [data-report-surface] li {
+            font-size: 14.5px !important;
+            line-height: 1.8 !important;
+            word-break: break-word !important;
+          }
+          [data-report-surface] h1 { font-size: 22px !important; }
+          [data-report-surface] h2 { font-size: 19px !important; margin-top: 24px !important; }
+          [data-report-surface] h3 { font-size: 16px !important; margin-top: 18px !important; }
+          [data-report-surface] blockquote { font-size: 13.5px !important; padding: 12px 16px !important; margin: 12px 0 !important; }
+        }
 
         @media print {
           /* 紙張可列印區：與 pdf-worker page.pdf margin:0 對齊，盡量滿版 */

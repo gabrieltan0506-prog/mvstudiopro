@@ -62,14 +62,14 @@ export default function AdminTeamStats() {
 
   if (authLoading || !isAuthenticated || user?.role !== "admin") {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] flex justify-center items-center">
+      <div className="min-h-dvh bg-[#0A0A0C] flex justify-center items-center">
         <Loader2 className="h-12 w-12 animate-spin text-[#FF6B35]" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8">
         {/* Header */}
         <header className="flex items-center justify-between pb-4 mb-6 border-b border-white/10">

@@ -31,7 +31,7 @@ export default function LayoutDashboard() {
 
   if (subLoading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF] flex items-center justify-center">
         <Loader2 className="h-10 w-10 animate-spin" />
       </div>
     );
@@ -49,7 +49,7 @@ export default function LayoutDashboard() {
       : "未认证";
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-dvh bg-[#0A0A0C] text-[#F7F4EF]">
       <div className="pb-16">
         {/* Header */}
         <div className="flex items-center p-4 border-b border-white/10">
