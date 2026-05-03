@@ -559,7 +559,7 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   figure.scene-figure figcaption { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; font-style: italic; max-width: 90%; margin-left: auto; margin-right: auto; }
   /* ── 数据可视化 figure（echarts mount） ── */
   .chart-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 22px 0 18px; border-radius: 10px; border: 1px solid var(--rule); background: var(--bg-elev); }
-  figure.chart-figure { margin: 0; padding: 14px 16px 12px; width: 100%; min-width: 400px; text-align: center; box-sizing: border-box; }
+  figure.chart-figure { margin: 0; padding: 14px 16px 12px; width: 100%; min-width: 720px; text-align: center; box-sizing: border-box; }
   figure.chart-figure .echart-mount { width: 100% !important; min-height: 320px; }
   figure.chart-figure figcaption { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; }
   /* ── 工具栏（右上角，提示交互版 + 主题）── */

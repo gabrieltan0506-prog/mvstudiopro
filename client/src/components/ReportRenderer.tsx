@@ -614,7 +614,7 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
         </span>
       </div>
       <div style={{ width: "100%", height: 280, minWidth: 320, overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch" }}>
-        <div style={{ minWidth: 400, height: "100%" }}>
+        <div style={{ minWidth: 720, height: "100%" }}>
           <ResponsiveContainer width="100%" height="100%">
           {chart.type === "bar" ? (
             <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>

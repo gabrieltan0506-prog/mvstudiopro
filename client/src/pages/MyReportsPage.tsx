@@ -599,7 +599,27 @@ export default function MyReportsPage() {
       } else {
         appendMyReportsPdfDebug("未找到 figure.cover-page img（将跳过封面像素诊断）");
       }
+      // ====== 手機端 PDF 導出優化：克隆前短暫撐開 DOM ======
+      let originalMinWidth = "";
+      const isMobile = window.matchMedia("(max-width: 768px)").matches;
+      if (isMobile) {
+        appendMyReportsPdfDebug("检测到移动端，临时将 pdfRoot 设为桌面宽度以优化图表生成...");
+        originalMinWidth = pdfRoot.style.minWidth || "";
+        pdfRoot.style.minWidth = "920px";
+        window.dispatchEvent(new Event("resize"));
+        // 等待 Recharts 重新计算并渲染
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
+      
+      // ====== 克隆完毕，立即还原手机端视图 ======
+      if (isMobile) {
+        pdfRoot.style.minWidth = originalMinWidth;
+        window.dispatchEvent(new Event("resize"));
+        appendMyReportsPdfDebug("已还原 pdfRoot 移动端宽度");
+      }
+
       fragment.querySelectorAll("script").forEach((n) => n.remove());
       fragment.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
       fragment.querySelectorAll("button").forEach((n) => n.remove());
