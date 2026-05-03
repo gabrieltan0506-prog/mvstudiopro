@@ -13,6 +13,18 @@ export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
  */
 export const PROXY_IMAGE_HEADING_MAX_CHARS = 35;
 export const PROXY_IMAGE_CONTEXT_MAX_CHARS = 500;
+/** 分鏡表 / 小紅書雙卡：單圖內多格，允許較長劇本上下文供模型拆成多鏡 */
+export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 900;
+
+/**
+ * gpt-image-2 官方尺寸約束：最長邊 ≤3840、兩邊皆 16 倍數、長寬比 ≤3:1、總像素 ∈ [655360, 8294400]。
+ * 下列為豎版（與本檔 9:16 prompt 一致）；由前到後嘗試，代理拒絕某一組時自動換下一組，無需產品側指定比例。
+ */
+const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1792", "1024x1536", "1536x2304"] as const;
+
+function shouldAbortGptImage2SizeRetries(status: number): boolean {
+  return status === 401 || status === 403 || status === 429;
+}
 
 /** ⚠️ 核心防禦：畫內可讀大字與長文案分離，避免整段貼成螞蟻字或亂碼排版 */
 function sliceHeading(title: string): string {
@@ -80,6 +92,133 @@ Aspect Ratio: 9:16. 8k resolution, masterpiece.
 `.trim();
 }
 
+/** 豎版專業執行分鏡表：單張 9:16 內含 2×4 共八鏡 + 每格下方欄位表 */
+export function buildStoryboardSheetPortraitPrompt(options: {
+  title: string;
+  scriptContext: string;
+  isTrial?: boolean;
+}): string {
+  const displayHeading = sliceHeading(options.title);
+  const raw = String(options.scriptContext || "").trim();
+  const visualContext =
+    raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
+      ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
+      : raw;
+  const watermarkInstruction = options.isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
+  return `
+Model: GPT-Image-2
+Task: Create ONE vertical 9:16 professional Chinese video EXECUTION STORYBOARD SHEET (执行分镜表), like a premium streaming drama production document.
+
+LAYOUT (strict):
+- Top: document header; natively render EXACTLY this title as the main headline: "${displayHeading}"
+- Below: a 2 columns × 4 rows grid = 8 shot panels total, read top-to-bottom. Each panel:
+  * Upper: cinematic key frame (consistent lead character appearance & wardrobe across all 8 panels, matching CONTEXT)
+  * Lower: compact table in readable Chinese with rows: 镜号, 景别, 画面内容, 情绪, 运镜, 台词/声音, 时长
+- Keep Chinese text legible; shorten cell copy if needed, never replace structure with a wall of tiny text.
+
+Derive eight sequential shots from CONTEXT (do NOT paste the whole CONTEXT as one paragraph on the image):
+${visualContext}
+
+STYLE: High-end Chinese drama stills, clean grid, optional light paper/parchment tone, no phone or browser chrome.
+${watermarkInstruction}
+Aspect Ratio: 9:16 portrait. 8k, masterpiece.
+`.trim();
+}
+
+/** 小紅書風：單張 9:16 內上下兩條筆記卡片（圖+標題短文案），一次生圖 */
+export function buildXiaohongshuDualNotePrompt(options: {
+  title: string;
+  scriptContext: string;
+  isTrial?: boolean;
+}): string {
+  const displayHeading = sliceHeading(options.title);
+  const raw = String(options.scriptContext || "").trim();
+  const visualContext =
+    raw.length > PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS
+      ? raw.slice(0, PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS)
+      : raw;
+  const watermarkInstruction = options.isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : "";
+  return `
+Model: GPT-Image-2
+Task: Create ONE vertical 9:16 image with TWO stacked Xiaohongshu-style note cards (小红书图文笔记), lifestyle editorial, soft shadows, rounded cards.
+
+STRUCTURE:
+- Card A (upper): hero lifestyle/cover-style photo + natively render a punchy short Chinese title (max 18 chars) distilled from: "${displayHeading}"
+- Card B (lower): complementary scene or detail + a second short catchy Chinese caption (max 22 chars) from the theme
+- Use CONTEXT for visual and copy ideas (do NOT paste full CONTEXT as tiny text):
+${visualContext}
+
+STYLE: authentic 小红书 aesthetic, bright premium mobile feed, emoji sparingly OK, no app UI frame.
+${watermarkInstruction}
+Aspect Ratio: 9:16 portrait. 8k, masterpiece.
+`.trim();
+}
+
+async function postGptImage2AndUpload(
+  prompt: string,
+  gcsSubdir: string,
+): Promise<string | null> {
+  const apiKey = String(process.env.PROXY_OPENAI_API_KEY || "").trim();
+  if (!apiKey) {
+    console.warn("[proxyImageService] PROXY_OPENAI_API_KEY missing, skip gpt-image-2");
+    return null;
+  }
+
+  for (const size of GPT_IMAGE2_PORTRAIT_SIZES) {
+    try {
+      const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-image-2",
+          prompt,
+          n: 1,
+          size,
+          response_format: "b64_json",
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const json: unknown = await r.json().catch(() => ({}));
+      const anyJson = json as { data?: Array<{ b64_json?: string }> };
+      if (!r.ok) {
+        console.warn(
+          "[proxyImageService] gpt-image-2 HTTP error:",
+          r.status,
+          `size=${size}`,
+          JSON.stringify(json).slice(0, 400),
+        );
+        if (shouldAbortGptImage2SizeRetries(r.status)) return null;
+        continue;
+      }
+      const b64 = anyJson?.data?.[0]?.b64_json;
+      if (!b64 || typeof b64 !== "string") {
+        console.warn("[proxyImageService] gpt-image-2 missing b64_json, size=", size);
+        continue;
+      }
+
+      const buffer = Buffer.from(b64, "base64");
+      const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+      const { gcsUri } = await uploadBufferToGcs({
+        objectName: path,
+        buffer,
+        contentType: "image/jpeg",
+      });
+      return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+    } catch (e: unknown) {
+      console.warn(
+        "[proxyImageService] gpt-image-2 exception:",
+        e instanceof Error ? e.message : e,
+        "size=",
+        size,
+      );
+    }
+  }
+  return null;
+}
+
 /**
  * OhMyGPT `gpt-image-2` 主路径；需配置 `PROXY_OPENAI_API_KEY`（Bearer）。
  * 失败返回 null，由调用方走 Imagen Ultra 等 fallback。
@@ -90,12 +229,6 @@ export async function generateGptImage2(options: {
   mode: ProxyImageTypographyMode;
   isTrial?: boolean;
 }): Promise<string | null> {
-  const apiKey = String(process.env.PROXY_OPENAI_API_KEY || "").trim();
-  if (!apiKey) {
-    console.warn("[proxyImageService] PROXY_OPENAI_API_KEY missing, skip gpt-image-2");
-    return null;
-  }
-
   const finalPrompt = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
@@ -103,48 +236,57 @@ export async function generateGptImage2(options: {
     isTrial: options.isTrial,
     forImagenFallback: false,
   });
+  return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase());
+}
 
-  try {
-    const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-image-2",
-        prompt: finalPrompt,
-        n: 1,
-        size: "1024x1792",
-        response_format: "b64_json",
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    const json: unknown = await r.json().catch(() => ({}));
-    const anyJson = json as { data?: Array<{ b64_json?: string }> };
-    if (!r.ok) {
-      console.warn(
-        "[proxyImageService] gpt-image-2 HTTP error:",
-        r.status,
-        JSON.stringify(json).slice(0, 400),
-      );
-      return null;
-    }
-    const b64 = anyJson?.data?.[0]?.b64_json;
-    if (!b64 || typeof b64 !== "string") return null;
+export type PlatformCompositeSheetKind = "storyboard_sheet_portrait" | "xiaohongshu_dual_note";
 
-    const buffer = Buffer.from(b64, "base64");
-    const path = `generated/${options.mode.toLowerCase()}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
-    const { gcsUri } = await uploadBufferToGcs({
-      objectName: path,
-      buffer,
-      contentType: "image/jpeg",
-    });
-    return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
-  } catch (e: unknown) {
-    console.warn("[proxyImageService] gpt-image-2 exception:", e instanceof Error ? e.message : e);
+/**
+ * 平台頁：單次 gpt-image-2（9:16）產「豎版分鏡表」或「小紅書雙筆記卡」+ Imagen 兜底。
+ */
+export async function generatePlatformCompositeSheetImage(options: {
+  kind: PlatformCompositeSheetKind;
+  title: string;
+  scriptContext: string;
+  isTrial?: boolean;
+}): Promise<string | null> {
+  const prompt =
+    options.kind === "storyboard_sheet_portrait"
+      ? buildStoryboardSheetPortraitPrompt({
+          title: options.title,
+          scriptContext: options.scriptContext,
+          isTrial: options.isTrial,
+        })
+      : buildXiaohongshuDualNotePrompt({
+          title: options.title,
+          scriptContext: options.scriptContext,
+          isTrial: options.isTrial,
+        });
+
+  const subdir =
+    options.kind === "storyboard_sheet_portrait" ? "platform_storyboard_sheet" : "platform_xhs_dual";
+  const primary = await postGptImage2AndUpload(prompt, subdir);
+  if (primary) return primary;
+
+  const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 1400);
+  const model =
+    String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
+    "imagen-4.0-ultra-generate-001";
+
+  const r = await generateImagenVertexPredict({
+    prompt: imagenPrompt,
+    model,
+    aspectRatio: "9:16",
+    imageSize: "2K",
+    numberOfImages: 1,
+    personGeneration: "ALLOW_ADULT",
+    guidanceScale: 4.0,
+  });
+  if (!r.ok || !r.imageUrl) {
+    console.warn("[proxyImageService] platform composite sheet imagen fallback failed:", r.error);
     return null;
   }
+  return uploadImagenDataUrlToSignedUrl(r.imageUrl);
 }
 
 async function uploadImagenDataUrlToSignedUrl(dataUrl: string): Promise<string | null> {
