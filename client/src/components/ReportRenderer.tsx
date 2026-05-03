@@ -388,7 +388,15 @@ function splitTableRow(line: string): string[] {
 // ───────────────────────────────────────────────────────────────────────────
 // 行内文本：加粗、行内代码、斜体
 
-function renderInline(text: string, colors: ColorPalette): React.ReactNode {
+type RenderInlineVariant = "default" | "tableHeader";
+
+function renderInline(
+  text: string,
+  colors: ColorPalette,
+  variant: RenderInlineVariant = "default",
+): React.ReactNode {
+  const isTableHeader = variant === "tableHeader";
+  const headerText = "#FFFFFF";
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|<br\s*\/?>)/gi);
   return parts.map((p, i) => {
     if (!p) return null;
@@ -398,10 +406,14 @@ function renderInline(text: string, colors: ColorPalette): React.ReactNode {
         <strong
           key={i}
           style={{
-            color: colors.goldDeep,
+            color: isTableHeader ? headerText : colors.goldDeep,
             fontWeight: 800,
-            background: `linear-gradient(180deg, transparent 70%, ${colors.goldLight}48 70%)`,
-            padding: "0 2px",
+            ...(isTableHeader
+              ? { textShadow: "0 1px 2px rgba(0,0,0,0.28)" }
+              : {
+                  background: `linear-gradient(180deg, transparent 70%, ${colors.goldLight}48 70%)`,
+                  padding: "0 2px",
+                }),
           }}
         >
           {p.slice(2, -2)}
@@ -412,10 +424,10 @@ function renderInline(text: string, colors: ColorPalette): React.ReactNode {
         <code
           key={i}
           style={{
-            background: `${colors.gold}1f`,
+            background: isTableHeader ? "rgba(255,255,255,0.22)" : `${colors.gold}1f`,
             padding: "1px 6px",
             borderRadius: 4,
-            color: colors.goldDeep,
+            color: isTableHeader ? headerText : colors.goldDeep,
             fontSize: 12,
             fontFamily: "ui-monospace,monospace",
           }}
@@ -459,27 +471,21 @@ function deriveChartFromTable(headers: string[], rows: string[][]): ChartData {
   if (headers.length < 2 || rows.length < 2) {
     return { type: null, data: [], numericKeys: [], labelKey: "" };
   }
-  
-  const cleanMarkdown = (s: string) => s.replace(/[*_~`]/g, "");
-  
-  const cleanHeaders = headers.map(cleanMarkdown);
-  const cleanRows = rows.map(r => r.map(cleanMarkdown));
-
-  const labelKey = cleanHeaders[0];
+  const labelKey = headers[0];
   const numericKeys: string[] = [];
-  for (let c = 1; c < cleanHeaders.length; c++) {
-    const colVals = cleanRows.map((r) => parseNumber(r[c] || ""));
+  for (let c = 1; c < headers.length; c++) {
+    const colVals = rows.map((r) => parseNumber(r[c] || ""));
     const nums = colVals.filter((v): v is number => v !== null);
-    if (nums.length >= Math.max(2, Math.floor(cleanRows.length * 0.6))) {
-      numericKeys.push(cleanHeaders[c]);
+    if (nums.length >= Math.max(2, Math.floor(rows.length * 0.6))) {
+      numericKeys.push(headers[c]);
     }
   }
   if (numericKeys.length === 0) return { type: null, data: [], numericKeys: [], labelKey };
 
-  const data: Array<Record<string, unknown>> = cleanRows
+  const data: Array<Record<string, unknown>> = rows
     .map((r) => {
       const item: Record<string, unknown> = { [labelKey]: r[0] || "" };
-      cleanHeaders.slice(1).forEach((h, idx) => {
+      headers.slice(1).forEach((h, idx) => {
         if (numericKeys.includes(h)) {
           item[h] = parseNumber(r[idx + 1] || "") ?? 0;
         }
@@ -490,7 +496,7 @@ function deriveChartFromTable(headers: string[], rows: string[][]): ChartData {
 
   if (data.length < 2) return { type: null, data: [], numericKeys: [], labelKey };
 
-  const headerStr = cleanHeaders.join(" ");
+  const headerStr = headers.join(" ");
   const labelStr = data.map((d) => String(d[labelKey])).join(" ");
   let type: "bar" | "line" | "radar" = "bar";
   if (/雷达|维度|能力|评分|短板|画像|象限/.test(headerStr + labelStr)) type = "radar";
@@ -514,8 +520,8 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
         overflow: "hidden",
       }}
     >
-      <div style={{ width: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
           <thead>
             <tr style={{ background: colors.tableHeadGradient }}>
               {headers.map((h, i) => (
@@ -529,10 +535,9 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
                     textAlign: "left",
                     letterSpacing: "0.04em",
                     borderRight: i < headers.length - 1 ? "1px solid rgba(255,255,255,0.18)" : "none",
-                    whiteSpace: "nowrap",
                   }}
                 >
-                  {renderInline(h, colors)}
+                  {renderInline(h, colors, "tableHeader")}
                 </th>
               ))}
             </tr>
@@ -551,7 +556,6 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
                       color: ci === 0 ? colors.goldDeep : colors.inkSoft,
                       fontWeight: ci === 0 ? 700 : 500,
                       lineHeight: 1.65,
-                      whiteSpace: "nowrap",
                     }}
                   >
                     {renderInline(cell, colors)}
@@ -613,13 +617,12 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
           根据上方表格自动生成 · 仅展示数值列对比
         </span>
       </div>
-      <div style={{ width: "100%", height: 280, minWidth: 320, overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch" }}>
-        <div style={{ minWidth: 720, height: "100%" }}>
-          <ResponsiveContainer width="100%" height="100%">
+      <div style={{ width: "100%", height: 280 }}>
+        <ResponsiveContainer>
           {chart.type === "bar" ? (
-            <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
+            <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
               {commonGrid}
-              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval="preserveStartEnd" angle={-25} textAnchor="end" height={60} />
+              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
               <YAxis tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
@@ -628,9 +631,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </BarChart>
           ) : chart.type === "line" ? (
-            <LineChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 36 }}>
+            <LineChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
               {commonGrid}
-              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} interval="preserveStartEnd" angle={-25} textAnchor="end" height={60} />
+              <XAxis dataKey={chart.labelKey} tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <YAxis tick={{ fill: colors.inkSoft, fontSize: 11 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
@@ -647,9 +650,9 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </LineChart>
           ) : (
-            <RadarChart data={chart.data} margin={{ top: 12, right: 24, left: 24, bottom: 12 }} outerRadius="55%">
+            <RadarChart data={chart.data} margin={{ top: 12, right: 24, left: 24, bottom: 12 }}>
               <PolarGrid stroke={colors.divider} />
-              <PolarAngleAxis dataKey={chart.labelKey} tick={{ fill: colors.ink, fontSize: 10 }} />
+              <PolarAngleAxis dataKey={chart.labelKey} tick={{ fill: colors.ink, fontSize: 11 }} />
               <PolarRadiusAxis tick={{ fill: colors.inkSoft, fontSize: 10 }} />
               <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 12, color: colors.ink }} />
@@ -665,8 +668,7 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
               ))}
             </RadarChart>
           )}
-          </ResponsiveContainer>
-        </div>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -838,27 +840,6 @@ export default function ReportRenderer({
         .report-raw-html figure img { max-width: 100%; height: auto; border-radius: 10px; box-shadow: ${colors.cardShadow}; }
         .report-raw-html figcaption { margin-top: 8px; font-size: 12.5px; color: ${colors.inkSoft}; font-style: italic; line-height: 1.65; }
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
-
-        /* Mobile Typography Optimization */
-        @media (max-width: 640px) {
-          [data-report-surface] {
-            padding: 24px 20px !important;
-            font-size: 14.5px !important;
-          }
-          [data-pdf-accent-bar] {
-            margin: -24px -20px 24px !important;
-          }
-          [data-report-surface] p,
-          [data-report-surface] li {
-            font-size: 14.5px !important;
-            line-height: 1.8 !important;
-            word-break: break-word !important;
-          }
-          [data-report-surface] h1 { font-size: 22px !important; }
-          [data-report-surface] h2 { font-size: 19px !important; margin-top: 24px !important; }
-          [data-report-surface] h3 { font-size: 16px !important; margin-top: 18px !important; }
-          [data-report-surface] blockquote { font-size: 13.5px !important; padding: 12px 16px !important; margin: 12px 0 !important; }
-        }
 
         @media print {
           /* 紙張可列印區：與 pdf-worker page.pdf margin:0 對齊，盡量滿版 */

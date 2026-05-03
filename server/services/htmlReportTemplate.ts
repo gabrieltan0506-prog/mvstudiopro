@@ -131,7 +131,7 @@ function buildHtmlPalette(style: HtmlPdfStyle): HtmlPalette {
       rule: "#E9D5FF",
       rowAlt: "#F5F3FF",
       tableHeadBg: "#5B21B6",
-      tableHeadText: "#E0F2FE",
+      tableHeadText: "#FFFFFF",
       coverBg: "#1E1B4B",
       coverGold: "#06B6D4",
       h2Bg: "linear-gradient(90deg, #7C3AED 0%, #A855F7 50%, #06B6D4 100%)",
@@ -250,7 +250,7 @@ function parseMarkdownToHtml(markdownContent: string): string {
 }
 
 function enhanceTables(html: string): string {
-  const withEnhancedCells = html.replace(
+  return html.replace(
     /<(td|th)>([\s\S]*?)<\/\1>/g,
     (m, tag: string, inner: string) => {
       const text = inner.replace(/<[^>]+>/g, "").trim();
@@ -264,15 +264,6 @@ function enhanceTables(html: string): string {
       if (isPctChange) cls.push(text.startsWith("-") ? "neg" : "pos");
       return `<${tag}${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</${tag}>`;
     },
-  );
-  
-  // Wrap table in overflow-x: auto container for mobile
-  return withEnhancedCells.replace(
-    /<figure class="chart-figure">([\s\S]*?)<\/figure>/g,
-    '<div class="chart-wrapper"><figure class="chart-figure">$1</figure></div>'
-  ).replace(
-    /<table>([\s\S]*?)<\/table>/g,
-    '<div class="table-wrapper"><table>$1</table></div>'
   );
 }
 
@@ -539,11 +530,14 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   li { margin: 4px 0; line-height: 1.78; }
   li::marker { color: var(--primary); font-weight: 700; }
   /* ── 表格 ── */
-  .table-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 20px 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-  table { width: 100%; min-width: max-content; border-collapse: collapse; margin: 0; font-size: 13px; table-layout: auto; }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
   thead th { background: var(--th-bg); color: var(--th-text); padding: 11px 13px; text-align: left; font-weight: 700; font-size: 12px; letter-spacing: 0.05em; border-right: 1px solid rgba(255,255,255,0.10); white-space: nowrap; }
   thead th:last-child { border-right: none; }
-  tbody td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--text-main); white-space: nowrap; }
+  /* 表头内行内 Markdown（strong/code）勿套正文 accent 色，一律跟随表头白字，否则多主题下不可读 */
+  thead th strong,
+  thead th em { color: var(--th-text); font-weight: 800; }
+  thead th code { color: var(--th-text); background: rgba(255,255,255,0.22); }
+  tbody td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--text-main); }
   tbody tr:nth-child(even) td { background-color: var(--row-alt); }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.num.pos { color: #15803D; font-weight: 700; }
@@ -554,12 +548,11 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   pre code { background: transparent; padding: 0; color: inherit; }
   img { max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   /* ── 场景图 figure ── */
-  figure.scene-figure { margin: 22px auto 16px; padding: 0; width: 100%; max-width: 100%; text-align: center; }
+  figure.scene-figure { margin: 22px auto 16px; padding: 0; max-width: 100%; text-align: center; }
   figure.scene-figure img { display: block; margin: 0 auto; max-width: 100%; max-height: 540px; object-fit: cover; border-radius: 10px; border: 1px solid var(--rule); box-shadow: 0 6px 24px rgba(0,0,0,0.10); }
   figure.scene-figure figcaption { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; font-style: italic; max-width: 90%; margin-left: auto; margin-right: auto; }
   /* ── 数据可视化 figure（echarts mount） ── */
-  .chart-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 22px 0 18px; border-radius: 10px; border: 1px solid var(--rule); background: var(--bg-elev); }
-  figure.chart-figure { margin: 0; padding: 14px 16px 12px; width: 100%; min-width: 720px; text-align: center; box-sizing: border-box; }
+  figure.chart-figure { margin: 22px auto 18px; padding: 14px 16px 12px; max-width: 100%; text-align: center; background: var(--bg-elev); border: 1px solid var(--rule); border-radius: 10px; }
   figure.chart-figure .echart-mount { width: 100% !important; min-height: 320px; }
   figure.chart-figure figcaption { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; }
   /* ── 工具栏（右上角，提示交互版 + 主题）── */
