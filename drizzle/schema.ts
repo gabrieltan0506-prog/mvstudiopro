@@ -1,4 +1,4 @@
-import { integer, json, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, json, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 /**
  * Core user table backing auth flow.
@@ -22,6 +22,7 @@ export const users = pgTable("users", {
   contactWechat: varchar("contactWechat", { length: 120 }),
   contactPhone: varchar("contactPhone", { length: 30 }),
   verifyStatus: text("verifyStatus").default("none").notNull(),
+  enterpriseTrialPaid: boolean("enterpriseTrialPaid").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
