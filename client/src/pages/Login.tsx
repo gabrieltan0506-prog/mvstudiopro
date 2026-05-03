@@ -149,8 +149,9 @@ function OtpFlow() {
     try {
       const res = await verifyEmailOtp(email.trim(), otp.trim());
       if (res.ok) {
-        // 首次登录后导到个人中心，方便设定密码
-        window.location.href = "/dashboard";
+        // 登录成功后统一导回首页（原有设计是去充值中心/dashboard）
+        // 这里把 /dashboard 改成首页 /
+        window.location.href = "/";
       } else {
         setErr(res.error || "验证失败，请重试");
       }
@@ -288,7 +289,8 @@ function PasswordFlow() {
     setErr("");
     try {
       await loginWithPassword(email.trim(), password);
-      window.location.href = "/dashboard";
+      // 密码登录也统一回首页
+      window.location.href = "/";
     } catch (error: any) {
       setErr(error.message || "登录失败，请检查邮箱和密码");
     } finally {
