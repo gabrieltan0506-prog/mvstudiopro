@@ -474,17 +474,14 @@ export default function EnterpriseAgentManager() {
               )}
             </p>
           </div>
-          <Dialog open={deployOpen} onOpenChange={setDeployOpen}>
-            <DialogTrigger asChild>
-              <Button
-                size="lg"
-                className="min-h-[48px] w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold"
-              >
-                <Plus className="h-5 w-5 mr-1.5" />
-                部署新 Agent
-              </Button>
-            </DialogTrigger>
-          </Dialog>
+          <Button
+            size="lg"
+            onClick={() => setDeployOpen(true)}
+            className="min-h-[48px] w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold"
+          >
+            <Plus className="h-5 w-5 mr-1.5" />
+            部署新 Agent
+          </Button>
         </div>
 
         {/* 副控件：显示已删除 toggle */}

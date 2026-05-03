@@ -6,6 +6,7 @@ import HomeRemixStrip from "../components/HomeRemixStrip";
 import HomeTools from "../components/HomeTools";
 import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
+import { HomeEnterpriseAgentCard } from "../components/HomeEnterpriseAgentCard";
 import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
 import HomeMyWorks from "../components/HomeMyWorks";
@@ -54,6 +55,11 @@ export default function HomePage() {
 
       {/* 定价与转化（看完功能再做决策） */}
       <HomePricing />
+
+      {/* 企业级专属定制 */}
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+        <HomeEnterpriseAgentCard />
+      </div>
 
       {/* 兑换邀请码 / 申请邀请码（推到决策点之后） */}
       <HomeRedeemCode />
