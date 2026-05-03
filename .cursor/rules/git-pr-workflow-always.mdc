@@ -1,0 +1,10 @@
+---
+description: mvstudiopro — 改動須走 PR，勿直推 main
+alwaysApply: true
+---
+
+# Git / PR 工作流（本倉庫）
+
+- **完成代碼修改後**：在**功能分支**上 commit，**`git push` 該分支**，並用 **`gh pr create`**（或 GitHub 網頁）開 PR 對準 **`main`**；不要 **`git push origin main`** 把改動直接推到主線。
+- **例外**（僅在用戶**明文**說「直推 main / 緊急熱修 / 不要 PR」時）：才可直推 `main`，並在回覆裡說明原因。
+- PR 描述用簡短完整句：改了什麼、為什麼；必要時附關聯 issue / run 連結。
