@@ -1,9 +1,14 @@
 /**
- * 翻譯中樞：Vertex AI **實體區域**（預設 `us-central1`）+ **gemini-3.1-pro-preview**（不依賴 Consumer API Key）。
+ * 翻譯中樞：Vertex AI **實體區域**（預設 `us-central1`）+ **gemini-3.1-pro**（正式版 ID，可依 `VERTEX_GEMINI_31_PRO_MODEL` 覆寫）。
  * Vertex **不可**使用 `location: "global"`（SDK 會打到無效主機、回 HTML 404，進而觸發 JSON 解析錯誤）。
  * Vercel 無實體憑證檔路徑，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 注入並修復 **private_key** 換行轉義。
  */
 import { VertexAI } from "@google-cloud/vertexai";
+
+/** Vertex 文字生成模型（預設 GA ID；專案若僅開通 preview 可設環變回退）。 */
+function resolveVertexGemini31ProModelId(): string {
+  return String(process.env.VERTEX_GEMINI_31_PRO_MODEL || "gemini-3.1-pro").trim() || "gemini-3.1-pro";
+}
 
 function resolveProjectId(): string {
   const p = String(
@@ -70,13 +75,14 @@ export type CallGemini31ProOptions = {
   topP?: number;
 };
 
-/** Vertex AI（區域節點）驅動 gemini-3.1-pro-preview，不依賴 GEMINI_API_KEY */
+/** Vertex AI（區域節點）驅動 Gemini 3.1 Pro，不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
   const vertex_ai = getVertexClientForGemini31Pro();
+  const modelId = resolveVertexGemini31ProModelId();
   const generativeModel = vertex_ai.getGenerativeModel({
-    model: "gemini-3.1-pro-preview",
+    model: modelId,
     generationConfig: {
-      maxOutputTokens: opts?.maxOutputTokens ?? 2048,
+      maxOutputTokens: opts?.maxOutputTokens ?? 8192,
       temperature: opts?.temperature ?? 0.4,
       topP: opts?.topP ?? 0.8,
     },
@@ -97,7 +103,7 @@ export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOp
       .trim();
   } catch (error: any) {
     const errorDetail = error?.message || String(error);
-    console.error("[Vertex AI gemini-3.1-pro-preview 崩潰]:", errorDetail);
+    console.error(`[Vertex AI ${resolveVertexGemini31ProModelId()} 崩潰]:`, errorDetail);
     throw new Error(`[Vertex 翻译失败] 原因: ${errorDetail}`);
   }
 }
