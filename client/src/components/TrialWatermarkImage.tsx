@@ -43,7 +43,13 @@ export default function TrialWatermarkImage({
         draggable={isTrial ? false : undefined}
         onContextMenu={preventAction}
         onDragStart={preventAction}
-        style={{ display: "block", width: "100%", height: "100%", objectFit: objectFit, pointerEvents: isTrial ? "none" : undefined }}
+        style={{
+          display: "block",
+          width: "100%",
+          height: objectFit === "contain" ? "auto" : "100%",
+          objectFit,
+          pointerEvents: isTrial ? "none" : undefined,
+        }}
       />
 
       {isTrial && (

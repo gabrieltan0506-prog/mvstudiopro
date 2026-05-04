@@ -2308,7 +2308,8 @@ ${job.topic}
     // 不 await！主流程立即继续 — 报告先 ready，封面后台慢慢出。
 
     // 3. 报告头部 banner（封面卡 + 个性化签名） + 趋势图 + 报告正文 + 思维链 + 来源
-    const reportHeader = `# ${lighthouseTitle}\n\n> 📅 出品日期：${dateStr} · 个性化种子：\`${personalSeed.slice(0, 32)}…\`\n> 🔍 数据来源：Google 搜索接地（近 2 年） + 您的账户基线 ${holistic.totalCreations} 条创作记录\n> 🧠 推演引擎：Gemini Deep Research Pro Preview · 全网检索 + 思维链推理 + 综合最深层级\n\n---\n\n`;
+    // 對外首屏：僅展示出品日期（不展示種子、數據來源、推演引擎等後台元數據）
+    const reportHeader = `# ${lighthouseTitle}\n\n> 📅 出品日期：${dateStr}\n\n---\n\n`;
 
     // 思维链折叠区块（放在报告末尾，PDF 中也会被渲染成可读区块）
     const thoughtsBlock = harvested.thoughts && harvested.thoughts.length > 200

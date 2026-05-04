@@ -41,7 +41,7 @@
 | `server/services/deepResearchService.ts` | on-demand / 非同步封面：Gemini 英文指令 → GPT-IMAGE-2 優先，失敗再走 Fly Vertex / Consumer Flash |
 | `server/routers.ts` | `generatePlatformCompositeSheet`、`generateTopicImage`、`generateAllPlatformTopicImages`、`generateGodViewChapterPosters` |
 | `shared/plans.ts` / `server/plans.ts` | 兩類合成均 **16** 點及說明表 |
-| `client/src/pages/PlatformPage.tsx` | **分鏡圖文參考**全寬卡片，僅嵌圖 + `contain`，無 DOM 疊加；**對外 UI 僅高亮 GPT-IMAGE-2，不展示 Gemini 字樣**；**「參考分鏡圖文」橫向滾動欄**（`referenceStoryboardGraphicStrip`）匯總全部選題之**批量單幀**與 **2×4 合成大圖**，點擊可捲動至對應選題卡（DOM：`executionCardDomId` → `execution-card-…`） |
+| `client/src/pages/PlatformPage.tsx` | **分鏡圖文參考**全寬卡片，僅嵌圖 + `contain`；**對外 UI 僅高亮 GPT-IMAGE-2**；**「參考分鏡圖文」橫向滾動欄**（`referenceStoryboardGraphicStrip`）匯總批量單幀與 **2×4 合成**，**僅展示、不可點擊滾動定位**；選題卡仍帶 `execution-card-…` id |
 | `server/services/htmlReportTemplate.ts` | 分鏡 / 小紅書區塊改為 **單 `<img>`**，無絕對定位網格與 HTML 疊字 |
 
 ---
@@ -84,7 +84,7 @@
 ## 6. 前端與 HTML/PDF
 
 - **平台頁**：合成結果與 loading 共用 **「分鏡圖文參考」** 大卡片；標籤 **原生 2×4**；**不展示任何後端模型名稱**；**對外句式採「生图采用 GPT-IMAGE-2」**：`GPT-IMAGE-2` **始終保留英文**，不以簡體字直接拼在品牌後當釋義（如不寫「GPT-IMAGE-2 生圖」「使用 GPT-IMAGE-2 生成…」這類緊貼中文動詞）；且畫面上不出現 **Gemini** 字樣。
-- **「參考分鏡圖文」橫排卡片（必備欄位）**：置於「高定分鏡腳本畫廊 / 圖文筆記配圖畫廊」區塊內、選題網格**上方**，橫向滾動展示**全部選題**之（1）批量單幀、（2）分鏡 2×4 合成、（3）小紅書 2×4 合成；生成中狀態可佔位。
+- **「參考分鏡圖文」橫排卡片（必備欄位）**：置於「高定分鏡腳本畫廊 / 圖文筆記配圖畫廊」區塊內、選題網格**上方**，橫向滾動展示**全部選題**之（1）批量單幀、（2）分鏡 2×4 合成、（3）小紅書 2×4 合成；生成中狀態可佔位；**不提供「定位至卡片」按鈕或點擊捲動**。
 - **HTML 匯出**：`buildHtmlStoryboardSheetSection`、`buildHtmlXhsNoteSection` 僅 **區塊標題 + 全寬圖**，與「畫內已排版」一致。
 - **已移除**：`shared/xhsDualNoteBullets.ts` 及依賴（不再需要從 `actionableSteps` 抽 bullet 做 HTML 疊加）。
 
@@ -94,7 +94,7 @@
 
 1. 正確配置翻譯與 **GPT-IMAGE-2** 閘道後，在平台頁各觸發「分镜图文参考」「小红书图文参考」，確認扣 **16** 點、返回橫版大圖。
 2. 圖上應可見 **簡體標題/說明**（質量隨 prompt 與出圖引擎而異；失敗時查日誌與退點）。
-3. **「參考分鏡圖文」橫排出現**，且在批量渲染與 2×4 合成後自動匯入縮略卡；點擊可定位至下方對應選題。
+3. **「參考分鏡圖文」橫排出現**，批量渲染與 2×4 合成後自動匯入縮略卡；**不提供點擊定位至選題卡**。
 4. 使用者可見介面無 **Gemini** 字樣，**GPT-IMAGE-2** 以高亮呈現。
 5. `npx tsc --noEmit` 通過。
 6. 導出 HTML：分鏡區 / 小紅書區僅 **單張 img**，無舊版網格 div。

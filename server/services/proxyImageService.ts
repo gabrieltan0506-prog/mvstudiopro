@@ -4,6 +4,12 @@ import { generateImagenVertexPredict } from "./imageGenerationService";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
+/** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入） */
+export function appendImageFlowLog(log: string[] | undefined, message: string): void {
+  if (!log) return;
+  log.push(`${new Date().toISOString()}  ${message}`);
+}
+
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
 
 /**
@@ -275,15 +281,29 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   gcsSubdir: string;
   /** 试读等：追加到 prompt 末尾（仅像素出图） */
   trialWatermarkPromptSuffix?: string;
+  /** 可選：逐步寫入供平台 Debug 面板展示 */
+  flowLog?: string[];
 }): Promise<string | null> {
+  const L = options.flowLog;
   const raw = String(options.englishPrompt || "").trim();
-  if (!raw) return null;
+  if (!raw) {
+    appendImageFlowLog(L, "[单帧·英文 prompt] 为空，跳过生图");
+    return null;
+  }
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
   const prompt = suffix ? `${raw}\n\n${suffix}` : raw;
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
+  appendImageFlowLog(
+    L,
+    `[单帧主路径] GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 英文 prompt 约 ${prompt.length} 字`,
+  );
   const primary = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes });
-  if (primary) return primary;
+  if (primary) {
+    appendImageFlowLog(L, "[单帧主路径] GPT-IMAGE-2 成功，已上传 GCS");
+    return primary;
+  }
 
+  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Imagen · ${options.aspectRatio} · 2K`);
   const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 2400);
   const model =
     String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
@@ -298,9 +318,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     guidanceScale: 4.0,
   });
   if (!r.ok || !r.imageUrl) {
+    appendImageFlowLog(L, `[单帧兜底] Imagen 失败: ${r.error ?? "no url"}`);
     console.warn("[proxyImageService] raw-prompt imagen fallback failed:", r.error);
     return null;
   }
+  appendImageFlowLog(L, "[单帧兜底] Imagen 成功，已转存签名 URL");
   return uploadImagenDataUrlToSignedUrl(r.imageUrl);
 }
 
@@ -330,7 +352,7 @@ export type PlatformCompositeSheetKind =
   | "xiaohongshu_dual_note";
 
 /**
- * 平台页：由 Gemini **双语编导**任务产出英文视觉 prompt，再送 **GPT-IMAGE-2**（横版 16:9，原生 2×4）+ Imagen 兜底。GPT-IMAGE-2 **只**吃英文 prompt，不翻译。
+ * 平台页 2×4：Gemini 双语编导 → 英文 prompt → **主路径 GPT-IMAGE-2** 横版 16:9；失败则 **Vertex Nano Banana 2**（`gemini-3.1-flash-image-preview`）同 prompt 16:9 兜底。**不使用** Imagen `:predict` 兜底。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -338,13 +360,22 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
+  /** 可選：2×4 生圖逐步驟時間線 */
+  flowLog?: string[];
 }): Promise<string | null> {
+  const L = options.flowLog;
   const k = options.kind;
   const isStoryboard = k === "storyboard_sheet_portrait" || k === "storyboard_sheet_landscape";
   const isXhs = k === "xiaohongshu_dual_note";
   if (!isStoryboard && !isXhs) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
+
+  appendImageFlowLog(
+    L,
+    `[2×4 合成] kind=${k} · ${isStoryboard ? "分镜图文参考（buildVideoStoryboardGeminiPrompt）" : "小红书双笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+  );
+  appendImageFlowLog(L, `[2×4·步骤1] Gemini translatePlatformCompositeToEnglishPrompt（中文剧本→一条英文视觉指令）…`);
 
   let prompt: string;
   try {
@@ -356,6 +387,8 @@ export async function generatePlatformCompositeSheetImage(options: {
       scriptContext: options.scriptContext,
     });
   } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    appendImageFlowLog(L, `[2×4·步骤1] Gemini 失败: ${msg}`);
     console.warn(
       "[proxyImageService] platform composite prompt translation failed:",
       e instanceof Error ? e.message : e,
@@ -363,32 +396,61 @@ export async function generatePlatformCompositeSheetImage(options: {
     return null;
   }
 
+  appendImageFlowLog(L, `[2×4·步骤1] 完成 · 英文 prompt 约 ${prompt.length} 字符（预览）: ${prompt.replace(/\s+/g, " ").slice(0, 180)}…`);
+
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
+  appendImageFlowLog(
+    L,
+    `[2×4·步骤2] GPT-IMAGE-2 横版 16:9 · gcsSubdir=${subdir} · 尺寸: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
+  );
   const primary = await postGptImage2AndUpload(prompt, subdir, {
     maxAttempts: 1,
     sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
   });
-  if (primary) return primary;
-
-  const imagenPrompt = String(prompt || "").replace(/\s+/g, " ").slice(0, 2400);
-  const model =
-    String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
-    "imagen-4.0-ultra-generate-001";
-
-  const r = await generateImagenVertexPredict({
-    prompt: imagenPrompt,
-    model,
-    aspectRatio: "16:9",
-    imageSize: "2K",
-    numberOfImages: 1,
-    personGeneration: "ALLOW_ADULT",
-    guidanceScale: 4.0,
-  });
-  if (!r.ok || !r.imageUrl) {
-    console.warn("[proxyImageService] platform composite sheet imagen fallback failed:", r.error);
-    return null;
+  if (primary) {
+    appendImageFlowLog(L, "[2×4·步骤2] GPT-IMAGE-2 成功");
+    return primary;
   }
-  return uploadImagenDataUrlToSignedUrl(r.imageUrl);
+
+  appendImageFlowLog(
+    L,
+    "[2×4·步骤2] GPT-IMAGE-2 未返回图像 → 启动 Vertex Nano Banana 2（Gemini 3 Flash Image / gemini-3.1-flash-image-preview）16:9 兜底…",
+  );
+
+  try {
+    const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
+    if (!isGeminiImageAvailable()) {
+      appendImageFlowLog(
+        L,
+        "[2×4·步骤3] Vertex 图像不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），无法兜底",
+      );
+      throw new Error(
+        "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
+      );
+    }
+    const vertexResult = await generateGeminiImage({
+      prompt: String(prompt).trim(),
+      quality: "1k",
+      aspectRatio: "16:9",
+      personGeneration: "ALLOW_ADULT",
+    });
+    const fallbackUrl = String(vertexResult?.imageUrl || "").trim();
+    if (!fallbackUrl) {
+      appendImageFlowLog(L, "[2×4·步骤3] Nano Banana 2 返回空 URL");
+      throw new Error("Vertex Nano Banana 2 未返回图像。");
+    }
+    appendImageFlowLog(
+      L,
+      `[2×4·步骤3] Nano Banana 2 兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+    );
+    return fallbackUrl;
+  } catch (fallbackErr: unknown) {
+    const inner = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+    appendImageFlowLog(L, `[2×4·步骤3] Nano Banana 2 兜底失败: ${inner}`);
+    throw new Error(
+      "影像生成双核引擎（GPT-IMAGE-2 + Vertex Nano Banana 2）均失败，请稍后重试。",
+    );
+  }
 }
 
 async function uploadImagenDataUrlToSignedUrl(dataUrl: string): Promise<string | null> {
@@ -422,10 +484,20 @@ export async function generateImageGpt2WithImagenFallback(options: {
   copywriting: string;
   mode: ProxyImageTypographyMode;
   isTrial?: boolean;
+  flowLog?: string[];
 }): Promise<string | null> {
+  const L = options.flowLog;
+  appendImageFlowLog(
+    L,
+    `[版式兜底] buildTypographyImagePrompt + GPT-IMAGE-2 · mode=${options.mode} · 9:16（画内零字策略）`,
+  );
   const primary = await generateGptImage2(options);
-  if (primary) return primary;
+  if (primary) {
+    appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 成功");
+    return primary;
+  }
 
+  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Imagen 9:16 · 2K");
   const prompt = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
@@ -448,9 +520,11 @@ export async function generateImageGpt2WithImagenFallback(options: {
     guidanceScale: 4.0,
   });
   if (!r.ok || !r.imageUrl) {
+    appendImageFlowLog(L, `[版式兜底] Imagen 失败: ${r.error || "unknown"}`);
     console.warn("[proxyImageService] imagen fallback failed:", r.error);
     return null;
   }
+  appendImageFlowLog(L, "[版式兜底] Imagen 成功");
   return uploadImagenDataUrlToSignedUrl(r.imageUrl);
 }
 
