@@ -1,6 +1,7 @@
 /**
- * 翻譯中樞：Vertex AI **global** 節點 + **gemini-3.1-pro-preview**（不依賴 Google AI Studio / Consumer API Key）。
- * Vercel 無實體憑證檔路徑，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 顯式注入並修復 **private_key** 換行轉義。
+ * 翻譯中樞：Vertex AI **實體區域**（預設 `us-central1`）+ **gemini-3.1-pro-preview**（不依賴 Consumer API Key）。
+ * Vertex **不可**使用 `location: "global"`（SDK 會打到無效主機、回 HTML 404，進而觸發 JSON 解析錯誤）。
+ * Vercel 無實體憑證檔路徑，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 注入並修復 **private_key** 換行轉義。
  */
 import { VertexAI } from "@google-cloud/vertexai";
 
@@ -12,6 +13,14 @@ function resolveProjectId(): string {
     throw new Error("missing_GCP_PROJECT_ID_or_VERTEX_PROJECT_ID");
   }
   return p;
+}
+
+/** Gemini 3.1 Pro 文本：須為 Vertex 已開通區域（Console 配額多在 us-central1）。 */
+function resolveVertexGemini31Location(): string {
+  const loc = String(
+    process.env.GCP_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "us-central1",
+  ).trim();
+  return loc || "us-central1";
 }
 
 /** 與 Vercel JSON 環變相容：解析失敗回 `{}`，私鑰 `\\n` → 真換行。 */
@@ -37,17 +46,20 @@ function parseCredentialsFromVercelJsonEnv(): Record<string, unknown> {
 }
 
 let vertexSingleton: VertexAI | null = null;
+let vertexSingletonLocation: string | null = null;
 
-function getVertexGlobal(): VertexAI {
-  if (!vertexSingleton) {
+function getVertexClientForGemini31Pro(): VertexAI {
+  const location = resolveVertexGemini31Location();
+  if (!vertexSingleton || vertexSingletonLocation !== location) {
     const credentials = parseCredentialsFromVercelJsonEnv();
     vertexSingleton = new VertexAI({
       project: resolveProjectId(),
-      location: "global",
+      location,
       googleAuthOptions: {
         credentials,
       },
     });
+    vertexSingletonLocation = location;
   }
   return vertexSingleton;
 }
@@ -58,9 +70,9 @@ export type CallGemini31ProOptions = {
   topP?: number;
 };
 
-/** Vertex AI Global 驅動（gemini-3.1-pro-preview），不依賴 GEMINI_API_KEY */
+/** Vertex AI（區域節點）驅動 gemini-3.1-pro-preview，不依賴 GEMINI_API_KEY */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
-  const vertex_ai = getVertexGlobal();
+  const vertex_ai = getVertexClientForGemini31Pro();
   const generativeModel = vertex_ai.getGenerativeModel({
     model: "gemini-3.1-pro-preview",
     generationConfig: {
@@ -85,7 +97,7 @@ export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOp
       .trim();
   } catch (error: any) {
     const errorDetail = error?.message || String(error);
-    console.error("[Vertex AI Global 3.1 Pro 崩溃]:", errorDetail);
-    throw new Error(`[Vertex Global 翻译失败] 原因: ${errorDetail}`);
+    console.error("[Vertex AI gemini-3.1-pro-preview 崩潰]:", errorDetail);
+    throw new Error(`[Vertex 翻译失败] 原因: ${errorDetail}`);
   }
 }

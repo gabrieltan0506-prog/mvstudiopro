@@ -1,7 +1,7 @@
 /**
  * 竞品调研双引擎服务
  * Stage 1: gemma-4-31b-it — **Vertex AI**（`callGemma4` · us-central1 · 服务账号），**不使用** GEMINI_API_KEY
- * Stage 2: gemini-3.1-pro-preview — **Vertex AI · global**（`callGemini3_1_Pro`），**不使用** GEMINI_API_KEY
+ * Stage 2: gemini-3.1-pro-preview — **Vertex AI**（`callGemini3_1_Pro`，區域預設 us-central1），**不使用** GEMINI_API_KEY
  */
 import fs from "fs/promises";
 import path from "path";
@@ -12,7 +12,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * 调用生成模型：
- * - gemini-3.1-pro-preview → Vertex Global（callGemini3_1_Pro）
+ * - gemini-3.1-pro-preview → Vertex 區域節點（callGemini3_1_Pro）
  * - gemma-4-31b-it → Vertex（callGemma4 · publishers/google/models/gemma-4-31b-it）
  * - 其余模型 → Google AI Studio HTTP（需 GEMINI_API_KEY；当前竞品调研不会走到此分支）
  */
