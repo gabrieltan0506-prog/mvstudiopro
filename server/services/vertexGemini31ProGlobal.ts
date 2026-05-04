@@ -1,5 +1,6 @@
 /**
  * 翻譯中樞：Vertex AI **global** 節點 + **gemini-3.1-pro-preview**（不依賴 Google AI Studio / Consumer API Key）。
+ * Vercel 無實體憑證檔路徑，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 顯式注入並修復 **private_key** 換行轉義。
  */
 import { VertexAI } from "@google-cloud/vertexai";
 
@@ -13,13 +14,39 @@ function resolveProjectId(): string {
   return p;
 }
 
+/** 與 Vercel JSON 環變相容：解析失敗回 `{}`，私鑰 `\\n` → 真換行。 */
+function parseCredentialsFromVercelJsonEnv(): Record<string, unknown> {
+  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
+  let credentials: Record<string, unknown> = {};
+
+  try {
+    if (raw && raw !== "{}") {
+      credentials = JSON.parse(raw) as Record<string, unknown>;
+      const pk = credentials.private_key;
+      if (typeof pk === "string") {
+        credentials.private_key = pk.replace(/\\n/g, "\n");
+      }
+    } else {
+      console.warn("[Vertex 警告]: GOOGLE_APPLICATION_CREDENTIALS_JSON 为空");
+    }
+  } catch (error) {
+    console.error("[Vertex 授权异常] 解析 JSON 凭证失败:", error);
+  }
+
+  return credentials;
+}
+
 let vertexSingleton: VertexAI | null = null;
 
 function getVertexGlobal(): VertexAI {
   if (!vertexSingleton) {
+    const credentials = parseCredentialsFromVercelJsonEnv();
     vertexSingleton = new VertexAI({
       project: resolveProjectId(),
       location: "global",
+      googleAuthOptions: {
+        credentials,
+      },
     });
   }
   return vertexSingleton;
