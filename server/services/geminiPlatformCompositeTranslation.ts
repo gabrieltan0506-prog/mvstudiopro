@@ -51,13 +51,7 @@ ${slice}
 `.trim();
 }
 
-const DEFAULT_MODEL =
-  String(process.env.GEMINI_PLATFORM_COMPOSITE_MODEL || "gemini-3-pro-preview").trim() || "gemini-3-pro-preview";
-
-const STRATEGIC_COVER_TEXT_MODEL =
-  String(process.env.GEMINI_COVER_PROMPT_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview";
-
-/** 战略智库杂志封面：双语编导（Gemini）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
+/** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
 export function buildStrategicCoverGeminiTask(input: {
   chineseTitle: string;
   englishMonthYear: string;
@@ -132,31 +126,12 @@ MANDATORY RULES:
 }
 
 /**
- * 战略封面 / 章节扉页：**Gemini**（可通过 `GEMINI_COVER_PROMPT_MODEL` 覆盖）任**双语编导**阶段，产出**一条英文**视觉 prompt；
- * **GPT-IMAGE-2** 仅接收该英文串并生图，**不具备**读中文或翻译能力。
+ * 战略封面 / 章节扉页：**Vertex Global · gemini-3.1-pro-preview** 双语编导 → 一条英文视觉 prompt。
  */
 export async function runGemini31ProPreviewText(userTask: string): Promise<string> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    throw new Error("missing_GEMINI_API_KEY");
-  }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(STRATEGIC_COVER_TEXT_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: userTask }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 8192 },
-    }),
-    signal: AbortSignal.timeout(120_000),
-  });
-  const json: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } } =
-    await r.json().catch(() => ({}));
-  if (!r.ok) {
-    throw new Error(json?.error?.message || `封面指令 API ${r.status}`);
-  }
-  const text = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-  const out = stripModelOutput(text);
+  const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
+  const raw = await callGemini3_1_Pro(userTask);
+  const out = stripModelOutput(raw);
   if (!out) {
     throw new Error("封面指令返回空内容");
   }
@@ -172,30 +147,12 @@ function stripModelOutput(raw: string): string {
 }
 
 /**
- * 呼叫已配置之翻譯推理服務，僅回傳純英文生圖指令字串（具體後端由環境變數決定，此處不寫死名稱）。
+ * 平台选题 / 2×4 编导：**Vertex Global · gemini-3.1-pro-preview**，仅返回纯英文生图指令字串。
  */
 export async function callGemini31ProForImagePrompt(translationTask: string): Promise<string> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    throw new Error("missing_GEMINI_API_KEY");
-  }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(DEFAULT_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: translationTask }] }],
-      generationConfig: { temperature: 0.45, maxOutputTokens: 8192 },
-    }),
-    signal: AbortSignal.timeout(120_000),
-  });
-  const json: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } } =
-    await r.json().catch(() => ({}));
-  if (!r.ok) {
-    throw new Error(json?.error?.message || `翻译服务 API ${r.status}`);
-  }
-  const text = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-  const out = stripModelOutput(text);
+  const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
+  const raw = await callGemini3_1_Pro(translationTask);
+  const out = stripModelOutput(raw);
   if (!out) {
     throw new Error("翻译服务返回空 prompt");
   }

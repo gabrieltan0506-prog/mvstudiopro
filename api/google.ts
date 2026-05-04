@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { put } from "@vercel/blob";
 import { getVertexAccessToken } from "../server/utils/vertex";
-import { generateImagenVertexPredict } from "../server/services/imageGenerationService";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "../server/services/gcs";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
@@ -18,18 +17,16 @@ export const config = {
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - **Imagen 4.0 Ultra（Consumer / `generativelanguage…:predict` + GEMINI_API_KEY）實測：目前僅 `imagen-4.0-ultra-generate-001` 穩定成功**；其餘 Ultra 字串多數失敗，見 Test Lab smoke。
- * - op=nanoImage       （**兩套路徑**：① Imagen 4.x **Consumer / AI Studio**：`generativelanguage…/models/{id}:predict`**`?key=GEMINI_API_KEY`**；② Gemini / Nano Banana：`generateContent`；③ **Vertex 企業**：**`imagenBackend=vertex`** → `{location}-aiplatform…/v1/projects/{project}/locations/{location}/publishers/google/models/{id}:predict`，**不可用 API Key**，須 **IAM：OAuth2 Bearer**（服務帳號 JSON 或 `GOOGLE_APPLICATION_CREDENTIALS` 檔）。**Body** 兩邊皆為 `instances` + `parameters`。預設 `us-central1`，無模型降級。**解析度**：Imagen `predict` 的 `parameters.imageSize`（Ultra 常用 2K 求速度與高密度）；Nano Banana **Pro** 的 `generateContent` 除 `imageConfig.imageSize` 外可標 **imageConfig.outputResolution**（如 4K）。**大圖 Base64**：Vertex `generateContent` 與 Consumer `:predict` 的 fetch 均帶 **AbortSignal.timeout(120000)** 以免 Read body 中途斷線；**Vercel Serverless** 另須 **本檔 `export const config.maxDuration`**。**預設**：將模型回傳的 `data:` **落地 GCS**（`uploadBufferToGcs` + **V4 GET 簽名 URL**）— **推論在 Vertex、 object 寫回同 GCP 桶時內網/骨幹極短延遲**，比把數 MB Base64 再塞進 JSON 回傳快得多；`imageUrl` / `imageUrls` 給客戶端 **HTTPS 直鏈**讀圖。若需除錯內聯傳 `inlineBase64=1`。**編排原則**：本 handler 為「單次請求內同步落地 GCS 再響應」；**智庫等多圖 / 長任務務必維持 fire-and-forget / 背景队列**，勿在單條 tRPC 或頁面請求裡串行 await 多輪 4K。）
+ * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
  *
  * Env:
- * - **Vertex IAM（含 `imagenBackend=vertex`、Gemini Script、Nano Banana、Veo 等所有 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
- * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（transcribeAudio、Imagen `…:predict?key=`、translateForVeo）；**不**用於 Vertex。
- * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与该变量完全一致时也走 API Key 生图，用于不以 imagen-4.0 前缀命名的别名 ID）
- * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填；Vertex Imagen 亦用，可另備 GOOGLE_CLOUD_PROJECT）
- * - VERTEX_IMAGEN_LOCATION（可选，默认 us-central1）
+ * - **Vertex IAM（`generateContent` 圖像、Gemini Script、Veo 等 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
+ * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（transcribeAudio、translateForVeo）；**不**用於 Vertex 圖像。
+ * - VERTEX_PROJECT_ID（Vertex 圖像 / geminiScript / Veo 等必填；可另備 GOOGLE_CLOUD_PROJECT）
+ * - VERTEX_IMAGEN_LOCATION（可選；**本閘道生圖已不再走 Imagen**，保留僅為歷史 env 相容）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
  * - VERTEX_VIDEO_LOCATION_RAPID / VERTEX_VIDEO_LOCATION_PRO
@@ -179,24 +176,17 @@ async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Test Lab / 网关传入的 personGeneration 枚举 → Gemini Imagen `predict` parameters 小写值 */
-function mapPersonGenerationForGeminiImagenPredict(raw: string): string | undefined {
-  const u = s(raw).trim().toUpperCase().replace(/-/g, "_");
-  if (!u) return undefined;
-  if (u === "ALLOW_ADULT") return "allow_adult";
-  if (u === "ALLOW_ALL") return "allow_all";
-  if (u === "DONT_ALLOW") return "dont_allow";
-  return undefined;
-}
-
-/** 所有以 imagen-4.0 开头的 model 均走 generativelanguage + GEMINI_API_KEY + `:predict`（不经 Vertex nanoImage）。 */
-function isImagen4GeminiApiModel(rawModel: string): boolean {
+/** 舊 Imagen 4 `imagen-4.0*` 前綴，或與 `GEMINI_IMAGEN_ULTRA_MODEL` **完全一致**的別名 → 由 `nanoImage` 強制 remap。 */
+function isLegacyImagenModelId(rawModel: string): boolean {
   const m = s(rawModel).trim();
   if (!m) return false;
   const alias = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "").trim();
   if (alias.length > 0 && m === alias) return true;
   return m.toLowerCase().startsWith("imagen-4.0");
 }
+
+/** 舊 `:predict` 文生圖 ID 攔截後 **固定**使用的 Nano Banana 2（與 `VERTEX_IMAGE_MODEL_FLASH` 預設一致）。 */
+const LEGACY_IMAGEN_REMAP_TARGET_MODEL = "gemini-3.1-flash-image-preview";
 
 const NANO_IMAGE_GCS_PREFIX = "generated/nano-image";
 
@@ -334,110 +324,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
-    // ---------------- nanoImage：Vertex Imagen（企業 `:predict`，無降級） / Consumer Imagen 4（GEMINI_API_KEY + `…:predict`，與 AI Studio REST 一致） / 下文 Nano Banana（Vertex generateContent） ----------------
-    if (op === "nanoImage") {
-      const imagenBackend = s(q.imagenBackend || b.imagenBackend).toLowerCase();
-      const promptUltra = s(b.prompt || q.prompt || "");
-      const rawUltra = s(b.model || q.model || "");
-
-      if (imagenBackend === "vertex" && promptUltra) {
-        if (!isImagen4GeminiApiModel(rawUltra)) {
-          return res.status(400).json({
-            ok: false,
-            error: "vertex_imagen_requires_imagen_4_model",
-            detail: "imagenBackend=vertex 仅支持 imagen-4.0* 模型 ID（与 Consumer Ultra 命名对齐）。",
-            model: rawUltra,
-          });
-        }
-        const aspectRatioVx = s(b.aspectRatio || q.aspectRatio || "1:1");
-        const sizeVx = s(b.imageSize || q.imageSize || "1K").toUpperCase();
-        const numberOfImagesVx = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
-        const seedVx = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
-        const personGenerationVx = mapPersonGenerationForGeminiImagenPredict(s(b.personGeneration || q.personGeneration || ""));
-        const guidanceScaleVx = Number(b.guidanceScale || q.guidanceScale || NaN);
-
-        const rVx = await generateImagenVertexPredict({
-          prompt: promptUltra,
-          model: s(rawUltra).trim(),
-          aspectRatio: aspectRatioVx,
-          imageSize: sizeVx,
-          numberOfImages: numberOfImagesVx,
-          seed: Number.isFinite(seedVx as number) ? (seedVx as number) : undefined,
-          personGeneration: personGenerationVx,
-          guidanceScale: Number.isFinite(guidanceScaleVx) ? guidanceScaleVx : undefined,
-        });
-
-        const bodyVx = await buildNanoImageResponseBody({
-          ok: rVx.ok,
-          status: rVx.status,
-          model: rVx.model,
-          url: rVx.url,
-          raw: rVx.raw,
-          imageUrls: rVx.imageUrls,
-          forceInlineBase64: nanoForceInlineBase64,
-          extra: {
-            imagenBackend: "vertex",
-            vertexLocation: rVx.location,
-            ...(rVx.error ? { error: rVx.error } : {}),
-          },
-        });
-        return res.status(rVx.ok ? 200 : 502).json(bodyVx);
-      }
-
-      if (promptUltra && isImagen4GeminiApiModel(rawUltra)) {
-        const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
-        if (!geminiApiKey) {
-          return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
-        }
-        const geminiImagenModel = s(rawUltra).trim();
-        if (!geminiImagenModel) {
-          return res.status(400).json({ ok: false, error: "missing_model_for_imagen_4" });
-        }
-        const aspectRatioU = s(b.aspectRatio || q.aspectRatio || "1:1");
-        const sizeU = s(b.imageSize || q.imageSize || "1K").toUpperCase();
-        const numberOfImagesU = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
-        const seedU = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
-        const personGenerationU = mapPersonGenerationForGeminiImagenPredict(s(b.personGeneration || q.personGeneration || ""));
-
-        const parameters: Record<string, unknown> = {
-          sampleCount: numberOfImagesU,
-          aspectRatio: aspectRatioU,
-        };
-        if (sizeU === "1K" || sizeU === "2K" || sizeU === "4K") parameters.imageSize = sizeU;
-        if (Number.isFinite(seedU as number)) parameters.seed = Math.floor(seedU as number);
-        if (personGenerationU) parameters.personGeneration = personGenerationU;
-
-        const glUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiImagenModel}:predict?key=${geminiApiKey}`;
-        const requestInitUltra: RequestInit = {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            instances: [{ prompt: promptUltra }],
-            parameters,
-          }),
-          signal: AbortSignal.timeout(120_000),
-        };
-        let rU = await fetchJson(glUrl, requestInitUltra);
-        for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(rU.status, rU.json, rU.rawText); attempt += 1) {
-          await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
-          rU = await fetchJson(glUrl, requestInitUltra);
-        }
-        const rawU = rU.json ?? rU.rawText;
-        const imagesU = rU.ok ? extractGeneratedImages(rU.json) : [];
-        const imageUrlsU = imagesU.map((item) => `data:${item.mimeType};base64,${item.data}`);
-        const bodyU = await buildNanoImageResponseBody({
-          ok: rU.ok,
-          status: rU.status,
-          model: geminiImagenModel,
-          url: glUrl.split("?")[0],
-          raw: rawU,
-          imageUrls: imageUrlsU,
-          forceInlineBase64: nanoForceInlineBase64,
-        });
-        return res.status(rU.ok ? 200 : 502).json(bodyU);
-      }
-    }
-
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
     if(!projectId) return res.status(500).json({ok:false,error:"missing_env",detail:"VERTEX_PROJECT_ID"});
 
@@ -464,6 +350,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     }
 
     // ---------------- Nano Banana (image) ----------------
+    // 舊 Imagen `imagen-4.0*` / GEMINI_IMAGEN_ULTRA_MODEL 別名 → 強制 LEGACY_IMAGEN_REMAP_TARGET_MODEL，JSON 附 remappedFromLegacyImagen。
     // op=nanoImage, tier=flash|pro, size=1K|2K|4K, aspectRatio=16:9...
     // Pro · 4K：imageConfig.imageSize + outputResolution（產品文檔口徑）；Flash 僅在 2K/4K 時寫 imageSize。
     // fetch 一律 120s：4K Base64 體量大可導致讀取超時。
@@ -480,13 +367,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
-      const rawModel = s(b.model || q.model || "");
-      if (isImagen4GeminiApiModel(rawModel)) {
-        return res.status(400).json({
-          ok: false,
-          error: "imagen_4_vertex_conflict",
-          detail: "凡 imagen-4.0* 生图仅走 generativelanguage `…:predict` + GEMINI_API_KEY；请检查前置分支是否生效或是否缺少 prompt。",
-        });
+      let rawModel = s(b.model || q.model || "");
+      const legacyImagenRemap = isLegacyImagenModelId(rawModel);
+      if (legacyImagenRemap) {
+        rawModel = LEGACY_IMAGEN_REMAP_TARGET_MODEL;
       }
 
       const resolvedTier = rawModel
@@ -544,10 +428,12 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const bodyNb = await buildNanoImageResponseBody({
         ok: r.ok,
         status: r.status,
+        model,
         url: r.url,
         raw,
         imageUrls,
         forceInlineBase64: nanoForceInlineBase64,
+        extra: legacyImagenRemap ? { remappedFromLegacyImagen: true as const } : undefined,
       });
       return res.status(r.ok ? 200 : 502).json(bodyNb);
     }

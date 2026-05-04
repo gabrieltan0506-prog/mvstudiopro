@@ -280,8 +280,8 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   // ─── 平台趋势分析 ─────────────────────────────────────────
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 6 cr；试用包不支持" },
-  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: 5, note: "每张 5 cr，生图采用 GPT-IMAGE-2 主路径 · Imagen 兜底" },
-  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: 6, note: "每张 6 cr，生图采用 GPT-IMAGE-2 主路径 · Imagen 兜底" },
+  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: 5, note: "每张 5 cr，生图采用 GPT-IMAGE-2 主路径 · Nano Banana 2 兜底" },
+  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: 6, note: "每张 6 cr，生图采用 GPT-IMAGE-2 主路径 · Nano Banana 2 兜底" },
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
   { product: "平台数据分析", subFeature: "小红书图文参考（原生 2×4）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },

@@ -650,30 +650,27 @@ export default function PlatformPage() {
         );
       }
     },
-    onError: (err, variables) => {
-      console.error("[PlatformPage] generatePlatformCompositeSheet failed:", err);
-      const raw = String((err as { message?: unknown })?.message ?? "").trim();
-      const fallback = "双核视觉引擎满载或发生网络异常，已退回 16 积分，请稍后重试。";
-      const forToast = raw.length > 0 ? (raw.length > 720 ? `${raw.slice(0, 720)}…` : raw) : fallback;
-      toast.error(forToast);
-      setPlatformImageGenFlowSnapshots((prev) =>
-        [
+    onError: (error, variables) => {
+      toast.error("双核引擎异常，已退回 16 积分。请查閱 Debug 面板。");
+
+      const errorLogEntry = `[${new Date().toLocaleTimeString()}] ❌ 2x4 合成失败 (Global 节点): \n${String((error as { message?: unknown })?.message ?? "")}`;
+
+      setPlatformImageGenFlowSnapshots((prev) => {
+        const updated = [
+          ...(prev || []),
           {
             at: new Date().toISOString(),
             kind: "composite_2x4_failed" as const,
-            lines: linesFromClientMutationFailure(
-              `[客户端] 2×4 合成 mutation 失败 · kind=${variables.kind} · sceneId=${variables.sceneId}`,
-              err,
-            ),
+            lines: [errorLogEntry],
             meta: {
               apiKind: variables.kind,
               sceneId: variables.sceneId,
               title: variables.title?.slice(0, 80),
             },
           },
-          ...prev,
-        ].slice(0, 8),
-      );
+        ];
+        return updated.slice(-8);
+      });
     },
     onSettled: () => setPendingCompositeSheet(null),
   });
