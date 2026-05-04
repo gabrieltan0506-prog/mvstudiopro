@@ -2490,7 +2490,7 @@ ${job.topic}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 自动场景配图 — **Vertex** `nanoImage`：优先 Imagen Ultra `imagen-4.0-ultra-generate-001` · 2K；单张失败兜底 Nano Banana 2 · 2K
+// 自动场景配图 — **Fly** `generateAndStoreStrategicImage`（SCENE）：**Nano Banana 2** · 16:9 · 2K（与 proxyImageService GPT 兜底一致，无 Imagen :predict）
 // ─────────────────────────────────────────────────────────────────────────────
 // 设计：
 //   1. 用 LLM 解析报告 → 输出 3-5 个"应用场景 / 人物特色 / 行业生态"画面

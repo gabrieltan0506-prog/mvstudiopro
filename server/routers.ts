@@ -2888,7 +2888,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           });
         }
         if (!imageUrl) {
-          throw new Error("generateTopicImage failed: gpt-image-2 与 Imagen 兜底均未返回图片");
+          throw new Error("generateTopicImage failed: gpt-image-2 与 Nano Banana 2 兜底均未返回图片");
         }
         return { success: true, imageUrl };
       }),
@@ -2996,7 +2996,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             );
           }
           if (!url) {
-            appendImageFlowLog(flowLog, "[步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography/Imagen 版式兜底）");
+            appendImageFlowLog(flowLog, "[步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）");
             url = await generateImageGpt2WithImagenFallback({
               title: s.title,
               copywriting: body,
@@ -3088,17 +3088,18 @@ ${JSON.stringify(platformEvidence, null, 2)}
             executionDetails: input.executionDetails,
             flowLog: imageGenFlowLog,
           });
-        } catch (genErr: unknown) {
+        } catch (error: any) {
+          const rawMessage = error instanceof Error ? error.message : String(error);
+
+          console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
+
           if (!isAdminUser) {
-            await refundCredits(userId, cost, "platformCompositeSheet GPT-IMAGE-2 失败退还");
+            await refundCredits(ctx.user.id, cost, "platformCompositeSheet Global Node 生图致命错误退还");
           }
-          const msg =
-            genErr instanceof Error
-              ? genErr.message
-              : "GPT-IMAGE-2 渲染失败（2×4 无 Imagen 兜底），请稍后重试";
+
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: `${msg}（积分已退回）`,
+            message: `引擎错误 (积分已退回): \n${rawMessage}`,
           });
         }
 
@@ -3106,9 +3107,21 @@ ${JSON.stringify(platformEvidence, null, 2)}
           if (!isAdminUser) {
             await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
           }
+          const logTail = imageGenFlowLog
+            .filter((s) => String(s).trim())
+            .slice(-24)
+            .join("\n")
+            .trim();
+          const cap = 2000;
+          const detail =
+            logTail.length > cap ? `${logTail.slice(0, cap)}…\n（日志已截断）` : logTail;
+          const rawMessage = detail
+            ? `imageUrl 为空\n—— imageGenFlowLog ——\n${detail}`
+            : "imageUrl 为空（无 imageGenFlowLog 明细）";
+          console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: "生图失败，请稍后重试（积分已退回）",
+            message: `引擎错误 (积分已退回): \n${rawMessage}`,
           });
         }
 
@@ -3146,7 +3159,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * GodView 研报完成后：按章节一键生成战略扉页竖版海报（Gemini 英文指令 → GPT-IMAGE-2 + Imagen 兜底；试用水印跟任务走）。
+     * GodView 研报完成后：按章节一键生成战略扉页竖版海报（Gemini 英文指令 → GPT-IMAGE-2 + Nano Banana 2 兜底；试用水印跟任务走）。
      * 不扣积分；水印严格跟随该任务的 `strategicImagesTrialWatermark`（首购尝鲜），不信任客户端传参绕过。
      */
     generateGodViewChapterPosters: protectedProcedure
@@ -6991,7 +7004,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           userId: ctx.user.id,
           creditsBilled: aiAssistDeduct.source === "admin" ? 0 : COST,
           action: `主编工作台AI助手·${input.action}`,
-          externalApiCostHint: "Gemini 3 Pro Preview",
+          externalApiCostHint: "Vertex gemini-3.1-pro-preview (global)",
           metadata: { recordId: input.recordId, action: input.action },
         }).catch(() => {});
 
@@ -7009,26 +7022,10 @@ ${input.instruction ? `【主编指令】\n${input.instruction}\n` : ""}
 【原段落】
 ${input.blockText}`;
 
-        // 调用 Gemini 3.1 Pro Preview（与正式合成同一模型，保持文风一致）
+        // 调用 Gemini 3.1 Pro Preview · Vertex global（与平台编导同一管線，无需 GEMINI_API_KEY）
         try {
-          const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-          if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`;
-          const r = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
-              generationConfig: { temperature: 0.55, maxOutputTokens: 8192 },
-            }),
-            signal: AbortSignal.timeout(120_000),
-          });
-          const json: any = await r.json().catch(() => ({}));
-          if (!r.ok) {
-            await refundCreditsOnFailure(aiAssistJobId, "aiAssistEditor", "external_api_error", `Gemini ${r.status}`).catch(() => {});
-            throw new Error(json?.error?.message || `Gemini API ${r.status}`);
-          }
-          const text = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+          const { callGemini3_1_Pro } = await import("./services/vertexGemini31ProGlobal.js");
+          const text = (await callGemini3_1_Pro(finalPrompt, { maxOutputTokens: 8192, temperature: 0.55 })).trim();
           if (!text) {
             await refundCreditsOnFailure(aiAssistJobId, "aiAssistEditor", "external_api_error", "empty response").catch(() => {});
             throw new Error("AI 未返回内容");

@@ -1,6 +1,5 @@
 import { analyzeStoryboardPanelStats } from "../../shared/storyboardPanelCount.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
-import { generateImagenVertexPredict } from "./imageGenerationService";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -272,8 +271,47 @@ async function postGptImage2AndUpload(
   return null;
 }
 
+/** GPT-IMAGE-2 失敗後：Vertex **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· 2K。 */
+async function fallbackNanoBanana2FromPrompt(
+  prompt: string,
+  aspectRatio: "9:16" | "16:9",
+  flowLog?: string[],
+): Promise<string | null> {
+  const L = flowLog;
+  try {
+    const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
+    if (!isGeminiImageAvailable()) {
+      appendImageFlowLog(
+        L,
+        "[单帧兜底] Vertex 不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），跳过 Nano Banana 2",
+      );
+      return null;
+    }
+    const vertexResult = await generateGeminiImage({
+      prompt: String(prompt || "").trim(),
+      quality: "2k",
+      aspectRatio,
+      personGeneration: "ALLOW_ADULT",
+    });
+    const url = String(vertexResult?.imageUrl || "").trim();
+    if (!url) {
+      appendImageFlowLog(L, "[单帧兜底] Nano Banana 2 返回空 URL");
+      return null;
+    }
+    appendImageFlowLog(
+      L,
+      `[单帧兜底] Nano Banana 2 成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+    );
+    return url;
+  } catch (e: unknown) {
+    appendImageFlowLog(L, `[单帧兜底] Nano Banana 2 失败: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn("[proxyImageService] nano banana 2 fallback failed:", e);
+    return null;
+  }
+}
+
 /**
- * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **GPT-IMAGE-2**（9:16 或 16:9）→ Vertex Imagen 兜底。图像 API **不**执行翻译。
+ * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **GPT-IMAGE-2**（9:16 或 16:9）→ **Nano Banana 2** 兜底。图像 API **不**执行翻译。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
   englishPrompt: string;
@@ -303,32 +341,13 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Imagen · ${options.aspectRatio} · 2K`);
-  const imagenPrompt = prompt.replace(/\s+/g, " ").slice(0, 2400);
-  const model =
-    String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
-    "imagen-4.0-ultra-generate-001";
-  const r = await generateImagenVertexPredict({
-    prompt: imagenPrompt,
-    model,
-    aspectRatio: options.aspectRatio === "16:9" ? "16:9" : "9:16",
-    imageSize: "2K",
-    numberOfImages: 1,
-    personGeneration: "ALLOW_ADULT",
-    guidanceScale: 4.0,
-  });
-  if (!r.ok || !r.imageUrl) {
-    appendImageFlowLog(L, `[单帧兜底] Imagen 失败: ${r.error ?? "no url"}`);
-    console.warn("[proxyImageService] raw-prompt imagen fallback failed:", r.error);
-    return null;
-  }
-  appendImageFlowLog(L, "[单帧兜底] Imagen 成功，已转存签名 URL");
-  return uploadImagenDataUrlToSignedUrl(r.imageUrl);
+  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K`);
+  return fallbackNanoBanana2FromPrompt(prompt, options.aspectRatio, L);
 }
 
 /**
  * OhMyGPT `gpt-image-2` 主路径；需配置 `PROXY_OPENAI_API_KEY`（Bearer）。
- * 失败返回 null，由调用方走 Imagen Ultra 等 fallback。
+ * 失败返回 null，由调用方走 Nano Banana 2 等 fallback。
  */
 export async function generateGptImage2(options: {
   title: string;
@@ -444,33 +463,17 @@ export async function generatePlatformCompositeSheetImage(options: {
       `[2×4·步骤3] Nano Banana 2 兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
     );
     return fallbackUrl;
-  } catch (fallbackErr: unknown) {
-    const inner = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-    appendImageFlowLog(L, `[2×4·步骤3] Nano Banana 2 兜底失败: ${inner}`);
-    throw new Error(
-      "影像生成双核引擎（GPT-IMAGE-2 + Vertex Nano Banana 2）均失败，请稍后重试。",
-    );
+  } catch (fallbackError: any) {
+    const flowLog = L ?? [];
+    const realError = fallbackError?.message || String(fallbackError);
+    flowLog.push(`[5] 双核引擎皆渲染失败，底层报错: ${realError}`);
+
+    throw new Error(`[双核渲染崩溃]\n详细原因: ${realError}\n执行日志:\n${flowLog.join("\n")}`);
   }
 }
 
-async function uploadImagenDataUrlToSignedUrl(dataUrl: string): Promise<string | null> {
-  const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
-  if (!m?.[2]) return null;
-  const buffer = Buffer.from(m[2], "base64");
-  const mime = String(m[1] || "image/png");
-  const contentType = /jpeg|jpg/i.test(mime) ? "image/jpeg" : "image/png";
-  const ext = contentType === "image/jpeg" ? "jpg" : "png";
-  const path = `generated/imagen-fallback/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { gcsUri } = await uploadBufferToGcs({
-    objectName: path,
-    buffer,
-    contentType,
-  });
-  return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
-}
-
 /**
- * 旗艦生圖引擎：OhMyGPT `gpt-image-2` 主路徑 → Vertex **Imagen** `:predict` 兜底，產出 GCS 簽名 URL。
+ * 旗艦生圖引擎：OhMyGPT `gpt-image-2` 主路徑 → Vertex **Nano Banana 2** 兜底。
  *
  * @description 截斷與水印只在 `buildTypographyImagePrompt` 內執行一次，禁止在本函數重複 `sliceHeading`，
  *   以免已帶省略號的標題被二次截斷。
@@ -497,35 +500,15 @@ export async function generateImageGpt2WithImagenFallback(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Imagen 9:16 · 2K");
-  const prompt = buildTypographyImagePrompt({
+  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K");
+  const nbPrompt = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
     mode: options.mode,
     isTrial: options.isTrial,
     forImagenFallback: true,
   });
-
-  const model =
-    String(process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001").trim() ||
-    "imagen-4.0-ultra-generate-001";
-
-  const r = await generateImagenVertexPredict({
-    prompt,
-    model,
-    aspectRatio: "9:16",
-    imageSize: "2K",
-    numberOfImages: 1,
-    personGeneration: "ALLOW_ADULT",
-    guidanceScale: 4.0,
-  });
-  if (!r.ok || !r.imageUrl) {
-    appendImageFlowLog(L, `[版式兜底] Imagen 失败: ${r.error || "unknown"}`);
-    console.warn("[proxyImageService] imagen fallback failed:", r.error);
-    return null;
-  }
-  appendImageFlowLog(L, "[版式兜底] Imagen 成功");
-  return uploadImagenDataUrlToSignedUrl(r.imageUrl);
+  return fallbackNanoBanana2FromPrompt(nbPrompt, "9:16", L);
 }
 
 /** 深研报告场景配图：主路径 gpt-image-2，STRATEGIC 画风 + 试用水印。 */
@@ -541,3 +524,5 @@ export async function generateDeepResearchSceneIllustration(options: {
     isTrial: options.isTrial,
   });
 }
+
+export { callGemini3_1_Pro } from "./vertexGemini31ProGlobal.js";

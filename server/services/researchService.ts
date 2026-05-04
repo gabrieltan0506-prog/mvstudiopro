@@ -1,10 +1,7 @@
 /**
- * 竞品调研双引擎服务 — Google AI Studio 版本
- * Stage 1: gemma-4-31b-it  (竞品底层特征扫描)
- * Stage 2: gemini-3.1-pro-preview  (差异化战略处方生成)
- *
- * 使用 GEMINI_API_KEY (AI Studio)，不依赖 Vertex AI / GCP 私钥
- * 结合 /data/growth/platform-current/{platform}.current.json 真实平台数据
+ * 竞品调研双引擎服务
+ * Stage 1: gemma-4-31b-it — **Vertex AI**（`callGemma4` · us-central1 · 服务账号），**不使用** GEMINI_API_KEY
+ * Stage 2: gemini-3.1-pro-preview — **Vertex AI · global**（`callGemini3_1_Pro`），**不使用** GEMINI_API_KEY
  */
 import fs from "fs/promises";
 import path from "path";
@@ -14,10 +11,48 @@ const BACKUP_DIR = "/data/growth/research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 直接 HTTP 调用 Google AI Studio (Gemini API)
- * 避免 @google/genai SDK 对中文的 ByteString 编码问题
+ * 调用生成模型：
+ * - gemini-3.1-pro-preview → Vertex Global（callGemini3_1_Pro）
+ * - gemma-4-31b-it → Vertex（callGemma4 · publishers/google/models/gemma-4-31b-it）
+ * - 其余模型 → Google AI Studio HTTP（需 GEMINI_API_KEY；当前竞品调研不会走到此分支）
  */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
+  if (model === "gemini-3.1-pro-preview") {
+    const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 8192, temperature: 0.4 });
+      } catch (e: any) {
+        const msg = String(e?.message || e || "");
+        if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
+          console.log(`[researchService] Vertex 429/限流，${5 * (i + 1)}s 后重试...`);
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+        throw e;
+      }
+    }
+    return "";
+  }
+
+  if (model === "gemma-4-31b-it") {
+    const { callGemma4 } = await import("./gemma4.js");
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await callGemma4(prompt);
+      } catch (e: any) {
+        const msg = String(e?.message || e || "");
+        if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
+          console.log(`[researchService] Gemma Vertex 429/限流，${5 * (i + 1)}s 后重试...`);
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+        throw e;
+      }
+    }
+    return "";
+  }
+
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 

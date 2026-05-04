@@ -1,27 +1,11 @@
 import React, { useMemo, useRef, useState } from "react";
 
 type TabKey = "script" | "image" | "video" | "music";
-type GoogleImageModel =
-  | "gemini-3.1-flash-image-preview"
-  | "gemini-3-pro-image-preview"
-  | "imagen-4.0-ultra"
-  | "imagen-4.0-ultra-generate"
-  | "imagen-4.0-ultra-generate-001"
-  | "imagen-4.0-ultra-preview"
-  | "imagen-4.0-ultra-generate-preview";
+type GoogleImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
 type OpenAIImageModel = "gpt-image-2";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
 type MusicProvider = "suno" | "udio";
-
-/** Test Lab：一次連測多個 Ultra model 字串（Consumer + GEMINI_API_KEY）。實測目前僅 imagen-4.0-ultra-generate-001 穩定；Vertex 企業版請用「Vertex us-central1」勾選單測，不參與本串行 smoke。 */
-const IMAGEN_ULTRA_SMOKE_MODELS: readonly GoogleImageModel[] = [
-  "imagen-4.0-ultra",
-  "imagen-4.0-ultra-generate",
-  "imagen-4.0-ultra-generate-001",
-  "imagen-4.0-ultra-preview",
-  "imagen-4.0-ultra-generate-preview",
-];
 
 async function fetchJsonish(url: string, init?: RequestInit) {
   const resp = await fetch(url, init);
@@ -213,8 +197,6 @@ export default function TestLab() {
   const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3.1-flash-image-preview");
   /** 非空则覆盖「模型」下拉的 model 字符串（方便试 AI Studio 里复制的完整 ID） */
   const [googleImageModelOverride, setGoogleImageModelOverride] = useState("");
-  /** true：Imagen 4.x 走 Vertex 企業節點 `imagenBackend=vertex`（us-central1 `:predict`），不作模型降級 */
-  const [googleImagenVertexBackend, setGoogleImagenVertexBackend] = useState(false);
   const [openaiImageModel] = useState<OpenAIImageModel>("gpt-image-2");
   const [openaiSize, setOpenaiSize] = useState("1024x1024");
   const [openaiQuality, setOpenaiQuality] = useState("high");
@@ -359,11 +341,8 @@ export default function TestLab() {
       if (imageProvider === "google") {
         const model = googleImageModelOverride.trim() || googleImageModel;
         const tier = model === "gemini-3.1-flash-image-preview" ? "flash" : "pro";
-        const useVertexImagen =
-          googleImagenVertexBackend && model.toLowerCase().startsWith("imagen-4.0");
-        const vertexQs = useVertexImagen ? `&imagenBackend=${encodeURIComponent("vertex")}` : "";
         const r = await fetchJsonish(
-          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}${vertexQs}`,
+          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -378,12 +357,11 @@ export default function TestLab() {
               guidanceScale: Number(guidanceScale || 4),
               seed: imageSeed ? Number(imageSeed) : undefined,
               personGeneration,
-              ...(useVertexImagen ? { imagenBackend: "vertex" as const } : {}),
             }),
           }
         );
         last = r;
-        setDebug({ ok: r.ok, action: useVertexImagen ? "image:google:vertex" : "image:google", ...snapshotHttpForDebug(r) });
+        setDebug({ ok: r.ok, action: "image:google", ...snapshotHttpForDebug(r) });
         if (!r.ok) throw new Error("google_image_failed");
 
         const dataUrl = String(r?.json?.imageUrl || "").trim();
@@ -437,95 +415,6 @@ export default function TestLab() {
       throw new Error("kling_image_timeout");
     } catch (e: any) {
       setDebug(buildClientFailureDebug(e, last, { action: "image" }));
-    } finally {
-      setImageBusy(false);
-    }
-  }
-
-  /** 串行連打三次 nanoImage，比對哪個 model ID 可用；結果寫入 debug，第一張成功圖會顯示在預覽。 */
-  async function runImagenUltraTripleSmoke() {
-    if (imageProvider !== "google") {
-      setDebug(buildClientFailureDebug(new Error("请先切换到 Google 引擎"), undefined, { action: "imagenUltraTripleSmoke" }));
-      return;
-    }
-    if (!prompt.trim()) {
-      setDebug(buildClientFailureDebug(new Error("请填写 prompt"), undefined, { action: "imagenUltraTripleSmoke" }));
-      return;
-    }
-
-    setImageBusy(true);
-    setImageTaskId("");
-    setImageUrl("");
-    setUpscaledImageUrl("");
-    setDebug({ ok: true, action: "imagenUltraTripleSmoke:start", models: [...IMAGEN_ULTRA_SMOKE_MODELS] });
-
-    const rows: any[] = [];
-    let smokeWinnerUrl: string | undefined;
-
-    try {
-      for (const model of IMAGEN_ULTRA_SMOKE_MODELS) {
-        const tier = model === "gemini-3.1-flash-image-preview" ? "flash" : "pro";
-        const r = await fetchJsonish(
-          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              prompt,
-              tier,
-              model,
-              imageSize: imageResolution,
-              aspectRatio,
-              negativePrompt,
-              numberOfImages: Number(imageCount || 1),
-              guidanceScale: Number(guidanceScale || 4),
-              seed: imageSeed ? Number(imageSeed) : undefined,
-              personGeneration,
-            }),
-          }
-        );
-
-        const dataUrl = String(r?.json?.imageUrl || "").trim();
-        const multi = Array.isArray(r?.json?.imageUrls) ? r.json.imageUrls : [];
-        const firstUrl = dataUrl || String(multi[0] || "").trim();
-        if (r.ok && firstUrl && !smokeWinnerUrl) smokeWinnerUrl = firstUrl;
-        const errStructured = extractStructuredApiErrors(r.json);
-        const errMsg =
-          (r?.json?.error && String(r.json.error)) ||
-          (typeof r?.json?.message === "string" ? r.json.message : "") ||
-          (errStructured && JSON.stringify(errStructured)) ||
-          r.rawText.slice(0, 400);
-
-        rows.push({
-          model,
-          hasImage: Boolean(firstUrl),
-          imageHint: firstUrl
-            ? firstUrl.startsWith("data:")
-              ? `[data URL ${firstUrl.length} chars]`
-              : firstUrl.slice(0, 120) + (firstUrl.length > 120 ? "…" : "")
-            : null,
-          errorSnippet: r.ok && firstUrl ? null : errMsg,
-          http: snapshotHttpForDebug(r),
-        });
-      }
-
-      if (smokeWinnerUrl) setImageUrl(smokeWinnerUrl);
-
-      setDebug({
-        ok: true,
-        action: "imagenUltraTripleSmoke:done",
-        summary: rows.map((x) => ({
-          model: x.model,
-          httpStatus: x.http?.httpStatus,
-          httpOk: x.http?.httpOk,
-          hasImage: x.hasImage,
-          errorSnippet: x.errorSnippet,
-          structured: x.http?.structured,
-        })),
-        rows,
-      });
-    } catch (e: any) {
-      setDebug(buildClientFailureDebug(e, undefined, { action: "imagenUltraTripleSmoke", partialRows: rows }));
     } finally {
       setImageBusy(false);
     }
@@ -901,6 +790,7 @@ export default function TestLab() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div>
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
+                {/* 僅 Flash / Pro；若自訂欄填 imagen-4.0* 等舊 ID，後端 /api/google op=nanoImage 會強制改為 gemini-3.1-flash-image-preview 並附 remappedFromLegacyImagen */}
                 <select
                   value={googleImageModel}
                   onChange={(e) => setGoogleImageModel(e.target.value as GoogleImageModel)}
@@ -908,32 +798,10 @@ export default function TestLab() {
                 >
                   <option value="gemini-3.1-flash-image-preview">Nano Banana 2（gemini-3.1-flash-image-preview）</option>
                   <option value="gemini-3-pro-image-preview">Nano Banana Pro（gemini-3-pro-image-preview）</option>
-                  <option value="imagen-4.0-ultra">Imagen Ultra · imagen-4.0-ultra（Gemini API Key → URL 原样）</option>
-                  <option value="imagen-4.0-ultra-generate">Imagen Ultra · imagen-4.0-ultra-generate</option>
-                  <option value="imagen-4.0-ultra-generate-001">Imagen Ultra · imagen-4.0-ultra-generate-001（Consumer 實測可用）</option>
-                  <option value="imagen-4.0-ultra-preview">Imagen Ultra · imagen-4.0-ultra-preview</option>
-                  <option value="imagen-4.0-ultra-generate-preview">Imagen Ultra · imagen-4.0-ultra-generate-preview</option>
                 </select>
                 <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.65, lineHeight: 1.45 }}>
-                  Consumer 路徑（<code style={{ fontSize: 10 }}>generativelanguage</code> + <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>）實測：目前僅{" "}
-                  <code style={{ fontSize: 10 }}>imagen-4.0-ultra-generate-001</code> 穩定成功，其餘 Ultra 後綴多數失敗。企業 Vertex 請勾選下方「Vertex us-central1」單獨測（無模型降級）。
+                  若手動填寫舊版 <code style={{ fontSize: 10 }}>imagen-4.0*</code> 模型 ID，閘道會自動改走 Vertex Nano Banana 2（Flash）。
                 </p>
-                {(googleImageModelOverride.trim() || googleImageModel).toLowerCase().startsWith("imagen-4.0") ? (
-                  <label style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12 }}>
-                    <input
-                      type="checkbox"
-                      checked={googleImagenVertexBackend}
-                      onChange={(e) => setGoogleImagenVertexBackend(e.target.checked)}
-                    />
-                    <span>
-                      Vertex 企業版（<code style={{ fontSize: 10 }}>imagenBackend=vertex</code>，預設 <code style={{ fontSize: 10 }}>us-central1</code>，端點為{" "}
-                      <code style={{ fontSize: 10 }}>…-aiplatform…/v1/projects/…/locations/…/models/…:predict</code>
-                      ；認證為 <strong>IAM Bearer</strong>（<code style={{ fontSize: 10 }}>GOOGLE_APPLICATION_CREDENTIALS_JSON</code> 或憑證檔路徑，<strong>非</strong>{" "}
-                      <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>）；並需{" "}
-                      <code style={{ fontSize: 10 }}>VERTEX_PROJECT_ID</code> 或 <code style={{ fontSize: 10 }}>GOOGLE_CLOUD_PROJECT</code>。
-                    </span>
-                  </label>
-                ) : null}
                 </div>
                 <div>
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>自定义 model ID（可选，非空覆盖下拉）</div>
@@ -1110,17 +978,6 @@ export default function TestLab() {
             >
               {imageBusy ? "生成中…" : "开始生成图片"}
             </button>
-            {imageProvider === "google" ? (
-              <button
-                type="button"
-                onClick={runImagenUltraTripleSmoke}
-                disabled={imageBusy}
-                title="忽略「自定义 model ID」，依次请求 5 个 Ultra 相关 model ID（含 preview），结果见下方 Raw debug"
-                style={{ padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(120,180,255,0.45)", background: "rgba(80,120,200,0.22)", color: "white", fontWeight: 900 }}
-              >
-                连测 Ultra（5 ID）
-              </button>
-            ) : null}
           </div>
 
           {imageTaskId ? <div style={{ marginTop: 8, opacity: 0.8 }}>任务：<code>{imageTaskId}</code></div> : null}
