@@ -425,10 +425,41 @@ const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
 
 type PlatformImageGenFlowSnapshot = {
   at: string;
-  kind: "batch_topic_frames" | "composite_2x4";
+  kind: "batch_topic_frames" | "composite_2x4" | "batch_topic_frames_failed" | "composite_2x4_failed";
   lines: string[];
   meta?: Record<string, unknown>;
 };
+
+/** 失敗時寫入 Debug 綠框，便于对照 Network / 服务端日志 */
+function linesFromClientMutationFailure(prefix: string, err: unknown): string[] {
+  const lines = [`${prefix} · ${new Date().toISOString()}`];
+  if (err instanceof Error) {
+    lines.push(`name: ${err.name}`, `message: ${err.message}`);
+    if (err.stack) lines.push(`stack:\n${err.stack}`);
+  } else {
+    lines.push(`raw: ${String(err)}`);
+  }
+  const d = err as { data?: { code?: string; httpStatus?: number; path?: string; zodError?: unknown } };
+  if (d?.data?.code != null) lines.push(`trpc.data.code: ${d.data.code}`);
+  if (d?.data?.httpStatus != null) lines.push(`trpc.data.httpStatus: ${String(d.data.httpStatus)}`);
+  if (d?.data?.path != null) lines.push(`trpc.data.path: ${d.data.path}`);
+  if (d?.data?.zodError != null) {
+    try {
+      lines.push(`trpc.data.zodError:\n${JSON.stringify(d.data.zodError, null, 2)}`);
+    } catch {
+      lines.push("trpc.data.zodError: [无法序列化]");
+    }
+  }
+  const shape = (err as { shape?: unknown }).shape;
+  if (shape != null) {
+    try {
+      lines.push(`trpc.shape:\n${JSON.stringify(shape, null, 2)}`);
+    } catch {
+      lines.push("trpc.shape: [无法序列化]");
+    }
+  }
+  return lines;
+}
 
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
@@ -564,7 +595,24 @@ export default function PlatformPage() {
         );
       }
     },
-    onError: (err) => toast.error(err.message || "批量生图失败"),
+    onError: (err) => {
+      console.error("[PlatformPage] generateAllPlatformTopicImages failed:", err);
+      toast.error(err.message || "批量生图失败");
+      setPlatformImageGenFlowSnapshots((prev) =>
+        [
+          {
+            at: new Date().toISOString(),
+            kind: "batch_topic_frames_failed" as const,
+            lines: linesFromClientMutationFailure(
+              `[客户端] 批量单帧 mutation 失败 · platformBatchType=${platformBatchType}`,
+              err,
+            ),
+            meta: { platformBatchType },
+          },
+          ...prev,
+        ].slice(0, 8),
+      );
+    },
   });
 
   const generatePlatformCompositeSheetMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
@@ -602,8 +650,31 @@ export default function PlatformPage() {
         );
       }
     },
-    onError: () =>
-      toast.error("双核视觉引擎满载或发生网络异常，已退回 16 积分，请稍后重试。"),
+    onError: (err, variables) => {
+      console.error("[PlatformPage] generatePlatformCompositeSheet failed:", err);
+      const raw = String((err as { message?: unknown })?.message ?? "").trim();
+      const fallback = "双核视觉引擎满载或发生网络异常，已退回 16 积分，请稍后重试。";
+      const forToast = raw.length > 0 ? (raw.length > 720 ? `${raw.slice(0, 720)}…` : raw) : fallback;
+      toast.error(forToast);
+      setPlatformImageGenFlowSnapshots((prev) =>
+        [
+          {
+            at: new Date().toISOString(),
+            kind: "composite_2x4_failed" as const,
+            lines: linesFromClientMutationFailure(
+              `[客户端] 2×4 合成 mutation 失败 · kind=${variables.kind} · sceneId=${variables.sceneId}`,
+              err,
+            ),
+            meta: {
+              apiKind: variables.kind,
+              sceneId: variables.sceneId,
+              title: variables.title?.slice(0, 80),
+            },
+          },
+          ...prev,
+        ].slice(0, 8),
+      );
+    },
     onSettled: () => setPendingCompositeSheet(null),
   });
 
@@ -2052,12 +2123,12 @@ export default function PlatformPage() {
                     </pre>
                   </div>
                 </div>
-                {platformImageGenFlowSnapshots.length > 0 ? (
-                  <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
-                        分镜单帧 / 封面参考 / 2×4 合成 · 服务端逐步日志（imageGenFlowLog）
-                      </div>
+                <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
+                      分镜单帧 / 封面参考 / 2×4 合成 · 服务端逐步日志（imageGenFlowLog）
+                    </div>
+                    {platformImageGenFlowSnapshots.length > 0 ? (
                       <button
                         type="button"
                         onClick={() => setPlatformImageGenFlowSnapshots([])}
@@ -2065,19 +2136,44 @@ export default function PlatformPage() {
                       >
                         清空
                       </button>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+                    位置：本卡片在 <span className="text-gray-400">askPlatformFollowUp.debug</span>{" "}
+                    三块 JSON <strong className="text-gray-400">正下方</strong>。
+                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>；<strong className="text-rose-400/90">失败</strong>
+                    时也会追加一段红色「mutation 失败」流水（含 TRPC message / code / zodError）。
+                  </p>
+                  {platformImageGenFlowSnapshots.length === 0 ? (
+                    <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
+                      尚无记录。请往下翻到选题卡片区跑一次批量参考图或 2×4 合成；若失败，此处也应出现红色失败流水。
                     </div>
-                    <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                      开启本面板后，最近一次「一键批量单帧」或「分镜图文参考 / 小红书图文参考」成功返回时会追加一段带 ISO
-                      时间戳的流水；多选题批量时按 scene 分段。
-                    </p>
+                  ) : (
                     <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
                       {platformImageGenFlowSnapshots.map((snap, i) => (
                         <div
                           key={`${snap.at}-${snap.kind}-${i}`}
-                          className="rounded-xl border border-white/10 bg-black/40 p-3"
+                          className={`rounded-xl border bg-black/40 p-3 ${
+                            snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed"
+                              ? "border-rose-500/40"
+                              : "border-white/10"
+                          }`}
                         >
-                          <div className="font-mono text-[10px] text-[#8cefff]">
-                            {snap.at} · {snap.kind === "batch_topic_frames" ? "批量单帧" : "2×4 合成"}
+                          <div
+                            className={`font-mono text-[10px] ${
+                              snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed"
+                                ? "text-rose-300"
+                                : "text-[#8cefff]"
+                            }`}
+                          >
+                            {snap.at} ·{" "}
+                            {snap.kind === "batch_topic_frames"
+                              ? "批量单帧"
+                              : snap.kind === "batch_topic_frames_failed"
+                                ? "批量单帧 · 失败（客户端捕获）"
+                                : snap.kind === "composite_2x4_failed"
+                                  ? "2×4 合成 · 失败（客户端捕获）"
+                                  : "2×4 合成"}
                             {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
                           </div>
                           <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
@@ -2086,8 +2182,8 @@ export default function PlatformPage() {
                         </div>
                       ))}
                     </div>
-                  </div>
-                ) : null}
+                  )}
+                </div>
               </div>
             ) : null}
 

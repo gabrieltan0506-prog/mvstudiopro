@@ -3106,9 +3106,19 @@ ${JSON.stringify(platformEvidence, null, 2)}
           if (!isAdminUser) {
             await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
           }
+          const logTail = imageGenFlowLog
+            .filter((s) => String(s).trim())
+            .slice(-24)
+            .join("\n")
+            .trim();
+          const cap = 2000;
+          const detail =
+            logTail.length > cap ? `${logTail.slice(0, cap)}…\n（日志已截断）` : logTail;
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: "生图失败，请稍后重试（积分已退回）",
+            message: detail
+              ? `生图失败（积分已退回）。常见原因：双语编导 Gemini 步骤失败（见下方日志片段）。\n—— imageGenFlowLog ——\n${detail}`
+              : "生图失败，请稍后重试（积分已退回）",
           });
         }
 
