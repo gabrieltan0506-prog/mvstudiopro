@@ -525,5 +525,5 @@ export async function generateDeepResearchSceneIllustration(options: {
   });
 }
 
-/** Vertex Gemini 3.1 Pro（global）：Vercel 憑證見 `vertexGemini31ProGlobal.ts`（`GOOGLE_APPLICATION_CREDENTIALS_JSON` + `private_key` 換行修復）。 */
+/** Vertex Gemini 3.1 Pro：`vertexGemini31ProGlobal.ts`（區域預設 us-central1、JSON 憑證 + private_key 換行修復）。 */
 export { callGemini3_1_Pro } from "./vertexGemini31ProGlobal.js";
