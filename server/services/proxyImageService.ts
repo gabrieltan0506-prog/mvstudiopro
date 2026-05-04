@@ -525,5 +525,5 @@ export async function generateDeepResearchSceneIllustration(options: {
   });
 }
 
-/** Vertex Gemini 3.1 Pro：`vertexGemini31ProGlobal.ts`（區域預設 us-central1、JSON 憑證 + private_key 換行修復）。 */
+/** re-export：`callGemini3_1_Pro` 實作於 `vertexGemini31ProGlobal.ts`（預設模型 `gemini-3.1-pro`、`maxOutputTokens` 8192）。 */
 export { callGemini3_1_Pro } from "./vertexGemini31ProGlobal.js";
