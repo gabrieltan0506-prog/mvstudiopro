@@ -105,6 +105,29 @@ import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
 import { and, desc, eq, gte } from "drizzle-orm";
 
+/** 平台頁一鍵批量參考圖：同時進行「Gemini→英文 + 生圖」的條目數（環境變數可調，預設 4）。 */
+function resolvePlatformTopicImageConcurrency(): number {
+  const raw = String(process.env.PLATFORM_TOPIC_IMAGE_CONCURRENCY || "").trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : 4;
+  if (!Number.isFinite(parsed)) return 4;
+  return Math.min(8, Math.max(1, parsed));
+}
+
+async function mapWithPool<T, R>(items: T[], pool: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  const workers = Math.min(Math.max(1, pool), items.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return out;
+}
+
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
   "douyin_creator_index",
@@ -2825,27 +2848,26 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const {
-          buildPlatformTopicReferenceGeminiTask,
-          runGemini31ProPreviewText,
-        } = await import("./services/geminiPlatformCompositeTranslation.js");
+        const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
+          "./services/geminiPlatformCompositeTranslation.js",
+        );
         const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
           "./services/proxyImageService",
         );
-        const formatLabel = input.format === "图文" ? "图文笔记" : "短视频";
         const title = String(input.topicHook || "").trim().slice(0, 80);
         const ctx = String(input.context || "").trim();
         const copywriting = ctx ? `${input.topicHook}\n${ctx}` : input.topicHook;
-        const mode = input.format === "图文" ? "GRAPHIC" : "STORYBOARD";
+        const isGraphic = input.format === "图文";
+        const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
 
         let imageUrl: string | null = null;
         try {
           const geminiTask = buildPlatformTopicReferenceGeminiTask({
             topicHook: input.topicHook,
-            formatLabel,
             context: ctx,
+            variant: isGraphic ? "graphic" : "video",
           });
-          const englishPrompt = await runGemini31ProPreviewText(geminiTask);
+          const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
           imageUrl = await generateGptImage2FromRawEnglishPrompt({
             englishPrompt,
             aspectRatio: "9:16",
@@ -2853,7 +2875,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           });
         } catch (e: unknown) {
           console.warn(
-            "[mvAnalysis.generateTopicImage] Gemini→GPT-IMAGE-2 失败，走旧版指令:",
+            `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} Gemini→英文失败:`,
             e instanceof Error ? e.message : e,
           );
         }
@@ -2871,13 +2893,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
         return { success: true, imageUrl };
       }),
 
-    /** 平台页：一键为全部选题生图。短视频分镜 5 点/张，图文配图 6 点/张；主路径 gpt-image-2，Imagen Ultra 兜底。 */
+    /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
     generateAllPlatformTopicImages: protectedProcedure
       .input(
         z.object({
-          /** 可選：審計/日誌關聯（若無平台 Job 可省略）；不以此前端欄位做扣費權限判斷 */
           jobId: z.string().max(128).optional(),
-          /** 整批統一計價與生圖 mode：video=短影音分鏡 5點/張，graphic=圖文配圖 6點/張 */
           platformType: z.enum(["video", "graphic"]),
           scenes: z
             .array(
@@ -2917,7 +2937,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             userId,
             totalCost,
             "platformTopicImages",
-            `批量生成分鏡/配圖（${input.scenes.length} 张 · 共 ${totalCost} 点）`,
+            `批量生成分鏡/封面參考（${input.scenes.length} 张 · 共 ${totalCost} 点）`,
           );
         }
 
@@ -2929,46 +2949,77 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
         const {
           buildPlatformTopicReferenceGeminiTask,
-          runGemini31ProPreviewText,
+          callGemini31ProForImagePrompt,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
-        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
-          "./services/proxyImageService",
+        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, appendImageFlowLog } = await import(
+          "./services/proxyImageService.js",
         );
-        const mode = isVideo ? "STORYBOARD" : "GRAPHIC";
-        const formatLabel = isVideo ? "短视频" : "图文笔记";
-        const results: { id: string; url: string | null }[] = [];
-        for (const s of input.scenes) {
+        const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
+        const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
+        const pool = resolvePlatformTopicImageConcurrency();
+        const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
+        const results = await mapWithPool(input.scenes, pool, async (s) => {
           const body = String(s.text ?? s.copywriting ?? "").trim();
+          const flowLog: string[] = [];
+          appendImageFlowLog(flowLog, `──────── 选题「${s.title.slice(0, 48)}」· id=${s.id} ────────`);
+          appendImageFlowLog(
+            flowLog,
+            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt → generateGptImage2FromRawEnglishPrompt 9:16`,
+          );
+          appendImageFlowLog(
+            flowLog,
+            `说明: 中文语境仅供 Gemini 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
+          );
           let url: string | null = null;
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: s.title,
-              formatLabel,
               context: body,
+              variant: geminiVariant,
             });
-            const englishPrompt = await runGemini31ProPreviewText(geminiTask);
+            appendImageFlowLog(flowLog, "[步骤1] 调用 Gemini 生成英文 prompt …");
+            const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+            appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
+            appendImageFlowLog(flowLog, "[步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…");
             url = await generateGptImage2FromRawEnglishPrompt({
               englishPrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_batch_reference",
+              flowLog,
             });
           } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            appendImageFlowLog(flowLog, `[步骤1/2] 主路径异常: ${msg}`);
             console.warn(
-              `[mvAnalysis.generateAllPlatformTopicImages] Gemini→GPT-IMAGE-2 失败 scene=${s.id}:`,
+              `[mvAnalysis.generateAllPlatformTopicImages] 英文化主路径失败 scene=${s.id}:`,
               e instanceof Error ? e.message : e,
             );
           }
           if (!url) {
+            appendImageFlowLog(flowLog, "[步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography/Imagen 版式兜底）");
             url = await generateImageGpt2WithImagenFallback({
               title: s.title,
               copywriting: body,
               mode,
               isTrial: false,
+              flowLog,
             });
           }
-          results.push({ id: s.id, url });
-        }
-        return { success: true as const, results, totalCost: isAdminUser ? 0 : totalCost };
+          appendImageFlowLog(flowLog, url ? "✓ 本条结束：已得到 imageUrl" : "✗ 本条结束：仍无 URL");
+          return { id: s.id, url, flowLog };
+        });
+        const mergedFlowLog = [batchHeader, ...results.flatMap((r) => [`▶ ${r.id}`, ...(r.flowLog ?? [])])];
+        return {
+          success: true as const,
+          results,
+          totalCost: isAdminUser ? 0 : totalCost,
+          imageGenFlowLog: mergedFlowLog,
+          imageGenMeta: {
+            platformType: input.platformType,
+            concurrency: pool,
+            sceneCount: input.scenes.length,
+          },
+        };
       }),
 
     /**
@@ -3019,15 +3070,37 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
-        const { generatePlatformCompositeSheetImage } = await import("./services/proxyImageService");
+        const { generatePlatformCompositeSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
+        const imageGenFlowLog: string[] = [];
+        appendImageFlowLog(
+          imageGenFlowLog,
+          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)}`,
+        );
         const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
-        const imageUrl = await generatePlatformCompositeSheetImage({
-          kind: input.kind,
-          title: input.title,
-          scriptContext: input.scriptContext,
-          isTrial,
-          executionDetails: input.executionDetails,
-        });
+        appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
+        let imageUrl: string | null = null;
+        try {
+          imageUrl = await generatePlatformCompositeSheetImage({
+            kind: input.kind,
+            title: input.title,
+            scriptContext: input.scriptContext,
+            isTrial,
+            executionDetails: input.executionDetails,
+            flowLog: imageGenFlowLog,
+          });
+        } catch (genErr: unknown) {
+          if (!isAdminUser) {
+            await refundCredits(userId, cost, "platformCompositeSheet GPT-IMAGE-2 失败退还");
+          }
+          const msg =
+            genErr instanceof Error
+              ? genErr.message
+              : "GPT-IMAGE-2 渲染失败（2×4 无 Imagen 兜底），请稍后重试";
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `${msg}（积分已退回）`,
+          });
+        }
 
         if (!imageUrl) {
           if (!isAdminUser) {
@@ -3062,11 +3135,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
           console.error("[mvAnalysis.generatePlatformCompositeSheet] metadata persist failed:", e?.message || e);
         }
 
+        appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
         return {
           success: true as const,
           imageUrl,
           totalCost: isAdminUser ? 0 : cost,
           kind: input.kind,
+          imageGenFlowLog,
         };
       }),
 

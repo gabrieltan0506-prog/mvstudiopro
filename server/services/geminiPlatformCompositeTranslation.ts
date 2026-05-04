@@ -20,7 +20,7 @@ MANDATORY RULES FOR YOUR OUTPUT PROMPT:
 1. START EXACTLY WITH: "Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills."
 2. SCENE TRANSLATION: Describe the visuals, lighting, clothing, and actions vividly in English.
 3. CRITICAL TYPOGRAPHY INSTRUCTION: You MUST add this exact sentence to force the AI to render Chinese text: "The image must include a main title in Simplified Chinese. Each image panel must contain Simplified Chinese text describing the content. Below each image panel, there must be a clean text grid containing precise Simplified Chinese descriptions of the lighting, camera angle, clothing, and actions."
-4. DYNAMIC BACKGROUND: Based on the historical era or scene mood in the script, assign a masterpiece-level, high-end color palette for the storyboard's background. (e.g., "The overall chart background is a rich cinematic dark slate to contrast the bright scenes" or "The background is a masterpiece light cappuccino beige gradient").
+4. DYNAMIC BACKGROUND: Based on the historical era, genre, and scene mood in the script, choose a **cohesive** storyboard-sheet background palette and material (color, texture, atmosphere) that **matches the visual aesthetic of the piece**—not a fixed template. Examples of the kind of variation allowed: rich cinematic dark slate behind bright panels; soft ink-wash and paper grain for literati mood; cool clinical white-gray for medical explainer; warm artisanal paper only when the script itself calls for that tone.
 5. OUTPUT: Output ONLY the final English prompt string. Do not include conversational text.
 
 [Chinese Script]:
@@ -103,30 +103,36 @@ MANDATORY RULES:
 `.trim();
 }
 
-/** 平台选题参考图：双语编导把中文钩子压成英文视觉 prompt → GPT-IMAGE-2 */
+/** 平台選題單幀：中文 → 英文視覺 prompt。video=多格分鏡條；graphic=圖文/封面式參考（非 2×4 合成表）。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
-  formatLabel: string;
   context: string;
+  /** `video`：短影音分鏡多格；`graphic`：圖文笔记/封面参考竖图 */
+  variant: "video" | "graphic";
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 500);
   const ctx = String(input.context || "").trim().slice(0, 1500);
+  const openLine =
+    input.variant === "video"
+      ? 'START EXACTLY WITH: "Cinematic 9:16 vertical **multi-panel storyboard strip** for short-form video: **at least 3 clearly separated frames or panels** (stacked vertically or in a neat grid), each panel showing one sequential beat of the action; visible borders, gutters, or storyboard labels between panels; dramatic lighting—not a single full-bleed poster hero shot, not a magazine cover, not a title-splash-only card."'
+      : 'START EXACTLY WITH: "High-end vertical 9:16 **editorial cover-style reference still** for social / Xiaohongshu graphic note—luxury commercial photography, clear focal subject, premium layout feel suitable as a **cover or hero card**—not a multi-panel storyboard grid, not a film strip."';
+  const roleLabel = input.variant === "video" ? "short-video **multi-panel storyboard reference image**" : "**graphic note / cover-style** single hero reference (one main scene)";
   return `
 You are a bilingual (English and Simplified Chinese) social media visual strategist and prompt director.
 
 CRITICAL PIPELINE (DO NOT SKIP):
-**GPT-IMAGE-2** has **no** translation step—**only** your **English** prompt is sent to the image API. Convert the Chinese hook and supporting context into **one** **English** prompt for GPT-IMAGE-2 for a ${input.formatLabel} reference still, with legible **Simplified-Chinese** hook text mandated via English instructions.
+**GPT-IMAGE-2** consumes **only English**—it cannot translate Chinese. You MUST output **one** self-contained English prompt for a ${roleLabel}, with mandatory on-image **Simplified-Chinese** typography (hook, title, or panel labels as appropriate) described via **English** instructions to the image model.
 
 MANDATORY RULES:
-1. START EXACTLY WITH: "High-end vertical 9:16 editorial reference still, ${input.formatLabel} content style, luminous luxury palette, crisp commercial photography."
-2. Main on-image hook line MUST be Simplified Chinese only, legible, based on: 「${hook}」. Supporting labels or bullets if any MUST also be Simplified Chinese.
-3. Use English only for non-text visual descriptions. Context (for you to infer visuals, do not dump raw):\n${ctx}
+1. ${openLine}
+2. Main on-image hook or title line MUST be Simplified Chinese only, legible, based on: 「${hook}」. Any supporting labels MUST be Simplified Chinese.
+3. Use English only for non-text visual / camera / lighting / layout descriptions. Use the Chinese context below to infer composition (do not paste raw Chinese into the output string):\n${ctx}
 4. OUTPUT: English prompt string only.
 `.trim();
 }
 
 /**
- * 战略封面 / 扉页 / 选题参考：**Gemini 3.1 Pro**（可通过 `GEMINI_COVER_PROMPT_MODEL` 覆盖）任**双语编导**阶段，产出**一条英文**视觉 prompt；
+ * 战略封面 / 章节扉页：**Gemini**（可通过 `GEMINI_COVER_PROMPT_MODEL` 覆盖）任**双语编导**阶段，产出**一条英文**视觉 prompt；
  * **GPT-IMAGE-2** 仅接收该英文串并生图，**不具备**读中文或翻译能力。
  */
 export async function runGemini31ProPreviewText(userTask: string): Promise<string> {

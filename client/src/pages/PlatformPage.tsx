@@ -416,10 +416,19 @@ function readOptionalReportBindingCreationId(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-/** 執行選題卡 DOM id：畫廊點擊後 scrollIntoView（與 GMGPT / 交付規格 `execution-card-${id}` 對齊，含編碼避免特殊字元） */
+/** 執行選題卡 DOM id：穩定錨點 `execution-card-…`（畫廊不綁定點擊滾動） */
 function executionCardDomId(sceneId: string): string {
   return `execution-card-${encodeURIComponent(sceneId).replace(/%/g, "")}`;
 }
+
+const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
+
+type PlatformImageGenFlowSnapshot = {
+  at: string;
+  kind: "batch_topic_frames" | "composite_2x4";
+  lines: string[];
+  meta?: Record<string, unknown>;
+};
 
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
@@ -458,6 +467,10 @@ export default function PlatformPage() {
   } | null>(null);
   /** 整批生圖計價與引擎 mode：與後端 `platformType` 對齊 */
   const [platformBatchType, setPlatformBatchType] = useState<"video" | "graphic">("video");
+  /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
+  const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
+    [],
+  );
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -533,7 +546,23 @@ export default function PlatformPage() {
         return next;
       });
       const ok = res.results.filter((r) => r.url).length;
-      toast.success(`已生成 ${ok}/${res.results.length} 张配图${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
+      const label = platformBatchType === "video" ? "分镜参考" : "图文参考";
+      toast.success(`已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
+      const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
+      const meta = (res as { imageGenMeta?: Record<string, unknown> }).imageGenMeta;
+      if (Array.isArray(lines) && lines.length > 0) {
+        setPlatformImageGenFlowSnapshots((prev) =>
+          [
+            {
+              at: new Date().toISOString(),
+              kind: "batch_topic_frames" as const,
+              lines,
+              meta,
+            },
+            ...prev,
+          ].slice(0, 8),
+        );
+      }
     },
     onError: (err) => toast.error(err.message || "批量生图失败"),
   });
@@ -554,8 +583,27 @@ export default function PlatformPage() {
           ? "分镜图文参考"
           : "小红书图文参考";
       toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
+      const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
+      if (Array.isArray(lines) && lines.length > 0) {
+        setPlatformImageGenFlowSnapshots((prev) =>
+          [
+            {
+              at: new Date().toISOString(),
+              kind: "composite_2x4" as const,
+              lines,
+              meta: {
+                apiKind: variables.kind,
+                sceneId: variables.sceneId,
+                title: variables.title?.slice(0, 80),
+              },
+            },
+            ...prev,
+          ].slice(0, 8),
+        );
+      }
     },
-    onError: (err) => toast.error(err.message || "合成生图失败"),
+    onError: () =>
+      toast.error("双核视觉引擎满载或发生网络异常，已退回 16 积分，请稍后重试。"),
     onSettled: () => setPendingCompositeSheet(null),
   });
 
@@ -1544,7 +1592,7 @@ export default function PlatformPage() {
         onClose={() => setShowIpModal(false)}
       />
 
-      <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-6 md:py-8">
+      <div className="mx-auto max-w-[min(1920px,100%)] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <button
             type="button"
@@ -2004,6 +2052,42 @@ export default function PlatformPage() {
                     </pre>
                   </div>
                 </div>
+                {platformImageGenFlowSnapshots.length > 0 ? (
+                  <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
+                        分镜单帧 / 封面参考 / 2×4 合成 · 服务端逐步日志（imageGenFlowLog）
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPlatformImageGenFlowSnapshots([])}
+                        className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-gray-400 hover:bg-white/10"
+                      >
+                        清空
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+                      开启本面板后，最近一次「一键批量单帧」或「分镜图文参考 / 小红书图文参考」成功返回时会追加一段带 ISO
+                      时间戳的流水；多选题批量时按 scene 分段。
+                    </p>
+                    <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
+                      {platformImageGenFlowSnapshots.map((snap, i) => (
+                        <div
+                          key={`${snap.at}-${snap.kind}-${i}`}
+                          className="rounded-xl border border-white/10 bg-black/40 p-3"
+                        >
+                          <div className="font-mono text-[10px] text-[#8cefff]">
+                            {snap.at} · {snap.kind === "batch_topic_frames" ? "批量单帧" : "2×4 合成"}
+                            {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
+                          </div>
+                          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
+                            {snap.lines.join("\n")}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -2227,22 +2311,24 @@ export default function PlatformPage() {
                           <Sparkles className="h-4 w-4" />
                         )}
                         {generateAllPlatformImagesMutation.isPending
-                          ? "顶级渲染中..."
-                          : `一键渲染全部 (${platformBatchType === "video" ? "单张 5 点" : "单张 6 点"})`}
+                          ? platformBatchType === "video"
+                            ? "正在生成分镜参考单帧…"
+                            : "正在生成图文参考单帧…"
+                          : `一键生成全部${platformBatchType === "video" ? "分镜" : "图文"}参考 (${platformBatchType === "video" ? "单张 5 点" : "单张 6 点"})`}
                       </button>
                     ) : null}
                   </div>
                 </div>
-                <p className="text-[11px] leading-5 text-[#9080b8]">
-                  请先选择「短影音」或「图文」批量模式；长文案在后端会智慧截断为 500 字画面上下文，标题金字限制 35 字以防画面乱码。
-                  {supervisorAccess ? " 主理人预览通道不扣积分。" : null}
-                </p>
 
                 {contentExecutionCards.length > 0 ? (
-                  <div className="mb-10 rounded-3xl border border-white/5 bg-[#0a0a0a]/50 p-6">
-                    <div className="mb-6 flex items-center gap-3">
-                      <div className="h-6 w-1.5 rounded-full bg-[#10B981]" />
+                  <div
+                    id={PLATFORM_REFERENCE_GALLERY_ID}
+                    className="mb-10 rounded-3xl border border-white/5 bg-[#0a0a0a]/50 p-6"
+                  >
+                    <div className="mb-6 flex flex-wrap items-center gap-3">
+                      <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
                       <h3 className="text-xl font-bold tracking-tight text-white">参考分镜图文画廊</h3>
+                      <span className="ml-0 text-xs text-gray-500 sm:ml-2">点击可检视高清原图</span>
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
@@ -2253,20 +2339,19 @@ export default function PlatformPage() {
                         {referenceStoryboardGraphicStrip.map((ref) => (
                           <div
                             key={ref.key}
-                            role="button"
-                            tabIndex={0}
-                            className="group relative h-36 w-64 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-white/10 bg-black transition-all hover:border-[#10B981]"
-                            onClick={() =>
-                              document
-                                .getElementById(executionCardDomId(ref.sceneId))
-                                ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                            }
+                            role={ref.url ? "button" : undefined}
+                            tabIndex={ref.url ? 0 : undefined}
+                            className={`group relative flex aspect-video w-[min(28rem,85vw)] max-w-none shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/80 transition-all sm:w-[32rem] ${
+                              ref.url ? "cursor-pointer border-white/10 hover:border-[#10B981]" : ""
+                            }`}
+                            onClick={() => {
+                              if (ref.url) window.open(ref.url, "_blank", "noopener,noreferrer");
+                            }}
                             onKeyDown={(e) => {
+                              if (!ref.url) return;
                               if (e.key === "Enter" || e.key === " ") {
                                 e.preventDefault();
-                                document
-                                  .getElementById(executionCardDomId(ref.sceneId))
-                                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                window.open(ref.url, "_blank", "noopener,noreferrer");
                               }
                             }}
                           >
@@ -2275,22 +2360,24 @@ export default function PlatformPage() {
                                 <TrialWatermarkImage
                                   src={ref.url}
                                   isTrial={isTrial}
-                                  objectFit="cover"
-                                  className="h-full w-full opacity-80 transition-opacity group-hover:opacity-100"
+                                  objectFit="contain"
+                                  className="h-full w-full opacity-90 transition-opacity group-hover:opacity-100"
                                 />
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                                  <span className="rounded-full border border-[#10B981] px-3 py-1 text-xs font-bold text-[#10B981]">
-                                    定位至卡片
+                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+                                  <span className="rounded-full border border-[#10B981] bg-black/50 px-3 py-1 text-xs font-bold text-[#10B981]">
+                                    放大检视
                                   </span>
                                 </div>
                               </>
                             ) : ref.pending ? (
                               <div className="flex h-full w-full items-center justify-center">
-                                <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-gray-500" />
+                                <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-[#10B981]" />
                               </div>
                             ) : null}
                             <div className="pointer-events-none absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent p-3 pt-8">
-                              <p className="truncate text-[11px] font-medium text-gray-200">{ref.title}</p>
+                              <p className="truncate text-[11px] font-medium text-gray-200 drop-shadow-md">
+                                {ref.title}
+                              </p>
                               <p className="truncate text-[10px] text-gray-500">{ref.kindLabel}</p>
                             </div>
                           </div>
@@ -2314,6 +2401,16 @@ export default function PlatformPage() {
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const digest = copyFlat.slice(0, 60);
+                      const compositeMutationBusy = generatePlatformCompositeSheetMutation.isPending;
+                      const storyboardCompositeLoading =
+                        compositeMutationBusy &&
+                        pendingCompositeSheet?.sceneId === item.id &&
+                        (pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ||
+                          pendingCompositeSheet?.kind === "storyboard_sheet_landscape");
+                      const xhsCompositeLoading =
+                        compositeMutationBusy &&
+                        pendingCompositeSheet?.sceneId === item.id &&
+                        pendingCompositeSheet?.kind === "xiaohongshu_dual_note";
                       const showVisualReference =
                         !!platformStoryboardSheetMap[item.id] ||
                         !!platformXhsNoteMap[item.id] ||
@@ -2420,7 +2517,11 @@ export default function PlatformPage() {
                         <div className="mt-4">
                           {platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
-                              <div className="group relative aspect-[9/16] w-full overflow-hidden rounded-xl bg-black/40">
+                              <div
+                                className={`group relative w-full overflow-hidden rounded-xl bg-black/40 ${
+                                  item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
+                                }`}
+                              >
                                 <TrialWatermarkImage
                                   src={platformImageMap[item.id]}
                                   isTrial={isTrial}
@@ -2429,7 +2530,9 @@ export default function PlatformPage() {
                                 <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
                                   <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
                                     {item.title}
-                                    <span className="ml-2 text-xs font-normal text-gray-300">| 批量视觉执行帧</span>
+                                    <span className="ml-2 text-xs font-normal text-gray-300">
+                                      | {item.format === "图文" ? "配图参考 · 单帧" : "分镜参考 · 单帧"}
+                                    </span>
                                   </h3>
                                 </div>
                                 <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
@@ -2455,8 +2558,12 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : (
-                            <div className="flex aspect-[9/16] items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 text-[11px] uppercase tracking-widest text-gray-600">
-                              Awaiting Batch Render...
+                            <div
+                              className={`flex w-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 px-3 text-center text-[11px] leading-relaxed text-gray-600 ${
+                                item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
+                              }`}
+                            >
+                              {item.format === "图文" ? "尚无配图参考单帧，可点上方一键生成" : "尚无分镜参考单帧，可点上方一键生成"}
                             </div>
                           )}
                         </div>
@@ -2482,7 +2589,7 @@ export default function PlatformPage() {
                               type="button"
                               disabled={
                                 !isAuthenticated ||
-                                generatePlatformCompositeSheetMutation.isPending ||
+                                compositeMutationBusy ||
                                 isDashboardLoading ||
                                 isContentLoading
                               }
@@ -2494,7 +2601,7 @@ export default function PlatformPage() {
                                 const cost = CREDIT_COSTS.platformStoryboardSheet;
                                 const note = supervisorAccess
                                   ? ""
-                                  : `将消耗 ${cost} 积分，生图采用 GPT-IMAGE-2，将生成分镜图文参考大图，是否继续？`;
+                                  : `将消耗 ${cost} 积分，主路径 GPT-IMAGE-2（失败自动 Vertex 高规兜底），将生成分镜图文参考大图，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const script = buildPlatformSheetScriptContext(item as any);
                                 generatePlatformCompositeSheetMutation.mutate({
@@ -2507,22 +2614,26 @@ export default function PlatformPage() {
                                   creationRecordId: readOptionalReportBindingCreationId(),
                                 });
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-3 py-2 text-xs font-bold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
+                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-3 py-2 text-xs font-bold text-[#8cefff] transition hover:bg-[#49e6ff]/20 ${
+                                compositeMutationBusy && !storyboardCompositeLoading
+                                  ? "opacity-45"
+                                  : ""
+                              } ${storyboardCompositeLoading ? "cursor-wait ring-2 ring-[#49e6ff]/35 [&:disabled]:opacity-100" : ""}`}
                             >
-                              {pendingCompositeSheet?.sceneId === item.id &&
-                              (pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ||
-                                pendingCompositeSheet?.kind === "storyboard_sheet_landscape") ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              {storyboardCompositeLoading ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                               ) : (
-                                <Film className="h-3.5 w-3.5" />
+                                <Film className="h-3.5 w-3.5 shrink-0" />
                               )}
-                              分镜图文参考 · {CREDIT_COSTS.platformStoryboardSheet} 点
+                              {storyboardCompositeLoading
+                                ? "生成中…"
+                                : `分镜图文参考 · ${CREDIT_COSTS.platformStoryboardSheet} 点`}
                             </button>
                             <button
                               type="button"
                               disabled={
                                 !isAuthenticated ||
-                                generatePlatformCompositeSheetMutation.isPending ||
+                                compositeMutationBusy ||
                                 isDashboardLoading ||
                                 isContentLoading
                               }
@@ -2534,7 +2645,7 @@ export default function PlatformPage() {
                                 const cost = CREDIT_COSTS.platformXhsDualNote;
                                 const note = supervisorAccess
                                   ? ""
-                                  : `将消耗 ${cost} 积分，生图采用 GPT-IMAGE-2，将生成小红书图文参考大图，是否继续？`;
+                                  : `将消耗 ${cost} 积分，主路径 GPT-IMAGE-2（失败自动 Vertex 高规兜底），将生成小红书图文参考大图，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const script = buildPlatformSheetScriptContext(item as any);
                                 generatePlatformCompositeSheetMutation.mutate({
@@ -2547,15 +2658,18 @@ export default function PlatformPage() {
                                   creationRecordId: readOptionalReportBindingCreationId(),
                                 });
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/40 bg-[#ff4fb8]/10 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/20 disabled:opacity-45"
+                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#ff4fb8]/40 bg-[#ff4fb8]/10 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/20 ${
+                                compositeMutationBusy && !xhsCompositeLoading ? "opacity-45" : ""
+                              } ${xhsCompositeLoading ? "cursor-wait ring-2 ring-[#ff4fb8]/35 [&:disabled]:opacity-100" : ""}`}
                             >
-                              {pendingCompositeSheet?.sceneId === item.id &&
-                              pendingCompositeSheet?.kind === "xiaohongshu_dual_note" ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              {xhsCompositeLoading ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                               ) : (
-                                <Heart className="h-3.5 w-3.5" />
+                                <Heart className="h-3.5 w-3.5 shrink-0" />
                               )}
-                              小红书图文参考 · {CREDIT_COSTS.platformXhsDualNote} 点
+                              {xhsCompositeLoading
+                                ? "生成中…"
+                                : `小红书图文参考 · ${CREDIT_COSTS.platformXhsDualNote} 点`}
                             </button>
                           </div>
                           {showVisualReference ? (
@@ -2574,26 +2688,26 @@ export default function PlatformPage() {
                                   </span>
                                 </div>
                               </div>
-                              <div className="relative flex min-h-[400px] w-full justify-center overflow-hidden rounded-2xl border border-white/5 bg-black/60 shadow-2xl">
+                              <div className="relative w-full min-h-[min(520px,56vw)] overflow-hidden rounded-2xl border border-white/5 bg-black/60 shadow-2xl sm:min-h-[min(560px,50vw)]">
                                 {compositeRefUrl ? (
                                   <TrialWatermarkImage
                                     src={compositeRefUrl}
                                     isTrial={isTrial}
                                     objectFit="contain"
-                                    className="w-full max-h-[85vh] transition-transform duration-500 hover:scale-[1.01]"
-                                    style={{ width: "100%", height: "auto" }}
+                                    className="w-full max-w-none object-contain transition-transform duration-500 hover:scale-[1.01]"
+                                    style={{
+                                      width: "100%",
+                                      height: "auto",
+                                      maxHeight: "min(92vh, 1280px)",
+                                      display: "block",
+                                    }}
                                     alt="Storyboard visual reference"
                                   />
                                 ) : (
-                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-gray-500 backdrop-blur-sm">
-                                    <div className="mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-[#10B981]" />
-                                    <span className="text-sm font-semibold tracking-widest text-gray-200">
-                                      GPT-IMAGE-2 引擎极速渲染中（
-                                      {compositeIsStoryboard
-                                        ? CREDIT_COSTS.platformStoryboardSheet
-                                        : CREDIT_COSTS.platformXhsDualNote}{" "}
-                                      Credits）...
-                                    </span>
+                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/50 backdrop-blur-sm">
+                                    <Loader2 className="h-14 w-14 animate-spin text-[#10B981]" />
+                                    <span className="text-sm font-semibold text-gray-100">生成中，請稍候…</span>
+                                    <span className="text-[11px] text-gray-500">后端已接收任务，画面出现后会自动显示</span>
                                   </div>
                                 )}
                               </div>
