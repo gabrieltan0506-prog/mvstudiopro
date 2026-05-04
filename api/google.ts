@@ -176,13 +176,13 @@ async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 舊 Imagen 4：ID **含** `imagen-4.0`，或與 `GEMINI_IMAGEN_ULTRA_MODEL` **完全一致** → `nanoImage` 強制 remap Nano Banana 2。 */
+/** 舊 Imagen 4 `imagen-4.0*` 前綴，或與 `GEMINI_IMAGEN_ULTRA_MODEL` **完全一致**的別名 → 由 `nanoImage` 強制 remap。 */
 function isLegacyImagenModelId(rawModel: string): boolean {
   const m = s(rawModel).trim();
   if (!m) return false;
   const alias = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "").trim();
   if (alias.length > 0 && m === alias) return true;
-  return m.toLowerCase().includes("imagen-4.0");
+  return m.toLowerCase().startsWith("imagen-4.0");
 }
 
 /** 舊 `:predict` 文生圖 ID 攔截後 **固定**使用的 Nano Banana 2（與 `VERTEX_IMAGE_MODEL_FLASH` 預設一致）。 */

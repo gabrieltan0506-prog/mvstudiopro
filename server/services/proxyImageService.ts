@@ -525,5 +525,5 @@ export async function generateDeepResearchSceneIllustration(options: {
   });
 }
 
-/** 翻譯/編導中樞 re-export：`callGemini3_1_Pro` 於 vertexGemini31ProGlobal（Vertex **us-central1**、GOOGLE_APPLICATION_CREDENTIALS_JSON、預設 **gemini-1.5-pro**、8192 tokens）。匯出名不變，呼叫處無需改動。 */
+/** re-export：`callGemini3_1_Pro` 實作於 `vertexGemini31ProGlobal.ts`（預設模型 `gemini-1.5-pro`、`maxOutputTokens` 8192）。 */
 export { callGemini3_1_Pro } from "./vertexGemini31ProGlobal.js";
