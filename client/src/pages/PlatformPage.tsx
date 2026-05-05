@@ -556,6 +556,8 @@ export default function PlatformPage() {
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
+  /** 批量后静默补发进行中：用于单卡呼吸骨架，与全屏批量 isPending 区分 */
+  const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<string[]>([]);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -623,6 +625,10 @@ export default function PlatformPage() {
 
   /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
   const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
+    onMutate: (variables) => {
+      const sid = variables.sceneId;
+      if (sid) setCoverSilentRetryIds((prev) => (prev.includes(sid) ? prev : [...prev, sid]));
+    },
     onSuccess: (res, variables) => {
       const sid = variables.sceneId;
       if (!sid) return;
@@ -631,6 +637,11 @@ export default function PlatformPage() {
       if (res.creationId != null) setSceneJobIds((prev) => ({ ...prev, [sid]: String(res.creationId) }));
     },
     onError: (err) => console.warn("[Silent Retry Failed]:", err.message),
+    onSettled: (_d, _e, variables) => {
+      const sid = variables?.sceneId;
+      if (!sid) return;
+      setCoverSilentRetryIds((prev) => prev.filter((x) => x !== sid));
+    },
   });
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -2721,7 +2732,8 @@ export default function PlatformPage() {
                         </details>
                         <div className="mt-4">
                           {regeneratingCoverSceneId === item.id ||
-                          (!platformImageMap[item.id] && generateAllPlatformImagesMutation.isPending) ? (
+                          (!platformImageMap[item.id] &&
+                            (generateAllPlatformImagesMutation.isPending || coverSilentRetryIds.includes(item.id))) ? (
                             <div
                               className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse ${
                                 item.format === "图文" || item.format === "小红书"
@@ -2733,7 +2745,9 @@ export default function PlatformPage() {
                               <span className="text-xs font-medium tracking-widest text-gray-400">
                                 {regeneratingCoverSceneId === item.id
                                   ? "单帧重新绘制中..."
-                                  : "高定视觉绘製中..."}
+                                  : coverSilentRetryIds.includes(item.id)
+                                    ? "高定视觉绘制中（静默补发）..."
+                                    : "高定视觉绘制中..."}
                               </span>
                             </div>
                           ) : platformImageMap[item.id] ? (
@@ -2807,8 +2821,10 @@ export default function PlatformPage() {
                                         if (!window.confirm(warning)) return;
                                       } else {
                                         const confirmNote = isEligibleFreeRetry
-                                          ? "检测到当前图片链接含超时或错误标记，本次重新生成将「免费」为您补发，是否继续？"
-                                          : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
+                                          ? "检测到黑图，本次将免费补发，是否继续？"
+                                          : !hasValidJobId && !supervisorAccess
+                                            ? "凭证因刷新丢失，本次将扣分补发，是否继续？"
+                                            : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
                                         if (!supervisorAccess && !window.confirm(confirmNote)) return;
                                       }
                                       setRegeneratingCoverSceneId(item.id);
