@@ -334,12 +334,6 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
-function cardImageKind(format: string): "storyboard" | "graphic" {
-  const f = String(format || "").trim();
-  if (f.includes("图文")) return "graphic";
-  return "storyboard";
-}
-
 function buildPlatformSceneText(item: {
   title: string;
   hook: string;
@@ -496,8 +490,6 @@ export default function PlatformPage() {
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
-  /** 整批生圖計價與引擎 mode：與後端 `platformType` 對齊 */
-  const [platformBatchType, setPlatformBatchType] = useState<"video" | "graphic">("video");
   /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
@@ -577,7 +569,7 @@ export default function PlatformPage() {
         return next;
       });
       const ok = res.results.filter((r) => r.url).length;
-      const label = platformBatchType === "video" ? "分镜参考" : "图文参考";
+      const label = "图文封面参考";
       toast.success(`已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
       const meta = (res as { imageGenMeta?: Record<string, unknown> }).imageGenMeta;
@@ -603,11 +595,8 @@ export default function PlatformPage() {
           {
             at: new Date().toISOString(),
             kind: "batch_topic_frames_failed" as const,
-            lines: linesFromClientMutationFailure(
-              `[客户端] 批量单帧 mutation 失败 · platformBatchType=${platformBatchType}`,
-              err,
-            ),
-            meta: { platformBatchType },
+            lines: linesFromClientMutationFailure(`[客户端] 批量单帧 mutation 失败 · platformType=graphic`, err),
+            meta: { platformType: "graphic" as const },
           },
           ...prev,
         ].slice(0, 8),
@@ -1245,20 +1234,12 @@ export default function PlatformPage() {
   );
 
   useEffect(() => {
-    if (!contentExecutionCards.length) return;
-    const graphicN = contentExecutionCards.filter((c) => cardImageKind(c.format) === "graphic").length;
-    setPlatformBatchType(graphicN > contentExecutionCards.length / 2 ? "graphic" : "video");
-  }, [contentExecutionCardsKey]);
-
-  useEffect(() => {
     setPlatformStoryboardSheetMap({});
     setPlatformXhsNoteMap({});
   }, [contentExecutionCardsKey]);
 
-  const platformBulkImageEstimate = useMemo(
-    () => contentExecutionCards.length * (platformBatchType === "video" ? 5 : 6),
-    [contentExecutionCards.length, platformBatchType],
-  );
+  const platformTopicCount = contentExecutionCards.length;
+  const platformBulkGraphicCost = useMemo(() => platformTopicCount * 6, [platformTopicCount]);
 
   /** 橫排「参考分镜图文」：匯總全部選題的批量單幀 + 分鏡/小紅書 2×4 合成（GPT-IMAGE-2） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
@@ -2336,39 +2317,19 @@ export default function PlatformPage() {
                     <div className="min-w-0 flex-1">
                       <h3 className="flex items-center gap-2 text-xl font-bold text-white">
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
-                        {platformBatchType === "video" ? "高定分镜脚本画廊" : "图文笔记配图画廊"}
+                        图文笔记封面画廊
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">一次性生成当前平台所有选题的视觉资产</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setPlatformBatchType("video")}
-                          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
-                            platformBatchType === "video"
-                              ? "bg-[#49e6ff]/20 text-[#8cefff] ring-1 ring-[#49e6ff]/50"
-                              : "border border-white/15 bg-white/5 text-[#b7add8] hover:bg-white/10"
-                          }`}
-                        >
-                          短影音分镜 · 单张 5 积分
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPlatformBatchType("graphic")}
-                          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
-                            platformBatchType === "graphic"
-                              ? "bg-[#ff4fb8]/20 text-[#ff9fe0] ring-1 ring-[#ff4fb8]/45"
-                              : "border border-white/15 bg-white/5 text-[#b7add8] hover:bg-white/10"
-                          }`}
-                        >
-                          图文笔记 · 单张 6 积分
-                        </button>
-                      </div>
+                      <p className="mt-1 text-xs text-gray-500">一键为当前全部选题批量生成图文封面参考单帧</p>
                     </div>
-                    {contentExecutionCards.length > 0 ? (
+                    {platformTopicCount > 0 ? (
                       <button
                         type="button"
                         disabled={
-                          generateAllPlatformImagesMutation.isPending || isDashboardLoading || isContentLoading || !isAuthenticated
+                          generateAllPlatformImagesMutation.isPending ||
+                          isDashboardLoading ||
+                          isContentLoading ||
+                          !isAuthenticated ||
+                          platformTopicCount === 0
                         }
                         onClick={() => {
                           if (!isAuthenticated) {
@@ -2388,11 +2349,11 @@ export default function PlatformPage() {
                           }));
                           const discountNote = supervisorAccess
                             ? ""
-                            : `将一次性按「${platformBatchType === "video" ? "短影音 5 点" : "图文 6 点"}」× ${scenes.length} 张扣费，共 ${platformBulkImageEstimate} 积分，是否继续？`;
+                            : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
                           if (!supervisorAccess && !window.confirm(discountNote)) return;
                           generateAllPlatformImagesMutation.mutate({
                             jobId: analysisJobId || undefined,
-                            platformType: platformBatchType,
+                            platformType: "graphic",
                             scenes,
                           });
                         }}
@@ -2404,10 +2365,8 @@ export default function PlatformPage() {
                           <Sparkles className="h-4 w-4" />
                         )}
                         {generateAllPlatformImagesMutation.isPending
-                          ? platformBatchType === "video"
-                            ? "正在生成分镜参考单帧…"
-                            : "正在生成图文参考单帧…"
-                          : `一键生成全部${platformBatchType === "video" ? "分镜" : "图文"}参考 (${platformBatchType === "video" ? "单张 5 点" : "单张 6 点"})`}
+                          ? "正在生成图文封面单帧…"
+                          : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
                       </button>
                     ) : null}
                   </div>

@@ -525,6 +525,9 @@ function buildGeminiGenerationConfig(
   const config: Record<string, unknown> = {
     ...getGeminiConfig(format),
   };
+  if (typeof maxOutputTokens === "number" && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+    config.maxOutputTokens = maxOutputTokens;
+  }
 
   if (isGemini31Model(modelName)) {
     config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.2;
@@ -599,6 +602,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
   const accessToken = await getVertexAccessToken();
+  const maxTok = params.max_tokens ?? params.maxTokens;
 
   const response = await fetch(String(target.apiUrl), {
     method: "POST",
@@ -610,7 +614,13 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
-      generationConfig: buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, undefined, params.temperature, params.topP),
+      generationConfig: buildGeminiGenerationConfig(
+        target.modelName,
+        normalizedResponseFormat,
+        maxTok,
+        params.temperature,
+        params.topP,
+      ),
     }),
   });
 
