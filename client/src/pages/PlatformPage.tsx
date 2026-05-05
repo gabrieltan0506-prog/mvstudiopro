@@ -555,7 +555,7 @@ export default function PlatformPage() {
   /** 單張封面「重新生成」進行中（顯示骨架，避免無反饋） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** 批量/单帧生图绑定的 user_creations.id（sceneId → jobId），供服务端校验免扣补发 */
-  const [lastJobMap, setLastJobMap] = useState<Record<string, string>>({});
+  const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -621,8 +621,11 @@ export default function PlatformPage() {
     },
   });
 
+  /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
+  const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation();
+
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       setPlatformImageMap((prev) => {
         const next = { ...prev };
         for (const r of res.results) {
@@ -630,7 +633,7 @@ export default function PlatformPage() {
         }
         return next;
       });
-      setLastJobMap((prev) => {
+      setSceneJobIds((prev) => {
         const next = { ...prev };
         for (const r of res.results) {
           const cid = (r as { creationId?: number }).creationId;
@@ -638,7 +641,44 @@ export default function PlatformPage() {
         }
         return next;
       });
-      const ok = res.results.filter((r) => r.url).length;
+
+      for (const r of res.results) {
+        const u = String(r.url ?? "").trim().toLowerCase();
+        const bad = !r.url || !String(r.url).trim() || u.includes("timeout") || u.includes("error");
+        const cid = (r as { creationId?: number }).creationId;
+        if (!bad || cid == null) continue;
+        const scene = variables.scenes.find((s) => s.id === r.id);
+        if (!scene) continue;
+        const topicHook = String(scene.title || "").trim().slice(0, 500);
+        if (!topicHook) continue;
+        const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
+        autoRetryTopicImageMutation.mutate(
+          {
+            topicHook,
+            format: variables.platformType === "video" ? "短视频" : "图文",
+            context: ctxBody,
+            failedJobId: String(cid),
+            sceneId: r.id,
+          },
+          {
+            onSuccess: (out) => {
+              if (out.imageUrl) {
+                setPlatformImageMap((prev) => ({ ...prev, [r.id]: out.imageUrl! }));
+              }
+              if (out.creationId != null) {
+                setSceneJobIds((prev) => ({ ...prev, [r.id]: String(out.creationId) }));
+              }
+            },
+            onError: (e) =>
+              console.warn(
+                "[PlatformPage] 批量漏图自动补发失败",
+                r.id,
+                e instanceof Error ? e.message : e,
+              ),
+          },
+        );
+      }
+      const ok = res.results.filter((r) => r.url && String(r.url).trim()).length;
       const label = "图文封面参考";
       toast.success(`已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
@@ -674,11 +714,8 @@ export default function PlatformPage() {
     },
   });
 
-  const regenerateTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onError: (err) => {
-      toast.error(err.message || "重新生成封面失败");
-    },
-  });
+  /** 用户手动「重新生成」封面 */
+  const regenerateTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation();
 
   const generatePlatformCompositeSheetMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
     onMutate: (input) => {
@@ -2598,7 +2635,7 @@ export default function PlatformPage() {
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       const normalCoverCost = isGraphicCover ? 6 : 5;
-                      const hasFailedJobCredential = Boolean(lastJobMap[item.id]);
+                      const hasFailedJobCredential = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasFailedJobCredential;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
                       return (
@@ -2623,7 +2660,7 @@ export default function PlatformPage() {
                           </p>
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
-                          <summary className="cursor-pointer select-none text-[15px] font-black leading-relaxed text-[#ff9900] transition-colors animate-pulse hover:text-[#ffb84d]">
+                          <summary className="cursor-pointer select-none text-[15px] font-black text-[#ff9900] animate-pulse transition-colors hover:text-[#ffb84d]">
                             ▶ 执行细项、分镜与发布（点击展开查看详细步骤）
                           </summary>
                           <div className="mt-3 space-y-2.5 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
@@ -2795,7 +2832,7 @@ export default function PlatformPage() {
                                               }
                                             ).executionDetails,
                                           }),
-                                          failedJobId: isEligibleFreeRetry ? lastJobMap[item.id] : undefined,
+                                          failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                                           sceneId: item.id,
                                         },
                                         {
@@ -2807,7 +2844,7 @@ export default function PlatformPage() {
                                               }));
                                             }
                                             if (res.creationId != null) {
-                                              setLastJobMap((prev) => ({
+                                              setSceneJobIds((prev) => ({
                                                 ...prev,
                                                 [item.id]: String(res.creationId),
                                               }));
