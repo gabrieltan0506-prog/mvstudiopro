@@ -554,6 +554,8 @@ export default function PlatformPage() {
   );
   /** 單張封面「重新生成」進行中（顯示骨架，避免無反饋） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
+  /** 批量/单帧生图绑定的 user_creations.id（sceneId → jobId），供服务端校验免扣补发 */
+  const [lastJobMap, setLastJobMap] = useState<Record<string, string>>({});
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -625,6 +627,14 @@ export default function PlatformPage() {
         const next = { ...prev };
         for (const r of res.results) {
           if (r.url) next[r.id] = r.url;
+        }
+        return next;
+      });
+      setLastJobMap((prev) => {
+        const next = { ...prev };
+        for (const r of res.results) {
+          const cid = (r as { creationId?: number }).creationId;
+          if (cid != null) next[r.id] = String(cid);
         }
         return next;
       });
@@ -2588,7 +2598,9 @@ export default function PlatformPage() {
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       const normalCoverCost = isGraphicCover ? 6 : 5;
-                      const actualCost = isBlackImageOrTimeout ? 0 : normalCoverCost;
+                      const hasFailedJobCredential = Boolean(lastJobMap[item.id]);
+                      const isEligibleFreeRetry = isBlackImageOrTimeout && hasFailedJobCredential;
+                      const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
                       return (
                       <div
                         key={item.id}
@@ -2761,8 +2773,8 @@ export default function PlatformPage() {
                                         toast.error("选题缺少标题或钩子，无法生成");
                                         return;
                                       }
-                                      const confirmNote = isBlackImageOrTimeout
-                                        ? "检测到当前图片链接含超时或错误标记，本次重新生成将「免费」为您补发，是否继续？"
+                                      const confirmNote = isEligibleFreeRetry
+                                        ? "检测到当前图片链接含超时或错误标记，且已绑定平台任务记录，本次重新生成将「免费」为您补发，是否继续？"
                                         : `重新生成此单帧将消耗 ${actualCost} 积分（使用新种子算绘），是否继续？`;
                                       if (!supervisorAccess && !window.confirm(confirmNote)) return;
                                       setRegeneratingCoverSceneId(item.id);
@@ -2783,7 +2795,8 @@ export default function PlatformPage() {
                                               }
                                             ).executionDetails,
                                           }),
-                                          failedImageUrl: isBlackImageOrTimeout ? currentImageUrl : undefined,
+                                          failedJobId: isEligibleFreeRetry ? lastJobMap[item.id] : undefined,
+                                          sceneId: item.id,
                                         },
                                         {
                                           onSuccess: (res) => {
@@ -2793,9 +2806,15 @@ export default function PlatformPage() {
                                                 [item.id]: res.imageUrl!,
                                               }));
                                             }
+                                            if (res.creationId != null) {
+                                              setLastJobMap((prev) => ({
+                                                ...prev,
+                                                [item.id]: String(res.creationId),
+                                              }));
+                                            }
                                             setRegeneratingCoverSceneId(null);
                                             toast.success(
-                                              isBlackImageOrTimeout ? "免费补发成功" : "重新生成成功",
+                                              isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
                                             );
                                           },
                                           onError: (err) => {
@@ -2807,8 +2826,8 @@ export default function PlatformPage() {
                                     }}
                                     className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
                                     title={
-                                      isBlackImageOrTimeout
-                                        ? "重新免费请求生图"
+                                      isEligibleFreeRetry
+                                        ? "重新免费请求生图（已校验任务记录）"
                                         : "使用新种子重新生成此封面"
                                     }
                                   >
@@ -2819,7 +2838,7 @@ export default function PlatformPage() {
                                           : "group-hover:text-[#49e6ff]"
                                       }`}
                                     />
-                                    {isBlackImageOrTimeout ? "免费补发" : `重新生成 · ${actualCost}点`}
+                                    {isEligibleFreeRetry ? "免费补发" : `重新生成 · ${actualCost}点`}
                                   </button>
                                 </div>
                               </div>
