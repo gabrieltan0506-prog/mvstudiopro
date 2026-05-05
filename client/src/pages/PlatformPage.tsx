@@ -2588,7 +2588,7 @@ export default function PlatformPage() {
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       const normalCoverCost = isGraphicCover ? 6 : 5;
-                      const actualCoverCost = isBlackImageOrTimeout ? 0 : normalCoverCost;
+                      const actualCost = isBlackImageOrTimeout ? 0 : normalCoverCost;
                       return (
                       <div
                         key={item.id}
@@ -2763,7 +2763,7 @@ export default function PlatformPage() {
                                       }
                                       const confirmNote = isBlackImageOrTimeout
                                         ? "检测到当前图片链接含超时或错误标记，本次重新生成将「免费」为您补发，是否继续？"
-                                        : `重新生成此单帧将消耗 ${actualCoverCost} 积分（使用新种子算绘），是否继续？`;
+                                        : `重新生成此单帧将消耗 ${actualCost} 积分（使用新种子算绘），是否继续？`;
                                       if (!supervisorAccess && !window.confirm(confirmNote)) return;
                                       setRegeneratingCoverSceneId(item.id);
                                       regenerateTopicImageMutation.mutate(
@@ -2819,7 +2819,7 @@ export default function PlatformPage() {
                                           : "group-hover:text-[#49e6ff]"
                                       }`}
                                     />
-                                    {isBlackImageOrTimeout ? "免费补发" : `重新生成 · ${actualCoverCost}点`}
+                                    {isBlackImageOrTimeout ? "免费补发" : `重新生成 · ${actualCost}点`}
                                   </button>
                                 </div>
                               </div>
