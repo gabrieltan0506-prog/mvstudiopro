@@ -1,13 +1,18 @@
 /**
- * 翻譯中樞：Vertex AI **實體區域**（預設 `us-central1`）+ **gemini-1.5-pro**（正式版 ID，可依 `VERTEX_GEMINI_31_PRO_MODEL` 覆寫）。
- * Vertex **不可**使用 `location: "global"`（SDK 會打到無效主機、回 HTML 404，進而觸發 JSON 解析錯誤）。
+ * Vertex 前半段文案 / 低成本路徑：**實體區域**（預設 `us-central1`）+ **gemini-3.1-pro-preview**。
+ * 可依 `VERTEX_GEMINI_31_PRO_MODEL` 覆寫；勿改為區域無此 ID 舊標籤（如 gemini-1.5-pro 已不可用會 404）。
+ * Vertex **不可**使用 `location: "global"`（SDK 會打到無效主機、回 HTML 404）。
  * Vercel 無實體憑證檔路徑，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 注入並修復 **private_key** 換行轉義。
+ *
+ * 【雙軌】生圖翻譯走 AI Studio：`proxyImageService.callGemini3_1_Pro`（GEMINI_API_KEY + gemini-3.1-pro），本檔僅 Vertex。
  */
 import { VertexAI } from "@google-cloud/vertexai";
 
-/** Vertex 文字生成模型（預設 GA ID；專案若僅開通 preview 可設環變回退）。 */
+/** Vertex 文字生成模型（預設 gemini-3.1-pro-preview；可依 VERTEX_GEMINI_31_PRO_MODEL 覆寫）。 */
 function resolveVertexGemini31ProModelId(): string {
-  return String(process.env.VERTEX_GEMINI_31_PRO_MODEL || "gemini-1.5-pro").trim() || "gemini-1.5-pro";
+  return (
+    String(process.env.VERTEX_GEMINI_31_PRO_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview"
+  );
 }
 
 function resolveProjectId(): string {
@@ -75,12 +80,12 @@ export type CallGemini31ProOptions = {
   topP?: number;
 };
 
-/** Vertex AI（區域節點）驅動 Gemini 3.1 Pro，不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
+/** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
   const vertex_ai = getVertexClientForGemini31Pro();
-  const modelId = resolveVertexGemini31ProModelId();
+  const modelName = resolveVertexGemini31ProModelId();
   const generativeModel = vertex_ai.getGenerativeModel({
-    model: modelId,
+    model: modelName,
     generationConfig: {
       maxOutputTokens: opts?.maxOutputTokens ?? 8192,
       temperature: opts?.temperature ?? 0.4,
@@ -103,7 +108,7 @@ export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOp
       .trim();
   } catch (error: any) {
     const errorDetail = error?.message || String(error);
-    console.error(`[Vertex AI ${resolveVertexGemini31ProModelId()} 崩潰]:`, errorDetail);
+    console.error(`[Vertex AI ${modelName} 崩潰]:`, errorDetail);
     throw new Error(`[Vertex 翻译失败] 原因: ${errorDetail}`);
   }
 }

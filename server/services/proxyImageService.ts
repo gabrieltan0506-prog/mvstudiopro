@@ -525,5 +525,48 @@ export async function generateDeepResearchSceneIllustration(options: {
   });
 }
 
-/** re-export：`callGemini3_1_Pro` 實作於 `vertexGemini31ProGlobal.ts`（預設模型 `gemini-1.5-pro`、`maxOutputTokens` 8192）。 */
-export { callGemini3_1_Pro } from "./vertexGemini31ProGlobal.js";
+/** 雙軌 · 生圖翻譯：AI Studio `gemini-3.1-pro`（`GEMINI_API_KEY`），與 Vertex `vertexGemini31ProGlobal` 並存。 */
+export type CallGemini31ProAiStudioOptions = {
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+};
+
+export async function callGemini3_1_Pro(
+  prompt: string,
+  opts?: CallGemini31ProAiStudioOptions,
+): Promise<string> {
+  const model = "gemini-3.1-pro";
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey?.trim()) {
+    throw new Error("[系統錯誤] 缺少 GEMINI_API_KEY 環境變數，請確認配置。");
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+          temperature: opts?.temperature ?? 0.4,
+          topP: opts?.topP ?? 0.8,
+        },
+      }),
+    });
+    const data = await response.json();
+    if ((data as { error?: { message?: string } }).error) {
+      const msg = String((data as { error?: { message?: string } }).error?.message || "unknown");
+      throw new Error(`[Gemini API Error] ${msg}`);
+    }
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return text.replace(/```[a-z]*\n?/g, "").replace(/```/g, "").trim();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[AI Studio 翻譯失敗]: ${message}`);
+  }
+}

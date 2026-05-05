@@ -811,6 +811,7 @@ async function buildPlatformContent(params: {
     // Upgraded to Vertex 3.1 Pro Preview for premium content generation
     provider: "vertex",
     modelName: "gemini-3.1-pro-preview",
+    max_tokens: 8192,
     messages: [
       {
         role: "system",
@@ -827,7 +828,10 @@ async function buildPlatformContent(params: {
 - 任何泛化建议，不针对此用户的具体身份和专长
 
 严格要求：
-1. contentBlueprints：生成至少 3 个具体可执行的内容方案。每个方案必须包含：
+必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
+在 contentBlueprints 数组中，务必生成 4 到 6 个深度内容方案/选题，切勿少于 4 个。充分利用上下文发散，确保高转化潜力。
+
+1. contentBlueprints：生成至少 4 个具体可执行的内容方案（建议 4～6 个）。每个方案必须包含：
    - title（选题标题，必须是具体的，不是抽象的）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）

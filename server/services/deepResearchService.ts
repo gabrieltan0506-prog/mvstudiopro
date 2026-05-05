@@ -316,15 +316,17 @@ async function generate(
   retries = 2,
   opts?: { temperature?: number; maxTokens?: number; topP?: number; topK?: number },
 ): Promise<string> {
+  /** AI Studio 深研輔助生成：鎖 formal gemini-3.1-pro（與 Vertex 前半段分流） */
+  const modelName = "gemini-3.1-pro";
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: opts?.temperature ?? 0.5,
-      ...(opts?.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
+      temperature: 0.2, // 🟢 深度研究需保持低溫，確保事實與邏輯嚴謹
+      maxOutputTokens: 8192, // 🟢 極致長文必備
       ...(opts?.topP != null ? { topP: opts.topP } : {}),
       ...(opts?.topK != null ? { topK: opts.topK } : {}),
     },
@@ -343,7 +345,8 @@ async function generate(
       await sleep(10000 * (i + 1));
       continue;
     }
-    if (!res.ok) throw new Error(`${model} ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
+    if (!res.ok)
+      throw new Error(`${modelName} ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
     return String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "");
   }
   return "";

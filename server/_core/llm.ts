@@ -525,6 +525,9 @@ function buildGeminiGenerationConfig(
   const config: Record<string, unknown> = {
     ...getGeminiConfig(format),
   };
+  if (typeof maxOutputTokens === "number" && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+    config.maxOutputTokens = maxOutputTokens;
+  }
 
   if (typeof maxOutputTokens === "number" && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
     config.maxOutputTokens = Math.floor(maxOutputTokens);
