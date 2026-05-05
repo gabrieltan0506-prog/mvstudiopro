@@ -71,6 +71,56 @@ const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
 const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
 
+/** 快照克隆前：單張圖 load/error 逾時（選題多時並行等待，總耗時≈最慢一張） */
+const PLATFORM_PDF_PER_IMAGE_WAIT_MS = 12_000;
+
+/**
+ * 克隆 #platform-report 前，確保區域內 img 已載入（含 lazy→eager、decode），避免 PDF 空白圖塊。
+ */
+async function waitForPlatformReportImagesReady(pdfRoot: HTMLElement): Promise<void> {
+  const images = Array.from(pdfRoot.querySelectorAll("img"));
+  await Promise.all(images.map((img) => waitForSinglePlatformReportImageForPdf(img)));
+}
+
+async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Promise<void> {
+  const raw = (img.currentSrc || img.src || "").trim();
+  if (!raw) return;
+
+  if (img.loading === "lazy") {
+    img.loading = "eager";
+  }
+
+  if (img.complete && img.naturalWidth > 0) {
+    try {
+      await img.decode();
+    } catch {
+      /* 仍可有已解碼柵格供 clone 使用 */
+    }
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timeoutId);
+      img.removeEventListener("load", finish);
+      img.removeEventListener("error", finish);
+      resolve();
+    };
+    const timeoutId = window.setTimeout(finish, PLATFORM_PDF_PER_IMAGE_WAIT_MS);
+    img.addEventListener("load", finish);
+    img.addEventListener("error", finish);
+  });
+
+  try {
+    await img.decode();
+  } catch {
+    /* pdf-worker 仍會再擋 decode；此處不擋快照 */
+  }
+}
+
 const WINDOW_OPTIONS = [
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
   { days: 30 as const, label: "30天", description: "看平台主流结构与相对稳定方向" },
@@ -844,12 +894,13 @@ export default function PlatformPage() {
   const handleDownloadPlatformPdf = useCallback(async () => {
     // 與 MyReports `captureAndUploadSnapshot` 對齊：精準克隆 `#platform-report` + head 副本 +
     // optimizePdfSnapshotHtml / injectPlatformPdfSnapshotSanitizeIntoHead；並保留 details 行內展開以防截斷。
+    // 圖片：克隆前 waitForPlatformReportImagesReady（lazy→eager、load/decode），避免 GPT 封面等尚未載入即成空塊。
     try {
       setIsDownloadingPdf(true);
       if (typeof document !== "undefined" && (document as any).fonts?.ready) {
         await (document as any).fonts.ready;
       }
-      await new Promise((r) => setTimeout(r, 2800));
+      await new Promise((r) => setTimeout(r, 600));
 
       toast.dismiss();
       await new Promise((r) => setTimeout(r, 400));
@@ -860,6 +911,8 @@ export default function PlatformPage() {
         setIsDownloadingPdf(false);
         return;
       }
+
+      await waitForPlatformReportImagesReady(pdfRoot);
 
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
       fragment.querySelectorAll("script").forEach((n) => n.remove());
