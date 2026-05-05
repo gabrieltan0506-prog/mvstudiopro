@@ -2319,7 +2319,7 @@ export default function PlatformPage() {
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
                         图文笔记封面画廊
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">按当前全部选题批量生成封面单帧；每张选题固定 6 积分</p>
+                      <p className="mt-1 text-xs text-gray-500">一键为当前全部选题批量生成图文封面参考单帧</p>
                     </div>
                     {platformTopicCount > 0 ? (
                       <button
@@ -2349,7 +2349,7 @@ export default function PlatformPage() {
                           }));
                           const discountNote = supervisorAccess
                             ? ""
-                            : `将一次性按「图文封面 · 6 点」× ${scenes.length} 张扣费，共 ${platformBulkGraphicCost} 积分，是否继续？`;
+                            : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
                           if (!supervisorAccess && !window.confirm(discountNote)) return;
                           generateAllPlatformImagesMutation.mutate({
                             jobId: analysisJobId || undefined,
@@ -2366,7 +2366,7 @@ export default function PlatformPage() {
                         )}
                         {generateAllPlatformImagesMutation.isPending
                           ? "正在生成图文封面单帧…"
-                          : `一键生成封面（共消耗 ${platformBulkGraphicCost} 积分）`}
+                          : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
                       </button>
                     ) : null}
                   </div>
