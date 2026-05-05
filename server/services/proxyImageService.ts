@@ -526,11 +526,11 @@ export async function generateDeepResearchSceneIllustration(options: {
 }
 
 export async function callGemini3_1_Pro(prompt: string): Promise<string> {
-  // 🔴 核心變更：直連 AI Studio 付費端點，使用正式版 3.1 Pro
-  const model = 'gemini-3.1-pro'; 
+  // 🟢 翻譯中樞：AI Studio 付費通道 gemini-3.1-pro（不走 Vertex）
+  const model = "gemini-3.1-pro";
   const apiKey = process.env.GEMINI_API_KEY;
-  
-  if (!apiKey) {
+
+  if (!apiKey?.trim()) {
     throw new Error("[系統錯誤] 缺少 GEMINI_API_KEY 環境變數，請確認配置。");
   }
 
@@ -538,29 +538,25 @@ export async function callGemini3_1_Pro(prompt: string): Promise<string> {
 
   try {
     const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          maxOutputTokens: 8192, // 🟢 解鎖長文本，確保分鏡細節不被截斷
+          maxOutputTokens: 8192,
           temperature: 0.4,
-          topP: 0.8
-        }
-      })
+        },
+      }),
     });
-
     const data = await response.json();
-    
-    // 處理 API Key 欠費或調用失敗
-    if (data.error) {
-      throw new Error(`[Gemini API Error] ${data.error.message}`);
+    if ((data as { error?: { message?: string } }).error) {
+      const msg = String((data as { error?: { message?: string } }).error?.message || "unknown");
+      throw new Error(`[Gemini API Error] ${msg}`);
     }
-
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    return text.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
-  } catch (error: any) {
-    console.error("[翻譯大腦報錯]:", error.message);
-    throw new Error(`[AI Studio 翻譯故障] 請檢查網路或配額狀態: ${error.message}`);
+    return text.replace(/```[a-z]*\n?/g, "").replace(/```/g, "").trim();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[AI Studio 翻譯失敗]: ${message}`);
   }
 }
