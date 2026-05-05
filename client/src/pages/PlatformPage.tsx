@@ -835,6 +835,7 @@ export default function PlatformPage() {
   }, []);
 
   const handleDownloadPlatformPdf = useCallback(() => {
+    // 與 GodView / MyReports「全息閱覽」相同鏈路：DOM 快照 → mvAnalysis.downloadPlatformPdf → Cloud Run pdf-worker（見 routers 註釋）。
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("script").forEach((n) => n.remove());
     clone.querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group").forEach((n) => n.remove());
@@ -1258,18 +1259,6 @@ export default function PlatformPage() {
     for (const row of contentExecutionCards) {
       const id = row.id;
       const title = row.title;
-      const batchUrl = platformImageMap[id];
-      if (batchUrl) {
-        items.push({
-          key: `${id}-batch`,
-          sceneId: id,
-          title,
-          url: batchUrl,
-          kindLabel: row.format === "图文" ? "图文笔记 · 单帧" : "分镜 · 单帧",
-          layout: "portrait",
-          pending: false,
-        });
-      }
       const sbUrl = platformStoryboardSheetMap[id];
       if (sbUrl) {
         items.push({
@@ -1321,7 +1310,6 @@ export default function PlatformPage() {
     return items;
   }, [
     contentExecutionCards,
-    platformImageMap,
     platformStoryboardSheetMap,
     platformXhsNoteMap,
     pendingCompositeSheet,
@@ -2318,9 +2306,11 @@ export default function PlatformPage() {
                     <div className="min-w-0 flex-1">
                       <h3 className="flex items-center gap-2 text-xl font-bold text-white">
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
-                        图文笔记封面画廊
+                        视频图文分镜表
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">一键为当前全部选题批量生成图文封面参考单帧</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书双卡矩阵。
+                      </p>
                     </div>
                     {platformTopicCount > 0 ? (
                       <button
@@ -2380,12 +2370,12 @@ export default function PlatformPage() {
                   >
                     <div className="mb-6 flex flex-wrap items-center gap-3">
                       <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
-                      <h3 className="text-xl font-bold tracking-tight text-white">参考分镜图文画廊</h3>
+                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书双卡 预览</h3>
                       <span className="ml-0 text-xs text-gray-500 sm:ml-2">点击可检视高清原图</span>
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
-                        尚未生成分镜或图文笔记
+                        尚未生成 2×4 分镜或小红书合成图（批量封面请见下方各选题卡片）
                       </div>
                     ) : (
                       <div className="custom-scrollbar flex min-h-[160px] items-center gap-5 overflow-x-auto pb-4">
@@ -2499,8 +2489,8 @@ export default function PlatformPage() {
                           </p>
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
-                          <summary className="leading-relaxed font-semibold transition-colors hover:text-[#ff4fb8]">
-                            执行细项、分镜与发布（展开）
+                          <summary className="cursor-pointer select-none text-[15px] font-black leading-relaxed text-[#ff9900] transition-colors animate-pulse hover:text-[#ffb84d]">
+                            ▶ 执行细项、分镜与发布（点击展开查看详细步骤）
                           </summary>
                           <div className="mt-3 space-y-2.5 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
                             {item.production ? (

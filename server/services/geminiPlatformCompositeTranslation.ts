@@ -20,8 +20,9 @@ MANDATORY RULES FOR YOUR OUTPUT PROMPT:
 1. START EXACTLY WITH: "Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills."
 2. SCENE TRANSLATION: Describe the visuals, lighting, clothing, and actions vividly in English.
 3. CRITICAL TYPOGRAPHY INSTRUCTION: You MUST add this exact sentence to force the AI to render Chinese text: "The image must include a main title in Simplified Chinese. Each image panel must contain Simplified Chinese text describing the content. Below each image panel, there must be a clean text grid containing precise Simplified Chinese descriptions of the lighting, camera angle, clothing, and actions."
-4. DYNAMIC BACKGROUND: Based on the historical era, genre, and scene mood in the script, choose a **cohesive** storyboard-sheet background palette and material (color, texture, atmosphere) that **matches the visual aesthetic of the piece**—not a fixed template. Examples of the kind of variation allowed: rich cinematic dark slate behind bright panels; soft ink-wash and paper grain for literati mood; cool clinical white-gray for medical explainer; warm artisanal paper only when the script itself calls for that tone.
-5. OUTPUT: Output ONLY the final English prompt string. Do not include conversational text.
+4. TYPOGRAPHY COLOR & EMOTION: You MUST include verbatim: "Typography Color & Emotion: MUST use highly expressive, emotional, and contrasting color combinations for the Simplified-Chinese text typography. Do NOT use plain white only. The text colors MUST amplify the emotional tension and dramatic feel of each panel and the overall scene."
+5. DYNAMIC BACKGROUND: Based on the historical era, genre, and scene mood in the script, choose a **cohesive** storyboard-sheet background palette and material (color, texture, atmosphere) that **matches the visual aesthetic of the piece**—not a fixed template. Examples of the kind of variation allowed: rich cinematic dark slate behind bright panels; soft ink-wash and paper grain for literati mood; cool clinical white-gray for medical explainer; warm artisanal paper only when the script itself calls for that tone.
+6. OUTPUT: Output ONLY the final English prompt string. Do not include conversational text.
 
 [Chinese Script]:
 ${slice}
@@ -40,11 +41,12 @@ Downstream **GPT-IMAGE-2** **only** consumes an **English** visual prompt—it *
 Your task is to analyze the Chinese script and extract the core visuals, lighting, and aesthetic details into a HIGHLY PRECISE English prompt.
 
 MANDATORY RULES FOR YOUR OUTPUT PROMPT:
-1. START EXACTLY WITH: "Cinematic 2x4 grid Xiaohongshu visual note layout, 2k high resolution, magazine editorial style, masterpiece."
+1. START EXACTLY WITH: "Cinematic 2x4 grid Xiaohongshu visual note layout, 16:9 canvas, 2k high resolution, magazine editorial style, masterpiece. Visually split into TWO distinct vertical cards side-by-side — Left card: cover hero and hook; Right card: value bullet points and supporting note panels. The overall grid remains a 2×4 cinematic matrix readable as one 16:9 sheet."
 2. AESTHETICS: Describe the visuals vividly in English, maintaining a high-net-worth IP luxury style.
 3. CRITICAL TYPOGRAPHY INSTRUCTION: You MUST add this exact sentence: "Include a main title in Simplified Chinese. Render Simplified Chinese text below each image explaining the visual. The final 2 or 3 panels MUST contain clear bullet-point summaries of the core value in Simplified Chinese." Let the model decide the key bullet points based on context.
-4. DYNAMIC BACKGROUND: Assign a high-end, masterpiece-level background color for the layout that matches the mood (e.g., "Deep obsidian black background" or "Warm cream gradient background").
-5. OUTPUT: Output ONLY the final English prompt string. Do not include conversational text.
+4. TYPOGRAPHY COLOR & EMOTION: You MUST include verbatim: "Typography Color & Emotion: MUST use highly expressive, emotional, and contrasting color combinations for the Simplified-Chinese text typography. Do NOT use plain white only. The text colors MUST amplify the emotional tension and dramatic feel of the scene."
+5. DYNAMIC BACKGROUND: Assign a high-end, masterpiece-level background color for the layout that matches the mood (e.g., "Deep obsidian black background" or "Warm cream gradient background").
+6. OUTPUT: Output ONLY the final English prompt string. Do not include conversational text.
 
 [Chinese Script]:
 ${slice}
@@ -120,8 +122,9 @@ CRITICAL PIPELINE (DO NOT SKIP):
 MANDATORY RULES:
 1. ${openLine}
 2. Main on-image hook or title line MUST be Simplified Chinese only, legible, based on: 「${hook}」. Any supporting labels MUST be Simplified Chinese.
-3. Use English only for non-text visual / camera / lighting / layout descriptions. Use the Chinese context below to infer composition (do not paste raw Chinese into the output string):\n${ctx}
-4. OUTPUT: English prompt string only.
+3. Include this English instruction for GPT-IMAGE-2: "Typography Color & Emotion: use expressive, contrasting colors for Simplified-Chinese on-image text; do not use plain white only; match emotional tension of the topic."
+4. Use English only for non-text visual / camera / lighting / layout descriptions. Use the Chinese context below to infer composition (do not paste raw Chinese into the output string):\n${ctx}
+5. OUTPUT: English prompt string only.
 `.trim();
 }
 
@@ -147,16 +150,47 @@ function stripModelOutput(raw: string): string {
 }
 
 /**
- * 平台选题 / 2×4 编导：**Vertex Global · gemini-3.1-pro-preview**，仅返回纯英文生图指令字串。
+ * 平台 2×4 / 小紅書合成：**AI Studio**（`GEMINI_API_KEY` + `gemini-3.1-pro`）產出純英文生圖指令，避免 Vertex 翻譯節點 404 導致降級無字兜底。
+ * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(translationTask: string): Promise<string> {
-  const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
-  const raw = await callGemini3_1_Pro(translationTask);
-  const out = stripModelOutput(raw);
-  if (!out) {
-    throw new Error("翻译服务返回空 prompt");
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY for image translation.");
   }
-  return out;
+  const url =
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent?key=" +
+    encodeURIComponent(apiKey);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: translationTask }] }],
+        generationConfig: { maxOutputTokens: 8192, temperature: 0.7 },
+      }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = (await response.json()) as {
+      error?: { message?: string };
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    if (!response.ok) {
+      throw new Error(data?.error?.message || `HTTP ${response.status}`);
+    }
+    if (data.error) {
+      throw new Error(String(data.error.message || "Gemini API error"));
+    }
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const out = stripModelOutput(raw);
+    if (!out) {
+      throw new Error("翻译服务返回空 prompt");
+    }
+    return out;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[AI Studio 翻译大脑崩溃]: ${message}`);
+  }
 }
 
 export async function translatePlatformCompositeToEnglishPrompt(options: {
