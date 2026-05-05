@@ -2585,8 +2585,7 @@ export default function PlatformPage() {
                         pendingCompositeSheet?.kind === compositeKind;
                       const currentImageUrl = platformImageMap[item.id] || "";
                       const isBlackImageOrTimeout =
-                        !currentImageUrl ||
-                        /timeout|error|black|failed|empty/i.test(currentImageUrl);
+                        currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       const normalCoverCost = isGraphicCover ? 6 : 5;
                       const actualCoverCost = isBlackImageOrTimeout ? 0 : normalCoverCost;
@@ -2763,7 +2762,7 @@ export default function PlatformPage() {
                                         return;
                                       }
                                       const confirmNote = isBlackImageOrTimeout
-                                        ? "检测到前次生成为黑图或超时，本次重新生成将「免费」为您补发，是否继续？"
+                                        ? "检测到当前图片链接含超时或错误标记，本次重新生成将「免费」为您补发，是否继续？"
                                         : `重新生成此单帧将消耗 ${actualCoverCost} 积分（使用新种子算绘），是否继续？`;
                                       if (!supervisorAccess && !window.confirm(confirmNote)) return;
                                       setRegeneratingCoverSceneId(item.id);
@@ -2784,7 +2783,7 @@ export default function PlatformPage() {
                                               }
                                             ).executionDetails,
                                           }),
-                                          bypassCredit: isBlackImageOrTimeout,
+                                          failedImageUrl: isBlackImageOrTimeout ? currentImageUrl : undefined,
                                         },
                                         {
                                           onSuccess: (res) => {
