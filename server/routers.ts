@@ -852,9 +852,17 @@ async function buildPlatformContent(params: {
 
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
-在 contentBlueprints 数组中，务必生成 4 到 6 个深度内容方案/选题，切勿少于 4 个。充分利用上下文发散，确保高转化潜力。
 
-1. contentBlueprints：生成至少 4 个具体可执行的内容方案（建议 4～6 个）。每个方案必须包含：
+【核心数量与维度指令】：你必须为该平台精确生成 6 个深度内容方案/选题。这是一个硬性要求，切勿少于 6 个。请严格结合上文 JSON 传入的 context（当前用户真实背景、IP 定位与行业上下文）以及 platformMenu、snapshotData，分别从以下 6 个动态维度各发散一个独特选题：
+1. 核心专业洞察（展现该 IP 最强的专业壁垒或硬核知识）
+2. 跨界结合与价值观（展现该 IP 独特的视野或美学主张）
+3. 目标受众痛点暴击（一针见血解决粉丝最深的焦虑）
+4. 个人经历与人设魅力（利用真实的背景故事建立信任）
+5. 行业认知破局（打破常规，提出反共识的独家观点）
+6. 平台流量密码融合（高度迎合该平台的当前爆款逻辑）
+请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
+
+1. contentBlueprints：必须恰好包含 6 个具体可执行的内容方案，并与上方 6 个维度一一对应（第 1 条对应维度 1，依此类推）。每个方案必须包含：
    - title（选题标题，必须是具体的，不是抽象的）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
@@ -939,6 +947,8 @@ async function buildPlatformContent(params: {
             growthPlan: params.snapshot.growthPlan || [],
             creationAssist: params.snapshot.creationAssist || {},
           },
+          ipContextBinding:
+            "context 字段承载当前用户真实 IP 定位、行业背景与补充说明；6 个选题必须逐一锚定该上下文及 platformMenu / snapshotData，禁止套用无关行业标签或泛泛模板。",
         }),
       },
     ],
