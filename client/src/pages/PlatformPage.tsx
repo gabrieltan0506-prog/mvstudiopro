@@ -838,6 +838,7 @@ export default function PlatformPage() {
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("script").forEach((n) => n.remove());
     clone.querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group").forEach((n) => n.remove());
+    clone.querySelectorAll("details").forEach((detail) => detail.setAttribute("open", "true"));
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
