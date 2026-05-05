@@ -2563,29 +2563,11 @@ export default function PlatformPage() {
                         compositeMutationBusy &&
                         pendingCompositeSheet?.sceneId === item.id &&
                         pendingCompositeSheet?.kind === compositeKind;
-                      const showVisualReference =
-                        !!platformStoryboardSheetMap[item.id] ||
-                        !!platformXhsNoteMap[item.id] ||
-                        (pendingCompositeSheet?.sceneId === item.id &&
-                          pendingCompositeSheet &&
-                          (pendingCompositeSheet.kind === "storyboard_sheet_portrait" ||
-                            pendingCompositeSheet.kind === "storyboard_sheet_landscape" ||
-                            pendingCompositeSheet.kind === "xiaohongshu_dual_note"));
-                      const compositeRefUrl =
-                        platformStoryboardSheetMap[item.id] || platformXhsNoteMap[item.id] || "";
-                      const compositeIsStoryboard = !!platformStoryboardSheetMap[item.id];
-                      const previewIsXhs =
-                        !!platformXhsNoteMap[item.id] ||
-                        (pendingCompositeSheet?.sceneId === item.id &&
-                          pendingCompositeSheet?.kind === "xiaohongshu_dual_note");
-                      const visualReferenceTitle = previewIsXhs ? "小红书图文参考" : "分镜图文参考";
                       return (
                       <div
                         key={item.id}
                         id={executionCardDomId(item.id)}
-                        className={`group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5${
-                          showVisualReference ? " col-span-1 md:col-span-2 lg:col-span-3" : ""
-                        }`}
+                        className="group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
@@ -2714,15 +2696,7 @@ export default function PlatformPage() {
                                 />
                               </div>
                             </div>
-                          ) : (
-                            <div
-                              className={`flex w-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 px-3 text-center text-[11px] leading-relaxed text-gray-600 ${
-                                item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
-                              }`}
-                            >
-                              {item.format === "图文" ? "尚无配图参考单帧，可点上方一键生成" : "尚无分镜参考单帧，可点上方一键生成"}
-                            </div>
-                          )}
+                          ) : null}
                         </div>
 
                         <div className="mt-4 space-y-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.55)] p-3">
@@ -2776,79 +2750,6 @@ export default function PlatformPage() {
                               {isThisCompositeLoading ? "生成中…" : `${compositeLabel} · ${compositeCost} 点`}
                             </button>
                           </div>
-                          {showVisualReference ? (
-                            <div
-                              className={`mt-8 mb-10 rounded-3xl border p-6 shadow-2xl sm:p-8 ${
-                                previewIsXhs
-                                  ? "border-[#ff4fb8]/25 bg-[#0a0a0a]"
-                                  : "border-[#10B981]/20 bg-[#0a0a0a]"
-                              }`}
-                            >
-                              <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
-                                <div className="flex min-w-0 items-center gap-3">
-                                  <div
-                                    className={`h-6 w-1.5 shrink-0 rounded-full ${
-                                      previewIsXhs ? "bg-[#ff4fb8]" : "bg-[#10B981]"
-                                    }`}
-                                  />
-                                  <h3 className="text-2xl font-bold tracking-tight text-white">{visualReferenceTitle}</h3>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <span
-                                    className={`rounded-full border px-3 py-1 text-xs ${
-                                      previewIsXhs
-                                        ? "border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ff9fe0]"
-                                        : "border-[#10B981]/20 bg-[#10B981]/10 text-[#10B981]"
-                                    }`}
-                                  >
-                                    {previewIsXhs ? "小红书双卡矩阵" : "原生 2x4 矩阵"}
-                                  </span>
-                                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-400">
-                                    生图采用 GPT-IMAGE-2
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="relative w-full min-h-[min(520px,56vw)] overflow-hidden rounded-2xl border border-white/5 bg-black/60 shadow-2xl sm:min-h-[min(560px,50vw)]">
-                                {compositeRefUrl ? (
-                                  <TrialWatermarkImage
-                                    src={compositeRefUrl}
-                                    isTrial={isTrial}
-                                    objectFit="contain"
-                                    className="w-full max-w-none object-contain transition-transform duration-500 hover:scale-[1.01]"
-                                    style={{
-                                      width: "100%",
-                                      height: "auto",
-                                      maxHeight: "min(92vh, 1280px)",
-                                      display: "block",
-                                    }}
-                                    alt="Storyboard visual reference"
-                                  />
-                                ) : (
-                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/50 backdrop-blur-sm">
-                                    <Loader2 className="h-14 w-14 animate-spin text-[#10B981]" />
-                                    <span className="text-sm font-semibold text-gray-100">生成中，請稍候…</span>
-                                    <span className="text-[11px] text-gray-500">后端已接收任务，画面出现后会自动显示</span>
-                                  </div>
-                                )}
-                              </div>
-                              {compositeRefUrl ? (
-                                <div className="mt-3 border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-                                  <ImageUpscaleBar
-                                    imageUrl={compositeRefUrl}
-                                    baseCreditKey="forgeImage"
-                                    className="mt-1"
-                                    onUpscaled={(url) => {
-                                      if (compositeIsStoryboard) {
-                                        setPlatformStoryboardSheetMap((prev) => ({ ...prev, [item.id]: url }));
-                                      } else {
-                                        setPlatformXhsNoteMap((prev) => ({ ...prev, [item.id]: url }));
-                                      }
-                                    }}
-                                  />
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
                         </div>
                       </div>
                       );
