@@ -622,7 +622,16 @@ export default function PlatformPage() {
   });
 
   /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
-  const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation();
+  const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
+    onSuccess: (res, variables) => {
+      const sid = variables.sceneId;
+      if (!sid) return;
+      const u = res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+      if (u) setPlatformImageMap((prev) => ({ ...prev, [sid]: u }));
+      if (res.creationId != null) setSceneJobIds((prev) => ({ ...prev, [sid]: String(res.creationId) }));
+    },
+    onError: (err) => console.warn("[Silent Retry Failed]:", err.message),
+  });
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
     onSuccess: (res, variables) => {
@@ -652,32 +661,13 @@ export default function PlatformPage() {
         const topicHook = String(scene.title || "").trim().slice(0, 500);
         if (!topicHook) continue;
         const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
-        autoRetryTopicImageMutation.mutate(
-          {
-            topicHook,
-            format: variables.platformType === "video" ? "短视频" : "图文",
-            context: ctxBody,
-            failedJobId: String(cid),
-            sceneId: r.id,
-          },
-          {
-            onSuccess: (out) => {
-              if (out.creationId != null) {
-                setSceneJobIds((prev) => ({ ...prev, [r.id]: String(out.creationId) }));
-              }
-              const u = out.imageUrl ?? (out as { url?: string | null }).url ?? null;
-              if (out.success && u) {
-                setPlatformImageMap((prev) => ({ ...prev, [r.id]: u }));
-              }
-            },
-            onError: (e) =>
-              console.warn(
-                "[PlatformPage] 批量漏图自动补发失败",
-                r.id,
-                e instanceof Error ? e.message : e,
-              ),
-          },
-        );
+        autoRetryTopicImageMutation.mutate({
+          topicHook,
+          format: variables.platformType === "video" ? "短视频" : "图文",
+          context: ctxBody,
+          failedJobId: String(cid),
+          sceneId: r.id,
+        });
       }
       const ok = res.results.filter((r) => r.url && String(r.url).trim()).length;
       const label = "图文封面参考";
@@ -2743,7 +2733,7 @@ export default function PlatformPage() {
                               <span className="text-xs font-medium tracking-widest text-gray-400">
                                 {regeneratingCoverSceneId === item.id
                                   ? "单帧重新绘制中..."
-                                  : "高定视觉绘制中..."}
+                                  : "高定视觉绘製中..."}
                               </span>
                             </div>
                           ) : platformImageMap[item.id] ? (

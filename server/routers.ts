@@ -453,25 +453,30 @@ const platformDashboardResponseSchema = z.object({
 // Use z.any() for all array fields to tolerate Gemini schema drift
 // executionDetails is an optional sub-object in each contentBlueprint item
 const platformContentResponseSchema = z.object({
-  contentBlueprints: z.array(z.object({
-    title: z.string().optional(),
-    format: z.string().optional(),
-    hook: z.string().optional(),
-    copywriting: z.string().optional(),
-    // z.any() — Gemini sometimes returns comma-string instead of array, or adds extra fields
-    suitablePlatforms: z.any().optional(),
-    // z.any() — Gemini sometimes returns mixed types in actionableSteps
-    actionableSteps: z.any().optional(),
-    detailedScript: z.string().optional(),
-    publishingAdvice: z.string().optional(),
-    // .passthrough() — allow any extra fields Gemini adds to executionDetails without crashing schema
-    executionDetails: z.object({
-      environmentAndWardrobe: z.string().optional(),
-      lightingAndCamera: z.string().optional(),
-      // z.any() — can be string or string[] depending on model version
-      stepByStepScript: z.any().optional(),
-    }).passthrough().optional(),
-  }).passthrough()).default([]),
+  contentBlueprints: z
+    .array(
+      z
+        .object({
+          title: z.string().optional(),
+          format: z.string().optional(),
+          hook: z.string().optional(),
+          copywriting: z.string().optional(),
+          suitablePlatforms: z.any().optional(),
+          actionableSteps: z.any().optional(),
+          detailedScript: z.string().optional(),
+          publishingAdvice: z.string().optional(),
+          executionDetails: z
+            .object({
+              environmentAndWardrobe: z.string().optional(),
+              lightingAndCamera: z.string().optional(),
+              stepByStepScript: z.any().optional(),
+            })
+            .passthrough()
+            .optional(),
+        })
+        .passthrough(),
+    )
+    .length(6, { message: "contentBlueprints 必须恰好 6 个选题方案" }),
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
 
@@ -853,13 +858,9 @@ async function buildPlatformContent(params: {
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：你必须为该平台精确生成 6 个深度内容方案/选题。这是一个硬性要求，切勿少于 6 个。请严格结合上文 JSON 传入的 context（当前用户真实背景、IP 定位与行业上下文）以及 platformMenu、snapshotData，分别从以下 6 个动态维度各发散一个独特选题：
-1. 核心专业洞察（展现该 IP 最强的专业壁垒或硬核知识）
-2. 跨界结合与价值观（展现该 IP 独特的视野或美学主张）
-3. 目标受众痛点暴击（一针见血解决粉丝最深的焦虑）
-4. 个人经历与人设魅力（利用真实的背景故事建立信任）
-5. 行业认知破局（打破常规，提出反共识的独家观点）
-6. 平台流量密码融合（高度迎合该平台的当前爆款逻辑）
+【核心数量与维度指令】：你必须为该平台精确生成 6 个内容选题方案（少于 6 个将导致系统崩溃）。请严格结合用户真实 IP 背景（见下方 user 消息中的 ipContextBinding 与 context），依序从以下六个维度发散：
+1. 核心专业洞察、2. 跨界结合与价值观、3. 目标受众痛点暴击、4. 个人经历与人设魅力、5. 行业认知破局、6. 平台流量密码融合。
+
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
 1. contentBlueprints：必须恰好包含 6 个具体可执行的内容方案，并与上方 6 个维度一一对应（第 1 条对应维度 1，依此类推）。每个方案必须包含：
@@ -948,7 +949,7 @@ async function buildPlatformContent(params: {
             creationAssist: params.snapshot.creationAssist || {},
           },
           ipContextBinding:
-            "context 字段承载当前用户真实 IP 定位、行业背景与补充说明；6 个选题必须逐一锚定该上下文及 platformMenu / snapshotData，禁止套用无关行业标签或泛泛模板。",
+            "context 字段承载当前用户真实 IP 定位、行业背景与补充说明；ipContextBinding 强调你必须以此为锚生成恰好 6 个选题。6 个选题必须逐一锚定该上下文及 platformMenu / snapshotData，禁止套用无关行业标签或泛泛模板。",
         }),
       },
     ],
@@ -986,13 +987,16 @@ async function buildPlatformContent(params: {
   // Gemini may rename keys despite the 【强制 JSON Key 锁定】 prompt instruction.
   // This layer remaps all observed alias variants back to the canonical key names.
   const partial = normalizePlatformContentKeys((parsedRaw || {}) as Record<string, unknown>);
-  const parseResult = platformContentResponseSchema.safeParse(partial);
+  const rawBp = Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [];
+  const blueprintsForSchema = rawBp.length > 6 ? rawBp.slice(0, 6) : rawBp;
+  const partialForParse = { ...partial, contentBlueprints: blueprintsForSchema };
+  const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) return parseResult.data;
 
   console.error("[buildPlatformContent] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
   console.warn("[buildPlatformContent] attempting loose parse with defaults");
   const looseResult = platformContentResponseSchema.safeParse({
-    contentBlueprints: Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [],
+    contentBlueprints: blueprintsForSchema,
     monetizationLanes: Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [],
   });
   if (looseResult.success) return looseResult.data;
@@ -2942,55 +2946,78 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
           if (failedJobRaw.length > 0) {
             const failedIdNum = Number.parseInt(failedJobRaw, 10);
-            if (Number.isInteger(failedIdNum) && failedIdNum > 0) {
-              const [targetJob] = await database
-                .select()
-                .from(userCreations)
-                .where(
-                  and(
-                    eq(userCreations.id, failedIdNum),
-                    eq(userCreations.userId, userId),
-                    eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
-                  ),
-                )
-                .limit(1);
-
-              if (targetJob && (targetJob.status === "failed" || targetJob.status === "timeout")) {
-                const meta = parseUserCreationMetadata(targetJob.metadata);
-                if (meta.platformFreeRetryConsumed !== true) {
-                  const [consumedRow] = await database
-                    .update(userCreations)
-                    .set({
-                      metadata: JSON.stringify({
-                        ...meta,
-                        platformFreeRetryConsumed: true,
-                      }),
-                      updatedAt: new Date(),
-                    })
-                    .where(
-                      and(
-                        eq(userCreations.id, failedIdNum),
-                        eq(userCreations.userId, userId),
-                        eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
-                        or(eq(userCreations.status, "failed"), eq(userCreations.status, "timeout")),
-                        sql`coalesce((${userCreations.metadata})::jsonb->>'platformFreeRetryConsumed', '') <> 'true'`,
-                      ),
-                    )
-                    .returning({ id: userCreations.id });
-
-                  if (!consumedRow) {
-                    await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
-                    creationIdOut = undefined;
-                    throw new TRPCError({
-                      code: "BAD_REQUEST",
-                      message: "免扣分凭证已失效或被并发消耗",
-                    });
-                  }
-                  isFreeRetry = true;
-                  consumedParentId = failedIdNum;
-                }
-              }
+            if (!Number.isInteger(failedIdNum) || failedIdNum <= 0) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "免扣分凭证已失效或被并发消耗",
+              });
             }
+            const [targetJob] = await database
+              .select()
+              .from(userCreations)
+              .where(
+                and(
+                  eq(userCreations.id, failedIdNum),
+                  eq(userCreations.userId, userId),
+                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                ),
+              )
+              .limit(1);
+
+            if (
+              !targetJob ||
+              (targetJob.status !== "failed" && targetJob.status !== "timeout")
+            ) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "免扣分凭证已失效或被并发消耗",
+              });
+            }
+
+            const metaPre = parseUserCreationMetadata(targetJob.metadata);
+            if (metaPre.platformFreeRetryConsumed === true) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "免扣分凭证已失效或被并发消耗",
+              });
+            }
+
+            const [consumedRow] = await database
+              .update(userCreations)
+              .set({
+                metadata: JSON.stringify({
+                  ...metaPre,
+                  platformFreeRetryConsumed: true,
+                }),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(userCreations.id, failedIdNum),
+                  eq(userCreations.userId, userId),
+                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                  or(eq(userCreations.status, "failed"), eq(userCreations.status, "timeout")),
+                  sql`coalesce((${userCreations.metadata})::jsonb->>'platformFreeRetryConsumed', '') <> 'true'`,
+                ),
+              )
+              .returning({ id: userCreations.id });
+
+            if (!consumedRow) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "免扣分凭证已失效或被并发消耗",
+              });
+            }
+            isFreeRetry = true;
+            consumedParentId = failedIdNum;
           }
 
           if (!isAdminUser && !isFreeRetry) {
@@ -3063,35 +3090,40 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
         let imageUrl: string | null = null;
         try {
-          const geminiTask = buildPlatformTopicReferenceGeminiTask({
-            topicHook: input.topicHook,
-            context: ctxStr,
-            variant: isGraphic ? "graphic" : "video",
-          });
-          const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
-          imageUrl = await generateGptImage2FromRawEnglishPrompt({
-            englishPrompt,
-            aspectRatio: "9:16",
-            gcsSubdir: "platform_topic_reference",
-          });
-        } catch (e: unknown) {
-          console.warn(
-            `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} Gemini→英文失败:`,
-            e instanceof Error ? e.message : e,
-          );
-        }
-        if (!imageUrl) {
           try {
-            imageUrl = await generateImageGpt2WithImagenFallback({
-              title: title || "Content",
-              copywriting,
-              mode,
-              isTrial: false,
+            const geminiTask = buildPlatformTopicReferenceGeminiTask({
+              topicHook: input.topicHook,
+              context: ctxStr,
+              variant: isGraphic ? "graphic" : "video",
             });
-          } catch (fallbackErr) {
-            console.warn(`[mvAnalysis.generateTopicImage] 兜底异常:`, fallbackErr);
-            imageUrl = null;
+            const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+            imageUrl = await generateGptImage2FromRawEnglishPrompt({
+              englishPrompt,
+              aspectRatio: "9:16",
+              gcsSubdir: "platform_topic_reference",
+            });
+          } catch (e: unknown) {
+            console.warn(
+              `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} Gemini→英文失败:`,
+              e instanceof Error ? e.message : e,
+            );
           }
+          if (!imageUrl) {
+            try {
+              imageUrl = await generateImageGpt2WithImagenFallback({
+                title: title || "Content",
+                copywriting,
+                mode,
+                isTrial: false,
+              });
+            } catch (fallbackErr) {
+              console.warn(`[mvAnalysis.generateTopicImage] 兜底异常:`, fallbackErr);
+              imageUrl = null;
+            }
+          }
+        } catch (e: unknown) {
+          console.error("[mvAnalysis.generateTopicImage] 主路径或兜底未捕获异常:", e);
+          imageUrl = null;
         }
 
         if (!imageUrl) {
