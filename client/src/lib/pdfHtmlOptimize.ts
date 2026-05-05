@@ -42,3 +42,25 @@ export function optimizePdfSnapshotHtml(html: string): string {
 
   return s;
 }
+
+/**
+ * Platform 頁 PDF 快照：與 MyReports `injectPdfSnapshotSanitizeIntoHead` 同源思路
+ *（摘掉 Sonner / Toast、列印根容器與圖表分頁），根選擇器為 `#platform-report`。
+ */
+export function injectPlatformPdfSnapshotSanitizeIntoHead(html: string): string {
+  const strip = `<style id="mvs-pdf-snapshot-sanitize">
+[data-sonner-toaster],[data-sonner-toast],[data-sonner-toaster] li,
+ol[data-sonner-toaster],section[aria-label*="tific" i],section[aria-label*="通知" i],
+[class*="sonner-toast"],.toaster.group,.toaster{display:none!important;visibility:hidden!important;
+height:0!important;width:0!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;}
+@media print{
+html,body{margin:0!important;padding:0!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+#platform-report{margin:0!important;padding:0!important;max-width:none!important;}
+figure:not(.cover-page),img:not(:is(.cover-page img)),.echart-mount{page-break-inside:avoid!important;break-inside:avoid!important;}
+figure:not(.cover-page) img,.report-raw-html figure:not(.cover-page) img,img:not(:is(.cover-page img)){max-height:277mm!important;max-width:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;}
+@page{margin:0;size:A4 portrait;}
+}
+</style>`;
+  if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);
+  return `${strip}${html}`;
+}

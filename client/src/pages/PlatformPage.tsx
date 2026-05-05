@@ -18,6 +18,10 @@ import type {
 } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
 import {
+  injectPlatformPdfSnapshotSanitizeIntoHead,
+  optimizePdfSnapshotHtml,
+} from "@/lib/pdfHtmlOptimize";
+import {
   Activity,
   ArrowLeft,
   ArrowRight,
@@ -63,6 +67,59 @@ import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+
+/** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
+const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
+
+/** 快照克隆前：單張圖 load/error 逾時（選題多時並行等待，總耗時≈最慢一張） */
+const PLATFORM_PDF_PER_IMAGE_WAIT_MS = 12_000;
+
+/**
+ * 克隆 #platform-report 前，確保區域內 img 已載入（含 lazy→eager、decode），避免 PDF 空白圖塊。
+ */
+async function waitForPlatformReportImagesReady(pdfRoot: HTMLElement): Promise<void> {
+  const images = Array.from(pdfRoot.querySelectorAll("img"));
+  await Promise.all(images.map((img) => waitForSinglePlatformReportImageForPdf(img)));
+}
+
+async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Promise<void> {
+  const raw = (img.currentSrc || img.src || "").trim();
+  if (!raw) return;
+
+  if (img.loading === "lazy") {
+    img.loading = "eager";
+  }
+
+  if (img.complete && img.naturalWidth > 0) {
+    try {
+      await img.decode();
+    } catch {
+      /* 仍可有已解碼柵格供 clone 使用 */
+    }
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timeoutId);
+      img.removeEventListener("load", finish);
+      img.removeEventListener("error", finish);
+      resolve();
+    };
+    const timeoutId = window.setTimeout(finish, PLATFORM_PDF_PER_IMAGE_WAIT_MS);
+    img.addEventListener("load", finish);
+    img.addEventListener("error", finish);
+  });
+
+  try {
+    await img.decode();
+  } catch {
+    /* pdf-worker 仍會再擋 decode；此處不擋快照 */
+  }
+}
 
 const WINDOW_OPTIONS = [
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
@@ -834,20 +891,66 @@ export default function PlatformPage() {
     }, 3000);
   }, []);
 
-  const handleDownloadPlatformPdf = useCallback(() => {
-    // 與 GodView / MyReports「全息閱覽」相同鏈路：DOM 快照 → mvAnalysis.downloadPlatformPdf → Cloud Run pdf-worker（見 routers 註釋）。
-    const clone = document.documentElement.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("script").forEach((n) => n.remove());
-    clone.querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group").forEach((n) => n.remove());
-    clone.querySelectorAll("details").forEach((detail) => detail.setAttribute("open", "true"));
-    const base = document.createElement("base");
-    base.href = window.location.origin + "/";
-    clone.querySelector("head")?.prepend(base);
+  const handleDownloadPlatformPdf = useCallback(async () => {
+    // 與 MyReports `captureAndUploadSnapshot` 對齊：精準克隆 `#platform-report` + head 副本 +
+    // optimizePdfSnapshotHtml / injectPlatformPdfSnapshotSanitizeIntoHead；並保留 details 行內展開以防截斷。
+    // 圖片：克隆前 waitForPlatformReportImagesReady（lazy→eager、load/decode），避免 GPT 封面等尚未載入即成空塊。
+    try {
+      setIsDownloadingPdf(true);
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        await (document as any).fonts.ready;
+      }
+      await new Promise((r) => setTimeout(r, 600));
 
-    const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
-    setIsDownloadingPdf(true);
-    toast.info("云端压制 PDF 中，多数约 15～45 分钟，请保持页面打开。", { duration: 10_000 });
-    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=360000&selector=%23platform-report` });
+      toast.dismiss();
+      await new Promise((r) => setTimeout(r, 400));
+
+      const pdfRoot = document.getElementById(PLATFORM_PDF_SNAPSHOT_ROOT_ID);
+      if (!pdfRoot) {
+        toast.error("找不到报告容器（platform-report），请先完成分析后再试");
+        setIsDownloadingPdf(false);
+        return;
+      }
+
+      await waitForPlatformReportImagesReady(pdfRoot);
+
+      const fragment = pdfRoot.cloneNode(true) as HTMLElement;
+      fragment.querySelectorAll("script").forEach((n) => n.remove());
+      fragment.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+      fragment.querySelectorAll("button").forEach((n) => n.remove());
+      fragment
+        .querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group")
+        .forEach((n) => n.remove());
+      fragment.querySelectorAll("[class*='sonner']").forEach((n) => n.remove());
+
+      fragment.querySelectorAll("details").forEach((detail) => {
+        detail.setAttribute("open", "true");
+        (detail as HTMLElement).style.display = "block";
+        const content = detail.lastElementChild as HTMLElement | null;
+        if (content) {
+          content.style.display = "block";
+          content.style.height = "auto";
+          content.style.opacity = "1";
+          content.style.overflow = "visible";
+        }
+      });
+
+      const headEl = document.head.cloneNode(true) as HTMLHeadElement;
+      headEl.querySelectorAll("script").forEach((n) => n.remove());
+      const baseEl = document.createElement("base");
+      baseEl.href = window.location.origin + "/";
+      headEl.insertBefore(baseEl, headEl.firstChild);
+
+      let html = `<!DOCTYPE html><html lang="zh-CN">${headEl.outerHTML}<body>${fragment.outerHTML}</body></html>`;
+      html = optimizePdfSnapshotHtml(html);
+      html = injectPlatformPdfSnapshotSanitizeIntoHead(html);
+
+      toast.info("云端压制 PDF 中，多数约 15～45 分钟，请保持页面打开。", { duration: 10_000 });
+      downloadPlatformPdfMutation.mutate({ html, token: `wait=360000&selector=%23platform-report` });
+    } catch (e) {
+      setIsDownloadingPdf(false);
+      toast.error(e instanceof Error ? e.message : "构建 PDF 快照失败，请重试");
+    }
   }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
@@ -1817,7 +1920,7 @@ export default function PlatformPage() {
                   {hasAnalyzed && !isDashboardLoading && !isContentLoading && (
                     <button
                       type="button"
-                      onClick={handleDownloadPlatformPdf}
+                      onClick={() => void handleDownloadPlatformPdf()}
                       disabled={isDownloadingPdf}
                       className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold text-[#49e6ff] transition hover:bg-[rgba(73,230,255,0.15)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -2444,16 +2547,22 @@ export default function PlatformPage() {
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const digest = copyFlat.slice(0, 60);
+                      const isGraphicFormat = item.format === "图文" || item.format === "小红书";
+                      const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+                      const compositeCost = isGraphicFormat
+                        ? CREDIT_COSTS.platformXhsDualNote
+                        : CREDIT_COSTS.platformStoryboardSheet;
+                      const compositeLabel = isGraphicFormat ? "小红书双卡矩阵" : "2x4 高定分镜表";
+                      const CompositeIcon = isGraphicFormat ? Heart : Film;
+                      const compositeColorClass = isGraphicFormat
+                        ? "text-[#ff9fe0] bg-[#ff4fb8]/10 border-[#ff4fb8]/40 hover:bg-[#ff4fb8]/20"
+                        : "text-[#8cefff] bg-[#49e6ff]/10 border-[#49e6ff]/40 hover:bg-[#49e6ff]/20";
+                      const compositeRingClass = isGraphicFormat ? "ring-[#ff4fb8]/35" : "ring-[#49e6ff]/35";
                       const compositeMutationBusy = generatePlatformCompositeSheetMutation.isPending;
-                      const storyboardCompositeLoading =
+                      const isThisCompositeLoading =
                         compositeMutationBusy &&
                         pendingCompositeSheet?.sceneId === item.id &&
-                        (pendingCompositeSheet?.kind === "storyboard_sheet_portrait" ||
-                          pendingCompositeSheet?.kind === "storyboard_sheet_landscape");
-                      const xhsCompositeLoading =
-                        compositeMutationBusy &&
-                        pendingCompositeSheet?.sceneId === item.id &&
-                        pendingCompositeSheet?.kind === "xiaohongshu_dual_note";
+                        pendingCompositeSheet?.kind === compositeKind;
                       const showVisualReference =
                         !!platformStoryboardSheetMap[item.id] ||
                         !!platformXhsNoteMap[item.id] ||
@@ -2465,6 +2574,11 @@ export default function PlatformPage() {
                       const compositeRefUrl =
                         platformStoryboardSheetMap[item.id] || platformXhsNoteMap[item.id] || "";
                       const compositeIsStoryboard = !!platformStoryboardSheetMap[item.id];
+                      const previewIsXhs =
+                        !!platformXhsNoteMap[item.id] ||
+                        (pendingCompositeSheet?.sceneId === item.id &&
+                          pendingCompositeSheet?.kind === "xiaohongshu_dual_note");
+                      const visualReferenceTitle = previewIsXhs ? "小红书图文参考" : "分镜图文参考";
                       return (
                       <div
                         key={item.id}
@@ -2623,108 +2737,71 @@ export default function PlatformPage() {
                               GPT-IMAGE-2
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 分镜 {CREDIT_COSTS.platformStoryboardSheet} 点 / 小红书 {CREDIT_COSTS.platformXhsDualNote}{" "}
-                              点
+                              · 依选题自动匹配 · 视频 {CREDIT_COSTS.platformStoryboardSheet} 点 · 图文/小红书{" "}
+                              {CREDIT_COSTS.platformXhsDualNote} 点
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              disabled={
-                                !isAuthenticated ||
-                                compositeMutationBusy ||
-                                isDashboardLoading ||
-                                isContentLoading
-                              }
+                              disabled={!isAuthenticated || compositeMutationBusy || isDashboardLoading || isContentLoading}
                               onClick={() => {
                                 if (!isAuthenticated) {
                                   toast.error("请先登录");
                                   return;
                                 }
-                                const cost = CREDIT_COSTS.platformStoryboardSheet;
                                 const note = supervisorAccess
                                   ? ""
-                                  : `将消耗 ${cost} 积分，主路径 GPT-IMAGE-2（失败自动 Vertex 高规兜底），将生成分镜图文参考大图，是否继续？`;
+                                  : `将消耗 ${compositeCost} 积分，主路径 GPT-IMAGE-2，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
-                                const script = buildPlatformSheetScriptContext(item as any);
                                 generatePlatformCompositeSheetMutation.mutate({
                                   sceneId: item.id,
                                   title: item.title,
-                                  scriptContext: script,
-                                  kind: "storyboard_sheet_portrait",
-                                  executionDetails: buildPlatformExecutionDetailsPayload(item as any),
-                                  jobId: analysisJobId || undefined,
-                                  creationRecordId: readOptionalReportBindingCreationId(),
-                                });
-                              }}
-                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-3 py-2 text-xs font-bold text-[#8cefff] transition hover:bg-[#49e6ff]/20 ${
-                                compositeMutationBusy && !storyboardCompositeLoading
-                                  ? "opacity-45"
-                                  : ""
-                              } ${storyboardCompositeLoading ? "cursor-wait ring-2 ring-[#49e6ff]/35 [&:disabled]:opacity-100" : ""}`}
-                            >
-                              {storyboardCompositeLoading ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                              ) : (
-                                <Film className="h-3.5 w-3.5 shrink-0" />
-                              )}
-                              {storyboardCompositeLoading
-                                ? "生成中…"
-                                : `分镜图文参考 · ${CREDIT_COSTS.platformStoryboardSheet} 点`}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={
-                                !isAuthenticated ||
-                                compositeMutationBusy ||
-                                isDashboardLoading ||
-                                isContentLoading
-                              }
-                              onClick={() => {
-                                if (!isAuthenticated) {
-                                  toast.error("请先登录");
-                                  return;
-                                }
-                                const cost = CREDIT_COSTS.platformXhsDualNote;
-                                const note = supervisorAccess
-                                  ? ""
-                                  : `将消耗 ${cost} 积分，主路径 GPT-IMAGE-2（失败自动 Vertex 高规兜底），将生成小红书图文参考大图，是否继续？`;
-                                if (!supervisorAccess && !window.confirm(note)) return;
-                                const script = buildPlatformSheetScriptContext(item as any);
-                                generatePlatformCompositeSheetMutation.mutate({
-                                  sceneId: item.id,
-                                  title: item.title,
-                                  scriptContext: script,
-                                  kind: "xiaohongshu_dual_note",
+                                  scriptContext: buildPlatformSheetScriptContext(item as any),
+                                  kind: compositeKind,
                                   jobId: analysisJobId || undefined,
                                   executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                   creationRecordId: readOptionalReportBindingCreationId(),
                                 });
                               }}
-                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#ff4fb8]/40 bg-[#ff4fb8]/10 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/20 ${
-                                compositeMutationBusy && !xhsCompositeLoading ? "opacity-45" : ""
-                              } ${xhsCompositeLoading ? "cursor-wait ring-2 ring-[#ff4fb8]/35 [&:disabled]:opacity-100" : ""}`}
+                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition ${compositeColorClass} ${
+                                compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""
+                              } ${isThisCompositeLoading ? `cursor-wait ring-2 ${compositeRingClass} [&:disabled]:opacity-100` : ""}`}
                             >
-                              {xhsCompositeLoading ? (
+                              {isThisCompositeLoading ? (
                                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                               ) : (
-                                <Heart className="h-3.5 w-3.5 shrink-0" />
+                                <CompositeIcon className="h-3.5 w-3.5 shrink-0" />
                               )}
-                              {xhsCompositeLoading
-                                ? "生成中…"
-                                : `小红书图文参考 · ${CREDIT_COSTS.platformXhsDualNote} 点`}
+                              {isThisCompositeLoading ? "生成中…" : `${compositeLabel} · ${compositeCost} 点`}
                             </button>
                           </div>
                           {showVisualReference ? (
-                            <div className="mt-8 mb-10 rounded-3xl border border-[#10B981]/20 bg-[#0a0a0a] p-6 shadow-2xl sm:p-8">
+                            <div
+                              className={`mt-8 mb-10 rounded-3xl border p-6 shadow-2xl sm:p-8 ${
+                                previewIsXhs
+                                  ? "border-[#ff4fb8]/25 bg-[#0a0a0a]"
+                                  : "border-[#10B981]/20 bg-[#0a0a0a]"
+                              }`}
+                            >
                               <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
                                 <div className="flex min-w-0 items-center gap-3">
-                                  <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
-                                  <h3 className="text-2xl font-bold tracking-tight text-white">分镜图文参考</h3>
+                                  <div
+                                    className={`h-6 w-1.5 shrink-0 rounded-full ${
+                                      previewIsXhs ? "bg-[#ff4fb8]" : "bg-[#10B981]"
+                                    }`}
+                                  />
+                                  <h3 className="text-2xl font-bold tracking-tight text-white">{visualReferenceTitle}</h3>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                  <span className="rounded-full border border-[#10B981]/20 bg-[#10B981]/10 px-3 py-1 text-xs text-[#10B981]">
-                                    原生 2x4 矩阵
+                                  <span
+                                    className={`rounded-full border px-3 py-1 text-xs ${
+                                      previewIsXhs
+                                        ? "border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ff9fe0]"
+                                        : "border-[#10B981]/20 bg-[#10B981]/10 text-[#10B981]"
+                                    }`}
+                                  >
+                                    {previewIsXhs ? "小红书双卡矩阵" : "原生 2x4 矩阵"}
                                   </span>
                                   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-400">
                                     生图采用 GPT-IMAGE-2
@@ -3064,7 +3141,7 @@ export default function PlatformPage() {
                   </a>
                   <button
                     type="button"
-                    onClick={handleDownloadPlatformPdf}
+                    onClick={() => void handleDownloadPlatformPdf()}
                     disabled={isDownloadingPdf || isDashboardLoading || isContentLoading}
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_32px_rgba(73,230,255,0.15)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                   >
