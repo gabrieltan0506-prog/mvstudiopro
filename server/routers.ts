@@ -2851,8 +2851,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           topicHook: z.string().min(1).max(500),
           format: z.enum(["短视频", "图文"]).optional(),
           context: z.string().optional(),
-          /** 黑圖 / 超時等補發：跳過扣點（由前端依 URL 啟發式判定，監理模式仍應自律） */
-          bypassCredit: z.boolean().optional(),
+          /** 上一张疑似失败图的 URL；仅当服务端校验其含 timeout/error 子串时才可能免扣点补发 */
+          failedImageUrl: z.string().max(4096).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -2861,7 +2861,16 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const isGraphic = input.format === "图文";
         const cost = isGraphic ? 6 : 5;
 
-        if (!input.bypassCredit && !isAdminUser) {
+        const failedRef = String(input.failedImageUrl ?? "").trim();
+        let isFreeRetry = false;
+        if (failedRef.length > 0) {
+          const lower = failedRef.toLowerCase();
+          if (lower.includes("timeout") || lower.includes("error")) {
+            isFreeRetry = true;
+          }
+        }
+
+        if (!isAdminUser && !isFreeRetry) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
             throw new TRPCError({
@@ -2918,7 +2927,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (!imageUrl) {
           throw new Error("generateTopicImage failed: gpt-image-2 与 Nano Banana 2 兜底均未返回图片");
         }
-        return { success: true, imageUrl, bypassApplied: Boolean(input.bypassCredit) };
+        return { success: true, imageUrl, freeRetryApplied: isFreeRetry };
       }),
 
     /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
