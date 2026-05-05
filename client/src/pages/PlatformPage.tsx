@@ -2482,40 +2482,52 @@ export default function PlatformPage() {
                     ) : (
                       <div className="grid gap-6 md:grid-cols-2">
                         {referenceStoryboardGraphicStrip.map((ref) => {
-                          const isXhsKind = ref.key.includes("xhs-sheet");
+                          const isXhs = ref.key.includes("xhs-sheet");
                           return (
                             <div
                               key={ref.key}
-                              className="rounded-2xl border border-white/10 bg-[#0a0a0a] p-5 shadow-2xl"
+                              className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0a0a0a] shadow-2xl transition-all hover:border-white/20"
                             >
-                              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-                                <div className="min-w-0 truncate text-sm font-bold text-white">{ref.title}</div>
-                                <span className="shrink-0 text-[10px] text-gray-500">{ref.kindLabel}</span>
+                              <div className="flex items-center justify-between border-b border-white/5 bg-white/5 px-4 py-3">
+                                <div className="truncate pr-2 text-sm font-bold text-white">{ref.title}</div>
+                                <div
+                                  className={`shrink-0 rounded-full border px-2 py-1 text-[10px] ${
+                                    isXhs
+                                      ? "border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ff9fe0]"
+                                      : "border-[#10B981]/20 bg-[#10B981]/10 text-[#10B981]"
+                                  }`}
+                                >
+                                  {ref.kindLabel}
+                                </div>
                               </div>
-                              <div className="relative w-full min-h-[min(400px,50vw)] overflow-hidden rounded-xl border border-white/5 bg-black/60">
+
+                              <div className="relative flex min-h-[300px] w-full flex-1 items-center justify-center overflow-hidden bg-black/60 p-2">
                                 {ref.url ? (
                                   <TrialWatermarkImage
                                     src={ref.url}
                                     isTrial={isTrial}
                                     objectFit="contain"
-                                    className="max-h-[800px] w-full transition-transform duration-500 hover:scale-[1.01]"
+                                    className="h-full w-full max-h-[600px] object-contain transition-transform duration-500 hover:scale-[1.01]"
                                     alt={`${ref.title} · ${ref.kindLabel}`}
                                   />
                                 ) : ref.pending ? (
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/50 backdrop-blur-sm">
-                                    <Loader2 className="h-10 w-10 animate-spin text-[#10B981]" />
-                                    <span className="text-sm font-semibold text-gray-100">生成中，请稍候…</span>
+                                  <div className="flex flex-col items-center justify-center gap-3 opacity-80">
+                                    <Loader2
+                                      className={`h-8 w-8 animate-spin ${isXhs ? "text-[#ff4fb8]" : "text-[#10B981]"}`}
+                                    />
+                                    <span className="text-xs text-gray-400">正在绘制高定画面...</span>
                                   </div>
                                 ) : null}
                               </div>
+
                               {ref.url ? (
-                                <div className="mt-3 rounded-lg border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                <div className="border-t border-white/5 bg-[rgba(14,9,32,0.88)] p-3">
                                   <ImageUpscaleBar
                                     imageUrl={ref.url}
                                     baseCreditKey="forgeImage"
                                     className="mt-1"
                                     onUpscaled={(url) => {
-                                      if (isXhsKind) {
+                                      if (isXhs) {
                                         setPlatformXhsNoteMap((prev) => ({ ...prev, [ref.sceneId]: url }));
                                       } else {
                                         setPlatformStoryboardSheetMap((prev) => ({ ...prev, [ref.sceneId]: url }));
