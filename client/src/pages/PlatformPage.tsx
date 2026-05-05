@@ -556,8 +556,8 @@ export default function PlatformPage() {
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
-  /** 批量后静默补发进行中：用于单卡呼吸骨架，与全屏批量 isPending 区分 */
-  const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<string[]>([]);
+  /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
+  const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<Set<string>>(() => new Set());
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -625,22 +625,26 @@ export default function PlatformPage() {
 
   /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
   const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onMutate: (variables) => {
-      const sid = variables.sceneId;
-      if (sid) setCoverSilentRetryIds((prev) => (prev.includes(sid) ? prev : [...prev, sid]));
+    onMutate: (vars) => {
+      const sid = vars.sceneId;
+      if (sid) setCoverSilentRetryIds((prev) => new Set(prev).add(sid));
     },
-    onSuccess: (res, variables) => {
-      const sid = variables.sceneId;
+    onSuccess: (res, vars) => {
+      const sid = vars.sceneId;
       if (!sid) return;
       const u = res.imageUrl ?? (res as { url?: string | null }).url ?? null;
       if (u) setPlatformImageMap((prev) => ({ ...prev, [sid]: u }));
       if (res.creationId != null) setSceneJobIds((prev) => ({ ...prev, [sid]: String(res.creationId) }));
     },
     onError: (err) => console.warn("[Silent Retry Failed]:", err.message),
-    onSettled: (_d, _e, variables) => {
-      const sid = variables?.sceneId;
+    onSettled: (_res, _err, vars) => {
+      const sid = vars?.sceneId;
       if (!sid) return;
-      setCoverSilentRetryIds((prev) => prev.filter((x) => x !== sid));
+      setCoverSilentRetryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sid);
+        return next;
+      });
     },
   });
 
@@ -2640,6 +2644,81 @@ export default function PlatformPage() {
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
+                      const handleManualRegenerateCover = () => {
+                        if (!isAuthenticated) {
+                          toast.error("请先登录");
+                          return;
+                        }
+                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        if (!topicHook) {
+                          toast.error("选题缺少标题或钩子，无法生成");
+                          return;
+                        }
+                        if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
+                          const warning =
+                            "检测到超时黑图，但由于页面刷新，本地安全凭证已丢失。本次补发将作为新任务消耗积分，是否继续？(建议：勿在生图期间刷新页面)";
+                          if (!window.confirm(warning)) return;
+                        } else {
+                          const confirmNote = isEligibleFreeRetry
+                            ? "检测到黑图，本次将免费补发，是否继续？"
+                            : !hasValidJobId && !supervisorAccess
+                              ? "凭证因刷新丢失，本次将扣分补发，是否继续？"
+                              : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
+                          if (!supervisorAccess && !window.confirm(confirmNote)) return;
+                        }
+                        setRegeneratingCoverSceneId(item.id);
+                        regenerateTopicImageMutation.mutate(
+                          {
+                            topicHook,
+                            format: isGraphicCover ? "图文" : "短视频",
+                            context: buildPlatformSceneText({
+                              title: item.title,
+                              hook: item.hook ?? "",
+                              copywriting: item.copywriting ?? "",
+                              executionDetails: (
+                                item as {
+                                  executionDetails?: {
+                                    environmentAndWardrobe?: string;
+                                    lightingAndCamera?: string;
+                                  };
+                                }
+                              ).executionDetails,
+                            }),
+                            failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
+                            sceneId: item.id,
+                          },
+                          {
+                            onSuccess: (res) => {
+                              const finalUrl =
+                                res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+                              if (res.creationId != null) {
+                                setSceneJobIds((prev) => ({
+                                  ...prev,
+                                  [item.id]: String(res.creationId),
+                                }));
+                              }
+                              if (res.success && finalUrl) {
+                                setPlatformImageMap((prev) => ({
+                                  ...prev,
+                                  [item.id]: finalUrl,
+                                }));
+                                toast.success(
+                                  isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
+                                );
+                              } else {
+                                toast.error(
+                                  "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
+                                );
+                              }
+                              setRegeneratingCoverSceneId(null);
+                            },
+                            onError: (err) => {
+                              setRegeneratingCoverSceneId(null);
+                              toast.error(err.message || "操作失败");
+                            },
+                          },
+                        );
+                      };
                       return (
                       <div
                         key={item.id}
@@ -2733,22 +2812,21 @@ export default function PlatformPage() {
                         <div className="mt-4">
                           {regeneratingCoverSceneId === item.id ||
                           (!platformImageMap[item.id] &&
-                            (generateAllPlatformImagesMutation.isPending || coverSilentRetryIds.includes(item.id))) ? (
-                            <div
-                              className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse ${
-                                item.format === "图文" || item.format === "小红书"
-                                  ? "aspect-[9/16]"
-                                  : "aspect-video"
-                              }`}
-                            >
+                            (generateAllPlatformImagesMutation.isPending || coverSilentRetryIds.has(item.id))) ? (
+                            <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
-                              <span className="text-xs font-medium tracking-widest text-gray-400">
-                                {regeneratingCoverSceneId === item.id
-                                  ? "单帧重新绘制中..."
-                                  : coverSilentRetryIds.includes(item.id)
-                                    ? "高定视觉绘制中（静默补发）..."
+                              <div className="flex flex-col items-center gap-1 px-3 text-center">
+                                <span className="text-xs font-medium tracking-widest text-gray-400">
+                                  {regeneratingCoverSceneId === item.id
+                                    ? "单帧重新绘制中..."
                                     : "高定视觉绘制中..."}
-                              </span>
+                                </span>
+                                {coverSilentRetryIds.has(item.id) && regeneratingCoverSceneId !== item.id ? (
+                                  <span className="text-[10px] text-amber-500/80">
+                                    检测到异常，正在自动重试补救...
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
                           ) : platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
@@ -2805,83 +2883,7 @@ export default function PlatformPage() {
                                       isDashboardLoading ||
                                       isContentLoading
                                     }
-                                    onClick={() => {
-                                      if (!isAuthenticated) {
-                                        toast.error("请先登录");
-                                        return;
-                                      }
-                                      const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
-                                      if (!topicHook) {
-                                        toast.error("选题缺少标题或钩子，无法生成");
-                                        return;
-                                      }
-                                      if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
-                                        const warning =
-                                          "检测到超时黑图，但由于页面刷新，本地安全凭证已丢失。本次补发将作为新任务消耗积分，是否继续？(建议：勿在生图期间刷新页面)";
-                                        if (!window.confirm(warning)) return;
-                                      } else {
-                                        const confirmNote = isEligibleFreeRetry
-                                          ? "检测到黑图，本次将免费补发，是否继续？"
-                                          : !hasValidJobId && !supervisorAccess
-                                            ? "凭证因刷新丢失，本次将扣分补发，是否继续？"
-                                            : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
-                                        if (!supervisorAccess && !window.confirm(confirmNote)) return;
-                                      }
-                                      setRegeneratingCoverSceneId(item.id);
-                                      regenerateTopicImageMutation.mutate(
-                                        {
-                                          topicHook,
-                                          format: isGraphicCover ? "图文" : "短视频",
-                                          context: buildPlatformSceneText({
-                                            title: item.title,
-                                            hook: item.hook ?? "",
-                                            copywriting: item.copywriting ?? "",
-                                            executionDetails: (
-                                              item as {
-                                                executionDetails?: {
-                                                  environmentAndWardrobe?: string;
-                                                  lightingAndCamera?: string;
-                                                };
-                                              }
-                                            ).executionDetails,
-                                          }),
-                                          failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
-                                          sceneId: item.id,
-                                        },
-                                        {
-                                          onSuccess: (res) => {
-                                            const finalUrl =
-                                              res.imageUrl ??
-                                              (res as { url?: string | null }).url ??
-                                              null;
-                                            if (res.creationId != null) {
-                                              setSceneJobIds((prev) => ({
-                                                ...prev,
-                                                [item.id]: String(res.creationId),
-                                              }));
-                                            }
-                                            if (res.success && finalUrl) {
-                                              setPlatformImageMap((prev) => ({
-                                                ...prev,
-                                                [item.id]: finalUrl,
-                                              }));
-                                              toast.success(
-                                                isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
-                                              );
-                                            } else {
-                                              toast.error(
-                                                "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
-                                              );
-                                            }
-                                            setRegeneratingCoverSceneId(null);
-                                          },
-                                          onError: (err) => {
-                                            setRegeneratingCoverSceneId(null);
-                                            toast.error(err.message || "操作失败");
-                                          },
-                                        },
-                                      );
-                                    }}
+                                    onClick={handleManualRegenerateCover}
                                     className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
                                     title={
                                       isEligibleFreeRetry
@@ -2891,7 +2893,8 @@ export default function PlatformPage() {
                                   >
                                     <RefreshCw
                                       className={`h-3 w-3 ${
-                                        regeneratingCoverSceneId === item.id && regenerateTopicImageMutation.isPending
+                                        regeneratingCoverSceneId === item.id &&
+                                        regenerateTopicImageMutation.isPending
                                           ? "animate-spin text-[#ff4fb8]"
                                           : "group-hover:text-[#49e6ff]"
                                       }`}

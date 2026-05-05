@@ -858,8 +858,14 @@ async function buildPlatformContent(params: {
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：你必须为该平台精确生成 6 个内容选题方案（少于 6 个将导致系统崩溃）。请严格结合用户真实 IP 背景（ipContextBinding，见 user 消息 JSON 内同名字段及 context），依序从以下六个维度发散：
-1. 核心专业洞察、2. 跨界结合与价值观、3. 目标受众痛点暴击、4. 个人经历与人设魅力、5. 行业认知破局、6. 平台流量密码融合。
+【核心數量與維度指令】：你必須為該平台精確生成 6 個深度選題（少於 6 個將導致系統崩潰）。請嚴格結合 ipContextBinding（當前用戶行業背景與 IP 定位，見 user 消息 JSON 同名字段與 context），依次從以下六個維度各發散一個獨特選題：
+1. 核心專業洞察 (Professional Insight)
+2. 跨界結合與價值觀 (Cross-over Value)
+3. 目標受眾痛點暴擊 (Audience Pain Point)
+4. 個人經歷與人設魅力 (IP Persona Story)
+5. 行業認知破局 (Industry Breakthrough)
+6. 平台流量密碼融合 (Platform Logic)
+【資安要求】：选题必须锚定用户的真实背景，若内容与 ipContextBinding 脱钩或泛化模板化，则视为不合格。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
@@ -949,7 +955,7 @@ async function buildPlatformContent(params: {
             creationAssist: params.snapshot.creationAssist || {},
           },
           ipContextBinding:
-            "资安与一致性要求：你必须以 context 与 platformMenu / snapshotData 所体现的用户真实 IP、行业与人设为唯一锚点生成恰好 6 条选题；contentBlueprints 须与 ipContextBinding 强绑定，禁止套用无关标签或模板句。少于 6 条或与 IP 脱钩即视为不合格输出。",
+            "【資安 / 一致性】context、platformMenu、snapshotData 共構當前用戶真實 IP 與行業定位；contentBlueprints 必須緊扣本 ipContextBinding，恰好 6 條且各維度一條。少於 6 條、與 IP 脫鉤或模板化泛泛內容均視為不合格。若模型輸出與 ipContextBinding 無強因果關聯，須視為無效供下游拒收。",
         }),
       },
     ],
@@ -2955,8 +2961,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               });
             }
 
-            /** 单次 UPDATE + jsonb_set：原子合并 platformFreeRetryConsumed，避免并发双消费 */
-            const [consumedRow] = await database
+            const updated = await database
               .update(userCreations)
               .set({
                 metadata: sql<string>`(jsonb_set(coalesce((${userCreations.metadata})::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
@@ -2973,7 +2978,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
               )
               .returning({ id: userCreations.id });
 
-            if (!consumedRow) {
+            if (updated.length > 0) {
+              isFreeRetry = true;
+              consumedParentId = failedIdNum;
+            } else {
               await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
               creationIdOut = undefined;
               throw new TRPCError({
@@ -2981,8 +2989,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 message: "免扣分凭证已失效或被并发消耗",
               });
             }
-            isFreeRetry = true;
-            consumedParentId = failedIdNum;
           }
 
           if (!isAdminUser && !isFreeRetry) {
