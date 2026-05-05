@@ -128,6 +128,29 @@ async function mapWithPool<T, R>(items: T[], pool: number, fn: (item: T, index: 
   return out;
 }
 
+/** 平台批量/单帧封面参考：写入 user_creations，供免扣补发时 failedJobId 校验 */
+const PLATFORM_TOPIC_FRAME_TYPE = "platform_topic_frame";
+
+function parseUserCreationMetadata(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 根据 imageUrl 判定 creation 终态（failed / timeout 可申请一次免扣补发，由服务端校验 job） */
+function classifyPlatformTopicFrameStatus(url: string | null | undefined): "completed" | "failed" | "timeout" {
+  const u = String(url ?? "").trim();
+  if (!u) return "failed";
+  const l = u.toLowerCase();
+  if (l.includes("timeout")) return "timeout";
+  if (l.includes("error")) return "failed";
+  return "completed";
+}
+
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
   "douyin_creator_index",
@@ -2851,8 +2874,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
           topicHook: z.string().min(1).max(500),
           format: z.enum(["短视频", "图文"]).optional(),
           context: z.string().optional(),
-          /** 上一张疑似失败图的 URL；仅当服务端校验其含 timeout/error 子串时才可能免扣点补发 */
-          failedImageUrl: z.string().max(4096).optional(),
+          /** user_creations.id：须为当前用户、type=platform_topic_frame、status∈{failed,timeout} 且未消费过免费补发 */
+          failedJobId: z.string().max(32).optional(),
+          /** 单帧付费重绘成功后写入新 creation 行，便于下次绑定 scene */
+          sceneId: z.string().max(128).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -2861,13 +2886,47 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const isGraphic = input.format === "图文";
         const cost = isGraphic ? 6 : 5;
 
-        const failedRef = String(input.failedImageUrl ?? "").trim();
+        const database = await db.getDb();
+        const { userCreations } = await import("../drizzle/schema-creations");
+
         let isFreeRetry = false;
-        if (failedRef.length > 0) {
-          const lower = failedRef.toLowerCase();
-          if (lower.includes("timeout") || lower.includes("error")) {
-            isFreeRetry = true;
+        let freeRetryCreationId: number | null = null;
+        let existingMetaForRetry: Record<string, unknown> = {};
+
+        const failedJobRaw = String(input.failedJobId ?? "").trim();
+        if (failedJobRaw.length > 0 && database) {
+          const n = Number.parseInt(failedJobRaw, 10);
+          if (Number.isInteger(n) && n > 0) {
+            const [targetJob] = await database
+              .select()
+              .from(userCreations)
+              .where(
+                and(
+                  eq(userCreations.id, n),
+                  eq(userCreations.userId, userId),
+                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                ),
+              )
+              .limit(1);
+            if (targetJob && (targetJob.status === "failed" || targetJob.status === "timeout")) {
+              const meta = parseUserCreationMetadata(targetJob.metadata);
+              if (meta.platformFreeRetryConsumed !== true) {
+                isFreeRetry = true;
+                freeRetryCreationId = n;
+                existingMetaForRetry = meta;
+              }
+            }
           }
+        }
+
+        if (isFreeRetry && freeRetryCreationId != null && database) {
+          await database
+            .update(userCreations)
+            .set({
+              metadata: JSON.stringify({ ...existingMetaForRetry, platformFreeRetryConsumed: true }),
+              updatedAt: new Date(),
+            })
+            .where(eq(userCreations.id, freeRetryCreationId));
         }
 
         if (!isAdminUser && !isFreeRetry) {
@@ -2924,10 +2983,65 @@ ${JSON.stringify(platformEvidence, null, 2)}
             isTrial: false,
           });
         }
+
         if (!imageUrl) {
+          if (isFreeRetry && freeRetryCreationId != null && database) {
+            await database
+              .update(userCreations)
+              .set({
+                status: "failed",
+                outputUrl: null,
+                updatedAt: new Date(),
+                metadata: JSON.stringify({
+                  ...existingMetaForRetry,
+                  platformFreeRetryConsumed: true,
+                  platformFreeRetryLastError: "empty_output",
+                }),
+              })
+              .where(eq(userCreations.id, freeRetryCreationId));
+          }
           throw new Error("generateTopicImage failed: gpt-image-2 与 Nano Banana 2 兜底均未返回图片");
         }
-        return { success: true, imageUrl, freeRetryApplied: isFreeRetry };
+
+        let creationIdOut: number | undefined;
+        if (isFreeRetry && freeRetryCreationId != null && database) {
+          await database
+            .update(userCreations)
+            .set({
+              status: "completed",
+              outputUrl: imageUrl,
+              updatedAt: new Date(),
+              metadata: JSON.stringify({ ...existingMetaForRetry, platformFreeRetryConsumed: true }),
+            })
+            .where(eq(userCreations.id, freeRetryCreationId));
+          creationIdOut = freeRetryCreationId;
+        } else if (!isFreeRetry && database) {
+          const sid = String(input.sceneId ?? "").trim();
+          if (sid.length > 0) {
+            try {
+              const [row] = await database
+                .insert(userCreations)
+                .values({
+                  userId,
+                  type: PLATFORM_TOPIC_FRAME_TYPE,
+                  title: title.slice(0, 255),
+                  status: "completed",
+                  outputUrl: imageUrl,
+                  creditsUsed: cost,
+                  metadata: JSON.stringify({
+                    sceneId: sid,
+                    source: "generateTopicImage",
+                  }),
+                })
+                .returning({ id: userCreations.id });
+              creationIdOut = row?.id;
+            } catch (e) {
+              console.warn("[mvAnalysis.generateTopicImage] insert platform_topic_frame failed:", e);
+            }
+          }
+        }
+
+        return { success: true, imageUrl, freeRetryApplied: isFreeRetry, creationId: creationIdOut };
       }),
 
     /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
@@ -2995,6 +3109,35 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
         const pool = resolvePlatformTopicImageConcurrency();
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
+
+        const drizzleDb = await db.getDb();
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const sceneToCreationId = new Map<string, number>();
+        if (drizzleDb) {
+          for (const s of input.scenes) {
+            try {
+              const [row] = await drizzleDb
+                .insert(userCreations)
+                .values({
+                  userId,
+                  type: PLATFORM_TOPIC_FRAME_TYPE,
+                  title: s.title.slice(0, 255),
+                  status: "pending",
+                  creditsUsed: 0,
+                  metadata: JSON.stringify({
+                    sceneId: s.id,
+                    platformType: input.platformType,
+                    batchJobId: input.jobId ?? null,
+                  }),
+                })
+                .returning({ id: userCreations.id });
+              if (row?.id != null) sceneToCreationId.set(s.id, row.id);
+            } catch (e) {
+              console.warn("[mvAnalysis.generateAllPlatformTopicImages] insert platform_topic_frame failed:", e);
+            }
+          }
+        }
+
         const results = await mapWithPool(input.scenes, pool, async (s) => {
           const body = String(s.text ?? s.copywriting ?? "").trim();
           const flowLog: string[] = [];
@@ -3043,7 +3186,28 @@ ${JSON.stringify(platformEvidence, null, 2)}
             });
           }
           appendImageFlowLog(flowLog, url ? "✓ 本条结束：已得到 imageUrl" : "✗ 本条结束：仍无 URL");
-          return { id: s.id, url, flowLog };
+          const creationId = sceneToCreationId.get(s.id);
+          if (drizzleDb && creationId != null) {
+            try {
+              const finalStatus = classifyPlatformTopicFrameStatus(url);
+              await drizzleDb
+                .update(userCreations)
+                .set({
+                  status: finalStatus,
+                  outputUrl: url ?? null,
+                  updatedAt: new Date(),
+                  metadata: JSON.stringify({
+                    sceneId: s.id,
+                    platformType: input.platformType,
+                    batchJobId: input.jobId ?? null,
+                  }),
+                })
+                .where(eq(userCreations.id, creationId));
+            } catch (e) {
+              console.warn(`[mvAnalysis.generateAllPlatformTopicImages] update creation ${creationId}:`, e);
+            }
+          }
+          return { id: s.id, url, flowLog, creationId: creationId ?? undefined };
         });
         const mergedFlowLog = [batchHeader, ...results.flatMap((r) => [`▶ ${r.id}`, ...(r.flowLog ?? [])])];
         return {
