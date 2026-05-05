@@ -1346,7 +1346,7 @@ export default function PlatformPage() {
   const platformTopicCount = contentExecutionCards.length;
   const platformBulkGraphicCost = useMemo(() => platformTopicCount * 6, [platformTopicCount]);
 
-  /** 橫排「参考分镜图文」：匯總全部選題的批量單幀 + 分鏡/小紅書 2×4 合成（GPT-IMAGE-2） */
+  /** 頂部「2×4 / 小紅書合成」畫廊：各選題合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
     type StripItem = {
       key: string;
@@ -2471,63 +2471,62 @@ export default function PlatformPage() {
                     id={PLATFORM_REFERENCE_GALLERY_ID}
                     className="mb-10 rounded-3xl border border-white/5 bg-[#0a0a0a]/50 p-6"
                   >
-                    <div className="mb-6 flex flex-wrap items-center gap-3">
+                    <div className="mb-6 flex flex-wrap items-center gap-3 border-b border-white/10 pb-4">
                       <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
-                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书双卡 预览</h3>
-                      <span className="ml-0 text-xs text-gray-500 sm:ml-2">点击可检视高清原图</span>
+                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书双卡 画廊</h3>
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
-                        尚未生成 2×4 分镜或小红书合成图（批量封面请见下方各选题卡片）
+                        尚未生成 2×4 分镜或小红书合成图（请在下方选题卡片中点击生成）
                       </div>
                     ) : (
-                      <div className="custom-scrollbar flex min-h-[160px] items-center gap-5 overflow-x-auto pb-4">
-                        {referenceStoryboardGraphicStrip.map((ref) => (
-                          <div
-                            key={ref.key}
-                            role={ref.url ? "button" : undefined}
-                            tabIndex={ref.url ? 0 : undefined}
-                            className={`group relative flex aspect-video w-[min(28rem,85vw)] max-w-none shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/80 transition-all sm:w-[32rem] ${
-                              ref.url ? "cursor-pointer border-white/10 hover:border-[#10B981]" : ""
-                            }`}
-                            onClick={() => {
-                              if (ref.url) window.open(ref.url, "_blank", "noopener,noreferrer");
-                            }}
-                            onKeyDown={(e) => {
-                              if (!ref.url) return;
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                window.open(ref.url, "_blank", "noopener,noreferrer");
-                              }
-                            }}
-                          >
-                            {ref.url ? (
-                              <>
-                                <TrialWatermarkImage
-                                  src={ref.url}
-                                  isTrial={isTrial}
-                                  objectFit="contain"
-                                  className="h-full w-full opacity-90 transition-opacity group-hover:opacity-100"
-                                />
-                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                                  <span className="rounded-full border border-[#10B981] bg-black/50 px-3 py-1 text-xs font-bold text-[#10B981]">
-                                    放大检视
-                                  </span>
-                                </div>
-                              </>
-                            ) : ref.pending ? (
-                              <div className="flex h-full w-full items-center justify-center">
-                                <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-[#10B981]" />
+                      <div className="grid gap-6 md:grid-cols-2">
+                        {referenceStoryboardGraphicStrip.map((ref) => {
+                          const isXhsKind = ref.key.includes("xhs-sheet");
+                          return (
+                            <div
+                              key={ref.key}
+                              className="rounded-2xl border border-white/10 bg-[#0a0a0a] p-5 shadow-2xl"
+                            >
+                              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+                                <div className="min-w-0 truncate text-sm font-bold text-white">{ref.title}</div>
+                                <span className="shrink-0 text-[10px] text-gray-500">{ref.kindLabel}</span>
                               </div>
-                            ) : null}
-                            <div className="pointer-events-none absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent p-3 pt-8">
-                              <p className="truncate text-[11px] font-medium text-gray-200 drop-shadow-md">
-                                {ref.title}
-                              </p>
-                              <p className="truncate text-[10px] text-gray-500">{ref.kindLabel}</p>
+                              <div className="relative w-full min-h-[min(400px,50vw)] overflow-hidden rounded-xl border border-white/5 bg-black/60">
+                                {ref.url ? (
+                                  <TrialWatermarkImage
+                                    src={ref.url}
+                                    isTrial={isTrial}
+                                    objectFit="contain"
+                                    className="max-h-[800px] w-full transition-transform duration-500 hover:scale-[1.01]"
+                                    alt={`${ref.title} · ${ref.kindLabel}`}
+                                  />
+                                ) : ref.pending ? (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/50 backdrop-blur-sm">
+                                    <Loader2 className="h-10 w-10 animate-spin text-[#10B981]" />
+                                    <span className="text-sm font-semibold text-gray-100">生成中，请稍候…</span>
+                                  </div>
+                                ) : null}
+                              </div>
+                              {ref.url ? (
+                                <div className="mt-3 rounded-lg border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                  <ImageUpscaleBar
+                                    imageUrl={ref.url}
+                                    baseCreditKey="forgeImage"
+                                    className="mt-1"
+                                    onUpscaled={(url) => {
+                                      if (isXhsKind) {
+                                        setPlatformXhsNoteMap((prev) => ({ ...prev, [ref.sceneId]: url }));
+                                      } else {
+                                        setPlatformStoryboardSheetMap((prev) => ({ ...prev, [ref.sceneId]: url }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              ) : null}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
