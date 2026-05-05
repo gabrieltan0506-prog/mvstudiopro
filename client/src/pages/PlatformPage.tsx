@@ -513,6 +513,39 @@ function linesFromClientMutationFailure(prefix: string, err: unknown): string[] 
   return lines;
 }
 
+/** 3A：六維度 IP 描述指南（與後端 buildPlatformContent 六維硬約束對齊） */
+function PlatformIpDimensionGuide() {
+  return (
+    <div className="mb-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-md">
+      <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#ff9900]">
+        <Bot className="h-4 w-4 shrink-0 animate-pulse" />
+        高定内容引擎：六大核心维度说明
+      </h3>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {[
+          { t: "专业洞察", d: "展现该领域最强的硬核知识或壁垒，建立专业权威。" },
+          { t: "跨界价值", d: "融合美学、哲学或跨界视野，赋予内容独特的灵魂。" },
+          { t: "受众痛点", d: "一针见血解决粉丝最深的焦虑，产生即时共鸣。" },
+          { t: "人设魅力", d: "分享真实成长经历与背景，建立深度情感信任。" },
+          { t: "认知破局", d: "提出反共识的独家观点，打破常规，引发讨论。" },
+          { t: "流量密码", d: "高度契合平台爆款逻辑与算法偏好，精准吸粉。" },
+        ].map((v, i) => (
+          <div key={v.t} className="rounded-lg bg-white/5 p-3 transition hover:bg-white/10">
+            <div className="mb-1 text-[12px] font-bold text-gray-200">
+              维度 {i + 1}：{v.t}
+            </div>
+            <p className="text-[11px] leading-relaxed text-gray-400">{v.d}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-[10px] italic text-gray-500">
+        <span className="font-semibold text-[#ff9900]/90">提示：</span>
+        在上方 IP 定位中描述得越具体（如：哈佛医学背景、某行业 10 年老兵），生成效果越精准。
+      </p>
+    </div>
+  );
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
@@ -2606,6 +2639,8 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
 
+                {platformDashboard ? <PlatformIpDimensionGuide /> : null}
+
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
                     <div className="col-span-full flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
@@ -2815,18 +2850,13 @@ export default function PlatformPage() {
                             (generateAllPlatformImagesMutation.isPending || coverSilentRetryIds.has(item.id))) ? (
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
-                              <div className="flex flex-col items-center gap-1 px-3 text-center">
-                                <span className="text-xs font-medium tracking-widest text-gray-400">
-                                  {regeneratingCoverSceneId === item.id
-                                    ? "单帧重新绘制中..."
+                              <span className="px-3 text-center text-xs text-gray-400">
+                                {regeneratingCoverSceneId === item.id
+                                  ? "单帧重新绘制中..."
+                                  : coverSilentRetryIds.has(item.id)
+                                    ? "检测到异常，正在自动补救..."
                                     : "高定视觉绘制中..."}
-                                </span>
-                                {coverSilentRetryIds.has(item.id) && regeneratingCoverSceneId !== item.id ? (
-                                  <span className="text-[10px] text-amber-500/80">
-                                    检测到异常，正在自动重试补救...
-                                  </span>
-                                ) : null}
-                              </div>
+                              </span>
                             </div>
                           ) : platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">

@@ -858,14 +858,9 @@ async function buildPlatformContent(params: {
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心數量與維度指令】：你必須為該平台精確生成 6 個深度選題（少於 6 個將導致系統崩潰）。請嚴格結合 ipContextBinding（當前用戶行業背景與 IP 定位，見 user 消息 JSON 同名字段與 context），依次從以下六個維度各發散一個獨特選題：
-1. 核心專業洞察 (Professional Insight)
-2. 跨界結合與價值觀 (Cross-over Value)
-3. 目標受眾痛點暴擊 (Audience Pain Point)
-4. 個人經歷與人設魅力 (IP Persona Story)
-5. 行業認知破局 (Industry Breakthrough)
-6. 平台流量密碼融合 (Platform Logic)
-【資安要求】：选题必须锚定用户的真实背景，若内容与 ipContextBinding 脱钩或泛化模板化，则视为不合格。
+【核心數量與維度指令】：你必須為該平台精確生成 6 個深度內容方案（少於 6 個將導致系統崩潰）。請嚴格結合 ipContextBinding（user 消息 JSON 同名字段與 context），依序從以下六個維度各發散一個獨特選題：
+1. 核心專業洞察 (Professional Insight)、2. 跨界結合與價值觀 (Cross-over Value)、3. 目標受眾痛點暴擊 (Audience Pain Point)、4. 個人經歷與人設魅力 (IP Persona Story)、5. 行業認知破局 (Industry Breakthrough)、6. 平台流量密碼融合 (Platform Logic)。
+【資安要求】：选题必须锚定用户真实背景，若内容脱钩或使用泛化模板，则视为不合格。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
@@ -955,7 +950,7 @@ async function buildPlatformContent(params: {
             creationAssist: params.snapshot.creationAssist || {},
           },
           ipContextBinding:
-            "【資安 / 一致性】context、platformMenu、snapshotData 共構當前用戶真實 IP 與行業定位；contentBlueprints 必須緊扣本 ipContextBinding，恰好 6 條且各維度一條。少於 6 條、與 IP 脫鉤或模板化泛泛內容均視為不合格。若模型輸出與 ipContextBinding 無強因果關聯，須視為無效供下游拒收。",
+            "【資安 / 一致性】context、platformMenu、snapshotData 共構當前用戶真實 IP。選題必須錨定用戶真實背景並緊扣本 ipContextBinding：恰好 6 條、六維度各一條。少於 6 條、內容脫鉤或使用泛化模板均視為不合格，下游可拒收。",
         }),
       },
     ],
@@ -2957,7 +2952,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "BAD_REQUEST",
-                message: "免扣分凭证已失效或被并发消耗",
+                message: "凭证无效或已被使用",
               });
             }
 
@@ -2986,7 +2981,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "BAD_REQUEST",
-                message: "免扣分凭证已失效或被并发消耗",
+                message: "凭证无效或已被使用",
               });
             }
           }
@@ -3088,7 +3083,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 isTrial: false,
               });
             } catch (fallbackErr) {
-              console.warn(`[mvAnalysis.generateTopicImage] 兜底异常:`, fallbackErr);
+              console.warn("兜底异常:", fallbackErr);
               imageUrl = null;
             }
           }
