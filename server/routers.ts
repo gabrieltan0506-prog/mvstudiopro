@@ -2845,13 +2845,38 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
       }),
 
-    generateTopicImage: publicProcedure
-      .input(z.object({
-        topicHook: z.string().min(1).max(500),
-        format: z.enum(["短视频", "图文"]).optional(),
-        context: z.string().optional(),
-      }))
-      .mutation(async ({ input }) => {
+    generateTopicImage: protectedProcedure
+      .input(
+        z.object({
+          topicHook: z.string().min(1).max(500),
+          format: z.enum(["短视频", "图文"]).optional(),
+          context: z.string().optional(),
+          /** 黑圖 / 超時等補發：跳過扣點（由前端依 URL 啟發式判定，監理模式仍應自律） */
+          bypassCredit: z.boolean().optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const isGraphic = input.format === "图文";
+        const cost = isGraphic ? 6 : 5;
+
+        if (!input.bypassCredit && !isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformTopicImages",
+            `平台单帧参考重绘（${cost}点）`,
+          );
+        }
+
         const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
           "./services/geminiPlatformCompositeTranslation.js",
         );
@@ -2859,16 +2884,15 @@ ${JSON.stringify(platformEvidence, null, 2)}
           "./services/proxyImageService",
         );
         const title = String(input.topicHook || "").trim().slice(0, 80);
-        const ctx = String(input.context || "").trim();
-        const copywriting = ctx ? `${input.topicHook}\n${ctx}` : input.topicHook;
-        const isGraphic = input.format === "图文";
+        const ctxStr = String(input.context || "").trim();
+        const copywriting = ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook;
         const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
 
         let imageUrl: string | null = null;
         try {
           const geminiTask = buildPlatformTopicReferenceGeminiTask({
             topicHook: input.topicHook,
-            context: ctx,
+            context: ctxStr,
             variant: isGraphic ? "graphic" : "video",
           });
           const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
@@ -2894,7 +2918,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (!imageUrl) {
           throw new Error("generateTopicImage failed: gpt-image-2 与 Nano Banana 2 兜底均未返回图片");
         }
-        return { success: true, imageUrl };
+        return { success: true, imageUrl, bypassApplied: Boolean(input.bypassCredit) };
       }),
 
     /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */

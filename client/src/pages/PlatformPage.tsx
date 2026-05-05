@@ -51,6 +51,7 @@ import {
   PenLine,
   PlayCircle,
   Rocket,
+  RefreshCw,
   Share2,
   ShieldCheck,
   Sparkles,
@@ -551,6 +552,8 @@ export default function PlatformPage() {
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
   );
+  /** 單張封面「重新生成」進行中（顯示骨架，避免無反饋） */
+  const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -658,6 +661,12 @@ export default function PlatformPage() {
           ...prev,
         ].slice(0, 8),
       );
+    },
+  });
+
+  const regenerateTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
+    onError: (err) => {
+      toast.error(err.message || "重新生成封面失败");
     },
   });
 
@@ -1346,7 +1355,7 @@ export default function PlatformPage() {
   const platformTopicCount = contentExecutionCards.length;
   const platformBulkGraphicCost = useMemo(() => platformTopicCount * 6, [platformTopicCount]);
 
-  /** 橫排「参考分镜图文」：匯總全部選題的批量單幀 + 分鏡/小紅書 2×4 合成（GPT-IMAGE-2） */
+  /** 頂部「2×4 / 小紅書合成」畫廊：各選題合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
     type StripItem = {
       key: string;
@@ -2471,63 +2480,74 @@ export default function PlatformPage() {
                     id={PLATFORM_REFERENCE_GALLERY_ID}
                     className="mb-10 rounded-3xl border border-white/5 bg-[#0a0a0a]/50 p-6"
                   >
-                    <div className="mb-6 flex flex-wrap items-center gap-3">
+                    <div className="mb-6 flex flex-wrap items-center gap-3 border-b border-white/10 pb-4">
                       <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
-                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书双卡 预览</h3>
-                      <span className="ml-0 text-xs text-gray-500 sm:ml-2">点击可检视高清原图</span>
+                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书双卡 画廊</h3>
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
-                        尚未生成 2×4 分镜或小红书合成图（批量封面请见下方各选题卡片）
+                        尚未生成 2×4 分镜或小红书合成图（请在下方选题卡片中点击生成）
                       </div>
                     ) : (
-                      <div className="custom-scrollbar flex min-h-[160px] items-center gap-5 overflow-x-auto pb-4">
-                        {referenceStoryboardGraphicStrip.map((ref) => (
-                          <div
-                            key={ref.key}
-                            role={ref.url ? "button" : undefined}
-                            tabIndex={ref.url ? 0 : undefined}
-                            className={`group relative flex aspect-video w-[min(28rem,85vw)] max-w-none shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/80 transition-all sm:w-[32rem] ${
-                              ref.url ? "cursor-pointer border-white/10 hover:border-[#10B981]" : ""
-                            }`}
-                            onClick={() => {
-                              if (ref.url) window.open(ref.url, "_blank", "noopener,noreferrer");
-                            }}
-                            onKeyDown={(e) => {
-                              if (!ref.url) return;
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                window.open(ref.url, "_blank", "noopener,noreferrer");
-                              }
-                            }}
-                          >
-                            {ref.url ? (
-                              <>
-                                <TrialWatermarkImage
-                                  src={ref.url}
-                                  isTrial={isTrial}
-                                  objectFit="contain"
-                                  className="h-full w-full opacity-90 transition-opacity group-hover:opacity-100"
-                                />
-                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
-                                  <span className="rounded-full border border-[#10B981] bg-black/50 px-3 py-1 text-xs font-bold text-[#10B981]">
-                                    放大检视
-                                  </span>
+                      <div className="grid gap-6 md:grid-cols-2">
+                        {referenceStoryboardGraphicStrip.map((ref) => {
+                          const isXhs = ref.key.includes("xhs-sheet");
+                          return (
+                            <div
+                              key={ref.key}
+                              className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0a0a0a] shadow-2xl transition-all hover:border-white/20"
+                            >
+                              <div className="flex items-center justify-between border-b border-white/5 bg-white/5 px-4 py-3">
+                                <div className="truncate pr-2 text-sm font-bold text-white">{ref.title}</div>
+                                <div
+                                  className={`shrink-0 rounded-full border px-2 py-1 text-[10px] ${
+                                    isXhs
+                                      ? "border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ff9fe0]"
+                                      : "border-[#10B981]/20 bg-[#10B981]/10 text-[#10B981]"
+                                  }`}
+                                >
+                                  {ref.kindLabel}
                                 </div>
-                              </>
-                            ) : ref.pending ? (
-                              <div className="flex h-full w-full items-center justify-center">
-                                <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-[#10B981]" />
                               </div>
-                            ) : null}
-                            <div className="pointer-events-none absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent p-3 pt-8">
-                              <p className="truncate text-[11px] font-medium text-gray-200 drop-shadow-md">
-                                {ref.title}
-                              </p>
-                              <p className="truncate text-[10px] text-gray-500">{ref.kindLabel}</p>
+
+                              <div className="relative flex min-h-[300px] w-full flex-1 items-center justify-center overflow-hidden bg-black/60 p-2">
+                                {ref.url ? (
+                                  <TrialWatermarkImage
+                                    src={ref.url}
+                                    isTrial={isTrial}
+                                    objectFit="contain"
+                                    className="h-full w-full max-h-[600px] object-contain transition-transform duration-500 hover:scale-[1.01]"
+                                    alt={`${ref.title} · ${ref.kindLabel}`}
+                                  />
+                                ) : ref.pending ? (
+                                  <div className="flex flex-col items-center justify-center gap-3 opacity-80">
+                                    <Loader2
+                                      className={`h-8 w-8 animate-spin ${isXhs ? "text-[#ff4fb8]" : "text-[#10B981]"}`}
+                                    />
+                                    <span className="text-xs text-gray-400">正在绘制高定画面...</span>
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              {ref.url ? (
+                                <div className="border-t border-white/5 bg-[rgba(14,9,32,0.88)] p-3">
+                                  <ImageUpscaleBar
+                                    imageUrl={ref.url}
+                                    baseCreditKey="forgeImage"
+                                    className="mt-1"
+                                    onUpscaled={(url) => {
+                                      if (isXhs) {
+                                        setPlatformXhsNoteMap((prev) => ({ ...prev, [ref.sceneId]: url }));
+                                      } else {
+                                        setPlatformStoryboardSheetMap((prev) => ({ ...prev, [ref.sceneId]: url }));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              ) : null}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -2563,29 +2583,18 @@ export default function PlatformPage() {
                         compositeMutationBusy &&
                         pendingCompositeSheet?.sceneId === item.id &&
                         pendingCompositeSheet?.kind === compositeKind;
-                      const showVisualReference =
-                        !!platformStoryboardSheetMap[item.id] ||
-                        !!platformXhsNoteMap[item.id] ||
-                        (pendingCompositeSheet?.sceneId === item.id &&
-                          pendingCompositeSheet &&
-                          (pendingCompositeSheet.kind === "storyboard_sheet_portrait" ||
-                            pendingCompositeSheet.kind === "storyboard_sheet_landscape" ||
-                            pendingCompositeSheet.kind === "xiaohongshu_dual_note"));
-                      const compositeRefUrl =
-                        platformStoryboardSheetMap[item.id] || platformXhsNoteMap[item.id] || "";
-                      const compositeIsStoryboard = !!platformStoryboardSheetMap[item.id];
-                      const previewIsXhs =
-                        !!platformXhsNoteMap[item.id] ||
-                        (pendingCompositeSheet?.sceneId === item.id &&
-                          pendingCompositeSheet?.kind === "xiaohongshu_dual_note");
-                      const visualReferenceTitle = previewIsXhs ? "小红书图文参考" : "分镜图文参考";
+                      const currentImageUrl = platformImageMap[item.id] || "";
+                      const isBlackImageOrTimeout =
+                        !currentImageUrl ||
+                        /timeout|error|black|failed|empty/i.test(currentImageUrl);
+                      const isGraphicCover = item.format === "图文" || item.format === "小红书";
+                      const normalCoverCost = isGraphicCover ? 6 : 5;
+                      const actualCoverCost = isBlackImageOrTimeout ? 0 : normalCoverCost;
                       return (
                       <div
                         key={item.id}
                         id={executionCardDomId(item.id)}
-                        className={`group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5${
-                          showVisualReference ? " col-span-1 md:col-span-2 lg:col-span-3" : ""
-                        }`}
+                        className="group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
@@ -2672,11 +2681,29 @@ export default function PlatformPage() {
                           </div>
                         </details>
                         <div className="mt-4">
-                          {platformImageMap[item.id] ? (
+                          {regeneratingCoverSceneId === item.id ||
+                          (!platformImageMap[item.id] && generateAllPlatformImagesMutation.isPending) ? (
+                            <div
+                              className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse ${
+                                item.format === "图文" || item.format === "小红书"
+                                  ? "aspect-[9/16]"
+                                  : "aspect-video"
+                              }`}
+                            >
+                              <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
+                              <span className="text-xs font-medium tracking-widest text-gray-400">
+                                {regeneratingCoverSceneId === item.id
+                                  ? "单帧重新绘制中..."
+                                  : "高定视觉绘制中..."}
+                              </span>
+                            </div>
+                          ) : platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
                               <div
                                 className={`group relative w-full overflow-hidden rounded-xl bg-black/40 ${
-                                  item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
+                                  item.format === "图文" || item.format === "小红书"
+                                    ? "aspect-[9/16]"
+                                    : "aspect-video"
                                 }`}
                               >
                                 <TrialWatermarkImage
@@ -2703,26 +2730,102 @@ export default function PlatformPage() {
                                   </span>
                                 </div>
                               </div>
-                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-                                <ImageUpscaleBar
-                                  imageUrl={platformImageMap[item.id]}
-                                  baseCreditKey="forgeImage"
-                                  className="mt-1"
-                                  onUpscaled={(url) =>
-                                    setPlatformImageMap((prev) => ({ ...prev, [item.id]: url }))
-                                  }
-                                />
+                              <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
+                                <div className="min-w-0 flex-1">
+                                  <ImageUpscaleBar
+                                    imageUrl={currentImageUrl}
+                                    baseCreditKey="forgeImage"
+                                    className="mt-0"
+                                    onUpscaled={(url) =>
+                                      setPlatformImageMap((prev) => ({ ...prev, [item.id]: url }))
+                                    }
+                                  />
+                                </div>
+                                <div className="ml-3 shrink-0 border-l border-white/10 pl-3">
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      !isAuthenticated ||
+                                      generateAllPlatformImagesMutation.isPending ||
+                                      regenerateTopicImageMutation.isPending ||
+                                      compositeMutationBusy ||
+                                      isDashboardLoading ||
+                                      isContentLoading
+                                    }
+                                    onClick={() => {
+                                      if (!isAuthenticated) {
+                                        toast.error("请先登录");
+                                        return;
+                                      }
+                                      const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                                      if (!topicHook) {
+                                        toast.error("选题缺少标题或钩子，无法生成");
+                                        return;
+                                      }
+                                      const confirmNote = isBlackImageOrTimeout
+                                        ? "检测到前次生成为黑图或超时，本次重新生成将「免费」为您补发，是否继续？"
+                                        : `重新生成此单帧将消耗 ${actualCoverCost} 积分（使用新种子算绘），是否继续？`;
+                                      if (!supervisorAccess && !window.confirm(confirmNote)) return;
+                                      setRegeneratingCoverSceneId(item.id);
+                                      regenerateTopicImageMutation.mutate(
+                                        {
+                                          topicHook,
+                                          format: isGraphicCover ? "图文" : "短视频",
+                                          context: buildPlatformSceneText({
+                                            title: item.title,
+                                            hook: item.hook ?? "",
+                                            copywriting: item.copywriting ?? "",
+                                            executionDetails: (
+                                              item as {
+                                                executionDetails?: {
+                                                  environmentAndWardrobe?: string;
+                                                  lightingAndCamera?: string;
+                                                };
+                                              }
+                                            ).executionDetails,
+                                          }),
+                                          bypassCredit: isBlackImageOrTimeout,
+                                        },
+                                        {
+                                          onSuccess: (res) => {
+                                            if (res.imageUrl) {
+                                              setPlatformImageMap((prev) => ({
+                                                ...prev,
+                                                [item.id]: res.imageUrl!,
+                                              }));
+                                            }
+                                            setRegeneratingCoverSceneId(null);
+                                            toast.success(
+                                              isBlackImageOrTimeout ? "免费补发成功" : "重新生成成功",
+                                            );
+                                          },
+                                          onError: (err) => {
+                                            setRegeneratingCoverSceneId(null);
+                                            toast.error(err.message || "操作失败");
+                                          },
+                                        },
+                                      );
+                                    }}
+                                    className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+                                    title={
+                                      isBlackImageOrTimeout
+                                        ? "重新免费请求生图"
+                                        : "使用新种子重新生成此封面"
+                                    }
+                                  >
+                                    <RefreshCw
+                                      className={`h-3 w-3 ${
+                                        regeneratingCoverSceneId === item.id && regenerateTopicImageMutation.isPending
+                                          ? "animate-spin text-[#ff4fb8]"
+                                          : "group-hover:text-[#49e6ff]"
+                                      }`}
+                                    />
+                                    {isBlackImageOrTimeout ? "免费补发" : `重新生成 · ${actualCoverCost}点`}
+                                  </button>
+                                </div>
                               </div>
                             </div>
-                          ) : (
-                            <div
-                              className={`flex w-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/5 px-3 text-center text-[11px] leading-relaxed text-gray-600 ${
-                                item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
-                              }`}
-                            >
-                              {item.format === "图文" ? "尚无配图参考单帧，可点上方一键生成" : "尚无分镜参考单帧，可点上方一键生成"}
-                            </div>
-                          )}
+                          ) : null}
                         </div>
 
                         <div className="mt-4 space-y-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.55)] p-3">
@@ -2776,79 +2879,6 @@ export default function PlatformPage() {
                               {isThisCompositeLoading ? "生成中…" : `${compositeLabel} · ${compositeCost} 点`}
                             </button>
                           </div>
-                          {showVisualReference ? (
-                            <div
-                              className={`mt-8 mb-10 rounded-3xl border p-6 shadow-2xl sm:p-8 ${
-                                previewIsXhs
-                                  ? "border-[#ff4fb8]/25 bg-[#0a0a0a]"
-                                  : "border-[#10B981]/20 bg-[#0a0a0a]"
-                              }`}
-                            >
-                              <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
-                                <div className="flex min-w-0 items-center gap-3">
-                                  <div
-                                    className={`h-6 w-1.5 shrink-0 rounded-full ${
-                                      previewIsXhs ? "bg-[#ff4fb8]" : "bg-[#10B981]"
-                                    }`}
-                                  />
-                                  <h3 className="text-2xl font-bold tracking-tight text-white">{visualReferenceTitle}</h3>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <span
-                                    className={`rounded-full border px-3 py-1 text-xs ${
-                                      previewIsXhs
-                                        ? "border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ff9fe0]"
-                                        : "border-[#10B981]/20 bg-[#10B981]/10 text-[#10B981]"
-                                    }`}
-                                  >
-                                    {previewIsXhs ? "小红书双卡矩阵" : "原生 2x4 矩阵"}
-                                  </span>
-                                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-400">
-                                    生图采用 GPT-IMAGE-2
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="relative w-full min-h-[min(520px,56vw)] overflow-hidden rounded-2xl border border-white/5 bg-black/60 shadow-2xl sm:min-h-[min(560px,50vw)]">
-                                {compositeRefUrl ? (
-                                  <TrialWatermarkImage
-                                    src={compositeRefUrl}
-                                    isTrial={isTrial}
-                                    objectFit="contain"
-                                    className="w-full max-w-none object-contain transition-transform duration-500 hover:scale-[1.01]"
-                                    style={{
-                                      width: "100%",
-                                      height: "auto",
-                                      maxHeight: "min(92vh, 1280px)",
-                                      display: "block",
-                                    }}
-                                    alt="Storyboard visual reference"
-                                  />
-                                ) : (
-                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/50 backdrop-blur-sm">
-                                    <Loader2 className="h-14 w-14 animate-spin text-[#10B981]" />
-                                    <span className="text-sm font-semibold text-gray-100">生成中，請稍候…</span>
-                                    <span className="text-[11px] text-gray-500">后端已接收任务，画面出现后会自动显示</span>
-                                  </div>
-                                )}
-                              </div>
-                              {compositeRefUrl ? (
-                                <div className="mt-3 border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-                                  <ImageUpscaleBar
-                                    imageUrl={compositeRefUrl}
-                                    baseCreditKey="forgeImage"
-                                    className="mt-1"
-                                    onUpscaled={(url) => {
-                                      if (compositeIsStoryboard) {
-                                        setPlatformStoryboardSheetMap((prev) => ({ ...prev, [item.id]: url }));
-                                      } else {
-                                        setPlatformXhsNoteMap((prev) => ({ ...prev, [item.id]: url }));
-                                      }
-                                    }}
-                                  />
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
                         </div>
                       </div>
                       );
