@@ -2583,6 +2583,13 @@ export default function PlatformPage() {
                         compositeMutationBusy &&
                         pendingCompositeSheet?.sceneId === item.id &&
                         pendingCompositeSheet?.kind === compositeKind;
+                      const currentImageUrl = platformImageMap[item.id] || "";
+                      const isBlackImageOrTimeout =
+                        !currentImageUrl ||
+                        /timeout|error|black|failed|empty/i.test(currentImageUrl);
+                      const isGraphicCover = item.format === "图文" || item.format === "小红书";
+                      const normalCoverCost = isGraphicCover ? 6 : 5;
+                      const actualCoverCost = isBlackImageOrTimeout ? 0 : normalCoverCost;
                       return (
                       <div
                         key={item.id}
@@ -2677,20 +2684,26 @@ export default function PlatformPage() {
                           {regeneratingCoverSceneId === item.id ||
                           (!platformImageMap[item.id] && generateAllPlatformImagesMutation.isPending) ? (
                             <div
-                              className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner ${
-                                item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
+                              className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse ${
+                                item.format === "图文" || item.format === "小红书"
+                                  ? "aspect-[9/16]"
+                                  : "aspect-video"
                               }`}
                             >
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <span className="text-xs font-medium tracking-widest text-gray-400">
-                                高定视觉绘制中...
+                                {regeneratingCoverSceneId === item.id
+                                  ? "单帧重新绘制中..."
+                                  : "高定视觉绘制中..."}
                               </span>
                             </div>
                           ) : platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
                               <div
                                 className={`group relative w-full overflow-hidden rounded-xl bg-black/40 ${
-                                  item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
+                                  item.format === "图文" || item.format === "小红书"
+                                    ? "aspect-[9/16]"
+                                    : "aspect-video"
                                 }`}
                               >
                                 <TrialWatermarkImage
@@ -2716,7 +2729,19 @@ export default function PlatformPage() {
                                     高定视觉引擎
                                   </span>
                                 </div>
-                                <div className="absolute right-3 top-14 z-30 flex justify-end sm:top-16">
+                              </div>
+                              <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
+                                <div className="min-w-0 flex-1">
+                                  <ImageUpscaleBar
+                                    imageUrl={currentImageUrl}
+                                    baseCreditKey="forgeImage"
+                                    className="mt-0"
+                                    onUpscaled={(url) =>
+                                      setPlatformImageMap((prev) => ({ ...prev, [item.id]: url }))
+                                    }
+                                  />
+                                </div>
+                                <div className="ml-3 shrink-0 border-l border-white/10 pl-3">
                                   <button
                                     type="button"
                                     disabled={
@@ -2737,22 +2762,19 @@ export default function PlatformPage() {
                                         toast.error("选题缺少标题或钩子，无法生成");
                                         return;
                                       }
-                                      const fmt =
-                                        item.format === "图文" || item.format === "小红书" ? "图文" : "短视频";
-                                      const regenCost = fmt === "图文" ? 6 : 5;
-                                      const note = supervisorAccess
-                                        ? ""
-                                        : `将重新生成该封面（约消耗 ${regenCost} 积分，以服务端为准），是否继续？`;
-                                      if (!supervisorAccess && !window.confirm(note)) return;
+                                      const confirmNote = isBlackImageOrTimeout
+                                        ? "检测到前次生成为黑图或超时，本次重新生成将「免费」为您补发，是否继续？"
+                                        : `重新生成此单帧将消耗 ${actualCoverCost} 积分（使用新种子算绘），是否继续？`;
+                                      if (!supervisorAccess && !window.confirm(confirmNote)) return;
                                       setRegeneratingCoverSceneId(item.id);
                                       regenerateTopicImageMutation.mutate(
                                         {
                                           topicHook,
-                                          format: fmt,
+                                          format: isGraphicCover ? "图文" : "短视频",
                                           context: buildPlatformSceneText({
                                             title: item.title,
-                                            hook: item.hook,
-                                            copywriting: item.copywriting,
+                                            hook: item.hook ?? "",
+                                            copywriting: item.copywriting ?? "",
                                             executionDetails: (
                                               item as {
                                                 executionDetails?: {
@@ -2762,42 +2784,45 @@ export default function PlatformPage() {
                                               }
                                             ).executionDetails,
                                           }),
+                                          bypassCredit: isBlackImageOrTimeout,
                                         },
                                         {
                                           onSuccess: (res) => {
                                             if (res.imageUrl) {
-                                              setPlatformImageMap((prev) => ({ ...prev, [item.id]: res.imageUrl! }));
-                                              toast.success("封面已重新生成");
+                                              setPlatformImageMap((prev) => ({
+                                                ...prev,
+                                                [item.id]: res.imageUrl!,
+                                              }));
                                             }
-                                          },
-                                          onSettled: () => {
-                                            setRegeneratingCoverSceneId((cur) =>
-                                              cur === item.id ? null : cur,
+                                            setRegeneratingCoverSceneId(null);
+                                            toast.success(
+                                              isBlackImageOrTimeout ? "免费补发成功" : "重新生成成功",
                                             );
+                                          },
+                                          onError: (err) => {
+                                            setRegeneratingCoverSceneId(null);
+                                            toast.error(err.message || "操作失败");
                                           },
                                         },
                                       );
                                     }}
-                                    className="pointer-events-auto inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-black/70 px-2.5 py-1.5 text-[11px] font-semibold text-white/95 shadow-lg backdrop-blur-sm transition hover:border-[#ff4fb8]/45 hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-45"
+                                    className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+                                    title={
+                                      isBlackImageOrTimeout
+                                        ? "重新免费请求生图"
+                                        : "使用新种子重新生成此封面"
+                                    }
                                   >
-                                    {regeneratingCoverSceneId === item.id && regenerateTopicImageMutation.isPending ? (
-                                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                                    ) : (
-                                      <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                                    )}
-                                    重新生成
+                                    <RefreshCw
+                                      className={`h-3 w-3 ${
+                                        regeneratingCoverSceneId === item.id && regenerateTopicImageMutation.isPending
+                                          ? "animate-spin text-[#ff4fb8]"
+                                          : "group-hover:text-[#49e6ff]"
+                                      }`}
+                                    />
+                                    {isBlackImageOrTimeout ? "免费补发" : `重新生成 · ${actualCoverCost}点`}
                                   </button>
                                 </div>
-                              </div>
-                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-                                <ImageUpscaleBar
-                                  imageUrl={platformImageMap[item.id]}
-                                  baseCreditKey="forgeImage"
-                                  className="mt-1"
-                                  onUpscaled={(url) =>
-                                    setPlatformImageMap((prev) => ({ ...prev, [item.id]: url }))
-                                  }
-                                />
                               </div>
                             </div>
                           ) : null}
