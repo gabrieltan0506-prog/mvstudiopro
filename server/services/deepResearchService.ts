@@ -316,15 +316,16 @@ async function generate(
   retries = 2,
   opts?: { temperature?: number; maxTokens?: number; topP?: number; topK?: number },
 ): Promise<string> {
+  const modelName = 'gemini-3.1-pro'; // 必須是沒有 preview 的正式版
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: opts?.temperature ?? 0.5,
-      ...(opts?.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
+      temperature: 0.2, // 🟢 深度研究需保持低溫，確保事實與邏輯嚴謹
+      maxOutputTokens: 8192, // 🟢 極致長文必備
       ...(opts?.topP != null ? { topP: opts.topP } : {}),
       ...(opts?.topK != null ? { topK: opts.topK } : {}),
     },
