@@ -525,8 +525,17 @@ export async function generateDeepResearchSceneIllustration(options: {
   });
 }
 
-export async function callGemini3_1_Pro(prompt: string): Promise<string> {
-  // 🟢 翻譯中樞：AI Studio 付費通道 gemini-3.1-pro（不走 Vertex）
+/** 雙軌 · 生圖翻譯：AI Studio `gemini-3.1-pro`（`GEMINI_API_KEY`），與 Vertex `vertexGemini31ProGlobal` 並存。 */
+export type CallGemini31ProAiStudioOptions = {
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+};
+
+export async function callGemini3_1_Pro(
+  prompt: string,
+  opts?: CallGemini31ProAiStudioOptions,
+): Promise<string> {
   const model = "gemini-3.1-pro";
   const apiKey = process.env.GEMINI_API_KEY;
 
@@ -543,8 +552,9 @@ export async function callGemini3_1_Pro(prompt: string): Promise<string> {
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          maxOutputTokens: 8192,
-          temperature: 0.4,
+          maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+          temperature: opts?.temperature ?? 0.4,
+          topP: opts?.topP ?? 0.8,
         },
       }),
     });

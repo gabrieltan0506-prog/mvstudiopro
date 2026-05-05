@@ -772,8 +772,9 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
       const stage1Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-3.1-pro-preview",
-      max_tokens: 8192,
       response_format: { type: "json_object" },
+      // 長篇 contentBlueprints（多選題 + 長腳本）極易觸及預設輸出上限導致 JSON 截斷 → parse 失敗後變 {}，前端全空
+      max_tokens: 65536,
       messages: [
         { role: "system", content: stage1SystemInstruction },
         {
@@ -791,7 +792,15 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
       let contentResult: unknown = {};
       try {
         contentResult = JSON.parse(extractJsonString(stage1Raw));
-      } catch {
+      } catch (e) {
+        console.error(
+          "[platform_analysis] stage1 JSON.parse failed:",
+          e instanceof Error ? e.message : e,
+          "raw length=",
+          stage1Raw.length,
+          "tail=",
+          stage1Raw.slice(-400),
+        );
         contentResult = {};
       }
 
@@ -801,6 +810,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
       provider: "vertex",
       modelName: "gemini-2.5-pro",
       response_format: { type: "json_object" },
+      max_tokens: 32768,
       messages: [
         { role: "system", content: stage2SystemInstruction },
         {
@@ -827,7 +837,15 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
       let dashboardResult: unknown = {};
       try {
         dashboardResult = JSON.parse(extractJsonString(stage2Raw));
-      } catch {
+      } catch (e) {
+        console.error(
+          "[platform_analysis] stage2 JSON.parse failed:",
+          e instanceof Error ? e.message : e,
+          "raw length=",
+          stage2Raw.length,
+          "tail=",
+          stage2Raw.slice(-400),
+        );
         dashboardResult = {};
       }
 

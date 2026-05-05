@@ -25,9 +25,11 @@ function resolveProjectId(): string {
   return p;
 }
 
-/** 翻譯/編導用 **實體區域**（預設 quota 所在 us-central1）。不用 `VERTEX_GEMINI_LOCATION`，避免他處設成 `global` 誤傷此文生路徑。 */
+/** Gemini 3.1 Pro 文本：須為 Vertex 已開通區域（Console 配額多在 us-central1）。 */
 function resolveVertexGemini31Location(): string {
-  const loc = String(process.env.GCP_LOCATION || "us-central1").trim();
+  const loc = String(
+    process.env.GCP_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "us-central1",
+  ).trim();
   return loc || "us-central1";
 }
 
@@ -81,7 +83,6 @@ export type CallGemini31ProOptions = {
 /** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
   const vertex_ai = getVertexClientForGemini31Pro();
-  // 🔴 低成本前半段：Vertex 鎖預覽版 ID（可經 VERTEX_GEMINI_31_PRO_MODEL 覆寫）
   const modelName = resolveVertexGemini31ProModelId();
   const generativeModel = vertex_ai.getGenerativeModel({
     model: modelName,
