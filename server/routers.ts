@@ -103,7 +103,7 @@ import {
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, or } from "drizzle-orm";
 
 /** 平台頁一鍵批量參考圖：同時進行「Gemini→英文 + 生圖」的條目數（環境變數可調，預設 4）。 */
 function resolvePlatformTopicImageConcurrency(): number {
@@ -2900,8 +2900,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const { userCreations } = await import("../drizzle/schema-creations");
 
         let isFreeRetry = false;
-        let freeRetryCreationId: number | null = null;
-        let existingMetaForRetry: Record<string, unknown> = {};
+        let oldFailedJobId: number | null = null;
+        let existingMetaForOldJob: Record<string, unknown> = {};
 
         const failedJobRaw = String(input.failedJobId ?? "").trim();
         if (failedJobRaw.length > 0 && database) {
@@ -2922,21 +2922,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
               const meta = parseUserCreationMetadata(targetJob.metadata);
               if (meta.platformFreeRetryConsumed !== true) {
                 isFreeRetry = true;
-                freeRetryCreationId = n;
-                existingMetaForRetry = meta;
+                oldFailedJobId = n;
+                existingMetaForOldJob = meta;
               }
             }
           }
-        }
-
-        if (isFreeRetry && freeRetryCreationId != null && database) {
-          await database
-            .update(userCreations)
-            .set({
-              metadata: JSON.stringify({ ...existingMetaForRetry, platformFreeRetryConsumed: true }),
-              updatedAt: new Date(),
-            })
-            .where(eq(userCreations.id, freeRetryCreationId));
         }
 
         if (!isAdminUser && !isFreeRetry) {
@@ -2955,13 +2945,72 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
+        const title = String(input.topicHook || "").trim().slice(0, 80);
+        const sid = String(input.sceneId ?? "").trim();
+        const newJobMetaBase: Record<string, unknown> = {
+          sceneId: sid.length > 0 ? sid : null,
+          source: "generateTopicImage",
+          isFreeRetry,
+          parentFailedJobId: oldFailedJobId,
+        };
+
+        let newJobId: number | undefined;
+        if (database) {
+          try {
+            const [newRow] = await database
+              .insert(userCreations)
+              .values({
+                userId,
+                type: PLATFORM_TOPIC_FRAME_TYPE,
+                title: title.slice(0, 255),
+                status: "pending",
+                creditsUsed: !isAdminUser && !isFreeRetry ? cost : 0,
+                metadata: JSON.stringify(newJobMetaBase),
+              })
+              .returning({ id: userCreations.id });
+            newJobId = newRow?.id;
+          } catch (e) {
+            console.warn("[mvAnalysis.generateTopicImage] insert pending platform_topic_frame failed:", e);
+          }
+
+          /** Append-Only：新行已插入后再标记旧失败凭证已消费；若更新 0 行（已消费/状态变化）则删除新行 */
+          if (isFreeRetry && oldFailedJobId != null && newJobId != null) {
+            const [consumedRow] = await database
+              .update(userCreations)
+              .set({
+                metadata: JSON.stringify({
+                  ...existingMetaForOldJob,
+                  platformFreeRetryConsumed: true,
+                }),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(userCreations.id, oldFailedJobId),
+                  eq(userCreations.userId, userId),
+                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                  or(eq(userCreations.status, "failed"), eq(userCreations.status, "timeout")),
+                ),
+              )
+              .returning({ id: userCreations.id });
+
+            if (!consumedRow) {
+              await database.delete(userCreations).where(eq(userCreations.id, newJobId));
+              newJobId = undefined;
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "免费补发凭证无效或已使用，请刷新后重试或作为新任务付费重绘",
+              });
+            }
+          }
+        }
+
         const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
           "./services/geminiPlatformCompositeTranslation.js",
         );
         const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
           "./services/proxyImageService",
         );
-        const title = String(input.topicHook || "").trim().slice(0, 80);
         const ctxStr = String(input.context || "").trim();
         const copywriting = ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook;
         const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
@@ -2995,7 +3044,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         if (!imageUrl) {
-          if (isFreeRetry && freeRetryCreationId != null && database) {
+          if (newJobId != null && database) {
             await database
               .update(userCreations)
               .set({
@@ -3003,55 +3052,38 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 outputUrl: null,
                 updatedAt: new Date(),
                 metadata: JSON.stringify({
-                  ...existingMetaForRetry,
-                  platformFreeRetryConsumed: true,
+                  ...newJobMetaBase,
                   platformFreeRetryLastError: "empty_output",
                 }),
               })
-              .where(eq(userCreations.id, freeRetryCreationId));
+              .where(eq(userCreations.id, newJobId));
           }
-          throw new Error("generateTopicImage failed: gpt-image-2 与 Nano Banana 2 兜底均未返回图片");
+          return {
+            success: false as const,
+            imageUrl: null,
+            freeRetryApplied: isFreeRetry,
+            creationId: newJobId,
+          };
         }
 
-        let creationIdOut: number | undefined;
-        if (isFreeRetry && freeRetryCreationId != null && database) {
-          await database
-            .update(userCreations)
-            .set({
-              status: "completed",
-              outputUrl: imageUrl,
-              updatedAt: new Date(),
-              metadata: JSON.stringify({ ...existingMetaForRetry, platformFreeRetryConsumed: true }),
-            })
-            .where(eq(userCreations.id, freeRetryCreationId));
-          creationIdOut = freeRetryCreationId;
-        } else if (!isFreeRetry && database) {
-          const sid = String(input.sceneId ?? "").trim();
-          if (sid.length > 0) {
-            try {
-              const [row] = await database
-                .insert(userCreations)
-                .values({
-                  userId,
-                  type: PLATFORM_TOPIC_FRAME_TYPE,
-                  title: title.slice(0, 255),
-                  status: "completed",
-                  outputUrl: imageUrl,
-                  creditsUsed: cost,
-                  metadata: JSON.stringify({
-                    sceneId: sid,
-                    source: "generateTopicImage",
-                  }),
-                })
-                .returning({ id: userCreations.id });
-              creationIdOut = row?.id;
-            } catch (e) {
-              console.warn("[mvAnalysis.generateTopicImage] insert platform_topic_frame failed:", e);
-            }
+        const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
+        if (newJobId != null && database) {
+          try {
+            await database
+              .update(userCreations)
+              .set({
+                status: finalStatus,
+                outputUrl: imageUrl,
+                updatedAt: new Date(),
+                metadata: JSON.stringify(newJobMetaBase),
+              })
+              .where(eq(userCreations.id, newJobId));
+          } catch (e) {
+            console.warn("[mvAnalysis.generateTopicImage] update new platform_topic_frame failed:", e);
           }
         }
 
-        return { success: true, imageUrl, freeRetryApplied: isFreeRetry, creationId: creationIdOut };
+        return { success: true as const, imageUrl, freeRetryApplied: isFreeRetry, creationId: newJobId };
       }),
 
     /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
