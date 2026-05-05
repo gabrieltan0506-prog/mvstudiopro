@@ -18,6 +18,10 @@ import type {
 } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
 import {
+  injectPlatformPdfSnapshotSanitizeIntoHead,
+  optimizePdfSnapshotHtml,
+} from "@/lib/pdfHtmlOptimize";
+import {
   Activity,
   ArrowLeft,
   ArrowRight,
@@ -63,6 +67,9 @@ import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+
+/** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
+const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
 
 const WINDOW_OPTIONS = [
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
@@ -834,30 +841,63 @@ export default function PlatformPage() {
     }, 3000);
   }, []);
 
-  const handleDownloadPlatformPdf = useCallback(() => {
-    // 與 GodView / MyReports「全息閱覽」相同鏈路：DOM 快照 → mvAnalysis.downloadPlatformPdf → Cloud Run pdf-worker（見 routers 註釋）。
-    const clone = document.documentElement.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("script").forEach((n) => n.remove());
-    clone.querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group").forEach((n) => n.remove());
-    clone.querySelectorAll("details").forEach((detail) => {
-      detail.setAttribute("open", "true");
-      (detail as HTMLElement).style.display = "block";
-      const content = detail.lastElementChild as HTMLElement | null;
-      if (content) {
-        content.style.display = "block";
-        content.style.height = "auto";
-        content.style.opacity = "1";
-        content.style.overflow = "visible";
+  const handleDownloadPlatformPdf = useCallback(async () => {
+    // 與 MyReports `captureAndUploadSnapshot` 對齊：精準克隆 `#platform-report` + head 副本 +
+    // optimizePdfSnapshotHtml / injectPlatformPdfSnapshotSanitizeIntoHead；並保留 details 行內展開以防截斷。
+    try {
+      setIsDownloadingPdf(true);
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        await (document as any).fonts.ready;
       }
-    });
-    const base = document.createElement("base");
-    base.href = window.location.origin + "/";
-    clone.querySelector("head")?.prepend(base);
+      await new Promise((r) => setTimeout(r, 2800));
 
-    const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
-    setIsDownloadingPdf(true);
-    toast.info("云端压制 PDF 中，多数约 15～45 分钟，请保持页面打开。", { duration: 10_000 });
-    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=360000&selector=%23platform-report` });
+      toast.dismiss();
+      await new Promise((r) => setTimeout(r, 400));
+
+      const pdfRoot = document.getElementById(PLATFORM_PDF_SNAPSHOT_ROOT_ID);
+      if (!pdfRoot) {
+        toast.error("找不到报告容器（platform-report），请先完成分析后再试");
+        setIsDownloadingPdf(false);
+        return;
+      }
+
+      const fragment = pdfRoot.cloneNode(true) as HTMLElement;
+      fragment.querySelectorAll("script").forEach((n) => n.remove());
+      fragment.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+      fragment.querySelectorAll("button").forEach((n) => n.remove());
+      fragment
+        .querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group")
+        .forEach((n) => n.remove());
+      fragment.querySelectorAll("[class*='sonner']").forEach((n) => n.remove());
+
+      fragment.querySelectorAll("details").forEach((detail) => {
+        detail.setAttribute("open", "true");
+        (detail as HTMLElement).style.display = "block";
+        const content = detail.lastElementChild as HTMLElement | null;
+        if (content) {
+          content.style.display = "block";
+          content.style.height = "auto";
+          content.style.opacity = "1";
+          content.style.overflow = "visible";
+        }
+      });
+
+      const headEl = document.head.cloneNode(true) as HTMLHeadElement;
+      headEl.querySelectorAll("script").forEach((n) => n.remove());
+      const baseEl = document.createElement("base");
+      baseEl.href = window.location.origin + "/";
+      headEl.insertBefore(baseEl, headEl.firstChild);
+
+      let html = `<!DOCTYPE html><html lang="zh-CN">${headEl.outerHTML}<body>${fragment.outerHTML}</body></html>`;
+      html = optimizePdfSnapshotHtml(html);
+      html = injectPlatformPdfSnapshotSanitizeIntoHead(html);
+
+      toast.info("云端压制 PDF 中，多数约 15～45 分钟，请保持页面打开。", { duration: 10_000 });
+      downloadPlatformPdfMutation.mutate({ html, token: `wait=360000&selector=%23platform-report` });
+    } catch (e) {
+      setIsDownloadingPdf(false);
+      toast.error(e instanceof Error ? e.message : "构建 PDF 快照失败，请重试");
+    }
   }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
@@ -1827,7 +1867,7 @@ export default function PlatformPage() {
                   {hasAnalyzed && !isDashboardLoading && !isContentLoading && (
                     <button
                       type="button"
-                      onClick={handleDownloadPlatformPdf}
+                      onClick={() => void handleDownloadPlatformPdf()}
                       disabled={isDownloadingPdf}
                       className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold text-[#49e6ff] transition hover:bg-[rgba(73,230,255,0.15)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -3048,7 +3088,7 @@ export default function PlatformPage() {
                   </a>
                   <button
                     type="button"
-                    onClick={handleDownloadPlatformPdf}
+                    onClick={() => void handleDownloadPlatformPdf()}
                     disabled={isDownloadingPdf || isDashboardLoading || isContentLoading}
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_32px_rgba(73,230,255,0.15)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                   >
