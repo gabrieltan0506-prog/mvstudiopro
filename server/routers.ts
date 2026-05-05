@@ -103,7 +103,7 @@ import {
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
-import { and, desc, eq, gte, or } from "drizzle-orm";
+import { and, desc, eq, gte, or, sql } from "drizzle-orm";
 
 /** 平台頁一鍵批量參考圖：同時進行「Gemini→英文 + 生圖」的條目數（環境變數可調，預設 4）。 */
 function resolvePlatformTopicImageConcurrency(): number {
@@ -2899,37 +2899,122 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
 
-        let isFreeRetry = false;
-        let oldFailedJobId: number | null = null;
-        let existingMetaForOldJob: Record<string, unknown> = {};
-
+        const title = String(input.topicHook || "").trim().slice(0, 80);
+        const sid = String(input.sceneId ?? "").trim();
         const failedJobRaw = String(input.failedJobId ?? "").trim();
-        if (failedJobRaw.length > 0 && database) {
-          const n = Number.parseInt(failedJobRaw, 10);
-          if (Number.isInteger(n) && n > 0) {
-            const [targetJob] = await database
-              .select()
-              .from(userCreations)
-              .where(
-                and(
-                  eq(userCreations.id, n),
-                  eq(userCreations.userId, userId),
-                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
-                ),
-              )
-              .limit(1);
-            if (targetJob && (targetJob.status === "failed" || targetJob.status === "timeout")) {
-              const meta = parseUserCreationMetadata(targetJob.metadata);
-              if (meta.platformFreeRetryConsumed !== true) {
-                isFreeRetry = true;
-                oldFailedJobId = n;
-                existingMetaForOldJob = meta;
+
+        let creationIdOut: number | undefined;
+        let isFreeRetry = false;
+        let consumedParentId: number | null = null;
+
+        /**
+         * Append-Only + 防并发：先 insert 新 pending 行占位，再尝试 UPDATE 旧失败行消耗凭证；
+         * 若 UPDATE 返回 0 行（已消耗/并发）则删除新行并 BAD_REQUEST，避免先烧凭证却无新任务。
+         * 付费路径：仅在新行存在后再检查余额并扣款，失败则删新行；扣款成功后写回 creditsUsed。
+         */
+        if (database) {
+          try {
+            const [newRow] = await database
+              .insert(userCreations)
+              .values({
+                userId,
+                type: PLATFORM_TOPIC_FRAME_TYPE,
+                title: title.slice(0, 255),
+                status: "pending",
+                creditsUsed: 0,
+                metadata: JSON.stringify({
+                  sceneId: sid.length > 0 ? sid : null,
+                  source: "generateTopicImage",
+                }),
+              })
+              .returning({ id: userCreations.id });
+            creationIdOut = newRow?.id;
+          } catch (e) {
+            console.warn("[mvAnalysis.generateTopicImage] insert pending platform_topic_frame failed:", e);
+          }
+
+          if (creationIdOut == null) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "创建单帧任务失败，请稍后重试",
+            });
+          }
+
+          if (failedJobRaw.length > 0) {
+            const failedIdNum = Number.parseInt(failedJobRaw, 10);
+            if (Number.isInteger(failedIdNum) && failedIdNum > 0) {
+              const [targetJob] = await database
+                .select()
+                .from(userCreations)
+                .where(
+                  and(
+                    eq(userCreations.id, failedIdNum),
+                    eq(userCreations.userId, userId),
+                    eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                  ),
+                )
+                .limit(1);
+
+              if (targetJob && (targetJob.status === "failed" || targetJob.status === "timeout")) {
+                const meta = parseUserCreationMetadata(targetJob.metadata);
+                if (meta.platformFreeRetryConsumed !== true) {
+                  const [consumedRow] = await database
+                    .update(userCreations)
+                    .set({
+                      metadata: JSON.stringify({
+                        ...meta,
+                        platformFreeRetryConsumed: true,
+                      }),
+                      updatedAt: new Date(),
+                    })
+                    .where(
+                      and(
+                        eq(userCreations.id, failedIdNum),
+                        eq(userCreations.userId, userId),
+                        eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                        or(eq(userCreations.status, "failed"), eq(userCreations.status, "timeout")),
+                        sql`coalesce((${userCreations.metadata})::jsonb->>'platformFreeRetryConsumed', '') <> 'true'`,
+                      ),
+                    )
+                    .returning({ id: userCreations.id });
+
+                  if (!consumedRow) {
+                    await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+                    creationIdOut = undefined;
+                    throw new TRPCError({
+                      code: "BAD_REQUEST",
+                      message: "免扣分凭证已失效或被并发消耗",
+                    });
+                  }
+                  isFreeRetry = true;
+                  consumedParentId = failedIdNum;
+                }
               }
             }
           }
-        }
 
-        if (!isAdminUser && !isFreeRetry) {
+          if (!isAdminUser && !isFreeRetry) {
+            const creditsInfo = await getCredits(userId);
+            if (creditsInfo.totalAvailable < cost) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "PAYMENT_REQUIRED",
+                message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              });
+            }
+            await deductCreditsAmount(
+              userId,
+              cost,
+              "platformTopicImages",
+              `平台单帧参考重绘（${cost}点）`,
+            );
+            await database
+              .update(userCreations)
+              .set({ creditsUsed: cost, updatedAt: new Date() })
+              .where(eq(userCreations.id, creationIdOut));
+          }
+        } else if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
             throw new TRPCError({
@@ -2945,67 +3030,24 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
-        const title = String(input.topicHook || "").trim().slice(0, 80);
-        const sid = String(input.sceneId ?? "").trim();
         const newJobMetaBase: Record<string, unknown> = {
           sceneId: sid.length > 0 ? sid : null,
           source: "generateTopicImage",
           isFreeRetry,
-          parentFailedJobId: oldFailedJobId,
+          parentFailedJobId: consumedParentId,
         };
 
-        /**
-         * Append-Only：付费先扣点，再 insert「新」pending 行；免费补发在新行落地后再将旧失败行
-         * 标记 platformFreeRetryConsumed（若标记失败则删新行并 BAD_REQUEST），避免先消费旧凭证却插不进新行。
-         */
-        let newJobId: number | undefined;
-        if (database) {
+        if (database && creationIdOut != null) {
           try {
-            const [newRow] = await database
-              .insert(userCreations)
-              .values({
-                userId,
-                type: PLATFORM_TOPIC_FRAME_TYPE,
-                title: title.slice(0, 255),
-                status: "pending",
-                creditsUsed: !isAdminUser && !isFreeRetry ? cost : 0,
-                metadata: JSON.stringify(newJobMetaBase),
-              })
-              .returning({ id: userCreations.id });
-            newJobId = newRow?.id;
-          } catch (e) {
-            console.warn("[mvAnalysis.generateTopicImage] insert pending platform_topic_frame failed:", e);
-          }
-
-          /** Append-Only：新行已插入后再标记旧失败凭证已消费；若更新 0 行（已消费/状态变化）则删除新行 */
-          if (isFreeRetry && oldFailedJobId != null && newJobId != null) {
-            const [consumedRow] = await database
+            await database
               .update(userCreations)
               .set({
-                metadata: JSON.stringify({
-                  ...existingMetaForOldJob,
-                  platformFreeRetryConsumed: true,
-                }),
+                metadata: JSON.stringify(newJobMetaBase),
                 updatedAt: new Date(),
               })
-              .where(
-                and(
-                  eq(userCreations.id, oldFailedJobId),
-                  eq(userCreations.userId, userId),
-                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
-                  or(eq(userCreations.status, "failed"), eq(userCreations.status, "timeout")),
-                ),
-              )
-              .returning({ id: userCreations.id });
-
-            if (!consumedRow) {
-              await database.delete(userCreations).where(eq(userCreations.id, newJobId));
-              newJobId = undefined;
-              throw new TRPCError({
-                code: "BAD_REQUEST",
-                message: "免费补发凭证无效或已使用，请刷新后重试或作为新任务付费重绘",
-              });
-            }
+              .where(eq(userCreations.id, creationIdOut));
+          } catch (e) {
+            console.warn("[mvAnalysis.generateTopicImage] enrich pending metadata failed:", e);
           }
         }
 
@@ -3048,31 +3090,35 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         if (!imageUrl) {
-          if (newJobId != null && database) {
-            await database
-              .update(userCreations)
-              .set({
-                status: "failed",
-                outputUrl: null,
-                updatedAt: new Date(),
-                metadata: JSON.stringify({
-                  ...newJobMetaBase,
-                  platformFreeRetryLastError: "empty_output",
-                }),
-              })
-              .where(eq(userCreations.id, newJobId));
+          if (creationIdOut != null && database) {
+            try {
+              await database
+                .update(userCreations)
+                .set({
+                  status: "failed",
+                  outputUrl: null,
+                  updatedAt: new Date(),
+                  metadata: JSON.stringify({
+                    ...newJobMetaBase,
+                    platformFreeRetryLastError: "empty_output",
+                  }),
+                })
+                .where(eq(userCreations.id, creationIdOut));
+            } catch (e) {
+              console.warn(`[mvAnalysis.generateTopicImage] mark failed ${creationIdOut}:`, e);
+            }
           }
           return {
             success: false as const,
             imageUrl: null,
             url: null,
             freeRetryApplied: isFreeRetry,
-            creationId: newJobId,
+            creationId: creationIdOut,
           };
         }
 
         const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
-        if (newJobId != null && database) {
+        if (creationIdOut != null && database) {
           try {
             await database
               .update(userCreations)
@@ -3085,7 +3131,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
                   resolvedFrameStatus: finalStatus,
                 }),
               })
-              .where(eq(userCreations.id, newJobId));
+              .where(eq(userCreations.id, creationIdOut));
           } catch (e) {
             console.warn("[mvAnalysis.generateTopicImage] update new platform_topic_frame failed:", e);
           }
@@ -3096,7 +3142,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           imageUrl,
           url: imageUrl,
           freeRetryApplied: isFreeRetry,
-          creationId: newJobId,
+          creationId: creationIdOut,
         };
       }),
 
