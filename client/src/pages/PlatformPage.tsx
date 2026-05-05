@@ -51,6 +51,7 @@ import {
   PenLine,
   PlayCircle,
   Rocket,
+  RefreshCw,
   Share2,
   ShieldCheck,
   Sparkles,
@@ -551,6 +552,8 @@ export default function PlatformPage() {
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
   );
+  /** 單張封面「重新生成」進行中（顯示骨架，避免無反饋） */
+  const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -658,6 +661,12 @@ export default function PlatformPage() {
           ...prev,
         ].slice(0, 8),
       );
+    },
+  });
+
+  const regenerateTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
+    onError: (err) => {
+      toast.error(err.message || "重新生成封面失败");
     },
   });
 
@@ -2665,7 +2674,19 @@ export default function PlatformPage() {
                           </div>
                         </details>
                         <div className="mt-4">
-                          {platformImageMap[item.id] ? (
+                          {regeneratingCoverSceneId === item.id ||
+                          (!platformImageMap[item.id] && generateAllPlatformImagesMutation.isPending) ? (
+                            <div
+                              className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner ${
+                                item.format === "图文" ? "aspect-[9/16]" : "aspect-video"
+                              }`}
+                            >
+                              <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
+                              <span className="text-xs font-medium tracking-widest text-gray-400">
+                                高定视觉绘制中...
+                              </span>
+                            </div>
+                          ) : platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
                               <div
                                 className={`group relative w-full overflow-hidden rounded-xl bg-black/40 ${
@@ -2694,6 +2715,78 @@ export default function PlatformPage() {
                                   <span className="rounded border border-white/10 bg-black/60 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm">
                                     高定视觉引擎
                                   </span>
+                                </div>
+                                <div className="absolute right-3 top-14 z-30 flex justify-end sm:top-16">
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      !isAuthenticated ||
+                                      generateAllPlatformImagesMutation.isPending ||
+                                      regenerateTopicImageMutation.isPending ||
+                                      compositeMutationBusy ||
+                                      isDashboardLoading ||
+                                      isContentLoading
+                                    }
+                                    onClick={() => {
+                                      if (!isAuthenticated) {
+                                        toast.error("请先登录");
+                                        return;
+                                      }
+                                      const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                                      if (!topicHook) {
+                                        toast.error("选题缺少标题或钩子，无法生成");
+                                        return;
+                                      }
+                                      const fmt =
+                                        item.format === "图文" || item.format === "小红书" ? "图文" : "短视频";
+                                      const regenCost = fmt === "图文" ? 6 : 5;
+                                      const note = supervisorAccess
+                                        ? ""
+                                        : `将重新生成该封面（约消耗 ${regenCost} 积分，以服务端为准），是否继续？`;
+                                      if (!supervisorAccess && !window.confirm(note)) return;
+                                      setRegeneratingCoverSceneId(item.id);
+                                      regenerateTopicImageMutation.mutate(
+                                        {
+                                          topicHook,
+                                          format: fmt,
+                                          context: buildPlatformSceneText({
+                                            title: item.title,
+                                            hook: item.hook,
+                                            copywriting: item.copywriting,
+                                            executionDetails: (
+                                              item as {
+                                                executionDetails?: {
+                                                  environmentAndWardrobe?: string;
+                                                  lightingAndCamera?: string;
+                                                };
+                                              }
+                                            ).executionDetails,
+                                          }),
+                                        },
+                                        {
+                                          onSuccess: (res) => {
+                                            if (res.imageUrl) {
+                                              setPlatformImageMap((prev) => ({ ...prev, [item.id]: res.imageUrl! }));
+                                              toast.success("封面已重新生成");
+                                            }
+                                          },
+                                          onSettled: () => {
+                                            setRegeneratingCoverSceneId((cur) =>
+                                              cur === item.id ? null : cur,
+                                            );
+                                          },
+                                        },
+                                      );
+                                    }}
+                                    className="pointer-events-auto inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-black/70 px-2.5 py-1.5 text-[11px] font-semibold text-white/95 shadow-lg backdrop-blur-sm transition hover:border-[#ff4fb8]/45 hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-45"
+                                  >
+                                    {regeneratingCoverSceneId === item.id && regenerateTopicImageMutation.isPending ? (
+                                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                                    )}
+                                    重新生成
+                                  </button>
                                 </div>
                               </div>
                               <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
