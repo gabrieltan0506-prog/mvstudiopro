@@ -3081,12 +3081,17 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
         if (!imageUrl) {
-          imageUrl = await generateImageGpt2WithImagenFallback({
-            title: title || "Content",
-            copywriting,
-            mode,
-            isTrial: false,
-          });
+          try {
+            imageUrl = await generateImageGpt2WithImagenFallback({
+              title: title || "Content",
+              copywriting,
+              mode,
+              isTrial: false,
+            });
+          } catch (fallbackErr) {
+            console.warn(`[mvAnalysis.generateTopicImage] 兜底异常:`, fallbackErr);
+            imageUrl = null;
+          }
         }
 
         if (!imageUrl) {
@@ -3279,13 +3284,20 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
           if (!url) {
             appendImageFlowLog(flowLog, "[步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）");
-            url = await generateImageGpt2WithImagenFallback({
-              title: s.title,
-              copywriting: body,
-              mode,
-              isTrial: false,
-              flowLog,
-            });
+            try {
+              url = await generateImageGpt2WithImagenFallback({
+                title: s.title,
+                copywriting: body,
+                mode,
+                isTrial: false,
+                flowLog,
+              });
+            } catch (fallbackErr) {
+              const msg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+              appendImageFlowLog(flowLog, `[步骤3] 兜底异常: ${msg}`);
+              console.warn(`[mvAnalysis.generateAllPlatformTopicImages] 兜底异常 ${s.id}:`, fallbackErr);
+              url = null;
+            }
           }
           appendImageFlowLog(flowLog, url ? "✓ 本条结束：已得到 imageUrl" : "✗ 本条结束：仍无 URL");
           const creationId = sceneToCreationId.get(s.id);
