@@ -513,34 +513,31 @@ function linesFromClientMutationFailure(prefix: string, err: unknown): string[] 
   return lines;
 }
 
-/** 3A：六維度 IP 描述指南（與後端 buildPlatformContent 六維硬約束對齊） */
+/** 3A：六維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
 function PlatformIpDimensionGuide() {
   return (
     <div className="mb-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-md">
       <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#ff9900]">
         <Bot className="h-4 w-4 shrink-0 animate-pulse" />
-        高定内容引擎：六大核心维度说明
+        高定内容生成指南：六大维度
       </h3>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 lg:grid-cols-3">
         {[
-          { t: "专业洞察", d: "展现该领域最强的硬核知识或壁垒，建立专业权威。" },
-          { t: "跨界价值", d: "融合美学、哲学或跨界视野，赋予内容独特的灵魂。" },
-          { t: "受众痛点", d: "一针见血解决粉丝最深的焦虑，产生即时共鸣。" },
-          { t: "人设魅力", d: "分享真实成长经历与背景，建立深度情感信任。" },
-          { t: "认知破局", d: "提出反共识的独家观点，打破常规，引发讨论。" },
-          { t: "流量密码", d: "高度契合平台爆款逻辑与算法偏好，精准吸粉。" },
+          { t: "专业洞察 (Insight)", d: "展现该行业最核心的硬核知识壁垒。" },
+          { t: "跨界价值 (Value)", d: "融合美学或跨界视野，建立独特辨识度。" },
+          { t: "受众痛点 (Pain Point)", d: "直击粉丝核心焦虑，产生即时情绪共鸣。" },
+          { t: "人设魅力 (Persona)", d: "分享真实经历故事，建立深度信任感。" },
+          { t: "认知破局 (Breakthrough)", d: "提出鲜明的反共识观点，打破常规思考。" },
+          { t: "流量密码 (Logic)", d: "精准适配算法逻辑，极大化内容的曝光力。" },
         ].map((v, i) => (
-          <div key={v.t} className="rounded-lg bg-white/5 p-3 transition hover:bg-white/10">
-            <div className="mb-1 text-[12px] font-bold text-gray-200">
-              维度 {i + 1}：{v.t}
-            </div>
+          <div key={i} className="rounded-lg bg-white/5 p-3 transition-colors hover:bg-white/10">
+            <div className="mb-1 text-[12px] font-bold text-gray-200">{v.t}</div>
             <p className="text-[11px] leading-relaxed text-gray-400">{v.d}</p>
           </div>
         ))}
       </div>
-      <p className="mt-4 text-[10px] italic text-gray-500">
-        <span className="font-semibold text-[#ff9900]/90">提示：</span>
-        在上方 IP 定位中描述得越具体（如：哈佛医学背景、某行业 10 年老兵），生成效果越精准。
+      <p className="mt-4 text-[11px] font-medium italic text-gray-500">
+        提示：在 IP 定位中描述得越具体（如：心血管专家、哈佛医学背景），生成效果越精准。
       </p>
     </div>
   );
@@ -665,7 +662,10 @@ export default function PlatformPage() {
     onSuccess: (res, vars) => {
       const sid = vars.sceneId;
       if (!sid) return;
-      const u = res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+      const u =
+        (res.imageUrl && String(res.imageUrl)) ||
+        ((res as { url?: string | null }).url && String((res as { url?: string | null }).url)) ||
+        null;
       if (u) setPlatformImageMap((prev) => ({ ...prev, [sid]: u }));
       if (res.creationId != null) setSceneJobIds((prev) => ({ ...prev, [sid]: String(res.creationId) }));
     },
@@ -2845,51 +2845,14 @@ export default function PlatformPage() {
                           </div>
                         </details>
                         <div className="mt-4">
-                          {regeneratingCoverSceneId === item.id ||
-                          (!platformImageMap[item.id] &&
-                            (generateAllPlatformImagesMutation.isPending || coverSilentRetryIds.has(item.id))) ? (
-                            <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse">
-                              <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
-                              <span className="px-3 text-center text-xs text-gray-400">
-                                {regeneratingCoverSceneId === item.id
-                                  ? "单帧重新绘制中..."
-                                  : coverSilentRetryIds.has(item.id)
-                                    ? "检测到异常，正在自动补救..."
-                                    : "高定视觉绘制中..."}
-                              </span>
-                            </div>
-                          ) : platformImageMap[item.id] ? (
+                          {platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
-                              <div
-                                className={`group relative w-full overflow-hidden rounded-xl bg-black/40 ${
-                                  item.format === "图文" || item.format === "小红书"
-                                    ? "aspect-[9/16]"
-                                    : "aspect-video"
-                                }`}
-                              >
+                              <div className="group relative aspect-[9/16] w-full bg-black/40">
                                 <TrialWatermarkImage
                                   src={platformImageMap[item.id]}
                                   isTrial={isTrial}
                                   className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
                                 />
-                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
-                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
-                                    {item.title}
-                                    <span className="ml-2 text-xs font-normal text-gray-300">
-                                      | {item.format === "图文" ? "配图参考 · 单帧" : "分镜参考 · 单帧"}
-                                    </span>
-                                  </h3>
-                                </div>
-                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
-                                  {isTrial ? (
-                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
-                                      Trial Preview
-                                    </span>
-                                  ) : null}
-                                  <span className="rounded border border-white/10 bg-black/60 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm">
-                                    高定视觉引擎
-                                  </span>
-                                </div>
                               </div>
                               <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
                                 <div className="min-w-0 flex-1">
@@ -2914,7 +2877,7 @@ export default function PlatformPage() {
                                       isContentLoading
                                     }
                                     onClick={handleManualRegenerateCover}
-                                    className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+                                    className="group flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
                                     title={
                                       isEligibleFreeRetry
                                         ? "重新免费请求生图（已校验任务记录）"
@@ -2926,12 +2889,32 @@ export default function PlatformPage() {
                                         regeneratingCoverSceneId === item.id &&
                                         regenerateTopicImageMutation.isPending
                                           ? "animate-spin text-[#ff4fb8]"
-                                          : "group-hover:text-[#49e6ff]"
+                                          : "text-gray-400 group-hover:text-white"
                                       }`}
                                     />
-                                    {isEligibleFreeRetry ? "免费补发" : `重新生成 · ${actualCost}点`}
+                                    <span>
+                                      {isEligibleFreeRetry ? "免费补发" : `重新生成 · ${actualCost}点`}
+                                    </span>
                                   </button>
                                 </div>
+                              </div>
+                            </div>
+                          ) : regeneratingCoverSceneId === item.id ||
+                            generateAllPlatformImagesMutation.isPending ||
+                            coverSilentRetryIds.has(item.id) ? (
+                            <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
+                              <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
+                              <div className="flex flex-col items-center gap-1 px-3 text-center">
+                                <span className="text-xs text-gray-400">
+                                  {regeneratingCoverSceneId === item.id
+                                    ? "单帧重新绘制中..."
+                                    : "高定视觉绘制中..."}
+                                </span>
+                                {coverSilentRetryIds.has(item.id) ? (
+                                  <span className="text-[10px] text-amber-500/80 animate-bounce">
+                                    检测到异常，正在自动重试补救...
+                                  </span>
+                                ) : null}
                               </div>
                             </div>
                           ) : null}
