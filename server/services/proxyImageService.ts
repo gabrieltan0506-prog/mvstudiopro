@@ -525,5 +525,42 @@ export async function generateDeepResearchSceneIllustration(options: {
   });
 }
 
-/** 翻譯/編導中樞 re-export：`callGemini3_1_Pro` 於 vertexGemini31ProGlobal（Vertex **us-central1**、GOOGLE_APPLICATION_CREDENTIALS_JSON、預設 **gemini-1.5-pro**、8192 tokens）。匯出名不變，呼叫處無需改動。 */
-export { callGemini3_1_Pro } from "./vertexGemini31ProGlobal.js";
+export async function callGemini3_1_Pro(prompt: string): Promise<string> {
+  // 🔴 核心變更：直連 AI Studio 付費端點，使用正式版 3.1 Pro
+  const model = 'gemini-3.1-pro'; 
+  const apiKey = process.env.GEMINI_API_KEY;
+  
+  if (!apiKey) {
+    throw new Error("[系統錯誤] 缺少 GEMINI_API_KEY 環境變數，請確認配置。");
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 8192, // 🟢 解鎖長文本，確保分鏡細節不被截斷
+          temperature: 0.4,
+          topP: 0.8
+        }
+      })
+    });
+
+    const data = await response.json();
+    
+    // 處理 API Key 欠費或調用失敗
+    if (data.error) {
+      throw new Error(`[Gemini API Error] ${data.error.message}`);
+    }
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return text.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
+  } catch (error: any) {
+    console.error("[翻譯大腦報錯]:", error.message);
+    throw new Error(`[AI Studio 翻譯故障] 請檢查網路或配額狀態: ${error.message}`);
+  }
+}
