@@ -2954,6 +2954,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
           parentFailedJobId: oldFailedJobId,
         };
 
+        /**
+         * Append-Only：付费先扣点，再 insert「新」pending 行；免费补发在新行落地后再将旧失败行
+         * 标记 platformFreeRetryConsumed（若标记失败则删新行并 BAD_REQUEST），避免先消费旧凭证却插不进新行。
+         */
         let newJobId: number | undefined;
         if (database) {
           try {
@@ -3061,6 +3065,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           return {
             success: false as const,
             imageUrl: null,
+            url: null,
             freeRetryApplied: isFreeRetry,
             creationId: newJobId,
           };
@@ -3075,7 +3080,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 status: finalStatus,
                 outputUrl: imageUrl,
                 updatedAt: new Date(),
-                metadata: JSON.stringify(newJobMetaBase),
+                metadata: JSON.stringify({
+                  ...newJobMetaBase,
+                  resolvedFrameStatus: finalStatus,
+                }),
               })
               .where(eq(userCreations.id, newJobId));
           } catch (e) {
@@ -3083,7 +3091,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
-        return { success: true as const, imageUrl, freeRetryApplied: isFreeRetry, creationId: newJobId };
+        return {
+          success: true as const,
+          imageUrl,
+          url: imageUrl,
+          freeRetryApplied: isFreeRetry,
+          creationId: newJobId,
+        };
       }),
 
     /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */

@@ -552,10 +552,10 @@ export default function PlatformPage() {
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
   );
-  /** 單張封面「重新生成」進行中（顯示骨架，避免無反饋） */
+  /** 单张封面「重新生成」进行中（显示骨架，避免无反馈） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
-  const [lastJobMap, setLastJobMap] = useState<Record<string, string>>({});
+  const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -633,7 +633,7 @@ export default function PlatformPage() {
         }
         return next;
       });
-      setLastJobMap((prev) => {
+      setSceneJobIds((prev) => {
         const next = { ...prev };
         for (const r of res.results) {
           const cid = (r as { creationId?: number }).creationId;
@@ -663,10 +663,11 @@ export default function PlatformPage() {
           {
             onSuccess: (out) => {
               if (out.creationId != null) {
-                setLastJobMap((prev) => ({ ...prev, [r.id]: String(out.creationId) }));
+                setSceneJobIds((prev) => ({ ...prev, [r.id]: String(out.creationId) }));
               }
-              if (out.success && out.imageUrl) {
-                setPlatformImageMap((prev) => ({ ...prev, [r.id]: out.imageUrl! }));
+              const u = out.imageUrl ?? (out as { url?: string | null }).url ?? null;
+              if (out.success && u) {
+                setPlatformImageMap((prev) => ({ ...prev, [r.id]: u }));
               }
             },
             onError: (e) =>
@@ -2635,7 +2636,7 @@ export default function PlatformPage() {
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       const normalCoverCost = isGraphicCover ? 6 : 5;
-                      const hasValidJobId = Boolean(lastJobMap[item.id]);
+                      const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
                       return (
@@ -2816,8 +2817,8 @@ export default function PlatformPage() {
                                         if (!window.confirm(warning)) return;
                                       } else {
                                         const confirmNote = isEligibleFreeRetry
-                                          ? "检测到当前图片链接含超时或错误标记，且已绑定平台任务记录，本次重新生成将「免费」为您补发，是否继续？"
-                                          : `重新生成此单帧将消耗 ${actualCost} 积分（使用新种子算绘），是否继续？`;
+                                          ? "检测到当前图片链接含超时或错误标记，本次重新生成将「免费」为您补发，是否继续？"
+                                          : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
                                         if (!supervisorAccess && !window.confirm(confirmNote)) return;
                                       }
                                       setRegeneratingCoverSceneId(item.id);
@@ -2838,28 +2839,32 @@ export default function PlatformPage() {
                                               }
                                             ).executionDetails,
                                           }),
-                                          failedJobId: isEligibleFreeRetry ? lastJobMap[item.id] : undefined,
+                                          failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                                           sceneId: item.id,
                                         },
                                         {
                                           onSuccess: (res) => {
+                                            const finalUrl =
+                                              res.imageUrl ??
+                                              (res as { url?: string | null }).url ??
+                                              null;
                                             if (res.creationId != null) {
-                                              setLastJobMap((prev) => ({
+                                              setSceneJobIds((prev) => ({
                                                 ...prev,
                                                 [item.id]: String(res.creationId),
                                               }));
                                             }
-                                            if (res.success && res.imageUrl) {
+                                            if (res.success && finalUrl) {
                                               setPlatformImageMap((prev) => ({
                                                 ...prev,
-                                                [item.id]: res.imageUrl,
+                                                [item.id]: finalUrl,
                                               }));
                                               toast.success(
                                                 isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
                                               );
                                             } else {
                                               toast.error(
-                                                "单帧生图失败，已记录任务。若链路异常可依提示再次补发。",
+                                                "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
                                               );
                                             }
                                             setRegeneratingCoverSceneId(null);
