@@ -86,7 +86,7 @@ const FREE_MAX_SCENES = 10;
 const PAID_MAX_SCENES = 20;
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
-type ModelOption = "flash" | "gpt5" | "pro";
+type ModelOption = "flash" | "gpt54" | "gpt5" | "pro";
 type VisualStyle = "cinematic" | "anime" | "documentary" | "realistic" | "scifi";
 
 const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: string; icon: React.ElementType }[] = [
@@ -98,9 +98,9 @@ const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: st
     icon: Zap,
   },
   {
-    value: "gpt5",
-    label: "灵感版",
-    desc: "更创意的分镜描述与专业建议",
+    value: "gpt54",
+    label: "GPT 5.4",
+    desc: "更强推理与导演级分镜分析",
     cost: "20 Credits",
     icon: Crown,
   },
@@ -176,7 +176,7 @@ export default function StoryboardPage() {
 
   // AI Recommend BGM states
   const [isRecommendingBgm, setIsRecommendingBgm] = useState(false);
-  const [recommendBgmModel, setRecommendBgmModel] = useState<"pro" | "gpt5">("pro");
+  const [recommendBgmModel, setRecommendBgmModel] = useState<"pro" | "gpt54">("pro");
 
   // Reference image states
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
@@ -612,7 +612,7 @@ export default function StoryboardPage() {
           );
           if (matchedPreset) setBgmStylePreset((matchedPreset as any).id);
         }
-        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt5" ? "灵感版" : "旗舰版"}，5 Credits）`);
+        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt54" ? "GPT 5.4" : "旗舰版"}，5 Credits）`);
         setShowBgmPanel(true);
       }
     } catch (error: any) {
@@ -1005,7 +1005,13 @@ export default function StoryboardPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-yellow-500 text-xs mt-1.5">
-                  {selectedModel === "gpt5" ? "灵感版 每次生成消耗 20 Credits" : selectedModel === "pro" ? "旗舰版 每次生成消耗 15 Credits" : "极速版 每次生成消耗 8 Credits"}
+                  {selectedModel === "gpt54"
+                    ? "GPT 5.4 每次生成消耗 20 Credits"
+                    : selectedModel === "gpt5"
+                        ? "GPT 5.4（兼容档）每次生成消耗 20 Credits"
+                        : selectedModel === "pro"
+                          ? "旗舰版 每次生成消耗 15 Credits"
+                          : "极速版 每次生成消耗 8 Credits"}
                 </p>
               </div>
 
@@ -1316,13 +1322,13 @@ export default function StoryboardPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Select value={recommendBgmModel} onValueChange={(v) => setRecommendBgmModel(v as "pro" | "gpt5")}>
+                      <Select value={recommendBgmModel} onValueChange={(v) => setRecommendBgmModel(v as "pro" | "gpt54")}>
                         <SelectTrigger className="w-[130px] h-8 text-xs bg-background" onClick={(e) => e.stopPropagation()}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="pro">旗舰版</SelectItem>
-                          <SelectItem value="gpt5">灵感版</SelectItem>
+                          <SelectItem value="gpt54">GPT 5.4</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

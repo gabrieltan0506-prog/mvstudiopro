@@ -8,6 +8,8 @@ import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
 const execFileAsync = promisify(execFile);
+const FLYCTL_BIN = process.env.FLYCTL_BIN || path.join(process.env.HOME || "", ".fly/bin/flyctl");
+const FLY_APP_NAME = String(process.env.FLY_APP || "mvstudiopro").trim() || "mvstudiopro";
 
 export type TrendSchedulerState = {
   platform: GrowthPlatform;
@@ -836,6 +838,42 @@ async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<P
   return parsed;
 }
 
+async function runFlyCat(command: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      FLYCTL_BIN,
+      ["ssh", "console", "-a", FLY_APP_NAME, "-C", command],
+      { timeout: 20_000, maxBuffer: 8 * 1024 * 1024 },
+    );
+    const out = String(stdout || "").trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readFlyPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
+  const raw = await runFlyCat(`cat /data/growth/platform-current/${platform}.current.json`);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as PlatformCurrentTruthFile;
+    if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function readFlyTrendStoreFile(): Promise<TrendStoreFile | null> {
+  const raw = await runFlyCat("cat /data/growth/current.json");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as TrendStoreFile;
+  } catch {
+    return null;
+  }
+}
+
 async function readPlatformCurrentTruthStoreFile(): Promise<TrendStoreFile | null> {
   const [meta, archiveIndex, history, summary, manifest] = await Promise.all([
     readRuntimeMeta(),
@@ -1096,8 +1134,14 @@ async function writeJsonAtomic(filePath: string, value: unknown) {
   await fs.rename(tempPath, filePath);
 }
 
-export async function readTrendStore(options?: { preferDerivedFiles?: boolean }): Promise<TrendStoreFile> {
+export async function readTrendStore(options?: { preferDerivedFiles?: boolean; preferFlyLive?: boolean }): Promise<TrendStoreFile> {
   await ensureStoreDir();
+  if (options?.preferFlyLive) {
+    const remote = await readFlyTrendStoreFile();
+    if (remote?.collections && Object.keys(remote.collections).length) {
+      return remote;
+    }
+  }
   if (options?.preferDerivedFiles) {
     const platformTruth = await readPlatformCurrentTruthStoreFile();
     if (platformTruth) return platformTruth;
@@ -1155,12 +1199,35 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean })
 
 export async function readTrendStoreForPlatforms(
   platforms: GrowthPlatform[],
-  options?: { preferDerivedFiles?: boolean },
+  options?: { preferDerivedFiles?: boolean; preferFlyLive?: boolean },
 ): Promise<TrendStoreFile> {
   await ensureStoreDir();
   const uniquePlatforms = Array.from(new Set(platforms.filter(Boolean)));
   const meta = await readRuntimeMeta();
   const history = await readHistorySummaryFile();
+
+  if (options?.preferFlyLive) {
+    const remoteEntries = await Promise.all(
+      uniquePlatforms.map(async (platform) => [platform, await readFlyPlatformCurrentTruthFile(platform)] as const),
+    );
+    const remoteCollections = Object.fromEntries(
+      remoteEntries.filter(([, entry]) => Boolean(entry)).map(([platform, entry]) => [platform, entry!.collection]),
+    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+    if (Object.keys(remoteCollections).length) {
+      return {
+        updatedAt: meta.updatedAt || nowShanghaiIso(),
+        collections: remoteCollections,
+        scheduler: meta.scheduler || {},
+        archiveIndex: [],
+        history: history || createEmptyHistoryState(),
+        backfill: meta.backfill || createEmptyStore().backfill,
+        backfillLive: meta.backfillLive || createEmptyStore().backfillLive,
+        backfillHistory: meta.backfillHistory || createEmptyStore().backfillHistory,
+        mailDigest: meta.mailDigest || {},
+        truthSource: "platform-current",
+      } as TrendStoreFile;
+    }
+  }
 
   if (options?.preferDerivedFiles) {
     const truthEntries = await Promise.all(
