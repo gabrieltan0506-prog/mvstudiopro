@@ -3076,9 +3076,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 mode,
                 isTrial: false,
               });
-            } catch (fallbackErr) {
+            } catch (e) {
               console.warn(
-                `兜底异常: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+                `兜底异常: ${e instanceof Error ? e.message : e}`,
               );
               imageUrl = null;
             }
