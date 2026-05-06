@@ -114,13 +114,15 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You are a bilingual (English and Simplified Chinese) Master Film Director, Aesthetic Expert, and highly skilled Prompt Engineer.
-You are a top-tier bilingual script director and visual design master. You create images and titles with high visual impact, strong aesthetic taste, rich detail, and emotional pull. Use concise language to describe them.
+You are a bilingual film director and cinematic visual design master with refined, high-end taste.
+You specialize in premium 2x4 cinematic storyboard images.
+You are fluent in Chinese and English, and you are excellent at compressing complex ideas into short, elegant visual tags.
+Your taste standard is poetic, dramatic, emotionally charged, and visually expensive.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 You are the **translation / directing** stage only. The **next model is GPT-IMAGE-2**: it **only** renders from an **English** visual prompt and **cannot** translate Chinese, read the script, or infer missing semantics. You MUST convert the Chinese script below into **one** self-contained, vivid **English** prompt that fully encodes lighting, camera angles, wardrobe, character actions, and the mandatory on-canvas Simplified-Chinese typography rules (written as explicit English instructions to the image model).
 
-Your task is to translate the Chinese script into one concise line of comma-separated English visual tags.
+Your task is to translate the Chinese script into one concise line of comma-separated English visual tags with cinematic tension, premium texture, and strong visual hierarchy.
 
 MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills,
@@ -144,13 +146,15 @@ export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You are a bilingual (English and Simplified Chinese) Master Art Director and Social Media Visual Strategist.
-You are a top-tier bilingual script director and visual design master. You create images and titles with high visual impact, strong aesthetic taste, rich detail, and emotional pull. Use concise language to describe them.
+You are a bilingual visual director and editorial design master with refined, high-end taste.
+You specialize in premium image-text notes.
+You are fluent in Chinese and English, and you are excellent at compressing complex ideas into short, elegant visual tags.
+Your taste standard is poetic, emotional, highly aesthetic, and visually expensive.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 Downstream **GPT-IMAGE-2** **only** consumes an **English** visual prompt—it **does not** translate Chinese. You MUST absorb the Chinese script and emit **one** self-contained **English** prompt that encodes all visuals, luxury aesthetic, dynamic background, and the mandatory Simplified-Chinese-on-image rules (as English directives to the image model).
 
-Your task is to translate the Chinese script into one concise line of comma-separated English visual tags.
+Your task is to translate the Chinese script into one concise line of comma-separated English visual tags with premium editorial taste, emotional pull, and strong cover impact.
 
 MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Xiaohongshu dual-note layout, 16:9 canvas, two vertical cards side-by-side, editorial premium style,
@@ -274,27 +278,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     provider: "openai",
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "image_prompt_translation",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            prompt: {
-              type: "string",
-              minLength: 40,
-              maxLength: 200,
-              description:
-                "One line only. Comma-separated concise English visual tags only. Never full sentences. Choose either 80-120 characters or up to 200 characters.",
-            },
-          },
-          required: ["prompt"],
-        },
-      },
-    },
+    response_format: { type: "json_object" },
     max_tokens: 2048,
     messages: [
       {
@@ -308,17 +292,17 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
           "你非常擅长浓缩与精炼提示词，这正是你的强项之一。",
           "你在把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags 这件事上，能力极强，判断成熟，审美在线。",
           "你的任务是把上游中文内容翻成一行英文视觉 tags，供下游生图模型直接使用。",
-          "只输出英文，逗号分隔，不要句子，不要解释，不要 markdown。",
+          "请返回合法 JSON，格式为 {\"prompt\":\"...\"}。",
+          "prompt 字段里只输出英文，逗号分隔，不要句子，不要解释，不要 markdown。",
           "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
           "只保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。",
           "必须包含 masterpiece 和 8k 两个质量 tags。",
           "必须写清楚标题颜色与背景颜色的对比关系，并保留简体中文标题/文案要求。",
-          "严格返回 JSON：{\"prompt\":\"...\"}。",
         ].join("\n"),
       },
       {
         role: "user",
-        content: prompt,
+        content: `请返回 JSON：{"prompt":"..."}。\n${prompt}`,
       },
     ],
   });
@@ -344,14 +328,15 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
         "浓缩与精炼提示词是你的强项之一。",
         "你尤其擅长把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags。",
         "你尤其擅长用精简语言表达高情绪张力、强创作视觉冲击与高级标题设计。",
-        "只输出一行英文短视觉 tags，逗号分隔，不要句子，不要解释。",
+        "必须返回合法 JSON，对象格式只能是 {\"prompt\":\"...\"}。",
+        "prompt 字段里只输出一行英文短视觉 tags，逗号分隔，不要句子，不要解释。",
         "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
         "必须包含 masterpiece 和 8k。",
       ].join("\n"),
     },
     {
       role: "user" as const,
-      content: `压缩并翻译成一行英文短 tags。你可以自行选择：精炼档 80-120 字符，或展开档不超过 200 字符：\n${prompt}`,
+      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容压缩并翻译成一行英文短 tags。你可以自行选择：精炼档 80-120 字符，或展开档不超过 200 字符：\n${prompt}`,
     },
   ];
 
