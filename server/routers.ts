@@ -2946,7 +2946,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             const updated = await database
               .update(userCreations)
               .set({
-                metadata: sql<string>`(jsonb_set(coalesce(${userCreations.metadata}::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
+                metadata: sql<string>`(jsonb_set(coalesce((${userCreations.metadata})::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
                 updatedAt: new Date(),
               })
               .where(
@@ -3039,6 +3039,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const ctxStr = String(input.context || "").trim();
         const copywriting = ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook;
         const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
+        /** 與批量 `flowLog` 同型，確保 `condenseImagePromptIfNeeded` + `appendImageFlowLog` 路徑一致 */
+        const topicImageCondenseLog: string[] = [];
 
         let imageUrl: string | null = null;
         try {
@@ -3049,15 +3051,20 @@ ${JSON.stringify(platformEvidence, null, 2)}
               variant: isGraphic ? "graphic" : "video",
             });
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
-            const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || copywriting);
+            const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || copywriting, topicImageCondenseLog);
             imageUrl = await generateGptImage2FromRawEnglishPrompt({
               englishPrompt: safePrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_reference",
             });
           } catch (e: unknown) {
+            if (topicImageCondenseLog.length > 0) {
+              console.warn(
+                `[mvAnalysis.generateTopicImage] condenseImagePromptIfNeeded flowLog:\n${topicImageCondenseLog.join("\n")}`,
+              );
+            }
             console.warn(
-              `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} Gemini→英文失败:`,
+              `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败（含 Gemini / 智能提炼 / GPT-IMAGE-2）:`,
               e instanceof Error ? e.message : e,
             );
           }
@@ -3204,6 +3211,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
+        /** jobs120：併發降級鎖定 — graphic 2 路、video 1 路，經 mapWithPool 第二參數傳入 */
         const pool = input.platformType === "graphic" ? 2 : 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
 

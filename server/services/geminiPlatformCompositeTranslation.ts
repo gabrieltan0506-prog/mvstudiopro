@@ -7,7 +7,7 @@ const SCRIPT_SLICE = 3500;
 
 /**
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
- * jobs118：锁死 100 词「抄作业」约束（范例缩短、收尾句为「仅输出 100 词内…」）。
+ * jobs118/jobs120：已 export；格式與批量/單幀 Prompt 構造器末尾拼接保持一致。
  */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
