@@ -18,21 +18,20 @@ const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【抄作业范例 / EXAMPLE FORMAT】:
 Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night. Realistic wuxia style, cold blue and warm orange lighting. Panels feature: grand gates, male warrior in black armor, woman in red dress with black cloak, bloody wooden box, hand holding bloody seal cloth. Chinese text tables below each image. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
 
-请完全模仿上述范例的极简结构，将当前的中文剧本转化为 100 词以内的纯英文视觉 Tag。
+请完全模仿上述范例的极简结构，将当前内容转化为纯英文视觉 Tag。
 `.trim();
 
 /** 视频分镜 2×4：Gemini 双语编导翻译 → 英文指令；出图端为 GPT-IMAGE-2 横版尺寸序列 */
 export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
-  return `
+  return (
+    `
 You are a bilingual (English and Simplified Chinese) Master Film Director, Aesthetic Expert, and highly skilled Prompt Engineer.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 You are the **translation / directing** stage only. The **next model is GPT-IMAGE-2**: it **only** renders from an **English** visual prompt and **cannot** translate Chinese, read the script, or infer missing semantics. You MUST convert the Chinese script below into **one** self-contained, vivid **English** prompt that fully encodes lighting, camera angles, wardrobe, character actions, and the mandatory on-canvas Simplified-Chinese typography rules (written as explicit English instructions to the image model).
 
 Your task is to analyze the provided Chinese script, synthesize lighting, camera, wardrobe, and character beats, and compress them into comma-separated English **tags** only (never prose paragraphs).
-
-${MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}
 
 MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills,
@@ -44,21 +43,23 @@ MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 
 [Chinese Script]:
 ${slice}
-`.trim();
+`.trim() +
+    "\n\n" +
+    MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT
+  );
 }
 
 /** 小红书图文 2×4：Gemini 双语编导 → 英文；GPT-IMAGE-2 只按英文出图 */
 export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
-  return `
+  return (
+    `
 You are a bilingual (English and Simplified Chinese) Master Art Director and Social Media Visual Strategist.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 Downstream **GPT-IMAGE-2** **only** consumes an **English** visual prompt—it **does not** translate Chinese. You MUST absorb the Chinese script and emit **one** self-contained **English** prompt that encodes all visuals, luxury aesthetic, dynamic background, and the mandatory Simplified-Chinese-on-image rules (as English directives to the image model).
 
 Your task is to analyze the Chinese script and extract visuals into comma-separated English **tags** only (never prose paragraphs).
-
-${MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}
 
 MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Cinematic 2x4 grid Xiaohongshu visual note layout, 16:9 canvas, 2k high resolution, magazine editorial style, masterpiece, two vertical cards side-by-side, 2x4 cinematic matrix,
@@ -70,7 +71,10 @@ MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 
 [Chinese Script]:
 ${slice}
-`.trim();
+`.trim() +
+    "\n\n" +
+    MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT
+  );
 }
 
 /** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
@@ -132,13 +136,12 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
     input.variant === "video"
       ? "Required tags must include: vertical 9:16, multi-panel storyboard strip, at least 3 separated frames, gutters between panels, short-form video beats, not single full-bleed poster"
       : "Required tags must include: vertical 9:16, editorial cover-style hero still, luxury focal subject, Xiaohongshu graphic note feel, not multi-panel storyboard grid";
-  return `
+  return (
+    `
 You are a bilingual (English and Simplified Chinese) social media visual strategist and prompt director.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 **GPT-IMAGE-2** consumes **only English**—it cannot translate Chinese. You MUST output **one** line of comma-separated English **visual tags** for a ${input.variant === "video" ? "short-video multi-panel storyboard reference" : "graphic note / cover-style single hero reference"}, with mandatory on-image **Simplified-Chinese** typography encoded as short English tag fragments (not prose).
-
-${MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}
 
 VARIANT + TYPOGRAPHY (tags only, comma-separated):
 - ${variantTags}
@@ -148,7 +151,10 @@ VARIANT + TYPOGRAPHY (tags only, comma-separated):
 ${ctx}
 
 OUTPUT: **Only** the final comma-separated English tag line. No explanations, no markdown.
-`.trim();
+`.trim() +
+    "\n\n" +
+    MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT
+  );
 }
 
 /**
