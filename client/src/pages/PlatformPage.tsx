@@ -2634,7 +2634,8 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
 
-                {platformDashboard && <PlatformIpDimensionGuide />}
+                {/* 3A：選題卡片 Grid 上方 — IP 維度引導（含底部提示） */}
+                {platformDashboard ? <PlatformIpDimensionGuide /> : null}
 
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
@@ -2901,11 +2902,7 @@ export default function PlatformPage() {
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
-                                {regeneratingCoverSceneId === item.id
-                                  ? "单帧重新绘制中..."
-                                  : coverSilentRetryIds.has(item.id)
-                                    ? "检测到异常，正在自动重试补救..."
-                                    : "高定视觉绘制中..."}
+                                {regeneratingCoverSceneId === item.id ? "单帧重新绘制中..." : coverSilentRetryIds.has(item.id) ? "检测到异常，正在自动重试补救..." : "高定视觉绘制中..."}
                               </span>
                             </div>
                           ) : null}

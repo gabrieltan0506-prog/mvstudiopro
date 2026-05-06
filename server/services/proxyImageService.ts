@@ -1,15 +1,52 @@
 import { analyzeStoryboardPanelStats } from "../../shared/storyboardPanelCount.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
+import { callGemini3_1_Pro_AiStudio } from "./geminiPlatformCompositeTranslation.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
-/** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入） */
+/** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入）。jobs120：嚴格陣列校驗，避免非陣列誤傳導致運行時寫入失敗。 */
 export function appendImageFlowLog(log: string[] | undefined, message: string): void {
-  if (!log) return;
+  if (!log || !Array.isArray(log)) return;
   log.push(`${new Date().toISOString()}  ${message}`);
 }
 
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
+
+/** 智能提煉閾值（字元數判斷，非截斷）：超過則觸發 AI Studio 濃縮。 */
+const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
+
+/**
+ * 超長 prompt 時啟動 AI Studio 最多 3 次濃縮；**不對生圖串做 slice 物理截斷**（閾值僅決定是否觸發提煉）。
+ * `log` 與 `appendImageFlowLog` 約定一致；批量任務傳 `flowLog`，單幀可傳空陣列 `[]` 以鎖定相同寫入路徑。
+ */
+export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
+  // 1. 安全邊界（約百詞英語 tag 對應之字元量級；非輸出截斷）
+  if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) return rawPrompt;
+
+  appendImageFlowLog(log, `[Prompt 提炼] 原始长度超标 (${rawPrompt.length})，启动 3 次智能重试机制...`);
+  const condenseTask = `请将以下过长的生图 Prompt 浓缩为 100 个单词以内的英文视觉 Tags (逗号分隔)：\n\n${rawPrompt}`;
+
+  // 2. 嚴格 3 次重試
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
+      const out = condensed.trim();
+      if (out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) {
+        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，字数縮減至: ${out.length}`);
+        return out;
+      }
+      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试结果仍超标 (${out.length})`);
+    } catch (e: unknown) {
+      appendImageFlowLog(
+        log,
+        `[Prompt 提炼] 第 ${i} 次尝试请求失败: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  // 3. 終極報錯（拒絕低品質/超長 prompt 直出）
+  throw new Error("Prompt 提炼连续 3 次失败且长度超标，为保生图质量，任务已中止。");
+}
 
 /**
  * 視覺防禦常數 — **畫內零文字**：標題與文案由前端 / HTML 疊加，gpt-image-2 只出純畫面。
@@ -416,6 +453,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
 
   appendImageFlowLog(L, `[2×4·步骤1] 完成 · 英文 prompt 约 ${prompt.length} 字符（预览）: ${prompt.replace(/\s+/g, " ").slice(0, 180)}…`);
+
+  prompt = await condenseImagePromptIfNeeded(prompt, L);
 
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   appendImageFlowLog(
