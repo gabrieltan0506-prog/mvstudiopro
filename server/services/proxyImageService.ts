@@ -20,10 +20,8 @@ export type ImagePromptStats = {
 };
 
 /** 智能提煉閾值：超過則二次調用 GPT 5.4 壓縮成更短的英文生圖指令。 */
-const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
-const PROMPT_CONDENSE_MAX_WORDS = 150;
-const PROMPT_CONDENSE_MIN_WORDS = 90;
-const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 700;
+const PROMPT_CONDENSE_LENGTH_THRESHOLD = 220;
+const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 220;
 const PROMPT_FINAL_HARD_CHAR_CAP = 220;
 
 function countPromptWords(text: string): number {
@@ -48,11 +46,7 @@ function forceTrimPromptToHardCap(text: string, hardCap = PROMPT_FINAL_HARD_CHAR
  */
 export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
   const originalWords = countPromptWords(rawPrompt);
-  // 1. 安全邊界：只有在词数和字符数都不过长时才直通，避免 700+ 字符 prompt 炸链路
-  if (
-    !rawPrompt ||
-    (originalWords <= PROMPT_CONDENSE_MAX_WORDS && rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT)
-  ) {
+  if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
     const direct = forceTrimPromptToHardCap(rawPrompt);
     if (direct.length !== String(rawPrompt || "").trim().length) {
       appendImageFlowLog(
@@ -71,7 +65,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
     `硬性要求：`,
     `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
-    `2. 总长度控制在 ${PROMPT_CONDENSE_MIN_WORDS}-${PROMPT_CONDENSE_MAX_WORDS} 个英文单词之间，同时尽量压到 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符以内。`,
+    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
     `3. 绝对不能丢失以下关键信息：构图、主体、灯光、镜头气质、平台版式。`,
     `4. 如果原文要求画面中出现简体中文标题、简体中文标签、简体中文文案，必须保留这条硬指令。`,
     `5. 小红书双卡、电影级分镜表、平台封面这类版式要求必须保留。`,
@@ -92,11 +86,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
         bestAttempt = out;
         bestAttemptChars = out.length;
       }
-      if (
-        out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT &&
-        outWords >= PROMPT_CONDENSE_MIN_WORDS &&
-        outWords <= PROMPT_CONDENSE_MAX_WORDS
-      ) {
+      if (out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
         appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
         const forcedOut = forceTrimPromptToHardCap(out);
         if (forcedOut.length !== out.length) {
@@ -122,10 +112,9 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     "将下面这条英文生图指令强制压缩成更短版本。",
     "硬性要求：",
     "1. 只输出一行英文，逗号分隔的短视觉 tags。",
-    `2. 绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
-    `3. 尽量保持在 ${PROMPT_CONDENSE_MIN_WORDS}-${PROMPT_CONDENSE_MAX_WORDS} 个英文单词之间。`,
-    "4. 绝对不要输出完整句子、解释、markdown。",
-    "5. 必须保留：主体、灯光、场景、版式、简体中文标题要求。",
+    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
+    "3. 绝对不要输出完整句子、解释、markdown。",
+    "4. 必须保留：主体、灯光、场景、版式、简体中文标题要求。",
     "",
     bestAttempt,
   ].join("\n");
@@ -217,14 +206,14 @@ function styleForMode(mode: ProxyImageTypographyMode): string {
 
 /**
  * 🛑 視圖解耦最高防禦指令 (Cam4-1)
- * 嚴禁模型在畫面上生成任何文字、數字或浮水印；試讀水印由前端 DOM / CSS 疊加，不得寫入 prompt。
+ * 舊版兜底鏈採用零文字策略；現已放寬給 GRAPHIC / STORYBOARD 生成簡體中文主標。
  */
 export const NO_TEXT_ON_IMAGE_BLOCK = `
 🛑 FATAL ERROR PREVENTION (STRICTLY NO TEXT/TYPOGRAPHY):
-DO NOT render ANY text, letters, numbers, watermarks, spreadsheets, or characters on the image. DO NOT simulate text or documents. The output MUST be a completely clean visual canvas containing ONLY pixels. All readable text will be added later by our system UI.
+DO NOT render ANY text, letters, numbers, watermarks, spreadsheets, or characters on the image. DO NOT simulate text or documents. The output MUST be a completely clean visual canvas containing ONLY pixels.
 `.trim();
 
-/** 與 OhMyGPT gpt-image-2 與 Imagen 兜底：畫內零文字；字由 UI / 報告 HTML 疊加 */
+/** 與 OhMyGPT gpt-image-2 與 Imagen 兜底：GRAPHIC / STORYBOARD 允許簡體中文主標；STRATEGIC 保持無字 */
 export function buildTypographyImagePrompt(options: {
   title: string;
   copywriting: string;
@@ -237,25 +226,40 @@ export function buildTypographyImagePrompt(options: {
   const displayHeading = sliceHeading(title);
   const visualContext = sliceVisualContext(copywriting);
   const stylePrompt = styleForMode(mode);
+  const allowChineseTypography = mode === "GRAPHIC" || mode === "STORYBOARD";
+  const typographyBlock = allowChineseTypography
+    ? [
+        "MANDATORY ON-IMAGE TEXT:",
+        `Render a large, legible Simplified Chinese headline based on: 「${displayHeading}」.`,
+        "Use Simplified Chinese only, high contrast, clean hierarchy, premium editorial composition.",
+        "If any secondary copy is needed, keep it minimal and also in Simplified Chinese.",
+      ].join("\n")
+    : NO_TEXT_ON_IMAGE_BLOCK;
 
   if (forImagenFallback) {
     return [
-      "Professional 9:16 editorial vertical scene — pure visuals only, absolutely no typography on the image.",
-      `VISUAL BRIEF (translate into imagery only; do NOT paint as readable text): ${visualContext}`,
-      `SUBJECT / MOOD ANCHOR (for composition only; do NOT spell as text): ${displayHeading}`,
+      allowChineseTypography
+        ? "Professional 9:16 editorial vertical scene with premium Simplified Chinese title integration."
+        : "Professional 9:16 editorial vertical scene — pure visuals only, absolutely no typography on the image.",
+      allowChineseTypography
+        ? `VISUAL BRIEF: ${visualContext}`
+        : `VISUAL BRIEF (translate into imagery only; do NOT paint as readable text): ${visualContext}`,
+      allowChineseTypography
+        ? `SUBJECT / MOOD ANCHOR: ${displayHeading}`
+        : `SUBJECT / MOOD ANCHOR (for composition only; do NOT spell as text): ${displayHeading}`,
       `STYLE: ${stylePrompt}`,
-      NO_TEXT_ON_IMAGE_BLOCK,
+      typographyBlock,
       "Aspect ratio 9:16 vertical. 8k resolution, masterpiece, no browser or phone UI mockups.",
     ].join("\n");
   }
 
   return `
 Model: GPT-Image-2
-Task: Create a professional 9:16 vertical image — **pure cinematic/editorial visuals only; zero readable characters on the canvas**.
-VISUAL BRIEF (inspiration for pixels only — do NOT render this block as typography): ${visualContext}
-MOOD ANCHOR (for setting & subject only — do NOT write as text): ${displayHeading}
+Task: Create a professional 9:16 vertical image.
+VISUAL BRIEF: ${visualContext}
+MOOD ANCHOR: ${displayHeading}
 STYLE: ${stylePrompt}
-${NO_TEXT_ON_IMAGE_BLOCK}
+${typographyBlock}
 Aspect Ratio: 9:16. 8k resolution, masterpiece.
 `.trim();
 }
@@ -572,6 +576,57 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(L, `[2×4·步骤1] GPT 5.4 translatePlatformCompositeToEnglishPrompt（中文剧本→一条英文视觉指令）…`);
 
+  const runDirectCompositeFallback = async (reason: string): Promise<string | null> => {
+    appendImageFlowLog(L, `[2×4·步骤1] 翻译层不可用，直接切入 Vertex Nano Banana 2 兜底 · 原因: ${reason}`);
+    try {
+      const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
+      if (!isGeminiImageAvailable()) {
+        appendImageFlowLog(
+          L,
+          "[2×4·步骤1b] Vertex 图像不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），无法直接兜底",
+        );
+        throw new Error("Vertex Nano Banana 2 未配置，无法执行 2×4 直接兜底。");
+      }
+      const fallbackPrompt = isStoryboard
+        ? buildStoryboardSheetLandscapePrompt({
+            title: options.title,
+            scriptContext: options.scriptContext,
+            isTrial: options.isTrial,
+            executionDetails: options.executionDetails,
+          })
+        : buildXiaohongshuDualNotePrompt({
+            title: options.title,
+            scriptContext: options.scriptContext,
+            isTrial: options.isTrial,
+            executionDetails: options.executionDetails,
+          });
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤1b] 直接兜底 Prompt 已构建 · chars=${fallbackPrompt.length} · model=gemini-3.1-flash-image-preview`,
+      );
+      const vertexResult = await generateGeminiImage({
+        prompt: String(fallbackPrompt).trim(),
+        quality: "1k",
+        aspectRatio: "16:9",
+        personGeneration: "ALLOW_ADULT",
+      });
+      const fallbackUrl = String(vertexResult?.imageUrl || "").trim();
+      if (!fallbackUrl) {
+        appendImageFlowLog(L, "[2×4·步骤1b] 直接兜底返回空 URL");
+        throw new Error("Vertex Nano Banana 2 直接兜底未返回图像。");
+      }
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤1b] 直接兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+      );
+      return fallbackUrl;
+    } catch (fallbackError: any) {
+      const realError = fallbackError?.message || String(fallbackError);
+      appendImageFlowLog(L, `[2×4·步骤1b] 直接兜底失败: ${realError}`);
+      throw new Error(realError);
+    }
+  };
+
   let prompt: string;
   try {
     const { translatePlatformCompositeToEnglishPrompt } = await import(
@@ -588,7 +643,12 @@ export async function generatePlatformCompositeSheetImage(options: {
       "[proxyImageService] platform composite prompt translation failed:",
       e instanceof Error ? e.message : e,
     );
-    return null;
+    return runDirectCompositeFallback(msg);
+  }
+
+  if (!String(prompt || "").trim()) {
+    appendImageFlowLog(L, "[2×4·步骤1] GPT 5.4 翻译结果为空，直接切入 Vertex Nano Banana 2 兜底");
+    return runDirectCompositeFallback("GPT 5.4 翻译结果为空");
   }
 
   appendImageFlowLog(L, `[2×4·步骤1] 完成 · 英文 prompt 约 ${prompt.length} 字符（预览）: ${prompt.replace(/\s+/g, " ").slice(0, 180)}…`);

@@ -16,7 +16,7 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
 1. 绝对禁止输出完整的英文句子、语法或描述性段落。
 2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
-3. 总字数严格限制在 150 个英文单词以内，且尽量控制在 300 个英文字符以内！超过将导致系统崩溃！
+3. 双轨硬约束：优先主动压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 220 个英文字符。超过将导致系统崩溃。
 4. 必须显式写出有情绪温度的标题视觉策略：高对比、强聚焦、可读的 Simplified Chinese headline。
 5. 必须显式写出背景与标题的配色对撞关系，使用具名英文颜色词，不要只写“warm / cool”.
 
@@ -25,7 +25,7 @@ Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night, realis
 
 6. 绝对不要写成完整英文句子，只能写简短、精要、逗号分隔的英文视觉 tags。
 
-请完全模仿上述范例的极简结构，仅输出 150 词内、300 字符内的英文视觉 Tag，不要生成句子。
+请完全模仿上述范例的极简结构，优先输出 80-140 字符的英文视觉 Tag；如果做不到，也必须控制在 220 字符内，不要生成句子。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -34,6 +34,17 @@ export function stripGeminiModelOutput(raw: string): string {
   const m = t.match(fence);
   if (m?.[1]) t = m[1].trim();
   return t.replace(/^["']|["']$/g, "").trim();
+}
+
+function buildEmergencyEnglishPrompt(task: string): string {
+  const lower = String(task || "").toLowerCase();
+  if (lower.includes("xiaohongshu") || lower.includes("dual-note")) {
+    return "Xiaohongshu dual-note layout, two vertical cards, premium editorial style, warm palette contrast, clean margins, Simplified Chinese title, 2-4 short Simplified Chinese bullets";
+  }
+  if (lower.includes("2x4") || lower.includes("storyboard")) {
+    return "Cinematic 2x4 grid storyboard, dramatic film stills, premium lighting, distinct panels, luxury palette, Simplified Chinese title, Simplified Chinese panel labels, text grid below panels";
+  }
+  return "Editorial cover, premium focal subject, high contrast lighting, luxury palette, legible Simplified Chinese headline, warm title color, dark background contrast";
 }
 
 export async function extractChineseVisualBrief(rawContext: string): Promise<string> {
@@ -277,7 +288,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
               minLength: 40,
               maxLength: 220,
               description:
-                "One line only. Comma-separated concise English visual tags only. Never full sentences. Must stay within 150 English words and within 220 characters.",
+                "One line only. Comma-separated concise English visual tags only. Never full sentences. Prefer 80-140 characters. Hard max 220 characters.",
             },
           },
           required: ["prompt"],
@@ -296,7 +307,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
           "你必须严格返回 JSON：{\"prompt\":\"...\"}。",
           "prompt 字段内容必须是英文，且必须保留对画面中“简体中文标题/文案”的明确英文指令。",
           "如果任务要求 tags，就输出逗号分隔的英文 tags；如果任务要求完整 prompt，也必须压成一行逗号分隔的短 tags，不允许句子。",
-          "第一次翻译阶段必须强制压短：输出必须在 150 个英文单词以内，且绝对不能超过 220 个英文字符。",
+          "第一次翻译阶段必须强制压短：优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 220 个英文字符。",
           "绝对不要生成完整英文句子，只能生成简短、精要、逗号分隔的英文视觉 tags。",
           "优先保留：情绪、灯光、场景、服装、关键道具、镜头感、网格版式。删除分析、解释、长动作描述和叙事句子。",
           "不要遗漏镜头、灯光、构图、气质、材质、版式、简体中文标题要求。",
@@ -322,7 +333,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
 
   const output = String(parsed?.prompt || raw).trim();
   if (output) {
-    return output;
+    return output.slice(0, 220).trim();
   }
 
   const fallbackMessages = [
@@ -333,12 +344,12 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
         "现在不要解释，不要 JSON 外的内容。",
         "只输出一行英文，逗号分隔的短视觉 tags。",
         "绝对不要句子。",
-        "绝对不能超过 220 个英文字符。",
+        "优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 220 个英文字符。",
       ].join("\n"),
     },
     {
       role: "user" as const,
-      content: `压缩并翻译成一行英文短 tags，220 字符内：\n${prompt}`,
+      content: `压缩并翻译成一行英文短 tags，优先 80-140 字符；如果做不到，也必须在 220 字符内：\n${prompt}`,
     },
   ];
 
@@ -363,10 +374,10 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     fallbackParsed?.prompt || fallbackParsed?.output || fallbackParsed?.text || fallbackRaw,
   ).trim();
   if (fallbackOutput) {
-    return fallbackOutput;
+    return fallbackOutput.slice(0, 220).trim();
   }
 
-  throw new Error("GPT 5.4 翻译大脑返回空 prompt");
+  return buildEmergencyEnglishPrompt(prompt).slice(0, 220).trim();
 }
 
 /**
