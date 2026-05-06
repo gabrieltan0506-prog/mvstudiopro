@@ -3116,7 +3116,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
-        const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
+        const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt, extractChineseVisualBrief } = await import(
           "./services/geminiPlatformCompositeTranslation.js",
         );
         const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
@@ -3127,6 +3127,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
         /** 與批量 `flowLog` 同型，確保 `condenseImagePromptIfNeeded` + `appendImageFlowLog` 路徑一致 */
         const topicImageCondenseLog: string[] = [];
+        topicImageCondenseLog.push(`${new Date().toISOString()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`);
+        topicImageCondenseLog.push(`${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(GPT 5.4) → generateGptImage2FromRawEnglishPrompt 9:16`);
+        topicImageCondenseLog.push(`${new Date().toISOString()}  说明: 中文语境仅供 GPT 5.4 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`);
         let promptStats = {
           translatedPromptChars: 0,
           translatedPromptWords: 0,
@@ -3141,18 +3144,28 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: input.topicHook,
-              context: ctxStr,
+              context: (await extractChineseVisualBrief(ctxStr)) || ctxStr,
               variant: isGraphic ? "graphic" : "video",
             });
+            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 调用 GPT 5.4 生成英文 prompt …`);
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
+            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
             const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || copywriting, topicImageCondenseLog);
             promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
+            topicImageCondenseLog.push(
+              `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
+            );
+            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
             imageUrl = await generateGptImage2FromRawEnglishPrompt({
               englishPrompt: safePrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_reference",
+              flowLog: topicImageCondenseLog,
             });
           } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1/2] 主路径异常: ${msg}`);
             if (topicImageCondenseLog.length > 0) {
               console.warn(
                 `[mvAnalysis.generateTopicImage] condenseImagePromptIfNeeded flowLog:\n${topicImageCondenseLog.join("\n")}`,
@@ -3166,13 +3179,20 @@ ${JSON.stringify(platformEvidence, null, 2)}
           if (!imageUrl) {
             try {
               fallbackUsed = true;
+              topicImageCondenseLog.push(
+                `${new Date().toISOString()}  [步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）`,
+              );
               imageUrl = await generateImageGpt2WithImagenFallback({
                 title: title || "Content",
                 copywriting,
                 mode,
                 isTrial: false,
+                flowLog: topicImageCondenseLog,
               });
             } catch (e) {
+              topicImageCondenseLog.push(
+                `${new Date().toISOString()}  [步骤3] 兜底异常: ${e instanceof Error ? e.message : String(e)}`,
+              );
               console.warn(
                 `兜底异常: ${e instanceof Error ? e.message : e}`,
               );
@@ -3185,6 +3205,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         if (!imageUrl) {
+          topicImageCondenseLog.push(`${new Date().toISOString()}  ✗ 本条结束：仍无 URL`);
           if (creationIdOut != null && database) {
             try {
               await database
@@ -3211,9 +3232,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
             url: null,
             freeRetryApplied: isFreeRetry,
             creationId: creationIdOut,
+            imageGenFlowLog: topicImageCondenseLog,
+            imagePromptStats: promptStats,
+            fallbackUsed,
           };
         }
 
+        topicImageCondenseLog.push(`${new Date().toISOString()}  ✓ 本条结束：已得到 imageUrl`);
         const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
         if (creationIdOut != null && database) {
           try {
@@ -3242,6 +3267,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           url: imageUrl,
           freeRetryApplied: isFreeRetry,
           creationId: creationIdOut,
+          imageGenFlowLog: topicImageCondenseLog,
           imagePromptStats: promptStats,
           fallbackUsed,
         };
@@ -3304,6 +3330,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const {
           buildPlatformTopicReferenceGeminiTask,
           callGemini31ProForImagePrompt,
+          extractChineseVisualBrief,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
@@ -3314,8 +3341,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
         } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        /** jobs120：併發降級鎖定 — graphic 2 路、video 1 路，經 mapWithPool 第二參數傳入 */
-        const pool = input.platformType === "graphic" ? 2 : 1;
+        /** 再次降级：graphic 1 路、video 1 路，避免同时两张封面把翻译/生图链顶爆 */
+        const pool = 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
 
         const drizzleDb = await db.getDb();
@@ -3370,7 +3397,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: s.title,
-              context: body,
+              context: (await extractChineseVisualBrief(body)) || body,
               variant: geminiVariant,
             });
             appendImageFlowLog(flowLog, "[步骤1] 调用 GPT 5.4 生成英文 prompt …");

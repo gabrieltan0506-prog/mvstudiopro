@@ -482,6 +482,18 @@ type PlatformImageGenFlowSnapshot = {
   meta?: Record<string, unknown>;
 };
 
+function upsertPlatformImageFlowSnapshot(
+  prev: PlatformImageGenFlowSnapshot[],
+  next: PlatformImageGenFlowSnapshot,
+): PlatformImageGenFlowSnapshot[] {
+  const opId = String(next.meta?.localOpId || "").trim();
+  if (!opId) {
+    return [next, ...prev].slice(0, 8);
+  }
+  const withoutSameOp = prev.filter((item) => String(item.meta?.localOpId || "").trim() !== opId);
+  return [next, ...withoutSameOp].slice(0, 8);
+}
+
 /** 失敗時寫入 Debug 綠框，便于对照 Network / 服务端日志 */
 function linesFromClientMutationFailure(prefix: string, err: unknown): string[] {
   const lines = [`${prefix} · ${new Date().toISOString()}`];
@@ -588,6 +600,9 @@ export default function PlatformPage() {
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
   /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
   const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<Set<string>>(() => new Set());
+  /** 一键封面：前端异步逐张生成（单张串行） */
+  const [batchGeneratingCoverIds, setBatchGeneratingCoverIds] = useState<Set<string>>(() => new Set());
+  const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -679,7 +694,27 @@ export default function PlatformPage() {
   });
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
-    onSuccess: (res, variables) => {
+    onMutate: (variables) => {
+      const localOpId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setPlatformImageGenFlowSnapshots((prev) =>
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "batch_topic_frames",
+          lines: [
+            `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
+            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. GPT 5.4 翻译英文 tags → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+          ],
+          meta: {
+            localOpId,
+            platformType: variables.platformType,
+            sceneCount: variables.scenes.length,
+            pending: true,
+          },
+        }),
+      );
+      return { localOpId };
+    },
+    onSuccess: async (res, variables, ctx) => {
       setPlatformImageMap((prev) => {
         const next = { ...prev };
         for (const r of res.results) {
@@ -696,6 +731,7 @@ export default function PlatformPage() {
         return next;
       });
 
+      let retryRecovered = 0;
       for (const r of res.results) {
         const u = String(r.url ?? "").trim().toLowerCase();
         const bad = !r.url || !String(r.url).trim() || u.includes("timeout") || u.includes("error");
@@ -706,58 +742,240 @@ export default function PlatformPage() {
         const topicHook = String(scene.title || "").trim().slice(0, 500);
         if (!topicHook) continue;
         const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
-        autoRetryTopicImageMutation.mutate({
-          topicHook,
-          format: variables.platformType === "video" ? "短视频" : "图文",
-          context: ctxBody,
-          failedJobId: String(cid),
-          sceneId: r.id,
-        });
+        try {
+          const retried = await autoRetryTopicImageMutation.mutateAsync({
+            topicHook,
+            format: variables.platformType === "video" ? "短视频" : "图文",
+            context: ctxBody,
+            failedJobId: String(cid),
+            sceneId: r.id,
+          });
+          const recoveredUrl = String(retried.imageUrl ?? (retried as { url?: string | null }).url ?? "").trim();
+          if (recoveredUrl) {
+            retryRecovered += 1;
+          }
+        } catch (err) {
+          console.warn(`[PlatformPage] batch auto retry failed for ${r.id}:`, err);
+        }
       }
-      const ok = res.results.filter((r) => r.url && String(r.url).trim()).length;
+      const ok = res.results.filter((r) => r.url && String(r.url).trim()).length + retryRecovered;
       const label = "图文封面参考";
-      toast.success(`已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
+      toast.success(
+        `已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}${retryRecovered > 0 ? ` · 自动补救 ${retryRecovered} 张` : ""}`,
+      );
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
       const meta = (res as { imageGenMeta?: Record<string, unknown> }).imageGenMeta;
       if (Array.isArray(lines) && lines.length > 0) {
         setPlatformImageGenFlowSnapshots((prev) =>
-          [
-            {
-              at: new Date().toISOString(),
-              kind: "batch_topic_frames" as const,
-              lines,
-              meta,
+          upsertPlatformImageFlowSnapshot(prev, {
+            at: new Date().toISOString(),
+            kind: "batch_topic_frames" as const,
+            lines,
+            meta: {
+              ...(meta || {}),
+              localOpId: ctx?.localOpId,
             },
-            ...prev,
-          ].slice(0, 8),
+          }),
         );
       }
     },
-    onError: (err) => {
+    onError: (err, variables, ctx) => {
       console.error("[PlatformPage] generateAllPlatformTopicImages failed:", err);
       toast.error(err.message || "批量生图失败");
       setPlatformImageGenFlowSnapshots((prev) =>
-        [
-          {
-            at: new Date().toISOString(),
-            kind: "batch_topic_frames_failed" as const,
-            lines: linesFromClientMutationFailure(`[客户端] 批量单帧 mutation 失败 · platformType=graphic`, err),
-            meta: { platformType: "graphic" as const },
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "batch_topic_frames_failed" as const,
+          lines: linesFromClientMutationFailure(`[客户端] 批量单帧 mutation 失败 · platformType=${variables.platformType}`, err),
+          meta: {
+            localOpId: ctx?.localOpId,
+            platformType: variables.platformType,
           },
-          ...prev,
-        ].slice(0, 8),
+        }),
       );
     },
   });
 
   /** 用户手动「重新生成」封面 */
   const regenerateTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation();
+  const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const COVER_BATCH_MIN_START_INTERVAL_MS = 30_000;
+  const platformImageRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const platformImageLastStartAtRef = useRef(0);
+  const runThrottledPlatformImageRequest = useCallback(
+    async (
+      label: string,
+      fn: () => Promise<any>,
+      onWait?: (waitMs: number) => void,
+    ) => {
+      const previous = platformImageRequestQueueRef.current;
+      let releaseQueue = () => {};
+      platformImageRequestQueueRef.current = new Promise<void>((resolve) => {
+        releaseQueue = resolve;
+      });
+      await previous;
+      try {
+        const now = Date.now();
+        const waitMs = Math.max(0, COVER_BATCH_MIN_START_INTERVAL_MS - (now - platformImageLastStartAtRef.current));
+        if (waitMs > 0) {
+          onWait?.(waitMs);
+          await sleep(waitMs);
+        }
+        platformImageLastStartAtRef.current = Date.now();
+        return await fn();
+      } finally {
+        releaseQueue();
+      }
+    },
+    [],
+  );
+
+  const runSequentialCoverBatchGeneration = async (
+    scenes: Array<{ id: string; title: string; text: string }>,
+  ) => {
+    const localOpId = `batch-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setIsSequentialCoverBatchGenerating(true);
+    setPlatformImageGenFlowSnapshots((prev) =>
+      upsertPlatformImageFlowSnapshot(prev, {
+        at: new Date().toISOString(),
+        kind: "batch_topic_frames",
+        lines: [
+          `${new Date().toISOString()}  [客户端] 异步逐张封面生成已发起 · sceneCount=${scenes.length} · concurrency=1`,
+          `${new Date().toISOString()}  [预估步骤] 单张循环：中文骨架 → GPT 5.4 英文 tags → Prompt 提炼 → GPT-IMAGE-2 主路径 → Nano Banana 2 / Vertex 兜底`,
+        ],
+        meta: {
+          localOpId,
+          platformType: "graphic",
+          sceneCount: scenes.length,
+          concurrency: 1,
+          pending: true,
+        },
+      }),
+    );
+
+    let successCount = 0;
+    const liveLines: string[] = [];
+    for (const scene of scenes) {
+      setBatchGeneratingCoverIds((prev) => new Set(prev).add(scene.id));
+      liveLines.push(`${new Date().toISOString()}  [客户端] 开始单张生成 · sceneId=${scene.id}`);
+      setPlatformImageGenFlowSnapshots((prev) =>
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "batch_topic_frames",
+          lines: [...liveLines],
+          meta: {
+            localOpId,
+            platformType: "graphic",
+            sceneCount: scenes.length,
+            concurrency: 1,
+            currentSceneId: scene.id,
+            successCount,
+            pending: true,
+          },
+        }),
+      );
+      try {
+        const result = await runThrottledPlatformImageRequest(
+          `cover:${scene.id}`,
+          () =>
+            regenerateTopicImageMutation.mutateAsync({
+              topicHook: String(scene.title || "").trim().slice(0, 500),
+              format: "图文",
+              context: String(scene.text || "").trim().slice(0, 8000),
+              sceneId: scene.id,
+            }),
+          (waitMs) => {
+            liveLines.push(
+              `${new Date().toISOString()}  [客户端] 节流等待 ${Math.ceil(waitMs / 1000)} 秒 · 保证 60 秒最多 2 次请求 · sceneId=${scene.id}`,
+            );
+            setPlatformImageGenFlowSnapshots((prev) =>
+              upsertPlatformImageFlowSnapshot(prev, {
+                at: new Date().toISOString(),
+                kind: "batch_topic_frames",
+                lines: [...liveLines],
+                meta: {
+                  localOpId,
+                  platformType: "graphic",
+                  sceneCount: scenes.length,
+                  concurrency: 1,
+                  currentSceneId: scene.id,
+                  successCount,
+                  pending: true,
+                },
+              }),
+            );
+          },
+        );
+        const out = String(result.imageUrl ?? (result as { url?: string | null }).url ?? "").trim();
+        if (out) {
+          successCount += 1;
+          setPlatformImageMap((prev) => ({ ...prev, [scene.id]: out }));
+          if (result.creationId != null) {
+            setSceneJobIds((prev) => ({ ...prev, [scene.id]: String(result.creationId) }));
+          }
+          liveLines.push(`${new Date().toISOString()}  ✓ 单张完成 · sceneId=${scene.id}`);
+        } else {
+          liveLines.push(`${new Date().toISOString()}  ✗ 单张无图 · sceneId=${scene.id}`);
+        }
+      } catch (err) {
+        liveLines.push(
+          `${new Date().toISOString()}  ✗ 单张异常 · sceneId=${scene.id} · ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        setBatchGeneratingCoverIds((prev) => {
+          const next = new Set(prev);
+          next.delete(scene.id);
+          return next;
+        });
+      }
+    }
+
+    setIsSequentialCoverBatchGenerating(false);
+    setPlatformImageGenFlowSnapshots((prev) =>
+      upsertPlatformImageFlowSnapshot(prev, {
+        at: new Date().toISOString(),
+        kind: "batch_topic_frames",
+        lines: [
+          ...liveLines,
+          `${new Date().toISOString()}  [客户端] 异步逐张封面生成结束 · success=${successCount}/${scenes.length}`,
+        ],
+        meta: {
+          localOpId,
+          platformType: "graphic",
+          sceneCount: scenes.length,
+          concurrency: 1,
+          successCount,
+          pending: false,
+        },
+      }),
+    );
+    toast.success(`已生成 ${successCount}/${scenes.length} 张图文封面单帧（共消耗 ${platformBulkGraphicCost} 点）`);
+  };
 
   const generatePlatformCompositeSheetMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
     onMutate: (input) => {
       setPendingCompositeSheet({ sceneId: input.sceneId, kind: input.kind });
+      const localOpId = `composite-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setPlatformImageGenFlowSnapshots((prev) =>
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "composite_2x4",
+          lines: [
+            `${new Date().toISOString()}  [客户端] 2×4 合成已发起 · sceneId=${input.sceneId} · kind=${input.kind}`,
+            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. GPT 5.4 翻译英文 tags → 3. Prompt 提炼 → 4. GPT-IMAGE-2 横版主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+          ],
+          meta: {
+            localOpId,
+            apiKind: input.kind,
+            sceneId: input.sceneId,
+            title: input.title?.slice(0, 80),
+            pending: true,
+          },
+        }),
+      );
+      return { localOpId };
     },
-    onSuccess: (res, variables) => {
+    onSuccess: (res, variables, ctx) => {
       if (!res.imageUrl) return;
       if (variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape") {
         setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
@@ -772,42 +990,37 @@ export default function PlatformPage() {
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
       if (Array.isArray(lines) && lines.length > 0) {
         setPlatformImageGenFlowSnapshots((prev) =>
-          [
-            {
-              at: new Date().toISOString(),
-              kind: "composite_2x4" as const,
-              lines,
-              meta: {
-                apiKind: variables.kind,
-                sceneId: variables.sceneId,
-                title: variables.title?.slice(0, 80),
-              },
+          upsertPlatformImageFlowSnapshot(prev, {
+            at: new Date().toISOString(),
+            kind: "composite_2x4" as const,
+            lines,
+            meta: {
+              localOpId: ctx?.localOpId,
+              apiKind: variables.kind,
+              sceneId: variables.sceneId,
+              title: variables.title?.slice(0, 80),
             },
-            ...prev,
-          ].slice(0, 8),
+          }),
         );
       }
     },
-    onError: (error, variables) => {
+    onError: (error, variables, ctx) => {
       toast.error("双核引擎异常，已退回 16 积分。请查閱 Debug 面板。");
 
       const errorLogEntry = `[${new Date().toLocaleTimeString()}] ❌ 2x4 合成失败 (Global 节点): \n${String((error as { message?: unknown })?.message ?? "")}`;
 
       setPlatformImageGenFlowSnapshots((prev) => {
-        const updated = [
-          ...(prev || []),
-          {
-            at: new Date().toISOString(),
-            kind: "composite_2x4_failed" as const,
-            lines: [errorLogEntry],
-            meta: {
-              apiKind: variables.kind,
-              sceneId: variables.sceneId,
-              title: variables.title?.slice(0, 80),
-            },
+        return upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "composite_2x4_failed" as const,
+          lines: [errorLogEntry],
+          meta: {
+            localOpId: ctx?.localOpId,
+            apiKind: variables.kind,
+            sceneId: variables.sceneId,
+            title: variables.title?.slice(0, 80),
           },
-        ];
-        return updated.slice(-8);
+        });
       });
     },
     onSettled: () => setPendingCompositeSheet(null),
@@ -2524,7 +2737,7 @@ export default function PlatformPage() {
                       <button
                         type="button"
                         disabled={
-                          generateAllPlatformImagesMutation.isPending ||
+                          isSequentialCoverBatchGenerating ||
                           isDashboardLoading ||
                           isContentLoading ||
                           !isAuthenticated ||
@@ -2550,20 +2763,16 @@ export default function PlatformPage() {
                             ? ""
                             : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
                           if (!supervisorAccess && !window.confirm(discountNote)) return;
-                          generateAllPlatformImagesMutation.mutate({
-                            jobId: analysisJobId || undefined,
-                            platformType: "graphic",
-                            scenes,
-                          });
+                          void runSequentialCoverBatchGeneration(scenes);
                         }}
                         className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
                       >
-                        {generateAllPlatformImagesMutation.isPending ? (
+                        {isSequentialCoverBatchGenerating ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Sparkles className="h-4 w-4" />
                         )}
-                        {generateAllPlatformImagesMutation.isPending
+                        {isSequentialCoverBatchGenerating
                           ? "正在生成图文封面单帧…"
                           : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
                       </button>
@@ -2754,8 +2963,8 @@ export default function PlatformPage() {
                           if (!supervisorAccess && !window.confirm(confirmNote)) return;
                         }
                         setRegeneratingCoverSceneId(item.id);
-                        regenerateTopicImageMutation.mutate(
-                          {
+                        void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, () =>
+                          regenerateTopicImageMutation.mutateAsync({
                             topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
                             context: buildPlatformSceneText({
@@ -2773,38 +2982,36 @@ export default function PlatformPage() {
                             }),
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
-                          },
-                          {
-                            onSuccess: (res) => {
-                              const finalUrl =
-                                res.imageUrl ?? (res as { url?: string | null }).url ?? null;
-                              if (res.creationId != null) {
-                                setSceneJobIds((prev) => ({
-                                  ...prev,
-                                  [item.id]: String(res.creationId),
-                                }));
-                              }
-                              if (res.success && finalUrl) {
-                                setPlatformImageMap((prev) => ({
-                                  ...prev,
-                                  [item.id]: finalUrl,
-                                }));
-                                toast.success(
-                                  isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
-                                );
-                              } else {
-                                toast.error(
-                                  "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
-                                );
-                              }
-                              setRegeneratingCoverSceneId(null);
-                            },
-                            onError: (err) => {
-                              setRegeneratingCoverSceneId(null);
-                              toast.error(err.message || "操作失败");
-                            },
-                          },
-                        );
+                          }),
+                        )
+                          .then((res) => {
+                            const finalUrl =
+                              res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+                            if (res.creationId != null) {
+                              setSceneJobIds((prev) => ({
+                                ...prev,
+                                [item.id]: String(res.creationId),
+                              }));
+                            }
+                            if (res.success && finalUrl) {
+                              setPlatformImageMap((prev) => ({
+                                ...prev,
+                                [item.id]: finalUrl,
+                              }));
+                              toast.success(
+                                isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
+                              );
+                            } else {
+                              toast.error(
+                                "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
+                              );
+                            }
+                            setRegeneratingCoverSceneId(null);
+                          })
+                          .catch((err) => {
+                            setRegeneratingCoverSceneId(null);
+                            toast.error(err.message || "操作失败");
+                          });
                       };
                       const queueSilentImageLoadRetry = () => {
                         if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
@@ -2966,7 +3173,7 @@ export default function PlatformPage() {
                                     type="button"
                                     disabled={
                                       !isAuthenticated ||
-                                      generateAllPlatformImagesMutation.isPending ||
+                                      isSequentialCoverBatchGenerating ||
                                       regenerateTopicImageMutation.isPending ||
                                       compositeMutationBusy ||
                                       isDashboardLoading ||
@@ -2996,13 +3203,14 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : (regeneratingCoverSceneId === item.id ||
-                              generateAllPlatformImagesMutation.isPending ||
+                              isSequentialCoverBatchGenerating ||
+                              batchGeneratingCoverIds.has(item.id) ||
                               coverSilentRetryIds.has(item.id)) &&
                             !platformImageMap[item.id] ? (
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
-                                {regeneratingCoverSceneId === item.id ? "单帧重新绘制中..." : coverSilentRetryIds.has(item.id) ? "检测到异常，正在自动重试补救..." : "高定视觉绘制中..."}
+                                {regeneratingCoverSceneId === item.id ? "单帧重新绘制中..." : coverSilentRetryIds.has(item.id) ? "检测到异常，正在自动重试补救..." : batchGeneratingCoverIds.has(item.id) ? "异步逐张生成中..." : "高定视觉绘制中..."}
                               </span>
                             </div>
                           ) : null}
@@ -3037,15 +3245,17 @@ export default function PlatformPage() {
                                   ? ""
                                   : `将消耗 ${compositeCost} 积分，主路径 GPT-IMAGE-2，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
-                                generatePlatformCompositeSheetMutation.mutate({
-                                  sceneId: item.id,
-                                  title: item.title,
-                                  scriptContext: buildPlatformSheetScriptContext(item as any),
-                                  kind: compositeKind,
-                                  jobId: analysisJobId || undefined,
-                                  executionDetails: buildPlatformExecutionDetailsPayload(item as any),
-                                  creationRecordId: readOptionalReportBindingCreationId(),
-                                });
+                                void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
+                                  generatePlatformCompositeSheetMutation.mutateAsync({
+                                    sceneId: item.id,
+                                    title: item.title,
+                                    scriptContext: buildPlatformSheetScriptContext(item as any),
+                                    kind: compositeKind,
+                                    jobId: analysisJobId || undefined,
+                                    executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                                    creationRecordId: readOptionalReportBindingCreationId(),
+                                  }),
+                                ).catch(() => {});
                               }}
                               className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition ${compositeColorClass} ${
                                 compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""

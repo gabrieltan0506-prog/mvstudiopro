@@ -6,6 +6,7 @@ import { extractJsonString, invokeLLM } from "../_core/llm.js";
  */
 
 const SCRIPT_SLICE = 3500;
+const CHINESE_VISUAL_BRIEF_MAX_CHARS = 220;
 
 /**
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
@@ -15,7 +16,7 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
 1. 绝对禁止输出完整的英文句子、语法或描述性段落。
 2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
-3. 总字数严格限制在 150 个英文单词以内，且尽量控制在 650 个英文字符以内！超过将导致系统崩溃！
+3. 双轨硬约束：优先主动压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 220 个英文字符。超过将导致系统崩溃。
 4. 必须显式写出有情绪温度的标题视觉策略：高对比、强聚焦、可读的 Simplified Chinese headline。
 5. 必须显式写出背景与标题的配色对撞关系，使用具名英文颜色词，不要只写“warm / cool”.
 
@@ -24,7 +25,7 @@ Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night, realis
 
 6. 绝对不要写成完整英文句子，只能写简短、精要、逗号分隔的英文视觉 tags。
 
-请完全模仿上述范例的极简结构，仅输出 150 词内、650 字符内的英文视觉 Tag，不要生成句子。
+请完全模仿上述范例的极简结构，优先输出 80-140 字符的英文视觉 Tag；如果做不到，也必须控制在 220 字符内，不要生成句子。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -33,6 +34,79 @@ export function stripGeminiModelOutput(raw: string): string {
   const m = t.match(fence);
   if (m?.[1]) t = m[1].trim();
   return t.replace(/^["']|["']$/g, "").trim();
+}
+
+function buildEmergencyEnglishPrompt(task: string): string {
+  const lower = String(task || "").toLowerCase();
+  if (lower.includes("xiaohongshu") || lower.includes("dual-note")) {
+    return "Xiaohongshu dual-note layout, two vertical cards, premium editorial style, warm palette contrast, clean margins, Simplified Chinese title, 2-4 short Simplified Chinese bullets";
+  }
+  if (lower.includes("2x4") || lower.includes("storyboard")) {
+    return "Cinematic 2x4 grid storyboard, dramatic film stills, premium lighting, distinct panels, luxury palette, Simplified Chinese title, Simplified Chinese panel labels, text grid below panels";
+  }
+  return "Editorial cover, premium focal subject, high contrast lighting, luxury palette, legible Simplified Chinese headline, warm title color, dark background contrast";
+}
+
+export async function extractChineseVisualBrief(rawContext: string): Promise<string> {
+  const slice = String(rawContext || "").trim().slice(0, SCRIPT_SLICE);
+  if (!slice) return "";
+
+  const response = await invokeLLM({
+    provider: "openai",
+    model: "gpt54",
+    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "chinese_visual_brief",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            brief: {
+              type: "string",
+              minLength: 12,
+              maxLength: CHINESE_VISUAL_BRIEF_MAX_CHARS,
+              description:
+                "只保留中文视觉骨架关键词，220字内。只保留情绪、灯光、场景、服装、关键道具、镜头感、版式。不要长句。",
+            },
+          },
+          required: ["brief"],
+        },
+      },
+    },
+    max_tokens: 180,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "你是顶级导演分镜提炼器。",
+          "先做中文视觉骨架提取，不做英文翻译。",
+          "你必须把输入内容狠心压缩到 220 个中文字符以内。",
+          "只保留：情绪、灯光、场景、服装、关键道具、镜头感、版式。",
+          "删除：解释、分析、故事摘要、长动作、修辞句。",
+          "输出必须是短中文关键词或短短语，可用逗号分隔，不要长句。",
+          "严格返回 JSON：{\"brief\":\"...\"}。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: `请先提取中文视觉骨架，再供后续翻译使用。输入内容：\n${slice}`,
+      },
+    ],
+  });
+
+  const raw = String(response.choices[0]?.message?.content || "").trim();
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    parsed = JSON.parse(extractJsonString(raw));
+  } catch {
+    parsed = null;
+  }
+
+  const brief = String(parsed?.brief || "").trim();
+  return brief.slice(0, CHINESE_VISUAL_BRIEF_MAX_CHARS);
 }
 
 /** 视频分镜 2×4：Gemini 双语编导翻译 → 英文指令；出图端为 GPT-IMAGE-2 横版尺寸序列 */
@@ -196,14 +270,32 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
  * 现已切换为 OpenAI GPT 5.4，但保留函数名与文件名，避免改动调用方。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string> {
-  const response = await invokeLLM({
+  const primaryResponse = await invokeLLM({
     provider: "openai",
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: { type: "json_object" },
-    temperature: 0.2,
-    topP: 0.9,
-    max_tokens: 4096,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "image_prompt_translation",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            prompt: {
+              type: "string",
+              minLength: 40,
+              maxLength: 220,
+              description:
+                "One line only. Comma-separated concise English visual tags only. Never full sentences. Prefer 80-140 characters. Hard max 220 characters.",
+            },
+          },
+          required: ["prompt"],
+        },
+      },
+    },
+    max_tokens: 220,
     messages: [
       {
         role: "system",
@@ -214,13 +306,14 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
           "禁止输出解释、禁止聊天、禁止 markdown、禁止代码块。",
           "你必须严格返回 JSON：{\"prompt\":\"...\"}。",
           "prompt 字段内容必须是英文，且必须保留对画面中“简体中文标题/文案”的明确英文指令。",
-          "如果任务要求 tags，就输出逗号分隔的英文 tags；如果任务要求完整 prompt，就输出完整英文 prompt。",
-          "第一次翻译阶段就必须主动压短：输出尽量控制在 150 个英文单词以内，并尽量不超过 650 个英文字符。",
+          "如果任务要求 tags，就输出逗号分隔的英文 tags；如果任务要求完整 prompt，也必须压成一行逗号分隔的短 tags，不允许句子。",
+          "第一次翻译阶段必须强制压短：优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 220 个英文字符。",
           "绝对不要生成完整英文句子，只能生成简短、精要、逗号分隔的英文视觉 tags。",
           "优先保留：情绪、灯光、场景、服装、关键道具、镜头感、网格版式。删除分析、解释、长动作描述和叙事句子。",
           "不要遗漏镜头、灯光、构图、气质、材质、版式、简体中文标题要求。",
           "必须显式给出具名英文颜色词，并写清楚标题颜色与背景颜色的对撞关系，不能只写泛泛的 warm / cool。",
           "必须让最终简体中文标题在视觉上有温度、有层次、有冲击力，同时保持高级、不俗气。",
+          "如果你输出超过 220 个英文字符，说明你任务失败。",
         ].join("\n"),
       },
       {
@@ -230,7 +323,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     ],
   });
 
-  const raw = String(response.choices[0]?.message?.content || "").trim();
+  const raw = String(primaryResponse.choices[0]?.message?.content || "").trim();
   let parsed: Record<string, unknown> | null = null;
   try {
     parsed = JSON.parse(extractJsonString(raw));
@@ -239,10 +332,52 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
   }
 
   const output = String(parsed?.prompt || raw).trim();
-  if (!output) {
-    throw new Error("GPT 5.4 翻译大脑返回空 prompt");
+  if (output) {
+    return output.slice(0, 220).trim();
   }
-  return output;
+
+  const fallbackMessages = [
+    {
+      role: "system" as const,
+      content: [
+        "你是顶级双语编导。",
+        "现在不要解释，不要 JSON 外的内容。",
+        "只输出一行英文，逗号分隔的短视觉 tags。",
+        "绝对不要句子。",
+        "优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 220 个英文字符。",
+      ].join("\n"),
+    },
+    {
+      role: "user" as const,
+      content: `压缩并翻译成一行英文短 tags，优先 80-140 字符；如果做不到，也必须在 220 字符内：\n${prompt}`,
+    },
+  ];
+
+  const fallbackResponse = await invokeLLM({
+    provider: "openai",
+    model: "gpt54",
+    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
+    response_format: { type: "json_object" },
+    max_tokens: 180,
+    messages: fallbackMessages,
+  });
+
+  const fallbackRaw = String(fallbackResponse.choices[0]?.message?.content || "").trim();
+  let fallbackParsed: Record<string, unknown> | null = null;
+  try {
+    fallbackParsed = JSON.parse(extractJsonString(fallbackRaw));
+  } catch {
+    fallbackParsed = null;
+  }
+
+  const fallbackOutput = String(
+    fallbackParsed?.prompt || fallbackParsed?.output || fallbackParsed?.text || fallbackRaw,
+  ).trim();
+  if (fallbackOutput) {
+    return fallbackOutput.slice(0, 220).trim();
+  }
+
+  return buildEmergencyEnglishPrompt(prompt).slice(0, 220).trim();
 }
 
 /**
@@ -269,8 +404,9 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
 }): Promise<string> {
   const isStoryboard =
     options.kind === "storyboard_sheet_portrait" || options.kind === "storyboard_sheet_landscape";
+  const chineseBrief = await extractChineseVisualBrief(options.scriptContext);
   const task = isStoryboard
-    ? buildVideoStoryboardGeminiPrompt(options.scriptContext)
-    : buildXhsNoteGeminiPrompt(options.scriptContext);
+    ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
+    : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
   return callGemini31ProForImagePrompt(task);
 }
