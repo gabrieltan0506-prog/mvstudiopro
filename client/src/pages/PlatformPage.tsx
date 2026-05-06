@@ -513,6 +513,34 @@ function linesFromClientMutationFailure(prefix: string, err: unknown): string[] 
   return lines;
 }
 
+/** 3A：六維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
+function PlatformIpDimensionGuide() {
+  return (
+    <div className="mb-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-md">
+      <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#ff9900]">
+        <Bot className="h-4 w-4 shrink-0 animate-pulse" />
+        高定内容生成指南：六大维度
+      </h3>
+      <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 lg:grid-cols-3">
+        {[
+          { t: "专业洞察 (Insight)", d: "展现行业壁垒与权威知识。" },
+          { t: "跨界价值 (Value)", d: "融合美学与个人哲学视野。" },
+          { t: "受众痛点 (Pain Point)", d: "精准击中粉丝的核心焦虑。" },
+          { t: "人设魅力 (Persona)", d: "分享真实经历建立情感信任。" },
+          { t: "认知破局 (Breakthrough)", d: "提出反共识的独家鲜明观点。" },
+          { t: "流量密码 (Logic)", d: "适配平台算法与爆款逻辑。" },
+        ].map((v, i) => (
+          <div key={i} className="rounded-lg bg-white/5 p-3 transition-colors hover:bg-white/10">
+            <div className="mb-1 text-[12px] font-bold text-gray-200">{v.t}</div>
+            <p className="text-[11px] leading-relaxed text-gray-400">{v.d}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-[11px] text-gray-500">提示：在上方 IP 定位中描述得越具体，内容生成越精准。</p>
+    </div>
+  );
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
@@ -556,6 +584,8 @@ export default function PlatformPage() {
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
+  /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
+  const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<Set<string>>(() => new Set());
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -622,7 +652,29 @@ export default function PlatformPage() {
   });
 
   /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
-  const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation();
+  const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
+    onMutate: (v) => {
+      if (v.sceneId) setCoverSilentRetryIds((prev) => new Set(prev).add(v.sceneId!));
+    },
+    onSuccess: (res, v) => {
+      const sid = v.sceneId;
+      if (!sid) return;
+      const out =
+        res.imageUrl ?? (res as { url?: string | null }).url;
+      if (out) setPlatformImageMap((p) => ({ ...p, [sid]: String(out) }));
+      if (res.creationId != null) setSceneJobIds((p) => ({ ...p, [sid]: String(res.creationId) }));
+    },
+    onError: (err) => console.warn(`兜底异常: ${err.message}`),
+    onSettled: (_res, _err, v) => {
+      const sid = v?.sceneId;
+      if (!sid) return;
+      setCoverSilentRetryIds((prev) => {
+        const n = new Set(prev);
+        n.delete(sid);
+        return n;
+      });
+    },
+  });
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
     onSuccess: (res, variables) => {
@@ -652,32 +704,13 @@ export default function PlatformPage() {
         const topicHook = String(scene.title || "").trim().slice(0, 500);
         if (!topicHook) continue;
         const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
-        autoRetryTopicImageMutation.mutate(
-          {
-            topicHook,
-            format: variables.platformType === "video" ? "短视频" : "图文",
-            context: ctxBody,
-            failedJobId: String(cid),
-            sceneId: r.id,
-          },
-          {
-            onSuccess: (out) => {
-              if (out.creationId != null) {
-                setSceneJobIds((prev) => ({ ...prev, [r.id]: String(out.creationId) }));
-              }
-              const u = out.imageUrl ?? (out as { url?: string | null }).url ?? null;
-              if (out.success && u) {
-                setPlatformImageMap((prev) => ({ ...prev, [r.id]: u }));
-              }
-            },
-            onError: (e) =>
-              console.warn(
-                "[PlatformPage] 批量漏图自动补发失败",
-                r.id,
-                e instanceof Error ? e.message : e,
-              ),
-          },
-        );
+        autoRetryTopicImageMutation.mutate({
+          topicHook,
+          format: variables.platformType === "video" ? "短视频" : "图文",
+          context: ctxBody,
+          failedJobId: String(cid),
+          sceneId: r.id,
+        });
       }
       const ok = res.results.filter((r) => r.url && String(r.url).trim()).length;
       const label = "图文封面参考";
@@ -2601,6 +2634,8 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
 
+                {platformDashboard && <PlatformIpDimensionGuide />}
+
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
                     <div className="col-span-full flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
@@ -2639,6 +2674,81 @@ export default function PlatformPage() {
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
+                      const handleManualRegenerateCover = () => {
+                        if (!isAuthenticated) {
+                          toast.error("请先登录");
+                          return;
+                        }
+                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        if (!topicHook) {
+                          toast.error("选题缺少标题或钩子，无法生成");
+                          return;
+                        }
+                        if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
+                          const warning =
+                            "检测到超时黑图，但由于页面刷新，本地安全凭证已丢失。本次补发将作为新任务消耗积分，是否继续？(建议：勿在生图期间刷新页面)";
+                          if (!window.confirm(warning)) return;
+                        } else {
+                          const confirmNote = isEligibleFreeRetry
+                            ? "检测到黑图，本次将免费补发，是否继续？"
+                            : !hasValidJobId && !supervisorAccess
+                              ? "凭证因刷新丢失，本次将扣分补发，是否继续？"
+                              : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
+                          if (!supervisorAccess && !window.confirm(confirmNote)) return;
+                        }
+                        setRegeneratingCoverSceneId(item.id);
+                        regenerateTopicImageMutation.mutate(
+                          {
+                            topicHook,
+                            format: isGraphicCover ? "图文" : "短视频",
+                            context: buildPlatformSceneText({
+                              title: item.title,
+                              hook: item.hook ?? "",
+                              copywriting: item.copywriting ?? "",
+                              executionDetails: (
+                                item as {
+                                  executionDetails?: {
+                                    environmentAndWardrobe?: string;
+                                    lightingAndCamera?: string;
+                                  };
+                                }
+                              ).executionDetails,
+                            }),
+                            failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
+                            sceneId: item.id,
+                          },
+                          {
+                            onSuccess: (res) => {
+                              const finalUrl =
+                                res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+                              if (res.creationId != null) {
+                                setSceneJobIds((prev) => ({
+                                  ...prev,
+                                  [item.id]: String(res.creationId),
+                                }));
+                              }
+                              if (res.success && finalUrl) {
+                                setPlatformImageMap((prev) => ({
+                                  ...prev,
+                                  [item.id]: finalUrl,
+                                }));
+                                toast.success(
+                                  isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
+                                );
+                              } else {
+                                toast.error(
+                                  "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
+                                );
+                              }
+                              setRegeneratingCoverSceneId(null);
+                            },
+                            onError: (err) => {
+                              setRegeneratingCoverSceneId(null);
+                              toast.error(err.message || "操作失败");
+                            },
+                          },
+                        );
+                      };
                       return (
                       <div
                         key={item.id}
@@ -2730,54 +2840,14 @@ export default function PlatformPage() {
                           </div>
                         </details>
                         <div className="mt-4">
-                          {regeneratingCoverSceneId === item.id ||
-                          (!platformImageMap[item.id] && generateAllPlatformImagesMutation.isPending) ? (
-                            <div
-                              className={`flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 shadow-inner animate-pulse ${
-                                item.format === "图文" || item.format === "小红书"
-                                  ? "aspect-[9/16]"
-                                  : "aspect-video"
-                              }`}
-                            >
-                              <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
-                              <span className="text-xs font-medium tracking-widest text-gray-400">
-                                {regeneratingCoverSceneId === item.id
-                                  ? "单帧重新绘制中..."
-                                  : "高定视觉绘制中..."}
-                              </span>
-                            </div>
-                          ) : platformImageMap[item.id] ? (
+                          {platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
-                              <div
-                                className={`group relative w-full overflow-hidden rounded-xl bg-black/40 ${
-                                  item.format === "图文" || item.format === "小红书"
-                                    ? "aspect-[9/16]"
-                                    : "aspect-video"
-                                }`}
-                              >
+                              <div className="group relative aspect-[9/16] w-full bg-black/40">
                                 <TrialWatermarkImage
                                   src={platformImageMap[item.id]}
                                   isTrial={isTrial}
                                   className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
                                 />
-                                <div className="pointer-events-none absolute left-0 top-0 z-20 w-full bg-gradient-to-b from-black/90 via-black/40 to-transparent p-4">
-                                  <h3 className="text-base font-bold tracking-widest text-white drop-shadow-lg">
-                                    {item.title}
-                                    <span className="ml-2 text-xs font-normal text-gray-300">
-                                      | {item.format === "图文" ? "配图参考 · 单帧" : "分镜参考 · 单帧"}
-                                    </span>
-                                  </h3>
-                                </div>
-                                <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2">
-                                  {isTrial ? (
-                                    <span className="rounded bg-red-500/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-lg">
-                                      Trial Preview
-                                    </span>
-                                  ) : null}
-                                  <span className="rounded border border-white/10 bg-black/60 px-2 py-1 text-[10px] text-white/80 backdrop-blur-sm">
-                                    高定视觉引擎
-                                  </span>
-                                </div>
                               </div>
                               <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
                                 <div className="min-w-0 flex-1">
@@ -2801,82 +2871,8 @@ export default function PlatformPage() {
                                       isDashboardLoading ||
                                       isContentLoading
                                     }
-                                    onClick={() => {
-                                      if (!isAuthenticated) {
-                                        toast.error("请先登录");
-                                        return;
-                                      }
-                                      const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
-                                      if (!topicHook) {
-                                        toast.error("选题缺少标题或钩子，无法生成");
-                                        return;
-                                      }
-                                      if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
-                                        const warning =
-                                          "检测到超时黑图，但由于页面刷新，本地安全凭证已丢失。本次补发将作为新任务消耗积分，是否继续？(建议：勿在生图期间刷新页面)";
-                                        if (!window.confirm(warning)) return;
-                                      } else {
-                                        const confirmNote = isEligibleFreeRetry
-                                          ? "检测到当前图片链接含超时或错误标记，本次重新生成将「免费」为您补发，是否继续？"
-                                          : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
-                                        if (!supervisorAccess && !window.confirm(confirmNote)) return;
-                                      }
-                                      setRegeneratingCoverSceneId(item.id);
-                                      regenerateTopicImageMutation.mutate(
-                                        {
-                                          topicHook,
-                                          format: isGraphicCover ? "图文" : "短视频",
-                                          context: buildPlatformSceneText({
-                                            title: item.title,
-                                            hook: item.hook ?? "",
-                                            copywriting: item.copywriting ?? "",
-                                            executionDetails: (
-                                              item as {
-                                                executionDetails?: {
-                                                  environmentAndWardrobe?: string;
-                                                  lightingAndCamera?: string;
-                                                };
-                                              }
-                                            ).executionDetails,
-                                          }),
-                                          failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
-                                          sceneId: item.id,
-                                        },
-                                        {
-                                          onSuccess: (res) => {
-                                            const finalUrl =
-                                              res.imageUrl ??
-                                              (res as { url?: string | null }).url ??
-                                              null;
-                                            if (res.creationId != null) {
-                                              setSceneJobIds((prev) => ({
-                                                ...prev,
-                                                [item.id]: String(res.creationId),
-                                              }));
-                                            }
-                                            if (res.success && finalUrl) {
-                                              setPlatformImageMap((prev) => ({
-                                                ...prev,
-                                                [item.id]: finalUrl,
-                                              }));
-                                              toast.success(
-                                                isEligibleFreeRetry ? "免费补发成功" : "重新生成成功",
-                                              );
-                                            } else {
-                                              toast.error(
-                                                "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
-                                              );
-                                            }
-                                            setRegeneratingCoverSceneId(null);
-                                          },
-                                          onError: (err) => {
-                                            setRegeneratingCoverSceneId(null);
-                                            toast.error(err.message || "操作失败");
-                                          },
-                                        },
-                                      );
-                                    }}
-                                    className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+                                    onClick={handleManualRegenerateCover}
+                                    className="group flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
                                     title={
                                       isEligibleFreeRetry
                                         ? "重新免费请求生图（已校验任务记录）"
@@ -2885,15 +2881,32 @@ export default function PlatformPage() {
                                   >
                                     <RefreshCw
                                       className={`h-3 w-3 ${
-                                        regeneratingCoverSceneId === item.id && regenerateTopicImageMutation.isPending
+                                        regeneratingCoverSceneId === item.id &&
+                                        regenerateTopicImageMutation.isPending
                                           ? "animate-spin text-[#ff4fb8]"
-                                          : "group-hover:text-[#49e6ff]"
+                                          : "text-gray-400 group-hover:text-white"
                                       }`}
                                     />
-                                    {isEligibleFreeRetry ? "免费补发" : `重新生成 · ${actualCost}点`}
+                                    <span>
+                                      {isEligibleFreeRetry ? "免费补发" : `重新生成 · ${actualCost}点`}
+                                    </span>
                                   </button>
                                 </div>
                               </div>
+                            </div>
+                          ) : (regeneratingCoverSceneId === item.id ||
+                              generateAllPlatformImagesMutation.isPending ||
+                              coverSilentRetryIds.has(item.id)) &&
+                            !platformImageMap[item.id] ? (
+                            <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
+                              <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
+                              <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
+                                {regeneratingCoverSceneId === item.id
+                                  ? "单帧重新绘制中..."
+                                  : coverSilentRetryIds.has(item.id)
+                                    ? "检测到异常，正在自动重试补救..."
+                                    : "高定视觉绘制中..."}
+                              </span>
                             </div>
                           ) : null}
                         </div>
