@@ -536,9 +536,7 @@ function PlatformIpDimensionGuide() {
           </div>
         ))}
       </div>
-      <p className="mt-4 text-[11px] font-medium italic text-gray-500">
-        提示：在上方 IP 定位中描述得越具体（如：心血管专家、哈佛医学背景），内容生成越精准。
-      </p>
+      <p className="mt-4 text-[11px] text-gray-500">提示：在上方 IP 定位中描述得越具体，内容生成越精准。</p>
     </div>
   );
 }
@@ -2896,22 +2894,21 @@ export default function PlatformPage() {
                                 </div>
                               </div>
                             </div>
-                          ) : regeneratingCoverSceneId === item.id ||
-                            generateAllPlatformImagesMutation.isPending ||
-                            coverSilentRetryIds.has(item.id) ? (
+                          ) : (regeneratingCoverSceneId === item.id ||
+                              generateAllPlatformImagesMutation.isPending ||
+                              coverSilentRetryIds.has(item.id)) &&
+                            !platformImageMap[item.id] ? (
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
-                              <div className="flex flex-col items-center gap-1 px-3 text-center">
-                                <span className="text-xs font-medium tracking-widest text-gray-400">
-                                  {regeneratingCoverSceneId === item.id ? (
-                                    "单帧重新绘制中..."
-                                  ) : coverSilentRetryIds.has(item.id) ? (
-                                    <span className="text-amber-500/80">检测到异常，正在自动重试补救...</span>
-                                  ) : (
-                                    "高定视觉绘制中..."
-                                  )}
-                                </span>
-                              </div>
+                              <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
+                                {regeneratingCoverSceneId === item.id ? (
+                                  "单帧重新绘制中..."
+                                ) : coverSilentRetryIds.has(item.id) ? (
+                                  <span className="text-amber-500/80">检测到异常，正在自动重试补救...</span>
+                                ) : (
+                                  "高定视觉绘制中..."
+                                )}
+                              </span>
                             </div>
                           ) : null}
                         </div>
