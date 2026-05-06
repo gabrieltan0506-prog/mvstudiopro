@@ -15,14 +15,16 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
 1. 绝对禁止输出完整的英文句子、语法或描述性段落。
 2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
-3. 总字数严格限制在 100 个英文单词以内！超过将导致系统崩溃！
+3. 总字数严格限制在 150 个英文单词以内，且尽量控制在 650 个英文字符以内！超过将导致系统崩溃！
 4. 必须显式写出有情绪温度的标题视觉策略：高对比、强聚焦、可读的 Simplified Chinese headline。
 5. 必须显式写出背景与标题的配色对撞关系，使用具名英文颜色词，不要只写“warm / cool”.
 
 【抄作业范例 / EXAMPLE FORMAT】:
-Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night. Realistic wuxia style, cold blue and warm orange lighting. Panels feature: grand gates, male warrior in black armor, woman in red dress with black cloak. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
+Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night, realistic wuxia style, cold blue lighting, warm orange rim light, black armor warrior, red dress woman, black cloak, bloody wooden box, hand holding bloody seal cloth, Simplified Chinese text grid below each panel, dramatic film stills, high detail, 3:2 composition
 
-请完全模仿上述范例的极简结构，仅输出 100 词内的英文视觉 Tag。
+6. 绝对不要写成完整英文句子，只能写简短、精要、逗号分隔的英文视觉 tags。
+
+请完全模仿上述范例的极简结构，仅输出 150 词内、650 字符内的英文视觉 Tag，不要生成句子。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -48,11 +50,12 @@ Your task is to analyze the provided Chinese script, synthesize lighting, camera
 
 MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills,
-2. Continue with vivid English **keywords** for visuals, lighting, wardrobe, actions (no narrative sentences).
+2. Keep ONLY the highest-value visual elements: mood, lighting, scene, wardrobe, key props, camera feel, panel layout. Remove story summary, abstract analysis, and long action prose.
 3. Include explicit tag fragments for Simplified-Chinese on-canvas text, e.g.: main title in Simplified Chinese, each panel Simplified Chinese labels, text grid below panels with Simplified Chinese.
 4. Include the Typography Color & Emotion fragment verbatim as short tags: blood red text (or another named contrasting color token), not vague "emotional colors". The title must feel emotionally charged, cinematic, and instantly legible.
 5. Choose cohesive background palette tags matching the script mood (slate / ink-wash / clinical / warm paper) as comma-separated phrases only, and make sure the title color has a deliberate contrast with the background palette.
-6. OUTPUT: Output ONLY the final comma-separated English tag line. No explanations, no markdown, no Chinese copied verbatim except inside quoted hook instructions if needed.
+6. The 2x4 grid must be materially encoded in tags: panel grid, distinct panel subjects, image grid below-title layout, simplified chinese text grid below panels.
+7. OUTPUT: Output ONLY the final comma-separated English tag line. No explanations, no markdown, no Chinese copied verbatim except inside quoted hook instructions if needed.
 
 [Chinese Script]:
 ${slice}
@@ -76,12 +79,13 @@ Downstream **GPT-IMAGE-2** **only** consumes an **English** visual prompt—it *
 Your task is to analyze the Chinese script and extract visuals into comma-separated English **tags** only (never prose paragraphs).
 
 MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
-1. START the tag line with exactly: Cinematic 2x4 grid Xiaohongshu visual note layout, 16:9 canvas, 2k high resolution, magazine editorial style, masterpiece, two vertical cards side-by-side, 2x4 cinematic matrix,
-2. Continue with luxury visuals as **keywords** only.
-3. Include tag fragments: Simplified Chinese main title, Simplified Chinese below each image, final panels bullet summaries in Simplified Chinese.
-4. Include Typography Color & Emotion as named color token tags (e.g. neon cyan typography), never vague emotional wording. The Simplified Chinese title must feel warm, emotionally charged, premium, and highly clickable.
-5. Add high-end background palette tags (obsidian black, cream gradient, etc.) as short phrases, and ensure strong readable contrast between title color and background color.
-6. OUTPUT: Output ONLY the final comma-separated English tag line. No explanations, no markdown.
+1. START the tag line with exactly: Xiaohongshu dual-note layout, 16:9 canvas, two vertical cards side-by-side, editorial premium style,
+2. Keep ONLY the highest-value visual elements: title emotion, palette contrast, scene, wardrobe, hero prop, clean card layout. Remove story summary, explanation, and long action prose.
+3. Text layout must stay minimal: one Simplified Chinese main title, two to four short Simplified Chinese bullet lines, no long paragraphs, no dense text block, no wall of copy.
+4. Include Typography Color & Emotion as named color token tags (e.g. warm ivory title, vermilion accent), never vague emotional wording. The Simplified Chinese title must feel warm, emotionally charged, premium, and highly clickable.
+5. Add high-end background palette tags (obsidian black, cream gradient, ink beige, dark walnut, muted jade) as short phrases, and ensure strong readable contrast between title color and background color.
+6. The dual-note grid must be explicit in tags: left card hero, right card hero, clean margins, premium editorial spacing, structured note layout.
+7. OUTPUT: Output ONLY the final comma-separated English tag line. No explanations, no markdown.
 
 [Chinese Script]:
 ${slice}
@@ -211,6 +215,9 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
           "你必须严格返回 JSON：{\"prompt\":\"...\"}。",
           "prompt 字段内容必须是英文，且必须保留对画面中“简体中文标题/文案”的明确英文指令。",
           "如果任务要求 tags，就输出逗号分隔的英文 tags；如果任务要求完整 prompt，就输出完整英文 prompt。",
+          "第一次翻译阶段就必须主动压短：输出尽量控制在 150 个英文单词以内，并尽量不超过 650 个英文字符。",
+          "绝对不要生成完整英文句子，只能生成简短、精要、逗号分隔的英文视觉 tags。",
+          "优先保留：情绪、灯光、场景、服装、关键道具、镜头感、网格版式。删除分析、解释、长动作描述和叙事句子。",
           "不要遗漏镜头、灯光、构图、气质、材质、版式、简体中文标题要求。",
           "必须显式给出具名英文颜色词，并写清楚标题颜色与背景颜色的对撞关系，不能只写泛泛的 warm / cool。",
           "必须让最终简体中文标题在视觉上有温度、有层次、有冲击力，同时保持高级、不俗气。",

@@ -11,11 +11,19 @@ export function appendImageFlowLog(log: string[] | undefined, message: string): 
 }
 
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
+export type ImagePromptStats = {
+  translatedPromptChars: number;
+  translatedPromptWords: number;
+  condensedPromptChars: number;
+  condensedPromptWords: number;
+  condenseTriggered: boolean;
+};
 
 /** 智能提煉閾值：超過則二次調用 GPT 5.4 壓縮成更短的英文生圖指令。 */
 const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
 const PROMPT_CONDENSE_MAX_WORDS = 150;
-const PROMPT_CONDENSE_MIN_WORDS = 80;
+const PROMPT_CONDENSE_MIN_WORDS = 90;
+const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 700;
 
 function countPromptWords(text: string): number {
   return String(text || "")
@@ -30,10 +38,10 @@ function countPromptWords(text: string): number {
  */
 export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
   const originalWords = countPromptWords(rawPrompt);
-  // 1. 安全邊界：字元與詞數都不超標時直接返回
+  // 1. 安全邊界：只有在词数和字符数都不过长时才直通，避免 700+ 字符 prompt 炸链路
   if (
     !rawPrompt ||
-    (rawPrompt.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD && originalWords <= PROMPT_CONDENSE_MAX_WORDS)
+    (originalWords <= PROMPT_CONDENSE_MAX_WORDS && rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT)
   ) {
     return rawPrompt;
   }
@@ -46,7 +54,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
     `硬性要求：`,
     `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
-    `2. 总长度控制在 ${PROMPT_CONDENSE_MIN_WORDS}-${PROMPT_CONDENSE_MAX_WORDS} 个英文单词之间。`,
+    `2. 总长度控制在 ${PROMPT_CONDENSE_MIN_WORDS}-${PROMPT_CONDENSE_MAX_WORDS} 个英文单词之间，同时尽量压到 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符以内。`,
     `3. 绝对不能丢失以下关键信息：构图、主体、灯光、镜头气质、平台版式。`,
     `4. 如果原文要求画面中出现简体中文标题、简体中文标签、简体中文文案，必须保留这条硬指令。`,
     `5. 小红书双卡、电影级分镜表、平台封面这类版式要求必须保留。`,
@@ -61,7 +69,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
       const out = condensed.trim();
       const outWords = countPromptWords(out);
       if (
-        out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD &&
+        out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT &&
         outWords >= PROMPT_CONDENSE_MIN_WORDS &&
         outWords <= PROMPT_CONDENSE_MAX_WORDS
       ) {
@@ -84,6 +92,18 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
   throw new Error("Prompt 提炼连续 3 次失败且长度超标，为保生图质量，任务已中止。");
 }
 
+export function buildImagePromptStats(translatedPrompt: string, finalPrompt: string): ImagePromptStats {
+  const translated = String(translatedPrompt || "").trim();
+  const condensed = String(finalPrompt || translatedPrompt || "").trim();
+  return {
+    translatedPromptChars: translated.length,
+    translatedPromptWords: countPromptWords(translated),
+    condensedPromptChars: condensed.length,
+    condensedPromptWords: countPromptWords(condensed),
+    condenseTriggered: translated !== condensed,
+  };
+}
+
 /**
  * 視覺防禦常數 — **畫內零文字**：標題與文案由前端 / HTML 疊加，gpt-image-2 只出純畫面。
  */
@@ -96,9 +116,11 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
  * gpt-image-2 官方尺寸約束：最長邊 ≤3840、兩邊皆 16 倍數、長寬比 ≤3:1、總像素 ∈ [655360, 8294400]。
  * 下列為豎版（與本檔多數 9:16 prompt 一致）；橫版 16:9 分鏡合成表見 GPT_IMAGE2_LANDSCAPE_SIZES。由前到後嘗試，代理拒絕某一組時自動換下一組。
  */
-const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1792", "1024x1536", "1536x2304"] as const;
+/** 9:16 竖版优先走更稳的中等尺寸，降低超时与空返回概率。 */
+const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "1024x1792"] as const;
 /** 16:9 橫版分鏡合成表 — 與 `buildStoryboardSheetLandscapePrompt` 一致 */
-const GPT_IMAGE2_LANDSCAPE_SIZES = ["1792x1024", "1536x864", "1344x768"] as const;
+/** 16:9 横版也优先走更稳的中等尺寸，再逐步回退。 */
+const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x864", "1344x768", "1792x1024"] as const;
 
 function shouldAbortGptImage2SizeRetries(status: number): boolean {
   return status === 401 || status === 403 || status === 429;
@@ -274,10 +296,12 @@ Aspect Ratio: 16:9.
 async function postGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
-  opts: { maxAttempts?: number; sizes?: readonly string[] } = {},
+  opts: { maxAttempts?: number; sizes?: readonly string[]; flowLog?: string[] } = {},
 ): Promise<string | null> {
+  const L = opts.flowLog;
   const apiKey = String(process.env.PROXY_OPENAI_API_KEY || "").trim();
   if (!apiKey) {
+    appendImageFlowLog(L, "[GPT-IMAGE-2] PROXY_OPENAI_API_KEY 缺失，跳过主路径");
     console.warn("[proxyImageService] PROXY_OPENAI_API_KEY missing, skip gpt-image-2");
     return null;
   }
@@ -291,6 +315,7 @@ async function postGptImage2AndUpload(
 
   for (const size of sizes) {
     try {
+      appendImageFlowLog(L, `[GPT-IMAGE-2] 尝试尺寸 ${size} …`);
       const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
         method: "POST",
         headers: {
@@ -309,6 +334,10 @@ async function postGptImage2AndUpload(
       const json: unknown = await r.json().catch(() => ({}));
       const anyJson = json as { data?: Array<{ b64_json?: string }> };
       if (!r.ok) {
+        appendImageFlowLog(
+          L,
+          `[GPT-IMAGE-2] 尺寸 ${size} HTTP ${r.status}，响应预览：${JSON.stringify(json).slice(0, 220)}`,
+        );
         console.warn(
           "[proxyImageService] gpt-image-2 HTTP error:",
           r.status,
@@ -320,6 +349,7 @@ async function postGptImage2AndUpload(
       }
       const b64 = anyJson?.data?.[0]?.b64_json;
       if (!b64 || typeof b64 !== "string") {
+        appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 未返回 b64_json`);
         console.warn("[proxyImageService] gpt-image-2 missing b64_json, size=", size);
         continue;
       }
@@ -331,8 +361,18 @@ async function postGptImage2AndUpload(
         buffer,
         contentType: "image/jpeg",
       });
-      return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+      const signedUrl = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+      appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 成功，已上传 GCS · gcsUri=${gcsUri}`);
+      appendImageFlowLog(
+        L,
+        `[GPT-IMAGE-2] 尺寸 ${size} 签名 URL 预览：${String(signedUrl).slice(0, 180)}…`,
+      );
+      return signedUrl;
     } catch (e: unknown) {
+      appendImageFlowLog(
+        L,
+        `[GPT-IMAGE-2] 尺寸 ${size} 异常：${e instanceof Error ? e.message : String(e)}`,
+      );
       console.warn(
         "[proxyImageService] gpt-image-2 exception:",
         e instanceof Error ? e.message : e,
@@ -408,7 +448,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     L,
     `[单帧主路径] GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 英文 prompt 约 ${prompt.length} 字`,
   );
-  const primary = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes });
+  const primary = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes, flowLog: L });
   if (primary) {
     appendImageFlowLog(L, "[单帧主路径] GPT-IMAGE-2 成功，已上传 GCS");
     return primary;
@@ -498,8 +538,8 @@ export async function generatePlatformCompositeSheetImage(options: {
     `[2×4·步骤2] GPT-IMAGE-2 横版 16:9 · gcsSubdir=${subdir} · 尺寸: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
   );
   const primary = await postGptImage2AndUpload(prompt, subdir, {
-    maxAttempts: 1,
     sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
+    flowLog: L,
   });
   if (primary) {
     appendImageFlowLog(L, "[2×4·步骤2] GPT-IMAGE-2 成功");

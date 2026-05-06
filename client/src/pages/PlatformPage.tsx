@@ -568,6 +568,8 @@ export default function PlatformPage() {
   const [isContentLoading, setIsContentLoading] = useState(false);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
+  const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
+  const [compositeLoadRetriedKeys, setCompositeLoadRetriedKeys] = useState<Set<string>>(() => new Set());
   /** 橫版 16:9 執行分鏡表（單張合成）；API kind 仍為 storyboard_sheet_portrait */
   const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
   /** 小紅書雙筆記卡（單張合成） */
@@ -1429,9 +1431,22 @@ export default function PlatformPage() {
   );
 
   useEffect(() => {
-    setPlatformStoryboardSheetMap({});
-    setPlatformXhsNoteMap({});
-  }, [contentExecutionCardsKey]);
+    const validIds = new Set(contentExecutionCards.map((row) => row.id));
+    setPlatformStoryboardSheetMap((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => validIds.has(key))),
+    );
+    setPlatformXhsNoteMap((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => validIds.has(key))),
+    );
+    setCompositeLoadRetriedKeys((prev) => {
+      const next = new Set<string>();
+      prev.forEach((key) => {
+        const sceneId = key.split("::")[0];
+        if (validIds.has(sceneId)) next.add(key);
+      });
+      return next;
+    });
+  }, [contentExecutionCards, contentExecutionCardsKey]);
 
   const platformTopicCount = contentExecutionCards.length;
   const platformBulkGraphicCost = useMemo(() => platformTopicCount * 6, [platformTopicCount]);
@@ -2573,6 +2588,35 @@ export default function PlatformPage() {
                       <div className="grid gap-6 md:grid-cols-2">
                         {referenceStoryboardGraphicStrip.map((ref) => {
                           const isXhs = ref.key.includes("xhs-sheet");
+                          const compositeRetryKey = `${ref.sceneId}::${isXhs ? "xhs" : "storyboard"}`;
+                          const sourceRow = contentExecutionCards.find((row) => row.id === ref.sceneId);
+                          const queueSilentCompositeRetry = () => {
+                            if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
+                            const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+                            setCompositeLoadRetriedKeys((prev) => new Set(prev).add(compositeRetryKey));
+                            if (isXhs) {
+                              setPlatformXhsNoteMap((prev) => {
+                                const next = { ...prev };
+                                delete next[ref.sceneId];
+                                return next;
+                              });
+                            } else {
+                              setPlatformStoryboardSheetMap((prev) => {
+                                const next = { ...prev };
+                                delete next[ref.sceneId];
+                                return next;
+                              });
+                            }
+                            generatePlatformCompositeSheetMutation.mutate({
+                              sceneId: sourceRow.id,
+                              title: sourceRow.title,
+                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any),
+                              kind: compositeKind,
+                              jobId: analysisJobId || undefined,
+                              executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
+                              creationRecordId: readOptionalReportBindingCreationId(),
+                            });
+                          };
                           return (
                             <div
                               key={ref.key}
@@ -2599,6 +2643,18 @@ export default function PlatformPage() {
                                     objectFit="contain"
                                     className="h-full w-full max-h-[600px] object-contain transition-transform duration-500 hover:scale-[1.01]"
                                     alt={`${ref.title} · ${ref.kindLabel}`}
+                                    onLoad={() => {
+                                      setCompositeLoadRetriedKeys((prev) => {
+                                        if (!prev.has(compositeRetryKey)) return prev;
+                                        const next = new Set(prev);
+                                        next.delete(compositeRetryKey);
+                                        return next;
+                                      });
+                                    }}
+                                    onError={() => {
+                                      console.warn(`[PlatformPage] composite image load failed, scheduling silent retry: ${ref.sceneId} (${isXhs ? "xhs" : "storyboard"})`);
+                                      queueSilentCompositeRetry();
+                                    }}
                                   />
                                 ) : ref.pending ? (
                                   <div className="flex flex-col items-center justify-center gap-3 opacity-80">
@@ -2750,6 +2806,38 @@ export default function PlatformPage() {
                           },
                         );
                       };
+                      const queueSilentImageLoadRetry = () => {
+                        if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
+                        const failedJobId = sceneJobIds[item.id];
+                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        if (!failedJobId || !topicHook) return;
+                        const ctxBody = buildPlatformSceneText({
+                          title: item.title,
+                          hook: item.hook ?? "",
+                          copywriting: item.copywriting ?? "",
+                          executionDetails: (
+                            item as {
+                              executionDetails?: {
+                                environmentAndWardrobe?: string;
+                                lightingAndCamera?: string;
+                              };
+                            }
+                          ).executionDetails,
+                        });
+                        setCoverLoadRetriedIds((prev) => new Set(prev).add(item.id));
+                        setPlatformImageMap((prev) => {
+                          const next = { ...prev };
+                          delete next[item.id];
+                          return next;
+                        });
+                        autoRetryTopicImageMutation.mutate({
+                          topicHook,
+                          format: isGraphicCover ? "图文" : "短视频",
+                          context: ctxBody,
+                          failedJobId,
+                          sceneId: item.id,
+                        });
+                      };
                       return (
                       <div
                         key={item.id}
@@ -2848,6 +2936,18 @@ export default function PlatformPage() {
                                   src={platformImageMap[item.id]}
                                   isTrial={isTrial}
                                   className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
+                                  onLoad={() => {
+                                    setCoverLoadRetriedIds((prev) => {
+                                      if (!prev.has(item.id)) return prev;
+                                      const next = new Set(prev);
+                                      next.delete(item.id);
+                                      return next;
+                                    });
+                                  }}
+                                  onError={() => {
+                                    console.warn(`[PlatformPage] cover image load failed, scheduling silent retry: ${item.id}`);
+                                    queueSilentImageLoadRetry();
+                                  }}
                                 />
                               </div>
                               <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
@@ -3272,4 +3372,3 @@ export default function PlatformPage() {
     </div>
   );
 }
-

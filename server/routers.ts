@@ -3119,7 +3119,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
           "./services/geminiPlatformCompositeTranslation.js",
         );
-        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
+        const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
           "./services/proxyImageService.js",
         );
         const ctxStr = String(input.context || "").trim();
@@ -3127,6 +3127,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
         /** 與批量 `flowLog` 同型，確保 `condenseImagePromptIfNeeded` + `appendImageFlowLog` 路徑一致 */
         const topicImageCondenseLog: string[] = [];
+        let promptStats = {
+          translatedPromptChars: 0,
+          translatedPromptWords: 0,
+          condensedPromptChars: 0,
+          condensedPromptWords: 0,
+          condenseTriggered: false,
+        };
+        let fallbackUsed = false;
 
         let imageUrl: string | null = null;
         try {
@@ -3138,6 +3146,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             });
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
             const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || copywriting, topicImageCondenseLog);
+            promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
             imageUrl = await generateGptImage2FromRawEnglishPrompt({
               englishPrompt: safePrompt,
               aspectRatio: "9:16",
@@ -3156,6 +3165,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
           if (!imageUrl) {
             try {
+              fallbackUsed = true;
               imageUrl = await generateImageGpt2WithImagenFallback({
                 title: title || "Content",
                 copywriting,
@@ -3186,6 +3196,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
                   metadata: JSON.stringify({
                     ...newJobMetaBase,
                     platformFreeRetryLastError: "empty_output",
+                    imagePromptStats: promptStats,
+                    fallbackUsed,
                   }),
                 })
                 .where(eq(userCreations.id, creationIdOut));
@@ -3214,6 +3226,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 metadata: JSON.stringify({
                   ...newJobMetaBase,
                   resolvedFrameStatus: finalStatus,
+                  imagePromptStats: promptStats,
+                  fallbackUsed,
                 }),
               })
               .where(eq(userCreations.id, creationIdOut));
@@ -3228,6 +3242,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           url: imageUrl,
           freeRetryApplied: isFreeRetry,
           creationId: creationIdOut,
+          imagePromptStats: promptStats,
+          fallbackUsed,
         };
       }),
 
@@ -3290,6 +3306,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           callGemini31ProForImagePrompt,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
+          buildImagePromptStats,
           generateImageGpt2WithImagenFallback,
           generateGptImage2FromRawEnglishPrompt,
           appendImageFlowLog,
@@ -3342,6 +3359,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
             `说明: 中文语境仅供 GPT 5.4 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
           );
           let url: string | null = null;
+          let fallbackUsed = false;
+          let promptStats = {
+            translatedPromptChars: 0,
+            translatedPromptWords: 0,
+            condensedPromptChars: 0,
+            condensedPromptWords: 0,
+            condenseTriggered: false,
+          };
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: s.title,
@@ -3353,6 +3378,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
             const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || body, flowLog);
+            promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
+            appendImageFlowLog(
+              flowLog,
+              `[统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
+            );
             appendImageFlowLog(flowLog, "[步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…");
             url = await generateGptImage2FromRawEnglishPrompt({
               englishPrompt: safePrompt,
@@ -3371,6 +3401,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           if (!url) {
             appendImageFlowLog(flowLog, "[步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）");
             try {
+              fallbackUsed = true;
               url = await generateImageGpt2WithImagenFallback({
                 title: s.title,
                 copywriting: body,
@@ -3400,6 +3431,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
                     sceneId: s.id,
                     platformType: input.platformType,
                     batchJobId: input.jobId ?? null,
+                    imagePromptStats: promptStats,
+                    fallbackUsed,
                   }),
                 })
                 .where(eq(userCreations.id, creationId));
@@ -3407,7 +3440,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               console.warn(`[mvAnalysis.generateAllPlatformTopicImages] update creation ${creationId}:`, e);
             }
           }
-          return { id: s.id, url, flowLog, creationId: creationId ?? undefined };
+          return { id: s.id, url, flowLog, creationId: creationId ?? undefined, promptStats, fallbackUsed };
         });
         const mergedFlowLog = [batchHeader, ...results.flatMap((r) => [`▶ ${r.id}`, ...(r.flowLog ?? [])])];
         return {
