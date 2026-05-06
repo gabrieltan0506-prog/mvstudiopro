@@ -523,12 +523,12 @@ function PlatformIpDimensionGuide() {
       </h3>
       <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 lg:grid-cols-3">
         {[
-          { t: "专业洞察 (Insight)", d: "展现该行业最核心的硬核知识壁垒。" },
-          { t: "跨界价值 (Value)", d: "融合美学或跨界视野，建立独特辨识度。" },
-          { t: "受众痛点 (Pain Point)", d: "直击粉丝核心焦虑，产生即时情绪共鸣。" },
-          { t: "人设魅力 (Persona)", d: "分享真实经历故事，建立深度信任感。" },
-          { t: "认知破局 (Breakthrough)", d: "提出鲜明的反共识观点，打破常规思考。" },
-          { t: "流量密码 (Logic)", d: "精准适配算法逻辑，极大化内容的曝光力。" },
+          { t: "专业洞察 (Insight)", d: "展现行业壁垒与权威知识。" },
+          { t: "跨界价值 (Value)", d: "融合美学与个人哲学视野。" },
+          { t: "受众痛点 (Pain Point)", d: "精准击中粉丝的核心焦虑。" },
+          { t: "人设魅力 (Persona)", d: "分享真实经历建立情感信任。" },
+          { t: "认知破局 (Breakthrough)", d: "提出反共识的独家鲜明观点。" },
+          { t: "流量密码 (Logic)", d: "适配平台算法与爆款逻辑。" },
         ].map((v, i) => (
           <div key={i} className="rounded-lg bg-white/5 p-3 transition-colors hover:bg-white/10">
             <div className="mb-1 text-[12px] font-bold text-gray-200">{v.t}</div>
@@ -537,7 +537,7 @@ function PlatformIpDimensionGuide() {
         ))}
       </div>
       <p className="mt-4 text-[11px] font-medium italic text-gray-500">
-        提示：在 IP 定位中描述得越具体（如：心血管专家、哈佛医学背景），生成效果越精准。
+        提示：在上方 IP 定位中描述得越具体（如：心血管专家、哈佛医学背景），内容生成越精准。
       </p>
     </div>
   );
@@ -655,28 +655,25 @@ export default function PlatformPage() {
 
   /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
   const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onMutate: (vars) => {
-      const sid = vars.sceneId;
-      if (sid) setCoverSilentRetryIds((prev) => new Set(prev).add(sid));
+    onMutate: (v) => {
+      if (v.sceneId) setCoverSilentRetryIds((prev) => new Set(prev).add(v.sceneId!));
     },
-    onSuccess: (res, vars) => {
-      const sid = vars.sceneId;
+    onSuccess: (res, v) => {
+      const sid = v.sceneId;
       if (!sid) return;
-      const u =
-        (res.imageUrl && String(res.imageUrl)) ||
-        ((res as { url?: string | null }).url && String((res as { url?: string | null }).url)) ||
-        null;
-      if (u) setPlatformImageMap((prev) => ({ ...prev, [sid]: u }));
-      if (res.creationId != null) setSceneJobIds((prev) => ({ ...prev, [sid]: String(res.creationId) }));
+      const out =
+        res.imageUrl ?? (res as { url?: string | null }).url;
+      if (out) setPlatformImageMap((p) => ({ ...p, [sid]: String(out) }));
+      if (res.creationId != null) setSceneJobIds((p) => ({ ...p, [sid]: String(res.creationId) }));
     },
-    onError: (err) => console.warn("[Silent Retry Failed]:", err.message),
-    onSettled: (_res, _err, vars) => {
-      const sid = vars?.sceneId;
+    onError: (err) => console.warn(`兜底异常: ${err.message}`),
+    onSettled: (_res, _err, v) => {
+      const sid = v?.sceneId;
       if (!sid) return;
       setCoverSilentRetryIds((prev) => {
-        const next = new Set(prev);
-        next.delete(sid);
-        return next;
+        const n = new Set(prev);
+        n.delete(sid);
+        return n;
       });
     },
   });
@@ -2639,7 +2636,7 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
 
-                {platformDashboard ? <PlatformIpDimensionGuide /> : null}
+                {platformDashboard && <PlatformIpDimensionGuide />}
 
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
@@ -2905,16 +2902,15 @@ export default function PlatformPage() {
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <div className="flex flex-col items-center gap-1 px-3 text-center">
-                                <span className="text-xs text-gray-400">
-                                  {regeneratingCoverSceneId === item.id
-                                    ? "单帧重新绘制中..."
-                                    : "高定视觉绘制中..."}
+                                <span className="text-xs font-medium tracking-widest text-gray-400">
+                                  {regeneratingCoverSceneId === item.id ? (
+                                    "单帧重新绘制中..."
+                                  ) : coverSilentRetryIds.has(item.id) ? (
+                                    <span className="text-amber-500/80">检测到异常，正在自动重试补救...</span>
+                                  ) : (
+                                    "高定视觉绘制中..."
+                                  )}
                                 </span>
-                                {coverSilentRetryIds.has(item.id) ? (
-                                  <span className="text-[10px] text-amber-500/80 animate-bounce">
-                                    检测到异常，正在自动重试补救...
-                                  </span>
-                                ) : null}
                               </div>
                             </div>
                           ) : null}

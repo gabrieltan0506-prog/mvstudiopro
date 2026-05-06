@@ -858,9 +858,14 @@ async function buildPlatformContent(params: {
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心數量與維度指令】：你必須為該平台精確生成 6 個深度內容方案（少於 6 個將導致系統崩潰）。請嚴格結合 ipContextBinding，依序從以下六個維度各發散一個獨特選題：
-1. 核心專業洞察 (Professional Insight)、2. 跨界結合與價值觀 (Cross-over Value)、3. 目標受眾痛點暴擊 (Audience Pain Point)、4. 個人經歷與人設魅力 (IP Persona Story)、5. 行業認知破局 (Industry Breakthrough)、6. 平台流量密碼融合 (Platform Logic)。
-【資安要求】：选题必须锚定用户真实背景 ipContextBinding。若内容脱钩或使用泛化模板，则视为不合格。必须恰好 6 条。
+【核心数量与维度指令】：你必须为该平台精确生成 6 个深度内容方案（少於 6 個將導致系統崩潰）。请严格结合 ipContextBinding，依序从以下六个维度各发散一个独特选题：
+1. 核心专业洞察(Professional Insight)
+2. 跨界结合与价值观(Cross-over Value)
+3. 目标受众痛点暴击(Audience Pain Point)
+4. 个人经历与人设魅力(IP Persona Story)
+5. 行业认知破局(Industry Breakthrough)
+6. 平台流量密码融合(Platform Logic)
+【资安要求】：选题必须锚定用户的真实背景 ipContextBinding。若内容脱钩或使用泛化模板，则视为不合格。必须恰好 6 条。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
@@ -950,7 +955,7 @@ async function buildPlatformContent(params: {
             creationAssist: params.snapshot.creationAssist || {},
           },
           ipContextBinding:
-            "【資安 / 一致性】選題必須錨定用戶真實背景與 ipContextBinding（context、platformMenu、snapshotData 可驗證身份與行業）。必須恰好 6 條選題、六維度各一條。內容脫鉤或使用泛化模板視為不合格，下游可拒收。",
+            "【資安 / 一致性】当前用户真实的 IP 定位与行业背景，必须据此生成恰好 6 条、六维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
         }),
       },
     ],
@@ -2973,7 +2978,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
               )
               .returning({ id: userCreations.id });
 
-            if (updated.length === 0) {
+            if (updated.length > 0) {
+              isFreeRetry = true;
+              consumedParentId = failedIdNum;
+            } else {
               await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
               creationIdOut = undefined;
               throw new TRPCError({
@@ -2981,8 +2989,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 message: "凭证无效或已被使用",
               });
             }
-            isFreeRetry = true;
-            consumedParentId = failedIdNum;
           }
 
           if (!isAdminUser && !isFreeRetry) {
@@ -3082,7 +3088,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 isTrial: false,
               });
             } catch (fallbackErr) {
-              console.warn("兜底异常:", fallbackErr);
+              console.warn(
+                `兜底异常: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+              );
               imageUrl = null;
             }
           }
