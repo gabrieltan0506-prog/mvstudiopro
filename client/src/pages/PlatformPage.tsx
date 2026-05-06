@@ -679,7 +679,7 @@ export default function PlatformPage() {
   });
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
-    onSuccess: (res, variables) => {
+    onSuccess: async (res, variables) => {
       setPlatformImageMap((prev) => {
         const next = { ...prev };
         for (const r of res.results) {
@@ -696,6 +696,7 @@ export default function PlatformPage() {
         return next;
       });
 
+      let retryRecovered = 0;
       for (const r of res.results) {
         const u = String(r.url ?? "").trim().toLowerCase();
         const bad = !r.url || !String(r.url).trim() || u.includes("timeout") || u.includes("error");
@@ -706,17 +707,27 @@ export default function PlatformPage() {
         const topicHook = String(scene.title || "").trim().slice(0, 500);
         if (!topicHook) continue;
         const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
-        autoRetryTopicImageMutation.mutate({
-          topicHook,
-          format: variables.platformType === "video" ? "短视频" : "图文",
-          context: ctxBody,
-          failedJobId: String(cid),
-          sceneId: r.id,
-        });
+        try {
+          const retried = await autoRetryTopicImageMutation.mutateAsync({
+            topicHook,
+            format: variables.platformType === "video" ? "短视频" : "图文",
+            context: ctxBody,
+            failedJobId: String(cid),
+            sceneId: r.id,
+          });
+          const recoveredUrl = String(retried.imageUrl ?? (retried as { url?: string | null }).url ?? "").trim();
+          if (recoveredUrl) {
+            retryRecovered += 1;
+          }
+        } catch (err) {
+          console.warn(`[PlatformPage] batch auto retry failed for ${r.id}:`, err);
+        }
       }
-      const ok = res.results.filter((r) => r.url && String(r.url).trim()).length;
+      const ok = res.results.filter((r) => r.url && String(r.url).trim()).length + retryRecovered;
       const label = "图文封面参考";
-      toast.success(`已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
+      toast.success(
+        `已生成 ${ok}/${res.results.length} 张${label}单帧${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}${retryRecovered > 0 ? ` · 自动补救 ${retryRecovered} 张` : ""}`,
+      );
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
       const meta = (res as { imageGenMeta?: Record<string, unknown> }).imageGenMeta;
       if (Array.isArray(lines) && lines.length > 0) {

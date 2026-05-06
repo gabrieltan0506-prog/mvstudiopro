@@ -3116,7 +3116,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
-        const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
+        const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt, extractChineseVisualBrief } = await import(
           "./services/geminiPlatformCompositeTranslation.js",
         );
         const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
@@ -3141,7 +3141,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: input.topicHook,
-              context: ctxStr,
+              context: (await extractChineseVisualBrief(ctxStr)) || ctxStr,
               variant: isGraphic ? "graphic" : "video",
             });
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
@@ -3304,6 +3304,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const {
           buildPlatformTopicReferenceGeminiTask,
           callGemini31ProForImagePrompt,
+          extractChineseVisualBrief,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
@@ -3370,7 +3371,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: s.title,
-              context: body,
+              context: (await extractChineseVisualBrief(body)) || body,
               variant: geminiVariant,
             });
             appendImageFlowLog(flowLog, "[步骤1] 调用 GPT 5.4 生成英文 prompt …");

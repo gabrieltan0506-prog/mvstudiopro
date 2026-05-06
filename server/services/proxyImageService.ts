@@ -24,12 +24,22 @@ const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
 const PROMPT_CONDENSE_MAX_WORDS = 150;
 const PROMPT_CONDENSE_MIN_WORDS = 90;
 const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 700;
+const PROMPT_FINAL_HARD_CHAR_CAP = 220;
 
 function countPromptWords(text: string): number {
   return String(text || "")
     .trim()
     .split(/\s+/)
     .filter(Boolean).length;
+}
+
+function forceTrimPromptToHardCap(text: string, hardCap = PROMPT_FINAL_HARD_CHAR_CAP): string {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length <= hardCap) return raw;
+  const sliced = raw.slice(0, hardCap);
+  const lastComma = sliced.lastIndexOf(",");
+  const trimmed = lastComma >= Math.floor(hardCap * 0.6) ? sliced.slice(0, lastComma) : sliced;
+  return trimmed.replace(/[,\s]+$/g, "").trim();
 }
 
 /**
@@ -43,7 +53,14 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     !rawPrompt ||
     (originalWords <= PROMPT_CONDENSE_MAX_WORDS && rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT)
   ) {
-    return rawPrompt;
+    const direct = forceTrimPromptToHardCap(rawPrompt);
+    if (direct.length !== String(rawPrompt || "").trim().length) {
+      appendImageFlowLog(
+        log,
+        `[Prompt 提炼] 直通前触发最终硬裁剪，chars=${String(rawPrompt || "").trim().length} -> ${direct.length}`,
+      );
+    }
+    return direct;
   }
 
   appendImageFlowLog(
@@ -62,19 +79,30 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     rawPrompt,
   ].join("\n");
 
+  let bestAttempt = rawPrompt.trim();
+  let bestAttemptChars = bestAttempt.length || Number.MAX_SAFE_INTEGER;
+
   // 2. 嚴格 3 次重試
   for (let i = 1; i <= 3; i++) {
     try {
       const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
       const out = condensed.trim();
       const outWords = countPromptWords(out);
+      if (out && out.length < bestAttemptChars) {
+        bestAttempt = out;
+        bestAttemptChars = out.length;
+      }
       if (
         out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT &&
         outWords >= PROMPT_CONDENSE_MIN_WORDS &&
         outWords <= PROMPT_CONDENSE_MAX_WORDS
       ) {
         appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
-        return out;
+        const forcedOut = forceTrimPromptToHardCap(out);
+        if (forcedOut.length !== out.length) {
+          appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次结果触发最终硬裁剪，chars=${out.length} -> ${forcedOut.length}`);
+        }
+        return forcedOut;
       }
       appendImageFlowLog(
         log,
@@ -88,8 +116,43 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     }
   }
 
-  // 3. 終極報錯（拒絕低品質/超長 prompt 直出）
-  throw new Error("Prompt 提炼连续 3 次失败且长度超标，为保生图质量，任务已中止。");
+  // 3. 不再中止：再做一次更强硬的最终压缩，避免整条主路径因提炼失败直接死亡
+  appendImageFlowLog(log, "[Prompt 提炼] 前 3 次未达标，启动最终强制浓缩，不再直接报失败");
+  const finalForceTask = [
+    "将下面这条英文生图指令强制压缩成更短版本。",
+    "硬性要求：",
+    "1. 只输出一行英文，逗号分隔的短视觉 tags。",
+    `2. 绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
+    `3. 尽量保持在 ${PROMPT_CONDENSE_MIN_WORDS}-${PROMPT_CONDENSE_MAX_WORDS} 个英文单词之间。`,
+    "4. 绝对不要输出完整句子、解释、markdown。",
+    "5. 必须保留：主体、灯光、场景、版式、简体中文标题要求。",
+    "",
+    bestAttempt,
+  ].join("\n");
+
+  try {
+    const forced = (await callGemini3_1_Pro_AiStudio(finalForceTask)).trim();
+    const forcedWords = countPromptWords(forced);
+    const forcedTrimmed = forceTrimPromptToHardCap(forced);
+    appendImageFlowLog(
+      log,
+      `[Prompt 提炼] 最终强制浓缩完成，chars=${forced.length}, words=${forcedWords}${forcedTrimmed.length !== forced.length ? ` · 最终硬裁剪 -> ${forcedTrimmed.length}` : ""}`,
+    );
+    if (forcedTrimmed) {
+      return forcedTrimmed;
+    }
+  } catch (e: unknown) {
+    appendImageFlowLog(
+      log,
+      `[Prompt 提炼] 最终强制浓缩请求失败: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
+  appendImageFlowLog(
+    log,
+    `[Prompt 提炼] 使用当前最短候选继续主路径，chars=${bestAttempt.length}, words=${countPromptWords(bestAttempt)}${forceTrimPromptToHardCap(bestAttempt).length !== bestAttempt.length ? ` · 最终硬裁剪 -> ${forceTrimPromptToHardCap(bestAttempt).length}` : ""}`,
+  );
+  return forceTrimPromptToHardCap(bestAttempt);
 }
 
 export function buildImagePromptStats(translatedPrompt: string, finalPrompt: string): ImagePromptStats {
