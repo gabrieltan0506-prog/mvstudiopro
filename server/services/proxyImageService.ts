@@ -111,7 +111,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
   const finalForceTask = [
     "将下面这条英文生图指令强制压缩成更短版本。",
     "硬性要求：",
-    "1. 只输出一行英文，逗号分隔的短视觉 tags。",
+    "1. 只输出英文短视觉 tags 或短短语块。",
     `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
     "3. 绝对不要输出完整句子、解释、markdown。",
     "4. 必须保留：主体、灯光、场景、版式、简体中文标题要求。",

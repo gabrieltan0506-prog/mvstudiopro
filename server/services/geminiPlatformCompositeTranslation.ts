@@ -1,7 +1,7 @@
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 
 /**
- * **双语编导（Gemini）**：读中文剧本 / 封面文案，产出**一条**纯英文视觉 prompt。
+ * **双语编导（Gemini）**：读中文剧本 / 封面文案，产出纯英文视觉 prompt。
  * **GPT-IMAGE-2** 只接收该英文串并生图，不做翻译、不读中文——汉语内容必须由 Gemini 先在 prompt 里用英文规划好（含「画面上简中字」等死命令）。
  */
 
@@ -14,7 +14,7 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = 220;
  */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
-1. 只输出一行英文视觉 tags，用逗号分隔，不要完整句子。
+1. 只输出英文视觉 tags 或短短语块，不要完整句子，不要解释。
 2. 你有两个可选输出档位，请自行选择更适合画面的一档：
    - 精炼档：80-120 个英文字符
    - 展开档：不超过 200 个英文字符
@@ -25,7 +25,7 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【抄作业范例 / EXAMPLE FORMAT】:
 Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night, realistic wuxia style, cold blue lighting, warm orange rim light, black armor warrior, red dress woman, black cloak, bloody wooden box, hand holding bloody seal cloth, Simplified Chinese text grid below each panel, dramatic film stills, high detail, 3:2 composition
 
-请完全模仿上述范例的极简结构，自行选择精炼档（80-120 字符）或展开档（不超过 200 字符）的英文视觉 Tag，不要生成句子。
+请完全模仿上述范例的极简结构，自行选择精炼档（80-120 字符）或展开档（不超过 200 字符）的英文视觉 Tag，可以分成多行短 tags / 短短语块，但不要生成句子。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -86,7 +86,7 @@ export async function extractChineseVisualBrief(rawContext: string): Promise<str
           "你必须把输入内容狠心压缩到 220 个中文字符以内。",
           "只保留：情绪、灯光、场景、服装、关键道具、镜头感、版式。",
           "删除：解释、分析、故事摘要、长动作、修辞句。",
-          "输出必须是短中文关键词或短短语，可用逗号分隔，不要长句。",
+          "输出必须是短中文关键词或短短语块，可用逗号分隔或分行，不要长句。",
           "严格返回 JSON：{\"brief\":\"...\"}。",
         ].join("\n"),
       },
@@ -114,24 +114,8 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You are a bilingual film director and cinematic visual design master with refined, high-end taste.
-You specialize in premium 2x4 cinematic storyboard images.
-You are fluent in Chinese and English, and you are excellent at compressing complex ideas into short, elegant visual tags.
-Your taste standard is poetic, dramatic, emotionally charged, and visually expensive.
-
-CRITICAL PIPELINE (DO NOT SKIP):
-You are the **translation / directing** stage only. The **next model is GPT-IMAGE-2**: it **only** renders from an **English** visual prompt and **cannot** translate Chinese, read the script, or infer missing semantics. You MUST convert the Chinese script below into **one** self-contained, vivid **English** prompt that fully encodes lighting, camera angles, wardrobe, character actions, and the mandatory on-canvas Simplified-Chinese typography rules (written as explicit English instructions to the image model).
-
-Your task is to translate the Chinese script into one concise line of comma-separated English visual tags with cinematic tension, premium texture, and strong visual hierarchy.
-
-MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
-1. START the tag line with exactly: Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills,
-2. Keep ONLY the highest-value visual elements: mood, lighting, scene, wardrobe, key props, camera feel, panel layout. Remove story summary, abstract analysis, and long action prose.
-3. Include explicit tag fragments for Simplified-Chinese on-canvas text, e.g.: main title in Simplified Chinese, each panel Simplified Chinese labels, text grid below panels with Simplified Chinese.
-4. Include the Typography Color & Emotion fragment verbatim as short tags: blood red text (or another named contrasting color token), not vague "emotional colors". The title must feel emotionally charged, cinematic, and instantly legible.
-5. Choose cohesive background palette tags matching the script mood (slate / ink-wash / clinical / warm paper) as comma-separated phrases only, and make sure the title color has a deliberate contrast with the background palette.
-6. The 2x4 grid must be materially encoded in tags: panel grid, distinct panel subjects, image grid below-title layout, simplified chinese text grid below panels.
-7. OUTPUT: Output ONLY the final comma-separated English tag line. Must include masterpiece, 8k. No explanations, no markdown, no Chinese copied verbatim except inside quoted hook instructions if needed.
+You are a bilingual film director who specializes in premium storyboard sheets with strong cinematic structure and high-end visual aesthetics.
+Cinematic 2x4 grid storyboard. Simplified Chinese text tables below each image. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
 
 [Chinese Script]:
 ${slice}
@@ -146,24 +130,8 @@ export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You are a bilingual visual director and editorial design master with refined, high-end taste.
-You specialize in premium image-text notes.
-You are fluent in Chinese and English, and you are excellent at compressing complex ideas into short, elegant visual tags.
-Your taste standard is poetic, emotional, highly aesthetic, and visually expensive.
-
-CRITICAL PIPELINE (DO NOT SKIP):
-Downstream **GPT-IMAGE-2** **only** consumes an **English** visual prompt—it **does not** translate Chinese. You MUST absorb the Chinese script and emit **one** self-contained **English** prompt that encodes all visuals, luxury aesthetic, dynamic background, and the mandatory Simplified-Chinese-on-image rules (as English directives to the image model).
-
-Your task is to translate the Chinese script into one concise line of comma-separated English visual tags with premium editorial taste, emotional pull, and strong cover impact.
-
-MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
-1. START the tag line with exactly: Xiaohongshu dual-note layout, 16:9 canvas, two vertical cards side-by-side, editorial premium style,
-2. Keep ONLY the highest-value visual elements: title emotion, palette contrast, scene, wardrobe, hero prop, clean card layout. Remove story summary, explanation, and long action prose.
-3. Text layout must stay minimal: one Simplified Chinese main title, two to four short Simplified Chinese bullet lines, no long paragraphs, no dense text block, no wall of copy.
-4. Include Typography Color & Emotion as named color token tags (e.g. warm ivory title, vermilion accent), never vague emotional wording. The Simplified Chinese title must feel warm, emotionally charged, premium, and highly clickable.
-5. Add high-end background palette tags (obsidian black, cream gradient, ink beige, dark walnut, muted jade) as short phrases, and ensure strong readable contrast between title color and background color.
-6. The dual-note grid must be explicit in tags: left card hero, right card hero, clean margins, premium editorial spacing, structured note layout.
-7. OUTPUT: Output ONLY the final comma-separated English tag line. Must include masterpiece, 8k. No explanations, no markdown.
+You are a bilingual visual editor who specializes in premium image-text notes with refined aesthetics and strong title design.
+Use Simplified Chinese as the main title language, with English allowed as secondary supporting text.
 
 [Chinese Script]:
 ${slice}
@@ -228,27 +196,32 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 500);
   const ctx = String(input.context || "").trim().slice(0, 1500);
-  const variantTags =
-    input.variant === "video"
-      ? "Required tags must include: vertical 9:16, multi-panel storyboard strip, at least 3 separated frames, gutters between panels, short-form video beats, not single full-bleed poster"
-      : "Required tags must include: vertical 9:16, editorial cover-style hero still, luxury focal subject, Xiaohongshu graphic note feel, not multi-panel storyboard grid";
+  const isVideo = input.variant === "video";
   return (
     `
-You are a bilingual (English and Simplified Chinese) social media visual strategist and prompt director.
-You are also a master thumbnail designer responsible for title emotion, palette contrast, and scroll-stopping visual impact.
+You are a bilingual visual prompt director.
+${isVideo
+  ? "You specialize in short-video storyboard reference frames with strong rhythm and visual clarity."
+  : "You specialize in premium single-image media covers with strong click appeal and high-end visual impact."}
 
-CRITICAL PIPELINE (DO NOT SKIP):
-**GPT-IMAGE-2** consumes **only English**—it cannot translate Chinese. You MUST output **one** line of comma-separated English **visual tags** for a ${input.variant === "video" ? "short-video multi-panel storyboard reference" : "graphic note / cover-style single hero reference"}, with mandatory on-image **Simplified-Chinese** typography encoded as short English tag fragments (not prose).
+${isVideo
+  ? "Use Simplified Chinese as the main title language."
+  : "Use Simplified Chinese as the main title language, with English allowed as secondary supporting text."}
 
-VARIANT + TYPOGRAPHY (tags only, comma-separated):
-- ${variantTags}
-- Main on-image hook or title: Simplified Chinese legible, based on 「${hook}」
-- Include Typography Color & Emotion as named English color token tags (e.g. golden yellow font), never vague wording. The title must have emotional warmth, contrast, and instant readability.
-- Explicitly define the contrast logic between background palette and title color using named English colors.
-- Absorb composition from Chinese context below; do **not** paste raw Chinese into the output string:
+${isVideo ? `
+VIDEO STORYBOARD REFERENCE:
+- Required tags must include: vertical 9:16, multi-panel storyboard strip, at least 3 separated frames, gutters between panels, short-form video beats, not single full-bleed poster.
+- Use storyboard rhythm, sequence, and shot progression language.
+- Main on-image hook or title: Simplified Chinese legible, based on 「${hook}」.
+` : `
+COVER DESIGN ONLY:
+- Required tags must include: vertical 9:16, single-image cover, single dominant hero subject, premium editorial portrait or scene, strong focal point, not multi-panel storyboard, not dual-card layout, not Xiaohongshu note, not checklist, not bullet list, not account UI, not comment bar.
+- The image must behave like a high-click cover, not an image-text note.
+- Main on-image hook or title: Simplified Chinese legible, based on 「${hook}」.
+`}
+
+Context:
 ${ctx}
-
-OUTPUT: **Only** the final comma-separated English tag line. No explanations, no markdown.
 `.trim() +
     "\n\n" +
     MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT
@@ -284,16 +257,11 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
       {
         role: "system",
         content: [
-          "你是顶级中英双语编导，也是顶级视觉设计大师、封面设计大师、精美图文笔记设计大师。",
-          "你的方向非常明确：输出高视觉冲击力、高度美感、用细节带动人情绪的画面与标题。",
-          "你擅长封面的设计，也擅长精美图文笔记的制作。",
-          "你擅长用精练的语言描述高细节、高张力、高冲击力的画面。",
-          "你尤其擅长用精简语言表达高情绪张力、强创作视觉冲击与高级标题设计。",
-          "你非常擅长浓缩与精炼提示词，这正是你的强项之一。",
-          "你在把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags 这件事上，能力极强，判断成熟，审美在线。",
-          "你的任务是把上游中文内容翻成一行英文视觉 tags，供下游生图模型直接使用。",
+          "你是顶级中英双语编导，也是顶级视觉提示词导演。",
+          "你的任务是把上游中文内容压缩成高级、精准、可执行的英文视觉 tags 或短短语块，供下游生图模型直接使用。",
+          "你非常擅长浓缩与精炼提示词，这是你的核心强项之一。",
           "请返回合法 JSON，格式为 {\"prompt\":\"...\"}。",
-          "prompt 字段里只输出英文，逗号分隔，不要句子，不要解释，不要 markdown。",
+          "prompt 字段里只输出英文视觉 tags 或短短语块。",
           "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
           "只保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。",
           "必须包含 masterpiece 和 8k 两个质量 tags。",
@@ -324,19 +292,18 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     {
       role: "system" as const,
       content: [
-        "你是顶级中英双语编导、视觉设计大师、封面设计大师、精美图文笔记设计大师，擅长输出高视觉冲击力、高美感、细节驱动情绪的画面与标题。",
+        "你是顶级中英双语编导，也是顶级视觉提示词导演。",
         "浓缩与精炼提示词是你的强项之一。",
-        "你尤其擅长把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags。",
-        "你尤其擅长用精简语言表达高情绪张力、强创作视觉冲击与高级标题设计。",
+        "你尤其擅长把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags 或短短语块。",
         "必须返回合法 JSON，对象格式只能是 {\"prompt\":\"...\"}。",
-        "prompt 字段里只输出一行英文短视觉 tags，逗号分隔，不要句子，不要解释。",
+        "prompt 字段里只输出英文短视觉 tags 或短短语块。",
         "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
         "必须包含 masterpiece 和 8k。",
       ].join("\n"),
     },
     {
       role: "user" as const,
-      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容压缩并翻译成一行英文短 tags。你可以自行选择：精炼档 80-120 字符，或展开档不超过 200 字符：\n${prompt}`,
+      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容压缩并翻译成英文短视觉 tags 或短短语块。你可以自行选择：精炼档 80-120 字符，或展开档不超过 200 字符：\n${prompt}`,
     },
   ];
 
