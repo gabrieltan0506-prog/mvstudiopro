@@ -9,7 +9,7 @@ const SCRIPT_SLICE = 3500;
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
  * jobs118：锁死 100 词「抄作业」约束（范例缩短、收尾句为「仅输出 100 词内…」）。
  */
-const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
+export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
 1. 绝对禁止输出完整的英文句子、语法或描述性段落。
 2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
@@ -182,7 +182,8 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
  * AI Studio REST：`GEMINI_API_KEY` + 可選 `GEMINI_PRO_MODEL_ID`（預設 gemini-3.1-pro-preview）。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string> {
-  const model = process.env.GEMINI_PRO_MODEL_ID || "gemini-3.1-pro-preview";
+  /** jobs118：默认锁死 preview；仅允许用 GEMINI_PRO_MODEL_ID 指向同族 preview 变体（勿改回无 -preview 的已废弃节点）。 */
+  const model = process.env.GEMINI_PRO_MODEL_ID?.trim() || "gemini-3.1-pro-preview";
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("Missing GEMINI_API_KEY");

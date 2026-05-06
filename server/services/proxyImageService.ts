@@ -1,5 +1,6 @@
 import { analyzeStoryboardPanelStats } from "../../shared/storyboardPanelCount.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
+import { callGemini3_1_Pro_AiStudio } from "./geminiPlatformCompositeTranslation.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -20,22 +21,26 @@ const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
 export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
   if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) return rawPrompt;
 
-  appendImageFlowLog(log, `[Prompt 提炼] 原始长度超标 (${rawPrompt.length})，启动 3 次重试机制...`);
+  appendImageFlowLog(log, `[Prompt 提炼] 原始长度超标 (${rawPrompt.length})，启动 3 次智能重试...`);
   const condenseTask = `请将以下过长的生图 Prompt 浓缩为 100 个单词以内的英文视觉 Tags (逗号分隔)：\n\n${rawPrompt}`;
-
-  const { callGemini3_1_Pro_AiStudio } = await import("./geminiPlatformCompositeTranslation.js");
 
   for (let i = 1; i <= 3; i++) {
     try {
       const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
       const out = condensed.trim();
-      if (out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) return out;
+      if (out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) {
+        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，字数縮減至: ${out.length}`);
+        return out;
+      }
       appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试结果仍超标 (${out.length})`);
-    } catch {
-      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试请求失败`);
+    } catch (e: unknown) {
+      appendImageFlowLog(
+        log,
+        `[Prompt 提炼] 第 ${i} 次尝试请求失败: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
-  throw new Error("Prompt 提炼连续 3 次失败，为保生图质量，任务已中止。");
+  throw new Error("Prompt 提炼连续 3 次失败且长度超标，为保生图质量，任务已中止。");
 }
 
 /**

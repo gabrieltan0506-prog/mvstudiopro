@@ -2946,7 +2946,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             const updated = await database
               .update(userCreations)
               .set({
-                metadata: sql<string>`(jsonb_set(coalesce(metadata::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
+                metadata: sql<string>`(jsonb_set(coalesce(${userCreations.metadata}::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
                 updatedAt: new Date(),
               })
               .where(
@@ -3034,7 +3034,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           "./services/geminiPlatformCompositeTranslation.js",
         );
         const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
-          "./services/proxyImageService",
+          "./services/proxyImageService.js",
         );
         const ctxStr = String(input.context || "").trim();
         const copywriting = ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook;
