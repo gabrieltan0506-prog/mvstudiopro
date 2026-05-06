@@ -2901,13 +2901,11 @@ export default function PlatformPage() {
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
-                                {regeneratingCoverSceneId === item.id ? (
-                                  "单帧重新绘制中..."
-                                ) : coverSilentRetryIds.has(item.id) ? (
-                                  <span className="text-amber-500/80">检测到异常，正在自动重试补救...</span>
-                                ) : (
-                                  "高定视觉绘制中..."
-                                )}
+                                {regeneratingCoverSceneId === item.id
+                                  ? "单帧重新绘制中..."
+                                  : coverSilentRetryIds.has(item.id)
+                                    ? "检测到异常，正在自动重试补救..."
+                                    : "高定视觉绘制中..."}
                               </span>
                             </div>
                           ) : null}

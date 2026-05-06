@@ -865,7 +865,7 @@ async function buildPlatformContent(params: {
 4.个人经历与人设魅力(IP Persona Story)
 5.行业认知破局(Industry Breakthrough)
 6.平台流量密码融合(Platform Logic)
-【资安要求】：选题必须锚定用户的真实背景 ipContextBinding。若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 6 条。
+【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 6 条。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
@@ -2911,7 +2911,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
         const title = String(input.topicHook || "").trim().slice(0, 80);
         const sid = String(input.sceneId ?? "").trim();
-        const failedJobRaw = String(input.failedJobId ?? "").trim();
 
         let creationIdOut: number | undefined;
         let isFreeRetry = false;
@@ -2950,17 +2949,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
             });
           }
 
-          if (failedJobRaw.length > 0 && creationIdOut != null) {
-            const failedIdNum = Number(failedJobRaw);
-            if (!Number.isInteger(failedIdNum) || failedIdNum <= 0) {
-              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
-              creationIdOut = undefined;
-              throw new TRPCError({
-                code: "BAD_REQUEST",
-                message: "凭证无效或已被使用",
-              });
-            }
-
+          if (input.failedJobId && creationIdOut) {
+            const failedIdNum = Number(input.failedJobId);
             const updated = await database
               .update(userCreations)
               .set({
@@ -2983,7 +2973,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
               consumedParentId = failedIdNum;
             } else {
               await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
-              creationIdOut = undefined;
               throw new TRPCError({
                 code: "BAD_REQUEST",
                 message: "凭证无效或已被使用",
