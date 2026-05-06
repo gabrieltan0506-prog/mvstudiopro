@@ -525,6 +525,45 @@ function linesFromClientMutationFailure(prefix: string, err: unknown): string[] 
   return lines;
 }
 
+function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohongshu", sceneId?: string): string[] {
+  const ts = new Date().toISOString();
+  if (kind === "cover_batch") {
+    return [
+      `${ts}  [客户端] 异步逐张封面生成已发起`,
+      `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
+      `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 灯光 / 场景 / 主体 / 标题要求）`,
+      `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
+      `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
+      `${ts}  [步骤4] GPT-IMAGE-2 主路径出图（9:16）`,
+      `${ts}  [步骤5] 若主路径无图，切 Typography / Nano Banana 2 兜底`,
+      `${ts}  [步骤6] 回写 imageUrl → 前端卡片渲染`,
+      `${ts}  [等待中] sceneId=${sceneId || "N/A"}`,
+    ];
+  }
+  if (kind === "storyboard") {
+    return [
+      `${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}`,
+      `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
+      `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 灯光 / 场景 / 服装 / 道具 / 网格）`,
+      `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
+      `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
+      `${ts}  [步骤4] GPT-IMAGE-2 横版 16:9 主路径出图`,
+      `${ts}  [步骤5] 若翻译空或主路径无图，切 Nano Banana 2 / Vertex 兜底`,
+      `${ts}  [步骤6] 回写 imageUrl → 顶部画廊与卡片渲染`,
+    ];
+  }
+  return [
+    `${ts}  [客户端] 小红书图文生成已发起 · sceneId=${sceneId || "N/A"}`,
+    `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
+    `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 配色 / 场景 / 主体 / 文案层级）`,
+    `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
+    `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
+    `${ts}  [步骤4] GPT-IMAGE-2 横版 16:9 主路径出图`,
+    `${ts}  [步骤5] 若翻译空或主路径无图，切 Nano Banana 2 / Vertex 兜底`,
+    `${ts}  [步骤6] 回写 imageUrl → 顶部画廊与卡片渲染`,
+  ];
+}
+
 /** 3A：六維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
 function PlatformIpDimensionGuide() {
   return (
@@ -841,7 +880,7 @@ export default function PlatformPage() {
         kind: "batch_topic_frames",
         lines: [
           `${new Date().toISOString()}  [客户端] 异步逐张封面生成已发起 · sceneCount=${scenes.length} · concurrency=1`,
-          `${new Date().toISOString()}  [预估步骤] 单张循环：中文骨架 → GPT 5.4 英文 tags → Prompt 提炼 → GPT-IMAGE-2 主路径 → Nano Banana 2 / Vertex 兜底`,
+          ...buildPendingImageGenLines("cover_batch"),
         ],
         meta: {
           localOpId,
@@ -861,8 +900,8 @@ export default function PlatformPage() {
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
-          kind: "batch_topic_frames",
-          lines: [...liveLines],
+        kind: "batch_topic_frames",
+          lines: [...liveLines, ...buildPendingImageGenLines("cover_batch", scene.id)],
           meta: {
             localOpId,
             platformType: "graphic",
@@ -907,6 +946,12 @@ export default function PlatformPage() {
           },
         );
         const out = String(result.imageUrl ?? (result as { url?: string | null }).url ?? "").trim();
+        const serverLines = Array.isArray((result as { imageGenFlowLog?: string[] }).imageGenFlowLog)
+          ? ((result as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+          : [];
+        if (serverLines.length > 0) {
+          liveLines.push(...serverLines);
+        }
         if (out) {
           successCount += 1;
           setPlatformImageMap((prev) => ({ ...prev, [scene.id]: out }));
@@ -960,10 +1005,10 @@ export default function PlatformPage() {
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
           kind: "composite_2x4",
-          lines: [
-            `${new Date().toISOString()}  [客户端] 2×4 合成已发起 · sceneId=${input.sceneId} · kind=${input.kind}`,
-            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. GPT 5.4 翻译英文 tags → 3. Prompt 提炼 → 4. GPT-IMAGE-2 横版主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
-          ],
+          lines:
+            input.kind === "xiaohongshu_dual_note"
+              ? buildPendingImageGenLines("xiaohongshu", input.sceneId)
+              : buildPendingImageGenLines("storyboard", input.sceneId),
           meta: {
             localOpId,
             apiKind: input.kind,
@@ -1601,7 +1646,7 @@ export default function PlatformPage() {
         }
 
         return {
-          id: `${title || index}-${index}`,
+          id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
           // Task II: Support theme / titleExample / contentHook keys from strict JSON template
           title: cleanUserCopy(renderSafeText(title || item.theme || item.titleExample, `内容方案 ${index + 1}`), `内容方案 ${index + 1}`),
           hook: cleanUserCopy(renderSafeText(hook || item.contentHook, "先用一句明确判断开头。"), "先用一句明确判断开头。"),
@@ -1629,7 +1674,7 @@ export default function PlatformPage() {
 
     // Pre-analysis state only: show snapshot topics as preview placeholders
     return topTopics.slice(0, 4).map((item, index) => ({
-      id: `${item.title}-${index}`,
+      id: String((item as any).id || (item as any).sceneId || `topic-${index}`),
       title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
       hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
       copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
