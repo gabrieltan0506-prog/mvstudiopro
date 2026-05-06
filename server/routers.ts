@@ -105,12 +105,9 @@ import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
 
-/** 平台頁一鍵批量參考圖：同時進行「Gemini→英文 + 生圖」的條目數（環境變數可調，預設 4）。 */
-function resolvePlatformTopicImageConcurrency(): number {
-  const raw = String(process.env.PLATFORM_TOPIC_IMAGE_CONCURRENCY || "").trim();
-  const parsed = raw ? Number.parseInt(raw, 10) : 4;
-  if (!Number.isFinite(parsed)) return 4;
-  return Math.min(8, Math.max(1, parsed));
+/** 平台頁一鍵批量參考圖：封面（圖文）最多 2 路並發，分鏡（短視頻）僅 1 路，降低生圖 API Rate limit 斷連風險。 */
+function resolvePlatformTopicImageBatchConcurrency(platformType: "video" | "graphic"): number {
+  return platformType === "graphic" ? 2 : 1;
 }
 
 async function mapWithPool<T, R>(items: T[], pool: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -3057,8 +3054,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
               variant: isGraphic ? "graphic" : "video",
             });
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+            const safePrompt = englishPrompt ? englishPrompt.slice(0, 800) : copywriting.slice(0, 800);
             imageUrl = await generateGptImage2FromRawEnglishPrompt({
-              englishPrompt,
+              englishPrompt: safePrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_reference",
             });
@@ -3208,7 +3206,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         );
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        const pool = resolvePlatformTopicImageConcurrency();
+        const pool = resolvePlatformTopicImageBatchConcurrency(input.platformType);
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
 
         const drizzleDb = await db.getDb();
@@ -3262,8 +3260,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…");
+            const safePrompt = englishPrompt ? englishPrompt.slice(0, 800) : body.slice(0, 800);
             url = await generateGptImage2FromRawEnglishPrompt({
-              englishPrompt,
+              englishPrompt: safePrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_batch_reference",
               flowLog,

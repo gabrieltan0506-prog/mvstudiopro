@@ -417,12 +417,17 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   appendImageFlowLog(L, `[2×4·步骤1] 完成 · 英文 prompt 约 ${prompt.length} 字符（预览）: ${prompt.replace(/\s+/g, " ").slice(0, 180)}…`);
 
+  const safePrompt = String(prompt || "").trim().slice(0, 800);
+  if (safePrompt.length < String(prompt || "").trim().length) {
+    appendImageFlowLog(L, `[2×4·步骤1] 已物理截断至 800 字符（防 API / 模型过载）`);
+  }
+
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   appendImageFlowLog(
     L,
     `[2×4·步骤2] GPT-IMAGE-2 横版 16:9 · gcsSubdir=${subdir} · 尺寸: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
   );
-  const primary = await postGptImage2AndUpload(prompt, subdir, {
+  const primary = await postGptImage2AndUpload(safePrompt, subdir, {
     maxAttempts: 1,
     sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
   });
@@ -448,7 +453,7 @@ export async function generatePlatformCompositeSheetImage(options: {
       );
     }
     const vertexResult = await generateGeminiImage({
-      prompt: String(prompt).trim(),
+      prompt: safePrompt,
       quality: "1k",
       aspectRatio: "16:9",
       personGeneration: "ALLOW_ADULT",
