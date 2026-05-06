@@ -11,6 +11,33 @@ export function appendImageFlowLog(log: string[] | undefined, message: string): 
 
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
 
+/** 智能提煉閾值（字元數判斷，非截斷）：超過則觸發 AI Studio 濃縮。 */
+const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
+
+/**
+ * 超長 prompt 時啟動 AI Studio 最多 3 次濃縮；不對生圖串做 slice 物理截斷。
+ */
+export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
+  if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) return rawPrompt;
+
+  appendImageFlowLog(log, `[Prompt 提炼] 原始长度超标 (${rawPrompt.length})，启动 3 次重试机制...`);
+  const condenseTask = `请将以下过长的生图 Prompt 浓缩为 100 个单词以内的英文视觉 Tags (逗号分隔)：\n\n${rawPrompt}`;
+
+  const { callGemini3_1_Pro_AiStudio } = await import("./geminiPlatformCompositeTranslation.js");
+
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
+      const out = condensed.trim();
+      if (out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) return out;
+      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试结果仍超标 (${out.length})`);
+    } catch {
+      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试请求失败`);
+    }
+  }
+  throw new Error("Prompt 提炼连续 3 次失败，为保生图质量，任务已中止。");
+}
+
 /**
  * 視覺防禦常數 — **畫內零文字**：標題與文案由前端 / HTML 疊加，gpt-image-2 只出純畫面。
  */
@@ -416,6 +443,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
 
   appendImageFlowLog(L, `[2×4·步骤1] 完成 · 英文 prompt 约 ${prompt.length} 字符（预览）: ${prompt.replace(/\s+/g, " ").slice(0, 180)}…`);
+
+  prompt = await condenseImagePromptIfNeeded(prompt, L);
 
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   appendImageFlowLog(

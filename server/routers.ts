@@ -2946,7 +2946,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             const updated = await database
               .update(userCreations)
               .set({
-                metadata: sql<string>`(jsonb_set(coalesce((${userCreations.metadata})::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
+                metadata: sql<string>`(jsonb_set(coalesce(metadata::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
                 updatedAt: new Date(),
               })
               .where(
@@ -3033,7 +3033,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt } = await import(
           "./services/geminiPlatformCompositeTranslation.js",
         );
-        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
+        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
           "./services/proxyImageService",
         );
         const ctxStr = String(input.context || "").trim();
@@ -3049,8 +3049,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
               variant: isGraphic ? "graphic" : "video",
             });
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+            const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || copywriting);
             imageUrl = await generateGptImage2FromRawEnglishPrompt({
-              englishPrompt,
+              englishPrompt: safePrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_reference",
             });
@@ -3195,9 +3196,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
           buildPlatformTopicReferenceGeminiTask,
           callGemini31ProForImagePrompt,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
-        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, appendImageFlowLog } = await import(
-          "./services/proxyImageService.js",
-        );
+        const {
+          generateImageGpt2WithImagenFallback,
+          generateGptImage2FromRawEnglishPrompt,
+          appendImageFlowLog,
+          condenseImagePromptIfNeeded,
+        } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
         const pool = input.platformType === "graphic" ? 2 : 1;
@@ -3253,9 +3257,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
             appendImageFlowLog(flowLog, "[步骤1] 调用 Gemini 生成英文 prompt …");
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
+            appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
+            const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || body, flowLog);
             appendImageFlowLog(flowLog, "[步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…");
             url = await generateGptImage2FromRawEnglishPrompt({
-              englishPrompt,
+              englishPrompt: safePrompt,
               aspectRatio: "9:16",
               gcsSubdir: "platform_topic_batch_reference",
               flowLog,

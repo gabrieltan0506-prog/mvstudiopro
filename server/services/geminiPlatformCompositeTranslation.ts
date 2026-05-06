@@ -7,19 +7,27 @@ const SCRIPT_SLICE = 3500;
 
 /**
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
+ * jobs118：锁死 100 词「抄作业」约束（范例缩短、收尾句为「仅输出 100 词内…」）。
  */
 const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
-你现在的任务是写出可以直接喂给 Midjourney 或 GPT-IMAGE-2 的英文 Prompt。
 1. 绝对禁止输出完整的英文句子、语法或描述性段落。
 2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
-3. 总字数严格限制在 100 个英文单词以内（约 500 字符）！超过将导致系统崩溃！
+3. 总字数严格限制在 100 个英文单词以内！超过将导致系统崩溃！
 
 【抄作业范例 / EXAMPLE FORMAT】:
-Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night. Realistic wuxia style, cold blue and warm orange lighting. Panels feature: grand gates, male warrior in black armor, woman in red dress with black cloak, bloody wooden box, hand holding bloody seal cloth. Chinese text tables below each image. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
+Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night. Realistic wuxia style, cold blue and warm orange lighting. Panels feature: grand gates, male warrior in black armor, woman in red dress with black cloak. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
 
-请完全模仿上述范例的极简结构，将当前内容转化为纯英文视觉 Tag。
+请完全模仿上述范例的极简结构，仅输出 100 词内的英文视觉 Tag。
 `.trim();
+
+export function stripGeminiModelOutput(raw: string): string {
+  let t = String(raw || "").trim();
+  const fence = /^```(?:[a-zA-Z0-9+-]*)?\s*([\s\S]*?)```$/;
+  const m = t.match(fence);
+  if (m?.[1]) t = m[1].trim();
+  return t.replace(/^["']|["']$/g, "").trim();
+}
 
 /** 视频分镜 2×4：Gemini 双语编导翻译 → 英文指令；出图端为 GPT-IMAGE-2 横版尺寸序列 */
 export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string {
@@ -163,19 +171,45 @@ OUTPUT: **Only** the final comma-separated English tag line. No explanations, no
 export async function runGemini31ProPreviewText(userTask: string): Promise<string> {
   const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
   const raw = await callGemini3_1_Pro(userTask);
-  const out = stripModelOutput(raw);
+  const out = stripGeminiModelOutput(raw);
   if (!out) {
     throw new Error("封面指令返回空内容");
   }
   return out;
 }
 
-function stripModelOutput(raw: string): string {
-  let t = String(raw || "").trim();
-  const fence = /^```(?:[a-zA-Z0-9+-]*)?\s*([\s\S]*?)```$/;
-  const m = t.match(fence);
-  if (m?.[1]) t = m[1].trim();
-  return t.replace(/^["']|["']$/g, "").trim();
+/**
+ * AI Studio REST：`GEMINI_API_KEY` + 可選 `GEMINI_PRO_MODEL_ID`（預設 gemini-3.1-pro-preview）。
+ */
+export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string> {
+  const model = process.env.GEMINI_PRO_MODEL_ID || "gemini-3.1-pro-preview";
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing GEMINI_API_KEY");
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 2048, temperature: 0.7 },
+      }),
+    },
+  );
+
+  const data = (await response.json()) as {
+    error?: { message?: string };
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+
+  if (!response.ok || data.error) {
+    throw new Error(data.error?.message || "AI Studio Error");
+  }
+
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
 /**
@@ -183,35 +217,9 @@ function stripModelOutput(raw: string): string {
  * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(translationTask: string): Promise<string> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY for image translation.");
-  }
-  const url =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=" +
-    encodeURIComponent(apiKey);
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: translationTask }] }],
-        generationConfig: { maxOutputTokens: 8192, temperature: 0.7 },
-      }),
-      signal: AbortSignal.timeout(300_000),
-    });
-    const data = (await response.json()) as {
-      error?: { message?: string };
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    if (!response.ok) {
-      throw new Error(data?.error?.message || `HTTP ${response.status}`);
-    }
-    if (data.error) {
-      throw new Error(String(data.error.message || "Gemini API error"));
-    }
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const out = stripModelOutput(raw);
+    const raw = await callGemini3_1_Pro_AiStudio(translationTask);
+    const out = stripGeminiModelOutput(raw);
     if (!out) {
       throw new Error("翻译服务返回空 prompt");
     }
