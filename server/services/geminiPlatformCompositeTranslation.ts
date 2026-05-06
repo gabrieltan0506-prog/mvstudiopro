@@ -1,3 +1,5 @@
+import { extractJsonString, invokeLLM } from "../_core/llm.js";
+
 /**
  * **双语编导（Gemini）**：读中文剧本 / 封面文案，产出**一条**纯英文视觉 prompt。
  * **GPT-IMAGE-2** 只接收该英文串并生图，不做翻译、不读中文——汉语内容必须由 Gemini 先在 prompt 里用英文规划好（含「画面上简中字」等死命令）。
@@ -14,6 +16,8 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 1. 绝对禁止输出完整的英文句子、语法或描述性段落。
 2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
 3. 总字数严格限制在 100 个英文单词以内！超过将导致系统崩溃！
+4. 必须显式写出有情绪温度的标题视觉策略：高对比、强聚焦、可读的 Simplified Chinese headline。
+5. 必须显式写出背景与标题的配色对撞关系，使用具名英文颜色词，不要只写“warm / cool”.
 
 【抄作业范例 / EXAMPLE FORMAT】:
 Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night. Realistic wuxia style, cold blue and warm orange lighting. Panels feature: grand gates, male warrior in black armor, woman in red dress with black cloak. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
@@ -35,6 +39,7 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
   return (
     `
 You are a bilingual (English and Simplified Chinese) Master Film Director, Aesthetic Expert, and highly skilled Prompt Engineer.
+You are also a luxury visual designer responsible for headline emotional temperature, palette contrast, and instant thumbnail impact.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 You are the **translation / directing** stage only. The **next model is GPT-IMAGE-2**: it **only** renders from an **English** visual prompt and **cannot** translate Chinese, read the script, or infer missing semantics. You MUST convert the Chinese script below into **one** self-contained, vivid **English** prompt that fully encodes lighting, camera angles, wardrobe, character actions, and the mandatory on-canvas Simplified-Chinese typography rules (written as explicit English instructions to the image model).
@@ -45,8 +50,8 @@ MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Cinematic 2x4 grid storyboard, 1k resolution, high quality, intricate details, dramatic film stills,
 2. Continue with vivid English **keywords** for visuals, lighting, wardrobe, actions (no narrative sentences).
 3. Include explicit tag fragments for Simplified-Chinese on-canvas text, e.g.: main title in Simplified Chinese, each panel Simplified Chinese labels, text grid below panels with Simplified Chinese.
-4. Include the Typography Color & Emotion fragment verbatim as short tags: blood red text (or another named contrasting color token), not vague "emotional colors".
-5. Choose cohesive background palette tags matching the script mood (slate / ink-wash / clinical / warm paper) as comma-separated phrases only.
+4. Include the Typography Color & Emotion fragment verbatim as short tags: blood red text (or another named contrasting color token), not vague "emotional colors". The title must feel emotionally charged, cinematic, and instantly legible.
+5. Choose cohesive background palette tags matching the script mood (slate / ink-wash / clinical / warm paper) as comma-separated phrases only, and make sure the title color has a deliberate contrast with the background palette.
 6. OUTPUT: Output ONLY the final comma-separated English tag line. No explanations, no markdown, no Chinese copied verbatim except inside quoted hook instructions if needed.
 
 [Chinese Script]:
@@ -63,6 +68,7 @@ export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   return (
     `
 You are a bilingual (English and Simplified Chinese) Master Art Director and Social Media Visual Strategist.
+You are also a top-tier visual branding designer responsible for title emotion, palette hierarchy, and thumbnail click impact.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 Downstream **GPT-IMAGE-2** **only** consumes an **English** visual prompt—it **does not** translate Chinese. You MUST absorb the Chinese script and emit **one** self-contained **English** prompt that encodes all visuals, luxury aesthetic, dynamic background, and the mandatory Simplified-Chinese-on-image rules (as English directives to the image model).
@@ -73,8 +79,8 @@ MANDATORY TAG FRAGMENTS (comma-separated, not full sentences):
 1. START the tag line with exactly: Cinematic 2x4 grid Xiaohongshu visual note layout, 16:9 canvas, 2k high resolution, magazine editorial style, masterpiece, two vertical cards side-by-side, 2x4 cinematic matrix,
 2. Continue with luxury visuals as **keywords** only.
 3. Include tag fragments: Simplified Chinese main title, Simplified Chinese below each image, final panels bullet summaries in Simplified Chinese.
-4. Include Typography Color & Emotion as named color token tags (e.g. neon cyan typography), never vague emotional wording.
-5. Add high-end background palette tags (obsidian black, cream gradient, etc.) as short phrases.
+4. Include Typography Color & Emotion as named color token tags (e.g. neon cyan typography), never vague emotional wording. The Simplified Chinese title must feel warm, emotionally charged, premium, and highly clickable.
+5. Add high-end background palette tags (obsidian black, cream gradient, etc.) as short phrases, and ensure strong readable contrast between title color and background color.
 6. OUTPUT: Output ONLY the final comma-separated English tag line. No explanations, no markdown.
 
 [Chinese Script]:
@@ -147,6 +153,7 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   return (
     `
 You are a bilingual (English and Simplified Chinese) social media visual strategist and prompt director.
+You are also a master thumbnail designer responsible for title emotion, palette contrast, and scroll-stopping visual impact.
 
 CRITICAL PIPELINE (DO NOT SKIP):
 **GPT-IMAGE-2** consumes **only English**—it cannot translate Chinese. You MUST output **one** line of comma-separated English **visual tags** for a ${input.variant === "video" ? "short-video multi-panel storyboard reference" : "graphic note / cover-style single hero reference"}, with mandatory on-image **Simplified-Chinese** typography encoded as short English tag fragments (not prose).
@@ -154,7 +161,8 @@ CRITICAL PIPELINE (DO NOT SKIP):
 VARIANT + TYPOGRAPHY (tags only, comma-separated):
 - ${variantTags}
 - Main on-image hook or title: Simplified Chinese legible, based on 「${hook}」
-- Include Typography Color & Emotion as named English color token tags (e.g. golden yellow font), never vague wording
+- Include Typography Color & Emotion as named English color token tags (e.g. golden yellow font), never vague wording. The title must have emotional warmth, contrast, and instant readability.
+- Explicitly define the contrast logic between background palette and title color using named English colors.
 - Absorb composition from Chinese context below; do **not** paste raw Chinese into the output string:
 ${ctx}
 
@@ -179,38 +187,55 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 }
 
 /**
- * AI Studio REST：`GEMINI_API_KEY` + 可選 `GEMINI_PRO_MODEL_ID`（預設 gemini-3.1-pro-preview）。
+ * 兼容旧调用名：
+ * 原本此函数走 Gemini 3.1 Pro / AI Studio 作为平台生图翻译大脑。
+ * 现已切换为 OpenAI GPT 5.4，但保留函数名与文件名，避免改动调用方。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string> {
-  /** jobs118：默认锁死 preview；仅允许用 GEMINI_PRO_MODEL_ID 指向同族 preview 变体（勿改回无 -preview 的已废弃节点）。 */
-  const model = process.env.GEMINI_PRO_MODEL_ID?.trim() || "gemini-3.1-pro-preview";
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY");
+  const response = await invokeLLM({
+    provider: "openai",
+    model: "gpt54",
+    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
+    response_format: { type: "json_object" },
+    temperature: 0.2,
+    topP: 0.9,
+    max_tokens: 4096,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "你是顶级双语编导、电影导演、顶级视觉设计大师。",
+          "你的唯一任务，是把上游中文内容压缩成下游生图模型可直接使用的一条英文视觉 prompt 或英文 tags。",
+          "你必须同时负责：标题的情绪温度、视觉冲击力、背景与标题的颜色搭配、以及画面整体的高级感。",
+          "禁止输出解释、禁止聊天、禁止 markdown、禁止代码块。",
+          "你必须严格返回 JSON：{\"prompt\":\"...\"}。",
+          "prompt 字段内容必须是英文，且必须保留对画面中“简体中文标题/文案”的明确英文指令。",
+          "如果任务要求 tags，就输出逗号分隔的英文 tags；如果任务要求完整 prompt，就输出完整英文 prompt。",
+          "不要遗漏镜头、灯光、构图、气质、材质、版式、简体中文标题要求。",
+          "必须显式给出具名英文颜色词，并写清楚标题颜色与背景颜色的对撞关系，不能只写泛泛的 warm / cool。",
+          "必须让最终简体中文标题在视觉上有温度、有层次、有冲击力，同时保持高级、不俗气。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
+
+  const raw = String(response.choices[0]?.message?.content || "").trim();
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    parsed = JSON.parse(extractJsonString(raw));
+  } catch {
+    parsed = null;
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 2048, temperature: 0.7 },
-      }),
-    },
-  );
-
-  const data = (await response.json()) as {
-    error?: { message?: string };
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-
-  if (!response.ok || data.error) {
-    throw new Error(data.error?.message || "AI Studio Error");
+  const output = String(parsed?.prompt || raw).trim();
+  if (!output) {
+    throw new Error("GPT 5.4 翻译大脑返回空 prompt");
   }
-
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  return output;
 }
 
 /**

@@ -8,7 +8,7 @@ import {
   getCometApiKey,
 } from "../services/cometapi";
 
-export type Role = "system" | "user" | "assistant" | "tool" | "function";
+export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
 export type TextContent = {
   type: "text";
@@ -123,8 +123,8 @@ export type ResponseFormat =
   | { type: "json_object" }
   | { type: "json_schema"; json_schema: JsonSchema };
 
-type ModelTier = "flash" | "pro" | "gpt5";
-type Provider = "vertex" | "gemini" | "cometapi";
+type ModelTier = "flash" | "pro" | "gpt5" | "gpt54";
+type Provider = "vertex" | "gemini" | "cometapi" | "openai";
 
 type LlmTarget = {
   provider: Provider;
@@ -180,7 +180,8 @@ const normalizeContentPart = (
 };
 
 const normalizeMessage = (message: Message) => {
-  const { role, name, tool_call_id } = message;
+  const role = message.role === "system" ? "developer" : message.role;
+  const { name, tool_call_id } = message;
 
   if (role === "tool" || role === "function") {
     const content = ensureArray(message.content)
@@ -237,8 +238,52 @@ const normalizeResponseFormat = ({
   };
 };
 
+const normalizeToolChoice = (
+  toolChoice: ToolChoice | undefined,
+  tools: Tool[] | undefined,
+): ToolChoiceExplicit | ToolChoicePrimitive | undefined => {
+  if (!toolChoice) return undefined;
+
+  if (toolChoice === "none" || toolChoice === "auto") {
+    return toolChoice;
+  }
+
+  if (toolChoice === "required") {
+    if (!tools || tools.length === 0) {
+      throw new Error("tool_choice 'required' was provided but no tools were configured");
+    }
+
+    if (tools.length > 1) {
+      throw new Error("tool_choice 'required' needs a single tool or specify the tool name explicitly");
+    }
+
+    return {
+      type: "function",
+      function: { name: tools[0].function.name },
+    };
+  }
+
+  if ("name" in toolChoice) {
+    return {
+      type: "function",
+      function: { name: toolChoice.name },
+    };
+  }
+
+  return toolChoice;
+};
+
 const getGeminiModelName = (modelTier: ModelTier | undefined) =>
   modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-2.5-flash";
+
+const DEFAULT_OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
+
+function getOpenAiModelName(modelTier: ModelTier | undefined) {
+  if (modelTier === "gpt54" || modelTier === "gpt5") {
+    return String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim() || "gpt-5.4";
+  }
+  return String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim() || "gpt-5.4";
+}
 
 function hasVertexEnv() {
   return Boolean(
@@ -311,7 +356,20 @@ const resolveTarget = (
   preferredProvider?: Provider,
   explicitModelName?: string,
 ): LlmTarget => {
-  if (preferredProvider === "cometapi" || modelTier === "gpt5") {
+  if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
+    if (!ENV.openaiApiKey) {
+      throw new Error("OPENAI_API_KEY is not configured");
+    }
+
+    return {
+      provider: "openai",
+      apiUrl: String(process.env.OPENAI_API_URL || DEFAULT_OPENAI_CHAT_COMPLETIONS_URL).trim() || DEFAULT_OPENAI_CHAT_COMPLETIONS_URL,
+      apiKey: ENV.openaiApiKey,
+      modelName: String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier),
+    };
+  }
+
+  if (preferredProvider === "cometapi") {
     const cometApiKey = getCometApiKey();
     if (!cometApiKey) {
       throw new Error("COMET_API_KEY is not configured");
@@ -452,7 +510,7 @@ async function toGeminiContents(messages: Message[]) {
   const systemTexts: string[] = [];
 
   for (const message of normalized) {
-    if (message.role === "system") {
+    if (message.role === "developer") {
       systemTexts.push(typeof message.content === "string" ? message.content : JSON.stringify(message.content));
       continue;
     }
@@ -713,6 +771,65 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
   return (await response.json()) as InvokeResult;
 }
 
+async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target: LlmTarget): Promise<InvokeResult> {
+  const normalizedResponseFormat = normalizeResponseFormat(params);
+  const supportsSamplingControls = !/^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
+  const payload: Record<string, unknown> = {
+    model: target.modelName,
+    messages: params.messages.map(normalizeMessage),
+    reasoning_effort: "high",
+  };
+
+  const maxCompletionTokens =
+    typeof params.maxTokens === "number" && Number.isFinite(params.maxTokens)
+      ? params.maxTokens
+      : typeof params.max_tokens === "number" && Number.isFinite(params.max_tokens)
+        ? params.max_tokens
+        : undefined;
+
+  if (typeof maxCompletionTokens === "number" && maxCompletionTokens > 0) {
+    payload.max_completion_tokens = Math.floor(maxCompletionTokens);
+  }
+
+  if (supportsSamplingControls && typeof params.temperature === "number") {
+    payload.temperature = params.temperature;
+  }
+
+  if (supportsSamplingControls && typeof params.topP === "number") {
+    payload.top_p = params.topP;
+  }
+
+  if (params.tools?.length) {
+    payload.tools = params.tools;
+  }
+
+  const normalizedToolChoice = normalizeToolChoice(params.toolChoice || params.tool_choice, params.tools);
+  if (normalizedToolChoice) {
+    payload.tool_choice = normalizedToolChoice;
+  }
+
+  if (normalizedResponseFormat) {
+    payload.response_format = normalizedResponseFormat;
+  }
+
+  const response = await fetch(String(target.apiUrl), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${target.apiKey}`,
+    },
+    signal: AbortSignal.timeout(getLlmTimeoutMs()),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
+  }
+
+  return (await response.json()) as InvokeResult;
+}
+
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
   const target = resolveTarget(params.model, params.provider, params.modelName);
 
@@ -722,6 +839,10 @@ export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): P
 
   if (target.provider === "gemini") {
     return invokeGemini(params, target);
+  }
+
+  if (target.provider === "openai") {
+    return invokeOpenAI(params, target);
   }
 
   return invokeCometApi(params, target);

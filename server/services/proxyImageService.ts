@@ -12,30 +12,66 @@ export function appendImageFlowLog(log: string[] | undefined, message: string): 
 
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
 
-/** 智能提煉閾值（字元數判斷，非截斷）：超過則觸發 AI Studio 濃縮。 */
+/** 智能提煉閾值：超過則二次調用 GPT 5.4 壓縮成更短的英文生圖指令。 */
 const PROMPT_CONDENSE_LENGTH_THRESHOLD = 800;
+const PROMPT_CONDENSE_MAX_WORDS = 150;
+const PROMPT_CONDENSE_MIN_WORDS = 80;
+
+function countPromptWords(text: string): number {
+  return String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
 
 /**
  * 超長 prompt 時啟動 AI Studio 最多 3 次濃縮；**不對生圖串做 slice 物理截斷**（閾值僅決定是否觸發提煉）。
  * `log` 與 `appendImageFlowLog` 約定一致；批量任務傳 `flowLog`，單幀可傳空陣列 `[]` 以鎖定相同寫入路徑。
  */
 export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
-  // 1. 安全邊界（約百詞英語 tag 對應之字元量級；非輸出截斷）
-  if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) return rawPrompt;
+  const originalWords = countPromptWords(rawPrompt);
+  // 1. 安全邊界：字元與詞數都不超標時直接返回
+  if (
+    !rawPrompt ||
+    (rawPrompt.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD && originalWords <= PROMPT_CONDENSE_MAX_WORDS)
+  ) {
+    return rawPrompt;
+  }
 
-  appendImageFlowLog(log, `[Prompt 提炼] 原始长度超标 (${rawPrompt.length})，启动 3 次智能重试机制...`);
-  const condenseTask = `请将以下过长的生图 Prompt 浓缩为 100 个单词以内的英文视觉 Tags (逗号分隔)：\n\n${rawPrompt}`;
+  appendImageFlowLog(
+    log,
+    `[Prompt 提炼] 原始长度超标 (chars=${rawPrompt.length}, words=${originalWords})，启动 3 次智能重试机制...`,
+  );
+  const condenseTask = [
+    `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
+    `硬性要求：`,
+    `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
+    `2. 总长度控制在 ${PROMPT_CONDENSE_MIN_WORDS}-${PROMPT_CONDENSE_MAX_WORDS} 个英文单词之间。`,
+    `3. 绝对不能丢失以下关键信息：构图、主体、灯光、镜头气质、平台版式。`,
+    `4. 如果原文要求画面中出现简体中文标题、简体中文标签、简体中文文案，必须保留这条硬指令。`,
+    `5. 小红书双卡、电影级分镜表、平台封面这类版式要求必须保留。`,
+    ``,
+    rawPrompt,
+  ].join("\n");
 
   // 2. 嚴格 3 次重試
   for (let i = 1; i <= 3; i++) {
     try {
       const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
       const out = condensed.trim();
-      if (out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD) {
-        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，字数縮減至: ${out.length}`);
+      const outWords = countPromptWords(out);
+      if (
+        out.length <= PROMPT_CONDENSE_LENGTH_THRESHOLD &&
+        outWords >= PROMPT_CONDENSE_MIN_WORDS &&
+        outWords <= PROMPT_CONDENSE_MAX_WORDS
+      ) {
+        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
         return out;
       }
-      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试结果仍超标 (${out.length})`);
+      appendImageFlowLog(
+        log,
+        `[Prompt 提炼] 第 ${i} 次尝试结果未达标 (chars=${out.length}, words=${outWords})`,
+      );
     } catch (e: unknown) {
       appendImageFlowLog(
         log,
@@ -431,7 +467,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     L,
     `[2×4 合成] kind=${k} · ${isStoryboard ? "分镜图文参考（buildVideoStoryboardGeminiPrompt）" : "小红书双笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
-  appendImageFlowLog(L, `[2×4·步骤1] Gemini translatePlatformCompositeToEnglishPrompt（中文剧本→一条英文视觉指令）…`);
+  appendImageFlowLog(L, `[2×4·步骤1] GPT 5.4 translatePlatformCompositeToEnglishPrompt（中文剧本→一条英文视觉指令）…`);
 
   let prompt: string;
   try {
@@ -444,7 +480,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    appendImageFlowLog(L, `[2×4·步骤1] Gemini 失败: ${msg}`);
+    appendImageFlowLog(L, `[2×4·步骤1] GPT 5.4 翻译失败: ${msg}`);
     console.warn(
       "[proxyImageService] platform composite prompt translation failed:",
       e instanceof Error ? e.message : e,

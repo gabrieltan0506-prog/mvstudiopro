@@ -479,31 +479,69 @@ async function buildPlatformDashboard(params: {
   store: Awaited<ReturnType<typeof readTrendStore>>;
   windowDays: number;
 }) {
-  // Filter items to the user's selected windowDays window (15 / 30 / 45 days back from now)
-  // so that collectionEvidence reflects exactly what the user asked to analyze.
-  // Note: platformBaselineStats always uses full 45-day data (separate section below).
-  const windowCutoffMs = Date.now() - params.windowDays * 24 * 60 * 60 * 1000;
-  const filterItemsByWindow = (items: any[]): any[] =>
-    items.filter((item) => {
-      const ts =
-        item?.collectedAt ||
-        item?.collected_at ||
-        item?.publishedAt ||
-        item?.published_at ||
-        item?.createdAt ||
-        item?.created_at ||
-        item?.date ||
-        null;
-      if (!ts) return true; // No date info — include to avoid dropping valid data
-      const ms = new Date(String(ts)).getTime();
-      return Number.isFinite(ms) && ms >= windowCutoffMs;
+  const getPlatformDecisionWindowDays = (platform: string): number => {
+    if (platform === "douyin" || platform === "kuaishou") return 5;
+    if (platform === "bilibili" || platform === "xiaohongshu") return 15;
+    return params.windowDays;
+  };
+  const readTrendItemTimestampMs = (item: any): number | null => {
+    const ts =
+      item?.collectedAt ||
+      item?.collected_at ||
+      item?.publishedAt ||
+      item?.published_at ||
+      item?.createdAt ||
+      item?.created_at ||
+      item?.date ||
+      null;
+    if (!ts) return null;
+    const ms = new Date(String(ts)).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const filterItemsByWindow = (platform: string, items: any[]): any[] => {
+    const windowDays = getPlatformDecisionWindowDays(platform);
+    const cutoffMs = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    return items.filter((item) => {
+      const ms = readTrendItemTimestampMs(item);
+      if (!ms) return true;
+      return ms >= cutoffMs;
     });
+  };
+  const dynamicDecisionEvidence = params.requestedPlatforms.map((platform) => {
+    const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
+    const allItems: any[] = collection?.items || [];
+    const decisionWindowDays = getPlatformDecisionWindowDays(platform);
+    const recentItems = filterItemsByWindow(platform, allItems);
+    const evidenceItems = recentItems.length > 0 ? recentItems : allItems;
+    const bucketCounts = getCollectionBucketCounts(evidenceItems);
+    const datedItems = evidenceItems
+      .map((item) => ({ item, ts: readTrendItemTimestampMs(item) || 0 }))
+      .sort((left, right) => right.ts - left.ts);
+    return {
+      platform,
+      decisionWindowDays,
+      collectedAt: collection?.collectedAt || null,
+      itemCount: evidenceItems.length,
+      recentTitles: datedItems.slice(0, 8).map(({ item }) => item?.title).filter(Boolean),
+      topBuckets: Object.entries(bucketCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 6)
+        .map(([bucket, count]) => ({ bucket, count })),
+      notes: (collection?.notes || []).slice(-6),
+    };
+  });
 
   const collectionEvidence = params.requestedPlatforms.map((platform) => {
     const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
     const allItems: any[] = collection?.items || [];
-    // Use window-filtered items for evidence sent to LLM (reflects user's selected time range)
-    const windowItems = filterItemsByWindow(allItems);
+    // UI-selected window remains the broad reporting window; dynamicDecisionEvidence below
+    // is the shorter decision chain for fast-moving platforms.
+    const windowCutoffMs = Date.now() - params.windowDays * 24 * 60 * 60 * 1000;
+    const windowItems = allItems.filter((item) => {
+      const ms = readTrendItemTimestampMs(item);
+      if (!ms) return true;
+      return ms >= windowCutoffMs;
+    });
     // Fall back to allItems if filtering removed everything (sparse data scenario)
     const evidenceItems = windowItems.length > 0 ? windowItems : allItems;
     const bucketCounts = getCollectionBucketCounts(evidenceItems);
@@ -590,6 +628,7 @@ async function buildPlatformDashboard(params: {
 5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
 6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
 7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
+8. 平台动态决策链必须强制使用：抖音 / 快手优先参考近 3-5 天样本（当前统一按 5 天窗口给你），B站 / 小红书优先参考近 7-15 天样本（当前统一按 15 天窗口给你）。判断“现在先做什么”时，优先读取 dynamicDecisionEvidence，不要只复述宽窗口快照。
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
@@ -643,6 +682,7 @@ async function buildPlatformDashboard(params: {
           },
           // Always-45-day database baseline for metric calculation
           platformBaselineStats,
+          dynamicDecisionEvidence,
           collections: collectionEvidence.slice(0, 3).map((item) => ({
             platform: item.platform,
             itemCount: item.itemCount,
@@ -820,7 +860,51 @@ async function buildPlatformContent(params: {
   platformMenu: any;
   context?: string;
   windowDays: number;
+  requestedPlatforms: string[];
+  store: Awaited<ReturnType<typeof readTrendStore>>;
 }) {
+  const getPlatformDecisionWindowDays = (platform: string): number => {
+    if (platform === "douyin" || platform === "kuaishou") return 5;
+    if (platform === "bilibili" || platform === "xiaohongshu") return 15;
+    return params.windowDays;
+  };
+  const readTrendItemTimestampMs = (item: any): number | null => {
+    const ts =
+      item?.collectedAt ||
+      item?.collected_at ||
+      item?.publishedAt ||
+      item?.published_at ||
+      item?.createdAt ||
+      item?.created_at ||
+      item?.date ||
+      null;
+    if (!ts) return null;
+    const ms = new Date(String(ts)).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const dynamicDecisionChain = params.requestedPlatforms.map((platform) => {
+    const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
+    const items: any[] = collection?.items || [];
+    const decisionWindowDays = getPlatformDecisionWindowDays(platform);
+    const cutoffMs = Date.now() - decisionWindowDays * 24 * 60 * 60 * 1000;
+    const filteredItems = items.filter((item) => {
+      const ms = readTrendItemTimestampMs(item);
+      if (!ms) return true;
+      return ms >= cutoffMs;
+    });
+    const evidenceItems = filteredItems.length > 0 ? filteredItems : items;
+    const bucketCounts = getCollectionBucketCounts(evidenceItems);
+    return {
+      platform,
+      decisionWindowDays,
+      itemCount: evidenceItems.length,
+      recentTitles: evidenceItems.slice(0, 8).map((item) => item?.title).filter(Boolean),
+      topBuckets: Object.entries(bucketCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 6)
+        .map(([bucket, count]) => ({ bucket, count })),
+    };
+  });
   const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
   const hasCulturePersona = /文化|艺术|艺术|历史|历史|书画|书画|收藏|人文/i.test(params.context || "");
   const personaConstraint = (hasMedicalPersona || hasCulturePersona)
@@ -858,6 +942,7 @@ async function buildPlatformContent(params: {
 5.行业认知破局(Industry Breakthrough)
 6.平台流量密码融合(Platform Logic)
 【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 6 条。
+【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期点击与节奏，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
@@ -940,6 +1025,7 @@ async function buildPlatformContent(params: {
           context: params.context || "",
           windowDays: params.windowDays,
           platformMenu: params.platformMenu,
+          dynamicDecisionChain,
           snapshotData: {
             titleExecutions: params.snapshot.titleExecutions || [],
             monetizationStrategies: params.snapshot.monetizationStrategies || [],
@@ -3064,7 +3150,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               );
             }
             console.warn(
-              `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败（含 Gemini / 智能提炼 / GPT-IMAGE-2）:`,
+              `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败（含 GPT 5.4 翻译 / 智能提炼 / GPT-IMAGE-2）:`,
               e instanceof Error ? e.message : e,
             );
           }
@@ -3249,11 +3335,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
           appendImageFlowLog(flowLog, `──────── 选题「${s.title.slice(0, 48)}」· id=${s.id} ────────`);
           appendImageFlowLog(
             flowLog,
-            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt → generateGptImage2FromRawEnglishPrompt 9:16`,
+            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt(GPT 5.4) → generateGptImage2FromRawEnglishPrompt 9:16`,
           );
           appendImageFlowLog(
             flowLog,
-            `说明: 中文语境仅供 Gemini 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
+            `说明: 中文语境仅供 GPT 5.4 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
           );
           let url: string | null = null;
           try {
@@ -3262,7 +3348,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               context: body,
               variant: geminiVariant,
             });
-            appendImageFlowLog(flowLog, "[步骤1] 调用 Gemini 生成英文 prompt …");
+            appendImageFlowLog(flowLog, "[步骤1] 调用 GPT 5.4 生成英文 prompt …");
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
@@ -3558,7 +3644,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         // Read narrow store for evidence enrichment (best-effort, 20s cap)
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
         const store = await Promise.race([
-          readTrendStoreForPlatforms(requestedPlatforms.length ? requestedPlatforms as any[] : ["douyin", "xiaohongshu", "bilibili", "kuaishou"], { preferDerivedFiles: true }),
+          readTrendStoreForPlatforms(requestedPlatforms.length ? requestedPlatforms as any[] : ["douyin", "xiaohongshu", "bilibili", "kuaishou"], { preferDerivedFiles: true, preferFlyLive: true }),
           new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 20_000)),
         ]).catch(() => storeNull);
 
@@ -3624,12 +3710,27 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const t0 = Date.now();
         let platformContent: z.infer<typeof platformContentResponseSchema> | null = null;
         try {
+          const requestedPlatforms = normalizePlatforms([
+            ...((input.snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
+            ...((input.platformMenu || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
+          ]);
+          const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
+          const store = await Promise.race([
+            requestedPlatforms.length
+              ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive: true })
+              : readTrendStore({ preferDerivedFiles: true, preferFlyLive: true }),
+            new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) =>
+              setTimeout(() => resolve(storeNull), 20_000),
+            ),
+          ]).catch(() => storeNull);
           platformContent = await Promise.race([
             buildPlatformContent({
               snapshot: input.snapshotSummary,
               platformMenu: input.platformMenu || [],
               context: input.context,
               windowDays: Number(input.windowDays),
+              requestedPlatforms,
+              store,
             }),
             new Promise<null>((resolve) => setTimeout(() => {
               console.warn(`[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_LLM_TIMEOUT_MS}ms，返回空结果`);
@@ -4573,7 +4674,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       .input(z.object({
         lyrics: z.string().min(1),
         sceneCount: z.number().min(1).max(20).default(5),
-        model: z.enum(["flash", "gpt5", "pro"]).default("flash"),
+        model: z.enum(["flash", "gpt5", "gpt54", "pro"]).default("flash"),
         visualStyle: z.enum(["cinematic", "anime", "documentary", "realistic", "scifi"]).default("cinematic"),
         referenceImageUrl: z.string().url().optional(),
         referenceStyleDescription: z.string().optional(),
@@ -4586,13 +4687,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
         // 所有模型都需要 Credits，管理員免費
         if (!isAdminUser) {
           const { deductCredits, hasEnoughCredits } = await import("./credits");
-          const creditKey = input.model === "gpt5" ? "storyboardGpt5" : input.model === "pro" ? "storyboard" : "storyboardFlash";
+          const isGptTier = input.model === "gpt5" || input.model === "gpt54";
+          const creditKey = isGptTier ? "storyboardGpt5" : input.model === "pro" ? "storyboard" : "storyboardFlash";
           const canAfford = await hasEnoughCredits(userId, creditKey);
           if (!canAfford) {
-            const modelLabel = input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash";
+            const modelLabel = isGptTier ? "GPT 5.4" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash";
             throw new Error(`Credits 不足，无法使用 ${modelLabel} 模型。请充值 Credits。`);
           }
-          await deductCredits(userId, creditKey, `分镜脚本生成 (${input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash"})`);
+          await deductCredits(userId, creditKey, `分镜脚本生成 (${isGptTier ? "GPT 5.4" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash"})`);
         }
 
         // Use LLM to analyze lyrics and generate storyboard
@@ -4601,11 +4703,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
           providers: getTierProviderChain(userTier, "text"),
           execute: async (provider) => {
             const providerModel =
-              provider === "gpt_5_1" || provider === "veo3.1-pro"
-                ? ("gpt5" as const)
+              input.model === "gpt54" || input.model === "gpt5"
+                ? input.model
                 : provider === "gemini_3_pro" || provider === "nano-banana-pro"
-                ? ("pro" as const)
-                : ("flash" as const);
+                  ? ("pro" as const)
+                  : ("flash" as const);
             const response = await invokeLLM({
           messages: [
             {
@@ -5008,7 +5110,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         }),
         userFeedback: z.string().min(1).max(500),
         visualStyle: z.enum(["cinematic", "anime", "documentary", "realistic", "scifi"]).default("cinematic"),
-        model: z.enum(["flash", "gpt5", "pro"]).default("flash"),
+        model: z.enum(["flash", "gpt5", "gpt54", "pro"]).default("flash"),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -5037,11 +5139,11 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           providers: getTierProviderChain(userTier, "text"),
           execute: async (provider) => {
             const providerModel =
-              provider === "gpt_5_1" || provider === "veo3.1-pro"
-                ? ("gpt5" as const)
+              input.model === "gpt54" || input.model === "gpt5"
+                ? input.model
                 : provider === "gemini_3_pro" || provider === "nano-banana-pro"
-                ? ("pro" as const)
-                : ("flash" as const);
+                  ? ("pro" as const)
+                  : ("flash" as const);
             const response = await invokeLLM({
               messages: [
                 {
@@ -5193,7 +5295,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           })),
           summary: z.string(),
         }),
-        model: z.enum(["pro", "gpt5"]).default("pro"),
+        model: z.enum(["pro", "gpt5", "gpt54"]).default("pro"),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -5204,7 +5306,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           if (creditsInfo.totalAvailable < CREDIT_COSTS.recommendBGM) {
             throw new Error(`Credits 不足，AI 推薦 BGM 需要 ${CREDIT_COSTS.recommendBGM} Credits`);
           }
-          await deductCredits(userId, "recommendBGM", `AI 推薦 BGM 描述 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
+          await deductCredits(userId, "recommendBGM", `AI 推薦 BGM 描述 (${input.model === "gpt54" || input.model === "gpt5" ? "GPT 5.4" : "Gemini 3.0 Pro"})`);
         }
 
         const sceneSummary = input.storyboard.scenes.map(s =>
@@ -5242,7 +5344,7 @@ ${sceneSummary}
             }
           ],
           response_format: { type: "json_object" },
-          model: input.model === "gpt5" ? ("gpt5" as any) : ("pro" as any),
+          model: input.model === "gpt54" || input.model === "gpt5" ? (input.model as any) : ("pro" as any),
         });
 
         const bgmData = JSON.parse(response.choices[0].message.content as string);
