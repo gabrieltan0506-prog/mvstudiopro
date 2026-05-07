@@ -36,6 +36,7 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
         clearedCookies.push({ name, options });
       },
     } as TrpcContext["res"],
+    clientDisconnected: new AbortController().signal,
   };
 
   return { ctx, clearedCookies };

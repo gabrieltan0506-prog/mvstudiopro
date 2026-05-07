@@ -78,6 +78,8 @@ export type InvokeParams = {
   response_format?: ResponseFormat;
   provider?: Provider;
   modelName?: string;
+  /** When aborted (e.g. client disconnected), in-flight provider requests are cancelled. */
+  abortSignal?: AbortSignal;
 };
 
 export type ToolCall = {
@@ -140,7 +142,28 @@ function getLlmTimeoutMs() {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LLM_TIMEOUT_MS;
 }
 
-async function withLlmTimeout<T>(promise: Promise<T>): Promise<T> {
+/** Combine LLM wall-clock timeout with an optional client disconnect signal (either aborts the fetch). */
+function mergeWithLlmTimeout(clientAbort?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(getLlmTimeoutMs());
+  if (!clientAbort) return timeoutSignal;
+  const combined = new AbortController();
+  const onAbort = () => {
+    try {
+      combined.abort();
+    } catch {
+      /* noop */
+    }
+  };
+  if (clientAbort.aborted || timeoutSignal.aborted) {
+    onAbort();
+    return combined.signal;
+  }
+  clientAbort.addEventListener("abort", onAbort, { once: true });
+  timeoutSignal.addEventListener("abort", onAbort, { once: true });
+  return combined.signal;
+}
+
+async function withLlmTimeout<T>(promise: Promise<T>, clientAbort?: AbortSignal): Promise<T> {
   const timeoutMs = getLlmTimeoutMs();
   let timeoutHandle: NodeJS.Timeout | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -149,8 +172,25 @@ async function withLlmTimeout<T>(promise: Promise<T>): Promise<T> {
     }, timeoutMs);
   });
 
+  const racers: Array<Promise<T | never>> = [promise, timeoutPromise];
+
+  if (clientAbort) {
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (clientAbort.aborted) {
+        reject(new Error("LLM 请求已取消（客户端已断开）"));
+        return;
+      }
+      clientAbort.addEventListener(
+        "abort",
+        () => reject(new Error("LLM 请求已取消（客户端已断开）")),
+        { once: true },
+      );
+    });
+    racers.push(abortPromise);
+  }
+
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race(racers);
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
@@ -627,6 +667,7 @@ async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target
         ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, undefined, params.temperature, params.topP),
       },
     }),
+    params.abortSignal,
   );
 
   const text =
@@ -684,7 +725,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    signal: AbortSignal.timeout(getLlmTimeoutMs()),
+    signal: mergeWithLlmTimeout(params.abortSignal),
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
@@ -759,7 +800,7 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
       "content-type": "application/json",
       authorization: `Bearer ${target.apiKey}`,
     },
-    signal: AbortSignal.timeout(getLlmTimeoutMs()),
+    signal: mergeWithLlmTimeout(params.abortSignal),
     body: JSON.stringify(payload),
   });
 
@@ -818,7 +859,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       "content-type": "application/json",
       authorization: `Bearer ${target.apiKey}`,
     },
-    signal: AbortSignal.timeout(getLlmTimeoutMs()),
+    signal: mergeWithLlmTimeout(params.abortSignal),
     body: JSON.stringify(payload),
   });
 
