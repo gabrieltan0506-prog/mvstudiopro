@@ -365,6 +365,23 @@ export const growthPlatformRecommendationSchema = z.object({
   topicIdeas: z.array(growthPlatformTopicIdeaSchema).default([]),
 });
 
+/**
+ * getPlatformDashboard 的 platformMenu 單項（與 server/routers ` platformDashboardResponseSchema` 對齊）。
+ * 勿與 {@link growthPlatformRecommendationSchema}（快照 platformRecommendations：name/reason/action）混淆。
+ */
+export const growthPlatformMenuItemSchema = z.object({
+  platform: z.string().optional(),
+  whyNow: z.string().optional(),
+  referenceAccounts: z.array(z.any()).optional().default([]),
+  primaryTrack: z.string().optional(),
+  estimatedTraffic: z.string().optional(),
+  ipUniqueness: z.string().optional(),
+  commercialConversion: z.string().optional(),
+  trafficBoosters: z.array(z.string()).optional().default([]),
+}).passthrough();
+
+export type GrowthPlatformMenuItem = z.infer<typeof growthPlatformMenuItemSchema>;
+
 export const growthTitleExecutionSchema = z.object({
   title: z.string(),
   copywriting: z.string(),
