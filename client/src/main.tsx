@@ -86,10 +86,21 @@ function resolveMvAnalysisLongTrpcUrl(): string | null {
   if (env) {
     try {
       const u = new URL(env);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      if (u.protocol !== "http:" && u.protocol !== "https:") {
+        console.warn(
+          "[tRPC] VITE_MV_ANALYSIS_TRPC_URL 需为 http(s)，已回退直连:",
+          DEFAULT_MV_ANALYSIS_TRPC_ORIGIN,
+        );
+        return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
+      }
       return u.href.replace(/\/$/, "");
     } catch {
-      return null;
+      /** 相对路径或非法值会令 new URL 失败；勿整体 return null，否则长链路会落回 `/api/trpc`（Vercel rewrite 易 502 / 截断） */
+      console.warn(
+        "[tRPC] VITE_MV_ANALYSIS_TRPC_URL 非合法绝对 URL，已回退直连:",
+        DEFAULT_MV_ANALYSIS_TRPC_ORIGIN,
+      );
+      return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
     }
   }
   return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
