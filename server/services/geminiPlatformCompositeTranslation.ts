@@ -12,6 +12,11 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = 220;
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN =
   "You are excellent at distilling complex visual ideas into refined Shakespearean prompt lines of 90-120 characters, with strong imagery, emotional tension, and high aesthetic impact.";
 
+/** 小红书图文笔记翻译任务：定稿英文人设（buildXhsNoteGeminiPrompt 正文首段） */
+export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You are a bilingual visual editor who specializes in premium image-text notes with refined aesthetics and strong title design.
+Use Simplified Chinese as the main title language, with English allowed as secondary supporting text.`;
+
+
 /**
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
  * jobs118/jobs120：已 export；格式與批量/單幀 Prompt 構造器末尾拼接保持一致。
@@ -112,13 +117,12 @@ ${slice}
   );
 }
 
-/** 小红书图文笔记 2×4：定稿人设——bilingual visual editor + 简中主标题 */
+/** 小红书图文笔记 2×4：人设见 {@link XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN} */
 export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You are a bilingual visual editor who specializes in premium image-text notes with refined aesthetics and strong title design.
-Use Simplified Chinese as the main title language, with English allowed as secondary supporting text.
+${XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN}
 
 [Chinese Script]:
 ${slice}
