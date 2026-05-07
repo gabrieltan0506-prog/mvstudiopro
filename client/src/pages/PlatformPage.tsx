@@ -607,6 +607,13 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
+  /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
+  const stage2EmptyPayload = useMemo(() => {
+    if (!platformContent) return false;
+    const bp = Array.isArray(platformContent.contentBlueprints) ? platformContent.contentBlueprints.length : 0;
+    const ml = Array.isArray(platformContent.monetizationLanes) ? platformContent.monetizationLanes.length : 0;
+    return bp === 0 && ml === 0;
+  }, [platformContent]);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
   const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
@@ -685,6 +692,17 @@ export default function PlatformPage() {
   const getPlatformContentMutation = trpc.mvAnalysis.getPlatformContent.useMutation({
     onSuccess: (result) => {
       if (result.platformContent) {
+        const bp = Array.isArray(result.platformContent.contentBlueprints)
+          ? result.platformContent.contentBlueprints.length
+          : 0;
+        const ml = Array.isArray(result.platformContent.monetizationLanes)
+          ? result.platformContent.monetizationLanes.length
+          : 0;
+        if (bp === 0 && ml === 0) {
+          toast.error(
+            "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「getPlatformContent」查看原因，或重新分析一次。",
+          );
+        }
         setPlatformContent(result.platformContent as any);
       } else {
         toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
@@ -2377,8 +2395,10 @@ export default function PlatformPage() {
                       <span>
                         {isContentLoading
                           ? "⏳ 正在生成原创文案..."
-                          : platformContent
+                          : platformContent && !stage2EmptyPayload
                             ? "✅ 已完成"
+                            : platformContent && stage2EmptyPayload
+                              ? "⚠️ 接口成功但內容為空"
                             : getPlatformContentMutation.isError ||
                                 (getPlatformContentMutation.isSuccess && !platformContent)
                               ? "❌ 解析失败"
@@ -2396,13 +2416,19 @@ export default function PlatformPage() {
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                   <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
                   <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
-                    {String(
-                      growthSnapshotQuery.error?.message ||
-                        getPlatformDashboardMutation.error?.message ||
-                        getPlatformContentMutation.error?.message ||
-                        dashboardDebug?.error ||
-                        (typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : "") ||
-                        "-",
+                    {(
+                      [
+                        growthSnapshotQuery.error?.message,
+                        getPlatformDashboardMutation.error?.message,
+                        getPlatformContentMutation.error?.message,
+                        typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
+                        typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
+                        stage2EmptyPayload
+                          ? "Stage 2 返回空選題：請查看下方 getPlatformContent.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join("\n\n") || "-"
                     )}
                   </div>
                 </div>
