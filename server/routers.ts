@@ -10,7 +10,7 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
-import { invokeLLM } from "./_core/llm";
+import { extractJsonString, invokeLLM } from "./_core/llm";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -431,34 +431,10 @@ const platformDashboardResponseSchema = z.object({
   conversationStarters: z.array(z.any()).default([]),
 }).passthrough();
 
-// Call 3 schema — detailed content blueprints and monetization (heavy copywriting)
-// Use z.any() for all array fields to tolerate Gemini schema drift
-// executionDetails is an optional sub-object in each contentBlueprint item
+// Call 3 — LLM 常把 executionDetails 打成字符串、把 title 打成数字、monetizationLanes 打成单对象。
+// 这里只用 z.any() 收束形状；细粒度纠错放在 normalizePlatformContentKeys + 最后一道 return。
 const platformContentResponseSchema = z.object({
-  contentBlueprints: z
-    .array(
-      z
-        .object({
-          title: z.string().optional(),
-          format: z.string().optional(),
-          hook: z.string().optional(),
-          copywriting: z.string().optional(),
-          suitablePlatforms: z.any().optional(),
-          actionableSteps: z.any().optional(),
-          detailedScript: z.string().optional(),
-          publishingAdvice: z.string().optional(),
-          executionDetails: z
-            .object({
-              environmentAndWardrobe: z.string().optional(),
-              lightingAndCamera: z.string().optional(),
-              stepByStepScript: z.any().optional(),
-            })
-            .passthrough()
-            .optional(),
-        })
-        .passthrough(),
-    )
-    .default([]), // 容忍模型少给 / 多给方案条数，避免因 .length(6) 导致 Stage 2 整包解析失败
+  contentBlueprints: z.array(z.any()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
 
@@ -779,6 +755,15 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
       out.commercializationLanes ?? out.revenueLanes;
     if (Array.isArray(alias)) out.monetizationLanes = alias;
   }
+  /** LLM 常返回「單物件」而非陣列 — 必須包成一條，否則 z.array 整段失敗 */
+  if (out.monetizationLanes != null && !Array.isArray(out.monetizationLanes)) {
+    out.monetizationLanes =
+      typeof out.monetizationLanes === "object" ? [out.monetizationLanes] : [];
+  }
+  if (out.contentBlueprints != null && !Array.isArray(out.contentBlueprints)) {
+    out.contentBlueprints =
+      typeof out.contentBlueprints === "object" ? [out.contentBlueprints] : [];
+  }
 
   // ── Per-blueprint item key aliases ────────────────────────────────────────
   if (Array.isArray(out.contentBlueprints)) {
@@ -805,8 +790,22 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
       if (!b.detailedScript) b.detailedScript = b.script ?? b.storyboard ?? b.detailed_script ?? b.shooting_script ?? "";
       // publishingAdvice
       if (!b.publishingAdvice) b.publishingAdvice = b.publishing ?? b.publishTips ?? b.publishing_advice ?? b.releaseAdvice ?? "";
-      // executionDetails — normalize nested object if present
-      if (b.executionDetails && typeof b.executionDetails === "object") {
+      // executionDetails：可能是字符串 / 数组 / 对象 — 统一收成对象，避免下游类型爆炸
+      if (b.executionDetails == null || b.executionDetails === "") {
+        /* optional */
+      } else if (typeof b.executionDetails === "string") {
+        b.executionDetails = {
+          environmentAndWardrobe: b.executionDetails,
+          lightingAndCamera: "",
+          stepByStepScript: [],
+        };
+      } else if (Array.isArray(b.executionDetails)) {
+        b.executionDetails = {
+          environmentAndWardrobe: "",
+          lightingAndCamera: "",
+          stepByStepScript: b.executionDetails,
+        };
+      } else if (typeof b.executionDetails === "object") {
         const ed = b.executionDetails as Record<string, unknown>;
         if (!ed.environmentAndWardrobe) ed.environmentAndWardrobe = ed.environment ?? ed.wardrobe ?? ed.scene ?? "";
         if (!ed.lightingAndCamera) ed.lightingAndCamera = ed.lighting ?? ed.camera ?? ed.lighting_camera ?? "";
@@ -815,6 +814,11 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
           ed.stepByStepScript = Array.isArray(ss) ? ss : [];
         }
         b.executionDetails = ed;
+      }
+      // 常见标量字段若被模型打成数字，转成 string，避免 UI / 下游报错
+      for (const key of ["title", "format", "hook", "copywriting", "detailedScript", "publishingAdvice"] as const) {
+        const v = b[key];
+        if (v != null && typeof v !== "string") b[key] = String(v);
       }
       return b;
     });
@@ -1039,22 +1043,48 @@ async function buildPlatformContent(params: {
     ? fenceMatch2[1].trim()
     : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
   
-  let parsedRaw: unknown;
-  try {
-    parsedRaw = JSON.parse(bracketExtracted || strippedContent2);
-  } catch {
+  let parsedRaw: unknown = {};
+  const tryJson = (s: string): unknown | null => {
+    const t = String(s || "").trim();
+    if (!t) return null;
     try {
-      parsedRaw = JSON.parse(strippedContent2);
+      return JSON.parse(t);
     } catch {
-      try {
-        parsedRaw = JSON.parse(rawContent);
-      } catch {
-        console.error("[buildPlatformContent] JSON parse FAILED on all attempts.");
-        console.error("[buildPlatformContent] rawContent length:", rawContent.length);
-        console.error("[buildPlatformContent] rawContent tail (last 200 chars):", rawContent.slice(-200));
-        parsedRaw = {};
-      }
+      return null;
     }
+  };
+  try {
+    parsedRaw =
+      tryJson(extractJsonString(rawContent)) ??
+      tryJson(bracketExtracted || strippedContent2) ??
+      tryJson(strippedContent2) ??
+      tryJson(rawContent) ??
+      {};
+  } catch {
+    parsedRaw =
+      tryJson(bracketExtracted || strippedContent2) ??
+      tryJson(strippedContent2) ??
+      tryJson(rawContent) ??
+      {};
+  }
+  if (
+    parsedRaw &&
+    typeof parsedRaw === "object" &&
+    !Array.isArray(parsedRaw) &&
+    Object.keys(parsedRaw as object).length === 0 &&
+    rawContent.trim()
+  ) {
+    console.error("[buildPlatformContent] JSON parse FAILED on all attempts.");
+    console.error("[buildPlatformContent] rawContent length:", rawContent.length);
+    console.error("[buildPlatformContent] rawContent tail (last 200 chars):", rawContent.slice(-200));
+  }
+  if (!rawContent.trim()) {
+    console.error("[buildPlatformContent] empty model output");
+  }
+
+  /** 模型偶发只输出 JSON 数组（整段就是 blueprints） */
+  if (Array.isArray(parsedRaw)) {
+    parsedRaw = { contentBlueprints: parsedRaw };
   }
 
   // Key normalization layer — handles known Gemini key-drift patterns before Zod parse.
@@ -1074,7 +1104,16 @@ async function buildPlatformContent(params: {
   });
   /** 極端長輸出保護（不影響正常 4–8 條） */
   const blueprintsForSchema = coercedBp.length > 48 ? coercedBp.slice(0, 48) : coercedBp;
-  const partialForParse = { ...partial, contentBlueprints: blueprintsForSchema };
+  const rawMl = Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [];
+  const monetizationCoerced = (rawMl as unknown[]).map((item: unknown) => {
+    if (item != null && typeof item === "object" && !Array.isArray(item)) return item as Record<string, unknown>;
+    if (typeof item === "string") {
+      return { title: "", fitReason: item, offerShape: "", revenueModes: [] as string[], firstValidation: "" };
+    }
+    return { title: "", fitReason: "", offerShape: "", revenueModes: [] as string[], firstValidation: "" };
+  });
+  /** 勿展開 partial：多餘頂層鍵曾導致 Zod 與預期不一致；Stage 2 只消费这两组数组 */
+  const partialForParse = { contentBlueprints: blueprintsForSchema, monetizationLanes: monetizationCoerced };
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) return parseResult.data;
 
@@ -1082,11 +1121,15 @@ async function buildPlatformContent(params: {
   console.warn("[buildPlatformContent] attempting loose parse with defaults");
   const looseResult = platformContentResponseSchema.safeParse({
     contentBlueprints: blueprintsForSchema,
-    monetizationLanes: Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [],
+    monetizationLanes: monetizationCoerced,
   });
   if (looseResult.success) return looseResult.data;
   console.error("[buildPlatformContent] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
-  throw new Error(`buildPlatformContent: loose parse failed. errors: ${JSON.stringify((looseResult.error as any).issues?.slice(0, 3) ?? looseResult.error.message)}`);
+  /** 最後一道：绝不让 Stage 2 因校验抛错而整包 null（文案可事后人工改） */
+  return {
+    contentBlueprints: blueprintsForSchema as any[],
+    monetizationLanes: monetizationCoerced as any[],
+  };
 }
 
 function buildFallbackPlatformDashboard(params: {
