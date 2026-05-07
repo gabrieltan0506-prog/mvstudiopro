@@ -652,6 +652,8 @@ export default function PlatformPage() {
   /** 一键封面：前端异步逐张生成（单张串行） */
   const [batchGeneratingCoverIds, setBatchGeneratingCoverIds] = useState<Set<string>>(() => new Set());
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
+  /** 封面图 onError：已对原始 URL 尝试过一次 cache-bust（避免误用「免扣 failedJobId」清图） */
+  const coverImageCacheBustTriedRef = useRef<Set<string>>(new Set());
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -3057,9 +3059,34 @@ export default function PlatformPage() {
                       };
                       const queueSilentImageLoadRetry = () => {
                         if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
-                        const failedJobId = sceneJobIds[item.id];
                         const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
-                        if (!failedJobId || !topicHook) return;
+                        if (!topicHook) return;
+
+                        /**
+                         * 服务端免扣补发要求 failedJobId 对应行 status ∈ {failed,timeout}。
+                         * 批量成功写入的 creationId 多为 completed — 不能当 failedJobId 传，否则 BAD_REQUEST
+                         * 且客户端已清图 → 卡片空白（见 topic-1：Nano 成功但封面不显示）。
+                         */
+                        const rawUrl = platformImageMap[item.id] || "";
+                        const urlLooksLikeServerRetryPayload =
+                          rawUrl.toLowerCase().includes("timeout") || rawUrl.toLowerCase().includes("error");
+                        const freeRetryJobId =
+                          urlLooksLikeServerRetryPayload && sceneJobIds[item.id] ? sceneJobIds[item.id] : undefined;
+
+                        if (!freeRetryJobId) {
+                          if (!coverImageCacheBustTriedRef.current.has(item.id) && rawUrl) {
+                            coverImageCacheBustTriedRef.current.add(item.id);
+                            const sep = rawUrl.includes("?") ? "&" : "?";
+                            setPlatformImageMap((prev) => ({
+                              ...prev,
+                              [item.id]: `${rawUrl}${sep}mv_img_cb=${Date.now()}`,
+                            }));
+                            return;
+                          }
+                          toast.error("封面图无法加载。请点下方「重新生成」或稍后重试。");
+                          return;
+                        }
+
                         const ctxBody = buildPlatformSceneText({
                           title: item.title,
                           hook: item.hook ?? "",
@@ -3085,7 +3112,7 @@ export default function PlatformPage() {
                           context: ctxBody,
                           coverPersonaContext:
                             buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
-                          failedJobId,
+                          failedJobId: freeRetryJobId,
                           sceneId: item.id,
                         });
                       };
@@ -3188,6 +3215,7 @@ export default function PlatformPage() {
                                   isTrial={isTrial}
                                   className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.02]"
                                   onLoad={() => {
+                                    coverImageCacheBustTriedRef.current.delete(item.id);
                                     setCoverLoadRetriedIds((prev) => {
                                       if (!prev.has(item.id)) return prev;
                                       const next = new Set(prev);

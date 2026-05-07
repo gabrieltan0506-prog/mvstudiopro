@@ -451,6 +451,7 @@ async function buildPlatformDashboard(params: {
   requestedPlatforms: string[];
   store: Awaited<ReturnType<typeof readTrendStore>>;
   windowDays: number;
+  abortSignal?: AbortSignal;
 }) {
   const getPlatformDecisionWindowDays = (platform: string): number => {
     if (platform === "douyin" || platform === "kuaishou") return 5;
@@ -573,6 +574,7 @@ async function buildPlatformDashboard(params: {
     // Upgraded to Vertex 3.1 Pro Preview for richer dashboard analysis
     provider: "vertex",
     modelName: "gemini-3.1-pro-preview",
+    abortSignal: params.abortSignal,
     messages: [
       {
         role: "system",
@@ -863,6 +865,7 @@ async function buildPlatformContent(params: {
   windowDays: number;
   requestedPlatforms: string[];
   store: Awaited<ReturnType<typeof readTrendStore>>;
+  abortSignal?: AbortSignal;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1072,6 +1075,7 @@ async function buildPlatformContent(params: {
       max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
       response_format: { type: "json_object" },
       messages: contentMessages,
+      abortSignal: params.abortSignal,
     });
     llmPath = "vertex+json_object";
   } catch (vertexJsonErr) {
@@ -1083,6 +1087,7 @@ async function buildPlatformContent(params: {
         modelName: "gemini-3.1-pro-preview",
         max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
         messages: contentMessages,
+        abortSignal: params.abortSignal,
       });
       llmPath = "vertex_plain";
     } catch (vertexPlainErr) {
@@ -1095,6 +1100,7 @@ async function buildPlatformContent(params: {
           max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
           response_format: { type: "json_object" },
           messages: contentMessages,
+          abortSignal: params.abortSignal,
         });
         llmPath = "gemini+json_object";
       } catch (geminiErr) {
@@ -2476,6 +2482,7 @@ export const appRouter = router({
                 requestedPlatforms,
                 store: effectiveStore,
                 windowDays: selectedWindowDays,
+                abortSignal: ctx.clientDisconnected,
               }),
               new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
                 setTimeout(() => {
@@ -3888,7 +3895,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         requestedPlatforms: z.array(z.string()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || []);
         const selectedWindowDays = Number(input.windowDays);
         const t0 = Date.now();
@@ -3912,6 +3919,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               requestedPlatforms: requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
               store,
               windowDays: selectedWindowDays,
+              abortSignal: ctx.clientDisconnected,
             }),
             new Promise<null>((resolve) => setTimeout(() => {
               console.warn(`[platform.getPlatformDashboard] 平台看板生成超时，已等待 ${DASHBOARD_TIMEOUT_MS}ms，返回空结果`);
@@ -3958,7 +3966,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         platformMenu: z.array(z.any()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const t0 = Date.now();
         let platformContent: z.infer<typeof platformContentResponseSchema> | null = null;
         let stage2Error: string | null = null;
@@ -4010,6 +4018,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               windowDays: Number(input.windowDays),
               requestedPlatforms,
               store,
+              abortSignal: ctx.clientDisconnected,
             }).then(
               (r): Stage2RaceDone => ({
                 kind: "done",

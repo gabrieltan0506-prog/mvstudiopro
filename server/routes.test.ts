@@ -11,6 +11,7 @@ function createPublicContext(): TrpcContext {
     user: null,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: () => {} } as unknown as TrpcContext["res"],
+    clientDisconnected: new AbortController().signal,
   };
 }
 
@@ -24,6 +25,7 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
     user,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: (name: string, options: Record<string, unknown>) => { clearedCookies.push({ name, options }); } } as TrpcContext["res"],
+    clientDisconnected: new AbortController().signal,
   };
   return { ctx, clearedCookies };
 }

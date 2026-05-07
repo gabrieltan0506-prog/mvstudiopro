@@ -63,13 +63,42 @@ if ("serviceWorker" in navigator) {
 
 const queryClient = new QueryClient();
 
-const FLY_TRPC_URL = "https://mvstudiopro.fly.dev/api/trpc";
+/**
+ * 生产站（如 mvstudiopro.com）在 Vercel 上会把 `/api/*` rewrite 到 Fly（见 vercel.json）。
+ * 该「多一跳」边缘代理对分钟级 LLM 响应常先断开，浏览器报 JSON 截断；Fly 侧 Vertex 仍可能跑完 → 白耗算力。
+ * 与早期行为一致：快照 / 看板 / 文案直连接 rewrite 背后的同一 Fly tRPC 端点，绕开 Vercel 长响应限制。
+ *
+ * 本地开发仍走同源 `/api/trpc`。可选用 `VITE_MV_ANALYSIS_TRPC_URL` 覆盖（例如日后自有 API 子域）。
+ */
+const MV_ANALYSIS_LONG_TRPC_PATHS = new Set([
+  "mvAnalysis.getGrowthSnapshot",
+  "mvAnalysis.getPlatformDashboard",
+  "mvAnalysis.getPlatformContent",
+]);
 
-function resolveGrowthSnapshotUrl() {
-  if (typeof window === "undefined") return "/api/trpc";
-  const hostname = window.location.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname === "127.0.0.1") return "/api/trpc";
-  return FLY_TRPC_URL;
+const DEFAULT_MV_ANALYSIS_TRPC_ORIGIN = "https://mvstudiopro.fly.dev/api/trpc";
+
+function resolveMvAnalysisLongTrpcUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const h = window.location.hostname.toLowerCase();
+  if (h === "localhost" || h === "127.0.0.1") return null;
+  const env = String(import.meta.env.VITE_MV_ANALYSIS_TRPC_URL || "").trim();
+  if (env) {
+    try {
+      const u = new URL(env);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      return u.href.replace(/\/$/, "");
+    } catch {
+      return null;
+    }
+  }
+  return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
+}
+
+const mvAnalysisLongTrpcUrl = resolveMvAnalysisLongTrpcUrl();
+
+function useMvAnalysisLongTrpcLink(op: { path: string }) {
+  return Boolean(mvAnalysisLongTrpcUrl) && MV_ANALYSIS_LONG_TRPC_PATHS.has(op.path);
 }
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
@@ -102,11 +131,9 @@ queryClient.getMutationCache().subscribe((event: any) => {
 const trpcClient = trpc.createClient({
   links: [
     splitLink({
-      condition(op) {
-        return op.path === "mvAnalysis.getGrowthSnapshot";
-      },
+      condition: useMvAnalysisLongTrpcLink,
       true: httpLink({
-        url: resolveGrowthSnapshotUrl(),
+        url: mvAnalysisLongTrpcUrl!,
         transformer: superjson,
         fetch(input, init) {
           return globalThis.fetch(input, {

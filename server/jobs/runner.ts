@@ -557,6 +557,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       req: {} as any,
       res: {} as any,
       user,
+      clientDisconnected: new AbortController().signal,
     });
 
     const result = await withTimeout(

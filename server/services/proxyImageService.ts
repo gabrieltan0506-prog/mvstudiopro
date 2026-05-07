@@ -476,10 +476,38 @@ async function fallbackNanoBanana2FromPrompt(
       aspectRatio,
       personGeneration: "ALLOW_ADULT",
     });
-    const url = String(vertexResult?.imageUrl || "").trim();
+    let url = String(vertexResult?.imageUrl || "").trim();
     if (!url) {
       appendImageFlowLog(L, "[单帧兜底] Nano Banana 2 返回空 URL");
       return null;
+    }
+    /** Fly 仅 Vertex、无 Blob/S3 时 storagePut 会回落 data: URL，过长时浏览器 <img> 易失败；与主路径一致转 GCS 签名链 */
+    if (url.startsWith("data:")) {
+      try {
+        const comma = url.indexOf(",");
+        if (comma > 0) {
+          const meta = url.slice(5, comma);
+          const b64 = url.slice(comma + 1);
+          const mimeMatch = /^([^;]+)/.exec(meta);
+          const mime = mimeMatch?.[1]?.trim() || "image/png";
+          const buffer = Buffer.from(b64, "base64");
+          const ext =
+            mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+          const path = `generated/platform_topic_reference/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const { gcsUri } = await uploadBufferToGcs({
+            objectName: path,
+            buffer,
+            contentType: mime,
+          });
+          url = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+          appendImageFlowLog(L, `[单帧兜底] Nano data URL 已转存 GCS · gcsUri=${gcsUri}`);
+        }
+      } catch (e: unknown) {
+        appendImageFlowLog(
+          L,
+          `[单帧兜底] Nano data URL 转 GCS 失败（仍返回原 data URL）: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
     appendImageFlowLog(
       L,
