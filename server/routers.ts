@@ -856,7 +856,32 @@ async function buildPlatformContent(params: {
   windowDays: number;
   requestedPlatforms: string[];
   store: Awaited<ReturnType<typeof readTrendStore>>;
-}) {
+}): Promise<{
+  data: z.infer<typeof platformContentResponseSchema>;
+  diagnostics: Record<string, unknown>;
+}> {
+  const diagnostics: Record<string, unknown> = {
+    stage: "buildPlatformContent",
+    at: new Date().toISOString(),
+    windowDays: params.windowDays,
+    requestedPlatforms: params.requestedPlatforms,
+    contextLen: String(params.context || "").length,
+    platformMenuCount: Array.isArray(params.platformMenu) ? params.platformMenu.length : 0,
+  };
+  try {
+    const cols = (params.store?.collections || {}) as Record<string, { items?: unknown[] }>;
+    diagnostics.storeCollectionKeys = Object.keys(cols);
+    diagnostics.storeItemCountsByPlatform = Object.fromEntries(
+      Object.entries(cols).map(([k, v]) => [k, Array.isArray(v?.items) ? v.items.length : 0]),
+    );
+    const totalItems = Object.values(diagnostics.storeItemCountsByPlatform as Record<string, number>).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    diagnostics.storeTotalItems = totalItems;
+  } catch {
+    diagnostics.storeItemCountsByPlatform = "unavailable";
+  }
   const getPlatformDecisionWindowDays = (platform: string): number => {
     if (platform === "douyin" || platform === "kuaishou") return 5;
     if (platform === "bilibili" || platform === "xiaohongshu") return 15;
@@ -905,12 +930,7 @@ async function buildPlatformContent(params: {
     ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。`
     : "";
 
-  const response = await invokeLLM({
-    // Upgraded to Vertex 3.1 Pro Preview for premium content generation
-    provider: "vertex",
-    modelName: "gemini-3.1-pro-preview",
-    max_tokens: 8192,
-    messages: [
+  const contentMessages: Parameters<typeof invokeLLM>[0]["messages"] = [
       {
         role: "system",
         content: `你是一个顶级的个人IP商业文案顾问。
@@ -1030,9 +1050,64 @@ async function buildPlatformContent(params: {
             "当前用户真实的 IP 定位与行业背景，必须据此生成恰好 6 条、六维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
         }),
       },
-    ],
-  });
+  ];
 
+  /** Stage 2：优先 Vertex + application/json，减少前言/杂质；失败则降级重试，避免整包 null。 */
+  let response: Awaited<ReturnType<typeof invokeLLM>>;
+  let vertexJsonErrMsg: string | null = null;
+  let vertexPlainErrMsg: string | null = null;
+  let geminiErrMsg: string | null = null;
+  let llmPath = "";
+  try {
+    response = await invokeLLM({
+      provider: "vertex",
+      modelName: "gemini-3.1-pro-preview",
+      max_tokens: 8192,
+      response_format: { type: "json_object" },
+      messages: contentMessages,
+    });
+    llmPath = "vertex+json_object";
+  } catch (vertexJsonErr) {
+    vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
+    console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
+    try {
+      response = await invokeLLM({
+        provider: "vertex",
+        modelName: "gemini-3.1-pro-preview",
+        max_tokens: 8192,
+        messages: contentMessages,
+      });
+      llmPath = "vertex_plain";
+    } catch (vertexPlainErr) {
+      vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
+      console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
+      try {
+        response = await invokeLLM({
+          provider: "gemini",
+          modelName: "gemini-3.1-pro-preview",
+          max_tokens: 8192,
+          response_format: { type: "json_object" },
+          messages: contentMessages,
+        });
+        llmPath = "gemini+json_object";
+      } catch (geminiErr) {
+        geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+        diagnostics.llmPath = llmPath || "all_failed";
+        diagnostics.vertexJsonError = vertexJsonErrMsg;
+        diagnostics.vertexPlainError = vertexPlainErrMsg;
+        diagnostics.geminiJsonError = geminiErrMsg;
+        throw geminiErr;
+      }
+    }
+  }
+  diagnostics.llmPath = llmPath;
+  diagnostics.vertexJsonError = vertexJsonErrMsg;
+  diagnostics.vertexPlainError = vertexPlainErrMsg;
+  diagnostics.geminiJsonError = geminiErrMsg;
+  diagnostics.responseModel = response.model;
+  diagnostics.responseProvider = response.provider ?? null;
+  diagnostics.responseFinishReason = response.choices?.[0]?.finish_reason ?? null;
+  diagnostics.usage = response.usage ?? null;
   // Robust JSON extraction — greedy bracket extraction, then fence strip fallback
   const rawContent = String(response.choices[0]?.message?.content || "");
   const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
@@ -1042,8 +1117,7 @@ async function buildPlatformContent(params: {
   const strippedContent2 = fenceMatch2
     ? fenceMatch2[1].trim()
     : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
-  
-  let parsedRaw: unknown = {};
+
   const tryJson = (s: string): unknown | null => {
     const t = String(s || "").trim();
     if (!t) return null;
@@ -1053,20 +1127,34 @@ async function buildPlatformContent(params: {
       return null;
     }
   };
-  try {
-    parsedRaw =
-      tryJson(extractJsonString(rawContent)) ??
-      tryJson(bracketExtracted || strippedContent2) ??
-      tryJson(strippedContent2) ??
-      tryJson(rawContent) ??
-      {};
-  } catch {
-    parsedRaw =
-      tryJson(bracketExtracted || strippedContent2) ??
-      tryJson(strippedContent2) ??
-      tryJson(rawContent) ??
-      {};
+
+  let parsedRaw: unknown = {};
+  let jsonParseStrategy = "none";
+  const exForParse = extractJsonString(rawContent);
+  const tryChain: Array<{ label: string; s: string | null }> = [
+    { label: "extractJsonString", s: exForParse.trim() ? exForParse : null },
+    { label: "bracket_or_stripped", s: (bracketExtracted || strippedContent2).trim() ? bracketExtracted || strippedContent2 : null },
+    { label: "strippedOnly", s: strippedContent2.trim() ? strippedContent2 : null },
+    { label: "raw_full", s: rawContent.trim() ? rawContent : null },
+  ];
+  for (const { label, s } of tryChain) {
+    if (!s) continue;
+    const v = tryJson(s);
+    if (v !== null) {
+      parsedRaw = v;
+      jsonParseStrategy = label;
+      break;
+    }
   }
+  if (jsonParseStrategy === "none" && rawContent.trim()) {
+    jsonParseStrategy = "parse_failed_all";
+  }
+  diagnostics.jsonParseStrategy = jsonParseStrategy;
+  diagnostics.rawContentChars = rawContent.length;
+  diagnostics.rawContentEmpty = !rawContent.trim();
+  diagnostics.rawContentHead280 = rawContent.slice(0, 280);
+  diagnostics.rawContentTail280 = rawContent.slice(-280);
+
   if (
     parsedRaw &&
     typeof parsedRaw === "object" &&
@@ -1083,9 +1171,11 @@ async function buildPlatformContent(params: {
   }
 
   /** 模型偶发只输出 JSON 数组（整段就是 blueprints） */
-  if (Array.isArray(parsedRaw)) {
+  const parsedWasRootArray = Array.isArray(parsedRaw);
+  if (parsedWasRootArray) {
     parsedRaw = { contentBlueprints: parsedRaw };
   }
+  diagnostics.parsedRootArrayWrappedToObject = parsedWasRootArray;
 
   // Key normalization layer — handles known Gemini key-drift patterns before Zod parse.
   // Gemini may rename keys despite the 【强制 JSON Key 锁定】 prompt instruction.
@@ -1114,21 +1204,36 @@ async function buildPlatformContent(params: {
   });
   /** 勿展開 partial：多餘頂層鍵曾導致 Zod 與預期不一致；Stage 2 只消费这两组数组 */
   const partialForParse = { contentBlueprints: blueprintsForSchema, monetizationLanes: monetizationCoerced };
+  diagnostics.normalizedTopLevelKeys = Object.keys(partial);
+  diagnostics.blueprintCountAfterKeyNormalize = rawBp.length;
+  diagnostics.monetizationCountAfterKeyNormalize = rawMl.length;
+  diagnostics.blueprintCountAfterCoerce = blueprintsForSchema.length;
+  diagnostics.monetizationCountAfterCoerce = monetizationCoerced.length;
+
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
-  if (parseResult.success) return parseResult.data;
+  if (parseResult.success) {
+    return { data: parseResult.data, diagnostics: { ...diagnostics, zodPath: "strict_ok" } };
+  }
 
   console.error("[buildPlatformContent] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
+  diagnostics.zodStrictIssues = (parseResult.error as any).issues?.slice(0, 12) ?? String(parseResult.error.message);
   console.warn("[buildPlatformContent] attempting loose parse with defaults");
   const looseResult = platformContentResponseSchema.safeParse({
     contentBlueprints: blueprintsForSchema,
     monetizationLanes: monetizationCoerced,
   });
-  if (looseResult.success) return looseResult.data;
+  if (looseResult.success) {
+    return { data: looseResult.data, diagnostics: { ...diagnostics, zodPath: "loose_ok" } };
+  }
   console.error("[buildPlatformContent] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
+  diagnostics.zodLooseIssues = (looseResult.error as any).issues?.slice(0, 12) ?? String(looseResult.error.message);
   /** 最後一道：绝不让 Stage 2 因校验抛错而整包 null（文案可事后人工改） */
   return {
-    contentBlueprints: blueprintsForSchema as any[],
-    monetizationLanes: monetizationCoerced as any[],
+    data: {
+      contentBlueprints: blueprintsForSchema as any[],
+      monetizationLanes: monetizationCoerced as any[],
+    },
+    diagnostics: { ...diagnostics, zodPath: "fallback_coerced_no_throw" },
   };
 }
 
@@ -3812,6 +3917,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
       .mutation(async ({ input }) => {
         const t0 = Date.now();
         let platformContent: z.infer<typeof platformContentResponseSchema> | null = null;
+        let stage2Error: string | null = null;
+        let stage2TimedOut = false;
+        const preferFlyLive = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
+        let storeReadTimedOut = false;
+        let buildDiagnostics: Record<string, unknown> | null = null;
+        const storeReadT0 = Date.now();
         try {
           const requestedPlatforms = normalizePlatforms([
             ...((input.snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
@@ -3820,13 +3931,20 @@ ${JSON.stringify(platformEvidence, null, 2)}
           const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
           const store = await Promise.race([
             requestedPlatforms.length
-              ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive: true })
-              : readTrendStore({ preferDerivedFiles: true, preferFlyLive: true }),
+              ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive })
+              : readTrendStore({ preferDerivedFiles: true, preferFlyLive }),
             new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) =>
-              setTimeout(() => resolve(storeNull), 20_000),
+              setTimeout(() => {
+                storeReadTimedOut = true;
+                resolve(storeNull);
+              }, 20_000),
             ),
           ]).catch(() => storeNull);
-          platformContent = await Promise.race([
+          const storeReadMs = Date.now() - storeReadT0;
+
+          type Stage2RaceDone = { kind: "done"; data: z.infer<typeof platformContentResponseSchema>; diagnostics: Record<string, unknown> };
+          type Stage2RaceTimeout = { kind: "timeout" };
+          const raced = await Promise.race([
             buildPlatformContent({
               snapshot: input.snapshotSummary,
               platformMenu: input.platformMenu || [],
@@ -3834,14 +3952,36 @@ ${JSON.stringify(platformEvidence, null, 2)}
               windowDays: Number(input.windowDays),
               requestedPlatforms,
               store,
+            }).then(
+              (r): Stage2RaceDone => ({
+                kind: "done",
+                data: r.data,
+                diagnostics: { ...r.diagnostics, storeReadMs },
+              }),
+            ),
+            new Promise<Stage2RaceTimeout>((resolve) => {
+              setTimeout(() => {
+                console.warn(`[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_LLM_TIMEOUT_MS}ms，返回空结果`);
+                stage2TimedOut = true;
+                resolve({ kind: "timeout" });
+              }, PLATFORM_LLM_TIMEOUT_MS);
             }),
-            new Promise<null>((resolve) => setTimeout(() => {
-              console.warn(`[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_LLM_TIMEOUT_MS}ms，返回空结果`);
-              resolve(null);
-            }, PLATFORM_LLM_TIMEOUT_MS)),
           ]);
+
+          if (raced.kind === "timeout") {
+            platformContent = null;
+            buildDiagnostics = { stage2TimedOut: true, storeReadMs, storeReadTimedOut };
+          } else {
+            platformContent = raced.data;
+            buildDiagnostics = {
+              ...raced.diagnostics,
+              storeReadMs,
+              storeReadTimedOut,
+            };
+          }
         } catch (error) {
           console.error("[platform.getPlatformContent] error:", error);
+          stage2Error = error instanceof Error ? error.message : String(error);
           if (error instanceof Error) {
             console.error("[platform.getPlatformContent] error message:", error.message);
           }
@@ -3850,6 +3990,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
             console.error("[platform.getPlatformContent] ZodError details:", JSON.stringify((error as any).errors?.slice(0, 5)));
           }
           platformContent = null;
+          buildDiagnostics = {
+            ...(buildDiagnostics && typeof buildDiagnostics === "object" ? buildDiagnostics : {}),
+            stage2Exception: true,
+            storeReadElapsedMs: Date.now() - storeReadT0,
+          };
         }
         return {
           success: true,
@@ -3858,6 +4003,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
             route: "mvAnalysis.getPlatformContent",
             totalMs: Date.now() - t0,
             hasContent: Boolean(platformContent),
+            preferFlyLive,
+            stage2Error,
+            stage2TimedOut,
+            platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
+            buildPlatformContent: buildDiagnostics,
           },
         };
       }),

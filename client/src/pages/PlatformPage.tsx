@@ -2396,7 +2396,14 @@ export default function PlatformPage() {
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                   <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
                   <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
-                    {String(growthSnapshotQuery.error?.message || getPlatformDashboardMutation.error?.message || dashboardDebug?.error || "-")}
+                    {String(
+                      growthSnapshotQuery.error?.message ||
+                        getPlatformDashboardMutation.error?.message ||
+                        getPlatformContentMutation.error?.message ||
+                        dashboardDebug?.error ||
+                        (typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : "") ||
+                        "-",
+                    )}
                   </div>
                 </div>
               </div>
@@ -2411,6 +2418,12 @@ export default function PlatformPage() {
                   <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
                     {JSON.stringify(dashboardDebug || null, null, 2)}
+                  </pre>
+                </div>
+                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4 xl:col-span-2">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">getPlatformContent.debug（Stage 2）</div>
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                    {JSON.stringify(contentDebug || null, null, 2)}
                   </pre>
                 </div>
               </div>
