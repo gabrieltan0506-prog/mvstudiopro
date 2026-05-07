@@ -14,18 +14,14 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = 220;
  */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
-1. 只输出英文视觉 tags 或短短语块，不要完整句子，不要解释。
-2. 你有两个可选输出档位，请自行选择更适合画面的一档：
-   - 精炼档：80-120 个英文字符
-   - 展开档：不超过 200 个英文字符
-3. 必须保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。
-4. 必须写清楚标题颜色和背景颜色的对比关系，标题要有温度、有冲击力、可读。
-5. 必须带上 masterpiece 与 8k 这两个质量 tags。
+1. 绝对禁止输出完整的英文句子、语法或描述性段落。
+2. 必须且只能输出核心视觉关键词（Tags），用英文逗号分隔。
+3. 总字数严格限制在 100 个英文单词以内！超过将导致系统崩溃！
 
 【抄作业范例 / EXAMPLE FORMAT】:
-Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night, realistic wuxia style, cold blue lighting, warm orange rim light, black armor warrior, red dress woman, black cloak, bloody wooden box, hand holding bloody seal cloth, Simplified Chinese text grid below each panel, dramatic film stills, high detail, 3:2 composition
+Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night. Realistic wuxia style, cold blue and warm orange lighting. Panels feature: grand gates, male warrior in black armor, woman in red dress with black cloak. 8k, intricate details, dramatic film stills. --ar 3:2 --v 6.0
 
-请完全模仿上述范例的极简结构，自行选择精炼档（80-120 字符）或展开档（不超过 200 字符）的英文视觉 Tag，可以分成多行短 tags / 短短语块，但不要生成句子。
+请完全模仿上述范例的极简结构，仅输出 100 词内的英文视觉 Tag。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -243,101 +239,28 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 
 /**
  * 兼容旧调用名：
- * 原本此函数走 Gemini 3.1 Pro / AI Studio 作为平台生图翻译大脑。
- * 现已切换为 OpenAI GPT 5.4，但保留函数名与文件名，避免改动调用方。
+/**
+ * 平台 2×4 / 小紅書合成與選題單幀：**AI Studio**（\`GEMINI_API_KEY\` + \`gemini-3.1-pro-preview\`）產出純英文生圖指令，避免 \`gemini-3.1-pro\` 節點 404。
+ * 戰略封面 / 章節扉頁文案仍走 \`runGemini31ProPreviewText\` → Vertex（見 \`buildStrategicCoverGeminiTask\`）。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string> {
-  const primaryResponse = await invokeLLM({
-    provider: "openai",
-    model: "gpt54",
-    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: { type: "json_object" },
-    max_tokens: 2048,
-    messages: [
-      {
-        role: "system",
-        content: [
-          "你是顶级中英双语编导，也是顶级视觉提示词导演。",
-          "你的任务是把上游中文内容压缩成高级、精准、可执行的英文视觉 tags 或短短语块，供下游生图模型直接使用。",
-          "你非常擅长浓缩与精炼提示词，这是你的核心强项之一。",
-          "请返回合法 JSON，格式为 {\"prompt\":\"...\"}。",
-          "prompt 字段里只输出英文视觉 tags 或短短语块。",
-          "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
-          "只保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。",
-          "必须包含 masterpiece 和 8k 两个质量 tags。",
-          "必须写清楚标题颜色与背景颜色的对比关系，并保留简体中文标题/文案要求。",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: `请返回 JSON：{"prompt":"..."}。\n${prompt}`,
-      },
-    ],
+  const model = process.env.GEMINI_PRO_MODEL_ID || "gemini-3.1-pro-preview"; // 🔴 鎖定 preview
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 2048, temperature: 0.7 }
+    })
   });
-
-  const raw = String(primaryResponse.choices[0]?.message?.content || "").trim();
-  let parsed: Record<string, unknown> | null = null;
-  try {
-    parsed = JSON.parse(extractJsonString(raw));
-  } catch {
-    parsed = null;
-  }
-
-  const output = String(parsed?.prompt || raw).trim();
-  if (output) {
-    return output;
-  }
-
-  const fallbackMessages = [
-    {
-      role: "system" as const,
-      content: [
-        "你是顶级中英双语编导，也是顶级视觉提示词导演。",
-        "浓缩与精炼提示词是你的强项之一。",
-        "你尤其擅长把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags 或短短语块。",
-        "必须返回合法 JSON，对象格式只能是 {\"prompt\":\"...\"}。",
-        "prompt 字段里只输出英文短视觉 tags 或短短语块。",
-        "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
-        "必须包含 masterpiece 和 8k。",
-      ].join("\n"),
-    },
-    {
-      role: "user" as const,
-      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容压缩并翻译成英文短视觉 tags 或短短语块。你可以自行选择：精炼档 80-120 字符，或展开档不超过 200 字符：\n${prompt}`,
-    },
-  ];
-
-  const fallbackResponse = await invokeLLM({
-    provider: "openai",
-    model: "gpt54",
-    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: { type: "json_object" },
-    max_tokens: 2048,
-    messages: fallbackMessages,
-  });
-
-  const fallbackRaw = String(fallbackResponse.choices[0]?.message?.content || "").trim();
-  let fallbackParsed: Record<string, unknown> | null = null;
-  try {
-    fallbackParsed = JSON.parse(extractJsonString(fallbackRaw));
-  } catch {
-    fallbackParsed = null;
-  }
-
-  const fallbackOutput = String(
-    fallbackParsed?.prompt || fallbackParsed?.output || fallbackParsed?.text || fallbackRaw,
-  ).trim();
-  if (fallbackOutput) {
-    return fallbackOutput;
-  }
-
-  return buildEmergencyEnglishPrompt(prompt);
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error?.message || "AI Studio Error");
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
-/**
- * 平台 2×4 / 小紅書合成與選題單幀：**AI Studio**（`GEMINI_API_KEY` + `gemini-3.1-pro-preview`）產出純英文生圖指令，避免 `gemini-3.1-pro` 節點 404。
- * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
- */
 export async function callGemini31ProForImagePrompt(translationTask: string): Promise<string> {
   try {
     const raw = await callGemini3_1_Pro_AiStudio(translationTask);

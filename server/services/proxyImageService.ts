@@ -43,105 +43,30 @@ function forceTrimPromptToHardCap(text: string, hardCap = PROMPT_FINAL_HARD_CHAR
 /**
  * 超長 prompt 時啟動 AI Studio 最多 3 次濃縮；**不對生圖串做 slice 物理截斷**（閾值僅決定是否觸發提煉）。
  * `log` 與 `appendImageFlowLog` 約定一致；批量任務傳 `flowLog`，單幀可傳空陣列 `[]` 以鎖定相同寫入路徑。
+
+/**
+ * 超長 prompt 時啟動 AI Studio 最多 3 次濃縮；**不對生圖串做 slice 物理截斷**。
  */
 export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
-  const originalWords = countPromptWords(rawPrompt);
-  if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
-    const direct = forceTrimPromptToHardCap(rawPrompt);
-    if (direct.length !== String(rawPrompt || "").trim().length) {
-      appendImageFlowLog(
-        log,
-        `[Prompt 提炼] 直通前触发最终硬裁剪，chars=${String(rawPrompt || "").trim().length} -> ${direct.length}`,
-      );
-    }
-    return direct;
-  }
-
-  appendImageFlowLog(
-    log,
-    `[Prompt 提炼] 原始长度超标 (chars=${rawPrompt.length}, words=${originalWords})，启动 3 次智能重试机制...`,
-  );
-  const condenseTask = [
-    `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
-    `硬性要求：`,
-    `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
-    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
-    `3. 绝对不能丢失以下关键信息：构图、主体、灯光、镜头气质、平台版式。`,
-    `4. 如果原文要求画面中出现简体中文标题、简体中文标签、简体中文文案，必须保留这条硬指令。`,
-    `5. 小红书双卡、电影级分镜表、平台封面这类版式要求必须保留。`,
-    ``,
-    rawPrompt,
-  ].join("\n");
-
-  let bestAttempt = rawPrompt.trim();
-  let bestAttemptChars = bestAttempt.length || Number.MAX_SAFE_INTEGER;
-
-  // 2. 嚴格 3 次重試
+  if (!rawPrompt || rawPrompt.length <= 800) return rawPrompt;
+  
+  appendImageFlowLog(log, `[Prompt 提炼] 原始长度超标 (${rawPrompt.length})，启动 3 次智能重试...`);
+  const condenseTask = `请将以下过长的生图 Prompt 浓缩为 100 个单词以内的英文视觉 Tags (逗号分隔)：\n\n${rawPrompt}`;
+  
   for (let i = 1; i <= 3; i++) {
     try {
       const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
       const out = condensed.trim();
-      const outWords = countPromptWords(out);
-      if (out && out.length < bestAttemptChars) {
-        bestAttempt = out;
-        bestAttemptChars = out.length;
+      if (out.length <= 800) {
+        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，字数縮減至: ${out.length}`);
+        return out;
       }
-      if (out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
-        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
-        const forcedOut = forceTrimPromptToHardCap(out);
-        if (forcedOut.length !== out.length) {
-          appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次结果触发最终硬裁剪，chars=${out.length} -> ${forcedOut.length}`);
-        }
-        return forcedOut;
-      }
-      appendImageFlowLog(
-        log,
-        `[Prompt 提炼] 第 ${i} 次尝试结果未达标 (chars=${out.length}, words=${outWords})`,
-      );
-    } catch (e: unknown) {
-      appendImageFlowLog(
-        log,
-        `[Prompt 提炼] 第 ${i} 次尝试请求失败: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试结果仍超标 (${out.length})`);
+    } catch (e) {
+      appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试请求失败: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-
-  // 3. 不再中止：再做一次更强硬的最终压缩，避免整条主路径因提炼失败直接死亡
-  appendImageFlowLog(log, "[Prompt 提炼] 前 3 次未达标，启动最终强制浓缩，不再直接报失败");
-  const finalForceTask = [
-    "将下面这条英文生图指令强制压缩成更短版本。",
-    "硬性要求：",
-    "1. 只输出英文短视觉 tags 或短短语块。",
-    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
-    "3. 绝对不要输出完整句子、解释、markdown。",
-    "4. 必须保留：主体、灯光、场景、版式、简体中文标题要求。",
-    "",
-    bestAttempt,
-  ].join("\n");
-
-  try {
-    const forced = (await callGemini3_1_Pro_AiStudio(finalForceTask)).trim();
-    const forcedWords = countPromptWords(forced);
-    const forcedTrimmed = forceTrimPromptToHardCap(forced);
-    appendImageFlowLog(
-      log,
-      `[Prompt 提炼] 最终强制浓缩完成，chars=${forced.length}, words=${forcedWords}${forcedTrimmed.length !== forced.length ? ` · 最终硬裁剪 -> ${forcedTrimmed.length}` : ""}`,
-    );
-    if (forcedTrimmed) {
-      return forcedTrimmed;
-    }
-  } catch (e: unknown) {
-    appendImageFlowLog(
-      log,
-      `[Prompt 提炼] 最终强制浓缩请求失败: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-
-  appendImageFlowLog(
-    log,
-    `[Prompt 提炼] 使用当前最短候选继续主路径，chars=${bestAttempt.length}, words=${countPromptWords(bestAttempt)}${forceTrimPromptToHardCap(bestAttempt).length !== bestAttempt.length ? ` · 最终硬裁剪 -> ${forceTrimPromptToHardCap(bestAttempt).length}` : ""}`,
-  );
-  return forceTrimPromptToHardCap(bestAttempt);
+  throw new Error("Prompt 提炼连续 3 次失败且长度超标，为保生图质量，任务已中止。");
 }
 
 export function buildImagePromptStats(translatedPrompt: string, finalPrompt: string): ImagePromptStats {

@@ -3341,8 +3341,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        /** 再次降级：graphic 1 路、video 1 路，避免同时两张封面把翻译/生图链顶爆 */
-        const pool = 1;
+        const pool = input.platformType === "graphic" ? 2 : 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
 
         const drizzleDb = await db.getDb();
