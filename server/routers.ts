@@ -416,6 +416,13 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
+/** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
+const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
+  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
+  if (!Number.isFinite(raw) || raw < 4096) return 16384;
+  return Math.min(65536, Math.floor(raw));
+})();
+
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
 // platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
 const platformDashboardResponseSchema = z.object({
@@ -1062,7 +1069,7 @@ async function buildPlatformContent(params: {
     response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-3.1-pro-preview",
-      max_tokens: 8192,
+      max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
       response_format: { type: "json_object" },
       messages: contentMessages,
     });
@@ -1074,7 +1081,7 @@ async function buildPlatformContent(params: {
       response = await invokeLLM({
         provider: "vertex",
         modelName: "gemini-3.1-pro-preview",
-        max_tokens: 8192,
+        max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
         messages: contentMessages,
       });
       llmPath = "vertex_plain";
@@ -1085,7 +1092,7 @@ async function buildPlatformContent(params: {
         response = await invokeLLM({
           provider: "gemini",
           modelName: "gemini-3.1-pro-preview",
-          max_tokens: 8192,
+          max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
           response_format: { type: "json_object" },
           messages: contentMessages,
         });
@@ -1154,6 +1161,18 @@ async function buildPlatformContent(params: {
   diagnostics.rawContentEmpty = !rawContent.trim();
   diagnostics.rawContentHead280 = rawContent.slice(0, 280);
   diagnostics.rawContentTail280 = rawContent.slice(-280);
+
+  /**
+   * 模型常返回**截断 JSON**（末尾缺少引号/括号）→ 所有 JSON.parse 失败。
+   * 旧逻辑会把 parsedRaw 留在 {} 上，normalize 后 0 条，Zod 仍 strict_ok，造成「假成功」。
+   */
+  if (jsonParseStrategy === "parse_failed_all" && rawContent.trim().length > 80) {
+    diagnostics.stage2FailureReason = "unparseable_json_likely_truncated";
+    console.error("[buildPlatformContent] parse_failed_all rawLen=", rawContent.length);
+    throw new Error(
+      "Stage2：模型输出未形成完整 JSON（多为截断）。请重新分析或稍后再试；若重复出现可缩短人设描述，或设置环境变量 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 提高输出上限。",
+    );
+  }
 
   if (
     parsedRaw &&
@@ -3929,17 +3948,31 @@ ${JSON.stringify(platformEvidence, null, 2)}
             ...((input.platformMenu || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
           ]);
           const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
-          const store = await Promise.race([
-            requestedPlatforms.length
-              ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive })
-              : readTrendStore({ preferDerivedFiles: true, preferFlyLive }),
-            new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) =>
-              setTimeout(() => {
-                storeReadTimedOut = true;
+          const storeReadPromise = requestedPlatforms.length
+            ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive })
+            : readTrendStore({ preferDerivedFiles: true, preferFlyLive });
+          const store = await new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              storeReadTimedOut = true;
+              resolve(storeNull);
+            }, 20_000);
+            storeReadPromise
+              .then((s) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(s);
+              })
+              .catch(() => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
                 resolve(storeNull);
-              }, 20_000),
-            ),
-          ]).catch(() => storeNull);
+              });
+          });
           const storeReadMs = Date.now() - storeReadT0;
 
           type Stage2RaceDone = { kind: "done"; data: z.infer<typeof platformContentResponseSchema>; diagnostics: Record<string, unknown> };
