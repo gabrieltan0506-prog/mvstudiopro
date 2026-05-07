@@ -2367,12 +2367,12 @@ export default function PlatformPage() {
                     <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 看板先行 ──</div>
                     <div>2. 平台优先级看板（getPlatformDashboard）</div>
-                    <div>2a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : "⏸ 等待"}</div>
+                    <div>2a. 状态: <span>{isDashboardLoading ? "⏳ 正在推演戰略看板..." : platformDashboard ? "✅ 已完成" : "⏸ 等待"}</span></div>
                     <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
                     <div>3. 深度原创分析（getPlatformContent）</div>
-                    <div>3a. 状态: {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功" : "⏸ 等待 Stage 1"}</div>
+                    <div>3a. 状态: <span>{isContentLoading ? "⏳ 正在生成原創文案..." : platformContent ? "✅ 已完成" : "⏸ 等待 Stage 1"}</span></div>
                     <div>3b. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
                     <div>3c. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
