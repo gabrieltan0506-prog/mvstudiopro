@@ -96,6 +96,7 @@ import {
   growthPremiumRemixAssetsSchema,
   growthPremiumRemixSchema,
   growthPlatformActivitySchema,
+  growthPlatformMenuItemSchema,
   growthPlatformRecommendationSchema,
   growthSnapshotSchema,
   growthTitleExecutionSchema,
@@ -415,44 +416,14 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
-/** LLM 偶发把 referenceAccounts（应为数组）写成单个对象，或把 trafficBoosters 写成单字符串 — 先预处理再入 Zod，避免 buildPlatformDashboard loose parse 失败 */
-const platformMenuReferenceAccountsSchema = z.preprocess((val) => {
-  if (Array.isArray(val)) return val;
-  if (val === null || val === undefined) return [];
-  return [val];
-}, z.array(z.any()));
-
-const platformMenuTrafficBoostersSchema = z.preprocess((val) => {
-  const toLine = (item: unknown) =>
-    typeof item === "string"
-      ? item
-      : item !== null && typeof item === "object"
-        ? JSON.stringify(item)
-        : String(item);
-  if (Array.isArray(val)) return val.map(toLine);
-  if (val === null || val === undefined) return [];
-  return [toLine(val)];
-}, z.array(z.string()));
-
-// Call 2 schema — lightweight direction (platform + signals), no heavy copywriting
-// All array fields use z.any() to tolerate Gemini returning strings instead of objects
-// (confirmed bug: topSignals returned as string[] instead of object[])
+// Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
+// platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
 const platformDashboardResponseSchema = z.object({
   headline: z.string(),
   subheadline: z.string().default(""),
   personaSummary: z.string().default(""),
-  // Use z.any() for all array fields — Gemini sometimes returns string[] instead of object[]
   topSignals: z.array(z.any()).default([]),
-  platformMenu: z.array(z.object({
-    platform: z.string().optional(),
-    whyNow: z.string().optional(),
-    referenceAccounts: platformMenuReferenceAccountsSchema.optional(),
-    primaryTrack: z.string().optional(),
-    estimatedTraffic: z.string().optional(),
-    ipUniqueness: z.string().optional(),
-    commercialConversion: z.string().optional(),
-    trafficBoosters: platformMenuTrafficBoostersSchema.optional(),
-  }).passthrough()).default([]),
+  platformMenu: z.array(growthPlatformMenuItemSchema).default([]),
   hotTopics: z.array(z.any()).default([]),
   contentBlueprints: z.array(z.any()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
@@ -633,8 +604,8 @@ async function buildPlatformDashboard(params: {
 
 【强制热点关联与深度四维量化】
 你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
-1. referenceAccounts：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。格式：{account: "目标用户画像", reason: "具体描述"}。禁止输出 "[object Object]" 或空值。
-2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动（如官方打卡、赛道扶持）或即将到来的节日热点。例如："带上 #医学硬核科普 参与近期知识区流量扶持"。
+1. referenceAccounts：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。【格式必须为对象数组】：[{"account": "画像名称", "reason": "具体描述"}]。绝对禁止输出单个对象或单个字符串。
+2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动或即将到来的节日热点。【格式必须为字符串数组】：例如 ["带上 #医学硬核科普 参与近期知识区流量扶持", "夏季健康打卡"]。绝对禁止输出单行字符串。
 3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
 4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。
    【严格禁止输出"XX万"、"X万+"等占位符！必须计算真实数字！】

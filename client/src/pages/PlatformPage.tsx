@@ -187,20 +187,10 @@ type PlatformDashboard = {
   headline: string;
   subheadline: string;
   personaSummary: string;
-  topSignals: Array<{ title: string; detail: string; badge?: string }>;
-  platformMenu: Array<{
-    platform: string;
-    label: string;
-    trend: string;
-    lane: string;
-    whyNow: string;
-    recommendedFormat?: string;
-    titleExample?: string;
-    contentHook?: string;
-    nextMove: string;
-    monetizationPath?: string;
-  }>;
-  hotTopics: Array<{ title: string; whyHot: string; howToUse: string }>;
+  topSignals: any[];
+  /** 後端 Zod 課程與 LLM 輸出；含 referenceAccounts、trafficBoosters；允許 label/lane/nextMove 等舊欄位 */
+  platformMenu: Array<Record<string, any>>;
+  hotTopics: any[];
   contentBlueprints: Array<{
     title: string;
     format: string;
@@ -218,7 +208,7 @@ type PlatformDashboard = {
     firstValidation: string;
   }>;
   actionCards: Array<{ title: string; detail: string }>;
-  conversationStarters: string[];
+  conversationStarters: any[];
 };
 
 type ProcessingStepCard = {
@@ -662,18 +652,24 @@ export default function PlatformPage() {
     },
   );
 
+  // Stage 1 Mutation: 戰略看板
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
     onSuccess: (result, variables) => {
       if (result.platformDashboard) {
         setPlatformDashboard(result.platformDashboard as PlatformDashboard);
-        // 看板 (Stage 1) 成功后，立刻触发文案与选题 (Stage 2)
+        // Stage 1 成功後立刻觸發 Stage 2，直接信任後端傳來的乾淨 Array
         setIsContentLoading(true);
         getPlatformContentMutation.mutate({
           context: focusPrompt || undefined,
           windowDays: selectedWindowDays,
-          platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu,
+          platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu || [],
           snapshotSummary: variables.snapshotSummary || {},
         });
+      } else {
+        console.warn("[PlatformPage] Stage 1 AI 解析失敗:", result.debug?.error);
+        toast.error(
+          `戰略看板生成失敗：AI 數據格式異常，請重試 (${String((result.debug as { error?: unknown })?.error ?? "未知")})`,
+        );
       }
       setDashboardDebug(result.debug as Record<string, unknown>);
       setIsDashboardLoading(false);
@@ -681,14 +677,17 @@ export default function PlatformPage() {
     onError: (error) => {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
       setIsDashboardLoading(false);
-      toast.error(`分析失败: ${error.message}`);
+      toast.error(`分析網路錯誤: ${error.message}`);
     },
   });
 
+  // Stage 2 Mutation: 文案與選題
   const getPlatformContentMutation = trpc.mvAnalysis.getPlatformContent.useMutation({
     onSuccess: (result) => {
       if (result.platformContent) {
         setPlatformContent(result.platformContent as any);
+      } else {
+        toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
       }
       setContentDebug(result.debug as Record<string, unknown>);
       setIsContentLoading(false);
@@ -696,6 +695,7 @@ export default function PlatformPage() {
     onError: (error) => {
       console.warn("[PlatformPage] content mutation error:", error.message);
       setIsContentLoading(false);
+      toast.error(`文案生成網路錯誤: ${error.message}`);
     },
   });
 
@@ -2372,7 +2372,19 @@ export default function PlatformPage() {
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
                     <div>3. 深度原创分析（getPlatformContent）</div>
-                    <div>3a. 状态: <span>{isContentLoading ? "⏳ 正在生成原創文案..." : platformContent ? "✅ 已完成" : "⏸ 等待 Stage 1"}</span></div>
+                    <div>
+                      3a. 状态:{" "}
+                      <span>
+                        {isContentLoading
+                          ? "⏳ 正在生成原创文案..."
+                          : platformContent
+                            ? "✅ 已完成"
+                            : getPlatformContentMutation.isError ||
+                                (getPlatformContentMutation.isSuccess && !platformContent)
+                              ? "❌ 解析失败"
+                              : "⏸ 等待 Stage 1"}
+                      </span>
+                    </div>
                     <div>3b. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
                     <div>3c. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
