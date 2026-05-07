@@ -3140,6 +3140,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           topicHook: z.string().min(1).max(500),
           format: z.enum(["短视频", "图文"]).optional(),
           context: z.string().optional(),
+          /** 封面／单帧出镜身份：IP 基因 + persona 摘要等，注入 GPT 5.4，避免仅由选题文案猜测人设 */
+          coverPersonaContext: z.string().max(4000).optional(),
           /** user_creations.id：须为当前用户、type=platform_topic_frame、status∈{failed,timeout} 且未消费过免费补发 */
           failedJobId: z.string().max(32).optional(),
           /** 单帧付费重绘成功后写入新 creation 行，便于下次绑定 scene */
@@ -3284,14 +3286,24 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
-        const { buildPlatformTopicReferenceGeminiTask, callGemini31ProForImagePrompt, extractChineseVisualBrief } = await import(
-          "./services/geminiPlatformCompositeTranslation.js",
-        );
+        const {
+          buildEmergencyEnglishPrompt,
+          buildPlatformTopicReferenceGeminiTask,
+          callGemini31ProForImagePrompt,
+          extractChineseVisualBrief,
+        } = await import("./services/geminiPlatformCompositeTranslation.js");
         const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
           "./services/proxyImageService.js",
         );
         const ctxStr = String(input.context || "").trim();
-        const copywriting = ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook;
+        const coverPersona = String(input.coverPersonaContext || "").trim();
+        const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
+        const copywriting = [
+          coverPersona ? `【封面身份锚点】\n${coverPersona}` : "",
+          ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
         /** 與批量 `flowLog` 同型，確保 `condenseImagePromptIfNeeded` + `appendImageFlowLog` 路徑一致 */
         const topicImageCondenseLog: string[] = [];
@@ -3312,14 +3324,18 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: input.topicHook,
-              context: (await extractChineseVisualBrief(ctxStr)) || ctxStr,
+              context: (await extractChineseVisualBrief(briefSource)) || briefSource.slice(0, 2000),
               variant: isGraphic ? "graphic" : "video",
+              coverPersonaContext: coverPersona || undefined,
             });
             topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 调用 GPT 5.4 生成英文 prompt …`);
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
             topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
-            const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || copywriting, topicImageCondenseLog);
+            const safePrompt = await condenseImagePromptIfNeeded(
+              englishPrompt?.trim() ? englishPrompt : buildEmergencyEnglishPrompt(geminiTask),
+              topicImageCondenseLog,
+            );
             promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
             topicImageCondenseLog.push(
               `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
@@ -3447,6 +3463,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
         z.object({
           jobId: z.string().max(128).optional(),
           platformType: z.enum(["video", "graphic"]),
+          /** 与单张 generateTopicImage.coverPersonaContext 一致，批量时复用同一人设 */
+          coverPersonaContext: z.string().max(4000).optional(),
           scenes: z
             .array(
               z
@@ -3468,6 +3486,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const batchCoverPersona = String(input.coverPersonaContext || "").trim();
 
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? 5 : 6;
@@ -3496,6 +3515,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         const {
+          buildEmergencyEnglishPrompt,
           buildPlatformTopicReferenceGeminiTask,
           callGemini31ProForImagePrompt,
           extractChineseVisualBrief,
@@ -3542,6 +3562,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
         const results = await mapWithPool(input.scenes, pool, async (s) => {
           const body = String(s.text ?? s.copywriting ?? "").trim();
+          const briefSource = [batchCoverPersona, String(s.title || "").trim(), body].filter(Boolean).join("\n\n");
           const flowLog: string[] = [];
           appendImageFlowLog(flowLog, `──────── 选题「${s.title.slice(0, 48)}」· id=${s.id} ────────`);
           appendImageFlowLog(
@@ -3564,14 +3585,18 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: s.title,
-              context: (await extractChineseVisualBrief(body)) || body,
+              context: (await extractChineseVisualBrief(briefSource)) || briefSource.slice(0, 2000),
               variant: geminiVariant,
+              coverPersonaContext: batchCoverPersona || undefined,
             });
             appendImageFlowLog(flowLog, "[步骤1] 调用 GPT 5.4 生成英文 prompt …");
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
-            const safePrompt = await condenseImagePromptIfNeeded(englishPrompt || body, flowLog);
+            const safePrompt = await condenseImagePromptIfNeeded(
+              englishPrompt?.trim() ? englishPrompt : buildEmergencyEnglishPrompt(geminiTask),
+              flowLog,
+            );
             promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
             appendImageFlowLog(
               flowLog,
@@ -3598,7 +3623,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               fallbackUsed = true;
               url = await generateImageGpt2WithImagenFallback({
                 title: s.title,
-                copywriting: body,
+                copywriting: [batchCoverPersona ? `【封面身份锚点】\n${batchCoverPersona}` : "", body].filter(Boolean).join("\n\n"),
                 mode,
                 isTrial: false,
                 flowLog,

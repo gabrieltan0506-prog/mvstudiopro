@@ -8,24 +8,24 @@ import { extractJsonString, invokeLLM } from "../_core/llm.js";
 const SCRIPT_SLICE = 3500;
 const CHINESE_VISUAL_BRIEF_MAX_CHARS = 220;
 
+/** GPT 5.4 翻译大脑：用户定稿的莎士比亚式英文身份（system 首句，与中文规则并用） */
+export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN =
+  "You are excellent at distilling complex visual ideas into refined Shakespearean prompt lines of 90-120 characters, with strong imagery, emotional tension, and high aesthetic impact.";
+
 /**
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
  * jobs118/jobs120：已 export；格式與批量/單幀 Prompt 構造器末尾拼接保持一致。
  */
+/** 封面 / 分镜 / 笔记公用：短英文 tags 上限（人设定稿：用户指定的「最高视觉指令约束」） */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
-【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】:
-1. 只输出英文视觉 tags 或短短语块，不要完整句子，不要解释。
+【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】（像诗一样短，不必写成律诗——够用即可）:
+1. 只输出英文视觉 tags 或短短语块。
 2. 你有两个可选输出档位，请自行选择更适合画面的一档：
    - 精炼档：80-120 个英文字符
    - 展开档：不超过 200 个英文字符
 3. 必须保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。
 4. 必须写清楚标题颜色和背景颜色的对比关系，标题要有温度、有冲击力、可读。
 5. 必须带上 masterpiece 与 8k 这两个质量 tags。
-
-【抄作业范例 / EXAMPLE FORMAT】:
-Cinematic 2x4 grid storyboard, ancient Chinese palace, heavy snowy night, realistic wuxia style, cold blue lighting, warm orange rim light, black armor warrior, red dress woman, black cloak, bloody wooden box, hand holding bloody seal cloth, Simplified Chinese text grid below each panel, dramatic film stills, high detail, 3:2 composition
-
-请完全模仿上述范例的极简结构，自行选择精炼档（80-120 字符）或展开档（不超过 200 字符）的英文视觉 Tag，可以分成多行短 tags / 短短语块，但不要生成句子。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -36,9 +36,17 @@ export function stripGeminiModelOutput(raw: string): string {
   return t.replace(/^["']|["']$/g, "").trim();
 }
 
-function buildEmergencyEnglishPrompt(task: string): string {
-  const lower = String(task || "").toLowerCase();
-  if (lower.includes("xiaohongshu") || lower.includes("dual-note")) {
+/** 仅当任务**明确**要双卡/笔记版式且未否定小红书时，才走紧急「双栏笔记」预案（避免 COVER 模板里 “not Xiaohongshu note” 误触发食谱卡）。 */
+export function buildEmergencyEnglishPrompt(task: string): string {
+  const t = String(task || "");
+  const lower = t.toLowerCase();
+  const forbidsXhsNote = /\bnot\s+xiaohongshu\b/i.test(t) || /\bno\s+xiaohongshu\b/i.test(t);
+  const explicitDualNote =
+    lower.includes("dual-note") ||
+    lower.includes("dual_note") ||
+    lower.includes("xiaohongshu_dual_note") ||
+    /双卡|雙卡/.test(t);
+  if (explicitDualNote && !forbidsXhsNote) {
     return "Xiaohongshu dual-note layout, premium editorial style, warm palette contrast, clean margins, Simplified Chinese title, short bullets, masterpiece, 8k";
   }
   if (lower.includes("2x4") || lower.includes("storyboard")) {
@@ -55,39 +63,18 @@ export async function extractChineseVisualBrief(rawContext: string): Promise<str
     provider: "openai",
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "chinese_visual_brief",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            brief: {
-              type: "string",
-              minLength: 12,
-              maxLength: CHINESE_VISUAL_BRIEF_MAX_CHARS,
-              description:
-                "只保留中文视觉骨架关键词，220字内。只保留情绪、灯光、场景、服装、关键道具、镜头感、版式。不要长句。",
-            },
-          },
-          required: ["brief"],
-        },
-      },
-    },
-    max_tokens: 180,
+    response_format: { type: "json_object" },
+    max_tokens: 256,
     messages: [
       {
         role: "system",
         content: [
-          "你是顶级导演分镜提炼器。",
-          "先做中文视觉骨架提取，不做英文翻译。",
-          "你必须把输入内容狠心压缩到 220 个中文字符以内。",
-          "只保留：情绪、灯光、场景、服装、关键道具、镜头感、版式。",
-          "删除：解释、分析、故事摘要、长动作、修辞句。",
-          "输出必须是短中文关键词或短短语块，可用逗号分隔或分行，不要长句。",
-          "严格返回 JSON：{\"brief\":\"...\"}。",
+          "你是一位像莎士比亚剧场里锤炼台词那样锤炼画面的双语视觉编导：精通语言的节奏与意象，读中文时像读诗一样抓住「最省字、最有画面」的那几笔。",
+          "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
+          "像写短诗一样凝练：目标约 12～220 个中文字符内的关键词或短短语，可逗号分隔或分行；去掉解释、剧情复述、长句修辞。",
+          "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
+          "若正文没有食物/菜谱含义，就不必写厨房、食材表、食谱版式。",
+          "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
         ].join("\n"),
       },
       {
@@ -109,7 +96,7 @@ export async function extractChineseVisualBrief(rawContext: string): Promise<str
   return brief.slice(0, CHINESE_VISUAL_BRIEF_MAX_CHARS);
 }
 
-/** 视频分镜 2×4：Gemini 双语编导翻译 → 英文指令；出图端为 GPT-IMAGE-2 横版尺寸序列 */
+/** 横版 2×4 电影级分镜主表：定稿人设见下行英文块（translatePlatformCompositeToEnglishPrompt · storyboard sheet） */
 export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
@@ -125,7 +112,7 @@ ${slice}
   );
 }
 
-/** 小红书图文 2×4：Gemini 双语编导 → 英文；GPT-IMAGE-2 只按英文出图 */
+/** 小红书图文笔记 2×4：定稿人设——bilingual visual editor + 简中主标题 */
 export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
@@ -187,37 +174,65 @@ MANDATORY RULES:
 `.trim();
 }
 
-/** 平台選題單幀：中文 → 英文視覺 **Tag**（百词内）；video=多格分鏡條；graphic=圖文/封面式參考（非 2×4 合成表）。 */
+/** 平台選題單幀：`graphic`＝单张竖版**封面**（非小红书双卡图文笔记）；`video`＝竖版 9:16 多分镜**条**（非横版 2×4，2×4 见 {@link buildVideoStoryboardGeminiPrompt}）。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
   context: string;
-  /** `video`：短影音分鏡多格；`graphic`：圖文笔记/封面参考竖图 */
+  /** `video`：短影音竖版多分镜参考条；`graphic`：仅竖版单张封面 */
   variant: "video" | "graphic";
+  /** 出镜身份 / IP 基因（中文）；供 GPT 5.4 锁定人設与场景符号，避免仅由单条文案猜测导致漂移 */
+  coverPersonaContext?: string;
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 500);
   const ctx = String(input.context || "").trim().slice(0, 1500);
+  const personaRaw = String(input.coverPersonaContext || "").trim().slice(0, 2000);
+  const personaBlock =
+    personaRaw.length > 0
+      ? `
+【单帧出镜 · 身份锚定】（英文 tags 须体现可视觉化身份与场景档次；封面单帧与竖版分镜条均适用）
+${personaRaw}
+
+`.trim() + "\n\n"
+      : "";
   const isVideo = input.variant === "video";
   return (
     `
-You are a bilingual visual prompt director.
-${isVideo
-  ? "You specialize in short-video storyboard reference frames with strong rhythm and visual clarity."
-  : "You specialize in premium single-image media covers with strong click appeal and high-end visual impact."}
+${personaBlock}${
+  isVideo
+    ? "You are a bilingual visual prompt director who specializes in vertical 9:16 multi-panel storyboard strips for short-form video—clear gutters between panels, shot progression and rhythm, not a landscape 2x4 master sheet."
+    : "You are a bilingual cover design director who specializes in premium single-image vertical covers with strong click appeal and high-end visual impact (this task is cover-only, not Xiaohongshu dual-card image-text notes)."
+}
 
 ${isVideo
   ? "Use Simplified Chinese as the main title language."
   : "Use Simplified Chinese as the main title language, with English allowed as secondary supporting text."}
 
 ${isVideo ? `
-VIDEO STORYBOARD REFERENCE:
-- Required tags must include: vertical 9:16, multi-panel storyboard strip, at least 3 separated frames, gutters between panels, short-form video beats, not single full-bleed poster.
-- Use storyboard rhythm, sequence, and shot progression language.
-- Main on-image hook or title: Simplified Chinese legible, based on 「${hook}」.
+VERTICAL 9:16 STORYBOARD STRIP (not 2x4 landscape):
+- vertical 9:16
+- multi-panel storyboard strip
+- at least 3 separated frames
+- gutters between panels
+- short-form video beats
+- not single full-bleed poster
+- main title based on 「${hook}」
 ` : `
 COVER DESIGN ONLY:
-- Required tags must include: vertical 9:16, single-image cover, single dominant hero subject, premium editorial portrait or scene, strong focal point, not multi-panel storyboard, not dual-card layout, not Xiaohongshu note, not checklist, not bullet list, not account UI, not comment bar.
+- vertical 9:16
+- single-image cover
+- single dominant hero subject
+- premium editorial portrait or scene
+- strong focal point
+- not multi-panel storyboard
+- not dual-card layout
+- not Xiaohongshu note
+- not checklist
+- not bullet list
+- not account UI
+- not comment bar
 - The image must behave like a high-click cover, not an image-text note.
-- Main on-image hook or title: Simplified Chinese legible, based on 「${hook}」.
+- ANTI-HALLUCINATION: The scene MUST match the themes of the hook 「${hook}」and Context (e.g. medicine, doctor persona, study, books, journal props, landscape art, wellness). If an identity anchor block appears above, the on-camera subject, wardrobe, props, and environment tier MUST align with it. Unless the hook or Context clearly names food, cooking, recipes, ingredients, or specific dishes, DO NOT show: kitchens, recipe infographics, ingredient grids, cooking steps, noodle bowls, restaurant plating, or dual-column recipe lesson layouts.
+- main title based on 「${hook}」
 `}
 
 Context:
@@ -257,15 +272,13 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
       {
         role: "system",
         content: [
-          "你是顶级中英双语编导，也是顶级视觉提示词导演。",
-          "你的任务是把上游中文内容压缩成高级、精准、可执行的英文视觉 tags 或短短语块，供下游生图模型直接使用。",
-          "你非常擅长浓缩与精炼提示词，这是你的核心强项之一。",
-          "请返回合法 JSON，格式为 {\"prompt\":\"...\"}。",
-          "prompt 字段里只输出英文视觉 tags 或短短语块。",
-          "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
-          "只保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。",
-          "必须包含 masterpiece 和 8k 两个质量 tags。",
-          "必须写清楚标题颜色与背景颜色的对比关系，并保留简体中文标题/文案要求。",
+          GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
+          "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂中文当作台词来打磨——删繁就简，只留能「被镜头看见」的东西。",
+          "把上游任务压缩成一串可执行的英文视觉 tags 或短短语块，供下游生图模型直接作画；像十四行诗里选最锋利的意象，而不是写说明书。",
+          "篇幅：习惯上 90～120 个英文字符最漂亮；若题材需要，也可以放宽到不超过约 200 个英文字符，仍要句句有画面。",
+          "请返回合法 JSON：{\"prompt\":\"...\"}；prompt 里只要英文 tags，不要解释、不要 markdown。",
+          "保留：情绪、灯光、场景、主体与服饰、标题语言（简中大字等）；须带 masterpiece 与 8k；标题色与背景色对比要说清。",
+          "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表；其余不必叠床架屋地列禁令。",
         ].join("\n"),
       },
       {
@@ -292,13 +305,11 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     {
       role: "system" as const,
       content: [
-        "你是顶级中英双语编导，也是顶级视觉提示词导演。",
-        "浓缩与精炼提示词是你的强项之一。",
-        "你尤其擅长把复杂中文内容压缩成高级、精准、可执行的英文视觉 tags 或短短语块。",
-        "必须返回合法 JSON，对象格式只能是 {\"prompt\":\"...\"}。",
-        "prompt 字段里只输出英文短视觉 tags 或短短语块。",
-        "你有两个可选输出档位，请自行选择最适合画面的一档：精炼档 80-120 个英文字符；展开档不超过 200 个英文字符。",
-        "必须包含 masterpiece 和 8k。",
+        GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
+        "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂内容磨成短而准的英文视觉 tags。",
+        "篇幅：90～120 个英文字符最佳；需要时可到约 200 内。",
+        "必须返回合法 JSON：{\"prompt\":\"...\"}；须含 masterpiece 与 8k。",
+        "若正文未写食物/菜谱，就不要画食谱厨房；其余从简。",
       ].join("\n"),
     },
     {

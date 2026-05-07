@@ -400,6 +400,19 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
+/** 将 IP 基因库 + 仪表盘「内容身份」注入封面生图链，供 GPT 5.4 锁定人設（此前仅传选题文案时模型无法看到身份设定） */
+function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
+  const parts: string[] = [];
+  const ps = String(personaSummary || "").trim();
+  if (ps) parts.push(`【内容身份】${ps.slice(0, 600)}`);
+  if (isIpProfileReady(ipProfile)) {
+    parts.push(
+      `【IP 基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌：${ipProfile.taboos.trim()}` : ""}`,
+    );
+  }
+  return parts.join("\n").trim().slice(0, 3800);
+}
+
 /** 供分鏡表 / 小紅書雙卡單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
 function buildPlatformSheetScriptContext(item: {
   title: string;
@@ -805,6 +818,7 @@ export default function PlatformPage() {
             topicHook,
             format: variables.platformType === "video" ? "短视频" : "图文",
             context: ctxBody,
+            coverPersonaContext: variables.coverPersonaContext,
             failedJobId: String(cid),
             sceneId: r.id,
           });
@@ -890,6 +904,7 @@ export default function PlatformPage() {
 
   const runSequentialCoverBatchGeneration = async (
     scenes: Array<{ id: string; title: string; text: string }>,
+    coverPersonaContext: string,
   ) => {
     const localOpId = `batch-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setIsSequentialCoverBatchGenerating(true);
@@ -941,6 +956,7 @@ export default function PlatformPage() {
               format: "图文",
               context: String(scene.text || "").trim().slice(0, 8000),
               sceneId: scene.id,
+              coverPersonaContext: coverPersonaContext.trim() || undefined,
             }),
           (waitMs) => {
             liveLines.push(
@@ -2785,7 +2801,10 @@ export default function PlatformPage() {
                             ? ""
                             : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
                           if (!supervisorAccess && !window.confirm(discountNote)) return;
-                          void runSequentialCoverBatchGeneration(scenes);
+                          void runSequentialCoverBatchGeneration(
+                            scenes,
+                            buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                          );
                         }}
                         className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
                       >
@@ -3001,6 +3020,8 @@ export default function PlatformPage() {
                                 }
                               ).executionDetails,
                             }),
+                            coverPersonaContext:
+                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
                           }),
@@ -3062,6 +3083,8 @@ export default function PlatformPage() {
                           topicHook,
                           format: isGraphicCover ? "图文" : "短视频",
                           context: ctxBody,
+                          coverPersonaContext:
+                            buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                           failedJobId,
                           sceneId: item.id,
                         });
