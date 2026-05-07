@@ -1126,10 +1126,6 @@ export default function PlatformPage() {
   const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
   const [showIpModal, setShowIpModal] = useState(false);
 
-  // 保留给 Debug 面板使用，平台分析 Job 轮询逻辑已移除
-  const analysisJobId: string | null = null;
-  const analysisPollCount = 0;
-  const analysisJobStatus = "idle";
   const [qaJobId, setQaJobId] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const qaPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
