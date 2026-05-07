@@ -858,7 +858,7 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
   return out;
 }
 
-async function buildPlatformContent(params: {
+export async function buildPlatformContent(params: {
   snapshot: any;
   platformMenu: any;
   context?: string;
@@ -3293,175 +3293,178 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
-        const {
-          buildEmergencyEnglishPrompt,
-          buildPlatformTopicReferenceGeminiTask,
-          callGemini31ProForImagePrompt,
-          extractChineseVisualBrief,
-        } = await import("./services/geminiPlatformCompositeTranslation.js");
-        const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } = await import(
-          "./services/proxyImageService.js",
-        );
-        const ctxStr = String(input.context || "").trim();
-        const coverPersona = String(input.coverPersonaContext || "").trim();
-        const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
-        const copywriting = [
-          coverPersona ? `【封面身份锚点】\n${coverPersona}` : "",
-          ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
-        /** 與批量 `flowLog` 同型，確保 `condenseImagePromptIfNeeded` + `appendImageFlowLog` 路徑一致 */
-        const topicImageCondenseLog: string[] = [];
-        topicImageCondenseLog.push(`${new Date().toISOString()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`);
-        topicImageCondenseLog.push(`${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(GPT 5.4) → generateGptImage2FromRawEnglishPrompt 9:16`);
-        topicImageCondenseLog.push(`${new Date().toISOString()}  说明: 中文语境仅供 GPT 5.4 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`);
-        let promptStats = {
-          translatedPromptChars: 0,
-          translatedPromptWords: 0,
-          condensedPromptChars: 0,
-          condensedPromptWords: 0,
-          condenseTriggered: false,
-        };
-        let fallbackUsed = false;
+        const { runPlatformTopicImagePipeline } = await import("./services/runPlatformTopicImagePipeline.js");
+        return runPlatformTopicImagePipeline({
+          topicHook: input.topicHook,
+          format: input.format,
+          context: input.context,
+          coverPersonaContext: input.coverPersonaContext,
+          sceneId: input.sceneId,
+          creationIdOut,
+          isFreeRetry,
+          newJobMetaBase,
+        });
+      }),
 
-        let imageUrl: string | null = null;
-        try {
+    /**
+     * 平台单帧生图：先入队，由 Fly jobs worker 执行生图；前端轮询 GET /api/jobs/:id，避免长 HTTP 占用。
+     */
+    enqueueGenerateTopicImage: protectedProcedure
+      .input(
+        z.object({
+          topicHook: z.string().min(1).max(500),
+          format: z.enum(["短视频", "图文"]).optional(),
+          context: z.string().optional(),
+          coverPersonaContext: z.string().max(4000).optional(),
+          failedJobId: z.string().max(32).optional(),
+          sceneId: z.string().max(128).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const isGraphic = input.format === "图文";
+        const cost = isGraphic ? 6 : 5;
+
+        const database = await db.getDb();
+        const { userCreations } = await import("../drizzle/schema-creations");
+
+        const title = String(input.topicHook || "").trim().slice(0, 80);
+        const sid = String(input.sceneId ?? "").trim();
+
+        let creationIdOut: number | undefined;
+        let isFreeRetry = false;
+        let consumedParentId: number | null = null;
+
+        if (database) {
           try {
-            const geminiTask = buildPlatformTopicReferenceGeminiTask({
-              topicHook: input.topicHook,
-              context: (await extractChineseVisualBrief(briefSource)) || briefSource.slice(0, 2000),
-              variant: isGraphic ? "graphic" : "video",
-              coverPersonaContext: coverPersona || undefined,
-            });
-            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 调用 GPT 5.4 生成英文 prompt …`);
-            const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
-            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
-            const safePrompt = await condenseImagePromptIfNeeded(
-              englishPrompt?.trim() ? englishPrompt : buildEmergencyEnglishPrompt(geminiTask),
-              topicImageCondenseLog,
-            );
-            promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
-            topicImageCondenseLog.push(
-              `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
-            );
-            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
-            imageUrl = await generateGptImage2FromRawEnglishPrompt({
-              englishPrompt: safePrompt,
-              aspectRatio: "9:16",
-              gcsSubdir: "platform_topic_reference",
-              flowLog: topicImageCondenseLog,
-            });
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1/2] 主路径异常: ${msg}`);
-            if (topicImageCondenseLog.length > 0) {
-              console.warn(
-                `[mvAnalysis.generateTopicImage] condenseImagePromptIfNeeded flowLog:\n${topicImageCondenseLog.join("\n")}`,
-              );
-            }
-            console.warn(
-              `[mvAnalysis.generateTopicImage] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败（含 GPT 5.4 翻译 / 智能提炼 / GPT-IMAGE-2）:`,
-              e instanceof Error ? e.message : e,
-            );
+            const [newRow] = await database
+              .insert(userCreations)
+              .values({
+                userId,
+                type: PLATFORM_TOPIC_FRAME_TYPE,
+                title: title.slice(0, 255),
+                status: "pending",
+                creditsUsed: 0,
+                metadata: JSON.stringify({
+                  sceneId: sid.length > 0 ? sid : null,
+                  source: "generateTopicImage",
+                }),
+              })
+              .returning({ id: userCreations.id });
+            creationIdOut = newRow?.id;
+          } catch (e) {
+            console.warn("[mvAnalysis.enqueueGenerateTopicImage] insert pending platform_topic_frame failed:", e);
           }
-          if (!imageUrl) {
-            try {
-              fallbackUsed = true;
-              topicImageCondenseLog.push(
-                `${new Date().toISOString()}  [步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）`,
-              );
-              imageUrl = await generateImageGpt2WithImagenFallback({
-                title: title || "Content",
-                copywriting,
-                mode,
-                isTrial: false,
-                flowLog: topicImageCondenseLog,
+
+          if (creationIdOut == null) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "创建单帧任务失败，请稍后重试",
+            });
+          }
+
+          if (input.failedJobId && creationIdOut) {
+            const failedIdNum = Number(input.failedJobId);
+            const updated = await database
+              .update(userCreations)
+              .set({
+                metadata: sql<string>`(jsonb_set(coalesce((${userCreations.metadata})::jsonb, '{}'::jsonb), '{platformFreeRetryConsumed}', 'true'::jsonb, true))::text`,
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(userCreations.id, failedIdNum),
+                  eq(userCreations.userId, userId),
+                  eq(userCreations.type, PLATFORM_TOPIC_FRAME_TYPE),
+                  sql`coalesce((${userCreations.metadata})::jsonb->>'platformFreeRetryConsumed', '') <> 'true'`,
+                  or(eq(userCreations.status, "failed"), eq(userCreations.status, "timeout")),
+                ),
+              )
+              .returning({ id: userCreations.id });
+
+            if (updated.length > 0) {
+              isFreeRetry = true;
+              consumedParentId = failedIdNum;
+            } else {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "凭证无效或已被使用",
               });
-            } catch (e) {
-              topicImageCondenseLog.push(
-                `${new Date().toISOString()}  [步骤3] 兜底异常: ${e instanceof Error ? e.message : String(e)}`,
-              );
-              console.warn(
-                `兜底异常: ${e instanceof Error ? e.message : e}`,
-              );
-              imageUrl = null;
             }
           }
-        } catch (e: unknown) {
-          console.error("[mvAnalysis.generateTopicImage] 主路径或兜底未捕获异常:", e);
-          imageUrl = null;
-        }
 
-        if (!imageUrl) {
-          topicImageCondenseLog.push(`${new Date().toISOString()}  ✗ 本条结束：仍无 URL`);
-          if (creationIdOut != null && database) {
-            try {
-              await database
-                .update(userCreations)
-                .set({
-                  status: "failed",
-                  outputUrl: null,
-                  updatedAt: new Date(),
-                  metadata: JSON.stringify({
-                    ...newJobMetaBase,
-                    platformFreeRetryLastError: "empty_output",
-                    imagePromptStats: promptStats,
-                    fallbackUsed,
-                  }),
-                })
-                .where(eq(userCreations.id, creationIdOut));
-            } catch (e) {
-              console.warn(`[mvAnalysis.generateTopicImage] mark failed ${creationIdOut}:`, e);
+          if (!isAdminUser && !isFreeRetry) {
+            const creditsInfo = await getCredits(userId);
+            if (creditsInfo.totalAvailable < cost) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "PAYMENT_REQUIRED",
+                message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              });
             }
+            await deductCreditsAmount(userId, cost, "platformTopicImages", `平台单帧参考重绘（${cost}点）`);
+            await database
+              .update(userCreations)
+              .set({ creditsUsed: cost, updatedAt: new Date() })
+              .where(eq(userCreations.id, creationIdOut));
           }
-          return {
-            success: false as const,
-            imageUrl: null,
-            url: null,
-            freeRetryApplied: isFreeRetry,
-            creationId: creationIdOut,
-            imageGenFlowLog: topicImageCondenseLog,
-            imagePromptStats: promptStats,
-            fallbackUsed,
-          };
+        } else if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(userId, cost, "platformTopicImages", `平台单帧参考重绘（${cost}点）`);
         }
 
-        topicImageCondenseLog.push(`${new Date().toISOString()}  ✓ 本条结束：已得到 imageUrl`);
-        const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
-        if (creationIdOut != null && database) {
+        const newJobMetaBase: Record<string, unknown> = {
+          sceneId: sid.length > 0 ? sid : null,
+          source: "generateTopicImage",
+          isFreeRetry,
+          parentFailedJobId: consumedParentId,
+        };
+
+        if (database && creationIdOut != null) {
           try {
             await database
               .update(userCreations)
               .set({
-                status: finalStatus,
-                outputUrl: imageUrl,
+                metadata: JSON.stringify(newJobMetaBase),
                 updatedAt: new Date(),
-                metadata: JSON.stringify({
-                  ...newJobMetaBase,
-                  resolvedFrameStatus: finalStatus,
-                  imagePromptStats: promptStats,
-                  fallbackUsed,
-                }),
               })
               .where(eq(userCreations.id, creationIdOut));
           } catch (e) {
-            console.warn("[mvAnalysis.generateTopicImage] update new platform_topic_frame failed:", e);
+            console.warn("[mvAnalysis.enqueueGenerateTopicImage] enrich pending metadata failed:", e);
           }
         }
 
-        return {
-          success: true as const,
-          imageUrl,
-          url: imageUrl,
-          freeRetryApplied: isFreeRetry,
-          creationId: creationIdOut,
-          imageGenFlowLog: topicImageCondenseLog,
-          imagePromptStats: promptStats,
-          fallbackUsed,
-        };
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(userId),
+          type: "platform",
+          provider: "vertex",
+          input: {
+            action: "platform_topic_image",
+            params: {
+              creationId: creationIdOut ?? null,
+              topicHook: input.topicHook,
+              format: input.format,
+              context: input.context,
+              coverPersonaContext: input.coverPersonaContext,
+              sceneId: input.sceneId,
+              isFreeRetry,
+              newJobMetaBase,
+            },
+          },
+        });
+
+        return { jobId, creationId: creationIdOut ?? null, status: "queued" as const };
       }),
 
     /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
@@ -3957,6 +3960,39 @@ ${JSON.stringify(platformEvidence, null, 2)}
             error: null as string | null,
           },
         };
+      }),
+
+    /**
+     * Stage 2 文案與選題：僅入隊，由 jobs worker 執行 buildPlatformContent；前端輪詢 GET /api/jobs/:id。
+     */
+    enqueuePlatformContentJob: publicProcedure
+      .input(
+        z.object({
+          context: z.string().optional(),
+          windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+          platformMenu: z.array(z.any()).optional(),
+          snapshotSummary: z.record(z.string(), z.any()),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const jobId = nanoid(16);
+        const uid = ctx.user?.id != null ? String(ctx.user.id) : "public";
+        await createJobRecord({
+          id: jobId,
+          userId: uid,
+          type: "platform",
+          provider: "vertex",
+          input: {
+            action: "platform_build_content",
+            params: {
+              context: input.context,
+              windowDays: input.windowDays,
+              platformMenu: input.platformMenu ?? [],
+              snapshotSummary: input.snapshotSummary,
+            },
+          },
+        });
+        return { jobId, status: "queued" as const };
       }),
 
     getPlatformContent: publicProcedure
