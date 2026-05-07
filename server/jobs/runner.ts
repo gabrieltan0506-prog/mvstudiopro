@@ -27,7 +27,7 @@ import {
   type FalKlingEndpoint,
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
-import { appRouter } from "../routers";
+import { appRouter, buildPlatformContent } from "../routers";
 import { invokeLLM, extractJsonString } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
 import { getDb } from "../db";
@@ -44,6 +44,8 @@ import {
 } from "../services/aimusic-producer";
 import { analyzeVideo as analyzeGrowthCampVideo } from "../growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
+import { normalizePlatforms } from "../growth/growthSchema";
+import { readTrendStore, readTrendStoreForPlatforms } from "../growth/trendStore";
 import {
   claimNextQueuedJob,
   claimNextPdfExportJob,
@@ -919,6 +921,103 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
           }
         }
       }
+    }
+
+    // ── platform_build_content（Creator Growth · Stage 2 文案與選題）────────────────
+    if (input.action === "platform_build_content") {
+      const context = String(params.context || "");
+      const windowDays = Number(params.windowDays ?? 15);
+      const platformMenu = Array.isArray(params.platformMenu) ? params.platformMenu : [];
+      const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
+      const preferFlyLive = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
+      const requestedPlatforms = normalizePlatforms([
+        ...((snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) =>
+          String(item?.platform || ""),
+        ),
+        ...((platformMenu || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
+      ]);
+      const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<
+        ReturnType<typeof readTrendStore>
+      >;
+      const storeReadPromise = requestedPlatforms.length
+        ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive })
+        : readTrendStore({ preferDerivedFiles: true, preferFlyLive });
+      const store = await new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          resolve(storeNull);
+        }, 20_000);
+        storeReadPromise
+          .then((s) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(s);
+          })
+          .catch(() => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(storeNull);
+          });
+      });
+      const t0 = Date.now();
+      const built = await buildPlatformContent({
+        snapshot: snapshotSummary,
+        platformMenu,
+        context: context || undefined,
+        windowDays,
+        requestedPlatforms,
+        store,
+        abortSignal: undefined,
+      });
+      return {
+        provider: "vertex",
+        output: {
+          success: true,
+          platformContent: built.data,
+          debug: {
+            route: "mvAnalysis.getPlatformContent",
+            totalMs: Date.now() - t0,
+            hasContent: Boolean(built.data),
+            preferFlyLive,
+            stage2Error: null as string | null,
+            stage2TimedOut: false,
+            platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
+            buildPlatformContent: built.diagnostics,
+          },
+        },
+      };
+    }
+
+    // ── platform_topic_image（平台单帧封面 · 异步 worker）──────────────────────────
+    if (input.action === "platform_topic_image") {
+      const { runPlatformTopicImagePipeline } = await import("../services/runPlatformTopicImagePipeline.js");
+      const creationRaw = params.creationId;
+      const creationNum =
+        typeof creationRaw === "number"
+          ? creationRaw
+          : creationRaw != null && String(creationRaw).trim() !== ""
+            ? Number(creationRaw)
+            : NaN;
+      const creationIdOut = Number.isFinite(creationNum) ? creationNum : null;
+      const meta = params.newJobMetaBase;
+      const newJobMetaBase =
+        meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
+      const fmt = params.format;
+      const result = await runPlatformTopicImagePipeline({
+        topicHook: String(params.topicHook || ""),
+        format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
+        context: typeof params.context === "string" ? params.context : undefined,
+        coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
+        sceneId: typeof params.sceneId === "string" ? params.sceneId : undefined,
+        creationIdOut,
+        isFreeRetry: Boolean(params.isFreeRetry),
+        newJobMetaBase,
+      });
+      return { provider: "vertex", output: result };
     }
 
     throw new Error(`不支持的平台任务动作：${input.action}`);

@@ -6,7 +6,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
-import { createJob, getJob } from "@/lib/jobs";
+import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import type {
   GrowthAnalysisScores,
@@ -216,6 +216,15 @@ type ProcessingStepCard = {
   label: string;
   detail: string;
   status: "done" | "active" | "pending";
+};
+
+/** Debug：單次 Fly job 在前端的入隊與輪詢步驟 */
+type ClientJobPollTrace = {
+  jobId: string;
+  label: string;
+  lines: string[];
+  pollCount: number;
+  terminalStatus?: string;
 };
 
 /**
@@ -620,6 +629,12 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
+  /** Stage 2 走 jobs 轮询时的错误信息（替代原 getPlatformContent mutation error） */
+  const [contentJobError, setContentJobError] = useState<string | null>(null);
+  /** Debug：Stage 2 文案 job 的 jobId、每次 GET、终态 */
+  const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
+  /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
+  const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
@@ -674,19 +689,87 @@ export default function PlatformPage() {
     },
   );
 
+  const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
+
   // Stage 1 Mutation: 戰略看板
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
-    onSuccess: (result, variables) => {
+    onSuccess: async (result, variables) => {
       if (result.platformDashboard) {
         setPlatformDashboard(result.platformDashboard as PlatformDashboard);
-        // Stage 1 成功後立刻觸發 Stage 2，直接信任後端傳來的乾淨 Array
+        setContentJobError(null);
         setIsContentLoading(true);
-        getPlatformContentMutation.mutate({
-          context: focusPrompt || undefined,
-          windowDays: selectedWindowDays,
-          platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu || [],
-          snapshotSummary: variables.snapshotSummary || {},
-        });
+        try {
+          const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
+            context: focusPrompt || undefined,
+            windowDays: selectedWindowDays,
+            platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu || [],
+            snapshotSummary: variables.snapshotSummary || {},
+          });
+          const tEnq = new Date().toISOString();
+          setContentJobPollTrace({
+            jobId,
+            label: "Stage 2 · platform_build_content",
+            lines: appendPollDebugLine(
+              [],
+              `${tEnq} 已入队 enqueuePlatformContentJob → jobId=${jobId}，此后 GET /api/jobs/:id 每 2500ms`,
+            ),
+            pollCount: 0,
+          });
+          const j = await pollJobUntilTerminal(jobId, {
+            intervalMs: 2500,
+            maxWaitMs: 14 * 60_000,
+            onPoll: ({ attempt, status, elapsedMs }) => {
+              const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（入队后 ${elapsedMs}ms）`;
+              setContentJobPollTrace((prev) =>
+                prev && prev.jobId === jobId
+                  ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
+                  : prev,
+              );
+            },
+          });
+          const termLine = `${new Date().toISOString()} 终态 status=${j.status}${j.error ? ` · error=${j.error}` : ""}`;
+          setContentJobPollTrace((prev) =>
+            prev && prev.jobId === jobId
+              ? { ...prev, terminalStatus: j.status, lines: appendPollDebugLine(prev.lines, termLine) }
+              : prev,
+          );
+          if (j.status === "failed") {
+            throw new Error(j.error || "文案任务失败");
+          }
+          const out = j.output as { platformContent?: unknown; debug?: Record<string, unknown> } | undefined;
+          if (out?.platformContent) {
+            const pc = out.platformContent as { contentBlueprints?: unknown[]; monetizationLanes?: unknown[] };
+            const bp = Array.isArray(pc.contentBlueprints) ? pc.contentBlueprints.length : 0;
+            const ml = Array.isArray(pc.monetizationLanes) ? pc.monetizationLanes.length : 0;
+            if (bp === 0 && ml === 0) {
+              toast.error(
+                "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「getPlatformContent」查看原因，或重新分析一次。",
+              );
+            }
+            setPlatformContent(out.platformContent as any);
+          } else {
+            setContentJobError("專屬文案生成失敗：任務完成但未返回有效內容");
+            toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
+          }
+          setContentDebug((out?.debug as Record<string, unknown>) ?? {});
+        } catch (e) {
+          console.warn("[PlatformPage] Stage 2 job poll error:", e);
+          const msg = e instanceof Error ? e.message : String(e);
+          setContentJobError(msg);
+          toast.error(`文案生成失敗: ${msg}`);
+          setContentDebug(null);
+          setContentJobPollTrace((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  terminalStatus: prev.terminalStatus ?? "client_error",
+                  lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
+                }
+              : prev,
+          );
+        } finally {
+          setIsContentLoading(false);
+        }
       } else {
         console.warn("[PlatformPage] Stage 1 AI 解析失敗:", result.debug?.error);
         toast.error(
@@ -703,35 +786,6 @@ export default function PlatformPage() {
     },
   });
 
-  // Stage 2 Mutation: 文案與選題
-  const getPlatformContentMutation = trpc.mvAnalysis.getPlatformContent.useMutation({
-    onSuccess: (result) => {
-      if (result.platformContent) {
-        const bp = Array.isArray(result.platformContent.contentBlueprints)
-          ? result.platformContent.contentBlueprints.length
-          : 0;
-        const ml = Array.isArray(result.platformContent.monetizationLanes)
-          ? result.platformContent.monetizationLanes.length
-          : 0;
-        if (bp === 0 && ml === 0) {
-          toast.error(
-            "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「getPlatformContent」查看原因，或重新分析一次。",
-          );
-        }
-        setPlatformContent(result.platformContent as any);
-      } else {
-        toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
-      }
-      setContentDebug(result.debug as Record<string, unknown>);
-      setIsContentLoading(false);
-    },
-    onError: (error) => {
-      console.warn("[PlatformPage] content mutation error:", error.message);
-      setIsContentLoading(false);
-      toast.error(`文案生成網路錯誤: ${error.message}`);
-    },
-  });
-
   const askPlatformFollowUpMutation = trpc.mvAnalysis.askPlatformFollowUp.useMutation({
     onSuccess: (result) => {
       setAskResult(result.result);
@@ -741,30 +795,92 @@ export default function PlatformPage() {
     },
   });
 
-  /** 批量完成后漏图静默补发（独立 isPending，避免卡住手动按钮） */
-  const autoRetryTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onMutate: (v) => {
-      if (v.sceneId) setCoverSilentRetryIds((prev) => new Set(prev).add(v.sceneId!));
-    },
-    onSuccess: (res, v) => {
-      const sid = v.sceneId;
-      if (!sid) return;
-      const out =
-        res.imageUrl ?? (res as { url?: string | null }).url;
-      if (out) setPlatformImageMap((p) => ({ ...p, [sid]: String(out) }));
-      if (res.creationId != null) setSceneJobIds((p) => ({ ...p, [sid]: String(res.creationId) }));
-    },
-    onError: (err) => console.warn(`兜底异常: ${err.message}`),
-    onSettled: (_res, _err, v) => {
-      const sid = v?.sceneId;
-      if (!sid) return;
-      setCoverSilentRetryIds((prev) => {
-        const n = new Set(prev);
-        n.delete(sid);
-        return n;
+  const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
+
+  const runEnqueueTopicImageAndPoll = useCallback(
+    async (inp: {
+      topicHook: string;
+      format: "短视频" | "图文";
+      context?: string;
+      coverPersonaContext?: string;
+      failedJobId?: string;
+      sceneId?: string;
+      /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
+      pollDebugLabel?: string;
+    }) => {
+      const pollLabel =
+        inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
+      const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync(inp);
+      const tEnq = new Date().toISOString();
+      setTopicImageJobPollTrace({
+        jobId,
+        label: pollLabel,
+        lines: appendPollDebugLine(
+          [],
+          `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
+        ),
+        pollCount: 0,
       });
+      let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
+      try {
+        j = await pollJobUntilTerminal(jobId, {
+          intervalMs: 2500,
+          maxWaitMs: 12 * 60_000,
+          onPoll: ({ attempt, status, elapsedMs }) => {
+            const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms） · ${pollLabel}`;
+            setTopicImageJobPollTrace((prev) =>
+              prev && prev.jobId === jobId
+                ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
+                : prev,
+            );
+          },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setTopicImageJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: prev.terminalStatus ?? "client_error",
+                lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
+              }
+            : prev,
+        );
+        throw err;
+      }
+      const termLine = `${new Date().toISOString()} 终态 status=${j.status}${j.error ? ` · error=${j.error}` : ""} · ${pollLabel}`;
+      setTopicImageJobPollTrace((prev) =>
+        prev && prev.jobId === jobId
+          ? { ...prev, terminalStatus: j.status, lines: appendPollDebugLine(prev.lines, termLine) }
+          : prev,
+      );
+      if (j.status === "failed") {
+        throw new Error(j.error || "生图任务失败");
+      }
+      const raw = j.output;
+      if (!raw || typeof raw !== "object") {
+        return {
+          success: false as const,
+          imageUrl: null as string | null,
+          url: null as string | null,
+          creationId: undefined as number | undefined,
+          imageGenFlowLog: [] as string[],
+        };
+      }
+      const o = raw as Record<string, unknown>;
+      const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
+      const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
+      const success = Boolean(o.success) && Boolean(imageUrl);
+      return {
+        success: success as boolean,
+        imageUrl,
+        url: imageUrl,
+        creationId,
+        imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
+      };
     },
-  });
+    [enqueueGenerateTopicImageMutation],
+  );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
     onMutate: (variables) => {
@@ -816,15 +932,16 @@ export default function PlatformPage() {
         if (!topicHook) continue;
         const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
         try {
-          const retried = await autoRetryTopicImageMutation.mutateAsync({
+          const retried = await runEnqueueTopicImageAndPoll({
             topicHook,
             format: variables.platformType === "video" ? "短视频" : "图文",
             context: ctxBody,
             coverPersonaContext: variables.coverPersonaContext,
             failedJobId: String(cid),
             sceneId: r.id,
+            pollDebugLabel: `批量兜底重试 · ${r.id}`,
           });
-          const recoveredUrl = String(retried.imageUrl ?? (retried as { url?: string | null }).url ?? "").trim();
+          const recoveredUrl = String(retried.imageUrl ?? retried.url ?? "").trim();
           if (recoveredUrl) {
             retryRecovered += 1;
           }
@@ -870,8 +987,6 @@ export default function PlatformPage() {
     },
   });
 
-  /** 用户手动「重新生成」封面 */
-  const regenerateTopicImageMutation = trpc.mvAnalysis.generateTopicImage.useMutation();
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const COVER_BATCH_MIN_START_INTERVAL_MS = 30_000;
   const platformImageRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -953,12 +1068,13 @@ export default function PlatformPage() {
         const result = await runThrottledPlatformImageRequest(
           `cover:${scene.id}`,
           () =>
-            regenerateTopicImageMutation.mutateAsync({
+            runEnqueueTopicImageAndPoll({
               topicHook: String(scene.title || "").trim().slice(0, 500),
               format: "图文",
               context: String(scene.text || "").trim().slice(0, 8000),
               sceneId: scene.id,
               coverPersonaContext: coverPersonaContext.trim() || undefined,
+              pollDebugLabel: `异步逐张批量 · ${scene.id}`,
             }),
           (waitMs) => {
             liveLines.push(
@@ -2407,7 +2523,7 @@ export default function PlatformPage() {
                     <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
-                    <div>3. 深度原创分析（getPlatformContent）</div>
+                    <div>3. 深度原创分析（enqueuePlatformContentJob → GET /api/jobs 轮询）</div>
                     <div>
                       3a. 状态:{" "}
                       <span>
@@ -2417,14 +2533,23 @@ export default function PlatformPage() {
                             ? "✅ 已完成"
                             : platformContent && stage2EmptyPayload
                               ? "⚠️ 接口成功但內容為空"
-                            : getPlatformContentMutation.isError ||
-                                (getPlatformContentMutation.isSuccess && !platformContent)
+                            : contentJobError
                               ? "❌ 解析失败"
                               : "⏸ 等待 Stage 1"}
                       </span>
                     </div>
                     <div>3b. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
                     <div>3c. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
+                    <div>
+                      3d. jobId:{" "}
+                      <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span>
+                    </div>
+                    <div>
+                      3e. 轮询次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
+                      {contentJobPollTrace?.terminalStatus
+                        ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
+                        : ""}
+                    </div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
                     <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
                     <div>4a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
@@ -2438,7 +2563,7 @@ export default function PlatformPage() {
                       [
                         growthSnapshotQuery.error?.message,
                         getPlatformDashboardMutation.error?.message,
-                        getPlatformContentMutation.error?.message,
+                        contentJobError,
                         typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
                         typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
                         stage2EmptyPayload
@@ -2471,11 +2596,61 @@ export default function PlatformPage() {
                   </pre>
                 </div>
               </div>
+              <div className="mt-4 rounded-2xl border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.06)] p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">
+                  Fly Jobs · 客户端轮询（GET /api/jobs/:id）
+                </div>
+                <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+                  任务状态落在 Neon；前端仅按间隔拉取终态。下面为每次入队 jobId、轮询序号与 HTTP 结果摘要。
+                </p>
+                <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-black/35 p-3">
+                    <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content</div>
+                    <div className="mt-1 space-y-1 text-[10px] text-gray-400">
+                      <div>
+                        jobId:{" "}
+                        <span className="break-all font-mono text-[#d7d0ef]">{contentJobPollTrace?.jobId ?? "—"}</span>
+                      </div>
+                      <div>
+                        末次轮询序号: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
+                        {contentJobPollTrace?.terminalStatus
+                          ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
+                          : ""}
+                      </div>
+                    </div>
+                    <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
+                      {(contentJobPollTrace?.lines ?? []).length > 0
+                        ? (contentJobPollTrace?.lines ?? []).join("\n")
+                        : "尚无记录。Stage 1 完成后触发 Stage 2 入队即会写入。"}
+                    </pre>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/35 p-3">
+                    <div className="text-[11px] font-semibold text-[#ff7fd5]">封面单帧 · platform_topic_image（最近一条）</div>
+                    <div className="mt-1 space-y-1 text-[10px] text-gray-400">
+                      <div>来源: {topicImageJobPollTrace?.label ?? "—"}</div>
+                      <div>
+                        jobId:{" "}
+                        <span className="break-all font-mono text-[#d7d0ef]">{topicImageJobPollTrace?.jobId ?? "—"}</span>
+                      </div>
+                      <div>
+                        末次轮询序号: {topicImageJobPollTrace != null ? String(topicImageJobPollTrace.pollCount) : "—"}
+                        {topicImageJobPollTrace?.terminalStatus
+                          ? ` · 终态 ${topicImageJobPollTrace.terminalStatus}`
+                          : ""}
+                      </div>
+                    </div>
+                    <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
+                      {(topicImageJobPollTrace?.lines ?? []).length > 0
+                        ? (topicImageJobPollTrace?.lines ?? []).join("\n")
+                        : "尚无记录。Enqueue 封面任务后写入（手动 / 批量 / 静默补发）。"}
+                    </pre>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         ) : null}
 
-        {/* Show loading state while waiting for dashboard (Call 2) */}
         {snapshot && !platformDashboard && isDashboardLoading ? (
           <section className="mt-6">
             <div className={shellCardClasses("p-6")}>
@@ -2522,6 +2697,16 @@ export default function PlatformPage() {
                       <div>4. Stage1(dashboard): {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} / Stage2(content): {isContentLoading ? "⏳" : platformContent ? "✅" : "⏸"}</div>
                       <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))} / hasPlatformContent: {String(Boolean(platformContent))}</div>
                       <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
+                      <div>
+                        7. Stage2 jobId:{" "}
+                        <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span> · 轮询{" "}
+                        {contentJobPollTrace != null ? contentJobPollTrace.pollCount : "—"}
+                      </div>
+                      <div>
+                        8. 封面 job:{" "}
+                        <span className="font-mono text-[#ff7fd5]">{topicImageJobPollTrace?.jobId ?? "—"}</span> ·{" "}
+                        {topicImageJobPollTrace?.label ?? "—"}
+                      </div>
                     </div>
                   </div>
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
@@ -2611,6 +2796,57 @@ export default function PlatformPage() {
                       ))}
                     </div>
                   )}
+                </div>
+                <div className="mt-4 rounded-2xl border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.06)] p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">
+                    Fly Jobs · 客户端轮询（GET /api/jobs/:id）
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+                    与上方「快照区」Debug 相同数据源：Stage 2 文案 job 与最近一次封面单帧 job 的入队与轮询流水。
+                  </p>
+                  <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-xl border border-white/10 bg-black/35 p-3">
+                      <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content</div>
+                      <div className="mt-1 space-y-1 text-[10px] text-gray-400">
+                        <div>
+                          jobId:{" "}
+                          <span className="break-all font-mono text-[#d7d0ef]">{contentJobPollTrace?.jobId ?? "—"}</span>
+                        </div>
+                        <div>
+                          末次轮询序号: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
+                          {contentJobPollTrace?.terminalStatus
+                            ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
+                            : ""}
+                        </div>
+                      </div>
+                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
+                        {(contentJobPollTrace?.lines ?? []).length > 0
+                          ? (contentJobPollTrace?.lines ?? []).join("\n")
+                          : "尚无记录。"}
+                      </pre>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/35 p-3">
+                      <div className="text-[11px] font-semibold text-[#ff7fd5]">封面单帧 · platform_topic_image（最近一条）</div>
+                      <div className="mt-1 space-y-1 text-[10px] text-gray-400">
+                        <div>来源: {topicImageJobPollTrace?.label ?? "—"}</div>
+                        <div>
+                          jobId:{" "}
+                          <span className="break-all font-mono text-[#d7d0ef]">{topicImageJobPollTrace?.jobId ?? "—"}</span>
+                        </div>
+                        <div>
+                          末次轮询序号: {topicImageJobPollTrace != null ? String(topicImageJobPollTrace.pollCount) : "—"}
+                          {topicImageJobPollTrace?.terminalStatus
+                            ? ` · 终态 ${topicImageJobPollTrace.terminalStatus}`
+                            : ""}
+                        </div>
+                      </div>
+                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
+                        {(topicImageJobPollTrace?.lines ?? []).length > 0
+                          ? (topicImageJobPollTrace?.lines ?? []).join("\n")
+                          : "尚无记录。"}
+                      </pre>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -3006,7 +3242,7 @@ export default function PlatformPage() {
                         }
                         setRegeneratingCoverSceneId(item.id);
                         void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, () =>
-                          regenerateTopicImageMutation.mutateAsync({
+                          runEnqueueTopicImageAndPoll({
                             topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
                             context: buildPlatformSceneText({
@@ -3026,6 +3262,7 @@ export default function PlatformPage() {
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
+                            pollDebugLabel: `手动重生成 · ${item.id}`,
                           }),
                         )
                           .then((res) => {
@@ -3106,15 +3343,41 @@ export default function PlatformPage() {
                           delete next[item.id];
                           return next;
                         });
-                        autoRetryTopicImageMutation.mutate({
-                          topicHook,
-                          format: isGraphicCover ? "图文" : "短视频",
-                          context: ctxBody,
-                          coverPersonaContext:
-                            buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
-                          failedJobId: freeRetryJobId,
-                          sceneId: item.id,
-                        });
+                        setCoverSilentRetryIds((prev) => new Set(prev).add(item.id));
+                        void runThrottledPlatformImageRequest(`silent-cover:${item.id}`, () =>
+                          runEnqueueTopicImageAndPoll({
+                            topicHook,
+                            format: isGraphicCover ? "图文" : "短视频",
+                            context: ctxBody,
+                            coverPersonaContext:
+                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
+                            failedJobId: freeRetryJobId,
+                            sceneId: item.id,
+                            pollDebugLabel: `静默加载失败补发 · ${item.id}`,
+                          }),
+                        )
+                          .then((res) => {
+                            if (res.creationId != null) {
+                              setSceneJobIds((prev) => ({
+                                ...prev,
+                                [item.id]: String(res.creationId),
+                              }));
+                            }
+                            if (res.success && res.imageUrl) {
+                              setPlatformImageMap((prev) => ({
+                                ...prev,
+                                [item.id]: res.imageUrl!,
+                              }));
+                            }
+                          })
+                          .catch((err) => console.warn(`[PlatformPage] silent cover retry: ${err.message}`))
+                          .finally(() => {
+                            setCoverSilentRetryIds((prev) => {
+                              const n = new Set(prev);
+                              n.delete(item.id);
+                              return n;
+                            });
+                          });
                       };
                       return (
                       <div
@@ -3246,7 +3509,7 @@ export default function PlatformPage() {
                                     disabled={
                                       !isAuthenticated ||
                                       isSequentialCoverBatchGenerating ||
-                                      regenerateTopicImageMutation.isPending ||
+                                      regeneratingCoverSceneId !== null ||
                                       compositeMutationBusy ||
                                       isDashboardLoading ||
                                       isContentLoading
@@ -3261,8 +3524,7 @@ export default function PlatformPage() {
                                   >
                                     <RefreshCw
                                       className={`h-3 w-3 ${
-                                        regeneratingCoverSceneId === item.id &&
-                                        regenerateTopicImageMutation.isPending
+                                        regeneratingCoverSceneId === item.id
                                           ? "animate-spin text-[#ff4fb8]"
                                           : "text-gray-400 group-hover:text-white"
                                       }`}
