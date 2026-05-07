@@ -458,7 +458,7 @@ const platformContentResponseSchema = z.object({
         })
         .passthrough(),
     )
-    .length(6, { message: "contentBlueprints 必须恰好 6 个选题方案" }),
+    .default([]), // 容忍模型少给 / 多给方案条数，避免因 .length(6) 导致 Stage 2 整包解析失败
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
 
@@ -1062,7 +1062,18 @@ async function buildPlatformContent(params: {
   // This layer remaps all observed alias variants back to the canonical key names.
   const partial = normalizePlatformContentKeys((parsedRaw || {}) as Record<string, unknown>);
   const rawBp = Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [];
-  const blueprintsForSchema = rawBp.length > 6 ? rawBp.slice(0, 6) : rawBp;
+  /** 單條若不是 object（模型偶爾塞字符串），強制包成物件，避免 z.array(z.object()) 整批失敗 */
+  const coercedBp = rawBp.map((item: unknown) => {
+    if (item != null && typeof item === "object" && !Array.isArray(item)) {
+      return item as Record<string, unknown>;
+    }
+    if (typeof item === "string") {
+      return { title: "", hook: "", copywriting: item };
+    }
+    return { title: "", hook: "", copywriting: "" };
+  });
+  /** 極端長輸出保護（不影響正常 4–8 條） */
+  const blueprintsForSchema = coercedBp.length > 48 ? coercedBp.slice(0, 48) : coercedBp;
   const partialForParse = { ...partial, contentBlueprints: blueprintsForSchema };
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) return parseResult.data;
