@@ -6,11 +6,12 @@ import { extractJsonString, invokeLLM } from "../_core/llm.js";
  */
 
 const SCRIPT_SLICE = 3500;
-const CHINESE_VISUAL_BRIEF_MAX_CHARS = 220;
+/** 中文视觉骨架：允许充分保留剧本信息，不再做 220 字硬砍（下游 GPT 5.4 可自主取舍）。 */
+const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 
 /** GPT 5.4 翻译大脑：用户定稿的莎士比亚式英文身份（system 首句，与中文规则并用） */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN =
-  "You are excellent at distilling complex visual ideas into refined Shakespearean prompt lines of 90-120 characters, with strong imagery, emotional tension, and high aesthetic impact.";
+  "You excel at distilling complex visual ideas into precise English image prompts: as short as tags when appropriate, or as long and detailed as the scene requires for faithful execution.";
 
 /** 小红书图文笔记翻译任务：定稿英文人设（buildXhsNoteGeminiPrompt 正文首段） */
 export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You are a bilingual visual editor who specializes in premium image-text notes with refined aesthetics and strong title design.
@@ -21,7 +22,7 @@ Use Simplified Chinese as the main title language, with English allowed as secon
  * 强制 Gemini 产出短英文视觉 Tag（非长段落），避免数千字 prompt 撑爆 GPT-IMAGE-2 / Vertex。
  * jobs118/jobs120：已 export；格式與批量/單幀 Prompt 構造器末尾拼接保持一致。
  */
-/** 封面 / 分镜 / 笔记公用：短英文 tags 上限（人设定稿：用户指定的「最高视觉指令约束」） */
+/** 封面 / 分镜 / 笔记公用：短英文 tags（2×4 / 小红书合成等仍适合短指令） */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】（像诗一样短，不必写成律诗——够用即可）:
 1. 只输出英文视觉 tags 或短短语块。
@@ -31,6 +32,15 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 3. 必须保留最关键的画面信息：情绪、灯光、场景、主体/服装、标题语言要求。
 4. 必须写清楚标题颜色和背景颜色的对比关系，标题要有温度、有冲击力、可读。
 5. 必须带上 masterpiece 与 8k 这两个质量 tags。
+`.trim();
+
+/** 平台選題 **圖文單幀封面**：不截斷英文長度，並死命令禁止多格分鏡版式。 */
+const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
+【英文生图输出 / OUTPUT — graphic single-frame only】
+1. Output ONE complete English image prompt (as long as needed for clarity and fidelity). Do NOT artificially shorten; include masterpiece and 8k.
+2. LAYOUT (hard): exactly ONE vertical 9:16 **single cover image** — one continuous scene, one dominant hero subject, full-bleed composition.
+3. FORBIDDEN: any storyboard grid, 2×4 or 8-panel layout, numbered panels (01–08), film-strip / comic strip gutters, multi-panel strips, split frames, side-by-side story beats.
+4. SUBJECT LOCK: visuals MUST match the Hook and Context (e.g. doctor/medical IP, 《听琴图》 or classical painting props, heart anatomy diagram, Harvard/medical authority cues). Do NOT substitute unrelated generic templates (e.g. entrepreneur redemption arcs, rainy office clichés) that ignore the brief.
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -54,7 +64,13 @@ export function buildEmergencyEnglishPrompt(task: string): string {
   if (explicitDualNote && !forbidsXhsNote) {
     return "Xiaohongshu dual-note layout, premium editorial style, warm palette contrast, clean margins, Simplified Chinese title, short bullets, masterpiece, 8k";
   }
-  if (lower.includes("2x4") || lower.includes("storyboard")) {
+  /** 勿用裸关键词 storyboard：图文单帧任务里会出现「not multi-panel storyboard」仅此就会误触 2×4。 */
+  const wantsLandscape2x4 =
+    lower.includes("2x4") ||
+    lower.includes("2×4") ||
+    /\b8[\s-]*panels?\b/i.test(lower) ||
+    /\bcinematic\s+2[\sx×]*4\b/i.test(lower);
+  if (wantsLandscape2x4) {
     return "Cinematic 2x4 grid storyboard, dramatic film stills, premium lighting, distinct panels, luxury palette, Simplified Chinese title, panel labels, masterpiece, 8k";
   }
   return "Editorial cover, premium focal subject, high contrast lighting, luxury palette, legible Simplified Chinese headline, warm title color, masterpiece, 8k";
@@ -69,14 +85,14 @@ export async function extractChineseVisualBrief(rawContext: string): Promise<str
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
     response_format: { type: "json_object" },
-    max_tokens: 256,
+    max_tokens: 2048,
     messages: [
       {
         role: "system",
         content: [
           "你是一位像莎士比亚剧场里锤炼台词那样锤炼画面的双语视觉编导：精通语言的节奏与意象，读中文时像读诗一样抓住「最省字、最有画面」的那几笔。",
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
-          "像写短诗一样凝练：目标约 12～220 个中文字符内的关键词或短短语，可逗号分隔或分行；去掉解释、剧情复述、长句修辞。",
+          "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
           "若正文没有食物/菜谱含义，就不必写厨房、食材表、食谱版式。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
@@ -188,7 +204,7 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   coverPersonaContext?: string;
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 500);
-  const ctx = String(input.context || "").trim().slice(0, 1500);
+  const ctx = String(input.context || "").trim().slice(0, SCRIPT_SLICE);
   const personaRaw = String(input.coverPersonaContext || "").trim().slice(0, 2000);
   const personaBlock =
     personaRaw.length > 0
@@ -235,6 +251,7 @@ COVER DESIGN ONLY:
 - not account UI
 - not comment bar
 - The image must behave like a high-click cover, not an image-text note.
+- FORBIDDEN LAYOUTS (even if trendy): storyboard grids, 2×4 panels, eight-panel montage, numbered scene strips, comic gutters, film contact-sheet layout, "救赎/逆袭" generic businessman arcs unrelated to the medical hook.
 - ANTI-HALLUCINATION: The scene MUST match the themes of the hook 「${hook}」and Context (e.g. medicine, doctor persona, study, books, journal props, landscape art, wellness). If an identity anchor block appears above, the on-camera subject, wardrobe, props, and environment tier MUST align with it. Unless the hook or Context clearly names food, cooking, recipes, ingredients, or specific dishes, DO NOT show: kitchens, recipe infographics, ingredient grids, cooking steps, noodle bowls, restaurant plating, or dual-column recipe lesson layouts.
 - main title based on 「${hook}」
 `}
@@ -243,7 +260,7 @@ Context:
 ${ctx}
 `.trim() +
     "\n\n" +
-    MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT
+    (isVideo ? MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT : PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER)
   );
 }
 
@@ -271,16 +288,16 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
     response_format: { type: "json_object" },
-    max_tokens: 2048,
+    max_tokens: 4096,
     messages: [
       {
         role: "system",
         content: [
           GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
           "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂中文当作台词来打磨——删繁就简，只留能「被镜头看见」的东西。",
-          "把上游任务压缩成一串可执行的英文视觉 tags 或短短语块，供下游生图模型直接作画；像十四行诗里选最锋利的意象，而不是写说明书。",
-          "篇幅：习惯上 90～120 个英文字符最漂亮；若题材需要，也可以放宽到不超过约 200 个英文字符，仍要句句有画面。",
-          "请返回合法 JSON：{\"prompt\":\"...\"}；prompt 里只要英文 tags，不要解释、不要 markdown。",
+          "把上游任务落成可直接给生图模型执行的英文画面指令：可以是精简 tags，也可以是一条完整、足够长的英文 prompt，**不要为字数而删光关键道具、版式禁令或身份锚点**；下游能接收较长输入时以画面对齐为先。",
+          "篇幅：**不作硬性字符上限**；在包含 masterpiece、8k、光影与主体前提下，写全必要信息。若任务要求单张竖版封面，必须保持单一主视觉，不得写成多格分镜文案。",
+          "请返回合法 JSON：{\"prompt\":\"...\"}；prompt 里只要英文生图指令，不要解释、不要 markdown。",
           "保留：情绪、灯光、场景、主体与服饰、标题语言（简中大字等）；须带 masterpiece 与 8k；标题色与背景色对比要说清。",
           "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表；其余不必叠床架屋地列禁令。",
         ].join("\n"),
@@ -310,15 +327,15 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
       role: "system" as const,
       content: [
         GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
-        "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂内容磨成短而准的英文视觉 tags。",
-        "篇幅：90～120 个英文字符最佳；需要时可到约 200 内。",
-        "必须返回合法 JSON：{\"prompt\":\"...\"}；须含 masterpiece 与 8k。",
+        "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂内容落成英文生图指令。",
+        "篇幅不设上限，以保证画面与任务一致为第一优先级；须含 masterpiece 与 8k。",
+        "必须返回合法 JSON：{\"prompt\":\"...\"}。",
         "若正文未写食物/菜谱，就不要画食谱厨房；其余从简。",
       ].join("\n"),
     },
     {
       role: "user" as const,
-      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容压缩并翻译成英文短视觉 tags 或短短语块。你可以自行选择：精炼档 80-120 字符，或展开档不超过 200 字符：\n${prompt}`,
+      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容翻译成完整、可用的英文生图指令（需要多长写多长）：\n${prompt}`,
     },
   ];
 
@@ -327,7 +344,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
     response_format: { type: "json_object" },
-    max_tokens: 2048,
+    max_tokens: 4096,
     messages: fallbackMessages,
   });
 

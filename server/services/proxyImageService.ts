@@ -19,10 +19,10 @@ export type ImagePromptStats = {
   condenseTriggered: boolean;
 };
 
-/** 智能提煉閾值：超過則二次調用 GPT 5.4 壓縮成更短的英文生圖指令。 */
-const PROMPT_CONDENSE_LENGTH_THRESHOLD = 220;
-const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 220;
-const PROMPT_FINAL_HARD_CHAR_CAP = 220;
+/** 智能提炼阈值：**大幅提高**，避免对正常长度英文 prompt 二次压短（平台单帧以画面一致性优先）。 */
+const PROMPT_CONDENSE_LENGTH_THRESHOLD = 24_000;
+const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 24_000;
+const PROMPT_FINAL_HARD_CHAR_CAP = 24_000;
 
 function countPromptWords(text: string): number {
   return String(text || "")
@@ -65,7 +65,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
     `硬性要求：`,
     `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
-    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
+    `2. 在保留构图、主体、灯光、版式类型（单封面 vs 分镜/双卡）与简中标题指令的前提下缩短；**无固定字符上限**，以「仍能指导生图模型」为准。`,
     `3. 绝对不能丢失以下关键信息：构图、主体、灯光、镜头气质、以及原文锁定的版式类型。`,
     `4. 如果原文要求画面中出现简体中文标题、简体中文标签、简体中文文案，必须保留这条硬指令。`,
     `5. 版式守恒（极其重要）：先读原文再压缩。若原文是多格分镜、横向合成表、电影感分镜格、或明确双卡/双栏/左右分屏笔记结构，提炼后必须继续满足该结构，不得擅自改成单张海报。`,
@@ -90,11 +90,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
       }
       if (out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
         appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
-        const forcedOut = forceTrimPromptToHardCap(out);
-        if (forcedOut.length !== out.length) {
-          appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次结果触发最终硬裁剪，chars=${out.length} -> ${forcedOut.length}`);
-        }
-        return forcedOut;
+        return out.trim();
       }
       appendImageFlowLog(
         log,
@@ -111,13 +107,12 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
   // 3. 不再中止：再做一次更强硬的最终压缩，避免整条主路径因提炼失败直接死亡
   appendImageFlowLog(log, "[Prompt 提炼] 前 3 次未达标，启动最终强制浓缩，不再直接报失败");
   const finalForceTask = [
-    "将下面这条英文生图指令强制压缩成更短版本。",
+    "将下面这条英文生图指令在不丢失版式与主体的前提下精炼（可仍为长句或 tags，以生图可用为准）。",
     "硬性要求：",
-    "1. 只输出英文短视觉 tags 或短短语块。",
-    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
-    "3. 绝对不要输出完整句子、解释、markdown。",
-    "4. 必须保留：主体、灯光、场景、版式类型（单封面 vs 分镜/双卡——与原文一致）、简体中文标题要求。",
-    "5. 若原文是单张 9:16 封面且禁止双卡/食谱信息图，禁止压成 dual-note、recipe、ingredient list 版式。",
+    "1. 只输出一条英文生图指令，不要解释、不要 markdown。",
+    `2. 无固定字符上限；以不丢单封面/分镜结构区分为先。`,
+    "3. 必须保留：主体、灯光、场景、版式类型（单封面 vs 分镜/双卡——与原文一致）、简体中文标题要求。",
+    "4. 若原文是单张 9:16 封面且禁止双卡/食谱信息图，禁止压成 dual-note、recipe、ingredient list 版式。",
     "",
     bestAttempt,
   ].join("\n");
@@ -454,6 +449,74 @@ async function postGptImage2AndUpload(
   return null;
 }
 
+/**
+ * 瀏覽器 <img> 可穩定載入的 GCS V4 簽名直鏈（與 {@link postGptImage2AndUpload} 一致）。
+ * Vertex → {@link storagePut} 常回 Blob / R2 / 超大 data:，對外公開讀常 403 或超長失敗。
+ */
+function isPublicGcsSignedReadUrl(u: string): boolean {
+  const s = u.toLowerCase();
+  if (!s.includes("storage.googleapis.com")) return false;
+  return s.includes("x-goog-signature") || s.includes("x-goog-algorithm");
+}
+
+function normalizeImageUploadContentType(mime: string): string {
+  const m = String(mime || "").toLowerCase();
+  if (m.includes("jpeg") || m.includes("jpg")) return "image/jpeg";
+  if (m.includes("webp")) return "image/webp";
+  return "image/png";
+}
+
+async function mirrorImageUrlToGcsSignedUrl(
+  rawUrl: string,
+  gcsSubdir: string,
+  flowLog?: string[],
+): Promise<string> {
+  const u = String(rawUrl || "").trim();
+  if (!u) return u;
+  if (isPublicGcsSignedReadUrl(u)) return u;
+
+  let buffer: Buffer;
+  let headerMime: string;
+
+  if (u.startsWith("data:")) {
+    const comma = u.indexOf(",");
+    if (comma <= 0) throw new Error("invalid_data_url");
+    const meta = u.slice(5, comma);
+    const b64 = u.slice(comma + 1);
+    const mimeMatch = /^([^;]+)/.exec(meta);
+    headerMime = mimeMatch?.[1]?.trim() || "image/png";
+    buffer = Buffer.from(b64, "base64");
+  } else if (u.startsWith("http://") || u.startsWith("https://")) {
+    const r = await fetch(u, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!r.ok) {
+      throw new Error(`mirror_fetch_http_${r.status}`);
+    }
+    const ct = r.headers.get("content-type") || "image/png";
+    headerMime = ct.split(";")[0].trim() || "image/png";
+    buffer = Buffer.from(await r.arrayBuffer());
+  } else {
+    return u;
+  }
+
+  const contentType = normalizeImageUploadContentType(headerMime);
+  const ext = contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "png";
+  const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { gcsUri } = await uploadBufferToGcs({
+    objectName: path,
+    buffer,
+    contentType,
+  });
+  const signed = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+  appendImageFlowLog(
+    flowLog,
+    `[Vertex 出图] 已镜像到 GCS 签名 URL（与 GPT-IMAGE-2 主路径一致，避免 Blob/R2/data 外链浏览器失败）· gcsUri=${gcsUri}`,
+  );
+  return signed;
+}
+
 /** GPT-IMAGE-2 失敗後：Vertex **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· 2K。 */
 async function fallbackNanoBanana2FromPrompt(
   prompt: string,
@@ -481,33 +544,13 @@ async function fallbackNanoBanana2FromPrompt(
       appendImageFlowLog(L, "[单帧兜底] Nano Banana 2 返回空 URL");
       return null;
     }
-    /** Fly 仅 Vertex、无 Blob/S3 时 storagePut 会回落 data: URL，过长时浏览器 <img> 易失败；与主路径一致转 GCS 签名链 */
-    if (url.startsWith("data:")) {
-      try {
-        const comma = url.indexOf(",");
-        if (comma > 0) {
-          const meta = url.slice(5, comma);
-          const b64 = url.slice(comma + 1);
-          const mimeMatch = /^([^;]+)/.exec(meta);
-          const mime = mimeMatch?.[1]?.trim() || "image/png";
-          const buffer = Buffer.from(b64, "base64");
-          const ext =
-            mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
-          const path = `generated/platform_topic_reference/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const { gcsUri } = await uploadBufferToGcs({
-            objectName: path,
-            buffer,
-            contentType: mime,
-          });
-          url = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
-          appendImageFlowLog(L, `[单帧兜底] Nano data URL 已转存 GCS · gcsUri=${gcsUri}`);
-        }
-      } catch (e: unknown) {
-        appendImageFlowLog(
-          L,
-          `[单帧兜底] Nano data URL 转 GCS 失败（仍返回原 data URL）: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
+    try {
+      url = await mirrorImageUrlToGcsSignedUrl(url, "platform_topic_reference", L);
+    } catch (e: unknown) {
+      appendImageFlowLog(
+        L,
+        `[单帧兜底] Nano → GCS 镜像失败（仍返回 Vertex/storage 原始 URL，浏览器可能无法加载）: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
     appendImageFlowLog(
       L,
