@@ -285,7 +285,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
 
   const output = String(parsed?.prompt || raw).trim();
   if (output) {
-    return output.slice(0, 200).trim();
+    return output;
   }
 
   const fallbackMessages = [
@@ -328,10 +328,10 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
     fallbackParsed?.prompt || fallbackParsed?.output || fallbackParsed?.text || fallbackRaw,
   ).trim();
   if (fallbackOutput) {
-    return fallbackOutput.slice(0, 200).trim();
+    return fallbackOutput;
   }
 
-  return buildEmergencyEnglishPrompt(prompt).slice(0, 200).trim();
+  return buildEmergencyEnglishPrompt(prompt);
 }
 
 /**
