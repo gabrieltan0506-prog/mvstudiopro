@@ -663,16 +663,16 @@ export default function PlatformPage() {
   );
 
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       if (result.platformDashboard) {
         setPlatformDashboard(result.platformDashboard as PlatformDashboard);
-        // Chain Call 3 immediately after Call 2 succeeds
+        // 看板 (Stage 1) 成功后，立刻触发文案与选题 (Stage 2)
         setIsContentLoading(true);
         getPlatformContentMutation.mutate({
           context: focusPrompt || undefined,
           windowDays: selectedWindowDays,
           platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu,
-          snapshotSummary: (getPlatformDashboardMutation.variables as any)?.snapshotSummary || {},
+          snapshotSummary: variables.snapshotSummary || {},
         });
       }
       setDashboardDebug(result.debug as Record<string, unknown>);
@@ -681,6 +681,7 @@ export default function PlatformPage() {
     onError: (error) => {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
       setIsDashboardLoading(false);
+      toast.error(`分析失败: ${error.message}`);
     },
   });
 
@@ -1071,8 +1072,6 @@ export default function PlatformPage() {
     onSettled: () => setPendingCompositeSheet(null),
   });
 
-  // ── Async Job Queue mutations ──────────────────────────────────────────────
-  const createPlatformAnalysisJobMutation = trpc.mvAnalysis.createPlatformAnalysisJob.useMutation();
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
   const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();
 
@@ -1127,14 +1126,13 @@ export default function PlatformPage() {
   const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
   const [showIpModal, setShowIpModal] = useState(false);
 
-  // ── Job polling state ──────────────────────────────────────────────────────
-  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  // 保留给 Debug 面板使用，平台分析 Job 轮询逻辑已移除
+  const analysisJobId: string | null = null;
+  const analysisPollCount = 0;
+  const analysisJobStatus = "idle";
   const [qaJobId, setQaJobId] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-  const analysisPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qaPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [analysisPollCount, setAnalysisPollCount] = useState(0);
-  const [analysisJobStatus, setAnalysisJobStatus] = useState<string>("idle");
   // QA file attachment state
   const [qaFileUri, setQaFileUri] = useState<string | null>(null);
   const [qaFileMimeType, setQaFileMimeType] = useState<string>("");
@@ -1147,58 +1145,8 @@ export default function PlatformPage() {
   // Cleanup polling intervals on unmount
   useEffect(() => {
     return () => {
-      if (analysisPollingRef.current) clearInterval(analysisPollingRef.current);
       if (qaPollingRef.current) clearInterval(qaPollingRef.current);
     };
-  }, []);
-
-  const startAnalysisPolling = useCallback((jobId: string) => {
-    if (analysisPollingRef.current) clearInterval(analysisPollingRef.current);
-    let transientFailures = 0;
-    let pollCount = 0;
-    setAnalysisPollCount(0);
-    setAnalysisJobStatus("queued");
-    analysisPollingRef.current = setInterval(async () => {
-      try {
-        const job = await getJob(jobId);
-        transientFailures = 0;
-        pollCount += 1;
-        setAnalysisPollCount(pollCount);
-        setAnalysisJobStatus(job.status || "unknown");
-        if (job.status === "succeeded") {
-          clearInterval(analysisPollingRef.current!);
-          analysisPollingRef.current = null;
-          const output = job.output as any;
-          if (output?.platformDashboard) {
-            setPlatformDashboard(output.platformDashboard);
-          }
-          setIsDashboardLoading(false);
-          if (output?.platformContent) {
-            setPlatformContent(output.platformContent);
-          }
-          setIsContentLoading(false);
-          toast.success("深度分析已完成");
-        } else if (job.status === "failed") {
-          clearInterval(analysisPollingRef.current!);
-          analysisPollingRef.current = null;
-          setIsDashboardLoading(false);
-          setIsContentLoading(false);
-          // Write job.error to dashboardDebug so it shows in the debug panel error section
-          setDashboardDebug((prev) => ({ ...(prev || {}), error: job.error || "unknown error" }));
-          toast.error(`分析任务失败: ${job.error || "未知错误"}`);
-        }
-      } catch {
-        transientFailures += 1;
-        if (transientFailures >= 5) {
-          clearInterval(analysisPollingRef.current!);
-          analysisPollingRef.current = null;
-          setIsDashboardLoading(false);
-          setIsContentLoading(false);
-          setAnalysisJobStatus("polling_error");
-          toast.error("轮询分析任务时出错，请重试");
-        }
-      }
-    }, 3000);
   }, []);
 
   const startQAPolling = useCallback((jobId: string) => {
@@ -1961,27 +1909,14 @@ export default function PlatformPage() {
     setHasAnalyzed(true);
     toast.success(`快照已生成，正在进行深度分析...`);
 
-    // Dispatch async Job — returns jobId immediately, polls every 3s for result
+    // 🔴 恢复 Progressive Rendering：先呼叫 Stage 1，让前端提早解锁看板
     const snap = result.data.snapshot;
     setIsDashboardLoading(true);
-    setIsContentLoading(true);
-    try {
-      const { jobId } = await createPlatformAnalysisJobMutation.mutateAsync({
-        context: focusPrompt || undefined,
-        windowDays: selectedWindowDays,
-        snapshotSummary: snap as any,
-      });
-      setAnalysisJobId(jobId);
-      setDashboardDebug((prev) => ({ ...(prev || {}), jobId, jobStatus: "queued", stage1: "dispatched", stage2: "pending" }));
-      startAnalysisPolling(jobId);
-    } catch (err: any) {
-      console.error("[PlatformPage] Job creation crashed:", err);
-      setIsDashboardLoading(false);
-      setIsContentLoading(false);
-      toast.error(`任务派发失败: ${err.message || "未知错误"}`);
-      // 将错误写入 Debug 面板，不再静默失败
-      setDashboardDebug((prev) => ({ ...(prev || {}), error: err.message || String(err) }));
-    }
+    getPlatformDashboardMutation.mutate({
+      context: focusPrompt || undefined,
+      windowDays: selectedWindowDays,
+      snapshotSummary: snap as any,
+    });
   };
 
   const handleUploadQaFile = useCallback(async (file: File) => {
@@ -2434,25 +2369,20 @@ export default function PlatformPage() {
                     <div>1a. 状态: {growthSnapshotQuery.isFetched ? `✅ 已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "⏳ 进行中" : "⏸ 未开始"}</div>
                     <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
                     <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Job Queue 派发 ──</div>
-                    <div>2. Job ID: <span className="font-mono text-[#ffdd44]">{analysisJobId || "未创建"}</span></div>
-                    <div>2a. DB 状态: <span className="font-mono">{analysisJobStatus}</span> / 轮询次数: <span className="text-[#ffdd44] font-bold">{analysisPollCount}</span></div>
-                    <div>2b. 轮询: {isDashboardLoading ? `✅ 进行中，每 3 秒 GET /api/jobs/${analysisJobId || "..."}` : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 原创内容 (先执行) ──</div>
-                    <div>3. 深度原创分析（不看趋势数据）</div>
-                    <div>3a. system instruction: 导演模式 — 7条铁律强制执行，禁止大纲</div>
-                    <div>3b. 状态: {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功" : "⏸ 等待"}</div>
-                    <div>3c. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
-                    <div>3d. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 趋势校准 (后执行) ──</div>
-                    <div>4. 趋势校准分析（含 primaryTrack/estimatedTraffic/ipUniqueness/commercialConversion）</div>
-                    <div>4a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
-                    <div>4b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
-                    <div>4c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 看板先行 ──</div>
+                    <div>2. 平台优先级看板（getPlatformDashboard）</div>
+                    <div>2a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : "⏸ 等待"}</div>
+                    <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
+                    <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
+                    <div>3. 深度原创分析（getPlatformContent）</div>
+                    <div>3a. 状态: {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功" : "⏸ 等待 Stage 1"}</div>
+                    <div>3b. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
+                    <div>3c. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
-                    <div>5. 纯文本对话分析（支持 fileUri 多模态）</div>
-                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
-                    <div>5b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
+                    <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
+                    <div>4a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
+                    <div>4b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
@@ -2524,7 +2454,7 @@ export default function PlatformPage() {
                       <div>1. getGrowthSnapshot 请求: {growthSnapshotQuery.isFetched ? "已返回" : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
                       <div>2. snapshot 构建: {snapshotDebug?.baseSource ? `已完成 (${snapshotDebug.baseSource})` : "未知"}</div>
                       <div>3. personalization: {String(snapshotDebug?.personalizedApplied ?? false)}</div>
-                      <div>4. [Job] analysisJobId: {analysisJobId || "-"} / Stage1(2.5Pro dashboard): {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} / Stage2(3.1Pro content): {isContentLoading ? "⏳" : platformContent ? "✅" : "⏸"}</div>
+                      <div>4. Stage1(dashboard): {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} / Stage2(content): {isContentLoading ? "⏳" : platformContent ? "✅" : "⏸"}</div>
                       <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))} / hasPlatformContent: {String(Boolean(platformContent))}</div>
                       <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
                     </div>
@@ -2866,7 +2796,6 @@ export default function PlatformPage() {
                               title: sourceRow.title,
                               scriptContext: buildPlatformSheetScriptContext(sourceRow as any),
                               kind: compositeKind,
-                              jobId: analysisJobId || undefined,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               creationRecordId: readOptionalReportBindingCreationId(),
                             });
@@ -3296,7 +3225,6 @@ export default function PlatformPage() {
                                     title: item.title,
                                     scriptContext: buildPlatformSheetScriptContext(item as any),
                                     kind: compositeKind,
-                                    jobId: analysisJobId || undefined,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     creationRecordId: readOptionalReportBindingCreationId(),
                                   }),
