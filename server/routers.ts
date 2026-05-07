@@ -415,6 +415,25 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
+/** LLM 偶发把 referenceAccounts（应为数组）写成单个对象，或把 trafficBoosters 写成单字符串 — 先预处理再入 Zod，避免 buildPlatformDashboard loose parse 失败 */
+const platformMenuReferenceAccountsSchema = z.preprocess((val) => {
+  if (Array.isArray(val)) return val;
+  if (val === null || val === undefined) return [];
+  return [val];
+}, z.array(z.any()));
+
+const platformMenuTrafficBoostersSchema = z.preprocess((val) => {
+  const toLine = (item: unknown) =>
+    typeof item === "string"
+      ? item
+      : item !== null && typeof item === "object"
+        ? JSON.stringify(item)
+        : String(item);
+  if (Array.isArray(val)) return val.map(toLine);
+  if (val === null || val === undefined) return [];
+  return [toLine(val)];
+}, z.array(z.string()));
+
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting
 // All array fields use z.any() to tolerate Gemini returning strings instead of objects
 // (confirmed bug: topSignals returned as string[] instead of object[])
@@ -427,12 +446,12 @@ const platformDashboardResponseSchema = z.object({
   platformMenu: z.array(z.object({
     platform: z.string().optional(),
     whyNow: z.string().optional(),
-    referenceAccounts: z.array(z.any()).optional(),
+    referenceAccounts: platformMenuReferenceAccountsSchema.optional(),
     primaryTrack: z.string().optional(),
     estimatedTraffic: z.string().optional(),
     ipUniqueness: z.string().optional(),
     commercialConversion: z.string().optional(),
-    trafficBoosters: z.array(z.string()).optional(),
+    trafficBoosters: platformMenuTrafficBoostersSchema.optional(),
   }).passthrough()).default([]),
   hotTopics: z.array(z.any()).default([]),
   contentBlueprints: z.array(z.any()).default([]),
@@ -3341,8 +3360,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        /** 再次降级：graphic 1 路、video 1 路，避免同时两张封面把翻译/生图链顶爆 */
-        const pool = 1;
+        const pool = input.platformType === "graphic" ? 2 : 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
 
         const drizzleDb = await db.getDb();
