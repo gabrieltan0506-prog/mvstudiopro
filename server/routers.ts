@@ -420,6 +420,16 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
+/**
+ * Stage 2 · getPlatformContent（同步 tRPC，直连 Fly）：须与 platform_build_content job 默认 20min 对齐，避免「队列版能跑满、同步版 8min 被裁断」。
+ * 覆盖：PLATFORM_STAGE2_SYNC_TIMEOUT_MS（毫秒，≥120000，封顶 25min）。
+ */
+const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.PLATFORM_STAGE2_SYNC_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 120_000) return Math.min(Math.floor(raw), 25 * 60_000);
+  return 20 * 60_000;
+})();
+
 /** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
 const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
   const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
@@ -4107,10 +4117,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
             ),
             new Promise<Stage2RaceTimeout>((resolve) => {
               setTimeout(() => {
-                console.warn(`[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_LLM_TIMEOUT_MS}ms，返回空结果`);
+                console.warn(
+                  `[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS}ms，返回空结果`,
+                );
                 stage2TimedOut = true;
                 resolve({ kind: "timeout" });
-              }, PLATFORM_LLM_TIMEOUT_MS);
+              }, PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS);
             }),
           ]);
 
@@ -4153,6 +4165,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             stage2Error,
             stage2TimedOut,
             platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
+            platformStage2SyncTimeoutMs: PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS,
             buildPlatformContent: buildDiagnostics,
           },
         };
