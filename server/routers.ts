@@ -3161,7 +3161,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const isGraphic = input.format === "图文";
-        const cost = isGraphic ? 6 : 5;
+        const cost = isGraphic ? CREDIT_COSTS.platformTopicFrameGraphic : CREDIT_COSTS.platformTopicFrameVideo;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -3328,7 +3328,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const isGraphic = input.format === "图文";
-        const cost = isGraphic ? 6 : 5;
+        const cost = isGraphic ? CREDIT_COSTS.platformTopicFrameGraphic : CREDIT_COSTS.platformTopicFrameVideo;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -3472,7 +3472,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         return { jobId, creationId: creationIdOut ?? null, status: "queued" as const };
       }),
 
-    /** 平台页：一键批量单帧——短影音分镜 5 点/张，图文封面参考 6 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
+    /** 平台页：一键批量单帧——短视频分镜 {@link CREDIT_COSTS.platformTopicFrameVideo} 点/张，图文封面 {@link CREDIT_COSTS.platformTopicFrameGraphic} 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
     generateAllPlatformTopicImages: protectedProcedure
       .input(
         z.object({
@@ -3510,7 +3510,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             : "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";
-        const costPerImage = isVideo ? 5 : 6;
+        const costPerImage = isVideo ? CREDIT_COSTS.platformTopicFrameVideo : CREDIT_COSTS.platformTopicFrameGraphic;
         const totalCost = input.scenes.length * costPerImage;
 
         if (!isAdminUser) {
@@ -3777,9 +3777,26 @@ ${JSON.stringify(platformEvidence, null, 2)}
             await refundCredits(ctx.user.id, cost, "platformCompositeSheet Global Node 生图致命错误退还");
           }
 
+          const hasFullLogInMessage =
+            rawMessage.includes("执行日志:") || rawMessage.includes("—— imageGenFlowLog ——");
+          let clientMessage = `引擎错误 (积分已退回): \n${rawMessage}`;
+          if (!hasFullLogInMessage && imageGenFlowLog.length > 0) {
+            const logTail = imageGenFlowLog
+              .filter((s) => String(s).trim())
+              .slice(-24)
+              .join("\n")
+              .trim();
+            const cap = 2000;
+            const detail =
+              logTail.length > cap ? `${logTail.slice(0, cap)}…\n（日志已截断）` : logTail;
+            if (detail) {
+              clientMessage += `\n—— imageGenFlowLog ——\n${detail}`;
+            }
+          }
+
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: `引擎错误 (积分已退回): \n${rawMessage}`,
+            message: clientMessage,
           });
         }
 

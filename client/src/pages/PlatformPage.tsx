@@ -489,6 +489,22 @@ function executionCardDomId(sceneId: string): string {
   return `execution-card-${encodeURIComponent(sceneId).replace(/%/g, "")}`;
 }
 
+/** 生圖請求速率：滾動窗口長度（毫秒），與上游「每分鐘 N 次」配額對齊。 */
+const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
+/**
+ * 上述窗口內最多**發起**幾次生圖（封面單幀 · 2×4 分鏡 · 小紅書 2×2 圖文筆記 / 合成餅圖共用同一節流器）。
+ * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆寫（整數 1～24，預設 6）。
+ */
+const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
+  24,
+  Math.max(1, Number(import.meta.env.VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S) || 6),
+);
+/** 若均勻分布時的大約間隔（僅用於 Debug 文案提示） */
+const PLATFORM_IMAGE_EVEN_SPACING_SEC = Math.max(
+  1,
+  Math.round(PLATFORM_IMAGE_RATE_WINDOW_MS / PLATFORM_IMAGE_MAX_STARTS_PER_60S / 1000),
+);
+
 const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
 
 type PlatformImageGenFlowSnapshot = {
@@ -508,6 +524,13 @@ function upsertPlatformImageFlowSnapshot(
   }
   const withoutSameOp = prev.filter((item) => String(item.meta?.localOpId || "").trim() !== opId);
   return [next, ...withoutSameOp].slice(0, 8);
+}
+
+/** 滾動窗口內只保留「仍在 60s 內」的發起時間戳 */
+function prunePlatformImageRateWindow(times: number[], now: number, windowMs: number): void {
+  while (times.length > 0 && times[0]! <= now - windowMs) {
+    times.shift();
+  }
 }
 
 /** 失敗時寫入 Debug 綠框，便于对照 Network / 服务端日志 */
@@ -546,7 +569,7 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   if (kind === "cover_batch") {
     return [
       `${ts}  [客户端] 异步逐张封面生成已发起`,
-      `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
+      `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
       `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 灯光 / 场景 / 主体 / 标题要求）`,
       `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
       `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
@@ -559,7 +582,7 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   if (kind === "storyboard") {
     return [
       `${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}`,
-      `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
+      `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
       `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 灯光 / 场景 / 服装 / 道具 / 网格）`,
       `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
       `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
@@ -570,7 +593,7 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   }
   return [
     `${ts}  [客户端] 小红书 2×2 四宫格生成已发起 · sceneId=${sceneId || "N/A"}`,
-    `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
+    `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
     `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 配色 / 场景 / 主体 / 文案层级）`,
     `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
     `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
@@ -1010,15 +1033,15 @@ export default function PlatformPage() {
   });
 
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-  const COVER_BATCH_MIN_START_INTERVAL_MS = 30_000;
   const platformImageRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const platformImageLastStartAtRef = useRef(0);
+  const platformImageStartTimesRef = useRef<number[]>([]);
   const runThrottledPlatformImageRequest = useCallback(
     async (
       label: string,
       fn: () => Promise<any>,
       onWait?: (waitMs: number) => void,
     ) => {
+      void label;
       const previous = platformImageRequestQueueRef.current;
       let releaseQueue = () => {};
       platformImageRequestQueueRef.current = new Promise<void>((resolve) => {
@@ -1026,13 +1049,20 @@ export default function PlatformPage() {
       });
       await previous;
       try {
-        const now = Date.now();
-        const waitMs = Math.max(0, COVER_BATCH_MIN_START_INTERVAL_MS - (now - platformImageLastStartAtRef.current));
-        if (waitMs > 0) {
-          onWait?.(waitMs);
-          await sleep(waitMs);
+        const times = platformImageStartTimesRef.current;
+        for (;;) {
+          const now = Date.now();
+          prunePlatformImageRateWindow(times, now, PLATFORM_IMAGE_RATE_WINDOW_MS);
+          if (times.length < PLATFORM_IMAGE_MAX_STARTS_PER_60S) break;
+          const waitMs = times[0]! + PLATFORM_IMAGE_RATE_WINDOW_MS - now + 25;
+          if (waitMs > 0) {
+            onWait?.(waitMs);
+            await sleep(waitMs);
+          } else {
+            times.shift();
+          }
         }
-        platformImageLastStartAtRef.current = Date.now();
+        times.push(Date.now());
         return await fn();
       } finally {
         releaseQueue();
@@ -1100,7 +1130,7 @@ export default function PlatformPage() {
             }),
           (waitMs) => {
             liveLines.push(
-              `${new Date().toISOString()}  [客户端] 节流等待 ${Math.ceil(waitMs / 1000)} 秒 · 保证 60 秒最多 2 次请求 · sceneId=${scene.id}`,
+              `${new Date().toISOString()}  [客户端] 节流等待 ${Math.ceil(waitMs / 1000)} 秒 · 滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内已排满 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次发起 · sceneId=${scene.id}`,
             );
             setPlatformImageGenFlowSnapshots((prev) =>
               upsertPlatformImageFlowSnapshot(prev, {
@@ -1825,7 +1855,10 @@ export default function PlatformPage() {
   }, [contentExecutionCards, contentExecutionCardsKey]);
 
   const platformTopicCount = contentExecutionCards.length;
-  const platformBulkGraphicCost = useMemo(() => platformTopicCount * 6, [platformTopicCount]);
+  const platformBulkGraphicCost = useMemo(
+    () => platformTopicCount * CREDIT_COSTS.platformTopicFrameGraphic,
+    [platformTopicCount],
+  );
 
   /** 頂部「2×4 / 小紅書合成」畫廊：各選題合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
@@ -2819,8 +2852,8 @@ export default function PlatformPage() {
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
                     位置：本卡片在 <span className="text-gray-400">askPlatformFollowUp.debug</span>{" "}
                     三块 JSON <strong className="text-gray-400">正下方</strong>。
-                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>；<strong className="text-rose-400/90">失败</strong>
-                    时也会追加一段红色「mutation 失败」流水（含 TRPC message / code / zodError）。
+                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>（含 GPT-IMAGE-2 失败原因、重试与计费提示）；<strong className="text-rose-400/90">失败</strong>
+                    时 TRPC 错误正文也会附带最近若干行 <code className="text-[#8cefff]">imageGenFlowLog</code> 摘要（2×4 与空 URL 类错误）。
                   </p>
                   {platformImageGenFlowSnapshots.length === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
@@ -2854,7 +2887,7 @@ export default function PlatformPage() {
                                   : "2×4 合成"}
                             {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
                           </div>
-                          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
+                          <pre className="mt-2 max-h-[min(52vh,440px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
                             {snap.lines.join("\n")}
                           </pre>
                         </div>
@@ -3074,53 +3107,92 @@ export default function PlatformPage() {
                         一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书 2×2 四宫格参考。
                       </p>
                     </div>
-                    {platformTopicCount > 0 ? (
-                      <button
-                        type="button"
-                        disabled={
-                          isSequentialCoverBatchGenerating ||
-                          isDashboardLoading ||
-                          isContentLoading ||
-                          !isAuthenticated ||
-                          platformTopicCount === 0
-                        }
-                        onClick={() => {
-                          if (!isAuthenticated) {
-                            toast.error("请先登录");
-                            return;
+                    <div className="flex w-full flex-shrink-0 flex-col gap-3 md:w-auto md:max-w-md md:items-end">
+                      <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
+                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#c4b5fd]">
+                          <FlaskConical className="h-3.5 w-3.5 text-violet-300" />
+                          生图 · 英文化翻译引擎
+                        </div>
+                        <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
+                          作用于封面单帧、一键逐张、2×4 / 小红书合成等。默认 GPT 5.4；探索项走 Vertex{" "}
+                          <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">gemini-3.1-flash-live-preview</code> ·{" "}
+                          <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">us-central1</code>。选项保存在本机。
+                        </p>
+                        <div className="mt-3 flex rounded-xl bg-black/45 p-1 ring-1 ring-white/10">
+                          <button
+                            type="button"
+                            onClick={() => setImagePromptTranslator("gpt54")}
+                            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-semibold transition sm:text-[13px] ${
+                              imagePromptTranslator === "gpt54"
+                                ? "bg-cyan-500/25 text-cyan-200 ring-1 ring-cyan-400/50 shadow-[0_0_16px_rgba(34,211,238,0.15)]"
+                                : "text-gray-500 hover:text-gray-300"
+                            }`}
+                          >
+                            <Zap className="h-3.5 w-3.5 shrink-0" />
+                            GPT 5.4
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setImagePromptTranslator("vertex_gemini_31_pro_preview")}
+                            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-semibold transition sm:text-[13px] ${
+                              imagePromptTranslator === "vertex_gemini_31_pro_preview"
+                                ? "bg-violet-500/25 text-violet-200 ring-1 ring-violet-400/50 shadow-[0_0_16px_rgba(167,139,250,0.15)]"
+                                : "text-gray-500 hover:text-gray-300"
+                            }`}
+                          >
+                            <FlaskConical className="h-3.5 w-3.5 shrink-0" />
+                            Vertex Flash
+                          </button>
+                        </div>
+                      </div>
+                      {platformTopicCount > 0 ? (
+                        <button
+                          type="button"
+                          disabled={
+                            isSequentialCoverBatchGenerating ||
+                            isDashboardLoading ||
+                            isContentLoading ||
+                            !isAuthenticated ||
+                            platformTopicCount === 0
                           }
-                          const scenes = contentExecutionCards.map((row) => ({
-                            id: row.id,
-                            title: row.title,
-                            text: buildPlatformSceneText({
+                          onClick={() => {
+                            if (!isAuthenticated) {
+                              toast.error("请先登录");
+                              return;
+                            }
+                            const scenes = contentExecutionCards.map((row) => ({
+                              id: row.id,
                               title: row.title,
-                              hook: row.hook,
-                              copywriting: row.copywriting,
-                              executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
-                                .executionDetails,
-                            }),
-                          }));
-                          const discountNote = supervisorAccess
-                            ? ""
-                            : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
-                          if (!supervisorAccess && !window.confirm(discountNote)) return;
-                          void runSequentialCoverBatchGeneration(
-                            scenes,
-                            buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
-                          );
-                        }}
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
-                      >
-                        {isSequentialCoverBatchGenerating ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Sparkles className="h-4 w-4" />
-                        )}
-                        {isSequentialCoverBatchGenerating
-                          ? "正在生成图文封面单帧…"
-                          : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
-                      </button>
-                    ) : null}
+                              text: buildPlatformSceneText({
+                                title: row.title,
+                                hook: row.hook,
+                                copywriting: row.copywriting,
+                                executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
+                                  .executionDetails,
+                              }),
+                            }));
+                            const discountNote = supervisorAccess
+                              ? ""
+                              : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
+                            if (!supervisorAccess && !window.confirm(discountNote)) return;
+                            void runSequentialCoverBatchGeneration(
+                              scenes,
+                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                            );
+                          }}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 md:w-auto"
+                        >
+                          {isSequentialCoverBatchGenerating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-4 w-4" />
+                          )}
+                          {isSequentialCoverBatchGenerating
+                            ? "正在生成图文封面单帧…"
+                            : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
 
@@ -3280,7 +3352,9 @@ export default function PlatformPage() {
                       const isBlackImageOrTimeout =
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
-                      const normalCoverCost = isGraphicCover ? 6 : 5;
+                      const normalCoverCost = isGraphicCover
+                        ? CREDIT_COSTS.platformTopicFrameGraphic
+                        : CREDIT_COSTS.platformTopicFrameVideo;
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
