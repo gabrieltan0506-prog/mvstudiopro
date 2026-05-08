@@ -8,9 +8,12 @@ import {
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
-/** Fly 持久卷部署：設為 `fly` 時平台生圖主路徑與 Vertex 鏡像改寫入 `/data`，經 `/api/jobs?op=flyVolumeMedia` 公開讀；未設則維持 GCS 簽名 URL。 */
+/**
+ * 平台選題生圖（封面單幀、2×4、Vertex 鏡像等）：**預設 GCS 簽名 URL**。
+ * 僅在明確設 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=1` 時才寫 Fly 持久卷 + `flyVolumeMedia`（與 `PLATFORM_TOPIC_IMAGE_STORAGE` 無關）。
+ */
 function isFlyPlatformTopicImageStorage(): boolean {
-  return String(process.env.PLATFORM_TOPIC_IMAGE_STORAGE || "").trim().toLowerCase() === "fly";
+  return String(process.env.PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME || "").trim() === "1";
 }
 
 /** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入）。jobs120：嚴格陣列校驗，避免非陣列誤傳導致運行時寫入失敗。 */
@@ -216,7 +219,7 @@ const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
 
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
   300_000,
-  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 180_000),
+  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 300_000),
 );
 
 /**
@@ -858,7 +861,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
-  /** 與單幀一致：預設 gpt54；探索為 Vertex Flash Live us-central1 */
+  /** 與單幀一致：預設 gpt54；探索為 Vertex Flash Live（預設 global） */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
@@ -872,6 +875,10 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
 
+  appendImageFlowLog(
+    L,
+    `[2×4·英文化机制] 与单帧封面相同：translator=gpt54 时走 GPT 5.4 最多 3 轮（间隔 3s/6s），无效后再 Vertex Flash；日志见下方 [GPT54·英文化] / [Vertex·Flash]。`,
+  );
   appendImageFlowLog(
     L,
     `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,

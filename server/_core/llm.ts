@@ -78,6 +78,8 @@ export type InvokeParams = {
   response_format?: ResponseFormat;
   provider?: Provider;
   modelName?: string;
+  /** GPT-5 系：推理強度；若不傳，json 輸出預設 medium（可設 OPENAI_GPT5_JSON_REASONING_EFFORT 覆寫） */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
   /** When aborted (e.g. client disconnected), in-flight provider requests are cancelled. */
   abortSignal?: AbortSignal;
 };
@@ -815,11 +817,32 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
 async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target: LlmTarget): Promise<InvokeResult> {
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const supportsSamplingControls = !/^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
+  const isGpt5Family = /^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
+  const envJsonReasoning = String(process.env.OPENAI_GPT5_JSON_REASONING_EFFORT || "").trim().toLowerCase();
+  const jsonReasoningFallback =
+    envJsonReasoning === "minimal" || envJsonReasoning === "low" || envJsonReasoning === "medium" || envJsonReasoning === "high"
+      ? envJsonReasoning
+      : "medium";
+  const wantsStructured =
+    normalizedResponseFormat?.type === "json_object" || normalizedResponseFormat?.type === "json_schema";
+  let reasoningEffort: string | undefined;
+  if (isGpt5Family) {
+    if (params.reasoningEffort) {
+      reasoningEffort = params.reasoningEffort;
+    } else if (wantsStructured) {
+      reasoningEffort = jsonReasoningFallback;
+    } else {
+      reasoningEffort = "high";
+    }
+  }
+
   const payload: Record<string, unknown> = {
     model: target.modelName,
     messages: params.messages.map(normalizeMessage),
-    reasoning_effort: "high",
   };
+  if (reasoningEffort) {
+    payload.reasoning_effort = reasoningEffort;
+  }
 
   const maxCompletionTokens =
     typeof params.maxTokens === "number" && Number.isFinite(params.maxTokens)

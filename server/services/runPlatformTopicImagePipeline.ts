@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import * as db from "../db";
 import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
+  resolveVertexFlashTranslationLocation,
   resolveVertexFlashTranslationModelName,
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
@@ -102,7 +103,7 @@ export async function runPlatformTopicImagePipeline(
   const imagePromptTranslator: PlatformImagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
   const translatorLogLabel =
     imagePromptTranslator === "vertex_gemini_31_pro_preview"
-      ? `Vertex @google/genai · ${resolveVertexFlashTranslationModelName()} · us-central1（JSON）`
+      ? `Vertex @google/genai · ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}（JSON）`
       : "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
   const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
