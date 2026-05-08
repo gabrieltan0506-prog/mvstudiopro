@@ -3,6 +3,11 @@ import { callGemini3_1_Pro_AiStudio } from "./geminiPlatformCompositeTranslation
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
+/** Fly 持久卷部署：設為 `fly` 時平台生圖主路徑與 Vertex 鏡像改寫入 `/data`，經 `/api/jobs?op=flyVolumeMedia` 公開讀；未設則維持 GCS 簽名 URL。 */
+function isFlyPlatformTopicImageStorage(): boolean {
+  return String(process.env.PLATFORM_TOPIC_IMAGE_STORAGE || "").trim().toLowerCase() === "fly";
+}
+
 /** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入）。jobs120：嚴格陣列校驗，避免非陣列誤傳導致運行時寫入失敗。 */
 export function appendImageFlowLog(log: string[] | undefined, message: string): void {
   if (!log || !Array.isArray(log)) return;
@@ -545,6 +550,20 @@ async function postGptImage2AndUpload(
         }
 
         const buffer = Buffer.from(b64, "base64");
+        if (isFlyPlatformTopicImageStorage()) {
+          const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
+            "./flyVolumeGeneratedImages.js",
+          );
+          const { relPath } = await writeFlyPlatformImageBuffer({
+            subdir: gcsSubdir,
+            buffer,
+            contentType: "image/jpeg",
+          });
+          const flyUrl = buildFlyPlatformImagePublicUrl(relPath);
+          appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 成功，已写入 Fly 卷 · relPath=${relPath}`);
+          appendImageFlowLog(L, `[GPT-IMAGE-2] 公開 URL 预览：${String(flyUrl).slice(0, 180)}…`);
+          return flyUrl;
+        }
         const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
         const { gcsUri } = await uploadBufferToGcs({
           objectName: path,
@@ -639,6 +658,26 @@ async function mirrorImageUrlToGcsSignedUrl(
 
   const contentType = normalizeImageUploadContentType(headerMime);
   const ext = contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "png";
+
+  if (isFlyPlatformTopicImageStorage()) {
+    const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
+      "./flyVolumeGeneratedImages.js",
+    );
+    const flyCt: "image/jpeg" | "image/png" | "image/webp" =
+      contentType === "image/webp" ? "image/webp" : contentType === "image/png" ? "image/png" : "image/jpeg";
+    const { relPath } = await writeFlyPlatformImageBuffer({
+      subdir: gcsSubdir,
+      buffer,
+      contentType: flyCt,
+    });
+    const publicUrl = buildFlyPlatformImagePublicUrl(relPath);
+    appendImageFlowLog(
+      flowLog,
+      `[存图] 已写入 Fly 持久卷（经 /api/jobs?op=flyVolumeMedia 公开读取）· relPath=${relPath}`,
+    );
+    return publicUrl;
+  }
+
   const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { gcsUri } = await uploadBufferToGcs({
     objectName: path,
@@ -816,53 +855,21 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；失败则用同源中文 task + buildEmergencyEnglishPrompt）· ${options.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex Flash · us-central1" : "GPT 5.4"} …`,
+    `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；預設 GPT 5.4，鏈路內失敗或空則改走 Vertex gemini-3.1-flash-live-preview）· ${options.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex Flash · us-central1" : "GPT 5.4"} …`,
   );
 
-  const {
-    translatePlatformCompositeToEnglishPrompt,
-    extractChineseVisualBrief,
-    buildVideoStoryboardGeminiPrompt,
-    buildXhsNoteGeminiPrompt,
-    buildEmergencyEnglishPrompt,
-  } = await import("./geminiPlatformCompositeTranslation.js");
+  const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
 
-  let englishCore = "";
-  try {
-    englishCore = await translatePlatformCompositeToEnglishPrompt({
-      kind: k,
-      scriptContext: options.scriptContext,
-      translator: options.imagePromptTranslator,
-      flowLog: L,
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    appendImageFlowLog(L, `[2×4·步骤1] 翻译 API 失败，改用同源编导 task 的紧急英文: ${msg}`);
-    console.warn("[proxyImageService] platform composite translation failed, using emergency English:", msg);
-    let brief = "";
-    try {
-      brief = await extractChineseVisualBrief(options.scriptContext, L);
-    } catch {
-      /* 骨架失败则全量剧本仍进 task */
-    }
-    const task = isStoryboard
-      ? buildVideoStoryboardGeminiPrompt(brief || options.scriptContext)
-      : buildXhsNoteGeminiPrompt(brief || options.scriptContext);
-    englishCore = buildEmergencyEnglishPrompt(task);
-  }
+  const englishCore = await translatePlatformCompositeToEnglishPrompt({
+    kind: k,
+    scriptContext: options.scriptContext,
+    translator: options.imagePromptTranslator,
+    flowLog: L,
+  });
 
   if (!String(englishCore || "").trim()) {
-    appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空，改用同源编导 task 的紧急英文");
-    let brief = "";
-    try {
-      brief = await extractChineseVisualBrief(options.scriptContext, L);
-    } catch {
-      /* ignore */
-    }
-    const task = isStoryboard
-      ? buildVideoStoryboardGeminiPrompt(brief || options.scriptContext)
-      : buildXhsNoteGeminiPrompt(brief || options.scriptContext);
-    englishCore = buildEmergencyEnglishPrompt(task);
+    appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空（不注入模版英文）");
+    throw new Error("宽幅合成翻译结果为空");
   }
 
   appendImageFlowLog(

@@ -3533,12 +3533,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
-        const {
-          buildEmergencyEnglishPrompt,
-          buildPlatformTopicReferenceGeminiTask,
-          callGemini31ProForImagePrompt,
-          extractChineseVisualBrief,
-        } = await import("./services/geminiPlatformCompositeTranslation.js");
+  const {
+    buildPlatformTopicReferenceGeminiTask,
+    callGemini31ProForImagePrompt,
+    extractChineseVisualBrief,
+  } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
           generateImageGpt2WithImagenFallback,
@@ -3616,10 +3615,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
             });
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
-            const safePrompt = await condenseImagePromptIfNeeded(
-              englishPrompt?.trim() ? englishPrompt : buildEmergencyEnglishPrompt(geminiTask),
-              flowLog,
-            );
+            const trimmedEn = String(englishPrompt || "").trim();
+            if (!trimmedEn) {
+              appendImageFlowLog(flowLog, `${new Date().toISOString()}  [步骤1] 翻译结果为空，不注入模版英文`);
+              throw new Error("英文 prompt 为空");
+            }
+            const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, flowLog);
             promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
             appendImageFlowLog(
               flowLog,

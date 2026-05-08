@@ -767,7 +767,10 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
  *   vertex / gemini-3.1-pro-preview，多模态追问；如有 fileUri 则附带文档
  *   finally：始终清理 GCS 临时文件
  */
-async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown; provider?: string }> {
+async function processPlatformJob(
+  input: JobEnvelope,
+  platformJobId?: string,
+): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
   try {
     // ── platform_analysis ────────────────────────────────────────────────────────
@@ -1037,6 +1040,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
         creationIdOut,
         isFreeRetry: Boolean(params.isFreeRetry),
         newJobMetaBase,
+        progressJobId: platformJobId,
       });
       return { provider: "vertex", output: result };
     }
@@ -1058,7 +1062,7 @@ async function executeJob(
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
-  if (type === "platform") return processPlatformJob(input);
+  if (type === "platform") return processPlatformJob(input, jobId);
   if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
   return processAudioJob(input, timeoutMs, userId);
 }

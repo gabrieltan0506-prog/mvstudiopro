@@ -174,6 +174,29 @@ export async function markJobFailed(id: string, error: string): Promise<void> {
   }
 }
 
+/** platform_topic_image 等長任務：running 時把部分 output 寫入 DB，供 GET /api/jobs 輪詢看到即時步驟 */
+const PLATFORM_JOB_PROGRESS_LOG_MAX = 240;
+
+export async function patchJobRunningProgress(jobId: string, patch: Record<string, unknown>): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    const job = await getJobById(jobId);
+    if (!job || job.status !== "running") return;
+    const prevOut =
+      job.output && typeof job.output === "object" && !Array.isArray(job.output)
+        ? { ...(job.output as Record<string, unknown>) }
+        : {};
+    const next = { ...prevOut, ...patch };
+    if (Array.isArray(next.imageGenFlowLog)) {
+      next.imageGenFlowLog = (next.imageGenFlowLog as string[]).slice(-PLATFORM_JOB_PROGRESS_LOG_MAX);
+    }
+    await db.update(jobs).set({ output: next as any, updatedAt: new Date() }).where(eq(jobs.id, jobId));
+  } catch (error) {
+    console.warn("[JobsRepo] patchJobRunningProgress failed:", error);
+  }
+}
+
 export async function requeueJob(id: string, error: string): Promise<void> {
   const db = await getDb();
   if (!db) return;

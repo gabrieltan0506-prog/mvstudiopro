@@ -499,11 +499,6 @@ const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
   24,
   Math.max(1, Number(import.meta.env.VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S) || 6),
 );
-/** 若均勻分布時的大約間隔（僅用於 Debug 文案提示） */
-const PLATFORM_IMAGE_EVEN_SPACING_SEC = Math.max(
-  1,
-  Math.round(PLATFORM_IMAGE_RATE_WINDOW_MS / PLATFORM_IMAGE_MAX_STARTS_PER_60S / 1000),
-);
 
 const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
 
@@ -569,38 +564,13 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   if (kind === "cover_batch") {
     return [
       `${ts}  [客户端] 异步逐张封面生成已发起`,
-      `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
-      `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 灯光 / 场景 / 主体 / 标题要求）`,
-      `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
-      `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
-      `${ts}  [步骤4] GPT-IMAGE-2 主路径出图（9:16）`,
-      `${ts}  [步骤5] 若主路径无图，切 Typography / Nano Banana 2 兜底`,
-      `${ts}  [步骤6] 回写 imageUrl → 前端卡片渲染`,
-      `${ts}  [等待中] sceneId=${sceneId || "N/A"}`,
+      `${ts}  [等待中] sceneId=${sceneId || "N/A"}（詳見下方服務端 imageGenFlowLog）`,
     ];
   }
   if (kind === "storyboard") {
-    return [
-      `${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}`,
-      `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
-      `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 灯光 / 场景 / 服装 / 道具 / 网格）`,
-      `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
-      `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
-      `${ts}  [步骤4] GPT-IMAGE-2 横版 16:9 主路径出图`,
-      `${ts}  [步骤5] 若翻译空或主路径无图，切 Nano Banana 2 / Vertex 兜底`,
-      `${ts}  [步骤6] 回写 imageUrl → 顶部画廊与卡片渲染`,
-    ];
+    return [`${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}（詳見下方服務端流水）`];
   }
-  return [
-    `${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}`,
-    `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
-    `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 配色 / 场景 / 主体 / 文案层级）`,
-    `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
-    `${ts}  [步骤3] Prompt 智能提炼 / 长度压缩（如需要）`,
-    `${ts}  [步骤4] GPT-IMAGE-2 横版 16:9 主路径出图`,
-    `${ts}  [步骤5] 若翻译空或主路径无图，切 Nano Banana 2 / Vertex 兜底`,
-    `${ts}  [步骤6] 回写 imageUrl → 顶部画廊与卡片渲染`,
-  ];
+  return [`${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}（詳見下方服務端流水）`];
 }
 
 /** Stage 2 等長任務：用 shimmer / 光斑 / 節拍點轉移注意力（不向用戶展示技術細節） */
@@ -726,6 +696,8 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
+  /** 輪詢時累加已展示的 jobs.output.imageGenFlowLog 條數，避免重複刷同一批 */
+  const topicImagePollFlowLogCursorRef = useRef(0);
   /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
@@ -918,18 +890,32 @@ export default function PlatformPage() {
         ),
         pollCount: 0,
       });
+      topicImagePollFlowLogCursorRef.current = 0;
       let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
       try {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
           maxWaitMs: 18 * 60_000,
-          onPoll: ({ attempt, status, elapsedMs }) => {
+          onPoll: ({ attempt, status, elapsedMs, output }) => {
             const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms） · ${pollLabel}`;
-            setTopicImageJobPollTrace((prev) =>
-              prev && prev.jobId === jobId
-                ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
-                : prev,
-            );
+            const flowRaw = output?.imageGenFlowLog;
+            let extraLines: string[] = [];
+            if (Array.isArray(flowRaw)) {
+              const flow = flowRaw as string[];
+              const start = topicImagePollFlowLogCursorRef.current;
+              if (flow.length > start) {
+                extraLines = flow.slice(start);
+                topicImagePollFlowLogCursorRef.current = flow.length;
+              }
+            }
+            setTopicImageJobPollTrace((prev) => {
+              if (!prev || prev.jobId !== jobId) return prev;
+              let lines = appendPollDebugLine(prev.lines, line);
+              for (const sl of extraLines) {
+                lines = appendPollDebugLine(lines, sl);
+              }
+              return { ...prev, pollCount: attempt, lines };
+            });
           },
         });
       } catch (err) {
