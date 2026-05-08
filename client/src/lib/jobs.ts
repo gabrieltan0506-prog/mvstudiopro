@@ -85,12 +85,13 @@ export async function getJobForPoll(jobId: string): Promise<JobResponse> {
   throw lastErr ?? new Error("getJobForPoll: unknown error");
 }
 
-/** 單次 GET /api/jobs/:id 後回調（含第幾次、當前狀態、耗時） */
+/** 單次 GET /api/jobs/:id 後回調（含第幾次、當前狀態、耗時、部分 output） */
 export type PollJobTick = {
   jobId: string;
   attempt: number;
   status: JobStatus;
   elapsedMs: number;
+  output?: Record<string, unknown>;
 };
 
 const MAX_POLL_DEBUG_LINES = 120;
@@ -112,11 +113,16 @@ export async function pollJobUntilTerminal(
   while (Date.now() - t0 < maxWait) {
     attempt += 1;
     const j = await getJobForPoll(jobId);
+    const out =
+      j.output && typeof j.output === "object" && !Array.isArray(j.output)
+        ? (j.output as Record<string, unknown>)
+        : undefined;
     opts?.onPoll?.({
       jobId,
       attempt,
       status: j.status,
       elapsedMs: Date.now() - t0,
+      output: out,
     });
     if (j.status === "succeeded" || j.status === "failed") return j;
     await new Promise((r) => setTimeout(r, interval));

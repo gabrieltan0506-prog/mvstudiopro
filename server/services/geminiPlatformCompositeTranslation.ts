@@ -7,28 +7,53 @@ function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): vo
   flowLog.push(`${new Date().toISOString()}  [Vertex·Flash] ${line}`);
 }
 
-/** 將异常打成可讀字串（避免只顯示 null / [object Object]）。 */
+/** 將異常打成可讀字串（debug：盡量完整，單條上限防極端爆滿日誌）。 */
+const MAX_DEBUG_ERR_CHARS = 65536;
+
 function formatErrForVertexDebug(e: unknown): string {
+  const cap = (s: string) =>
+    s.length <= MAX_DEBUG_ERR_CHARS ? s : `${s.slice(0, MAX_DEBUG_ERR_CHARS)}\n…(truncated at ${MAX_DEBUG_ERR_CHARS} chars)`;
+
   if (e instanceof Error) {
-    const any = e as unknown as Record<string, unknown>;
-    const parts: string[] = [`${e.name}: ${e.message || "(無 message)"}`];
-    for (const k of ["code", "status", "statusCode", "reason", "cause"] as const) {
+    const parts: string[] = [`${e.name}: ${e.message || "(no message)"}`];
+    if (e.stack) {
+      parts.push(`stack:\n${e.stack}`);
+    }
+    const any = e as Error & Record<string, unknown>;
+    for (const k of ["code", "status", "statusCode", "reason"] as const) {
       const v = any[k];
-      if (v != null && v !== "") parts.push(`${k}=${typeof v === "object" ? JSON.stringify(v).slice(0, 280) : String(v)}`);
+      if (v != null && v !== "") {
+        try {
+          parts.push(`${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+        } catch {
+          parts.push(`${k}=${String(v)}`);
+        }
+      }
     }
     if (any.error != null) {
-      parts.push(`error=${typeof any.error === "object" ? JSON.stringify(any.error).slice(0, 400) : String(any.error)}`);
+      try {
+        parts.push(`error=${typeof any.error === "object" ? JSON.stringify(any.error) : String(any.error)}`);
+      } catch {
+        parts.push(`error=${String(any.error)}`);
+      }
     }
-    return parts.join(" · ");
+    let c: unknown = e.cause;
+    let depth = 0;
+    while (c != null && depth < 8) {
+      parts.push(`cause[${depth}]:\n${formatErrForVertexDebug(c)}`);
+      c = c instanceof Error ? c.cause : null;
+      depth += 1;
+    }
+    return cap(parts.join("\n"));
   }
   if (e != null && typeof e === "object") {
     try {
-      return JSON.stringify(e).slice(0, 900);
+      return cap(JSON.stringify(e, null, 2));
     } catch {
-      return String(e);
+      return cap(String(e));
     }
   }
-  return String(e);
+  return cap(String(e));
 }
 
 /** 與 @google/genai Vertex 客戶端一致：專案 ID。 */
@@ -159,61 +184,6 @@ export function stripGeminiModelOutput(raw: string): string {
   const m = t.match(fence);
   if (m?.[1]) t = m[1].trim();
   return t.replace(/^["']|["']$/g, "").trim();
-}
-
-const EMERGENCY_EN_STORYBOARD_2X4 =
-  "Wide landscape 16:9 cinematic 2x4 storyboard master, EXACTLY 8 equal panels 2 rows x 4 columns, rigid cross gutters, distinct dramatic film still in upper 70% of each cell, bottom 25-30% each cell compact legible Simplified Chinese caption table (讯息分格) 2-4 short rows, masterpiece, 8k";
-
-const EMERGENCY_EN_XHS_2X4 =
-  "Xiaohongshu premium graphic note, wide landscape 16:9, EXACTLY 8 equal panels 2 rows x 4 columns, rigid gutters, row-major carousel order, each cell Simplified Chinese primary copy headlines lists icons pill tags infographic beats optional small English auxiliary keywords only masterpiece 8k";
-
-/** 仅当任务**明确**要小红书多格笔记且未否定小红书时，才走紧急预案（避免 COVER 模板里 “not Xiaohongshu note” 误触发食谱卡）。版式與分鏡一致為 **2×4 八格**。 */
-export function buildEmergencyEnglishPrompt(task: string): string {
-  const t = String(task || "");
-  const lower = t.toLowerCase();
-  const forbidsXhsNote = /\bnot\s+xiaohongshu\b/i.test(t) || /\bno\s+xiaohongshu\b/i.test(t);
-
-  /**
-   * 分镜主表 footer 含「禁止仅四格」等措辞时可能出现 **2×2** 字样；TAG 与 2×4 / eight panels 必须先于 2×2 探针判定。
-   */
-  if (/TAG:STORYBOARD_2X4_SHEET/i.test(t)) {
-    return EMERGENCY_EN_STORYBOARD_2X4;
-  }
-  if (/TAG:XHS_GRAPHIC_NOTE_2X4_SHEET/i.test(t)) {
-    return EMERGENCY_EN_XHS_2X4;
-  }
-  /** 勿用裸关键词 storyboard：图文单帧任务里会出现「not multi-panel storyboard」仅此就会误触 2×4。 */
-  const wantsLandscape2x4 =
-    lower.includes("2x4") ||
-    lower.includes("2×4") ||
-    /\b8[\s-]*panels?\b/i.test(lower) ||
-    /\bcinematic\s+2[\sx×]*4\b/i.test(lower) ||
-    /\b2\s+rows\s*[×x]\s*4\s+columns\b/i.test(lower);
-  if (wantsLandscape2x4) {
-    const xhsHint =
-      /little red book|xiaohongshu_dual_note|xiaohongshu|小红书|TAG:XHS_GRAPHIC_NOTE/i.test(t);
-    return xhsHint ? EMERGENCY_EN_XHS_2X4 : EMERGENCY_EN_STORYBOARD_2X4;
-  }
-
-  const explicitDualNote =
-    lower.includes("dual-note") ||
-    lower.includes("dual_note") ||
-    lower.includes("xiaohongshu_dual_note") ||
-    /双卡|雙卡/.test(t) ||
-    /四宫格|四宮格/.test(t) ||
-    /\b2\s*[×x]\s*2\b/i.test(t) ||
-    /\b2x2\b/i.test(lower);
-  if (explicitDualNote && !forbidsXhsNote) {
-    return EMERGENCY_EN_XHS_2X4;
-  }
-  const wantsPlatformVerticalCover =
-    /COVER DESIGN ONLY/i.test(t) ||
-    /graphic single-frame only/i.test(t) ||
-    (/vertical\s*9\s*:\s*16/i.test(t) && /single-image cover/i.test(lower));
-  if (wantsPlatformVerticalCover) {
-    return "Premium vertical 9:16 portrait cover, single full-bleed hero scene, editorial high contrast, legible Simplified Chinese headline, masterpiece, 8k, strictly taller-than-wide frame not landscape";
-  }
-  return "Editorial cover, premium focal subject, high contrast lighting, luxury palette, legible Simplified Chinese headline, warm title color, masterpiece, 8k";
 }
 
 export async function extractChineseVisualBrief(rawContext: string, flowLog?: string[]): Promise<string> {
@@ -443,21 +413,21 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
  * 探索 / 極速：Vertex AI **Gemini 3.1 Flash Live Preview** + `responseMimeType: application/json`。
  * **區域鎖定 us-central1**（見 {@link resolveVertexFlashTranslationLocation}），不可用 global，以免 preview 路由到無配額節點。
  * 模型預設 `gemini-3.1-flash-live-preview`，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
- * 失敗時回落至 {@link buildEmergencyEnglishPrompt}。
+ * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。三次仍失敗則拋錯。
  */
 export async function callVertexGeminiFlashTranslation(translationTask: string, flowLog?: string[]): Promise<string> {
   const task = String(translationTask || "").trim();
   if (!task) {
-    appendVertexFlashDebug(flowLog, `輸入 task 為空 → 直接 buildEmergencyEnglishPrompt`);
-    return buildEmergencyEnglishPrompt("");
+    appendVertexFlashDebug(flowLog, `輸入 task 為空 → 中止`);
+    throw new Error("Vertex Flash 翻译：上游 task 为空");
   }
 
   let project: string;
   try {
     project = resolveVertexProjectIdForGenAi();
   } catch (e) {
-    appendVertexFlashDebug(flowLog, `resolveVertexProjectId 失敗: ${formatErrForVertexDebug(e)} → emergency`);
-    return buildEmergencyEnglishPrompt(task);
+    appendVertexFlashDebug(flowLog, `resolveVertexProjectId 失敗: ${formatErrForVertexDebug(e)}`);
+    throw e instanceof Error ? e : new Error(String(e));
   }
 
   const location = resolveVertexFlashTranslationLocation();
@@ -485,15 +455,15 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
   ].join("\n");
 
-  try {
-    appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
-    const ai = new GoogleGenAI({
-      vertexai: true,
-      project,
-      location,
-      ...(authOpts ? { googleAuthOptions: authOpts } : {}),
-    });
+  appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
+  const ai = new GoogleGenAI({
+    vertexai: true,
+    project,
+    location,
+    ...(authOpts ? { googleAuthOptions: authOpts } : {}),
+  });
 
+  const runFlashAttempt = async (): Promise<string> => {
     appendVertexFlashDebug(flowLog, `調用 ai.models.generateContent({ model }) …`);
     const response = await ai.models.generateContent({
       model,
@@ -551,16 +521,34 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
       return stripped;
     }
 
-    appendVertexFlashDebug(flowLog, `prompt 空且裸字串不可用 → buildEmergencyEnglishPrompt（同源 task）`);
-  } catch (e: unknown) {
-    const detail = formatErrForVertexDebug(e);
-    appendVertexFlashDebug(flowLog, `generateContent 异常: ${detail}`);
-    console.error("[Vertex GenAI gemini-3.1-flash-live-preview 翻译异常 · us-central1]:", e);
+    appendVertexFlashDebug(flowLog, `prompt 空且裸字串不可用 → 本次失敗`);
+    throw new Error("Vertex Flash 翻译：模型未返回有效 prompt（JSON prompt 字段为空且无法从响应文本恢复）");
+  };
+
+  let lastFailure: unknown = null;
+  for (let i = 0; i < 3; i++) {
+    if (i === 1) {
+      appendVertexFlashDebug(flowLog, "[Flash·翻译] 第 1 次無效，等待 3000ms 後第 2 次…");
+      await new Promise((r) => setTimeout(r, 3000));
+    } else if (i === 2) {
+      appendVertexFlashDebug(flowLog, "[Flash·翻译] 第 2 次仍無效，等待 6000ms 後第 3 次…");
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+    try {
+      const out = await runFlashAttempt();
+      if (i > 0) {
+        appendVertexFlashDebug(flowLog, `[Flash·翻译] 第 ${i + 1} 次重试成功 · 約 ${out.length} 字符`);
+      }
+      return out;
+    } catch (e: unknown) {
+      lastFailure = e;
+      appendVertexFlashDebug(flowLog, `[Flash·翻译] 第 ${i + 1}/3 次失败 · ${formatErrForVertexDebug(e)}`);
+    }
   }
 
-  const emerg = buildEmergencyEnglishPrompt(task);
-  appendVertexFlashDebug(flowLog, `已回落 emergency 英文 · 長度=${emerg.length}`);
-  return emerg;
+  appendVertexFlashDebug(flowLog, `[Flash·翻译] 已 3 次仍失败 · ${formatErrForVertexDebug(lastFailure)}`);
+  console.error("[Vertex GenAI gemini-3.1-flash-live-preview 翻译异常 · us-central1]:", lastFailure);
+  throw lastFailure instanceof Error ? lastFailure : new Error(String(lastFailure));
 }
 
 /**
@@ -576,94 +564,80 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
 }
 
 /**
- * 兼容旧调用名：
- * 原本此函数走 Gemini 3.1 Pro / AI Studio 作为平台生图翻译大脑。
- * 现已切换为 OpenAI GPT 5.4，但保留函数名与文件名，避免改动调用方。
+ * 平台生图英文化：**GPT 5.4 最多 3 次**（第 1 次立即；若異常或空 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次）。
+ * 三次仍無有效英文 → **僅**改走 Vertex **Gemini 3.1 Flash Live Preview**（us-central1 JSON），不再疊更多 GPT 輪次。
  */
-export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string> {
-  const primaryResponse = await invokeLLM({
-    provider: "openai",
-    model: "gpt54",
-    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: { type: "json_object" },
-    // 與 fallback 同級額度：標籤式仍可能很長（八格分鏡），過低會截斷 JSON/prompt，間接傷害生圖效果
-    max_tokens: 4096,
-    messages: [
-      {
-        role: "system",
-        content: [
-          GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
-          "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
-          "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
-          "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求。",
-          "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
-          "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
-          "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表。",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: `请返回 JSON：{"prompt":"..."}。\n${prompt}`,
-      },
-    ],
-  });
+export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: string[]): Promise<string> {
+  const runGpt54 = async (): Promise<string> => {
+    const primaryResponse = await invokeLLM({
+      provider: "openai",
+      model: "gpt54",
+      modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
+      response_format: { type: "json_object" },
+      max_tokens: 4096,
+      messages: [
+        {
+          role: "system",
+          content: [
+            GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
+            "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
+            "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
+            "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求。",
+            "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
+            "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
+            "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表。",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: `请返回 JSON：{"prompt":"..."}。\n${prompt}`,
+        },
+      ],
+    });
 
-  const raw = String(primaryResponse.choices[0]?.message?.content || "").trim();
-  let parsed: Record<string, unknown> | null = null;
-  try {
-    parsed = JSON.parse(extractJsonString(raw));
-  } catch {
-    parsed = null;
+    const raw = String(primaryResponse.choices[0]?.message?.content || "").trim();
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(extractJsonString(raw));
+    } catch {
+      parsed = null;
+    }
+
+    return String(parsed?.prompt || raw).trim();
+  };
+
+  let lastFailure: unknown = null;
+
+  for (let i = 0; i < 3; i++) {
+    if (i === 1) {
+      appendVertexFlashDebug(flowLog, "[GPT54·翻译] 第 1 次無效，等待 3000ms 後第 2 次…");
+      await new Promise((r) => setTimeout(r, 3000));
+    } else if (i === 2) {
+      appendVertexFlashDebug(flowLog, "[GPT54·翻译] 第 2 次仍無效，等待 6000ms 後第 3 次…");
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+
+    try {
+      const output = await runGpt54();
+      if (output) {
+        if (i > 0) {
+          appendVertexFlashDebug(flowLog, `[GPT54·翻译] 第 ${i + 1} 次重试成功 · 約 ${output.length} 字符`);
+        }
+        return output;
+      }
+      lastFailure = new Error("GPT54 返回空 prompt");
+      appendVertexFlashDebug(flowLog, `[GPT54·翻译] 第 ${i + 1}/3 次 · JSON/正文中無有效 prompt`);
+    } catch (e: unknown) {
+      lastFailure = e;
+      appendVertexFlashDebug(flowLog, `[GPT54·翻译] 第 ${i + 1}/3 次异常 · ${formatErrForVertexDebug(e)}`);
+    }
   }
 
-  const output = String(parsed?.prompt || raw).trim();
-  if (output) {
-    return output;
-  }
-
-  const fallbackMessages = [
-    {
-      role: "system" as const,
-      content: [
-        GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
-        "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂内容落成英文生图指令。",
-        "篇幅不设上限，以保证画面与任务一致为第一优先级；须含 masterpiece 与 8k。",
-        "若上游含平台選題單幀封面 / COVER DESIGN / graphic single-frame，须锁定 **9:16 竖版**，不得写成 16:9 或 1:1。",
-        "必须返回合法 JSON：{\"prompt\":\"...\"}。",
-        "若正文未写食物/菜谱，就不要画食谱厨房；其余从简。",
-      ].join("\n"),
-    },
-    {
-      role: "user" as const,
-      content: `请返回 JSON：{"prompt":"..."}。\n将下面内容翻译成完整、可用的英文生图指令（需要多长写多长）：\n${prompt}`,
-    },
-  ];
-
-  const fallbackResponse = await invokeLLM({
-    provider: "openai",
-    model: "gpt54",
-    modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
-    response_format: { type: "json_object" },
-    max_tokens: 4096,
-    messages: fallbackMessages,
-  });
-
-  const fallbackRaw = String(fallbackResponse.choices[0]?.message?.content || "").trim();
-  let fallbackParsed: Record<string, unknown> | null = null;
-  try {
-    fallbackParsed = JSON.parse(extractJsonString(fallbackRaw));
-  } catch {
-    fallbackParsed = null;
-  }
-
-  const fallbackOutput = String(
-    fallbackParsed?.prompt || fallbackParsed?.output || fallbackParsed?.text || fallbackRaw,
-  ).trim();
-  if (fallbackOutput) {
-    return fallbackOutput;
-  }
-
-  return buildEmergencyEnglishPrompt(prompt);
+  appendVertexFlashDebug(
+    flowLog,
+    `[GPT54·翻译] 已 3 次仍失敗或為空 → fallback Vertex Flash · 最後一次: ${formatErrForVertexDebug(lastFailure)}`,
+  );
+  return callVertexGeminiFlashTranslation(prompt, flowLog);
 }
 
 /**
@@ -684,7 +658,7 @@ export async function callGemini31ProForImagePrompt(
     const raw =
       translator === "vertex_gemini_31_pro_preview"
         ? await callVertexGemini31ProForImagePrompt(translationTask, flowLog)
-        : await callGemini3_1_Pro_AiStudio(translationTask);
+        : await callGemini3_1_Pro_AiStudio(translationTask, flowLog);
     const out = stripGeminiModelOutput(raw);
     if (!out) {
       appendVertexFlashDebug(flowLog, `翻譯結果經 strip 後為空 · label=${label}`);

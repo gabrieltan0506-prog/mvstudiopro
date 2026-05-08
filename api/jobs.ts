@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
@@ -24,6 +25,7 @@ import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
+import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -1275,6 +1277,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader("Content-Type", asset.contentType);
       res.setHeader("Cache-Control", asset.cacheControl);
       return res.status(200).send(asset.buffer);
+    }
+
+    if (opNormalized === "flyvolumemedia") {
+      if (req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const relPath = s(q.relPath || q.relpath || b.relPath).trim();
+      if (!relPath) {
+        return res.status(400).json({ ok: false, error: "relPath is required" });
+      }
+      const resolved = resolveSafeFlyPlatformImageReadPath(relPath);
+      if (!resolved.ok) {
+        return res.status(400).json({ ok: false, error: `invalid_rel_path:${resolved.reason}` });
+      }
+      try {
+        const buf = await fs.readFile(resolved.abs);
+        if (!buf.length) {
+          return res.status(404).json({ ok: false, error: "empty_file" });
+        }
+        const lower = resolved.abs.toLowerCase();
+        const mime = lower.endsWith(".png")
+          ? "image/png"
+          : lower.endsWith(".webp")
+            ? "image/webp"
+            : "image/jpeg";
+        res.setHeader("Content-Type", mime);
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.status(200).send(buf);
+      } catch {
+        return res.status(404).json({ ok: false, error: "not_found" });
+      }
     }
 
     if (opNormalized === "workflowstatus") {
