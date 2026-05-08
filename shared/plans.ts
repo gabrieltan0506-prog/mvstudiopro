@@ -252,9 +252,9 @@ export const CREDIT_COSTS = {
 
   // ─── 平台趋势·参考图生成 ─────────────────────
   platformRefImage: 12,
-  /** 平台页：分镜 / 小红书 2×4（双语编导 → 英文 prompt；生图采用 GPT-IMAGE-2，单次统一定价） */
+  /** 平台页：分镜 2×4 / 小红书 2×2 四宫格（双语编导 → 英文 prompt；生图采用 GPT-IMAGE-2，单次统一定价） */
   platformStoryboardSheet: 16,
-  /** 平台页：同上，小红书图文笔记整条管线 */
+  /** 平台页：同上，小红书 2×2 四宫格整条管线（API kind 仍为 xiaohongshu_dual_note） */
   platformXhsDualNote: 16,
 } as const;
 

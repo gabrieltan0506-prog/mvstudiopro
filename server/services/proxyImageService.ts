@@ -19,10 +19,10 @@ export type ImagePromptStats = {
   condenseTriggered: boolean;
 };
 
-/** 智能提煉閾值：超過則二次調用 GPT 5.4 壓縮成更短的英文生圖指令。 */
-const PROMPT_CONDENSE_LENGTH_THRESHOLD = 220;
-const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 220;
-const PROMPT_FINAL_HARD_CHAR_CAP = 220;
+/** 智能提炼阈值：**大幅提高**，避免对正常长度英文 prompt 二次压短（平台单帧以画面一致性优先）。 */
+const PROMPT_CONDENSE_LENGTH_THRESHOLD = 24_000;
+const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 24_000;
+const PROMPT_FINAL_HARD_CHAR_CAP = 24_000;
 
 function countPromptWords(text: string): number {
   return String(text || "")
@@ -65,11 +65,11 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
     `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
     `硬性要求：`,
     `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
-    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
+    `2. 在保留构图、主体、灯光、版式类型（单封面 vs 分镜 / 小红书 2×2 四宫格）与简中标题指令的前提下缩短；**无固定字符上限**，以「仍能指导生图模型」为准。`,
     `3. 绝对不能丢失以下关键信息：构图、主体、灯光、镜头气质、以及原文锁定的版式类型。`,
     `4. 如果原文要求画面中出现简体中文标题、简体中文标签、简体中文文案，必须保留这条硬指令。`,
-    `5. 版式守恒（极其重要）：先读原文再压缩。若原文是多格分镜、横向合成表、电影感分镜格、或明确双卡/双栏/左右分屏笔记结构，提炼后必须继续满足该结构，不得擅自改成单张海报。`,
-    `6. 相反，若原文写明 single-image cover、单一主视觉、vertical 9:16 单封面，或明令禁止 dual-card / 笔记排版 / 食谱信息图 / checklist，则提炼后仍必须是单张竖版封面，禁止擅自改成小红书双栏教程卡、食谱步骤、食材清单或任意双列版式。`,
+    `5. 版式守恒（极其重要）：先读原文再压缩。若原文是多格分镜、横向合成表、电影感分镜格、或明确 **2×2 四宫格** / 旧式双栏分屏等结构，提炼后必须继续满足该结构，不得擅自改成单张海报。`,
+    `6. 相反，若原文写明 single-image cover、单一主视觉、vertical 9:16 单封面，或明令禁止 dual-card / 小红书多格笔记 / 食谱信息图 / checklist，则提炼后仍必须是单张竖版封面，禁止擅自改成小红书 2×2 四宫格、食谱步骤、食材清单或任意多格版式。`,
     `7. 若原文主题为医学、知识、Doctor IP、养生等而未出现食物/菜谱/料理名词，禁止在提炼结果中加入面条、汤碗、厨房、配料表等与主题无关的食物场景。`,
     ``,
     rawPrompt,
@@ -90,11 +90,7 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
       }
       if (out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
         appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
-        const forcedOut = forceTrimPromptToHardCap(out);
-        if (forcedOut.length !== out.length) {
-          appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次结果触发最终硬裁剪，chars=${out.length} -> ${forcedOut.length}`);
-        }
-        return forcedOut;
+        return out.trim();
       }
       appendImageFlowLog(
         log,
@@ -111,13 +107,12 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
   // 3. 不再中止：再做一次更强硬的最终压缩，避免整条主路径因提炼失败直接死亡
   appendImageFlowLog(log, "[Prompt 提炼] 前 3 次未达标，启动最终强制浓缩，不再直接报失败");
   const finalForceTask = [
-    "将下面这条英文生图指令强制压缩成更短版本。",
+    "将下面这条英文生图指令在不丢失版式与主体的前提下精炼（可仍为长句或 tags，以生图可用为准）。",
     "硬性要求：",
-    "1. 只输出英文短视觉 tags 或短短语块。",
-    `2. 优先压到 80-140 个英文字符之间；如果做不到，也绝对不能超过 ${PROMPT_CONDENSE_HARD_CHAR_LIMIT} 个英文字符。`,
-    "3. 绝对不要输出完整句子、解释、markdown。",
-    "4. 必须保留：主体、灯光、场景、版式类型（单封面 vs 分镜/双卡——与原文一致）、简体中文标题要求。",
-    "5. 若原文是单张 9:16 封面且禁止双卡/食谱信息图，禁止压成 dual-note、recipe、ingredient list 版式。",
+    "1. 只输出一条英文生图指令，不要解释、不要 markdown。",
+    `2. 无固定字符上限；以不丢单封面/分镜结构区分为先。`,
+    "3. 必须保留：主体、灯光、场景、版式类型（单封面 vs 分镜 / 小红书 2×2 四宫格——与原文一致）、简体中文标题要求。",
+    "4. 若原文是单张 9:16 封面且禁止多格笔记/食谱信息图，禁止压成 2×2 grid、dual-note、recipe、ingredient list 版式。",
     "",
     bestAttempt,
   ].join("\n");
@@ -164,21 +159,58 @@ export function buildImagePromptStats(translatedPrompt: string, finalPrompt: str
  */
 export const PROXY_IMAGE_HEADING_MAX_CHARS = 35;
 export const PROXY_IMAGE_CONTEXT_MAX_CHARS = 500;
-/** 分鏡表 / 小紅書雙卡：單圖內多格，需保留足夠劇本以統計鏡數與細節 */
+/** 分鏡表 / 小紅書 2×2 四宫格：單圖內多格，需保留足夠劇本以統計鏡數與細節 */
 export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
 
 /**
- * gpt-image-2 官方尺寸約束：最長邊 ≤3840、兩邊皆 16 倍數、長寬比 ≤3:1、總像素 ∈ [655360, 8294400]。
- * 下列為豎版（與本檔多數 9:16 prompt 一致）；橫版 16:9 分鏡合成表見 GPT_IMAGE2_LANDSCAPE_SIZES。由前到後嘗試，代理拒絕某一組時自動換下一組。
+ * gpt-image / gpt-image-2 经 OhMyGPT 转发时，`size` 须落在 **OpenAI GPT Image 模型白名单**内，否则会 HTTP 400（Args validation failed）。
+ * 官方枚举：`1024x1024`、`1536x1024`（横版和宽幅默认）、`1024x1536`（竖版）、`auto`。
+ * （文档另述「自定义分辨率」约束；代理若未开通宽表，勿传 1792×1024、1536×864 等非枚举值。）
  */
-/** 9:16 竖版优先走更稳的中等尺寸，降低超时与空返回概率。 */
-const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "1024x1792"] as const;
-/** 16:9 橫版分鏡合成表 — 與 `buildStoryboardSheetLandscapePrompt` 一致 */
-/** 16:9 横版也优先走更稳的中等尺寸，再逐步回退。 */
-const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x864", "1344x768", "1792x1024"] as const;
+/** 9:16 竖版：白名单 + auto 兜底 */
+const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "auto", "1024x1024"] as const;
 
+/** 豎版主路徑：拼在英文 prompt 末尾，鎖定 9:16（與 API `1024x1536` 預設一致）。 */
+const GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX =
+  "CRITICAL OUTPUT ASPECT: final image must be exactly 9:16 portrait (taller than wide), full-bleed vertical cover — not 16:9 landscape, not 1:1 square hero, not letterboxed cinematic wide frame.";
+/**
+ * 宽幅分镜 / 小红书四宫格：优先 `1536x1024`（官方 landscape 预设，≈3:2），再 `auto`、`1024x1024`。
+ * 勿使用 1792x1024 / 1536x864 等——多数网关按 OpenAI 枚举校验会直接 400。
+ */
+const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x1024", "auto", "1024x1024"] as const;
+
+/** 拼在寬幅合成英文 prompt 末尾，強制 GPT-IMAGE-2 主路徑畫出可見網格（避免單張海報式跑題）。 */
+const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master frame; EXACTLY eight equal panels in 2 rows × 4 columns with straight horizontal and vertical gutters; eight distinct cinematic stills — FORBIDDEN: one full-bleed hero only, magazine left-text strip + right photo split, 50/50 two-panel only.";
+
+const GPT_IMAGE2_XHS_2X2_PIXEL_LOCK =
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master frame; EXACTLY four equal quadrants 2×2 with one cross gutter (TL, TR, BL, BR) — FORBIDDEN: left typography band + right single hero photo, 50/50 split, single scene without four cells.";
+
+const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
+  300_000,
+  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 180_000),
+);
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 僅認證/權限類錯誤立即放棄；429/5xx 由 {@link postGptImage2AndUpload} 內重試同尺寸。 */
 function shouldAbortGptImage2SizeRetries(status: number): boolean {
-  return status === 401 || status === 403 || status === 429;
+  return status === 401 || status === 403;
+}
+
+/**
+ * Midjourney / Discord 風格參數（如 `--ar 3:2 --v 6`）對 GPT-IMAGE-2 無實際作用，易干擾語義；自第一個此類 flag 起截斷至文末。
+ */
+function stripMidjourneyStyleSuffixFromGptImagePrompt(prompt: string): { cleaned: string; stripped: boolean } {
+  const s = String(prompt || "").trim();
+  if (!s) return { cleaned: s, stripped: false };
+  const mj =
+    /\s--(?:ar|aspect|v|version|chaos|stylize|style|seed|no|iw|quality|q|tile|video|cref|cw|sref|sw|niji|fast|relax|turbo)\b/i;
+  const m = mj.exec(s);
+  if (m?.index == null) return { cleaned: s, stripped: false };
+  return { cleaned: s.slice(0, m.index).trimEnd(), stripped: true };
 }
 
 /** ⚠️ 核心防禦：畫內可讀大字與長文案分離，避免整段貼成螞蟻字或亂碼排版 */
@@ -292,7 +324,7 @@ export function buildStoryboardSheetLandscapePrompt(options: {
 
   return `
 Model: GPT-Image-2
-TASK: Create a high-end 16:9 Landscape Storyboard Grid (Professional Masterpiece).
+TASK: Create a high-end wide landscape Storyboard Grid (Professional Masterpiece).
 
 🛑 DYNAMIC GRID EXACT MAPPING:
 1. You MUST generate EXACTLY ${n} image panels in a neat, balanced grid.
@@ -312,7 +344,8 @@ ${NO_TEXT_ON_IMAGE_BLOCK}
 [SCENES]: Visualize: ${scriptSlice}.
 
 STYLE: Dark gold renaissance medical aesthetic, Vogue magazine elegance, 8k.
-Aspect Ratio: 16:9.
+Use a wide cinematic landscape master frame (storyboard grid fills the width; GPT IMAGE API uses ~1536×1024 class presets).
+Vertex / Nano 兜底仍按 16:9 出图，构图语义一致即可。
 `.trim();
 }
 
@@ -325,7 +358,7 @@ export function buildStoryboardSheetPortraitPrompt(options: {
 }): string {
   return buildStoryboardSheetLandscapePrompt(options);
 }
-/** 小紅書雙卡：16:9 **幾何鎖定**（左右 50/50 垂直卡）+ **畫內零文字**（X10 / Geometric Straightjacket） */
+/** 小紅書 **2×2 四宫格**：16:9 **幾何鎖定**（四等分十字分割）+ **畫內零文字**（X10 / Geometric Straightjacket） */
 export function buildXiaohongshuDualNotePrompt(options: {
   title: string;
   scriptContext: string;
@@ -342,12 +375,12 @@ export function buildXiaohongshuDualNotePrompt(options: {
 
   return `
 Model: GPT-Image-2
-TASK: Create a strict geometric layout for Xiaohongshu (Little Red Book) inside a 16:9 canvas.
+TASK: Create a strict **2×2 four-quadrant** layout for Xiaohongshu (Little Red Book) inside a wide landscape canvas (GPT IMAGE 主路径多为 1536×1024 级宽幅).
 
 🛑 GEOMETRIC LAYOUT RULES (FATAL IF IGNORED):
-1. You MUST divide the 16:9 canvas into EXACTLY TWO distinct vertical panels of equal width (50% left, 50% right), placed side-by-side. Each half is one tall vertical "note card" (approximate 3:4 portrait feel within that column) — two clean cards, not a random collage.
-2. The Left panel is the "Cover Card" (visual hook, hero scene). The Right panel is the "Value Card" (inner content visualization — supporting detail, atmosphere, or secondary focal scene).
-3. DO NOT draw messy collages, overlapping polaroids on a table, scattered stickers, or scrapbook chaos. Keep the vertical split between cards sharp and straight with a clean gutter.
+1. You MUST partition the canvas into EXACTLY **four equal rectangles** in a **2 rows × 2 columns** grid: **top-left**, **top-right**, **bottom-left**, **bottom-right**. One continuous **horizontal midline** and one continuous **vertical midline** must span the full width and full height, forming a clean **cross gutter** (four cells of equal area, ~25% each).
+2. Visual reading order like a carousel: **TL → TR → BL → BR**. Each quadrant is a distinct "note page" beat (new focal, prop, or lighting) while staying cohesive with the content — not four duplicate stock shots.
+3. HARD FORBIDDEN: a **50/50 left-right two-panel** split only; **left third solid text band + right two thirds single hero photo** (magazine cover split — NOT a 2×2 grid); a **single horizontal row of four** thin strips; one dominant full-bleed panel with tiny side tiles; messy scrapbook collage without a clear 2×2 structure.
 
 ${NO_TEXT_ON_IMAGE_BLOCK}
 
@@ -359,7 +392,7 @@ ${NO_TEXT_ON_IMAGE_BLOCK}
 [CONTENT — visualize this logic as imagery only; do NOT paste as typography]: ${content}
 
 STYLE: Editorial magazine photography, Vogue aesthetic, 8k resolution, masterpiece.
-Aspect Ratio: 16:9.
+Wide landscape master frame; GPT IMAGE 主路径约为 1536×1024 级宽幅，几何上为 **2×2 四宫格**（四等分 + 十字对齐 gutter）。
 `.trim();
 }
 
@@ -383,75 +416,195 @@ async function postGptImage2AndUpload(
   );
   const sizes = sizeList.slice(0, maxAttempts);
 
+  const { cleaned: promptForApi, stripped: strippedMjSuffix } =
+    stripMidjourneyStyleSuffixFromGptImagePrompt(prompt);
+  if (strippedMjSuffix) {
+    appendImageFlowLog(L, "[GPT-IMAGE-2] 已去除 Midjourney 風格後綴（如 --ar / --v），比例以 API size 為準");
+  }
+
   for (const size of sizes) {
-    try {
-      appendImageFlowLog(L, `[GPT-IMAGE-2] 尝试尺寸 ${size} …`);
-      const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-image-2",
-          prompt,
-          n: 1,
-          size,
-          response_format: "b64_json",
-        }),
-        signal: AbortSignal.timeout(120_000),
-      });
-      const json: unknown = await r.json().catch(() => ({}));
-      const anyJson = json as { data?: Array<{ b64_json?: string }> };
-      if (!r.ok) {
+    let attempt = 0;
+    const maxAttempts = 4;
+    while (attempt < maxAttempts) {
+      attempt += 1;
+      try {
+        appendImageFlowLog(L, `[GPT-IMAGE-2] 尝试尺寸 ${size}（第 ${attempt}/${maxAttempts} 次）…`);
+        const r = await fetch(`${OHMYGPT_BASE}/images/generations`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-image-2",
+            prompt: promptForApi,
+            n: 1,
+            size,
+            response_format: "b64_json",
+          }),
+          signal: AbortSignal.timeout(GPT_IMAGE2_REQUEST_TIMEOUT_MS),
+        });
+        const json: unknown = await r.json().catch(() => ({}));
+        const anyJson = json as { data?: Array<{ b64_json?: string }> };
+        if (!r.ok) {
+          appendImageFlowLog(
+            L,
+            `[GPT-IMAGE-2] 尺寸 ${size} HTTP ${r.status}，响应预览：${JSON.stringify(json).slice(0, 220)}`,
+          );
+          console.warn(
+            "[proxyImageService] gpt-image-2 HTTP error:",
+            r.status,
+            `size=${size}`,
+            JSON.stringify(json).slice(0, 400),
+          );
+          if (shouldAbortGptImage2SizeRetries(r.status)) return null;
+          const retryableHttp =
+            r.status === 429 ||
+            r.status === 408 ||
+            (r.status >= 500 && r.status <= 599);
+          if (retryableHttp && attempt < maxAttempts) {
+            const wait = r.status === 429 ? 3200 : 2000;
+            appendImageFlowLog(L, `[GPT-IMAGE-2] ${size} 可重试状态 ${r.status}，${wait}ms 后同尺寸重试…`);
+            await sleepMs(wait);
+            continue;
+          }
+          break;
+        }
+        const b64 = anyJson?.data?.[0]?.b64_json;
+        if (!b64 || typeof b64 !== "string") {
+          appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 未返回 b64_json`);
+          console.warn("[proxyImageService] gpt-image-2 missing b64_json, size=", size);
+          if (attempt < maxAttempts) {
+            await sleepMs(1500);
+            continue;
+          }
+          break;
+        }
+
+        const buffer = Buffer.from(b64, "base64");
+        const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+        const { gcsUri } = await uploadBufferToGcs({
+          objectName: path,
+          buffer,
+          contentType: "image/jpeg",
+        });
+        const signedUrl = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+        appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 成功，已上传 GCS · gcsUri=${gcsUri}`);
         appendImageFlowLog(
           L,
-          `[GPT-IMAGE-2] 尺寸 ${size} HTTP ${r.status}，响应预览：${JSON.stringify(json).slice(0, 220)}`,
+          `[GPT-IMAGE-2] 尺寸 ${size} 签名 URL 预览：${String(signedUrl).slice(0, 180)}…`,
         );
+        return signedUrl;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 异常：${msg}`);
         console.warn(
-          "[proxyImageService] gpt-image-2 HTTP error:",
-          r.status,
-          `size=${size}`,
-          JSON.stringify(json).slice(0, 400),
+          "[proxyImageService] gpt-image-2 exception:",
+          e instanceof Error ? e.message : e,
+          "size=",
+          size,
         );
-        if (shouldAbortGptImage2SizeRetries(r.status)) return null;
-        continue;
+        if (attempt < maxAttempts) {
+          appendImageFlowLog(L, `[GPT-IMAGE-2] ${size} 网络/超时，2000ms 后同尺寸重试…`);
+          await sleepMs(2000);
+          continue;
+        }
+        break;
       }
-      const b64 = anyJson?.data?.[0]?.b64_json;
-      if (!b64 || typeof b64 !== "string") {
-        appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 未返回 b64_json`);
-        console.warn("[proxyImageService] gpt-image-2 missing b64_json, size=", size);
-        continue;
-      }
-
-      const buffer = Buffer.from(b64, "base64");
-      const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
-      const { gcsUri } = await uploadBufferToGcs({
-        objectName: path,
-        buffer,
-        contentType: "image/jpeg",
-      });
-      const signedUrl = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
-      appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 成功，已上传 GCS · gcsUri=${gcsUri}`);
-      appendImageFlowLog(
-        L,
-        `[GPT-IMAGE-2] 尺寸 ${size} 签名 URL 预览：${String(signedUrl).slice(0, 180)}…`,
-      );
-      return signedUrl;
-    } catch (e: unknown) {
-      appendImageFlowLog(
-        L,
-        `[GPT-IMAGE-2] 尺寸 ${size} 异常：${e instanceof Error ? e.message : String(e)}`,
-      );
-      console.warn(
-        "[proxyImageService] gpt-image-2 exception:",
-        e instanceof Error ? e.message : e,
-        "size=",
-        size,
-      );
     }
   }
   return null;
+}
+
+/**
+ * 瀏覽器 <img> 可穩定載入的 GCS V4 簽名直鏈（與 {@link postGptImage2AndUpload} 一致）。
+ * Vertex → {@link storagePut} 常回 Blob / R2 / 超大 data:，對外公開讀常 403 或超長失敗。
+ */
+function isPublicGcsSignedReadUrl(u: string): boolean {
+  const s = u.toLowerCase();
+  if (!s.includes("storage.googleapis.com")) return false;
+  return s.includes("x-goog-signature") || s.includes("x-goog-algorithm");
+}
+
+function normalizeImageUploadContentType(mime: string): string {
+  const m = String(mime || "").toLowerCase();
+  if (m.includes("jpeg") || m.includes("jpg")) return "image/jpeg";
+  if (m.includes("webp")) return "image/webp";
+  return "image/png";
+}
+
+async function mirrorImageUrlToGcsSignedUrl(
+  rawUrl: string,
+  gcsSubdir: string,
+  flowLog?: string[],
+): Promise<string> {
+  const u = String(rawUrl || "").trim();
+  if (!u) return u;
+  if (isPublicGcsSignedReadUrl(u)) return u;
+
+  let buffer: Buffer;
+  let headerMime: string;
+
+  if (u.startsWith("data:")) {
+    const comma = u.indexOf(",");
+    if (comma <= 0) throw new Error("invalid_data_url");
+    const meta = u.slice(5, comma);
+    const b64 = u.slice(comma + 1);
+    const mimeMatch = /^([^;]+)/.exec(meta);
+    headerMime = mimeMatch?.[1]?.trim() || "image/png";
+    buffer = Buffer.from(b64, "base64");
+  } else if (u.startsWith("http://") || u.startsWith("https://")) {
+    const r = await fetch(u, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!r.ok) {
+      throw new Error(`mirror_fetch_http_${r.status}`);
+    }
+    const ct = r.headers.get("content-type") || "image/png";
+    headerMime = ct.split(";")[0].trim() || "image/png";
+    buffer = Buffer.from(await r.arrayBuffer());
+  } else {
+    return u;
+  }
+
+  const contentType = normalizeImageUploadContentType(headerMime);
+  const ext = contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "png";
+  const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { gcsUri } = await uploadBufferToGcs({
+    objectName: path,
+    buffer,
+    contentType,
+  });
+  const signed = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+  appendImageFlowLog(
+    flowLog,
+    `[Vertex 出图] 已镜像到 GCS 签名 URL（与 GPT-IMAGE-2 主路径一致，避免 Blob/R2/data 外链浏览器失败）· gcsUri=${gcsUri}`,
+  );
+  return signed;
+}
+
+/** 2×4 合成 / 翻译兜底：Nano 返回的外链镜像到 GCS 签名 URL，与主路径 GPT-IMAGE-2 一致。 */
+async function mirrorNanoSheetUrlToGcs(
+  rawUrl: string,
+  gcsSubdir: string,
+  flowLog?: string[],
+): Promise<string> {
+  const url = String(rawUrl || "").trim();
+  if (!url) return url;
+  if (isPublicGcsSignedReadUrl(url)) return url;
+  try {
+    return await mirrorImageUrlToGcsSignedUrl(url, gcsSubdir, flowLog);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    appendImageFlowLog(
+      flowLog,
+      `[2×4·Vertex] Nano → GCS 镜像失败: ${msg}`,
+    );
+    throw new Error(
+      `Nano 兜底已生成图片，但镜像到 GCS 失败（浏览器通常无法直接使用 Vertex 返回的临时 URL）。请检查服务端存图配置或重试。底层: ${msg}`,
+    );
+  }
 }
 
 /** GPT-IMAGE-2 失敗後：Vertex **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· 2K。 */
@@ -481,33 +634,13 @@ async function fallbackNanoBanana2FromPrompt(
       appendImageFlowLog(L, "[单帧兜底] Nano Banana 2 返回空 URL");
       return null;
     }
-    /** Fly 仅 Vertex、无 Blob/S3 时 storagePut 会回落 data: URL，过长时浏览器 <img> 易失败；与主路径一致转 GCS 签名链 */
-    if (url.startsWith("data:")) {
-      try {
-        const comma = url.indexOf(",");
-        if (comma > 0) {
-          const meta = url.slice(5, comma);
-          const b64 = url.slice(comma + 1);
-          const mimeMatch = /^([^;]+)/.exec(meta);
-          const mime = mimeMatch?.[1]?.trim() || "image/png";
-          const buffer = Buffer.from(b64, "base64");
-          const ext =
-            mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
-          const path = `generated/platform_topic_reference/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const { gcsUri } = await uploadBufferToGcs({
-            objectName: path,
-            buffer,
-            contentType: mime,
-          });
-          url = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
-          appendImageFlowLog(L, `[单帧兜底] Nano data URL 已转存 GCS · gcsUri=${gcsUri}`);
-        }
-      } catch (e: unknown) {
-        appendImageFlowLog(
-          L,
-          `[单帧兜底] Nano data URL 转 GCS 失败（仍返回原 data URL）: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
+    try {
+      url = await mirrorImageUrlToGcsSignedUrl(url, "platform_topic_reference", L);
+    } catch (e: unknown) {
+      appendImageFlowLog(
+        L,
+        `[单帧兜底] Nano → GCS 镜像失败（仍返回 Vertex/storage 原始 URL，浏览器可能无法加载）: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
     appendImageFlowLog(
       L,
@@ -540,7 +673,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return null;
   }
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
-  const prompt = suffix ? `${raw}\n\n${suffix}` : raw;
+  const aspectLock =
+    options.aspectRatio === "9:16" ? GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX : "";
+  const prompt = [raw, aspectLock, suffix].filter(Boolean).join("\n\n");
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
   appendImageFlowLog(
     L,
@@ -582,7 +717,7 @@ export type PlatformCompositeSheetKind =
   | "xiaohongshu_dual_note";
 
 /**
- * 平台页 2×4：Gemini 双语编导 → 英文 prompt → **主路径 GPT-IMAGE-2** 横版 16:9；失败则 **Vertex Nano Banana 2**（`gemini-3.1-flash-image-preview`）同 prompt 16:9 兜底。**不使用** Imagen `:predict` 兜底。
+ * 平台页宽幅合成：分镜 **2×4** 或小红书 **2×2 四宫格**。Gemini 双语编导 → 英文 prompt → **主路径 GPT-IMAGE-2** 横版 16:9；失败则 **Vertex Nano Banana 2** 同 prompt 16:9 兜底。**不使用** Imagen `:predict` 兜底。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -590,6 +725,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
+  /** 與單幀一致：預設 gpt54；探索為 Vertex Flash Live us-central1 */
+  imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
 }): Promise<string | null> {
@@ -600,12 +737,13 @@ export async function generatePlatformCompositeSheetImage(options: {
   if (!isStoryboard && !isXhs) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
+  const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
 
   appendImageFlowLog(
     L,
-    `[2×4 合成] kind=${k} · ${isStoryboard ? "分镜图文参考（buildVideoStoryboardGeminiPrompt）" : "小红书双笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+    `[宽幅合成] kind=${k} · ${isStoryboard ? "分镜图文参考（buildVideoStoryboardGeminiPrompt）" : "小红书 2×2 四宫格（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
-  appendImageFlowLog(L, `[2×4·步骤1] GPT 5.4 translatePlatformCompositeToEnglishPrompt（中文剧本→一条英文视觉指令）…`);
+  appendImageFlowLog(L, `[2×4·步骤1] translatePlatformCompositeToEnglishPrompt（${options.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex Flash · us-central1" : "GPT 5.4"}）…`);
 
   const runDirectCompositeFallback = async (reason: string): Promise<string | null> => {
     appendImageFlowLog(L, `[2×4·步骤1] 翻译层不可用，直接切入 Vertex Nano Banana 2 兜底 · 原因: ${reason}`);
@@ -650,7 +788,7 @@ export async function generatePlatformCompositeSheetImage(options: {
         L,
         `[2×4·步骤1b] 直接兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
       );
-      return fallbackUrl;
+      return await mirrorNanoSheetUrlToGcs(fallbackUrl, subdir, L);
     } catch (fallbackError: any) {
       const realError = fallbackError?.message || String(fallbackError);
       appendImageFlowLog(L, `[2×4·步骤1b] 直接兜底失败: ${realError}`);
@@ -666,10 +804,11 @@ export async function generatePlatformCompositeSheetImage(options: {
     prompt = await translatePlatformCompositeToEnglishPrompt({
       kind: k,
       scriptContext: options.scriptContext,
+      translator: options.imagePromptTranslator,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    appendImageFlowLog(L, `[2×4·步骤1] GPT 5.4 翻译失败: ${msg}`);
+    appendImageFlowLog(L, `[2×4·步骤1] 翻译失败: ${msg}`);
     console.warn(
       "[proxyImageService] platform composite prompt translation failed:",
       e instanceof Error ? e.message : e,
@@ -678,7 +817,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
 
   if (!String(prompt || "").trim()) {
-    appendImageFlowLog(L, "[2×4·步骤1] GPT 5.4 翻译结果为空，直接切入 Vertex Nano Banana 2 兜底");
+    appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空，直接切入 Vertex Nano Banana 2 兜底");
     return runDirectCompositeFallback("GPT 5.4 翻译结果为空");
   }
 
@@ -686,10 +825,9 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   prompt = await condenseImagePromptIfNeeded(prompt, L);
 
-  const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   appendImageFlowLog(
     L,
-    `[2×4·步骤2] GPT-IMAGE-2 横版 16:9 · gcsSubdir=${subdir} · 尺寸: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
+    `[2×4·步骤2] GPT-IMAGE-2 宽幅横版 · gcsSubdir=${subdir} · 尺寸序列（OpenAI gpt-image 白名单）: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
   );
   const primary = await postGptImage2AndUpload(prompt, subdir, {
     sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
@@ -731,7 +869,7 @@ export async function generatePlatformCompositeSheetImage(options: {
       L,
       `[2×4·步骤3] Nano Banana 2 兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
     );
-    return fallbackUrl;
+    return await mirrorNanoSheetUrlToGcs(fallbackUrl, subdir, L);
   } catch (fallbackError: any) {
     const flowLog = L ?? [];
     const realError = fallbackError?.message || String(fallbackError);

@@ -175,6 +175,7 @@ export async function deductCredits(
         remainingBalance: availableTeamCredits - cost,
         source: "team" as const,
         teamId: membership.teamId,
+        teamMemberId: membership.id,
       };
     }
   }
@@ -290,6 +291,7 @@ export async function deductCreditsAmount(
         remainingBalance: availableTeamCredits - cost,
         source: "team" as const,
         teamId: membership.teamId,
+        teamMemberId: membership.id,
       };
     }
   }
@@ -579,6 +581,84 @@ export async function refundCredits(
   });
 
   console.log(`[Credits] restoreCredits: userId=${userId}, amount=+${amount}, reason=${reason}`);
+}
+
+/**
+ * 與 {@link deductCreditsAmount} 對稱：依扣款時的 **來源（個人 / 團隊）** 退回同額度，避免「團隊扣款、失敗卻加回個人」的帳務錯亂。
+ */
+export async function refundCreditsForDeductAmount(
+  userId: number,
+  reason: string,
+  deduct: Awaited<ReturnType<typeof deductCreditsAmount>>,
+  actionForLog: string,
+): Promise<void> {
+  const cost = deduct.cost;
+  if (!deduct.success || cost <= 0) return;
+  if (deduct.source === "admin" || deduct.source === "none") return;
+
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const act = actionForLog.slice(0, 50);
+
+  if (deduct.source === "personal") {
+    await refundCredits(userId, cost, reason);
+    return;
+  }
+
+  if (deduct.source === "team") {
+    const teamMemberId = deduct.teamMemberId;
+    const teamId = deduct.teamId;
+    if (teamMemberId == null || teamId == null) {
+      console.error(
+        `[Credits] refundCreditsForDeductAmount: team source but missing teamMemberId/teamId userId=${userId} cost=${cost}`,
+      );
+      throw new Error("team_refund_metadata_missing");
+    }
+
+    const [row] = await db
+      .select({
+        usedCredits: teamMembers.usedCredits,
+        allocatedCredits: teamMembers.allocatedCredits,
+      })
+      .from(teamMembers)
+      .where(eq(teamMembers.id, teamMemberId))
+      .limit(1);
+
+    if (!row) {
+      console.error(`[Credits] refundCreditsForDeductAmount: teamMembers.id=${teamMemberId} not found`);
+      throw new Error("team_member_not_found_for_refund");
+    }
+
+    const nextUsed = Math.max(0, row.usedCredits - cost);
+    await db
+      .update(teamMembers)
+      .set({ usedCredits: nextUsed })
+      .where(eq(teamMembers.id, teamMemberId));
+
+    await db.insert(stripeUsageLogs).values({
+      userId,
+      action: act,
+      creditsCost: 0,
+      isFreeQuota: 0,
+      description: `${reason}（${cost} cr · 团队额度退回 · used ${row.usedCredits}→${nextUsed}）`,
+      balanceAfter: row.allocatedCredits - nextUsed,
+      metadata: JSON.stringify({
+        source: "team_refund",
+        teamId,
+        teamMemberId,
+        restoredCredits: cost,
+      }),
+    });
+
+    await db.insert(teamActivityLogs).values({
+      teamId,
+      userId,
+      action: "credits_refund",
+      description: `退回 ${cost} Credits（团队分配额度）：${reason}`,
+      metadata: JSON.stringify({ action: act, cost, teamMemberId }),
+    });
+  }
 }
 
 // ─── 获取使用日志 ──────────────────────────────────

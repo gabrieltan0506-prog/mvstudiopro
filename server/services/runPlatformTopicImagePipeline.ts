@@ -3,6 +3,7 @@
  */
 import { eq } from "drizzle-orm";
 import * as db from "../db";
+import type { PlatformImagePromptTranslator } from "./geminiPlatformCompositeTranslation.js";
 
 function classifyPlatformTopicFrameStatus(url: string | null | undefined): "completed" | "failed" | "timeout" {
   const u = String(url ?? "").trim();
@@ -27,6 +28,8 @@ export type RunPlatformTopicImagePipelineInput = {
   context?: string;
   coverPersonaContext?: string;
   sceneId?: string;
+  /** 英文化：預設 GPT 5.4；Vertex 供 Debug/對照（需 GCP 憑證）。 */
+  imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
   isFreeRetry: boolean;
   newJobMetaBase: Record<string, unknown>;
@@ -48,6 +51,11 @@ export async function runPlatformTopicImagePipeline(
 ): Promise<RunPlatformTopicImagePipelineResult> {
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
+  const imagePromptTranslator: PlatformImagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
+  const translatorLogLabel =
+    imagePromptTranslator === "vertex_gemini_31_pro_preview"
+      ? "Vertex @google/genai · gemini-3.1-flash-live-preview · us-central1（JSON）"
+      : "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
   const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
   const creationIdOut = input.creationIdOut ?? undefined;
@@ -78,10 +86,10 @@ export async function runPlatformTopicImagePipeline(
     `${new Date().toISOString()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
   );
   topicImageCondenseLog.push(
-    `${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(GPT 5.4) → generateGptImage2FromRawEnglishPrompt 9:16`,
+    `${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → generateGptImage2FromRawEnglishPrompt 9:16`,
   );
   topicImageCondenseLog.push(
-    `${new Date().toISOString()}  说明: 中文语境仅供 GPT 5.4 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
+    `${new Date().toISOString()}  说明: 中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
   );
 
   let promptStats: ImagePromptStats = {
@@ -102,8 +110,12 @@ export async function runPlatformTopicImagePipeline(
         variant: isGraphic ? "graphic" : "video",
         coverPersonaContext: coverPersona || undefined,
       });
-      topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 调用 GPT 5.4 生成英文 prompt …`);
-      const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+      topicImageCondenseLog.push(
+        `${new Date().toISOString()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,
+      );
+      const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
+        translator: imagePromptTranslator,
+      });
       topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
       topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
       const safePrompt = await condenseImagePromptIfNeeded(
