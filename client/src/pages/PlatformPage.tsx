@@ -756,7 +756,8 @@ export default function PlatformPage() {
           });
           const j = await pollJobUntilTerminal(jobId, {
             intervalMs: 2500,
-            maxWaitMs: 14 * 60_000,
+            // 需略長於服務端 platform_build_content（預設 20min）
+            maxWaitMs: 22 * 60_000,
             onPoll: ({ attempt, status, elapsedMs }) => {
               const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（入队后 ${elapsedMs}ms）`;
               setContentJobPollTrace((prev) =>
@@ -869,7 +870,7 @@ export default function PlatformPage() {
       try {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
-          maxWaitMs: 12 * 60_000,
+          maxWaitMs: 18 * 60_000,
           onPoll: ({ attempt, status, elapsedMs }) => {
             const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms） · ${pollLabel}`;
             setTopicImageJobPollTrace((prev) =>

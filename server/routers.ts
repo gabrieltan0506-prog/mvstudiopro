@@ -416,6 +416,12 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
+/**
+ * Stage 2 專屬文案：沿用已實測的 Vertex **Pro**。
+ * （`gemini-3.1-flash-live-preview` 等 Flash 預覽待你方實測通過後再替換此常數即可。）
+ */
+const STAGE2_CONTENT_MODEL = "gemini-3.1-pro-preview" as const;
+
 /** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
 const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
   const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
@@ -1071,7 +1077,7 @@ export async function buildPlatformContent(params: {
   try {
     response = await invokeLLM({
       provider: "vertex",
-      modelName: "gemini-3.1-pro-preview",
+      modelName: STAGE2_VERTEX_MODEL,
       max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
       response_format: { type: "json_object" },
       messages: contentMessages,
@@ -1084,7 +1090,7 @@ export async function buildPlatformContent(params: {
     try {
       response = await invokeLLM({
         provider: "vertex",
-        modelName: "gemini-3.1-pro-preview",
+        modelName: STAGE2_VERTEX_MODEL,
         max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
         messages: contentMessages,
         abortSignal: params.abortSignal,
@@ -3607,13 +3613,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: s.title,
-              context: (await extractChineseVisualBrief(briefSource)) || briefSource.slice(0, 2000),
+              context: (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000),
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
             });
             appendImageFlowLog(flowLog, `[步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`);
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
               translator: imagePromptTranslator,
+              flowLog,
             });
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");

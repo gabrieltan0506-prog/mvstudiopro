@@ -1,6 +1,36 @@
 import { GoogleGenAI } from "@google/genai";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 
+/** 寫入平台頁 / 寬幅合成 debug 時間線（與 imageGenFlowLog 同源）。 */
+function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): void {
+  if (!flowLog) return;
+  flowLog.push(`${new Date().toISOString()}  [Vertex·Flash] ${line}`);
+}
+
+/** 將异常打成可讀字串（避免只顯示 null / [object Object]）。 */
+function formatErrForVertexDebug(e: unknown): string {
+  if (e instanceof Error) {
+    const any = e as Record<string, unknown>;
+    const parts: string[] = [`${e.name}: ${e.message || "(無 message)"}`];
+    for (const k of ["code", "status", "statusCode", "reason", "cause"] as const) {
+      const v = any[k];
+      if (v != null && v !== "") parts.push(`${k}=${typeof v === "object" ? JSON.stringify(v).slice(0, 280) : String(v)}`);
+    }
+    if (any.error != null) {
+      parts.push(`error=${typeof any.error === "object" ? JSON.stringify(any.error).slice(0, 400) : String(any.error)}`);
+    }
+    return parts.join(" · ");
+  }
+  if (e != null && typeof e === "object") {
+    try {
+      return JSON.stringify(e).slice(0, 900);
+    } catch {
+      return String(e);
+    }
+  }
+  return String(e);
+}
+
 /** 與 @google/genai Vertex 客戶端一致：專案 ID。 */
 function resolveVertexProjectIdForGenAi(): string {
   const p = String(
@@ -186,10 +216,19 @@ export function buildEmergencyEnglishPrompt(task: string): string {
   return "Editorial cover, premium focal subject, high contrast lighting, luxury palette, legible Simplified Chinese headline, warm title color, masterpiece, 8k";
 }
 
-export async function extractChineseVisualBrief(rawContext: string): Promise<string> {
+export async function extractChineseVisualBrief(rawContext: string, flowLog?: string[]): Promise<string> {
   const slice = String(rawContext || "").trim().slice(0, SCRIPT_SLICE);
-  if (!slice) return "";
+  if (!slice) {
+    appendVertexFlashDebug(flowLog, `[骨架·GPT54] 輸入為空，跳過 extractChineseVisualBrief`);
+    return "";
+  }
 
+  appendVertexFlashDebug(
+    flowLog,
+    `[骨架·GPT54] extractChineseVisualBrief 開始 · 輸入約 ${slice.length} 字（上限切片 ${SCRIPT_SLICE}）`,
+  );
+
+  try {
   const response = await invokeLLM({
     provider: "openai",
     model: "gpt54",
@@ -224,7 +263,16 @@ export async function extractChineseVisualBrief(rawContext: string): Promise<str
   }
 
   const brief = String(parsed?.brief || "").trim();
-  return brief.slice(0, CHINESE_VISUAL_BRIEF_MAX_CHARS);
+  const out = brief.slice(0, CHINESE_VISUAL_BRIEF_MAX_CHARS);
+  appendVertexFlashDebug(
+    flowLog,
+    `[骨架·GPT54] 完成 · brief 約 ${out.length} 字 · JSON 解析=${parsed ? "ok" : "失敗(用原始片段推理)"}`,
+  );
+  return out;
+  } catch (e: unknown) {
+    appendVertexFlashDebug(flowLog, `[骨架·GPT54] 异常: ${formatErrForVertexDebug(e)}`);
+    throw e;
+  }
 }
 
 /** 横版 2×4 电影级分镜主表：定稿人设见下行英文块（translatePlatformCompositeToEnglishPrompt · storyboard sheet） */
@@ -397,18 +445,36 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
  * 模型預設 `gemini-3.1-flash-live-preview`，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * 失敗時回落至 {@link buildEmergencyEnglishPrompt}。
  */
-export async function callVertexGeminiFlashTranslation(translationTask: string): Promise<string> {
+export async function callVertexGeminiFlashTranslation(translationTask: string, flowLog?: string[]): Promise<string> {
   const task = String(translationTask || "").trim();
   if (!task) {
+    appendVertexFlashDebug(flowLog, `輸入 task 為空 → 直接 buildEmergencyEnglishPrompt`);
     return buildEmergencyEnglishPrompt("");
   }
 
-  const project = resolveVertexProjectIdForGenAi();
+  let project: string;
+  try {
+    project = resolveVertexProjectIdForGenAi();
+  } catch (e) {
+    appendVertexFlashDebug(flowLog, `resolveVertexProjectId 失敗: ${formatErrForVertexDebug(e)} → emergency`);
+    return buildEmergencyEnglishPrompt(task);
+  }
+
   const location = resolveVertexFlashTranslationLocation();
   const model = String(
     process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || "gemini-3.1-flash-live-preview",
   ).trim();
   const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
+  const authMode = authOpts ? "GOOGLE_APPLICATION_CREDENTIALS_JSON(service_account)" : "ADC/運行環境默認憑證";
+
+  appendVertexFlashDebug(
+    flowLog,
+    `── Flash Live 英文化開始 ── project=${project} · location=${location} · model=${model} · auth=${authMode}`,
+  );
+  appendVertexFlashDebug(
+    flowLog,
+    `請求參數 · responseMimeType=application/json · maxOutputTokens=4096 · temperature=0.6 · task 約 ${task.length} 字`,
+  );
 
   const systemInstruction = [
     GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
@@ -420,6 +486,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string):
   ].join("\n");
 
   try {
+    appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
     const ai = new GoogleGenAI({
       vertexai: true,
       project,
@@ -427,6 +494,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string):
       ...(authOpts ? { googleAuthOptions: authOpts } : {}),
     });
 
+    appendVertexFlashDebug(flowLog, `調用 ai.models.generateContent({ model }) …`);
     const response = await ai.models.generateContent({
       model,
       contents: `请返回 JSON：{"prompt":"..."}。\n${task}`,
@@ -439,34 +507,65 @@ export async function callVertexGeminiFlashTranslation(translationTask: string):
       },
     });
 
+    const respAny = response as Record<string, unknown> & {
+      text?: string;
+      candidates?: Array<{ finishReason?: string; safetyRatings?: unknown }>;
+    };
+    const finishReason = respAny?.candidates?.[0]?.finishReason ?? null;
+    const safety = respAny?.candidates?.[0]?.safetyRatings;
+    const usage = (respAny as { usageMetadata?: unknown }).usageMetadata;
+    appendVertexFlashDebug(
+      flowLog,
+      `generateContent 已返回 · finishReason=${finishReason ?? "n/a"} · usageMetadata=${usage != null ? JSON.stringify(usage).slice(0, 220) : "n/a"}`,
+    );
+    if (safety != null) {
+      appendVertexFlashDebug(flowLog, `safetyRatings(摘要)=${JSON.stringify(safety).slice(0, 280)}`);
+    }
+
     const raw = String(response.text ?? "").trim();
+    appendVertexFlashDebug(
+      flowLog,
+      `response.text 長度=${raw.length}${raw ? ` · 頭 120 字: ${raw.replace(/\s+/g, " ").slice(0, 120)}` : ""}`,
+    );
+
     let parsed: Record<string, unknown> | null = null;
     try {
       parsed = JSON.parse(extractJsonString(raw)) as Record<string, unknown>;
-    } catch {
+      appendVertexFlashDebug(flowLog, `JSON.parse(extractJsonString) → ok · 頂層鍵=${parsed ? Object.keys(parsed).join(",") : ""}`);
+    } catch (parseErr) {
+      appendVertexFlashDebug(flowLog, `JSON 解析失敗: ${formatErrForVertexDebug(parseErr)}`);
       parsed = null;
     }
+
     const fromPrompt = String(parsed?.prompt ?? "").trim();
     if (fromPrompt) {
+      appendVertexFlashDebug(flowLog, `輸出分支=prompt 欄位 · 英文長度=${fromPrompt.length} → 採用`);
       return fromPrompt;
     }
+
     const stripped = stripGeminiModelOutput(raw);
     if (stripped && !stripped.startsWith("{")) {
+      appendVertexFlashDebug(flowLog, `輸出分支=stripGeminiModelOutput（非 JSON 裸字串）· 長度=${stripped.length} → 採用`);
       return stripped;
     }
+
+    appendVertexFlashDebug(flowLog, `prompt 空且裸字串不可用 → buildEmergencyEnglishPrompt（同源 task）`);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[Vertex GenAI gemini-3.1-flash-live-preview 翻译异常 · us-central1]:", msg);
+    const detail = formatErrForVertexDebug(e);
+    appendVertexFlashDebug(flowLog, `generateContent 异常: ${detail}`);
+    console.error("[Vertex GenAI gemini-3.1-flash-live-preview 翻译异常 · us-central1]:", e);
   }
 
-  return buildEmergencyEnglishPrompt(task);
+  const emerg = buildEmergencyEnglishPrompt(task);
+  appendVertexFlashDebug(flowLog, `已回落 emergency 英文 · 長度=${emerg.length}`);
+  return emerg;
 }
 
 /**
  * 舊名保留：平台「探索」英文化現已改走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · us-central1），不再使用 global 3.1 Pro。
  */
-export async function callVertexGemini31ProForImagePrompt(translationTask: string): Promise<string> {
-  return callVertexGeminiFlashTranslation(translationTask);
+export async function callVertexGemini31ProForImagePrompt(translationTask: string, flowLog?: string[]): Promise<string> {
+  return callVertexGeminiFlashTranslation(translationTask, flowLog);
 }
 
 /** 與 {@link callVertexGemini31ProForImagePrompt} 相同，便於對照文檔命名。 */
@@ -571,9 +670,10 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
  */
 export async function callGemini31ProForImagePrompt(
   translationTask: string,
-  options?: { translator?: PlatformImagePromptTranslator },
+  options?: { translator?: PlatformImagePromptTranslator; flowLog?: string[] },
 ): Promise<string> {
   const translator: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
+  const flowLog = options?.flowLog;
   const label =
     translator === "vertex_gemini_31_pro_preview"
       ? "Vertex @google/genai · gemini-3.1-flash-live-preview · us-central1（JSON）"
@@ -581,15 +681,17 @@ export async function callGemini31ProForImagePrompt(
   try {
     const raw =
       translator === "vertex_gemini_31_pro_preview"
-        ? await callVertexGemini31ProForImagePrompt(translationTask)
+        ? await callVertexGemini31ProForImagePrompt(translationTask, flowLog)
         : await callGemini3_1_Pro_AiStudio(translationTask);
     const out = stripGeminiModelOutput(raw);
     if (!out) {
+      appendVertexFlashDebug(flowLog, `翻譯結果經 strip 後為空 · label=${label}`);
       throw new Error("翻译服务返回空 prompt");
     }
     return out;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    appendVertexFlashDebug(flowLog, `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`);
     throw new Error(`[${label} 翻译崩溃]: ${message}`);
   }
 }
@@ -601,22 +703,30 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   translator?: PlatformImagePromptTranslator;
   /** A/B：`gemini31flash` 強制走 Flash Live（us-central1）；`gpt54` 強制 GPT 5.4 */
   engine?: "gpt54" | "gemini31flash";
+  /** 寬幅合成 / debug：寫入 imageGenFlowLog */
+  flowLog?: string[];
 }): Promise<string> {
+  const flowLog = options.flowLog;
   const isStoryboard =
     options.kind === "storyboard_sheet_portrait" || options.kind === "storyboard_sheet_landscape";
-  const chineseBrief = await extractChineseVisualBrief(options.scriptContext);
+  appendVertexFlashDebug(
+    flowLog,
+    `translatePlatformComposite · kind=${options.kind} · translator=${options.translator ?? "(默認 gpt54)"} · engine=${options.engine ?? "n/a"}`,
+  );
+  const chineseBrief = await extractChineseVisualBrief(options.scriptContext, flowLog);
   const task = isStoryboard
     ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
     : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
+  appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
 
   if (options.engine === "gemini31flash") {
     console.log("[platformComposite] engine=gemini31flash → Vertex gemini-3.1-flash-live-preview · us-central1");
-    return callVertexGeminiFlashTranslation(task);
+    return callVertexGeminiFlashTranslation(task, flowLog);
   }
   if (options.engine === "gpt54") {
     console.log("[platformComposite] engine=gpt54 → GPT 5.4");
-    return callGemini31ProForImagePrompt(task, { translator: "gpt54" });
+    return callGemini31ProForImagePrompt(task, { translator: "gpt54", flowLog });
   }
 
-  return callGemini31ProForImagePrompt(task, { translator: options.translator });
+  return callGemini31ProForImagePrompt(task, { translator: options.translator, flowLog });
 }

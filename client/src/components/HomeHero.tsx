@@ -246,6 +246,26 @@ export default function HomeHero() {
                 AI 创作平台
               </div>
 
+              <div
+                style={{
+                  marginTop: 12,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "7px 14px",
+                  borderRadius: 999,
+                  background: "linear-gradient(100deg, rgba(34,211,238,0.22), rgba(167,139,250,0.28))",
+                  border: "1px solid rgba(34,211,238,0.5)",
+                  color: "#ecfeff",
+                  fontWeight: 900,
+                  fontSize: 13,
+                  letterSpacing: "0.04em",
+                  textShadow: "0 0 20px rgba(34,211,238,0.35)",
+                  boxShadow: "0 0 28px rgba(34,211,238,0.12), inset 0 1px 0 rgba(255,255,255,0.12)",
+                }}
+              >
+                新增 GPT-image-2 生图模型
+              </div>
+
               <div style={{ fontSize: 42, fontWeight: 900, lineHeight: 1.12, color: "white", marginTop: 18 }}>
                 从爆款洞察到大片生成，
                 <br />

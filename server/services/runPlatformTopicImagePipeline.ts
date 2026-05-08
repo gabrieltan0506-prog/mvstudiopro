@@ -106,7 +106,7 @@ export async function runPlatformTopicImagePipeline(
     try {
       const geminiTask = buildPlatformTopicReferenceGeminiTask({
         topicHook: input.topicHook,
-        context: (await extractChineseVisualBrief(briefSource)) || briefSource.slice(0, 2000),
+        context: (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000),
         variant: isGraphic ? "graphic" : "video",
         coverPersonaContext: coverPersona || undefined,
       });
@@ -115,6 +115,7 @@ export async function runPlatformTopicImagePipeline(
       );
       const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
         translator: imagePromptTranslator,
+        flowLog: topicImageCondenseLog,
       });
       topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
       topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);

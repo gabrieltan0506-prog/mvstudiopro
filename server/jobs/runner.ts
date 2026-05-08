@@ -60,7 +60,7 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
   audio: 8 * 60_000,
   video: 30_000,
-  // platform jobs run buildPlatformDashboard + buildPlatformContent — budget 12 min
+  // platform：預設 12 min；platform_build_content / platform_topic_image 由 resolveJobTimeoutMs 加長
   platform: 12 * 60_000,
   /** 与 Cloud Run pdf-worker + 跨云回传对齐；独占队列不阻塞别的任务 */
   pdf_export: 55 * 60_000,
@@ -615,6 +615,25 @@ function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" 
 
 function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   const defaultTimeout = JOB_TIMEOUT_MS[type];
+  if (type === "platform") {
+    try {
+      const input = asEnvelope(inputRaw);
+      if (input.action === "platform_build_content") {
+        const raw = Number(process.env.PLATFORM_BUILD_CONTENT_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 120_000) return raw;
+        // Stage 2：冷數據讀取 + 大 JSON LLM（預設 20min，可用 PLATFORM_BUILD_CONTENT_JOB_TIMEOUT_MS 覆蓋）
+        return 20 * 60_000;
+      }
+      if (input.action === "platform_topic_image") {
+        const raw = Number(process.env.PLATFORM_TOPIC_IMAGE_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 60_000) return raw;
+        return 15 * 60_000;
+      }
+    } catch {
+      /* fall through */
+    }
+    return defaultTimeout;
+  }
   if (type !== "video") return defaultTimeout;
   try {
     const input = asEnvelope(inputRaw);

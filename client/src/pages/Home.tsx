@@ -61,7 +61,8 @@ export default function HomePage() {
         <HomeEnterpriseAgentCard />
       </div>
 
-      {/* 兑换邀请码 / 申请邀请码（推到决策点之后） */}
+      {/* 兑换邀请码 / 申请邀请码（推到决策点之后）；锚点供更新日志等入口跳转 */}
+      <div id="redeem-invite" style={{ scrollMarginTop: 80 }} />
       <HomeRedeemCode />
 
       <HomeInviteApply />
