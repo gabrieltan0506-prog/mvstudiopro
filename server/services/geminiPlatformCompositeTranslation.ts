@@ -7,6 +7,27 @@ function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): vo
   flowLog.push(`${new Date().toISOString()}  [Vertex·Flash] ${line}`);
 }
 
+/** OpenAI GPT 5.4 英文化專用，與 imageGenFlowLog 同源（勿與 Vertex 混淆）。 */
+function appendGpt54TranslationDebug(flowLog: string[] | undefined, line: string): void {
+  if (!flowLog) return;
+  flowLog.push(`${new Date().toISOString()}  [GPT54·英文化] ${line}`);
+}
+
+/** Chat Completions 的 message.content：字串或 text part 陣列（與 OpenAI 回包一致）。 */
+function assistantMessageContentToPlainText(
+  content: string | Array<{ type?: string; text?: string }> | undefined,
+): string {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((p) => {
+      if (p && typeof p === "object" && "text" in p) return String((p as { text?: unknown }).text ?? "");
+      return "";
+    })
+    .join("");
+}
+
 /** 將異常打成可讀字串（debug：盡量完整，單條上限防極端爆滿日誌）。 */
 const MAX_DEBUG_ERR_CHARS = 65536;
 
@@ -573,11 +594,21 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
  * 三次仍無有效英文 → **僅**改走 Vertex **Gemini 3.1 Flash Live Preview**（us-central1 JSON），不再疊更多 GPT 輪次。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: string[]): Promise<string> {
-  const runGpt54 = async (): Promise<string> => {
+  const modelName = process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4";
+  const taskChars = String(prompt || "").length;
+
+  const runGpt54 = async (
+    attempt: number,
+  ): Promise<{ out: string; emptyReasonLine: string | null }> => {
+    const a = `第${attempt}/3轮`;
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=4096 · response_format=json_object · 上游 task 约 ${taskChars} 字`,
+    );
     const primaryResponse = await invokeLLM({
       provider: "openai",
       model: "gpt54",
-      modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
+      modelName,
       response_format: { type: "json_object" },
       max_tokens: 4096,
       messages: [
@@ -600,59 +631,126 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
       ],
     });
 
-    const raw = String(primaryResponse.choices[0]?.message?.content || "").trim();
+    const choicesLen = primaryResponse.choices?.length ?? 0;
+    const choice0 = primaryResponse.choices?.[0];
+    const finishReason = choice0?.finish_reason ?? null;
+    const usage = primaryResponse.usage;
+    const usageLine = usage
+      ? `prompt_tokens=${usage.prompt_tokens} · completion_tokens=${usage.completion_tokens} · total_tokens=${usage.total_tokens}`
+      : "无 usage";
+
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · 响应元数据 · choices.length=${choicesLen} · response.id=${String(primaryResponse.id || "").slice(0, 36)} · response.model=${primaryResponse.model ?? "n/a"} · finish_reason=${finishReason ?? "n/a"} · ${usageLine}`,
+    );
+
+    const contentRaw = choice0?.message?.content;
+    const contentKind = contentRaw == null ? "missing" : typeof contentRaw === "string" ? "string" : Array.isArray(contentRaw) ? `array(${contentRaw.length})` : typeof contentRaw;
+    const rawBody = assistantMessageContentToPlainText(
+      contentRaw as string | Array<{ type?: string; text?: string }> | undefined,
+    );
+    const raw = rawBody.trim();
+    const preview = raw
+      ? raw.replace(/\s+/g, " ").slice(0, 320)
+      : "";
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · message.content · kind=${contentKind} · trim 后长度=${raw.length}${preview ? ` · 头 320 字: ${preview}${raw.length > 320 ? "…" : ""}` : " · (无正文，故无法解析 prompt)"}`,
+    );
+
     let parsed: Record<string, unknown> | null = null;
-    try {
-      parsed = JSON.parse(extractJsonString(raw));
-    } catch {
-      parsed = null;
+    let extractedForParse = "";
+    if (raw) {
+      try {
+        extractedForParse = extractJsonString(raw);
+        appendGpt54TranslationDebug(
+          flowLog,
+          `${a} · extractJsonString · 长度=${extractedForParse.length} · 头 200 字: ${extractedForParse.replace(/\s+/g, " ").slice(0, 200)}${extractedForParse.length > 200 ? "…" : ""}`,
+        );
+        parsed = JSON.parse(extractedForParse) as Record<string, unknown>;
+        appendGpt54TranslationDebug(
+          flowLog,
+          `${a} · JSON.parse → 成功 · 顶层键=${parsed ? Object.keys(parsed).join(", ") : ""}`,
+        );
+      } catch (parseErr: unknown) {
+        appendGpt54TranslationDebug(flowLog, `${a} · JSON.parse → 失败 · ${formatErrForVertexDebug(parseErr)}`);
+        parsed = null;
+      }
+    } else {
+      appendGpt54TranslationDebug(flowLog, `${a} · 跳过 JSON：正文为空`);
     }
 
-    return String(parsed?.prompt || raw).trim();
+    const fromPrompt = String(parsed?.prompt ?? "").trim();
+    const out = String(parsed?.prompt || raw).trim();
+
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · 汇总 · prompt 字段 trim 长度=${fromPrompt.length} · String(parsed?.prompt||raw).trim 长度=${out.length} · 判定: ${out ? "本轮有非空输出（可进入 stripGeminiModelOutput）" : "本轮无有效输出 → 将计为无效并重试或走 fallback"}`,
+    );
+
+    if (!out) {
+      const fr = finishReason ?? "n/a";
+      let why: string;
+      if (choicesLen === 0) why = `choices 为空 · finish_reason=${fr}`;
+      else if (raw.length === 0)
+        why = `message.content 为空 · content.kind=${contentKind} · finish_reason=${fr}`;
+      else if (!parsed) why = `JSON 解析失败或非对象 · 正文长度=${raw.length} · finish_reason=${fr}`;
+      else if (fromPrompt.length === 0) why = `JSON 内 prompt 为空或仅空白 · finish_reason=${fr}`;
+      else why = `合并后仍为空 · finish_reason=${fr}`;
+      const oneLine = `[GPT54·崩溃原因] ${a} · ${why}`;
+      appendGpt54TranslationDebug(flowLog, oneLine);
+      return { out: "", emptyReasonLine: `${a} · ${why}` };
+    }
+
+    return { out, emptyReasonLine: null };
   };
 
   let lastFailure: unknown = null;
+  let lastGptCrashReason = "";
 
   for (let i = 0; i < 3; i++) {
     if (i === 1) {
-      appendVertexFlashDebug(flowLog, "[GPT54·翻译] 第 1 次無效，等待 3000ms 後第 2 次…");
+      appendGpt54TranslationDebug(flowLog, "[GPT54·翻译] 第 1 次无效，等待 3000ms 后第 2 次…");
       await new Promise((r) => setTimeout(r, 3000));
     } else if (i === 2) {
-      appendVertexFlashDebug(flowLog, "[GPT54·翻译] 第 2 次仍無效，等待 6000ms 後第 3 次…");
+      appendGpt54TranslationDebug(flowLog, "[GPT54·翻译] 第 2 次仍无效，等待 6000ms 后第 3 次…");
       await new Promise((r) => setTimeout(r, 6000));
     }
 
     try {
-      const output = await runGpt54();
-      if (output) {
+      const { out, emptyReasonLine } = await runGpt54(i + 1);
+      if (out) {
         if (i > 0) {
-          appendVertexFlashDebug(flowLog, `[GPT54·翻译] 第 ${i + 1} 次重试成功 · 約 ${output.length} 字符`);
+          appendGpt54TranslationDebug(flowLog, `[GPT54·翻译] 第 ${i + 1} 次重试成功 · 约 ${out.length} 字符`);
         }
-        return output;
+        return out;
       }
-      lastFailure = new Error("GPT54 返回空 prompt");
-      appendVertexFlashDebug(flowLog, `[GPT54·翻译] 第 ${i + 1}/3 次 · JSON/正文中無有效 prompt`);
+      lastFailure = new Error(emptyReasonLine || "GPT54 无输出");
+      if (emptyReasonLine) lastGptCrashReason = emptyReasonLine;
+      appendGpt54TranslationDebug(flowLog, `[GPT54·翻译] 第 ${i + 1}/3 次无效`);
     } catch (e: unknown) {
       lastFailure = e;
-      appendVertexFlashDebug(flowLog, `[GPT54·翻译] 第 ${i + 1}/3 次异常 · ${formatErrForVertexDebug(e)}`);
+      const em = e instanceof Error ? e.message : String(e);
+      lastGptCrashReason = `第${i + 1}/3轮 · 请求异常 · ${em}`;
+      appendGpt54TranslationDebug(flowLog, `[GPT54·崩溃原因] ${lastGptCrashReason}`);
+      appendGpt54TranslationDebug(flowLog, `[GPT54·翻译] 第 ${i + 1}/3 次异常 · ${formatErrForVertexDebug(e)}`);
     }
   }
 
-  appendVertexFlashDebug(
+  const summary =
+    lastGptCrashReason.trim() || formatErrForVertexDebug(lastFailure);
+  appendGpt54TranslationDebug(flowLog, `[GPT54·崩溃原因·汇总] 三轮均无可用英文 · ${summary}`);
+
+  appendGpt54TranslationDebug(
     flowLog,
-    `[GPT54·翻译] 已 3 次仍失敗或為空 → fallback Vertex Flash · 最後一次: ${formatErrForVertexDebug(lastFailure)}`,
+    `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
   );
   try {
     return await callVertexGeminiFlashTranslation(prompt, flowLog);
   } catch (vertexErr: unknown) {
     const vDetail = formatErrForVertexDebug(vertexErr);
     appendVertexFlashDebug(flowLog, `[Vertex·Flash·fallback] 失敗 · ${vDetail}`);
-    const gptSummary = formatErrForVertexDebug(lastFailure);
-    throw new Error(
-      `[Vertex Flash 英文化·GPT 已盡力] GPT 5.4 三輪無有效 prompt 或異常後已改走 Vertex（${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}）；Vertex 仍失敗。\n` +
-        `── GPT 5.4 最後狀態 ──\n${gptSummary}\n` +
-        `── Vertex API 詳情 ──\n${vDetail}`,
-    );
+    throw new Error(`[GPT54·崩溃原因·汇总] ${summary}\n[Vertex 英文化失败] ${vDetail}`);
   }
 }
 
@@ -678,15 +776,18 @@ export async function callGemini31ProForImagePrompt(
         : await callGemini3_1_Pro_AiStudio(translationTask, flowLog);
     const out = stripGeminiModelOutput(raw);
     if (!out) {
-      appendVertexFlashDebug(flowLog, `翻譯結果經 strip 後為空 · label=${label}`);
-      throw new Error("翻译服务返回空 prompt");
+      appendGpt54TranslationDebug(flowLog, `[GPT54·崩溃原因] stripGeminiModelOutput 后为空 · label=${label}`);
+      throw new Error("[GPT54·崩溃原因] strip 后为空");
     }
     return out;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     appendVertexFlashDebug(flowLog, `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`);
     const vertexFallback =
-      message.includes("[Vertex Flash 英文化·GPT 已盡力]") || message.includes("── Vertex API 詳情 ──");
+      message.includes("[Vertex Flash 英文化·GPT 已盡力]") ||
+      message.includes("── Vertex API 詳情 ──") ||
+      message.includes("[Vertex 英文化失败]") ||
+      message.includes("[GPT54·崩溃原因·汇总]");
     const looksLikeVertexApi =
       /publishers\/google\/models|NOT_FOUND|PERMISSION_DENIED|ResourceExhausted|GoogleGenerativeAIError|Vertex AI|vertexai/i.test(
         message,

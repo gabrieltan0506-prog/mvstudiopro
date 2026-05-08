@@ -532,8 +532,15 @@ function prunePlatformImageRateWindow(times: number[], now: number, windowMs: nu
 function linesFromClientMutationFailure(prefix: string, err: unknown): string[] {
   const lines = [`${prefix} · ${new Date().toISOString()}`];
   if (err instanceof Error) {
-    lines.push(`name: ${err.name}`, `message: ${err.message}`);
-    if (err.stack) lines.push(`stack:\n${err.stack}`);
+    lines.push(`name: ${err.name}`);
+    const msg = err.message ?? "";
+    if (msg.includes("\n")) {
+      lines.push("message（分行）:");
+      lines.push(...msg.split("\n"));
+    } else {
+      lines.push(`message: ${msg}`);
+    }
+    if (err.stack) lines.push("stack:", ...String(err.stack).split("\n"));
   } else {
     lines.push(`raw: ${String(err)}`);
   }
@@ -1298,15 +1305,17 @@ export default function PlatformPage() {
         variables.kind === "xiaohongshu_dual_note"
           ? CREDIT_COSTS.platformXhsDualNote
           : CREDIT_COSTS.platformStoryboardSheet;
-      toast.error(`双核引擎异常，已退回 ${refunded} 积分。请查阅 Debug 面板。`);
-
-      const errorLogEntry = `[${new Date().toLocaleTimeString()}] ❌ 2x4 合成失败 (Global 节点): \n${String((error as { message?: unknown })?.message ?? "")}`;
+      const head = `❌ 2x4 合成失败 · kind=${variables.kind} · sceneId=${variables.sceneId} · title=${String(variables.title ?? "").slice(0, 80)} · 已退回 ${refunded} 积分`;
+      const fullMsg = error instanceof Error ? error.message : String(error);
+      const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…（完整见下方 Debug）` : fullMsg;
+      toast.error(`${head}\n\n${preview}`, { duration: 14_000 });
+      console.error("[PlatformPage] generatePlatformCompositeSheet failed:", error);
 
       setPlatformImageGenFlowSnapshots((prev) => {
         return upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
           kind: "composite_2x4_failed" as const,
-          lines: [errorLogEntry],
+          lines: linesFromClientMutationFailure(head, error),
           meta: {
             localOpId: ctx?.localOpId,
             apiKind: variables.kind,
@@ -2930,7 +2939,31 @@ export default function PlatformPage() {
                                   : "2×4 合成"}
                             {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
                           </div>
-                          <pre className="mt-2 max-h-[min(52vh,440px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
+                          {snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed" ? (
+                            <div className="mt-2">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(snap.lines.join("\n"));
+                                    toast.success("已复制本段日志（含 TRPC 详情）");
+                                  } catch {
+                                    toast.error("复制失败，请手动选中下方文本");
+                                  }
+                                }}
+                                className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
+                              >
+                                复制本段报错全文
+                              </button>
+                            </div>
+                          ) : null}
+                          <pre
+                            className={`mt-2 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef] ${
+                              snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed"
+                                ? "max-h-[min(85vh,920px)]"
+                                : "max-h-[min(52vh,440px)]"
+                            }`}
+                          >
                             {snap.lines.join("\n")}
                           </pre>
                         </div>
