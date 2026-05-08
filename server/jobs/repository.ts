@@ -38,6 +38,40 @@ function normalizeJob(job: Job): NormalizedJob {
   };
 }
 
+/**
+ * 寬幅合成專用：**已 running** 的進度占位 job（不進 worker 佇列），供 GET /api/jobs 輪詢 `output.imageGenFlowLog`。
+ */
+export async function insertRunningCompositeSheetProgressJob(data: {
+  id: string;
+  userId: string;
+  sceneId: string;
+  kind: string;
+  titleSlice: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot create job");
+
+  await db.insert(jobs).values({
+    id: data.id,
+    userId: data.userId,
+    type: "platform",
+    provider: "vertex",
+    status: "running",
+    input: {
+      action: "platform_composite_sheet_progress",
+      params: { sceneId: data.sceneId, kind: data.kind },
+    } as InsertJob["input"],
+    output: {
+      imageGenFlowLog: [] as string[],
+      compositeSheetProgress: true,
+      sceneId: data.sceneId,
+      kind: data.kind,
+      titleSlice: data.titleSlice,
+    } as InsertJob["output"],
+    attempts: 1,
+  } as InsertJob);
+}
+
 export async function createJob(data: {
   id: string;
   userId: string;

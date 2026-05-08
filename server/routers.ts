@@ -76,6 +76,7 @@ import {
   getJobById,
   markJobSucceeded,
   markJobFailed,
+  insertRunningCompositeSheetProgressJob,
 } from "./jobs/repository";
 import { getTierProviderChain, resolveUserTier, resolveWatermark, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
@@ -3729,6 +3730,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           title: z.string().min(1).max(220),
           scriptContext: z.string().min(1).max(12000),
           kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
+          /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
+          progressJobId: z.string().min(8).max(64).optional(),
           executionDetails: z.string().max(4000).optional(),
           /** 與單幀一致：英文 prompt 翻譯引擎 */
           imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
@@ -3768,8 +3771,34 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
+        const progressJobIdRaw = String(input.progressJobId ?? "").trim();
+        const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
+
+        let detachLiveProgress: (() => void) | undefined;
+
         const { generatePlatformCompositeSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
         const imageGenFlowLog: string[] = [];
+
+        if (progressJobId) {
+          try {
+            await insertRunningCompositeSheetProgressJob({
+              id: progressJobId,
+              userId: String(userId),
+              sceneId: input.sceneId,
+              kind: input.kind,
+              titleSlice: input.title.slice(0, 80),
+            });
+          } catch (pe) {
+            console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "無法建立實時進度任務，請稍後再試",
+            });
+          }
+          const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
+          detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
+        }
+
         appendImageFlowLog(
           imageGenFlowLog,
           `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)}`,
@@ -3788,6 +3817,15 @@ ${JSON.stringify(platformEvidence, null, 2)}
             flowLog: imageGenFlowLog,
           });
         } catch (error: any) {
+          detachLiveProgress?.();
+          detachLiveProgress = undefined;
+          if (progressJobId) {
+            const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
+            await markJobFailed(
+              progressJobId,
+              tail ? `${error instanceof Error ? error.message : String(error)}\n── log ──\n${tail}` : String(error),
+            );
+          }
           const rawMessage = error instanceof Error ? error.message : String(error);
 
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
@@ -3820,6 +3858,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         if (!imageUrl) {
+          detachLiveProgress?.();
+          if (progressJobId) {
+            await markJobFailed(progressJobId, "imageUrl 为空");
+          }
           if (!isAdminUser) {
             await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
           }
@@ -3865,6 +3907,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+        detachLiveProgress?.();
+        if (progressJobId) {
+          await markJobSucceeded(progressJobId, {
+            imageGenFlowLog,
+            compositeSheetProgress: true,
+            done: true,
+          });
+        }
         return {
           success: true as const,
           imageUrl,
@@ -4016,7 +4066,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * Stage 2 文案與選題：僅入隊，由 jobs worker 執行 buildPlatformContent；前端輪詢 GET /api/jobs/:id。
+     * Stage 2 文案與選題：推薦前端走 getPlatformContent（長鏈直連 Fly）；本入口保留供腳本/舊客戶端入隊。
      */
     enqueuePlatformContentJob: publicProcedure
       .input(
