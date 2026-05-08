@@ -64,21 +64,32 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN =
   "You excel at distilling visual briefs into effective English for GPT Image models: prefer comma-separated tags and noun phrases when it helps; use longer phrasing whenever the brief needs more specificity—do not sacrifice fidelity to hit an arbitrary length.";
 
-/** 小红书 **多页** 图文笔记：仍以标签式英文为主，但**不施加字數硬槓**——版式（2×2）說清楚為先。 */
-export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×2 four-quadrant notes** (四宫格) into **one** English block for GPT Image. Prefer **comma-separated tags and short noun phrases**; you may add short phrases where needed for clarity—avoid rambling essays when tags suffice.
-One wide master MUST read as a strict **2×2** grid (TL, TR, BL, BR): **not** a lone hero cover, **not** 50/50 dual card, **not** one row of four strips.
-Where headlines matter, tag Simplified-Chinese **zones** in English (placement cues); otherwise English = lighting, palette, layout hardware only.`;
+/** 小红书 **多页** 图文笔记：**2×4 八格**；產品上≠視頻分鏡——**不要**用製片/DPP 式「情緒·燈光·景別·機位」欄位來組稿。 */
+export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×4 eight-panel GRAPHIC NOTES** (图文笔记拼圖 / viral note sheet) into **one** English block for GPT Image. Prefer **comma-separated tags and short noun phrases**; **do not** trim the English prompt too aggressively—when the translator goes longer, eight cells breathe and feel **less crowded**; prefer fidelity and clear per-cell beats over brevity.
 
-/** 小红书 2×2：版式约束写清楚；输出体例见 {@link MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}。 */
-export const XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER = `
-TAG:XHS_GRAPHIC_NOTE_MIN_4_PAGES
+LAYOUT: strict **2 rows × 4 columns**, **eight** equal cells, row-major (top L→R, then bottom L→R). **Not** a lone hero, **not** 2×2-only.
 
-【英文生图输出 / OUTPUT — Xiaohongshu **2×2 四宫格**（单张宽幅参考图）】
-1. Output **one** English string; preferred style: **comma-separated tags / 2–5 word phrases**. **No fixed character limit**—keep every layout beat needed so GPT-IMAGE-2 can paint a readable 2×2.
-2. LAYOUT (keep explicit): strict 2×2 grid, four equal quadrants TL/TR/BL/BR, straight cross gutters, wide landscape master (1536×1024 class), swipe order TL→TR→BL→BR, masterpiece, 8k.
-3. Avoid (layout): single-page cover only; 50/50 two-panel; one horizontal row of four strips; 2×3 / 3×2 unless script needs six pages; full-bleed hero + thin bands; left type strip + right single hero (magazine split).
-4. Per quadrant: distinct carousel beat (scene / prop / light); Simplified-Chinese headline zones as short English placement cues when relevant.
+CONTENT STYLE (**not** a film storyboard): each cell should feel like a **Little Red Book carousel card** — hook lines, bullet takeaways, before/after, step lists, mini diagrams, hashtags, persona tips.
+
+TYPOGRAPHY POLICY: **Simplified Chinese is the primary on-image explanation** (headlines, main bullets, body). **English is allowed as auxiliary**—small keywords,micro-subtags, short secondary hints, stylized accent lines—must stay **secondary** in visual weight vs 中文主解说; do not replace Chinese body copy with English.
+
+**FORBIDDEN for this task:** restructuring the user's copy into **video-production callout tables** (e.g. dedicated rows/columns titled 情绪 / 灯光 / 拍摄环境 / 景别 / 机位 / 分镜表头-style grids). Those belong **only** to the separate **cinematic storyboard** pipeline — do not import that idiom here. Overall palette/vibe may appear as **brief** English tags, not a DP checklist.`;
+
+/** 小红书 2×4 八格：版式约束；输出体例见 {@link MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}。 */
+export const XHS_GRAPHIC_NOTE_2X4_FOOTER = `
+TAG:XHS_GRAPHIC_NOTE_2X4_SHEET
+
+【英文生图输出 / OUTPUT — Xiaohongshu **2×4 八格筆記**（单张宽幅 landscape，與分鏡主表同維度）】
+1. Output **one** English string; preferred style: **comma-separated tags / 2–5 word phrases**. **No fixed character limit**—longer English is OK: richer staging makes **eight cells** feel **less cramped** and balances information across the grid.
+2. LAYOUT (keep explicit): wide ~16:9 landscape master (1536×1024 class), **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, masterpiece, 8k, premium Little Red Book / lifestyle-editorial note aesthetic.
+3. **TYPOGRAPHY:** **Primary** on-image copy = **legible 简体中文** in every cell (titles, main lists, hooks). **Optional English** as **secondary** accent only—keywords, micro-subtitles, short tags—smaller weight than Chinese; **do not** make English the main explanation body.
+4. **MANDATORY** in **each** cell: note-style density — bullets, icons, badges 01–08, pill tags, mini infographics as fits.**禁止**整页做成電影**分鏡網格註解**（如每格固定「镜头/景别/情绪/灯光/机位」製片表）；那是 **TAG:STORYBOARD_2X4_SHEET** 專用。
+5. Avoid (layout): single full-bleed hero for whole canvas; **four-quadrant 2×2 only** (wrong panel count); 50/50 two-panel only; one skinny horizontal row of eight strips; left type band + right single hero (magazine split); 2×3 / 3×2 unless script explicitly needs six cells.
+6. Per cell: distinct carousel beat; cohesive palette across the sheet.
 `.trim();
+
+/** @deprecated 已升級為八格 2×4；請使用 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} */
+export const XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER = XHS_GRAPHIC_NOTE_2X4_FOOTER;
 
 /** 封面 / 分镜条等：英文以 tags 为主，**不設字數上限**，以利一次生圖成功。 */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
@@ -96,9 +107,10 @@ TAG:STORYBOARD_2X4_SHEET
 
 【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape）】
 1. Output **one** English block；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious.**No character limit**—use more English if eight beats need it.
-2. LAYOUT: wide ~16:9 landscape master, **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard sheet, masterpiece, 8k.
-3. Per panel: distinct cinematic still / beat—nouns + lighting + palette; if your pipeline overlays labels, keep panels **wordless**; otherwise follow your product rules.
-4. Avoid layouts that hide the grid: single full-bleed hero, magazine text strip + one photo, 50/50 two-panel only, 2×2 only.
+2. LAYOUT: wide ~16:9 landscape master, **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard / contact-sheet, masterpiece, 8k, intricate cinematic film stills per cell upper area.
+3. **MANDATORY 简体中文字幕表（讯息分格）inside every panel**: reserve the **bottom ~25–30%** of **each** cell for a **compact Simplified Chinese caption table** (shot breakdown strip): **2–4 short labeled rows** (e.g. 镜头 / 景别, 情绪 / 氛围, 口播要点 or 画面说明)—styled like professional storyboard 「分格说明」or the reference phrase **"Chinese text tables below each image"**; thin grid lines or rules allowed; text must be **legible 简体中文 only** in these tables (no English in the table body). **Do not** leave panels wholly wordless.
+4. Upper ~70–75% of each cell: pure cinematic imagery only (no floating subtitles outside the reserved table band).
+5. Avoid layouts that break the grid: one full-bleed hero for the whole canvas, magazine left-text strip + one photo only, 50/50 two-panel only, or any **four-quadrant-only** note layout — this task is **eight** panels, not four.
 `.trim();
 
 /** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
@@ -119,11 +131,40 @@ export function stripGeminiModelOutput(raw: string): string {
   return t.replace(/^["']|["']$/g, "").trim();
 }
 
-/** 仅当任务**明确**要小红书多格笔记（含 2×2 四宫格）且未否定小红书时，才走紧急预案（避免 COVER 模板里 “not Xiaohongshu note” 误触发食谱卡）。 */
+const EMERGENCY_EN_STORYBOARD_2X4 =
+  "Wide landscape 16:9 cinematic 2x4 storyboard master, EXACTLY 8 equal panels 2 rows x 4 columns, rigid cross gutters, distinct dramatic film still in upper 70% of each cell, bottom 25-30% each cell compact legible Simplified Chinese caption table (讯息分格) 2-4 short rows, masterpiece, 8k";
+
+const EMERGENCY_EN_XHS_2X4 =
+  "Xiaohongshu premium graphic note, wide landscape 16:9, EXACTLY 8 equal panels 2 rows x 4 columns, rigid gutters, row-major carousel order, each cell Simplified Chinese primary copy headlines lists icons pill tags infographic beats optional small English auxiliary keywords only masterpiece 8k";
+
+/** 仅当任务**明确**要小红书多格笔记且未否定小红书时，才走紧急预案（避免 COVER 模板里 “not Xiaohongshu note” 误触发食谱卡）。版式與分鏡一致為 **2×4 八格**。 */
 export function buildEmergencyEnglishPrompt(task: string): string {
   const t = String(task || "");
   const lower = t.toLowerCase();
   const forbidsXhsNote = /\bnot\s+xiaohongshu\b/i.test(t) || /\bno\s+xiaohongshu\b/i.test(t);
+
+  /**
+   * 分镜主表 footer 含「禁止仅四格」等措辞时可能出现 **2×2** 字样；TAG 与 2×4 / eight panels 必须先于 2×2 探针判定。
+   */
+  if (/TAG:STORYBOARD_2X4_SHEET/i.test(t)) {
+    return EMERGENCY_EN_STORYBOARD_2X4;
+  }
+  if (/TAG:XHS_GRAPHIC_NOTE_2X4_SHEET/i.test(t)) {
+    return EMERGENCY_EN_XHS_2X4;
+  }
+  /** 勿用裸关键词 storyboard：图文单帧任务里会出现「not multi-panel storyboard」仅此就会误触 2×4。 */
+  const wantsLandscape2x4 =
+    lower.includes("2x4") ||
+    lower.includes("2×4") ||
+    /\b8[\s-]*panels?\b/i.test(lower) ||
+    /\bcinematic\s+2[\sx×]*4\b/i.test(lower) ||
+    /\b2\s+rows\s*[×x]\s*4\s+columns\b/i.test(lower);
+  if (wantsLandscape2x4) {
+    const xhsHint =
+      /little red book|xiaohongshu_dual_note|xiaohongshu|小红书|TAG:XHS_GRAPHIC_NOTE/i.test(t);
+    return xhsHint ? EMERGENCY_EN_XHS_2X4 : EMERGENCY_EN_STORYBOARD_2X4;
+  }
+
   const explicitDualNote =
     lower.includes("dual-note") ||
     lower.includes("dual_note") ||
@@ -133,16 +174,7 @@ export function buildEmergencyEnglishPrompt(task: string): string {
     /\b2\s*[×x]\s*2\b/i.test(t) ||
     /\b2x2\b/i.test(lower);
   if (explicitDualNote && !forbidsXhsNote) {
-    return "Xiaohongshu 2x2 four-grid graphic note, strict equal quadrants TL TR BL BR, clean cross gutters, premium editorial, four distinct carousel beats, legible Simplified Chinese headline zones, masterpiece, 8k, wide landscape master frame";
-  }
-  /** 勿用裸关键词 storyboard：图文单帧任务里会出现「not multi-panel storyboard」仅此就会误触 2×4。 */
-  const wantsLandscape2x4 =
-    lower.includes("2x4") ||
-    lower.includes("2×4") ||
-    /\b8[\s-]*panels?\b/i.test(lower) ||
-    /\bcinematic\s+2[\sx×]*4\b/i.test(lower);
-  if (wantsLandscape2x4) {
-    return "Wide landscape 16:9 cinematic storyboard master, EXACTLY 8 equal panels in 2 rows and 4 columns, rigid cross gutters, distinct dramatic film still per cell matching the script, wordless panels no typography, dark gold luxury palette, masterpiece, 8k";
+    return EMERGENCY_EN_XHS_2X4;
   }
   const wantsPlatformVerticalCover =
     /COVER DESIGN ONLY/i.test(t) ||
@@ -202,7 +234,9 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
     `
 You turn the Chinese script into **one English image prompt** for GPT Image. Prefer comma-separated tags / short fragments so the frame reads as **8 panels in 2 rows × 4 columns** with clear gutters—not a single full-bleed poster. Longer English is fine if it helps lock all eight beats.
 
-[cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette.
+**Non-negotiable:** every panel must include a **lower caption zone** with **legible Simplified Chinese** in a **small table / labeled rows** (讯息分格表、分镜说明), same idea as: "Chinese text tables below each image" in cinematic 2×4 reference boards—not optional, not English-only UI.
+
+[cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette (you may cite cold/warm contrast, wuxia, medical authority, etc. when the script fits).
 
 [Chinese Script]:
 ${slice}
@@ -212,7 +246,7 @@ ${slice}
   );
 }
 
-/** 小红书图文笔记：**2×2 四宫格**宽幅合成；人设见 {@link XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN} */
+/** 小红书图文笔记：**2×4 八格**宽幅合成（與分鏡主表同網格）；人设见 {@link XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN} */
 export function buildXhsNoteGeminiPrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
@@ -223,7 +257,7 @@ ${XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN}
 ${slice}
 `.trim() +
     "\n\n" +
-    XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER
+    XHS_GRAPHIC_NOTE_2X4_FOOTER
   );
 }
 
@@ -273,7 +307,7 @@ MANDATORY RULES:
 `.trim();
 }
 
-/** 平台選題單幀：`graphic`＝单张竖版**封面**（非小红书 2×2 四宫格笔记）；`video`＝竖版 9:16 多分镜**条**（非横版 2×4，2×4 见 {@link buildVideoStoryboardGeminiPrompt}）。 */
+/** 平台選題單幀：`graphic`＝单张竖版**封面**（非小红书 2×4 八格筆記）；`video`＝竖版 9:16 多分镜**条**（非横版 2×4 主表；宽幅 2×4 见 {@link buildVideoStoryboardGeminiPrompt} / {@link buildXhsNoteGeminiPrompt}）。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
   context: string;
