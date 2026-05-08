@@ -62,53 +62,53 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 
 /** GPT 5.4 翻译大脑：用户定稿的莎士比亚式英文身份（system 首句，与中文规则并用） */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN =
-  "You excel at distilling visual briefs into compact English for GPT Image models: prefer comma-separated tags and noun phrases—never flowing prose or long sentences unless the brief is extremely sparse.";
+  "You excel at distilling visual briefs into effective English for GPT Image models: prefer comma-separated tags and noun phrases when it helps; use longer phrasing whenever the brief needs more specificity—do not sacrifice fidelity to hit an arbitrary length.";
 
-/** 小红书 **多页** 图文笔记：定稿人设——2×2 四宫格仍以 **标签式英文** 写给 GPT-IMAGE-2（禁完整句、禁长叙述）。 */
-export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×2 four-quadrant notes** (四宫格) into **one** English line for GPT Image: **comma-separated tags and short noun phrases only**—no full sentences, no essay prose.
+/** 小红书 **多页** 图文笔记：仍以标签式英文为主，但**不施加字數硬槓**——版式（2×2）說清楚為先。 */
+export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×2 four-quadrant notes** (四宫格) into **one** English block for GPT Image. Prefer **comma-separated tags and short noun phrases**; you may add short phrases where needed for clarity—avoid rambling essays when tags suffice.
 One wide master MUST read as a strict **2×2** grid (TL, TR, BL, BR): **not** a lone hero cover, **not** 50/50 dual card, **not** one row of four strips.
 Where headlines matter, tag Simplified-Chinese **zones** in English (placement cues); otherwise English = lighting, palette, layout hardware only.`;
 
-/** 小红书 2×2：版式约束仍要硬，但 **输出体例** 与 {@link MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT} 一致（标签串、控长）。 */
+/** 小红书 2×2：版式约束写清楚；输出体例见 {@link MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}。 */
 export const XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER = `
 TAG:XHS_GRAPHIC_NOTE_MIN_4_PAGES
 
 【英文生图输出 / OUTPUT — Xiaohongshu **2×2 四宫格**（单张宽幅参考图）】
-1. Output **one** English string: **comma-separated tags / 2–5 word phrases** only—no full sentences, no flowing paragraphs. Aim **~200–550 English characters** (enough to lock the grid + four beats; stay lean).
-2. HARD LAYOUT (must appear, tag form): strict 2×2 grid, four equal quadrants TL/TR/BL/BR, straight cross gutters, wide landscape master (1536×1024 class), swipe order TL→TR→BL→BR, masterpiece, 8k.
-3. HARD FORBIDDEN: single-page cover only; 50/50 two-panel; one horizontal row of four strips; 2×3 / 3×2 unless script explicitly needs six pages; full-bleed hero + thin bands; left type strip + right single hero (magazine split).
-4. Per quadrant: tag distinct carousel beat (scene / prop / light)—still tag style; Simplified-Chinese headline zones as short English placement cues (e.g. "ZH headline TL", "ZH kicker BR").
+1. Output **one** English string; preferred style: **comma-separated tags / 2–5 word phrases**. **No fixed character limit**—keep every layout beat needed so GPT-IMAGE-2 can paint a readable 2×2.
+2. LAYOUT (keep explicit): strict 2×2 grid, four equal quadrants TL/TR/BL/BR, straight cross gutters, wide landscape master (1536×1024 class), swipe order TL→TR→BL→BR, masterpiece, 8k.
+3. Avoid (layout): single-page cover only; 50/50 two-panel; one horizontal row of four strips; 2×3 / 3×2 unless script needs six pages; full-bleed hero + thin bands; left type strip + right single hero (magazine split).
+4. Per quadrant: distinct carousel beat (scene / prop / light); Simplified-Chinese headline zones as short English placement cues when relevant.
 `.trim();
 
-/** 封面 / 分镜条等：**短**英文标签串（GPT-IMAGE-2） */
+/** 封面 / 分镜条等：英文以 tags 为主，**不設字數上限**，以利一次生圖成功。 */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
-【最高视觉指令约束 / MAXIMUM PROMPT LIMIT】（GPT-IMAGE-2：宜短、宜标签）
-1. 只输出 **英文** comma-separated tags 或极短短语块；**禁止**完整句子与段落。
-2. 建议总长 **约 120–320 个英文字符**（略复杂的竖版分镜条可到 ~450；仍避免散文）。
-3. 必须保留：情绪、灯光、场景、主体/服装、标题语言（简中等）、版式硬词。
-4. 标题色 vs 背景对比用短 tag 交代；须含 masterpiece、8k。
+【最高视觉指令约束 / OUTPUT】（GPT-IMAGE-2）
+1. 输出 **一段完整英文** 生图指令；**优先** comma-separated tags / 短語，必要時可用稍長句式把版式說清。**不限制字符數**，以模型能穩定執行為準。
+2. 保留：情绪、灯光、场景、主体/服装、标题语言（简中等）、版式提示。
+3. 标题与背景对比要说清；须含 masterpiece、8k。
 `.trim();
 
 /**
- * 橫版 **2×4 分鏡主表**：必须让模型「看得见」八格，但 **仍用标签串** 表达（禁完整句长叙述）；控长 ~320–650 英文字符。
+ * 橫版 **2×4 分鏡主表**：八格版式要说清；**不限制英文長度**，以一次出可用網格為優先。
  */
 export const STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER = `
 TAG:STORYBOARD_2X4_SHEET
 
 【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape）】
-1. Output **one** English string: **comma-separated tags / 3–6 word fragments** only—**no** polished sentences, **no** storytelling paragraphs. Target **~320–650 English characters** (lock grid + eight beats without prose).
-2. HARD LAYOUT TAGS: wide ~16:9 landscape master, **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard sheet, not single hero still, masterpiece, 8k.
-3. Per panel: tag distinct cinematic still / beat from the script—nouns + lighting + palette; **no readable text, numbers, tables, watermarks inside cells** (DOM overlay handles labels).
-4. FORBIDDEN: full-bleed one scene; left text band + right photo; 50/50 only; 2×2 only; mood-only line with no visible 2×4 grid.
+1. Output **one** English block；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious.**No character limit**—use more English if eight beats need it.
+2. LAYOUT: wide ~16:9 landscape master, **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard sheet, masterpiece, 8k.
+3. Per panel: distinct cinematic still / beat—nouns + lighting + palette; if your pipeline overlays labels, keep panels **wordless**; otherwise follow your product rules.
+4. Avoid layouts that hide the grid: single full-bleed hero, magazine text strip + one photo, 50/50 two-panel only, 2×2 only.
 `.trim();
 
-/** 平台選題 **圖文單幀封面**：9:16 单帧；**标签式**英文 + 禁多格；控长。 */
+/** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
 const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【英文生图输出 / OUTPUT — graphic single-frame only】
-1. Output **one** English string: **comma-separated tags / short phrases** only; **no** full sentences. Target **~150–400 English characters**; include masterpiece, 8k.
-2. HARD LAYOUT TAGS: 9:16 portrait mandatory, single full-bleed hero, one dominant subject, vertical cover—not 16:9 landscape, not 1:1 outer frame, not letterboxed wide mockup.
-3. FORBIDDEN: storyboard grid, 2×4 / eight panels, numbered strips, film-strip gutters, multi-panel, split-frame beats.
-4. SUBJECT LOCK: tags must track Hook + Context (e.g. medical IP, classical-art props, wellness)—no unrelated generic redemption / office rain clichés.
+1. Output **one** English block for GPT-IMAGE-2.**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
+2. LAYOUT: **9:16 portrait**, single full-bleed hero, one dominant subject—avoid looking like 16:9 landscape or a multi-panel sheet unless the task explicitly asks.
+3. Prefer a **single** strong cover beat; avoid storyboard grids, 2×4 strips, numbered panels when this task is one cover image.
+4. SUBJECT: align with Hook + Context; skip unrelated generic stock tropes.
+5. Include masterpiece, 8k; state Simplified-Chinese headline / on-image copy needs when the brief requires 简中.
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -200,7 +200,7 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You distill Chinese scripts into **one compact English tag string** for GPT Image (comma-separated tags / short fragments—**no** full sentences). The painted frame MUST still read as **8 visible panels in 2 rows × 4 columns** with rigid gutters—not a single poster.
+You turn the Chinese script into **one English image prompt** for GPT Image. Prefer comma-separated tags / short fragments so the frame reads as **8 panels in 2 rows × 4 columns** with clear gutters—not a single full-bleed poster. Longer English is fine if it helps lock all eight beats.
 
 [cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette.
 
@@ -379,10 +379,9 @@ export async function callVertexGeminiFlashTranslation(translationTask: string):
   const systemInstruction = [
     GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
     "你是頂級中英雙語編導，也是頂級視覺提示詞導演。",
-    "把上游任務壓成 **英文視覺 tags**（comma-separated tags / 短短語），供 GPT-IMAGE-2 直接使用；避免完整長段落與散文。",
+    "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-    "常規約 120–400 英文字符；若任務含 **2×4 / 2×2 網格** 可至約 650，仍須維持標籤串體例，不得因壓縮丟失網格硬詞。",
-    "必須包含 masterpiece、8k；強調情緒、燈光、場景、主體與標題衝擊力；單張 9:16 封面須鎖定豎版，不得寫成多格分鏡。",
+    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面時避免寫成多格分鏡，除非任務明確要求。",
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
   ].join("\n");
 
@@ -459,13 +458,12 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string): Promise<string
         role: "system",
         content: [
           GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
-          "你是一位莎士比亚式的双语舞台导演：精通诗性与节奏，把庞杂中文当作台词来打磨——删繁就简，只留能「被镜头看见」的东西。",
-          "把上游任务落成：**一条** **英文标签串**（comma-separated tags / 短短语），避免完整句和长段落；版式硬词（2×2、2×4 网格、9:16 单帧等）必须保留，不可因压缩而丢失网格或禁令。",
-          "若任务要求**平台選題單幀封面**：英文必须锁定 **9:16 竖版**（taller than wide），不得写成 16:9 横版或 1:1 外层画幅。",
-          "篇幅：**宁短勿冗**；含 masterpiece、8k、主体与版式前提下，多数任务约 150–650 英文字符即可；需要八格分镜表时可靠近上限，仍为标签串而非散文。单张竖版封面须单一主视觉，不得写多格分镜。",
-          "请返回合法 JSON：{\"prompt\":\"...\"}；prompt 里只要英文生图指令，不要解释、不要 markdown。",
-          "保留：情绪、灯光、场景、主体与服饰、标题语言（简中大字等）；须带 masterpiece 与 8k；标题色与背景色对比用短 tag 写清。",
-          "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表；其余不必叠床架屋地列禁令。",
+          "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
+          "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
+          "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求。",
+          "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
+          "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
+          "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表。",
         ].join("\n"),
       },
       {
