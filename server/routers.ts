@@ -42,7 +42,10 @@ import { collectTrendPlatforms } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
-import { resolveVertexFlashTranslationModelName } from "./services/geminiPlatformCompositeTranslation.js";
+import {
+  resolveVertexFlashTranslationLocation,
+  resolveVertexFlashTranslationModelName,
+} from "./services/geminiPlatformCompositeTranslation.js";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -3503,9 +3506,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const batchCoverPersona = String(input.coverPersonaContext || "").trim();
         const imagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
+        const vertexLoc = resolveVertexFlashTranslationLocation();
+        const vertexModel = resolveVertexFlashTranslationModelName();
         const translatorLogLabel =
           imagePromptTranslator === "vertex_gemini_31_pro_preview"
-            ? `Vertex @google/genai · ${resolveVertexFlashTranslationModelName()} · us-central1（JSON）`
+            ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
             : "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";

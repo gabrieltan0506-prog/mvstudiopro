@@ -580,6 +580,41 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   return [`${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}（詳見下方服務端流水）`];
 }
 
+/** 與服務端 generatePlatformCompositeSheetImage / translatePlatformCompositeToEnglishPrompt 步驟對齊（pending 時先顯示，成功後由 imageGenFlowLog 覆蓋為完整實測行）。 */
+function buildCompositeImageGenPendingLines(input: {
+  kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
+  sceneId: string;
+  title: string;
+  imagePromptTranslator?: PlatformImagePromptTranslator;
+}): string[] {
+  const ts = new Date().toISOString();
+  const tr = input.imagePromptTranslator ?? "gpt54";
+  const trLine =
+    tr === "vertex_gemini_31_pro_preview"
+      ? "探索：直走 Vertex Flash（application/json），不經 GPT 三輪"
+      : "默認 GPT 5.4：英文化最多 3 輪（間隔 3s/6s），無效後 Vertex Flash 兜底";
+  const kindLabel =
+    input.kind === "xiaohongshu_dual_note"
+      ? "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"
+      : input.kind === "storyboard_sheet_landscape"
+        ? "视频向 2×4 分镜主表 · 横版（buildVideoStoryboardGeminiPrompt）"
+        : "视频向 2×4 分镜主表 · portrait API kind（buildVideoStoryboardGeminiPrompt）";
+  return [
+    `${ts}  [客户端] 宽幅合成已发起 · ${kindLabel}`,
+    `${ts}  [客户端] sceneId=${input.sceneId} · title=${input.title.slice(0, 72)}`,
+    `${ts}  [客户端] 翻译引擎：${trLine}`,
+    `${ts}  [预估步骤] ① extractChineseVisualBrief — 中文视觉骨架（见 [Vertex·Flash]·骨架·GPT54）`,
+    `${ts}  [预估步骤] ② ${input.kind === "xiaohongshu_dual_note" ? "buildXhsNoteGeminiPrompt" : "buildVideoStoryboardGeminiPrompt"} — 组装编导任务`,
+    `${ts}  [预估步骤] ③ translatePlatformCompositeToEnglishPrompt — 英文化（见 [GPT54·英文化] / [Vertex·Flash]）`,
+    `${ts}  [预估步骤] ④ condenseImagePromptIfNeeded — 超长提炼（见 imageGenFlowLog）`,
+    `${ts}  [预估步骤] ⑤ 拼接像素锁（电影 2×4 / 八格笔记硬约束）`,
+    `${ts}  [预估步骤] ⑥ GPT-IMAGE-2 宽幅 — 多尺寸序列（见 [GPT-IMAGE-2]）`,
+    `${ts}  [预估步骤] ⑦ 无图则 Nano Banana 2 兜底`,
+    `${ts}  [说明] 整条链路失败会整链重试，默认至多 5 次（首次 + 重试 4 次）；见 imageGenFlowLog 中 [2×4·整链]。`,
+    `${ts}  [说明] 请求完成后下方将替换为服务端完整 imageGenFlowLog（含每步时间戳）；若仍只有本段，请检查 Network 响应是否含 imageGenFlowLog。`,
+  ];
+}
+
 /** Stage 2 等長任務：用 shimmer / 光斑 / 節拍點轉移注意力（不向用戶展示技術細節） */
 function PlatformGeneratingCharm(props: {
   className?: string;
@@ -981,7 +1016,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. ${variables.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex gemini-3.1-live-preview-04-2026 · us-central1" : "GPT 5.4"} 翻译英文 prompt → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. ${variables.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? `Vertex Flash（服务端默认模型/区域）` : "GPT 5.4（最多 3 轮再 Vertex）"} 翻译英文 prompt → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
           ],
           meta: {
             localOpId,
@@ -1256,10 +1291,12 @@ export default function PlatformPage() {
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
           kind: "composite_2x4",
-          lines:
-            input.kind === "xiaohongshu_dual_note"
-              ? buildPendingImageGenLines("xiaohongshu", input.sceneId)
-              : buildPendingImageGenLines("storyboard", input.sceneId),
+          lines: buildCompositeImageGenPendingLines({
+            kind: input.kind,
+            sceneId: input.sceneId,
+            title: input.title,
+            imagePromptTranslator: input.imagePromptTranslator,
+          }),
           meta: {
             localOpId,
             apiKind: input.kind,
@@ -1272,6 +1309,32 @@ export default function PlatformPage() {
       return { localOpId };
     },
     onSuccess: (res, variables, ctx) => {
+      const ts = new Date().toISOString();
+      const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
+        ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+        : [];
+      const headerLines = [
+        `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
+        `${ts}  [客户端] 以下为服务端 imageGenFlowLog 全量（${serverLines.length} 行）· ${serverLines.length === 0 ? "⚠ 响应未带日志字段，请查 TRPC 返回体" : "── 开始 ──"}`,
+      ];
+      const mergedLines = serverLines.length > 0 ? [...headerLines, ...serverLines] : headerLines;
+
+      setPlatformImageGenFlowSnapshots((prev) =>
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: ts,
+          kind: "composite_2x4" as const,
+          lines: mergedLines,
+          meta: {
+            localOpId: ctx?.localOpId,
+            apiKind: variables.kind,
+            sceneId: variables.sceneId,
+            title: variables.title?.slice(0, 80),
+            pending: false,
+            serverLogLines: serverLines.length,
+          },
+        }),
+      );
+
       if (!res.imageUrl) return;
       if (variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape") {
         setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
@@ -1283,22 +1346,6 @@ export default function PlatformPage() {
           ? "分镜图文参考"
           : "小红书 2×4 八格图文参考";
       toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
-      const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
-      if (Array.isArray(lines) && lines.length > 0) {
-        setPlatformImageGenFlowSnapshots((prev) =>
-          upsertPlatformImageFlowSnapshot(prev, {
-            at: new Date().toISOString(),
-            kind: "composite_2x4" as const,
-            lines,
-            meta: {
-              localOpId: ctx?.localOpId,
-              apiKind: variables.kind,
-              sceneId: variables.sceneId,
-              title: variables.title?.slice(0, 80),
-            },
-          }),
-        );
-      }
     },
     onError: (error, variables, ctx) => {
       const refunded =
@@ -2829,10 +2876,9 @@ export default function PlatformPage() {
                       单帧英文化 · 翻译模型（对照测试）
                     </div>
                     <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
-                      作用于并入队的封面单帧任务（重新生成、一键逐张、静默补发等）。默认 GPT 5.4；选探索时走{" "}
-                      <code className="text-[#c4b5fd]">@google/genai</code> + Vertex AI，模型{" "}
-                      <code className="text-[#c4b5fd]">gemini-3.1-live-preview-04-2026</code>，区域<strong className="text-gray-300"> 固定 </strong>
-                      <code className="text-[#c4b5fd]">us-central1</code>（可用{" "}
+                      作用于并入队的封面单帧任务（重新生成、一键逐张、静默补发等）。默认 GPT 5.4（英文化最多 3 轮，与前述 2×4 相同逻辑）；选探索时走{" "}
+                      <code className="text-[#c4b5fd]">@google/genai</code> + Vertex AI，模型与区域以服务端默认为准（可用{" "}
+                      <code className="text-[#c4b5fd]">VERTEX_GEMINI_FLASH_TRANSLATION_MODEL</code> /{" "}
                       <code className="text-[#c4b5fd]">VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION</code> 覆寫），
                       <code className="text-[#c4b5fd]"> responseMimeType: application/json</code>。选项保存在本机 localStorage。
                     </p>
@@ -2957,13 +3003,7 @@ export default function PlatformPage() {
                               </button>
                             </div>
                           ) : null}
-                          <pre
-                            className={`mt-2 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef] ${
-                              snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed"
-                                ? "max-h-[min(85vh,920px)]"
-                                : "max-h-[min(52vh,440px)]"
-                            }`}
-                          >
+                          <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
                             {snap.lines.join("\n")}
                           </pre>
                         </div>
@@ -3190,9 +3230,7 @@ export default function PlatformPage() {
                           生图 · 英文化翻译引擎
                         </div>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                          作用于封面单帧、一键逐张、2×4 / 小红书合成等。默认 GPT 5.4；探索项走 Vertex{" "}
-                          <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">gemini-3.1-live-preview-04-2026</code> ·{" "}
-                          <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">us-central1</code>。选项保存在本机。
+                          作用于封面单帧、一键逐张、2×4 / 小红书合成等。默认 GPT 5.4（英文化最多 3 轮，失败再 Vertex）；探索项走 Vertex（模型/区域见服务端默认，可用环境变量覆寫）。
                         </p>
                         <div className="mt-3 flex rounded-xl bg-black/45 p-1 ring-1 ring-white/10">
                           <button

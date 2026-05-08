@@ -92,16 +92,16 @@ function resolveVertexProjectIdForGenAi(): string {
 }
 
 /**
- * 平台英文化 · Flash Live Preview：**強制 us-central1**（preview 模型勿用 global；見 product 說明）。
- * 可用 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫，預設 `us-central1`。
+ * 平台英文化 · Flash Live Preview：**預設 `global`**（與 Live 預覽路由一致）。
+ * 可 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫（例如仍設 `us-central1` 做對照）。
  */
 export function resolveVertexFlashTranslationLocation(): string {
-  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "us-central1").trim();
-  return loc || "us-central1";
+  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "global").trim();
+  return loc || "global";
 }
 
 /** Vertex 英文化預設模型（可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫） */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-live-preview-04-2026";
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview";
 
 export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
@@ -131,7 +131,7 @@ function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: st
   return undefined;
 }
 
-/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_*` 为 Vertex Flash Live · us-central1）。 */
+/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_*` 为 Vertex Flash Live · global）。 */
 export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
 
 /**
@@ -439,7 +439,7 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 
 /**
  * 探索 / 極速：Vertex AI **Gemini 3.1 Flash Live Preview** + `responseMimeType: application/json`。
- * **區域鎖定 us-central1**（見 {@link resolveVertexFlashTranslationLocation}），不可用 global，以免 preview 路由到無配額節點。
+ * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **global**；可用環境變數改）。
  * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。三次仍失敗則拋錯。
  */
@@ -578,7 +578,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
 }
 
 /**
- * 舊名保留：平台「探索」英文化現已改走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · us-central1），不再使用 global 3.1 Pro。
+ * 舊名保留：平台「探索」英文化走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · 預設 global）。
  */
 export async function callVertexGemini31ProForImagePrompt(translationTask: string, flowLog?: string[]): Promise<string> {
   return callVertexGeminiFlashTranslation(translationTask, flowLog);
@@ -591,10 +591,14 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
 
 /**
  * 平台生图英文化：**GPT 5.4 最多 3 次**（第 1 次立即；若異常或空 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次）。
- * 三次仍無有效英文 → **僅**改走 Vertex **Gemini 3.1 Flash Live Preview**（us-central1 JSON），不再疊更多 GPT 輪次。
+ * 三次仍無有效英文 → **僅**改走 Vertex **Gemini 3.1 Flash Live Preview**（預設 global · JSON），不再疊更多 GPT 輪次。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: string[]): Promise<string> {
   const modelName = process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4";
+  const gpt54MaxOut = Math.min(
+    16_384,
+    Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 8192),
+  );
   const taskChars = String(prompt || "").length;
 
   const runGpt54 = async (
@@ -603,14 +607,14 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
     const a = `第${attempt}/3轮`;
     appendGpt54TranslationDebug(
       flowLog,
-      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=4096 · response_format=json_object · 上游 task 约 ${taskChars} 字`,
+      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=${gpt54MaxOut} · response_format=json_object · 上游 task 约 ${taskChars} 字`,
     );
     const primaryResponse = await invokeLLM({
       provider: "openai",
       model: "gpt54",
       modelName,
       response_format: { type: "json_object" },
-      max_tokens: 4096,
+      max_tokens: gpt54MaxOut,
       messages: [
         {
           role: "system",
@@ -749,13 +753,18 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
     return await callVertexGeminiFlashTranslation(prompt, flowLog);
   } catch (vertexErr: unknown) {
     const vDetail = formatErrForVertexDebug(vertexErr);
+    const vm = resolveVertexFlashTranslationModelName();
+    const vl = resolveVertexFlashTranslationLocation();
     appendVertexFlashDebug(flowLog, `[Vertex·Flash·fallback] 失敗 · ${vDetail}`);
-    throw new Error(`[GPT54·崩溃原因·汇总] ${summary}\n[Vertex 英文化失败] ${vDetail}`);
+    throw new Error(
+      `【GPT54 已三輪無效】${summary}\n` +
+        `【Vertex 兜底失敗 · ${vm} · ${vl}】\n${vDetail}`,
+    );
   }
 }
 
 /**
- * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時走 **Flash Live Preview（us-central1）**。
+ * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時走 **Flash Live Preview（預設 global）**。
  * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(
@@ -765,9 +774,10 @@ export async function callGemini31ProForImagePrompt(
   const translator: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
   const flowLog = options?.flowLog;
   const vertexModel = resolveVertexFlashTranslationModelName();
+  const vertexLoc = resolveVertexFlashTranslationLocation();
   const label =
     translator === "vertex_gemini_31_pro_preview"
-      ? `Vertex @google/genai · ${vertexModel} · us-central1（JSON）`
+      ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
       : "GPT 5.4（OpenAI）";
   try {
     const raw =
@@ -783,6 +793,10 @@ export async function callGemini31ProForImagePrompt(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     appendVertexFlashDebug(flowLog, `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`);
+    // 複合錯誤（GPT 三輪無效 + Vertex 404 等）已在 callGemini3_1_Pro_AiStudio 排好順序，勿再冠以「Vertex 翻译崩溃」誤導前綴
+    if (message.startsWith("【GPT54 已三輪無效】")) {
+      throw new Error(`[平台英文化链失败]\n${message}`);
+    }
     const vertexFallback =
       message.includes("[Vertex Flash 英文化·GPT 已盡力]") ||
       message.includes("── Vertex API 詳情 ──") ||
@@ -794,7 +808,7 @@ export async function callGemini31ProForImagePrompt(
       );
     const displayLabel =
       vertexFallback || (looksLikeVertexApi && translator === "gpt54")
-        ? `Vertex（${vertexModel} · ${resolveVertexFlashTranslationLocation()}）`
+        ? `Vertex（${vertexModel} · ${vertexLoc}）`
         : label;
     throw new Error(`[${displayLabel} 翻译崩溃]: ${message}`);
   }
@@ -805,7 +819,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   scriptContext: string;
   /** A/B：預設 GPT 5.4；與 {@link engine} 併用時以 engine 為準 */
   translator?: PlatformImagePromptTranslator;
-  /** A/B：`gemini31flash` 強制走 Flash Live（us-central1）；`gpt54` 強制 GPT 5.4 */
+  /** A/B：`gemini31flash` 強制走 Flash Live（預設 global）；`gpt54` 強制 GPT 5.4 */
   engine?: "gpt54" | "gemini31flash";
   /** 寬幅合成 / debug：寫入 imageGenFlowLog */
   flowLog?: string[];

@@ -8,9 +8,12 @@ import {
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
-/** Fly 持久卷部署：設為 `fly` 時平台生圖主路徑與 Vertex 鏡像改寫入 `/data`，經 `/api/jobs?op=flyVolumeMedia` 公開讀；未設則維持 GCS 簽名 URL。 */
+/**
+ * 平台選題生圖（封面單幀、2×4、Vertex 鏡像等）：**預設 GCS 簽名 URL**。
+ * 僅在明確設 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=1` 時才寫 Fly 持久卷 + `flyVolumeMedia`（與 `PLATFORM_TOPIC_IMAGE_STORAGE` 無關）。
+ */
 function isFlyPlatformTopicImageStorage(): boolean {
-  return String(process.env.PLATFORM_TOPIC_IMAGE_STORAGE || "").trim().toLowerCase() === "fly";
+  return String(process.env.PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME || "").trim() === "1";
 }
 
 /** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入）。jobs120：嚴格陣列校驗，避免非陣列誤傳導致運行時寫入失敗。 */
@@ -216,7 +219,7 @@ const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
 
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
   300_000,
-  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 180_000),
+  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 300_000),
 );
 
 /**
@@ -858,7 +861,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
-  /** 與單幀一致：預設 gpt54；探索為 Vertex Flash Live us-central1 */
+  /** 與單幀一致：預設 gpt54；探索為 Vertex Flash Live（預設 global） */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
@@ -874,6 +877,10 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   appendImageFlowLog(
     L,
+    `[2×4·英文化机制] translator=gpt54 时：**callGemini3_1_Pro_AiStudio 内 GPT 5.4 最多 3 轮**（间隔 3s/6s），仍无效再 **Vertex Flash**；探索模式直走 Vertex。分镜主表与小红书八格图文共用此逻辑。`,
+  );
+  appendImageFlowLog(
+    L,
     `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
   const tr = options.imagePromptTranslator ?? "gpt54";
@@ -882,105 +889,143 @@ export async function generatePlatformCompositeSheetImage(options: {
     L,
     `[2×4·流程总览] 分镜图/八格全链路（translator=${tr}；Vertex 英文化=${vertexRef}）：① extractChineseVisualBrief → ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·翻译]/[Vertex·Flash] 行）→ ④ condenseImagePromptIfNeeded（超长；与 translator 一致）→ ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
   );
+  const compositeMaxAttempts = Math.min(
+    8,
+    Math.max(1, Number(process.env.PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS) || 5),
+  );
   appendImageFlowLog(
     L,
-    `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；默认 GPT 5.4 · 失败或空则 Vertex ${resolveVertexFlashTranslationModelName()}）· ${
-      tr === "vertex_gemini_31_pro_preview" ? "直走 Vertex" : "先试 GPT 5.4"
-    } …`,
+    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 GPT 5.4 三轮（见上）与生图主/兜底链。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
-  const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
+  let lastFailure: unknown = null;
 
-  const englishCore = await translatePlatformCompositeToEnglishPrompt({
-    kind: k,
-    scriptContext: options.scriptContext,
-    translator: options.imagePromptTranslator,
-    flowLog: L,
-  });
-
-  if (!String(englishCore || "").trim()) {
-    appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空（不注入模版英文）");
-    throw new Error("宽幅合成翻译结果为空");
-  }
-
-  appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，进入提炼/Prompt 整形");
-  appendImageFlowLog(
-    L,
-    `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
-  );
-
-  appendImageFlowLog(
-    L,
-    `[2×4·步骤1b] Prompt 智能提炼（仅当超 PROMPT_CONDENSE 阈值触发；translator=${tr}）…`,
-  );
-  const condensedCore = await condenseImagePromptIfNeeded(englishCore, {
-    translator: options.imagePromptTranslator,
-    flowLog: L,
-  });
-  appendImageFlowLog(
-    L,
-    `[2×4·步骤1b·完成] chars ${englishCore.length} → ${condensedCore.length}${condensedCore.length < englishCore.length ? "（已缩短）" : "（未缩短或仅硬裁剪）"}`,
-  );
-  const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
-  const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}`;
-
-  appendImageFlowLog(
-    L,
-    `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 送生图总长约 ${promptForImage.length} 字符`,
-  );
-
-  appendImageFlowLog(
-    L,
-    `[2×4·步骤2] GPT-IMAGE-2 宽幅横版 · gcsSubdir=${subdir} · 尺寸序列（OpenAI gpt-image 白名单）: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
-  );
-  const primary = await postGptImage2AndUpload(promptForImage, subdir, {
-    sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
-    flowLog: L,
-  });
-  if (primary) {
-    appendImageFlowLog(L, "[2×4·步骤2] GPT-IMAGE-2 成功");
-    return primary;
-  }
-
-  appendImageFlowLog(
-    L,
-    "[2×4·步骤2] GPT-IMAGE-2 未返回图像 → Vertex 企业级 Nano Banana 2 · **同一完整 prompt** · 16:9 兜底…",
-  );
-
-  try {
-    const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
-    if (!isGeminiImageAvailable()) {
-      appendImageFlowLog(
-        L,
-        "[2×4·步骤3] Vertex 图像不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），无法兜底",
-      );
-      throw new Error(
-        "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
-      );
-    }
-    const vertexResult = await generateGeminiImage({
-      prompt: promptForImage,
-      quality: isXhs ? "2k" : "1k",
-      aspectRatio: "16:9",
-      personGeneration: "ALLOW_ADULT",
-    });
-    const fallbackUrl = String(vertexResult?.imageUrl || "").trim();
-    if (!fallbackUrl) {
-      appendImageFlowLog(L, "[2×4·步骤3] Nano Banana 2 返回空 URL");
-      throw new Error("Vertex Nano Banana 2 未返回图像。");
-    }
+  for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
     appendImageFlowLog(
       L,
-      `[2×4·步骤3] Nano Banana 2 兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+      `[2×4·整链] ═══ 第 ${attempt}/${compositeMaxAttempts} 次尝试开始 ═══`,
     );
-    return await mirrorNanoSheetUrlToGcs(fallbackUrl, subdir, L);
-  } catch (fallbackError: any) {
-    const flowLog = L ?? [];
-    const realError = fallbackError?.message || String(fallbackError);
-    flowLog.push(`[5] 双核引擎皆渲染失败，底层报错: ${realError}`);
+    appendImageFlowLog(
+      L,
+      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；默认 GPT 5.4 · 失败或空则 Vertex ${resolveVertexFlashTranslationModelName()}）· ${
+        tr === "vertex_gemini_31_pro_preview" ? "直走 Vertex" : "先试 GPT 5.4"
+      } …`,
+    );
 
-    throw new Error(`[双核渲染崩溃]\n详细原因: ${realError}\n执行日志:\n${flowLog.join("\n")}`);
+    try {
+      const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
+
+      const englishCore = await translatePlatformCompositeToEnglishPrompt({
+        kind: k,
+        scriptContext: options.scriptContext,
+        translator: options.imagePromptTranslator,
+        flowLog: L,
+      });
+
+      if (!String(englishCore || "").trim()) {
+        appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空（不注入模版英文）");
+        throw new Error("宽幅合成翻译结果为空");
+      }
+
+      appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，进入提炼/Prompt 整形");
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
+      );
+
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤1b] Prompt 智能提炼（仅当超 PROMPT_CONDENSE 阈值触发；translator=${tr}）…`,
+      );
+      const condensedCore = await condenseImagePromptIfNeeded(englishCore, {
+        translator: options.imagePromptTranslator,
+        flowLog: L,
+      });
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤1b·完成] chars ${englishCore.length} → ${condensedCore.length}${condensedCore.length < englishCore.length ? "（已缩短）" : "（未缩短或仅硬裁剪）"}`,
+      );
+      const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
+      const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}`;
+
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 送生图总长约 ${promptForImage.length} 字符`,
+      );
+
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤2] GPT-IMAGE-2 宽幅横版 · gcsSubdir=${subdir} · 尺寸序列（OpenAI gpt-image 白名单）: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
+      );
+      const primary = await postGptImage2AndUpload(promptForImage, subdir, {
+        sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
+        flowLog: L,
+      });
+      if (primary) {
+        appendImageFlowLog(L, `[2×4·步骤2] GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        return primary;
+      }
+
+      appendImageFlowLog(
+        L,
+        "[2×4·步骤2] GPT-IMAGE-2 未返回图像 → Vertex 企业级 Nano Banana 2 · **同一完整 prompt** · 16:9 兜底…",
+      );
+
+      try {
+        const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
+        if (!isGeminiImageAvailable()) {
+          appendImageFlowLog(
+            L,
+            "[2×4·步骤3] Vertex 图像不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），无法兜底",
+          );
+          throw new Error(
+            "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
+          );
+        }
+        const vertexResult = await generateGeminiImage({
+          prompt: promptForImage,
+          quality: isXhs ? "2k" : "1k",
+          aspectRatio: "16:9",
+          personGeneration: "ALLOW_ADULT",
+        });
+        const fallbackUrl = String(vertexResult?.imageUrl || "").trim();
+        if (!fallbackUrl) {
+          appendImageFlowLog(L, "[2×4·步骤3] Nano Banana 2 返回空 URL");
+          throw new Error("Vertex Nano Banana 2 未返回图像。");
+        }
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤3] Nano Banana 2 兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+        );
+        const mirrored = await mirrorNanoSheetUrlToGcs(fallbackUrl, subdir, L);
+        appendImageFlowLog(L, `[2×4·步骤3] 整链第 ${attempt}/${compositeMaxAttempts} 次 · Nano 兜底成功`);
+        return mirrored;
+      } catch (fallbackError: unknown) {
+        const realError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        appendImageFlowLog(L, `[2×4·步骤2/3] 生图链失败: ${realError.slice(0, 600)}`);
+        throw fallbackError;
+      }
+    } catch (e: unknown) {
+      lastFailure = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      appendImageFlowLog(
+        L,
+        `[2×4·整链] 第 ${attempt}/${compositeMaxAttempts} 次失败 · ${msg.replace(/\s+/g, " ").slice(0, 480)}`,
+      );
+      if (attempt >= compositeMaxAttempts) {
+        break;
+      }
+      const backoff = attempt === 1 ? 4000 : attempt === 2 ? 8000 : 12_000;
+      appendImageFlowLog(L, `[2×4·整链] ${backoff}ms 后整链重试（重新英文化+生图）…`);
+      await sleepMs(backoff);
+    }
   }
+
+  const flowLog = L ?? [];
+  const finalMsg =
+    lastFailure instanceof Error ? lastFailure.message : lastFailure != null ? String(lastFailure) : "unknown";
+  flowLog.push(`[2×4·整链] 已达 ${compositeMaxAttempts} 次仍失败 · ${finalMsg.slice(0, 400)}`);
+  throw new Error(`[2×4 宽幅合成·${compositeMaxAttempts} 次尝试均失败]\n最后原因: ${finalMsg}\n执行日志:\n${flowLog.join("\n")}`);
 }
 
 /**
