@@ -833,6 +833,7 @@ export async function generatePlatformCompositeSheetImage(options: {
       kind: k,
       scriptContext: options.scriptContext,
       translator: options.imagePromptTranslator,
+      flowLog: L,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -840,7 +841,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     console.warn("[proxyImageService] platform composite translation failed, using emergency English:", msg);
     let brief = "";
     try {
-      brief = await extractChineseVisualBrief(options.scriptContext);
+      brief = await extractChineseVisualBrief(options.scriptContext, L);
     } catch {
       /* 骨架失败则全量剧本仍进 task */
     }
@@ -854,7 +855,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空，改用同源编导 task 的紧急英文");
     let brief = "";
     try {
-      brief = await extractChineseVisualBrief(options.scriptContext);
+      brief = await extractChineseVisualBrief(options.scriptContext, L);
     } catch {
       /* ignore */
     }

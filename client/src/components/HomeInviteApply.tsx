@@ -19,7 +19,7 @@ export default function HomeInviteApply() {
   };
 
   return (
-    <section className="w-full py-10 px-4 flex flex-col items-center">
+    <section id="invite-apply" className="w-full py-10 px-4 flex flex-col items-center scroll-mt-20">
       <div className="w-full max-w-xl bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8 shadow-xl">
         <h2 className="text-xl font-bold text-white mb-1">申请邀请码</h2>
         <p className="text-sm text-purple-300/70 mb-6">内测阶段，填写申请后我们会通过微信或邮箱联系您</p>

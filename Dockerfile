@@ -50,4 +50,8 @@ RUN pnpm build \
 
 EXPOSE 3000
 
+# Fly / 容器內必須監聽 0.0.0.0；未設 NODE_ENV 時 tsx 直跑可能被判定行為不一致
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+
 CMD ["pnpm","exec","tsx","server/_core/index.ts"]
