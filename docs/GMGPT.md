@@ -11,7 +11,7 @@
 
 - **廢除**平台頁分鏡表 / 小紅書卡片的 **DOM 疊字、網格遮罩** 等複雜前端排版。
 - **改為**：先以**雙語編導式翻譯**將中文劇本整理成帶有「**簡體中文排版死命令**」與「**動態高級背景**」說明的 **英文生圖 prompt**，再交由 **GPT-IMAGE-2** 一次性產出 **原生 2×4 圖文大圖**（字在畫內）。
-- **計價**：分鏡圖文參考、小紅書圖文參考 **統一 16 Credits / 次**（`platformStoryboardSheet` 與 `platformXhsDualNote` 同價）。
+- **計價**：分鏡圖文參考 **16 Credits / 次**（`platformStoryboardSheet`）；小紅書 2×4 八格圖文 **24 Credits / 次**（`platformXhsDualNote`，含 2K 兜底成本考量）。
 
 ---
 

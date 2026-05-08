@@ -260,9 +260,9 @@ export const CREDIT_COSTS = {
   platformTopicFrameGraphic: 9,  // 图文/小红书竖版封面
   platformTopicFrameVideo: 5,     // 短视频分镜参考条
 
-  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×2 四宫格）──────────────────
+  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────
   platformStoryboardSheet: 16,  // 分镜 2×4（双语编导；生图采用 GPT-IMAGE-2）
-  platformXhsDualNote: 16,       // 小红书 2×2 四宫格（同价；内部 kind 名仍 xiaohongshu_dual_note）
+  platformXhsDualNote: 24,       // 小红书 2×4 八格图文（字多图密 · Vertex 兜底 2K；内部 kind 仍 xiaohongshu_dual_note）
 } as const;
 
 export interface CreditFeatureBreakdownRow {
@@ -287,7 +287,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 5 cr，生图采用 GPT-IMAGE-2 主路径 · Nano Banana 2 兜底" },
   { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 9 cr，生图采用 GPT-IMAGE-2 主路径 · Nano Banana 2 兜底" },
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
-  { product: "平台数据分析", subFeature: "小红书图文参考（2×2 四宫格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
+  { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；GPT-IMAGE-2 主路径 · Vertex 2K 兜底" },
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },
   { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },
   { product: "平台数据分析", subFeature: "参考图高清放大 4×", credits: CREDIT_COSTS.platformRefImageUpscale4x },

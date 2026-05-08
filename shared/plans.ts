@@ -256,10 +256,10 @@ export const CREDIT_COSTS = {
   platformTopicFrameGraphic: 9,
   /** 平台页：选题单帧 · 短视频竖版分镜参考条 */
   platformTopicFrameVideo: 5,
-  /** 平台页：分镜 2×4 / 小红书 2×2 四宫格（双语编导 → 英文 prompt；生图采用 GPT-IMAGE-2，单次统一定价） */
+  /** 平台页：分镜 2×4 宽幅合成（16 cr） */
   platformStoryboardSheet: 16,
-  /** 平台页：同上，小红书 2×2 四宫格整条管线（API kind 仍为 xiaohongshu_dual_note） */
-  platformXhsDualNote: 16,
+  /** 平台页：小红书 2×4 八格图文（24 cr · Vertex 兜底 2K；API kind 仍为 xiaohongshu_dual_note） */
+  platformXhsDualNote: 24,
 } as const;
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */

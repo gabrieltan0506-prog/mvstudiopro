@@ -426,7 +426,7 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: 
   return parts.join("\n").trim().slice(0, 3800);
 }
 
-/** 供分鏡表 / 小紅書 2×2 四宫格單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
+/** 供分鏡表 / 小紅書 2×4 八格圖文單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
 function buildPlatformSheetScriptContext(item: {
   title: string;
   hook: string;
@@ -492,7 +492,7 @@ function executionCardDomId(sceneId: string): string {
 /** 生圖請求速率：滾動窗口長度（毫秒），與上游「每分鐘 N 次」配額對齊。 */
 const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
 /**
- * 上述窗口內最多**發起**幾次生圖（封面單幀 · 2×4 分鏡 · 小紅書 2×2 圖文筆記 / 合成餅圖共用同一節流器）。
+ * 上述窗口內最多**發起**幾次生圖（封面單幀 · 2×4 分鏡 · 小紅書 2×4 八格圖文合成等共用同一節流器）。
  * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆寫（整數 1～24，預設 6）。
  */
 const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
@@ -592,7 +592,7 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
     ];
   }
   return [
-    `${ts}  [客户端] 小红书 2×2 四宫格生成已发起 · sceneId=${sceneId || "N/A"}`,
+    `${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}`,
     `${ts}  [步骤0] 等待节流 · 任意滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内最多 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次生图发起（封面 / 2×4 分镜 / 小红书笔记合成共用；均布约 ${PLATFORM_IMAGE_EVEN_SPACING_SEC}s）`,
     `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 配色 / 场景 / 主体 / 文案层级）`,
     `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
@@ -1235,7 +1235,7 @@ export default function PlatformPage() {
       const label =
         variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
           ? "分镜图文参考"
-          : "小红书 2×2 四宫格参考";
+          : "小红书 2×4 八格图文参考";
       toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
       if (Array.isArray(lines) && lines.length > 0) {
@@ -1255,7 +1255,11 @@ export default function PlatformPage() {
       }
     },
     onError: (error, variables, ctx) => {
-      toast.error("双核引擎异常，已退回 16 积分。请查閱 Debug 面板。");
+      const refunded =
+        variables.kind === "xiaohongshu_dual_note"
+          ? CREDIT_COSTS.platformXhsDualNote
+          : CREDIT_COSTS.platformStoryboardSheet;
+      toast.error(`双核引擎异常，已退回 ${refunded} 积分。请查阅 Debug 面板。`);
 
       const errorLogEntry = `[${new Date().toLocaleTimeString()}] ❌ 2x4 合成失败 (Global 节点): \n${String((error as { message?: unknown })?.message ?? "")}`;
 
@@ -1908,7 +1912,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: xhsUrl,
-          kindLabel: "小红书 · 2×2 四宫格",
+          kindLabel: "小红书 · 2×4 八格图文",
           layout: "landscape",
           pending: false,
         });
@@ -1918,7 +1922,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: null,
-          kindLabel: "小红书 · 2×2 四宫格",
+          kindLabel: "小红书 · 2×4 八格图文",
           layout: "landscape",
           pending: true,
         });
@@ -3104,7 +3108,7 @@ export default function PlatformPage() {
                         视频图文分镜表
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">
-                        一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书 2×2 四宫格参考。
+                        一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书 2×4 八格图文参考。
                       </p>
                     </div>
                     <div className="flex w-full flex-shrink-0 flex-col gap-3 md:w-auto md:max-w-md md:items-end">
@@ -3203,11 +3207,11 @@ export default function PlatformPage() {
                   >
                     <div className="mb-6 flex flex-wrap items-center gap-3 border-b border-white/10 pb-4">
                       <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
-                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书 2×2 四宫格 画廊</h3>
+                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书 2×4 八格图文 画廊</h3>
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
-                        尚未生成 2×4 分镜或小红书 2×2 四宫格（请在下方选题卡片中点击生成）
+                        尚未生成 2×4 分镜或小红书 2×4 八格图文（请在下方选题卡片中点击生成）
                       </div>
                     ) : (
                       <div className="grid gap-6 md:grid-cols-2">
@@ -3337,7 +3341,7 @@ export default function PlatformPage() {
                       const compositeCost = isGraphicFormat
                         ? CREDIT_COSTS.platformXhsDualNote
                         : CREDIT_COSTS.platformStoryboardSheet;
-                      const compositeLabel = isGraphicFormat ? "小红书 2×2 四宫格" : "2x4 高定分镜表";
+                      const compositeLabel = isGraphicFormat ? "小红书 2×4 八格图文" : "2×4 高定分镜表";
                       const CompositeIcon = isGraphicFormat ? Heart : Film;
                       const compositeColorClass = isGraphicFormat
                         ? "text-[#ff9fe0] bg-[#ff4fb8]/10 border-[#ff4fb8]/40 hover:bg-[#ff4fb8]/20"
