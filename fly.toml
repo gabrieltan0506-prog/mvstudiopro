@@ -11,7 +11,8 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
 [env]
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
-  NODE_OPTIONS = '--max-old-space-size=4096'
+  # 6GB VM：堆約 5GB，留 headroom 給 V8 外部 / Chromium / 原生模組，降低 Stage2 / PDF / 大 JSON 偶發 OOM
+  NODE_OPTIONS = '--max-old-space-size=5120'
   DOUYIN_CREATOR_CENTER_ENABLED = '0'
   DOUYIN_CREATOR_INDEX_ENABLED = '0'
   DISABLE_GROWTH_TREND_SCHEDULER = '0'
@@ -92,10 +93,11 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
     idle_timeout = 900
 
   [[http_service.checks]]
-    grace_period = "60s"
-    interval = "30s"
+    # 冷啟：依賴遷移、trend scheduler、job worker 掛載；過短易「還在 listen 前就 fail」→ 502 / rolling 部署抖動
+    grace_period = "180s"
+    interval = "15s"
     method = "GET"
-    timeout = "30s"
+    timeout = "10s"
     path = "/api/health"
 
 [[vm]]

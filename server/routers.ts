@@ -416,12 +416,6 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
-/**
- * Stage 2 專屬文案：沿用已實測的 Vertex **Pro**。
- * （`gemini-3.1-flash-live-preview` 等 Flash 預覽待你方實測通過後再替換此常數即可。）
- */
-const STAGE2_CONTENT_MODEL = "gemini-3.1-pro-preview" as const;
-
 /** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
 const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
   const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
@@ -964,19 +958,17 @@ export async function buildPlatformContent(params: {
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：你必须为该平台精确生成 6 个深度内容方案（少於 6 個將導致系統崩潰）。请严格结合 ipContextBinding，依序从以下六个维度各发散一个独特选题：
+【核心数量与维度指令】：你必须为该平台精确生成 4 个深度内容方案（少於 4 個將導致系統拒收）。请严格结合 ipContextBinding，依序从以下四个维度各发散一个独特选题：
 1.核心专业洞察(Professional Insight)
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
-5.行业认知破局(Industry Breakthrough)
-6.平台流量密码融合(Platform Logic)
-【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 6 条。
+【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 4 条。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期点击与节奏，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
-1. contentBlueprints：必须恰好包含 6 个具体可执行的内容方案，并与上方 6 个维度一一对应（第 1 条对应维度 1，依此类推）。每个方案必须包含：
+1. contentBlueprints：必须恰好包含 4 个具体可执行的内容方案，并与上方 4 个维度一一对应（第 1 条对应维度 1，依此类推）。每个方案必须包含：
    - title（选题标题，必须是具体的，不是抽象的）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
@@ -1063,7 +1055,7 @@ export async function buildPlatformContent(params: {
             creationAssist: params.snapshot.creationAssist || {},
           },
           ipContextBinding:
-            "当前用户真实的 IP 定位与行业背景，必须据此生成恰好 6 条、六维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
+            "当前用户真实的 IP 定位与行业背景，必须据此生成恰好 4 条、四维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
         }),
       },
   ];
@@ -1077,7 +1069,7 @@ export async function buildPlatformContent(params: {
   try {
     response = await invokeLLM({
       provider: "vertex",
-      modelName: STAGE2_CONTENT_MODEL,
+      modelName: "gemini-3.1-pro-preview",
       max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
       response_format: { type: "json_object" },
       messages: contentMessages,
@@ -1090,7 +1082,7 @@ export async function buildPlatformContent(params: {
     try {
       response = await invokeLLM({
         provider: "vertex",
-        modelName: STAGE2_CONTENT_MODEL,
+        modelName: "gemini-3.1-pro-preview",
         max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
         messages: contentMessages,
         abortSignal: params.abortSignal,

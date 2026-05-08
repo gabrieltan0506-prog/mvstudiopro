@@ -603,22 +603,74 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   ];
 }
 
-/** 3A：六維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
+/** Stage 2 等長任務：用 shimmer / 光斑 / 節拍點轉移注意力（不向用戶展示技術細節） */
+function PlatformGeneratingCharm(props: {
+  className?: string;
+  iconClass?: string;
+  pingClass?: string;
+  title: string;
+  subtitle?: string;
+  orbAClass?: string;
+  orbBClass?: string;
+  dotClasses?: [string, string, string];
+}) {
+  const {
+    className = "",
+    iconClass = "text-[#49e6ff]",
+    pingClass = "bg-[#49e6ff]/25",
+    title,
+    subtitle,
+    orbAClass = "bg-[#ff4fb8]/28",
+    orbBClass = "bg-[#49e6ff]/22",
+    dotClasses = ["bg-[#ff4fb8]", "bg-[#49e6ff]", "bg-[#c4b5fd]"],
+  } = props;
+  return (
+    <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] ${className}`}>
+      <div className="pointer-events-none absolute inset-0 shimmer opacity-50" aria-hidden />
+      <div
+        className={`pointer-events-none absolute -left-10 -top-14 h-44 w-44 rounded-full ${orbAClass} blur-3xl motion-safe:animate-[mvspPlatformOrb_9s_ease-in-out_infinite]`}
+        aria-hidden
+      />
+      <div
+        className={`pointer-events-none absolute -right-12 bottom-0 h-40 w-40 rounded-full ${orbBClass} blur-3xl motion-safe:animate-[mvspPlatformOrb_11s_ease-in-out_infinite_reverse]`}
+        style={{ animationDelay: "0.8s" }}
+        aria-hidden
+      />
+      <div className="relative z-10 flex flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+        <div className="relative flex h-12 w-12 items-center justify-center">
+          <span className={`absolute h-10 w-10 rounded-full ${pingClass} motion-safe:animate-ping`} aria-hidden />
+          <Loader2 className={`relative z-10 h-7 w-7 animate-spin ${iconClass}`} />
+        </div>
+        <div className="text-sm font-semibold tracking-tight text-white/95">{title}</div>
+        {subtitle ? <p className="max-w-md text-xs leading-relaxed text-[#c9c0e6]/88">{subtitle}</p> : null}
+        <div className="mt-0.5 flex gap-1.5" aria-hidden>
+          {dotClasses.map((c, i) => (
+            <span
+              key={i}
+              className={`h-1.5 w-1.5 rounded-full ${c} motion-safe:animate-bounce opacity-90`}
+              style={{ animationDelay: `${i * 0.18}s` }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 3A：四維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
 function PlatformIpDimensionGuide() {
   return (
     <div className="mb-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-md">
       <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#ff9900]">
         <Bot className="h-4 w-4 shrink-0 animate-pulse" />
-        高定内容生成指南：六大维度
+        高定内容生成指南：四大维度
       </h3>
-      <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 lg:grid-cols-4">
         {[
           { t: "专业洞察 (Insight)", d: "展现行业壁垒与权威知识。" },
           { t: "跨界价值 (Value)", d: "融合美学与个人哲学视野。" },
           { t: "受众痛点 (Pain Point)", d: "精准击中粉丝的核心焦虑。" },
           { t: "人设魅力 (Persona)", d: "分享真实经历建立情感信任。" },
-          { t: "认知破局 (Breakthrough)", d: "提出反共识的独家鲜明观点。" },
-          { t: "流量密码 (Logic)", d: "适配平台算法与爆款逻辑。" },
         ].map((v, i) => (
           <div key={i} className="rounded-lg bg-white/5 p-3 transition-colors hover:bg-white/10">
             <div className="mb-1 text-[12px] font-bold text-gray-200">{v.t}</div>
@@ -2229,7 +2281,7 @@ export default function PlatformPage() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
-      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}`}</style>
+      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}`}</style>
 
       {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
       <IpProfileModal

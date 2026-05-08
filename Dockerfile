@@ -50,8 +50,11 @@ RUN pnpm build \
 
 EXPOSE 3000
 
-# Fly / 容器內必須監聽 0.0.0.0；未設 NODE_ENV 時 tsx 直跑可能被判定行為不一致
+# Fly / 容器內必須監聽 0.0.0.0；PORT 與 fly.toml internal_port / 健康檢查一致
+# 堆上限以 fly.toml [env] NODE_OPTIONS 為準；此處僅作本地 docker run 無 fly 時的兜底
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
+ENV PORT=3000
+ENV NODE_OPTIONS=--max-old-space-size=5120
 
 CMD ["pnpm","exec","tsx","server/_core/index.ts"]
