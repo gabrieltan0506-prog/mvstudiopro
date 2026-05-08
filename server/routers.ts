@@ -3700,7 +3700,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * 平台页：单张原生 2×4 大图 — 双语编导（Gemini）产出英文视觉 prompt → GPT-IMAGE-2 + 系统兜底；统一定价 16 Credits/次。
+     * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底；分镜 16 cr / 小红书八格 24 cr（见 CREDIT_COSTS）。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
@@ -3739,7 +3739,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             "platformCompositeSheet",
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
-              : `小红书 2×2 四宫格参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`,
+              : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`,
           );
         }
 
