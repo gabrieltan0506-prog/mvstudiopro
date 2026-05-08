@@ -42,6 +42,7 @@ import { collectTrendPlatforms } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
+import { resolveVertexFlashTranslationModelName } from "./services/geminiPlatformCompositeTranslation.js";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -3504,7 +3505,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const imagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
         const translatorLogLabel =
           imagePromptTranslator === "vertex_gemini_31_pro_preview"
-            ? "Vertex @google/genai · gemini-3.1-flash-live-preview · us-central1（JSON）"
+            ? `Vertex @google/genai · ${resolveVertexFlashTranslationModelName()} · us-central1（JSON）`
             : "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";
@@ -3620,7 +3621,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
               appendImageFlowLog(flowLog, `${new Date().toISOString()}  [步骤1] 翻译结果为空，不注入模版英文`);
               throw new Error("英文 prompt 为空");
             }
-            const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, flowLog);
+        const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, {
+          translator: imagePromptTranslator,
+          flowLog,
+        });
             promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
             appendImageFlowLog(
               flowLog,
@@ -3783,10 +3787,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
           if (!hasFullLogInMessage && imageGenFlowLog.length > 0) {
             const logTail = imageGenFlowLog
               .filter((s) => String(s).trim())
-              .slice(-24)
+              .slice(-72)
               .join("\n")
               .trim();
-            const cap = 2000;
+            const cap = 6000;
             const detail =
               logTail.length > cap ? `${logTail.slice(0, cap)}…\n（日志已截断）` : logTail;
             if (detail) {
@@ -3806,10 +3810,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
           const logTail = imageGenFlowLog
             .filter((s) => String(s).trim())
-            .slice(-24)
+            .slice(-72)
             .join("\n")
             .trim();
-          const cap = 2000;
+          const cap = 6000;
           const detail =
             logTail.length > cap ? `${logTail.slice(0, cap)}…\n（日志已截断）` : logTail;
           const rawMessage = detail

@@ -74,9 +74,16 @@ function resolveVertexProjectIdForGenAi(): string {
  * 平台英文化 · Flash Live Preview：**強制 us-central1**（preview 模型勿用 global；見 product 說明）。
  * 可用 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫，預設 `us-central1`。
  */
-function resolveVertexFlashTranslationLocation(): string {
+export function resolveVertexFlashTranslationLocation(): string {
   const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "us-central1").trim();
   return loc || "us-central1";
+}
+
+/** Vertex 英文化預設模型（可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫） */
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-live-preview-04-2026";
+
+export function resolveVertexFlashTranslationModelName(): string {
+  return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
 }
 
 /** 從環境變數構造 google-auth-library 可用的 credentials（Fly / Vercel JSON）。 */
@@ -412,7 +419,7 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 /**
  * 探索 / 極速：Vertex AI **Gemini 3.1 Flash Live Preview** + `responseMimeType: application/json`。
  * **區域鎖定 us-central1**（見 {@link resolveVertexFlashTranslationLocation}），不可用 global，以免 preview 路由到無配額節點。
- * 模型預設 `gemini-3.1-flash-live-preview`，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
+ * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。三次仍失敗則拋錯。
  */
 export async function callVertexGeminiFlashTranslation(translationTask: string, flowLog?: string[]): Promise<string> {
@@ -431,9 +438,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
   }
 
   const location = resolveVertexFlashTranslationLocation();
-  const model = String(
-    process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || "gemini-3.1-flash-live-preview",
-  ).trim();
+  const model = resolveVertexFlashTranslationModelName();
   const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
   const authMode = authOpts ? "GOOGLE_APPLICATION_CREDENTIALS_JSON(service_account)" : "ADC/運行環境默認憑證";
 
@@ -547,7 +552,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
   }
 
   appendVertexFlashDebug(flowLog, `[Flash·翻译] 已 3 次仍失败 · ${formatErrForVertexDebug(lastFailure)}`);
-  console.error("[Vertex GenAI gemini-3.1-flash-live-preview 翻译异常 · us-central1]:", lastFailure);
+  console.error(`[Vertex GenAI ${resolveVertexFlashTranslationModelName()} 翻译异常 · ${resolveVertexFlashTranslationLocation()}]:`, lastFailure);
   throw lastFailure instanceof Error ? lastFailure : new Error(String(lastFailure));
 }
 
@@ -637,7 +642,18 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
     flowLog,
     `[GPT54·翻译] 已 3 次仍失敗或為空 → fallback Vertex Flash · 最後一次: ${formatErrForVertexDebug(lastFailure)}`,
   );
-  return callVertexGeminiFlashTranslation(prompt, flowLog);
+  try {
+    return await callVertexGeminiFlashTranslation(prompt, flowLog);
+  } catch (vertexErr: unknown) {
+    const vDetail = formatErrForVertexDebug(vertexErr);
+    appendVertexFlashDebug(flowLog, `[Vertex·Flash·fallback] 失敗 · ${vDetail}`);
+    const gptSummary = formatErrForVertexDebug(lastFailure);
+    throw new Error(
+      `[Vertex Flash 英文化·GPT 已盡力] GPT 5.4 三輪無有效 prompt 或異常後已改走 Vertex（${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}）；Vertex 仍失敗。\n` +
+        `── GPT 5.4 最後狀態 ──\n${gptSummary}\n` +
+        `── Vertex API 詳情 ──\n${vDetail}`,
+    );
+  }
 }
 
 /**
@@ -650,9 +666,10 @@ export async function callGemini31ProForImagePrompt(
 ): Promise<string> {
   const translator: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
   const flowLog = options?.flowLog;
+  const vertexModel = resolveVertexFlashTranslationModelName();
   const label =
     translator === "vertex_gemini_31_pro_preview"
-      ? "Vertex @google/genai · gemini-3.1-flash-live-preview · us-central1（JSON）"
+      ? `Vertex @google/genai · ${vertexModel} · us-central1（JSON）`
       : "GPT 5.4（OpenAI）";
   try {
     const raw =
@@ -668,7 +685,17 @@ export async function callGemini31ProForImagePrompt(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     appendVertexFlashDebug(flowLog, `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`);
-    throw new Error(`[${label} 翻译崩溃]: ${message}`);
+    const vertexFallback =
+      message.includes("[Vertex Flash 英文化·GPT 已盡力]") || message.includes("── Vertex API 詳情 ──");
+    const looksLikeVertexApi =
+      /publishers\/google\/models|NOT_FOUND|PERMISSION_DENIED|ResourceExhausted|GoogleGenerativeAIError|Vertex AI|vertexai/i.test(
+        message,
+      );
+    const displayLabel =
+      vertexFallback || (looksLikeVertexApi && translator === "gpt54")
+        ? `Vertex（${vertexModel} · ${resolveVertexFlashTranslationLocation()}）`
+        : label;
+    throw new Error(`[${displayLabel} 翻译崩溃]: ${message}`);
   }
 }
 
@@ -696,7 +723,9 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
 
   if (options.engine === "gemini31flash") {
-    console.log("[platformComposite] engine=gemini31flash → Vertex gemini-3.1-flash-live-preview · us-central1");
+    console.log(
+      `[platformComposite] engine=gemini31flash → Vertex ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`,
+    );
     return callVertexGeminiFlashTranslation(task, flowLog);
   }
   if (options.engine === "gpt54") {

@@ -4,7 +4,10 @@
 import { eq } from "drizzle-orm";
 import * as db from "../db";
 import { patchJobRunningProgress } from "../jobs/repository.js";
-import type { PlatformImagePromptTranslator } from "./geminiPlatformCompositeTranslation.js";
+import {
+  resolveVertexFlashTranslationModelName,
+  type PlatformImagePromptTranslator,
+} from "./geminiPlatformCompositeTranslation.js";
 
 /** 與 repository patch 截斷一致，避免單欄位過大 */
 const FLOW_LOG_DB_CAP = 240;
@@ -99,7 +102,7 @@ export async function runPlatformTopicImagePipeline(
   const imagePromptTranslator: PlatformImagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
   const translatorLogLabel =
     imagePromptTranslator === "vertex_gemini_31_pro_preview"
-      ? "Vertex @google/genai · gemini-3.1-flash-live-preview · us-central1（JSON）"
+      ? `Vertex @google/genai · ${resolveVertexFlashTranslationModelName()} · us-central1（JSON）`
       : "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
   const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
@@ -174,7 +177,10 @@ export async function runPlatformTopicImagePipeline(
           topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 翻译结果为空（不注入模版英文）`);
           throw new Error("英文 prompt 为空");
         }
-        const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, topicImageCondenseLog);
+        const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, {
+          translator: imagePromptTranslator,
+          flowLog: topicImageCondenseLog,
+        });
         promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,

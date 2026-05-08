@@ -974,7 +974,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. ${variables.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex gemini-3.1-flash-live-preview · us-central1" : "GPT 5.4"} 翻译英文 prompt → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. ${variables.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex gemini-3.1-live-preview-04-2026 · us-central1" : "GPT 5.4"} 翻译英文 prompt → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
           ],
           meta: {
             localOpId,
@@ -2822,7 +2822,7 @@ export default function PlatformPage() {
                     <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
                       作用于并入队的封面单帧任务（重新生成、一键逐张、静默补发等）。默认 GPT 5.4；选探索时走{" "}
                       <code className="text-[#c4b5fd]">@google/genai</code> + Vertex AI，模型{" "}
-                      <code className="text-[#c4b5fd]">gemini-3.1-flash-live-preview</code>，区域<strong className="text-gray-300"> 固定 </strong>
+                      <code className="text-[#c4b5fd]">gemini-3.1-live-preview-04-2026</code>，区域<strong className="text-gray-300"> 固定 </strong>
                       <code className="text-[#c4b5fd]">us-central1</code>（可用{" "}
                       <code className="text-[#c4b5fd]">VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION</code> 覆寫），
                       <code className="text-[#c4b5fd]"> responseMimeType: application/json</code>。选项保存在本机 localStorage。
@@ -3158,7 +3158,7 @@ export default function PlatformPage() {
                         </div>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
                           作用于封面单帧、一键逐张、2×4 / 小红书合成等。默认 GPT 5.4；探索项走 Vertex{" "}
-                          <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">gemini-3.1-flash-live-preview</code> ·{" "}
+                          <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">gemini-3.1-live-preview-04-2026</code> ·{" "}
                           <code className="rounded bg-black/40 px-1 text-[#a5b4fc]">us-central1</code>。选项保存在本机。
                         </p>
                         <div className="mt-3 flex rounded-xl bg-black/45 p-1 ring-1 ring-white/10">
