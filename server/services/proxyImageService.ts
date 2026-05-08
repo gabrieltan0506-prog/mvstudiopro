@@ -1,5 +1,10 @@
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
-import { callGemini3_1_Pro_AiStudio } from "./geminiPlatformCompositeTranslation.js";
+import {
+  callGemini31ProForImagePrompt,
+  resolveVertexFlashTranslationLocation,
+  resolveVertexFlashTranslationModelName,
+  type PlatformImagePromptTranslator,
+} from "./geminiPlatformCompositeTranslation.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -44,11 +49,21 @@ function forceTrimPromptToHardCap(text: string, hardCap = PROMPT_FINAL_HARD_CHAR
   return trimmed.replace(/[,\s]+$/g, "").trim();
 }
 
+export type CondenseImagePromptOptions = {
+  maxLength?: number;
+  translator?: PlatformImagePromptTranslator;
+  flowLog?: string[];
+};
+
 /**
- * 超長 prompt 時啟動 AI Studio 最多 3 次濃縮；**不對生圖串做 slice 物理截斷**（閾值僅決定是否觸發提煉）。
- * `log` 與 `appendImageFlowLog` 約定一致；批量任務傳 `flowLog`，單幀可傳空陣列 `[]` 以鎖定相同寫入路徑。
+ * 超長 prompt 時啟動最多 3 次濃縮；**不對生圖串做 slice 物理截斷**（閾值僅決定是否觸發提煉）。
+ * `flowLog` 與 `appendImageFlowLog` 約定一致；`translator` 與首階翻譯一致時整鏈路不走寫死 GPT。
  */
-export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: string[]): Promise<string> {
+export async function condenseImagePromptIfNeeded(
+  rawPrompt: string,
+  options?: CondenseImagePromptOptions,
+): Promise<string> {
+  const log = options?.flowLog;
   const originalWords = countPromptWords(rawPrompt);
   if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
     const direct = forceTrimPromptToHardCap(rawPrompt);
@@ -85,7 +100,10 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
   // 2. 嚴格 3 次重試
   for (let i = 1; i <= 3; i++) {
     try {
-      const condensed = await callGemini3_1_Pro_AiStudio(condenseTask);
+      const condensed = await callGemini31ProForImagePrompt(condenseTask, {
+        translator: options?.translator,
+        flowLog: log,
+      });
       const out = condensed.trim();
       const outWords = countPromptWords(out);
       if (out && out.length < bestAttemptChars) {
@@ -122,7 +140,12 @@ export async function condenseImagePromptIfNeeded(rawPrompt: string, log?: strin
   ].join("\n");
 
   try {
-    const forced = (await callGemini3_1_Pro_AiStudio(finalForceTask)).trim();
+    const forced = (
+      await callGemini31ProForImagePrompt(finalForceTask, {
+        translator: options?.translator,
+        flowLog: log,
+      })
+    ).trim();
     const forcedWords = countPromptWords(forced);
     const forcedTrimmed = forceTrimPromptToHardCap(forced);
     appendImageFlowLog(
@@ -853,9 +876,17 @@ export async function generatePlatformCompositeSheetImage(options: {
     L,
     `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
+  const tr = options.imagePromptTranslator ?? "gpt54";
+  const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；預設 GPT 5.4，鏈路內失敗或空則改走 Vertex gemini-3.1-flash-live-preview）· ${options.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex Flash · us-central1" : "GPT 5.4"} …`,
+    `[2×4·流程总览] 分镜图/八格全链路（translator=${tr}；Vertex 英文化=${vertexRef}）：① extractChineseVisualBrief → ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·翻译]/[Vertex·Flash] 行）→ ④ condenseImagePromptIfNeeded（超长；与 translator 一致）→ ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
+  );
+  appendImageFlowLog(
+    L,
+    `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；默认 GPT 5.4 · 失败或空则 Vertex ${resolveVertexFlashTranslationModelName()}）· ${
+      tr === "vertex_gemini_31_pro_preview" ? "直走 Vertex" : "先试 GPT 5.4"
+    } …`,
   );
 
   const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
@@ -872,16 +903,31 @@ export async function generatePlatformCompositeSheetImage(options: {
     throw new Error("宽幅合成翻译结果为空");
   }
 
+  appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，进入提炼/Prompt 整形");
   appendImageFlowLog(
     L,
     `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
   );
 
-  const condensedCore = await condenseImagePromptIfNeeded(englishCore, L);
+  appendImageFlowLog(
+    L,
+    `[2×4·步骤1b] Prompt 智能提炼（仅当超 PROMPT_CONDENSE 阈值触发；translator=${tr}）…`,
+  );
+  const condensedCore = await condenseImagePromptIfNeeded(englishCore, {
+    translator: options.imagePromptTranslator,
+    flowLog: L,
+  });
+  appendImageFlowLog(
+    L,
+    `[2×4·步骤1b·完成] chars ${englishCore.length} → ${condensedCore.length}${condensedCore.length < englishCore.length ? "（已缩短）" : "（未缩短或仅硬裁剪）"}`,
+  );
   const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
   const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}`;
 
-  appendImageFlowLog(L, `[2×4·步骤1] 最终送生图 · 含像素锁 · 总长约 ${promptForImage.length} 字符`);
+  appendImageFlowLog(
+    L,
+    `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 送生图总长约 ${promptForImage.length} 字符`,
+  );
 
   appendImageFlowLog(
     L,
