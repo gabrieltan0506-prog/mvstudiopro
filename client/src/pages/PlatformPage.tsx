@@ -610,6 +610,7 @@ function buildCompositeImageGenPendingLines(input: {
     `${ts}  [预估步骤] ⑤ 拼接像素锁（电影 2×4 / 八格笔记硬约束）`,
     `${ts}  [预估步骤] ⑥ GPT-IMAGE-2 宽幅 — 多尺寸序列（见 [GPT-IMAGE-2]）`,
     `${ts}  [预估步骤] ⑦ 无图则 Nano Banana 2 兜底`,
+    `${ts}  [说明] 整条链路失败会整链重试，默认至多 5 次（首次 + 重试 4 次）；见 imageGenFlowLog 中 [2×4·整链]。`,
     `${ts}  [说明] 请求完成后下方将替换为服务端完整 imageGenFlowLog（含每步时间戳）；若仍只有本段，请检查 Network 响应是否含 imageGenFlowLog。`,
   ];
 }
