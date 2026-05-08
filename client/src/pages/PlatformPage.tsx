@@ -39,6 +39,7 @@ import {
   FileText,
   Film,
   Flame,
+  FlaskConical,
   Globe,
   Heart,
   Image,
@@ -68,6 +69,9 @@ import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+
+const PLATFORM_IMAGE_PROMPT_TRANSLATOR_KEY = "mvplatform.imagePromptTranslator";
+type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
 const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
@@ -422,7 +426,7 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: 
   return parts.join("\n").trim().slice(0, 3800);
 }
 
-/** 供分鏡表 / 小紅書雙卡單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
+/** 供分鏡表 / 小紅書 2×2 四宫格單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
 function buildPlatformSheetScriptContext(item: {
   title: string;
   hook: string;
@@ -565,7 +569,7 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
     ];
   }
   return [
-    `${ts}  [客户端] 小红书图文生成已发起 · sceneId=${sceneId || "N/A"}`,
+    `${ts}  [客户端] 小红书 2×2 四宫格生成已发起 · sceneId=${sceneId || "N/A"}`,
     `${ts}  [步骤0] 等待节流闸门放行（60 秒最多 2 次请求）`,
     `${ts}  [步骤1] 提取中文视觉骨架（情绪 / 配色 / 场景 / 主体 / 文案层级）`,
     `${ts}  [步骤2] GPT 5.4 翻译为一行英文视觉 tags`,
@@ -607,6 +611,18 @@ function PlatformIpDimensionGuide() {
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
+  const [imagePromptTranslator, setImagePromptTranslator] = useState<PlatformImagePromptTranslator>(() => {
+    if (typeof window === "undefined") return "gpt54";
+    const v = window.localStorage.getItem(PLATFORM_IMAGE_PROMPT_TRANSLATOR_KEY);
+    return v === "vertex_gemini_31_pro_preview" ? "vertex_gemini_31_pro_preview" : "gpt54";
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLATFORM_IMAGE_PROMPT_TRANSLATOR_KEY, imagePromptTranslator);
+    } catch {
+      /* ignore */
+    }
+  }, [imagePromptTranslator]);
   const { isAuthenticated, loading, user } = useAuth({
     autoFetch: true,
     redirectOnUnauthenticated: !supervisorAccess,
@@ -805,12 +821,17 @@ export default function PlatformPage() {
       coverPersonaContext?: string;
       failedJobId?: string;
       sceneId?: string;
+      /** 與服務端 PlatformImagePromptTranslator 一致；省略則 GPT 5.4 */
+      imagePromptTranslator?: PlatformImagePromptTranslator;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
-      const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync(inp);
+      const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
+        ...inp,
+        imagePromptTranslator: inp.imagePromptTranslator ?? imagePromptTranslator,
+      });
       const tEnq = new Date().toISOString();
       setTopicImageJobPollTrace({
         jobId,
@@ -879,7 +900,7 @@ export default function PlatformPage() {
         imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
       };
     },
-    [enqueueGenerateTopicImageMutation],
+    [enqueueGenerateTopicImageMutation, imagePromptTranslator],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -891,7 +912,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. GPT 5.4 翻译英文 tags → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. ${variables.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "Vertex gemini-3.1-flash-live-preview · us-central1" : "GPT 5.4"} 翻译英文 prompt → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
           ],
           meta: {
             localOpId,
@@ -940,6 +961,7 @@ export default function PlatformPage() {
             failedJobId: String(cid),
             sceneId: r.id,
             pollDebugLabel: `批量兜底重试 · ${r.id}`,
+            imagePromptTranslator: variables.imagePromptTranslator,
           });
           const recoveredUrl = String(retried.imageUrl ?? retried.url ?? "").trim();
           if (recoveredUrl) {
@@ -1183,7 +1205,7 @@ export default function PlatformPage() {
       const label =
         variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
           ? "分镜图文参考"
-          : "小红书图文参考";
+          : "小红书 2×2 四宫格参考";
       toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
       const lines = (res as { imageGenFlowLog?: string[] }).imageGenFlowLog;
       if (Array.isArray(lines) && lines.length > 0) {
@@ -1853,7 +1875,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: xhsUrl,
-          kindLabel: "小红书 · 2×4 合成",
+          kindLabel: "小红书 · 2×2 四宫格",
           layout: "landscape",
           pending: false,
         });
@@ -1863,7 +1885,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: null,
-          kindLabel: "小红书 · 2×4 合成",
+          kindLabel: "小红书 · 2×2 四宫格",
           layout: "landscape",
           pending: true,
         });
@@ -2716,6 +2738,49 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 </div>
+                {(supervisorAccess || user?.role === "supervisor" || user?.role === "admin") ? (
+                  <div className="mt-4 rounded-2xl border border-[#6366f1]/40 bg-[rgba(99,102,241,0.08)] p-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#a5b4fc]">
+                      单帧英文化 · 翻译模型（对照测试）
+                    </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
+                      作用于并入队的封面单帧任务（重新生成、一键逐张、静默补发等）。默认 GPT 5.4；选探索时走{" "}
+                      <code className="text-[#c4b5fd]">@google/genai</code> + Vertex AI，模型{" "}
+                      <code className="text-[#c4b5fd]">gemini-3.1-flash-live-preview</code>，区域<strong className="text-gray-300"> 固定 </strong>
+                      <code className="text-[#c4b5fd]">us-central1</code>（可用{" "}
+                      <code className="text-[#c4b5fd]">VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION</code> 覆寫），
+                      <code className="text-[#c4b5fd]"> responseMimeType: application/json</code>。选项保存在本机 localStorage。
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <div className="flex rounded-lg bg-black/50 p-0.5 ring-1 ring-white/10">
+                        <button
+                          type="button"
+                          onClick={() => setImagePromptTranslator("gpt54")}
+                          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
+                            imagePromptTranslator === "gpt54"
+                              ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/45"
+                              : "text-gray-500 hover:text-gray-300"
+                          }`}
+                        >
+                          <Zap className="h-3 w-3 shrink-0" />
+                          GPT 5.4（穩定）
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setImagePromptTranslator("vertex_gemini_31_pro_preview")}
+                          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
+                            imagePromptTranslator === "vertex_gemini_31_pro_preview"
+                              ? "bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/45"
+                              : "text-gray-500 hover:text-gray-300"
+                          }`}
+                        >
+                          <FlaskConical className="h-3 w-3 shrink-0" />
+                          Vertex 3.1 Flash Live（探索）
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
@@ -3006,7 +3071,7 @@ export default function PlatformPage() {
                         视频图文分镜表
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">
-                        一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书双卡矩阵。
+                        一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书 2×2 四宫格参考。
                       </p>
                     </div>
                     {platformTopicCount > 0 ? (
@@ -3066,11 +3131,11 @@ export default function PlatformPage() {
                   >
                     <div className="mb-6 flex flex-wrap items-center gap-3 border-b border-white/10 pb-4">
                       <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
-                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书双卡 画廊</h3>
+                      <h3 className="text-xl font-bold tracking-tight text-white">2×4 分镜 · 小红书 2×2 四宫格 画廊</h3>
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
-                        尚未生成 2×4 分镜或小红书合成图（请在下方选题卡片中点击生成）
+                        尚未生成 2×4 分镜或小红书 2×2 四宫格（请在下方选题卡片中点击生成）
                       </div>
                     ) : (
                       <div className="grid gap-6 md:grid-cols-2">
@@ -3102,6 +3167,7 @@ export default function PlatformPage() {
                               kind: compositeKind,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               creationRecordId: readOptionalReportBindingCreationId(),
+                              imagePromptTranslator,
                             });
                           };
                           return (
@@ -3199,7 +3265,7 @@ export default function PlatformPage() {
                       const compositeCost = isGraphicFormat
                         ? CREDIT_COSTS.platformXhsDualNote
                         : CREDIT_COSTS.platformStoryboardSheet;
-                      const compositeLabel = isGraphicFormat ? "小红书双卡矩阵" : "2x4 高定分镜表";
+                      const compositeLabel = isGraphicFormat ? "小红书 2×2 四宫格" : "2x4 高定分镜表";
                       const CompositeIcon = isGraphicFormat ? Heart : Film;
                       const compositeColorClass = isGraphicFormat
                         ? "text-[#ff9fe0] bg-[#ff4fb8]/10 border-[#ff4fb8]/40 hover:bg-[#ff4fb8]/20"
@@ -3587,6 +3653,7 @@ export default function PlatformPage() {
                                     kind: compositeKind,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     creationRecordId: readOptionalReportBindingCreationId(),
+                                    imagePromptTranslator,
                                   }),
                                 ).catch(() => {});
                               }}

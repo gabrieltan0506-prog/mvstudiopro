@@ -1,10 +1,9 @@
 /**
- * Vertex 前半段文案 / 低成本路徑：**實體區域**（預設 `us-central1`）+ **gemini-3.1-pro-preview**。
- * 可依 `VERTEX_GEMINI_31_PRO_MODEL` 覆寫；勿改為區域無此 ID 舊標籤（如 gemini-1.5-pro 已不可用會 404）。
- * Vertex **不可**使用 `location: "global"`（SDK 會打到無效主機、回 HTML 404）。
- * Vercel 無實體憑證檔路徑，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 注入並修復 **private_key** 換行轉義。
+ * Vertex 前半段文案 / 低成本路徑：**區域**（預設 `global`，與專案在 Console 開通一致；可依 `VERTEX_GEMINI_LOCATION` / `GCP_LOCATION` 覆寫為 `us-central1` 等）+ **gemini-3.1-pro-preview**。
+ * 可依 `VERTEX_GEMINI_31_PRO_MODEL` 覆寫模型 ID。
+ * Vercel / Fly 無實體憑證檔路徑時，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 注入並修復 **private_key** 換行轉義。
  *
- * 【雙軌】生圖翻譯走 AI Studio：`proxyImageService.callGemini3_1_Pro`（GEMINI_API_KEY + gemini-3.1-pro），本檔僅 Vertex。
+ * 【雙軌】平台生圖「英文化」對照測試可走 {@link ../services/geminiPlatformCompositeTranslation.ts} 的 **@google/genai** 路徑（`responseMimeType: application/json`）；本檔為 **@google-cloud/vertexai** 備用。
  */
 import { VertexAI } from "@google-cloud/vertexai";
 
@@ -25,12 +24,12 @@ function resolveProjectId(): string {
   return p;
 }
 
-/** Gemini 3.1 Pro 文本：須為 Vertex 已開通區域（Console 配額多在 us-central1）。 */
+/** Gemini 3.1 Pro 文本：預設 **global**（與當前專案/預覽模型常見開通一致）；亦可設 `us-central1` 等。 */
 function resolveVertexGemini31Location(): string {
   const loc = String(
-    process.env.GCP_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "us-central1",
+    process.env.GCP_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "global",
   ).trim();
-  return loc || "us-central1";
+  return loc || "global";
 }
 
 /** 與 Vercel JSON 環變相容：解析失敗回 `{}`，私鑰 `\\n` → 真換行。 */
@@ -80,7 +79,7 @@ export type CallGemini31ProOptions = {
   topP?: number;
 };
 
-/** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
+/** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview @ global），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
   const vertex_ai = getVertexClientForGemini31Pro();
   const modelName = resolveVertexGemini31ProModelId();

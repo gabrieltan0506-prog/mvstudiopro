@@ -297,11 +297,27 @@ export async function deleteGcsObject(params: {
   }
 }
 
-/** V4 GET 签名直链（供客户下载 PDF 等），默认 1h；最大 7 天（與 GCS V4 實務上限對齊）。 */
-export function signGsUriV4ReadUrl(gsUri: string, expiresSeconds = 3600): string {
+/**
+ * V4 GET 直链（object 路径按段 encodeURIComponent，**不做** normalizeObjectName）。
+ * 用于把已存在于桶内的对象的「裸」https://storage.googleapis.com/BUCKET/OBJECT 换成可匿名读的签名 URL。
+ */
+export function signGcsObjectPathV4ReadUrl(
+  bucket: string,
+  /** 已解码的对象名，可含 `/` */
+  objectPath: string,
+  expiresSeconds = 3600,
+): string {
   const credentials = getGoogleServiceAccount();
-  const { bucket, objectName } = parseGsUri(gsUri);
-  const encodedObject = objectName.split("/").map(encodeURIComponent).join("/");
+  const b = String(bucket || "").trim();
+  const on = String(objectPath || "").replace(/^\/+/, "");
+  if (!b || !on) {
+    throw new Error("invalid_gcs_object_path");
+  }
+  const encodedObject = on
+    .split("/")
+    .filter((seg) => seg.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
   const expiry = Math.max(60, Math.min(7 * 24 * 3600, Math.floor(expiresSeconds)));
   const now = Math.floor(Date.now() / 1000);
   const dateIso = new Date(now * 1000).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
@@ -313,7 +329,7 @@ export function signGsUriV4ReadUrl(gsUri: string, expiresSeconds = 3600): string
   const signedHeaders = "host";
   const canonicalRequest = [
     "GET",
-    `/${bucket}/${encodedObject}`,
+    `/${b}/${encodedObject}`,
     `X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}`,
     headers,
     signedHeaders,
@@ -325,7 +341,13 @@ export function signGsUriV4ReadUrl(gsUri: string, expiresSeconds = 3600): string
   sign.update(stringToSign);
   sign.end();
   const signature = sign.sign(credentials.private_key).toString("hex");
-  return `https://${host}/${bucket}/${encodedObject}?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}&X-Goog-Signature=${signature}`;
+  return `https://${host}/${b}/${encodedObject}?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}&X-Goog-Signature=${signature}`;
+}
+
+/** V4 GET 签名直链（供客户下载 PDF 等），默认 1h；最大 7 天（與 GCS V4 實務上限對齊）。 */
+export function signGsUriV4ReadUrl(gsUri: string, expiresSeconds = 3600): string {
+  const { bucket, objectName } = parseGsUri(gsUri);
+  return signGcsObjectPathV4ReadUrl(bucket, objectName, expiresSeconds);
 }
 
 export function resolvePdfExportBucketName(): string {

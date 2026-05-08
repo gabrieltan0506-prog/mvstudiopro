@@ -3153,6 +3153,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           failedJobId: z.string().max(32).optional(),
           /** 单帧付费重绘成功后写入新 creation 行，便于下次绑定 scene */
           sceneId: z.string().max(128).optional(),
+          /** 英文化：默认 GPT 5.4；Vertex gemini-3.1-pro-preview 供对照测试 */
+          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -3300,6 +3302,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           context: input.context,
           coverPersonaContext: input.coverPersonaContext,
           sceneId: input.sceneId,
+          imagePromptTranslator: input.imagePromptTranslator,
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
@@ -3318,6 +3321,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           coverPersonaContext: z.string().max(4000).optional(),
           failedJobId: z.string().max(32).optional(),
           sceneId: z.string().max(128).optional(),
+          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -3458,6 +3462,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               context: input.context,
               coverPersonaContext: input.coverPersonaContext,
               sceneId: input.sceneId,
+              imagePromptTranslator: input.imagePromptTranslator,
               isFreeRetry,
               newJobMetaBase,
             },
@@ -3475,6 +3480,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           platformType: z.enum(["video", "graphic"]),
           /** 与单张 generateTopicImage.coverPersonaContext 一致，批量时复用同一人设 */
           coverPersonaContext: z.string().max(4000).optional(),
+          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
           scenes: z
             .array(
               z
@@ -3497,6 +3503,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const batchCoverPersona = String(input.coverPersonaContext || "").trim();
+        const imagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
+        const translatorLogLabel =
+          imagePromptTranslator === "vertex_gemini_31_pro_preview"
+            ? "Vertex @google/genai · gemini-3.1-flash-live-preview · us-central1（JSON）"
+            : "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? 5 : 6;
@@ -3539,8 +3550,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
         } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        const pool = input.platformType === "graphic" ? 2 : 1;
-        const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 并发=${pool} · 单价=${costPerImage}点`;
+        /** 逐張串行：降低 gpt-image-2 尖峰失敗率；單帳戶 API 配額足時也不圖並發擠爆。 */
+        const pool = 1;
+        const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 串行（并发=1）· 单价=${costPerImage}点`;
 
         const drizzleDb = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -3577,11 +3589,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
           appendImageFlowLog(flowLog, `──────── 选题「${s.title.slice(0, 48)}」· id=${s.id} ────────`);
           appendImageFlowLog(
             flowLog,
-            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt(GPT 5.4) → generateGptImage2FromRawEnglishPrompt 9:16`,
+            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → generateGptImage2FromRawEnglishPrompt 9:16`,
           );
           appendImageFlowLog(
             flowLog,
-            `说明: 中文语境仅供 GPT 5.4 吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
+            `说明: 中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
           );
           let url: string | null = null;
           let fallbackUsed = false;
@@ -3599,8 +3611,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
             });
-            appendImageFlowLog(flowLog, "[步骤1] 调用 GPT 5.4 生成英文 prompt …");
-            const englishPrompt = await callGemini31ProForImagePrompt(geminiTask);
+            appendImageFlowLog(flowLog, `[步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`);
+            const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
+              translator: imagePromptTranslator,
+            });
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
             const safePrompt = await condenseImagePromptIfNeeded(
@@ -3697,6 +3711,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           scriptContext: z.string().min(1).max(12000),
           kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
           executionDetails: z.string().max(4000).optional(),
+          /** 與單幀一致：英文 prompt 翻譯引擎 */
+          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
           /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
           creationRecordId: z.number().int().positive().optional(),
         }),
@@ -3723,7 +3739,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             "platformCompositeSheet",
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
-              : `小红书图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`,
+              : `小红书 2×2 四宫格参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`,
           );
         }
 
@@ -3749,6 +3765,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             scriptContext: input.scriptContext,
             isTrial,
             executionDetails: input.executionDetails,
+            imagePromptTranslator: input.imagePromptTranslator,
             flowLog: imageGenFlowLog,
           });
         } catch (error: any) {
