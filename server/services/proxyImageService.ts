@@ -209,9 +209,9 @@ const GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX =
  */
 const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x1024", "auto", "1024x1024"] as const;
 
-/** 拼在寬幅 2×4 合成英文 prompt 末尾：幾何鎖定 + **每格底部簡中訊息分格表**（與編導 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
+/** 拼在寬幅 2×4 合成英文 prompt 末尾：頂部簡中主標 + 幾何鎖定 + **每格底部簡中訊息分格表**（與 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
 const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master frame; EXACTLY eight equal panels in 2 rows × 4 columns with straight horizontal and vertical gutters; eight distinct cinematic stills. PER PANEL: upper ~70–75% = film still only; lower ~25–30% = compact legible Simplified Chinese caption table (讯息分格表 / shot breakdown): 2–4 short labeled rows (e.g. 镜头 / 景别, 情绪 / 氛围, 要点 / 口播), thin grid or ruled lines allowed; all text in these bands MUST be Simplified Chinese. FORBIDDEN: whole-canvas single hero only, magazine left-text strip + right one photo, 50/50 two-panel only, wholly wordless panels, English-only caption tables.";
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master frame. TOP ~8–12% HEIGHT: full-width horizontal TITLE STRIP with ONE prominent legible **Simplified Chinese** main title (系列标题 / 成片主题 / 视频标题); optional smaller 简体中文 subline; clear separation (rule or gradient) above the grid. BELOW that strip ONLY: EXACTLY eight equal panels in 2 rows × 4 columns with straight gutters; eight distinct cinematic stills. PER PANEL: upper ~70–75% of the cell = film still only; lower ~25–30% = compact legible Simplified Chinese caption table (讯息分格表): 2–4 short labeled rows (e.g. 镜头 / 景别, 情绪 / 氛围, 要点 / 口播), thin grid allowed; table text MUST be Simplified Chinese. FORBIDDEN: no top 简体中文 title band; first row of panels touching the top edge; whole-canvas single hero only; magazine left-text strip + right one photo; 50/50 two-panel only; wholly wordless panels; English-only caption tables.";
 
 /** 小紅書八格：幾何與分鏡同為 2×4；畫風偏資訊圖 / 筆記感，每格強簡中（與 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} 一致）。 */
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
@@ -416,11 +416,12 @@ Model: GPT-Image-2 / Gemini Image
 TASK: Cinematic 2×4 grid storyboard contact sheet — one single wide landscape master frame (~16:9), eight dramatic film stills, 8k, intricate details.
 
 COMPOSITION (NON-NEGOTIABLE):
-- EXACTLY eight equal panels in 2 rows × 4 columns with straight horizontal and vertical gutters spanning the full canvas. Eight distinct cinematic stills — no duplicate panels, no single full-bleed hero, no magazine left-text strip + right one photo, no 50/50 two-panel only.
+- TOP BAND FIRST: reserve the top ~8–12% of the **entire** image height as a **full-width Simplified Chinese title strip** with **one large legible main title** (use this anchor text in 简体中文): **${displayTitle}**. Optional subtitle in 简体中文 below; then a clear divider before the grid. **Do not** place storyboard panels against the top edge without this header.
+- BELOW the title strip: EXACTLY eight equal panels in 2 rows × 4 columns with straight horizontal and vertical gutters spanning the remaining canvas width. Eight distinct cinematic stills — no duplicate panels, no single full-bleed hero replacing both title + grid, no magazine left-text strip + right one photo, no 50/50 two-panel only.
 - PER PANEL: upper ~70–75% = film still only; lower ~25–30% = compact legible Simplified Chinese caption table (讯息分格表 / shot breakdown): 2–4 short labeled rows (e.g. 镜头 / 景别, 情绪 / 氛围, 要点 / 口播), thin grid or ruled lines allowed. All text in these lower bands MUST be Simplified Chinese. Same layout idiom as "Chinese text tables below each image" on a storyboard sheet.
-- FORBIDDEN: wholly wordless panels; English-only caption tables; fake watermarks beyond intentional table labels.
+- FORBIDDEN: missing top 简体中文 title strip; wholly wordless panels; English-only caption tables; fake watermarks beyond intentional table labels.
 
-MOOD / TITLE ANCHOR: ${displayTitle}
+MOOD / TITLE ANCHOR (must appear in the top title band): ${displayTitle}
 
 VISUAL CONTEXT — SCENES (render as the film stills in the upper bands): ${scriptSlice}
 
@@ -946,7 +947,18 @@ export async function generatePlatformCompositeSheetImage(options: {
         `[2×4·步骤1b·完成] chars ${englishCore.length} → ${condensedCore.length}${condensedCore.length < englishCore.length ? "（已缩短）" : "（未缩短或仅硬裁剪）"}`,
       );
       const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
-      const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}`;
+      const topicTitleZh = String(options.title || "").trim().slice(0, 80);
+      const storyboardTitleInject =
+        isStoryboard && topicTitleZh
+          ? `\n\nTOP TITLE (Simplified Chinese — render verbatim or nearly verbatim in the top title strip above the 2×4 grid): 「${topicTitleZh}」`
+          : "";
+      if (isStoryboard && topicTitleZh) {
+        appendImageFlowLog(
+          L,
+          `[2×4·顶栏标题] 已并入生图 prompt · 简中选题标题 · len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
+        );
+      }
+      const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
 
       appendImageFlowLog(
         L,

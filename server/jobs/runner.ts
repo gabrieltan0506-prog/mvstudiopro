@@ -773,6 +773,11 @@ async function processPlatformJob(
 ): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
   try {
+    if (input.action === "platform_composite_sheet_progress") {
+      throw new Error(
+        "[jobs] platform_composite_sheet_progress 僅為寬幅合成 TRPC 旁路進度占位（插入時即 running），不應進入 worker；請檢查 jobs 是否被誤改為 queued。",
+      );
+    }
     // ── platform_analysis ────────────────────────────────────────────────────────
     if (input.action === "platform_analysis") {
       const context = String(params.context || "");

@@ -231,6 +231,35 @@ type ClientJobPollTrace = {
   terminalStatus?: string;
 };
 
+/** Stage 2 失敗或空載荷時，從 getPlatformContent.debug 摘錄高信號欄位寫入輪詢區（避免只看 toast）。 */
+function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefined): string {
+  if (!debug || typeof debug !== "object") return "";
+  const parts: string[] = [];
+  const bp = debug.buildPlatformContent;
+  if (bp && typeof bp === "object") {
+    const o = bp as Record<string, unknown>;
+    const keys = [
+      "jsonParseStrategy",
+      "rawContentEmpty",
+      "vertexFinishReason",
+      "modelUsed",
+      "error",
+    ] as const;
+    for (const k of keys) {
+      const v = o[k];
+      if (v !== undefined && v !== null) {
+        const s = typeof v === "string" ? v : JSON.stringify(v);
+        parts.push(`${k}=${s.slice(0, 240)}`);
+      }
+    }
+  }
+  for (const k of ["stage2Error", "stage2TimedOut"] as const) {
+    const v = debug[k];
+    if (v !== undefined && v !== null) parts.push(`${k}=${String(v).slice(0, 200)}`);
+  }
+  return parts.slice(0, 8).join(" · ");
+}
+
 /**
  * renderHighlightText — parses **bold** markers and [高亮:keyword] patterns
  * from AI-generated text and renders them as highlighted spans.
@@ -502,6 +531,17 @@ const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
 
 const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
 
+/** 寬幅合成：服务端 jobs 表旁路进度，供 GET /api/jobs 轮询 `imageGenFlowLog` */
+function newPlatformCompositeProgressJobId(): string {
+  try {
+    const u = globalThis.crypto?.randomUUID?.();
+    if (u) return u.replace(/-/g, "").slice(0, 24);
+  } catch {
+    /* ignore */
+  }
+  return `cs${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 type PlatformImageGenFlowSnapshot = {
   at: string;
   kind: "batch_topic_frames" | "composite_2x4" | "batch_topic_frames_failed" | "composite_2x4_failed";
@@ -580,12 +620,13 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   return [`${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}（詳見下方服務端流水）`];
 }
 
-/** 與服務端 generatePlatformCompositeSheetImage / translatePlatformCompositeToEnglishPrompt 步驟對齊（pending 時先顯示，成功後由 imageGenFlowLog 覆蓋為完整實測行）。 */
+/** 寬幅合成：pending 時由 progressJobId + GET /api/jobs 實時刷新（分鏡 / 小紅書同一套）。 */
 function buildCompositeImageGenPendingLines(input: {
   kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   sceneId: string;
   title: string;
   imagePromptTranslator?: PlatformImagePromptTranslator;
+  progressJobId?: string;
 }): string[] {
   const ts = new Date().toISOString();
   const tr = input.imagePromptTranslator ?? "gpt54";
@@ -599,19 +640,20 @@ function buildCompositeImageGenPendingLines(input: {
       : input.kind === "storyboard_sheet_landscape"
         ? "视频向 2×4 分镜主表 · 横版（buildVideoStoryboardGeminiPrompt）"
         : "视频向 2×4 分镜主表 · portrait API kind（buildVideoStoryboardGeminiPrompt）";
+  const pid = String(input.progressJobId ?? "").trim();
   return [
     `${ts}  [客户端] 宽幅合成已发起 · ${kindLabel}`,
     `${ts}  [客户端] sceneId=${input.sceneId} · title=${input.title.slice(0, 72)}`,
     `${ts}  [客户端] 翻译引擎：${trLine}`,
-    `${ts}  [预估步骤] ① extractChineseVisualBrief — 中文视觉骨架（见 [Vertex·Flash]·骨架·GPT54）`,
-    `${ts}  [预估步骤] ② ${input.kind === "xiaohongshu_dual_note" ? "buildXhsNoteGeminiPrompt" : "buildVideoStoryboardGeminiPrompt"} — 组装编导任务`,
-    `${ts}  [预估步骤] ③ translatePlatformCompositeToEnglishPrompt — 英文化（见 [GPT54·英文化] / [Vertex·Flash]）`,
-    `${ts}  [预估步骤] ④ condenseImagePromptIfNeeded — 超长提炼（见 imageGenFlowLog）`,
-    `${ts}  [预估步骤] ⑤ 拼接像素锁（电影 2×4 / 八格笔记硬约束）`,
-    `${ts}  [预估步骤] ⑥ GPT-IMAGE-2 宽幅 — 多尺寸序列（见 [GPT-IMAGE-2]）`,
-    `${ts}  [预估步骤] ⑦ 无图则 Nano Banana 2 兜底`,
-    `${ts}  [说明] 整条链路失败会整链重试，默认至多 5 次（首次 + 重试 4 次）；见 imageGenFlowLog 中 [2×4·整链]。`,
-    `${ts}  [说明] 请求完成后下方将替换为服务端完整 imageGenFlowLog（含每步时间戳）；若仍只有本段，请检查 Network 响应是否含 imageGenFlowLog。`,
+    ...(pid.length >= 8
+      ? [
+          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s GET /api/jobs/${pid} · 下方【当前步骤】= 服务端流水最后一行`,
+          `${ts}  [提示] 卡在 [GPT-IMAGE-2] 不动：单次尺寸可能接近 300s；失败会换尺寸重试（你看到的「多次 API」多为超时/账单上限/换尺寸，非客户端重复发起合成）`,
+        ]
+      : [
+          `${ts}  [提示] 未带 progressJobId，无法轮询实时步骤；仅能在请求结束后看完整日志`,
+        ]),
+    `${ts}  [说明] 排查标签：[骨架·GPT54]、[GPT54·英文化]、[2×4·步骤…]、[GPT-IMAGE-2]、[2×4·整链]；整链失败最多 5 次完整重试`,
   ];
 }
 
@@ -759,6 +801,13 @@ export default function PlatformPage() {
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
+  /** 2×4 寬幅合成：與 TRPC 並行的 GET /api/jobs 輪詢（progressJobId） */
+  const compositeSheetLivePollCtxRef = useRef<{
+    jobId: string;
+    localOpId: string;
+    sceneId: string;
+    kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
+  } | null>(null);
   /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
@@ -794,7 +843,29 @@ export default function PlatformPage() {
     },
   );
 
-  const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
+  const getPlatformContentMutation = trpc.mvAnalysis.getPlatformContent.useMutation();
+
+  /** Stage 2 單次直連無中間態：pending 期間定期追加「已等待 N 秒」至 Debug 流水，避免像卡住。 */
+  useEffect(() => {
+    if (!getPlatformContentMutation.isPending) return;
+    const t0 = Date.now();
+    const intervalMs = 12_000;
+    const id = window.setInterval(() => {
+      const sec = Math.round((Date.now() - t0) / 1000);
+      setContentJobPollTrace((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          pollCount: prev.pollCount + 1,
+          lines: appendPollDebugLine(
+            prev.lines,
+            `${new Date().toISOString()}  [进行中] getPlatformContent 已等待 ${sec}s（长篇 JSON 常见 60–300s，请勿重复点击分析）`,
+          ),
+        };
+      });
+    }, intervalMs);
+    return () => window.clearInterval(id);
+  }, [getPlatformContentMutation.isPending]);
 
   // Stage 1 Mutation: 戰略看板
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
@@ -804,62 +875,105 @@ export default function PlatformPage() {
         setContentJobError(null);
         setIsContentLoading(true);
         try {
-          const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
+          const tStart = new Date().toISOString();
+          const syncId = `trpc-stage2-${Date.now()}`;
+          setContentJobPollTrace({
+            jobId: syncId,
+            label: "Stage 2 · getPlatformContent（直连 Fly，不经 job 队列）",
+            lines: appendPollDebugLine(
+              [],
+              `${tStart} 调用 mvAnalysis.getPlatformContent（与 worker 内 buildPlatformContent 相同；避免与 platform_topic_image 共队列堵塞）`,
+            ),
+            pollCount: 1,
+          });
+          const res = await getPlatformContentMutation.mutateAsync({
             context: focusPrompt || undefined,
             windowDays: selectedWindowDays,
             platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu || [],
             snapshotSummary: variables.snapshotSummary || {},
           });
-          const tEnq = new Date().toISOString();
-          setContentJobPollTrace({
-            jobId,
-            label: "Stage 2 · platform_build_content",
-            lines: appendPollDebugLine(
-              [],
-              `${tEnq} 已入队 enqueuePlatformContentJob → jobId=${jobId}，此后 GET /api/jobs/:id 每 2500ms`,
-            ),
-            pollCount: 0,
-          });
-          const j = await pollJobUntilTerminal(jobId, {
-            intervalMs: 2500,
-            // 需略長於服務端 platform_build_content（預設 20min）
-            maxWaitMs: 22 * 60_000,
-            onPoll: ({ attempt, status, elapsedMs }) => {
-              const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（入队后 ${elapsedMs}ms）`;
-              setContentJobPollTrace((prev) =>
-                prev && prev.jobId === jobId
-                  ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
-                  : prev,
-              );
-            },
-          });
-          const termLine = `${new Date().toISOString()} 终态 status=${j.status}${j.error ? ` · error=${j.error}` : ""}`;
+          const dbg = res.debug as
+            | {
+                totalMs?: number;
+                stage2Error?: string | null;
+                stage2TimedOut?: boolean;
+              }
+            | undefined;
+          const tEnd = new Date().toISOString();
+          let term: string;
+          if (res.platformContent) {
+            term = "succeeded";
+          } else if (dbg?.stage2TimedOut) {
+            term = "timeout";
+          } else if (dbg?.stage2Error) {
+            term = "failed";
+          } else {
+            term = "empty";
+          }
           setContentJobPollTrace((prev) =>
-            prev && prev.jobId === jobId
-              ? { ...prev, terminalStatus: j.status, lines: appendPollDebugLine(prev.lines, termLine) }
+            prev && prev.jobId === syncId
+              ? {
+                  ...prev,
+                  pollCount: 1,
+                  terminalStatus: term,
+                  lines: appendPollDebugLine(
+                    prev.lines,
+                    `${tEnd} 完成 · totalMs=${dbg?.totalMs ?? "?"} · terminal=${term}`,
+                  ),
+                }
               : prev,
           );
-          if (j.status === "failed") {
-            throw new Error(j.error || "文案任务失败");
+          if (dbg?.stage2Error) {
+            throw new Error(dbg.stage2Error);
           }
-          const out = j.output as { platformContent?: unknown; debug?: Record<string, unknown> } | undefined;
-          if (out?.platformContent) {
-            const pc = out.platformContent as { contentBlueprints?: unknown[]; monetizationLanes?: unknown[] };
+          if (dbg?.stage2TimedOut) {
+            throw new Error("專屬文案生成逾時，請稍後再試或縮短背景描述");
+          }
+          if (res.platformContent) {
+            const pc = res.platformContent as { contentBlueprints?: unknown[]; monetizationLanes?: unknown[] };
             const bp = Array.isArray(pc.contentBlueprints) ? pc.contentBlueprints.length : 0;
             const ml = Array.isArray(pc.monetizationLanes) ? pc.monetizationLanes.length : 0;
             if (bp === 0 && ml === 0) {
+              const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
+              setContentJobPollTrace((prev) =>
+                prev && prev.jobId === syncId
+                  ? {
+                      ...prev,
+                      lines: appendPollDebugLine(
+                        prev.lines,
+                        snippet
+                          ? `${new Date().toISOString()} Stage 2 接口成功但 0 條選題 · 摘要: ${snippet}`
+                          : `${new Date().toISOString()} Stage 2 接口成功但 0 條選題（无 buildPlatformContent 摘要）`,
+                      ),
+                    }
+                  : prev,
+              );
               toast.error(
                 "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「getPlatformContent」查看原因，或重新分析一次。",
               );
             }
-            setPlatformContent(out.platformContent as any);
+            setPlatformContent(res.platformContent as any);
           } else {
+            const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
+            setContentJobPollTrace((prev) =>
+              prev && prev.jobId === syncId
+                ? {
+                    ...prev,
+                    lines: appendPollDebugLine(
+                      prev.lines,
+                      snippet
+                        ? `${new Date().toISOString()} 未返回 platformContent · 摘要: ${snippet}`
+                        : `${new Date().toISOString()} 未返回 platformContent（无 debug 摘要）`,
+                    ),
+                  }
+                : prev,
+            );
             setContentJobError("專屬文案生成失敗：任務完成但未返回有效內容");
             toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
           }
-          setContentDebug((out?.debug as Record<string, unknown>) ?? {});
+          setContentDebug((res.debug as Record<string, unknown>) ?? {});
         } catch (e) {
-          console.warn("[PlatformPage] Stage 2 job poll error:", e);
+          console.warn("[PlatformPage] Stage 2 getPlatformContent error:", e);
           const msg = e instanceof Error ? e.message : String(e);
           setContentJobError(msg);
           toast.error(`文案生成失敗: ${msg}`);
@@ -1287,6 +1401,11 @@ export default function PlatformPage() {
     onMutate: (input) => {
       setPendingCompositeSheet({ sceneId: input.sceneId, kind: input.kind });
       const localOpId = `composite-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const pid = String(input.progressJobId ?? "").trim();
+      compositeSheetLivePollCtxRef.current =
+        pid.length >= 8
+          ? { jobId: pid, localOpId, sceneId: input.sceneId, kind: input.kind }
+          : null;
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
@@ -1296,6 +1415,7 @@ export default function PlatformPage() {
             sceneId: input.sceneId,
             title: input.title,
             imagePromptTranslator: input.imagePromptTranslator,
+            progressJobId: pid.length >= 8 ? pid : undefined,
           }),
           meta: {
             localOpId,
@@ -1303,6 +1423,7 @@ export default function PlatformPage() {
             sceneId: input.sceneId,
             title: input.title?.slice(0, 80),
             pending: true,
+            progressJobId: pid.length >= 8 ? pid : undefined,
           },
         }),
       );
@@ -1372,8 +1493,57 @@ export default function PlatformPage() {
         });
       });
     },
-    onSettled: () => setPendingCompositeSheet(null),
+    onSettled: () => {
+      setPendingCompositeSheet(null);
+      compositeSheetLivePollCtxRef.current = null;
+    },
   });
+
+  useEffect(() => {
+    if (!generatePlatformCompositeSheetMutation.isPending) return;
+    const ctx = compositeSheetLivePollCtxRef.current;
+    if (!ctx?.jobId) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const j = await getJob(ctx.jobId);
+        const out = j.output as { imageGenFlowLog?: string[] } | undefined;
+        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
+        const ts = new Date().toISOString();
+        const last = log.length > 0 ? String(log[log.length - 1]) : "";
+        const lines: string[] = [
+          `${ts}  [实时进度] GET /api/jobs/${ctx.jobId} · status=${j.status} · kind=${ctx.kind} · sceneId=${ctx.sceneId}`,
+          `${ts}  [当前步骤] ${last || "（尚无流水行；稍等或检查 jobs 是否已写入）"}`,
+        ];
+        if (log.length > 0) {
+          lines.push(`── 服务端 imageGenFlowLog（${log.length} 行）──`, ...log);
+        }
+        setPlatformImageGenFlowSnapshots((prev) =>
+          upsertPlatformImageFlowSnapshot(prev, {
+            at: ts,
+            kind: "composite_2x4",
+            lines,
+            meta: {
+              localOpId: ctx.localOpId,
+              apiKind: ctx.kind,
+              sceneId: ctx.sceneId,
+              pending: true,
+              liveProgressJobId: ctx.jobId,
+            },
+          }),
+        );
+      } catch {
+        /* 下一拍重试 */
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 850);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [generatePlatformCompositeSheetMutation.isPending]);
 
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
   const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();
@@ -2677,7 +2847,7 @@ export default function PlatformPage() {
                     <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
-                    <div>3. 深度原创分析（enqueuePlatformContentJob → GET /api/jobs 轮询）</div>
+                    <div>3. 深度原创分析（mvAnalysis.getPlatformContent 直连 Fly，不经 job 队列）</div>
                     <div>
                       3a. 状态:{" "}
                       <span>
@@ -2699,10 +2869,11 @@ export default function PlatformPage() {
                       <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span>
                     </div>
                     <div>
-                      3e. 轮询次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
+                      3e. 流水更新次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
                       {contentJobPollTrace?.terminalStatus
                         ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
                         : ""}
+                      <span className="text-gray-500">（直连期间约每 12s 追加一行等待进度）</span>
                     </div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
                     <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
@@ -2759,14 +2930,14 @@ export default function PlatformPage() {
                 </p>
                 <div className="mt-3 grid gap-4 lg:grid-cols-2">
                   <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                    <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content</div>
+                    <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · getPlatformContent（直连）</div>
                     <div className="mt-1 space-y-1 text-[10px] text-gray-400">
                       <div>
                         jobId:{" "}
                         <span className="break-all font-mono text-[#d7d0ef]">{contentJobPollTrace?.jobId ?? "—"}</span>
                       </div>
                       <div>
-                        末次轮询序号: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
+                        流水更新次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
                         {contentJobPollTrace?.terminalStatus
                           ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
                           : ""}
@@ -2775,7 +2946,7 @@ export default function PlatformPage() {
                     <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
                       {(contentJobPollTrace?.lines ?? []).length > 0
                         ? (contentJobPollTrace?.lines ?? []).join("\n")
-                        : "尚无记录。Stage 1 完成后触发 Stage 2 入队即会写入。"}
+                        : "尚无记录。Stage 1 完成后会自动调用 getPlatformContent（直连 Fly）；进行中约每 12s 追加等待进度。"}
                     </pre>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-black/35 p-3">
@@ -2852,8 +3023,8 @@ export default function PlatformPage() {
                       <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))} / hasPlatformContent: {String(Boolean(platformContent))}</div>
                       <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
                       <div>
-                        7. Stage2 jobId:{" "}
-                        <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span> · 轮询{" "}
+                        7. Stage2 追踪 id:{" "}
+                        <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span> · 流水更新{" "}
                         {contentJobPollTrace != null ? contentJobPollTrace.pollCount : "—"}
                       </div>
                       <div>
@@ -3016,18 +3187,18 @@ export default function PlatformPage() {
                     Fly Jobs · 客户端轮询（GET /api/jobs/:id）
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    与上方「快照区」Debug 相同数据源：Stage 2 文案 job 与最近一次封面单帧 job 的入队与轮询流水。
+                    与上方「快照区」Debug 相同数据源：Stage 2 为 getPlatformContent 单次直连流水（约每 12s 追加等待进度）；封面单帧仍为 job 入队与 GET /api/jobs 轮询。
                   </p>
                   <div className="mt-3 grid gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                      <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content</div>
+                      <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · getPlatformContent（直连）</div>
                       <div className="mt-1 space-y-1 text-[10px] text-gray-400">
                         <div>
                           jobId:{" "}
                           <span className="break-all font-mono text-[#d7d0ef]">{contentJobPollTrace?.jobId ?? "—"}</span>
                         </div>
                         <div>
-                          末次轮询序号: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
+                          流水更新次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
                           {contentJobPollTrace?.terminalStatus
                             ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
                             : ""}
@@ -3036,7 +3207,7 @@ export default function PlatformPage() {
                       <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
                         {(contentJobPollTrace?.lines ?? []).length > 0
                           ? (contentJobPollTrace?.lines ?? []).join("\n")
-                          : "尚无记录。"}
+                          : "尚无记录。完成 Stage 1 后将出现直连流水。"}
                       </pre>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-black/35 p-3">
@@ -3354,6 +3525,7 @@ export default function PlatformPage() {
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               creationRecordId: readOptionalReportBindingCreationId(),
                               imagePromptTranslator,
+                              progressJobId: newPlatformCompositeProgressJobId(),
                             });
                           };
                           return (
@@ -3842,6 +4014,7 @@ export default function PlatformPage() {
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     creationRecordId: readOptionalReportBindingCreationId(),
                                     imagePromptTranslator,
+                                    progressJobId: newPlatformCompositeProgressJobId(),
                                   }),
                                 ).catch(() => {});
                               }}

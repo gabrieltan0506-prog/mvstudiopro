@@ -11,7 +11,7 @@ import { registerStripeWebhook } from "../stripe-webhook";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
-import { startJobWorker } from "../jobs/runner";
+import { processJobsOnce, startJobWorker } from "../jobs/runner";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
 import { getSupervisorAllowlist } from "../services/access-policy";
@@ -296,6 +296,10 @@ async function startServer() {
         ) {
           return res.status(403).json({ error: "Forbidden" });
         }
+      }
+
+      if (job.status === "queued") {
+        void processJobsOnce().catch(() => {});
       }
 
       const output = (job.output && typeof job.output === "object")
