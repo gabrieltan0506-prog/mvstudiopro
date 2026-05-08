@@ -10,7 +10,7 @@ function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): vo
 /** 將异常打成可讀字串（避免只顯示 null / [object Object]）。 */
 function formatErrForVertexDebug(e: unknown): string {
   if (e instanceof Error) {
-    const any = e as Record<string, unknown>;
+    const any = e as unknown as Record<string, unknown>;
     const parts: string[] = [`${e.name}: ${e.message || "(無 message)"}`];
     for (const k of ["code", "status", "statusCode", "reason", "cause"] as const) {
       const v = any[k];
@@ -507,13 +507,15 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
       },
     });
 
-    const respAny = response as Record<string, unknown> & {
+    type GenContentDebug = {
       text?: string;
       candidates?: Array<{ finishReason?: string; safetyRatings?: unknown }>;
+      usageMetadata?: unknown;
     };
+    const respAny = response as unknown as GenContentDebug;
     const finishReason = respAny?.candidates?.[0]?.finishReason ?? null;
     const safety = respAny?.candidates?.[0]?.safetyRatings;
-    const usage = (respAny as { usageMetadata?: unknown }).usageMetadata;
+    const usage = respAny.usageMetadata;
     appendVertexFlashDebug(
       flowLog,
       `generateContent 已返回 · finishReason=${finishReason ?? "n/a"} · usageMetadata=${usage != null ? JSON.stringify(usage).slice(0, 220) : "n/a"}`,

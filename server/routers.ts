@@ -1077,7 +1077,7 @@ export async function buildPlatformContent(params: {
   try {
     response = await invokeLLM({
       provider: "vertex",
-      modelName: STAGE2_VERTEX_MODEL,
+      modelName: STAGE2_CONTENT_MODEL,
       max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
       response_format: { type: "json_object" },
       messages: contentMessages,
@@ -1090,7 +1090,7 @@ export async function buildPlatformContent(params: {
     try {
       response = await invokeLLM({
         provider: "vertex",
-        modelName: STAGE2_VERTEX_MODEL,
+        modelName: STAGE2_CONTENT_MODEL,
         max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
         messages: contentMessages,
         abortSignal: params.abortSignal,
