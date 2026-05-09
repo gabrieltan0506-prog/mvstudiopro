@@ -5,7 +5,9 @@
  * **放大**：見 `vertexImage.ts`（`imagen-4.0-upscale-preview` 等，與本檔無關）。
  */
 import { getVertexAccessToken } from "../utils/vertex";
+import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
+import { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } from "./flyVolumeGeneratedImages.js";
 import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
 
 function s(v: unknown): string {
@@ -149,11 +151,28 @@ export async function generateAndStoreStrategicImage(
   }
 
   const ext = /jpeg|jpg/i.test(contentType) ? "jpg" : "png";
+  const normalizedCt: "image/jpeg" | "image/png" | "image/webp" = contentType.toLowerCase().includes("webp")
+    ? "image/webp"
+    : contentType.includes("jpeg") || ext === "jpg"
+      ? "image/jpeg"
+      : "image/png";
+
+  if (resolvePlatformImageStorageDriver() === "fly") {
+    const { relPath } = await writeFlyPlatformImageBuffer({
+      subdir: "strategic",
+      buffer,
+      contentType: normalizedCt,
+    });
+    const url = buildFlyPlatformImagePublicUrl(relPath);
+    console.log(`[Fly Image Engine] 獲取圖像成功，落盤 Fly 卷: ${relPath}`);
+    return url;
+  }
+
   const gcsPath = `growth-camp/images/strategic_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { gcsUri } = await uploadBufferToGcs({
     objectName: gcsPath,
     buffer,
-    contentType: contentType.includes("jpeg") || ext === "jpg" ? "image/jpeg" : "image/png",
+    contentType: normalizedCt,
   });
 
   console.log(`[Fly Image Engine] 獲取圖像成功，上傳 GCS: ${gcsUri}`);
