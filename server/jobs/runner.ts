@@ -27,7 +27,7 @@ import {
   type FalKlingEndpoint,
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
-import { appRouter, buildPlatformContent } from "../routers";
+import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
 import { getDb } from "../db";
@@ -1015,7 +1015,9 @@ async function processPlatformJob(
             stage2Error: null as string | null,
             stage2TimedOut: false,
             platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
-            buildPlatformContent: built.diagnostics,
+            buildPlatformContent: slimBuildPlatformContentDiagnosticsForJob(
+              built.diagnostics as Record<string, unknown>,
+            ),
           },
         },
       };
