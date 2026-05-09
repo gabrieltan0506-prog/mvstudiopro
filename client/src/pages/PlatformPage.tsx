@@ -241,8 +241,6 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
     const keys = [
       "stage2MaxOutputTokens",
       "stage2SubStepsSummary",
-      "phase2SkippedReason",
-      "phase1CreativeReasoningEffortResolved",
       "openaiGpt5ReasoningEffort",
       "jsonParseStrategy",
       "rawContentEmpty",
@@ -3015,20 +3013,9 @@ export default function PlatformPage() {
                       </span>
                     </div>
                     <div className="break-words">
-                      3g1. Phase 2 跳過說明:{" "}
-                      <span className="font-mono text-[10px] text-[#d7d0ef]">
-                        {(() => {
-                          const t = (
-                            contentDebug?.buildPlatformContent as { phase2SkippedReason?: string } | undefined
-                          )?.phase2SkippedReason;
-                          return typeof t === "string" && t.trim() ? t : "—（雙階順利或單階模式時為空）";
-                        })()}
-                      </span>
-                    </div>
-                    <div className="break-words">
-                      3h. Stage 2 拆步{" "}
+                      3h. Stage 2 步驟概要{" "}
                       <span className="text-gray-500">
-                        （預設單階 OpenAI JSON；設 Fly `PLATFORM_STAGE2_OPENAI_TWO_PHASE=1` 時為 2‑1 GPT‑5.5→2‑2 GPT‑5.4。見 JSON 字段 stage2SubSteps）
+                        （OpenAI：單次呼叫推理並輸出 JSON；Vertex：`gemini-3.1-pro-preview` 單階。見 JSON `stage2SubSteps`）
                       </span>:
                       <div className="mt-1 space-y-0.5 pl-1 font-mono text-[10px] text-[#d7d0ef]">
                         {(() => {

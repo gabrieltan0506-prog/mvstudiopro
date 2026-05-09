@@ -11,19 +11,12 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import {
-  extractFirstChoicePlainText,
   extractJsonString,
   getOpenAiGpt5ReasoningEffortDiagnostics,
   invokeLLM,
   truncateForMemory,
-  type MemorySafeLlmDiagnostics,
 } from "./_core/llm";
-import {
-  getPlatformStage2OpenAiModel,
-  getPlatformStage2StructureOpenAiModel,
-  isPlatformStage2OpenAiTwoPhaseEnabled,
-  resolvePlatformStage2LlmMode,
-} from "./config/platformSwitches.js";
+import { getPlatformStage2OpenAiModel, resolvePlatformStage2LlmMode } from "./config/platformSwitches.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -457,30 +450,6 @@ const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
   return Math.min(65536, Math.floor(raw));
 })();
 
-/** OpenAI Stage 2 双阶：第一阶创意稿（預設 8192，`PLATFORM_STAGE2_CREATIVE_MAX_OUTPUT_TOKENS`）。 */
-const STAGE2_OPENAI_CREATIVE_MAX_OUT = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_CREATIVE_MAX_OUTPUT_TOKENS || "8192");
-  if (!Number.isFinite(raw) || raw < 1024) return 8192;
-  return Math.min(65536, Math.floor(raw));
-})();
-
-/** OpenAI Stage 2 双阶：第二阶 JSON（預設 16384，`PLATFORM_STAGE2_STRUCTURE_MAX_OUTPUT_TOKENS`）。 */
-const STAGE2_OPENAI_STRUCTURE_MAX_OUT = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_STRUCTURE_MAX_OUTPUT_TOKENS || "16384");
-  if (!Number.isFinite(raw) || raw < 2048) return 16384;
-  return Math.min(65536, Math.floor(raw));
-})();
-
-/** Phase 1 創意：`high` + 上限 8192 易將 completion 全數用於 reasoning、正文為空；預設改 `medium`，可用 PLATFORM_STAGE2_CREATIVE_REASONING_EFFORT=high。 */
-const GPT5_CREATIVE_EFF_LEVELS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-function resolveOpenAiCreativePhaseReasoningEffort(): NonNullable<Parameters<typeof invokeLLM>[0]["reasoningEffort"]> {
-  const raw = String(process.env.PLATFORM_STAGE2_CREATIVE_REASONING_EFFORT ?? "medium").trim().toLowerCase();
-  if (GPT5_CREATIVE_EFF_LEVELS.has(raw)) {
-    return raw as NonNullable<Parameters<typeof invokeLLM>[0]["reasoningEffort"]>;
-  }
-  return "medium";
-}
-
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
 // platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
 const platformDashboardResponseSchema = z.object({
@@ -502,41 +471,6 @@ const platformContentResponseSchema = z.object({
   contentBlueprints: z.array(z.any()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
-
-/** OpenAI 雙階·第一階：高推理純報告（禁 JSON），與單階 Vertex 的「直接 JSON」並行存在。 */
-const STAGE2_OPENAI_PHASE1_CREATIVE_SYSTEM_BASE = `你是一个顶级的个人IP商业文案顾问。
-
-根据已生成的平台方向与用户背景数据，请输出一份「深度战略分析报告」（以中文为主；可用多级标题、编号与条列组织）。**禁止输出 JSON、YAML、禁止 Markdown 代码块围栏（\`\`\`）、禁止用一对花括号包裹全文交卷。**
-
-【绝对禁止词汇黑名单】：
-- "电商带货" / "带货" / "橱窗"
-- "先做一轮轻量验证" / "先做轻量验证" / "轻量验证"
-- "开头先给结果" / "视频开头先给判断，中段给例子，结尾给行动引导"
-- "可能都可以" / "先试试" / "先探索一下"
-- "制作身份名片" / "锁定文化符号" / "设计轻量级产品"
-- 任何泛化建议，不针对此用户的具体身份和专长
-
-【核心数量与维度】：恰好 4 个深度内容方案，依序对应四维度：
-1.核心专业洞察 / 2.跨界结合与价值观 / 3.目标受众痛点暴击 / 4.个人经历与人设魅力
-须结合用户消息中的 dynamicDecisionChain：抖音与快手参考近 5 天；B 站与小红书参考近 15 天。
-
-对每个内容方案逐项写清语义等价于以下字段的正文：**title**, **format（短视频｜图文）**, **hook**, **copywriting（≥200 字完整三幕正文）**, **suitablePlatforms 列表语义**, **actionableSteps（至少 3 条有序落地动作）**,
-**detailedScript（短视频必须时间轴+视觉/口播；图文必须封面+内页结构）**, **publishingAdvice**,
-以及 **executionDetails**（environmentAndWardrobe、lightingAndCamera、stepByStepScript 多分镜步骤）。
-
-**monetizationLanes**：输出 1–2 条，每条含 title、fitReason、offerShape、revenueModes 语义列表、firstValidation（禁止「轻量验证」套话）。
-行动须极度具体「物理级」。须融入 Call2 platformMenu 的 trafficBoosters 热点。
-仅输出报告正文。`;
-
-const STAGE2_OPENAI_PHASE2_JSON_PACK_SYSTEM = `你是專業的數據封裝專員。請將使用者提供的「深度分析報告全文」轉化為單一合法 JSON。
-
-硬性規則：
-1. **嚴禁修改、刪減或潤飾**報告中的實質文案內容；僅允許 JSON 必要轉義與合法空白。
-2. 僅輸出 JSON：禁止 Markdown 圍欄、禁止前言结语；第一個字元為 { ，最後字元為 }。
-3. 頂級鍵精確為：contentBlueprints（array）、monetizationLanes（array）。
-4. contentBlueprints 每項必填：title, format, hook, copywriting, suitablePlatforms(string[]), actionableSteps(string[]), detailedScript, publishingAdvice,
-executionDetails: { environmentAndWardrobe, lightingAndCamera, stepByStepScript(string[]) }。
-5. monetizationLanes 每項必填：title, fitReason, offerShape, revenueModes(string[]), firstValidation。`;
 
 async function buildPlatformDashboard(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
@@ -1157,11 +1091,6 @@ export async function buildPlatformContent(params: {
       },
   ];
 
-  const openAiCreativePhaseMessages: Parameters<typeof invokeLLM>[0]["messages"] = [
-    { role: "system", content: `${STAGE2_OPENAI_PHASE1_CREATIVE_SYSTEM_BASE}${personaConstraint}` },
-    { role: "user", content: stage2UserJsonString },
-  ];
-
   const stage2LlmMode = resolvePlatformStage2LlmMode();
   diagnostics.stage2LlmMode = stage2LlmMode;
   console.log("[buildPlatformContent] Stage2 LLM", {
@@ -1182,170 +1111,38 @@ export async function buildPlatformContent(params: {
     const openaiCreativeModel = getPlatformStage2OpenAiModel();
     diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
 
-    /** 双阶失败/空稿回退单体 JSON：不显式降为 low（保持文案质量）；沿用 GPT‑5 `json_object` 的 reasoning 默认（通常为 medium，`OPENAI_GPT5_JSON_REASONING_EFFORT`）。 */
-    const runOpenAiSingleShot = async (fromTwoPhaseFailure?: boolean) => {
-      const jsonEff = getOpenAiGpt5ReasoningEffortDiagnostics().jsonFallbackEffective;
-      diagnostics.singleshotOpenAiFallback = fromTwoPhaseFailure
-        ? {
-            reason: "after_two_phase_empty_or_throw",
-            jsonReasoningEffort: jsonEff as NonNullable<
-              Parameters<typeof invokeLLM>[0]["reasoningEffort"]
-            >,
-          }
-        : undefined;
+    /** OpenAI Stage 2：一次呼叫完成推理 + `json_object`；若 json 模式報錯再用純正文重試。推理強度沿用 GPT‑5 系列預設（`OPENAI_GPT5_JSON_REASONING_EFFORT`）。 */
+    try {
+      response = await invokeLLM({
+        provider: "openai",
+        modelName: openaiCreativeModel,
+        max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+        response_format: { type: "json_object" },
+        messages: structuredStage2Messages,
+        abortSignal: params.abortSignal,
+      });
+      llmPath = "openai+json_object";
+    } catch (openaiJsonErr) {
+      openaiJsonErrMsg =
+        openaiJsonErr instanceof Error ? openaiJsonErr.message : String(openaiJsonErr);
+      console.warn("[buildPlatformContent] openai+json_object failed:", openaiJsonErr);
       try {
         response = await invokeLLM({
           provider: "openai",
           modelName: openaiCreativeModel,
           max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
-          response_format: { type: "json_object" },
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
         });
-        llmPath = "openai+json_object";
-      } catch (openaiJsonErr) {
-        openaiJsonErrMsg =
-          openaiJsonErr instanceof Error ? openaiJsonErr.message : String(openaiJsonErr);
-        console.warn("[buildPlatformContent] openai+json_object failed:", openaiJsonErr);
-        try {
-          response = await invokeLLM({
-            provider: "openai",
-            modelName: openaiCreativeModel,
-            max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
-            messages: structuredStage2Messages,
-            abortSignal: params.abortSignal,
-          });
-          llmPath = "openai_plain";
-        } catch (openaiPlainErr) {
-          openaiPlainErrMsg =
-            openaiPlainErr instanceof Error ? openaiPlainErr.message : String(openaiPlainErr);
-          diagnostics.llmPath = "openai_all_failed";
-          diagnostics.openaiJsonError = openaiJsonErrMsg;
-          diagnostics.openaiPlainError = openaiPlainErrMsg;
-          throw openaiPlainErr;
-        }
+        llmPath = "openai_plain";
+      } catch (openaiPlainErr) {
+        openaiPlainErrMsg =
+          openaiPlainErr instanceof Error ? openaiPlainErr.message : String(openaiPlainErr);
+        diagnostics.llmPath = "openai_all_failed";
+        diagnostics.openaiJsonError = openaiJsonErrMsg;
+        diagnostics.openaiPlainError = openaiPlainErrMsg;
+        throw openaiPlainErr;
       }
-    };
-
-    if (isPlatformStage2OpenAiTwoPhaseEnabled()) {
-      diagnostics.platformStage2StructureOpenAiModel = getPlatformStage2StructureOpenAiModel();
-      diagnostics.stage2OpenAiTwoPhase = true;
-      diagnostics.phase1CreativeReasoningEffortResolved = resolveOpenAiCreativePhaseReasoningEffort();
-      const structureModel = diagnostics.platformStage2StructureOpenAiModel as string;
-
-      const creativePeek: MemorySafeLlmDiagnostics = { phase: "creative_reasoning" };
-      let phase1Resp: Awaited<ReturnType<typeof invokeLLM>> | undefined;
-      try {
-        phase1Resp = await invokeLLM({
-          provider: "openai",
-          modelName: openaiCreativeModel,
-          max_tokens: STAGE2_OPENAI_CREATIVE_MAX_OUT,
-          reasoningEffort: resolveOpenAiCreativePhaseReasoningEffort(),
-          messages: openAiCreativePhaseMessages,
-          abortSignal: params.abortSignal,
-          memorySafeDiagnostics: creativePeek,
-        });
-      } catch (e1) {
-        diagnostics.phase1CreativeError = e1 instanceof Error ? e1.message : String(e1);
-        diagnostics.phase2SkippedReason =
-          "2-2（GPT‑5.4 組裝）未執行：Phase 1 請求已異常終止，無創意文稿可封裝。已改為單階 GPT‑5.5 JSON；沿用 JSON 推理強度預設（預設 medium，見 OPENAI_GPT5_JSON_REASONING_EFFORT）。";
-        diagnostics.stage2TwoPhaseFallback = "singleshot_after_phase1_throw";
-        await runOpenAiSingleShot(true);
-      }
-
-      if (phase1Resp) {
-        const creativeText = extractFirstChoicePlainText(phase1Resp).trim();
-        diagnostics.phase1Creative = {
-          finishReason: phase1Resp.choices?.[0]?.finish_reason ?? null,
-          contentChars: creativeText.length,
-          model: phase1Resp.model,
-          usage: phase1Resp.usage ?? null,
-          memorySafe: { ...creativePeek },
-        };
-
-        if (creativeText) {
-          const structurePeek: MemorySafeLlmDiagnostics = { phase: "json_structuring" };
-          const jsonPackUserBody = [
-            `你是一個專業的數據封裝專員。請將以下深度分析報告轉化為 JSON 格式，嚴禁修改、刪減或潤飾任何文案實質內容；僅可做 JSON 轉義。`,
-            "",
-            `分析報告全文：`,
-            creativeText,
-          ].join("\n");
-
-          const phase2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
-            { role: "system", content: STAGE2_OPENAI_PHASE2_JSON_PACK_SYSTEM },
-            { role: "user", content: jsonPackUserBody },
-          ];
-
-          let phase2DidFallbackToSingleshot = false;
-          let phase2InvokeResult: Awaited<ReturnType<typeof invokeLLM>> | undefined;
-          try {
-            phase2InvokeResult = await invokeLLM({
-              provider: "openai",
-              modelName: structureModel,
-              max_tokens: STAGE2_OPENAI_STRUCTURE_MAX_OUT,
-              response_format: { type: "json_object" },
-              reasoningEffort: "medium",
-              messages: phase2Messages,
-              abortSignal: params.abortSignal,
-              memorySafeDiagnostics: structurePeek,
-            });
-            response = phase2InvokeResult;
-            llmPath = "openai_two_phase_json";
-          } catch (openaiPhase2JsonErr) {
-            openaiJsonErrMsg =
-              openaiPhase2JsonErr instanceof Error ? openaiPhase2JsonErr.message : String(openaiPhase2JsonErr);
-            console.warn("[buildPlatformContent] openai two-phase json_object failed:", openaiPhase2JsonErr);
-            try {
-              phase2InvokeResult = await invokeLLM({
-                provider: "openai",
-                modelName: structureModel,
-                max_tokens: STAGE2_OPENAI_STRUCTURE_MAX_OUT,
-                reasoningEffort: "medium",
-                messages: phase2Messages,
-                abortSignal: params.abortSignal,
-                memorySafeDiagnostics: structurePeek,
-              });
-              response = phase2InvokeResult;
-              llmPath = "openai_two_phase_plain";
-            } catch (openaiPhase2PlainErr) {
-              openaiPlainErrMsg =
-                openaiPhase2PlainErr instanceof Error
-                  ? openaiPhase2PlainErr.message
-                  : String(openaiPhase2PlainErr);
-              console.warn(
-                "[buildPlatformContent] openai two-phase plain failed, falling back singleshot:",
-                openaiPhase2PlainErr,
-              );
-              diagnostics.stage2TwoPhaseFallback = "singleshot_after_phase2_fail";
-              diagnostics.phase2StructureError = openaiPlainErrMsg;
-              openaiJsonErrMsg = null;
-              openaiPlainErrMsg = null;
-              diagnostics.phase2SkippedReason =
-                "已嘗試 2‑1+2‑2：2‑2 GPT‑5.4 組裝兩輪皆失敗。改為單階 GPT‑5.5 JSON；沿用 JSON 推理強度預設（預設 medium）。";
-              await runOpenAiSingleShot(true);
-              phase2DidFallbackToSingleshot = true;
-            }
-          }
-
-          if (!phase2DidFallbackToSingleshot && phase2InvokeResult) {
-            diagnostics.phase2Structure = {
-              model: structureModel,
-              memorySafe: { ...structurePeek },
-              finishReason: phase2InvokeResult.choices?.[0]?.finish_reason ?? null,
-              usage: phase2InvokeResult.usage ?? null,
-            };
-          }
-        } else {
-          diagnostics.phase2SkippedReason =
-            "2-2（GPT‑5.4 組裝）未執行：Phase 1 完成但 message 無可見正文（多為 reasoning 佔滿 completion 上限）。已改為單階 GPT‑5.5 JSON；沿用 JSON 推理強度預設（預設 medium）。";
-          diagnostics.stage2TwoPhaseFallback = "singleshot_empty_phase1";
-          await runOpenAiSingleShot(true);
-        }
-      }
-    } else {
-      diagnostics.stage2OpenAiTwoPhase = false;
-      await runOpenAiSingleShot();
     }
   } else {
     diagnostics.platformStage2OpenAiModel = null;
@@ -1404,65 +1201,20 @@ export async function buildPlatformContent(params: {
   {
     type Stage2DebugSubStep = { id: string; title: string; model: string; status: string };
     const steps: Stage2DebugSubStep[] = [];
-    const creativeModel = typeof diagnostics.platformStage2OpenAiModel === "string" ? diagnostics.platformStage2OpenAiModel : "";
-    const structureModel =
-      typeof diagnostics.platformStage2StructureOpenAiModel === "string"
-        ? diagnostics.platformStage2StructureOpenAiModel
-        : "";
-    const twoPhaseOn = diagnostics.stage2OpenAiTwoPhase === true;
-    const fb = String(diagnostics.stage2TwoPhaseFallback || "");
+    const openaiModel = typeof diagnostics.platformStage2OpenAiModel === "string" ? diagnostics.platformStage2OpenAiModel : "";
 
     if (stage2LlmMode === "vertex") {
       steps.push({
         id: "2-v",
-        title: "Gemini 結構化輸出（Vertex 單階，非 2‑1/2‑2 拆步）",
+        title: "Gemini 結構化輸出（Vertex 單階呼叫）",
         model: "gemini-3.1-pro-preview",
         status: "✅ 已完成",
       });
-    } else if (twoPhaseOn && (llmPath === "openai_two_phase_json" || llmPath === "openai_two_phase_plain")) {
-      steps.push({
-        id: "2-1",
-        title: "GPT‑5.5 推理（創意深度文稿）",
-        model: creativeModel || "gpt-5.5",
-        status: "✅ 已完成",
-      });
-      steps.push({
-        id: "2-2",
-        title: "GPT‑5.4 組裝輸出（JSON 封裝）",
-        model: structureModel || "gpt-5.4",
-        status: "✅ 已完成",
-      });
-    } else if (twoPhaseOn && fb) {
-      let p1Status = "✅ 已完成";
-      if (fb === "singleshot_after_phase1_throw") p1Status = "❌ 失敗（改走單階回退）";
-      else if (fb === "singleshot_empty_phase1") p1Status = "⚠️ 無可見正文（改走單階回退）";
-
-      const p2Status =
-        fb === "singleshot_after_phase2_fail" ? "❌ 失敗（改走單階回退）" : "⏭ 未執行";
-
-      steps.push({
-        id: "2-1",
-        title: "GPT‑5.5 推理",
-        model: creativeModel || "gpt-5.5",
-        status: p1Status,
-      });
-      steps.push({
-        id: "2-2",
-        title: "GPT‑5.4 組裝輸出",
-        model: structureModel || "gpt-5.4",
-        status: p2Status,
-      });
-      steps.push({
-        id: "2-fallback",
-        title: "單階回退：同一創作模型直出 JSON（未走 2‑2）",
-        model: creativeModel || "—",
-        status: "✅ 已接替",
-      });
     } else {
       steps.push({
-        id: "2-单",
-        title: "OpenAI 單階調用（一次完成 JSON，未啟用雙階 2‑1/2‑2）",
-        model: creativeModel || "—",
+        id: "2-o",
+        title: "OpenAI 單次呼叫（推理與正文一次完成 → JSON）",
+        model: openaiModel || "—",
         status: "✅ 已完成",
       });
     }

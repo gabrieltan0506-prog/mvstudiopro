@@ -117,27 +117,6 @@ export function getPlatformStage2OpenAiModel(): string {
   return m || "gpt-5.5";
 }
 
-/**
- * Stage 2 OpenAI **第二階** JSON 封裝：預設 gpt‑5.4（成本較低），可用 `PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL` / `OPENAI_GPT54_MODEL` 覆蓋。
- */
-export function getPlatformStage2StructureOpenAiModel(): string {
-  const explicit = String(process.env.PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL || "").trim();
-  if (explicit) return explicit;
-  const from54 = String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim();
-  return from54 || "gpt-5.4";
-}
-
-/**
- * Stage 2 OpenAI **預設單階**：一次請求輸出 `json_object`。  
- * 若需 **雙階**（先創意正文再 GPT‑5.4 組裝 JSON），請設 `PLATFORM_STAGE2_OPENAI_TWO_PHASE=1`（或 `true` / `yes` / `on`）。
- */
-export function isPlatformStage2OpenAiTwoPhaseEnabled(): boolean {
-  const v = norm(process.env.PLATFORM_STAGE2_OPENAI_TWO_PHASE);
-  if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
-  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
-  return false;
-}
-
 export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver {
   if (isPlatformWeekendGcpEscape()) return "fly";
   const raw = norm(process.env.PLATFORM_IMAGE_STORAGE || process.env.MV_PLATFORM_IMAGE_STORAGE);
