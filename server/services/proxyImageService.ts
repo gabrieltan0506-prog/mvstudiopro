@@ -108,7 +108,7 @@ export async function condenseImagePromptIfNeeded(
   for (let i = 1; i <= 3; i++) {
     try {
       const condensed = await callGemini31ProForImagePrompt(condenseTask, {
-        translator: options?.translator,
+        translator: options?.translator ?? "gpt54",
         flowLog: log,
       });
       const out = condensed.trim();
@@ -149,7 +149,7 @@ export async function condenseImagePromptIfNeeded(
   try {
     const forced = (
       await callGemini31ProForImagePrompt(finalForceTask, {
-        translator: options?.translator,
+        translator: options?.translator ?? "gpt54",
         flowLog: log,
       })
     ).trim();

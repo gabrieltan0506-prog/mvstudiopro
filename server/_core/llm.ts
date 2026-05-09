@@ -78,8 +78,8 @@ export type InvokeParams = {
   response_format?: ResponseFormat;
   provider?: Provider;
   modelName?: string;
-  /** GPT-5 系：推理強度；若不傳，json 輸出預設 medium（可設 OPENAI_GPT5_JSON_REASONING_EFFORT 覆寫） */
-  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  /** GPT-5 系：推理强度 {@link https://developers.openai.com/api/docs/guides/reasoning}；与 gpt-5.5 默认一致推 `medium`。 */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   /** When aborted (e.g. client disconnected), in-flight provider requests are cancelled. */
   abortSignal?: AbortSignal;
 };
@@ -814,15 +814,43 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
   return (await response.json()) as InvokeResult;
 }
 
+const GPT5_REASONING_EFFORT_LEVELS = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+
+function parseGpt5ReasoningEffortEnv(envName: string, defaultEffort: string): string {
+  const raw = String(process.env[envName] || "").trim().toLowerCase();
+  if (GPT5_REASONING_EFFORT_LEVELS.has(raw)) return raw;
+  return defaultEffort;
+}
+
+/** 供 Stage 2 diagnostics / Debug 面板：OpenAI GPT‑5 系在未傳 `reasoningEffort` 時的解析結果與原始 env。 */
+export function getOpenAiGpt5ReasoningEffortDiagnostics(): {
+  jsonFallbackEffective: string;
+  textFallbackEffective: string;
+  envJson: string;
+  envText: string;
+} {
+  return {
+    jsonFallbackEffective: parseGpt5ReasoningEffortEnv("OPENAI_GPT5_JSON_REASONING_EFFORT", "medium"),
+    textFallbackEffective: parseGpt5ReasoningEffortEnv("OPENAI_GPT5_TEXT_REASONING_EFFORT", "medium"),
+    envJson: String(process.env.OPENAI_GPT5_JSON_REASONING_EFFORT ?? "").trim() || "(unset)",
+    envText: String(process.env.OPENAI_GPT5_TEXT_REASONING_EFFORT ?? "").trim() || "(unset)",
+  };
+}
+
 async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target: LlmTarget): Promise<InvokeResult> {
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const supportsSamplingControls = !/^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
   const isGpt5Family = /^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
-  const envJsonReasoning = String(process.env.OPENAI_GPT5_JSON_REASONING_EFFORT || "").trim().toLowerCase();
-  const jsonReasoningFallback =
-    envJsonReasoning === "minimal" || envJsonReasoning === "low" || envJsonReasoning === "medium" || envJsonReasoning === "high"
-      ? envJsonReasoning
-      : "medium";
+  /** gpt-5.5 官方默认 medium；JSON 与纯文本重试分别可用环境变量覆盖。 */
+  const jsonReasoningFallback = parseGpt5ReasoningEffortEnv("OPENAI_GPT5_JSON_REASONING_EFFORT", "medium");
+  const textReasoningFallback = parseGpt5ReasoningEffortEnv("OPENAI_GPT5_TEXT_REASONING_EFFORT", "medium");
   const wantsStructured =
     normalizedResponseFormat?.type === "json_object" || normalizedResponseFormat?.type === "json_schema";
   let reasoningEffort: string | undefined;
@@ -832,7 +860,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     } else if (wantsStructured) {
       reasoningEffort = jsonReasoningFallback;
     } else {
-      reasoningEffort = "high";
+      reasoningEffort = textReasoningFallback;
     }
   }
 

@@ -4,10 +4,15 @@
  * 换 OpenAI 模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5）。
  *
  * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
+ *
+ * **週末生存模式：** {@link PLATFORM_WEEKEND_SURVIVAL_MODE} 為 `true` 時，等同開啟平台 GCP 避險（Stage2→OpenAI、gpt‑5.5、 Fly 存圖、英文化不調 Vertex）。帳單恢復後請改回 `false`。
  */
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
+
+/** 🚨 鎖定 OpenAI + Fly 平台鏈路；並令 {@link isPlatformWeekendGcpEscape} 為真。 */
+export const PLATFORM_WEEKEND_SURVIVAL_MODE = true;
 
 function norm(s: string | undefined): string {
   return String(s ?? "").trim().toLowerCase();
@@ -41,6 +46,7 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 
 /** 平台圖/Stage2 相關避險（關閉主開關、週末旗標、billing/環境變數）。不影響語音或其它非平台管線。 */
 export function isPlatformWeekendGcpEscape(): boolean {
+  if (PLATFORM_WEEKEND_SURVIVAL_MODE) return true;
   if (!PLATFORM_USE_GOOGLE_GCP) return true;
   if (PLATFORM_WEEKEND_GCP_ESCAPE) return true;
   const billing = norm(process.env.GCP_BILLING_STATUS);
@@ -84,6 +90,10 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
   return "openai";
 }
 
+/**
+ * Creator Growth **Stage 2 長文**專用模型（`buildPlatformContent`）。  
+ * 計費上 gpt‑5.5 輸入/輸出約為 gpt‑5.4 的兩倍，故 **英文化 / condense 仍預設 gpt‑5.4**（見 geminiPlatformCompositeTranslation）。
+ */
 export function getPlatformStage2OpenAiModel(): string {
   if (isPlatformWeekendGcpEscape()) return "gpt-5.5";
   const m = String(process.env.PLATFORM_STAGE2_OPENAI_MODEL || "gpt-5.5").trim();

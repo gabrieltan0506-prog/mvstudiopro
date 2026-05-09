@@ -102,12 +102,20 @@ export async function pollJobUntilTerminal(
   opts?: {
     intervalMs?: number;
     maxWaitMs?: number;
+    /**
+     * 自第幾次輪詢起拉長間隔（預設 36 ≈ 首段約 1.5min×2.5s），避免長任務下 GET 過於密集、計數暴漲。
+     */
+    adaptiveBackoffAfterAttempts?: number;
+    /** 拉長後的間隔上限（預設 8s） */
+    maxIntervalMs?: number;
     /** 每次拉取 job 後觸發（含尚未進入終態的中間狀態） */
     onPoll?: (tick: PollJobTick) => void;
   },
 ): Promise<JobResponse> {
   const interval = opts?.intervalMs ?? 2500;
   const maxWait = opts?.maxWaitMs ?? 14 * 60_000;
+  const adaptiveAfter = opts?.adaptiveBackoffAfterAttempts ?? 36;
+  const maxInterval = opts?.maxIntervalMs ?? 8000;
   const t0 = Date.now();
   let attempt = 0;
   while (Date.now() - t0 < maxWait) {
@@ -125,9 +133,12 @@ export async function pollJobUntilTerminal(
       output: out,
     });
     if (j.status === "succeeded" || j.status === "failed") return j;
-    await new Promise((r) => setTimeout(r, interval));
+    const spacing =
+      attempt >= adaptiveAfter ? Math.min(maxInterval, interval * 2) : interval;
+    await sleep(spacing);
   }
-  throw new Error("任務輪詢超時，請刷新頁面或稍後再試");
+  const waitedMin = Math.round(maxWait / 60_000);
+  throw new Error(`任務輪詢已超過約 ${waitedMin} 分鐘（${attempt} 次），請刷新或稍後再試`);
 }
 
 /** 將輪詢步驟追加到陣列並截斷長度，避免 Debug 面板無限變長 */

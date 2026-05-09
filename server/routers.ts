@@ -10,7 +10,7 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
-import { extractJsonString, invokeLLM } from "./_core/llm";
+import { extractJsonString, getOpenAiGpt5ReasoningEffortDiagnostics, invokeLLM } from "./_core/llm";
 import { getPlatformStage2OpenAiModel, resolvePlatformStage2LlmMode } from "./config/platformSwitches.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
@@ -438,10 +438,10 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
   return requested;
 })();
 
-/** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
+/** Stage 2 文案链：长 JSON 易被截断；預設 8192（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆蓋，下限 4096） */
 const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
-  if (!Number.isFinite(raw) || raw < 4096) return 16384;
+  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "8192");
+  if (!Number.isFinite(raw) || raw < 4096) return 8192;
   return Math.min(65536, Math.floor(raw));
 })();
 
@@ -899,6 +899,8 @@ export async function buildPlatformContent(params: {
     requestedPlatforms: params.requestedPlatforms,
     contextLen: String(params.context || "").length,
     platformMenuCount: Array.isArray(params.platformMenu) ? params.platformMenu.length : 0,
+    stage2MaxOutputTokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+    openaiGpt5ReasoningEffort: getOpenAiGpt5ReasoningEffortDiagnostics(),
   };
   try {
     const cols = (params.store?.collections || {}) as Record<string, { items?: unknown[] }>;
