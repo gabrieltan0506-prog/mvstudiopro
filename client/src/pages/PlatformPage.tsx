@@ -241,6 +241,8 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
     const keys = [
       "stage2MaxOutputTokens",
       "stage2SubStepsSummary",
+      "phase2SkippedReason",
+      "phase1CreativeReasoningEffortResolved",
       "openaiGpt5ReasoningEffort",
       "jsonParseStrategy",
       "rawContentEmpty",
@@ -3009,6 +3011,17 @@ export default function PlatformPage() {
                           const r = (contentDebug?.buildPlatformContent as { openaiGpt5ReasoningEffort?: unknown } | undefined)
                             ?.openaiGpt5ReasoningEffort;
                           return r != null ? JSON.stringify(r) : "—（任務完成後由後端寫入）";
+                        })()}
+                      </span>
+                    </div>
+                    <div className="break-words">
+                      3g1. Phase 2 跳過說明:{" "}
+                      <span className="font-mono text-[10px] text-[#d7d0ef]">
+                        {(() => {
+                          const t = (
+                            contentDebug?.buildPlatformContent as { phase2SkippedReason?: string } | undefined
+                          )?.phase2SkippedReason;
+                          return typeof t === "string" && t.trim() ? t : "—（雙階順利或單階模式時為空）";
                         })()}
                       </span>
                     </div>
