@@ -11,6 +11,7 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import { extractJsonString, invokeLLM } from "./_core/llm";
+import { getPlatformStage2OpenAiModel, resolvePlatformStage2LlmMode } from "./config/platformSwitches.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -1075,61 +1076,106 @@ export async function buildPlatformContent(params: {
       },
   ];
 
-  /** Stage 2：优先 Vertex + application/json，减少前言/杂质；失败则降级重试，避免整包 null。 */
+  const stage2LlmMode = resolvePlatformStage2LlmMode();
+  diagnostics.stage2LlmMode = stage2LlmMode;
+
+  /** Stage 2：`PLATFORM_STAGE2_LLM` 一鍵 OpenAI（GPT‑5.5）或 Vertex/Gemini 鏈。 */
   let response: Awaited<ReturnType<typeof invokeLLM>>;
   let vertexJsonErrMsg: string | null = null;
   let vertexPlainErrMsg: string | null = null;
   let geminiErrMsg: string | null = null;
+  let openaiJsonErrMsg: string | null = null;
+  let openaiPlainErrMsg: string | null = null;
   let llmPath = "";
-  try {
-    response = await invokeLLM({
-      provider: "vertex",
-      modelName: "gemini-3.1-pro-preview",
-      max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
-      response_format: { type: "json_object" },
-      messages: contentMessages,
-      abortSignal: params.abortSignal,
-    });
-    llmPath = "vertex+json_object";
-  } catch (vertexJsonErr) {
-    vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
-    console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
+
+  if (stage2LlmMode === "openai") {
+    const openaiModel = getPlatformStage2OpenAiModel();
+    diagnostics.platformStage2OpenAiModel = openaiModel;
+    try {
+      response = await invokeLLM({
+        provider: "openai",
+        modelName: openaiModel,
+        max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+        response_format: { type: "json_object" },
+        messages: contentMessages,
+        abortSignal: params.abortSignal,
+      });
+      llmPath = "openai+json_object";
+    } catch (openaiJsonErr) {
+      openaiJsonErrMsg = openaiJsonErr instanceof Error ? openaiJsonErr.message : String(openaiJsonErr);
+      console.warn("[buildPlatformContent] openai+json_object failed:", openaiJsonErr);
+      try {
+        response = await invokeLLM({
+          provider: "openai",
+          modelName: openaiModel,
+          max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+          messages: contentMessages,
+          abortSignal: params.abortSignal,
+        });
+        llmPath = "openai_plain";
+      } catch (openaiPlainErr) {
+        openaiPlainErrMsg = openaiPlainErr instanceof Error ? openaiPlainErr.message : String(openaiPlainErr);
+        diagnostics.llmPath = "openai_all_failed";
+        diagnostics.openaiJsonError = openaiJsonErrMsg;
+        diagnostics.openaiPlainError = openaiPlainErrMsg;
+        throw openaiPlainErr;
+      }
+    }
+  } else {
+    diagnostics.platformStage2OpenAiModel = null;
     try {
       response = await invokeLLM({
         provider: "vertex",
         modelName: "gemini-3.1-pro-preview",
         max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+        response_format: { type: "json_object" },
         messages: contentMessages,
         abortSignal: params.abortSignal,
       });
-      llmPath = "vertex_plain";
-    } catch (vertexPlainErr) {
-      vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
-      console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
+      llmPath = "vertex+json_object";
+    } catch (vertexJsonErr) {
+      vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
+      console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
       try {
         response = await invokeLLM({
-          provider: "gemini",
+          provider: "vertex",
           modelName: "gemini-3.1-pro-preview",
           max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
-          response_format: { type: "json_object" },
           messages: contentMessages,
           abortSignal: params.abortSignal,
         });
-        llmPath = "gemini+json_object";
-      } catch (geminiErr) {
-        geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-        diagnostics.llmPath = llmPath || "all_failed";
-        diagnostics.vertexJsonError = vertexJsonErrMsg;
-        diagnostics.vertexPlainError = vertexPlainErrMsg;
-        diagnostics.geminiJsonError = geminiErrMsg;
-        throw geminiErr;
+        llmPath = "vertex_plain";
+      } catch (vertexPlainErr) {
+        vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
+        console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
+        try {
+          response = await invokeLLM({
+            provider: "gemini",
+            modelName: "gemini-3.1-pro-preview",
+            max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+            response_format: { type: "json_object" },
+            messages: contentMessages,
+            abortSignal: params.abortSignal,
+          });
+          llmPath = "gemini+json_object";
+        } catch (geminiErr) {
+          geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+          diagnostics.llmPath = llmPath || "vertex_chain_all_failed";
+          diagnostics.vertexJsonError = vertexJsonErrMsg;
+          diagnostics.vertexPlainError = vertexPlainErrMsg;
+          diagnostics.geminiJsonError = geminiErrMsg;
+          throw geminiErr;
+        }
       }
     }
   }
+
   diagnostics.llmPath = llmPath;
   diagnostics.vertexJsonError = vertexJsonErrMsg;
   diagnostics.vertexPlainError = vertexPlainErrMsg;
   diagnostics.geminiJsonError = geminiErrMsg;
+  diagnostics.openaiJsonError = openaiJsonErrMsg;
+  diagnostics.openaiPlainError = openaiPlainErrMsg;
   diagnostics.responseModel = response.model;
   diagnostics.responseProvider = response.provider ?? null;
   diagnostics.responseFinishReason = response.choices?.[0]?.finish_reason ?? null;

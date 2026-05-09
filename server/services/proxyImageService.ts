@@ -1,3 +1,4 @@
+import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import {
   callGemini31ProForImagePrompt,
@@ -9,11 +10,11 @@ import {
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
 /**
- * 平台選題生圖（封面單幀、2×4、Vertex 鏡像等）：**預設 GCS 簽名 URL**。
- * 僅在明確設 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=1` 時才寫 Fly 持久卷 + `flyVolumeMedia`（與 `PLATFORM_TOPIC_IMAGE_STORAGE` 無關）。
+ * 平台選題生圖：預設 Fly 卷 + flyVolumeMedia；設 `PLATFORM_IMAGE_STORAGE=gcs` 則 GCS 簽名 URL。
+ * 兼容 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=0` 強制走 GCS。
  */
 function isFlyPlatformTopicImageStorage(): boolean {
-  return String(process.env.PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME || "").trim() === "1";
+  return resolvePlatformImageStorageDriver() === "fly";
 }
 
 /** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入）。jobs120：嚴格陣列校驗，避免非陣列誤傳導致運行時寫入失敗。 */
