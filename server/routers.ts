@@ -1182,10 +1182,16 @@ export async function buildPlatformContent(params: {
     const openaiCreativeModel = getPlatformStage2OpenAiModel();
     diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
 
-    /** 來自双阶失敗/空稿回退時：降低 JSON `json_object` 的 reasoning，避免再次打滿上限仍無正文。 */
+    /** 双阶失败/空稿回退单体 JSON：不显式降为 low（保持文案质量）；沿用 GPT‑5 `json_object` 的 reasoning 默认（通常为 medium，`OPENAI_GPT5_JSON_REASONING_EFFORT`）。 */
     const runOpenAiSingleShot = async (fromTwoPhaseFailure?: boolean) => {
+      const jsonEff = getOpenAiGpt5ReasoningEffortDiagnostics().jsonFallbackEffective;
       diagnostics.singleshotOpenAiFallback = fromTwoPhaseFailure
-        ? { reason: "after_two_phase_empty_or_throw", jsonReasoningEffort: "low" as const }
+        ? {
+            reason: "after_two_phase_empty_or_throw",
+            jsonReasoningEffort: jsonEff as NonNullable<
+              Parameters<typeof invokeLLM>[0]["reasoningEffort"]
+            >,
+          }
         : undefined;
       try {
         response = await invokeLLM({
@@ -1195,7 +1201,6 @@ export async function buildPlatformContent(params: {
           response_format: { type: "json_object" },
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
-          ...(fromTwoPhaseFailure ? { reasoningEffort: "low" as const } : {}),
         });
         llmPath = "openai+json_object";
       } catch (openaiJsonErr) {
@@ -1209,7 +1214,6 @@ export async function buildPlatformContent(params: {
             max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
             messages: structuredStage2Messages,
             abortSignal: params.abortSignal,
-            ...(fromTwoPhaseFailure ? { reasoningEffort: "low" as const } : {}),
           });
           llmPath = "openai_plain";
         } catch (openaiPlainErr) {
@@ -1244,7 +1248,7 @@ export async function buildPlatformContent(params: {
       } catch (e1) {
         diagnostics.phase1CreativeError = e1 instanceof Error ? e1.message : String(e1);
         diagnostics.phase2SkippedReason =
-          "2-2（GPT‑5.4 組裝）未執行：Phase 1 請求已異常終止，無創意文稿可封裝。已改為單階 GPT‑5.5 JSON，並對該請求使用 reasoningEffort=low 以降低再次無正文的機率。";
+          "2-2（GPT‑5.4 組裝）未執行：Phase 1 請求已異常終止，無創意文稿可封裝。已改為單階 GPT‑5.5 JSON；沿用 JSON 推理強度預設（預設 medium，見 OPENAI_GPT5_JSON_REASONING_EFFORT）。";
         diagnostics.stage2TwoPhaseFallback = "singleshot_after_phase1_throw";
         await runOpenAiSingleShot(true);
       }
@@ -1281,7 +1285,7 @@ export async function buildPlatformContent(params: {
               modelName: structureModel,
               max_tokens: STAGE2_OPENAI_STRUCTURE_MAX_OUT,
               response_format: { type: "json_object" },
-              reasoningEffort: "low",
+              reasoningEffort: "medium",
               messages: phase2Messages,
               abortSignal: params.abortSignal,
               memorySafeDiagnostics: structurePeek,
@@ -1297,7 +1301,7 @@ export async function buildPlatformContent(params: {
                 provider: "openai",
                 modelName: structureModel,
                 max_tokens: STAGE2_OPENAI_STRUCTURE_MAX_OUT,
-                reasoningEffort: "low",
+                reasoningEffort: "medium",
                 messages: phase2Messages,
                 abortSignal: params.abortSignal,
                 memorySafeDiagnostics: structurePeek,
@@ -1318,7 +1322,7 @@ export async function buildPlatformContent(params: {
               openaiJsonErrMsg = null;
               openaiPlainErrMsg = null;
               diagnostics.phase2SkippedReason =
-                "已嘗試 2‑1+2‑2：2‑2 GPT‑5.4 組裝兩輪皆失敗。改為單階 GPT‑5.5 JSON；json 請求使用 reasoningEffort=low。";
+                "已嘗試 2‑1+2‑2：2‑2 GPT‑5.4 組裝兩輪皆失敗。改為單階 GPT‑5.5 JSON；沿用 JSON 推理強度預設（預設 medium）。";
               await runOpenAiSingleShot(true);
               phase2DidFallbackToSingleshot = true;
             }
@@ -1334,7 +1338,7 @@ export async function buildPlatformContent(params: {
           }
         } else {
           diagnostics.phase2SkippedReason =
-            "2-2（GPT‑5.4 組裝）未執行：Phase 1 完成但 message 無可見正文（多為 reasoning 佔滿 completion 上限）。已改為單階 GPT‑5.5 JSON，並對該請求使用 reasoningEffort=low。";
+            "2-2（GPT‑5.4 組裝）未執行：Phase 1 完成但 message 無可見正文（多為 reasoning 佔滿 completion 上限）。已改為單階 GPT‑5.5 JSON；沿用 JSON 推理強度預設（預設 medium）。";
           diagnostics.stage2TwoPhaseFallback = "singleshot_empty_phase1";
           await runOpenAiSingleShot(true);
         }
