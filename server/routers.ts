@@ -11,6 +11,7 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import { extractJsonString, invokeLLM } from "./_core/llm";
+import { getPlatformStage2OpenAiModel, resolvePlatformStage2LlmMode } from "./config/platformSwitches.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -76,6 +77,7 @@ import {
   getJobById,
   markJobSucceeded,
   markJobFailed,
+  insertRunningCompositeSheetProgressJob,
 } from "./jobs/repository";
 import { getTierProviderChain, resolveUserTier, resolveWatermark, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
@@ -421,15 +423,14 @@ const platformFollowUpResponseSchema = z.object({
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
 /**
- * Stage 2 · getPlatformContent（同步 HTTP / tRPC）：LLM 期间连接上可能长时间无字节，Fly `http_service.http_options.idle_timeout` 默认 900s，
- * 超过则由边缘返回 **502 空体**，浏览器 `response.json()` → Unexpected end of JSON input。队列版 job 仍可走 20min+，不受此上限绑定。
- * 覆盖：PLATFORM_STAGE2_SYNC_TIMEOUT_MS（毫秒，≥120000）；在 Fly（FLY_APP_NAME）上自动封顶为 idle 以下留余量。
+ * Stage 2 · getPlatformContent（同步 HTTP / tRPC）：默认与 platform_build_content job 同级（20min，`PLATFORM_STAGE2_SYNC_TIMEOUT_MS`，封顶 25min）。
+ * Fly 上长等待无下行字节会触发 idle_timeout（900s）→ 502 空体；若设 FLY_APP_NAME 则再封顶 ~845s。队列版 job 不受此限。
  */
 const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
   const raw = Number(process.env.PLATFORM_STAGE2_SYNC_TIMEOUT_MS);
   const requested = Number.isFinite(raw) && raw >= 120_000 ? Math.min(Math.floor(raw), 25 * 60_000) : 20 * 60_000;
   const flyIdleMs = 900_000;
-  const flyHeadroomMs = 55_000; // store 读、序列化、网络
+  const flyHeadroomMs = 55_000;
   const flySyncCap = Math.max(120_000, flyIdleMs - flyHeadroomMs);
   if (String(process.env.FLY_APP_NAME || "").trim()) {
     return Math.min(requested, flySyncCap);
@@ -1081,61 +1082,106 @@ export async function buildPlatformContent(params: {
       },
   ];
 
-  /** Stage 2：优先 Vertex + application/json，减少前言/杂质；失败则降级重试，避免整包 null。 */
+  const stage2LlmMode = resolvePlatformStage2LlmMode();
+  diagnostics.stage2LlmMode = stage2LlmMode;
+
+  /** Stage 2：`PLATFORM_STAGE2_LLM` 一鍵 OpenAI（GPT‑5.5）或 Vertex/Gemini 鏈。 */
   let response: Awaited<ReturnType<typeof invokeLLM>>;
   let vertexJsonErrMsg: string | null = null;
   let vertexPlainErrMsg: string | null = null;
   let geminiErrMsg: string | null = null;
+  let openaiJsonErrMsg: string | null = null;
+  let openaiPlainErrMsg: string | null = null;
   let llmPath = "";
-  try {
-    response = await invokeLLM({
-      provider: "vertex",
-      modelName: "gemini-3.1-pro-preview",
-      max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
-      response_format: { type: "json_object" },
-      messages: contentMessages,
-      abortSignal: params.abortSignal,
-    });
-    llmPath = "vertex+json_object";
-  } catch (vertexJsonErr) {
-    vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
-    console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
+
+  if (stage2LlmMode === "openai") {
+    const openaiModel = getPlatformStage2OpenAiModel();
+    diagnostics.platformStage2OpenAiModel = openaiModel;
+    try {
+      response = await invokeLLM({
+        provider: "openai",
+        modelName: openaiModel,
+        max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+        response_format: { type: "json_object" },
+        messages: contentMessages,
+        abortSignal: params.abortSignal,
+      });
+      llmPath = "openai+json_object";
+    } catch (openaiJsonErr) {
+      openaiJsonErrMsg = openaiJsonErr instanceof Error ? openaiJsonErr.message : String(openaiJsonErr);
+      console.warn("[buildPlatformContent] openai+json_object failed:", openaiJsonErr);
+      try {
+        response = await invokeLLM({
+          provider: "openai",
+          modelName: openaiModel,
+          max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+          messages: contentMessages,
+          abortSignal: params.abortSignal,
+        });
+        llmPath = "openai_plain";
+      } catch (openaiPlainErr) {
+        openaiPlainErrMsg = openaiPlainErr instanceof Error ? openaiPlainErr.message : String(openaiPlainErr);
+        diagnostics.llmPath = "openai_all_failed";
+        diagnostics.openaiJsonError = openaiJsonErrMsg;
+        diagnostics.openaiPlainError = openaiPlainErrMsg;
+        throw openaiPlainErr;
+      }
+    }
+  } else {
+    diagnostics.platformStage2OpenAiModel = null;
     try {
       response = await invokeLLM({
         provider: "vertex",
         modelName: "gemini-3.1-pro-preview",
         max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+        response_format: { type: "json_object" },
         messages: contentMessages,
         abortSignal: params.abortSignal,
       });
-      llmPath = "vertex_plain";
-    } catch (vertexPlainErr) {
-      vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
-      console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
+      llmPath = "vertex+json_object";
+    } catch (vertexJsonErr) {
+      vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
+      console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
       try {
         response = await invokeLLM({
-          provider: "gemini",
+          provider: "vertex",
           modelName: "gemini-3.1-pro-preview",
           max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
-          response_format: { type: "json_object" },
           messages: contentMessages,
           abortSignal: params.abortSignal,
         });
-        llmPath = "gemini+json_object";
-      } catch (geminiErr) {
-        geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-        diagnostics.llmPath = llmPath || "all_failed";
-        diagnostics.vertexJsonError = vertexJsonErrMsg;
-        diagnostics.vertexPlainError = vertexPlainErrMsg;
-        diagnostics.geminiJsonError = geminiErrMsg;
-        throw geminiErr;
+        llmPath = "vertex_plain";
+      } catch (vertexPlainErr) {
+        vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
+        console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
+        try {
+          response = await invokeLLM({
+            provider: "gemini",
+            modelName: "gemini-3.1-pro-preview",
+            max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+            response_format: { type: "json_object" },
+            messages: contentMessages,
+            abortSignal: params.abortSignal,
+          });
+          llmPath = "gemini+json_object";
+        } catch (geminiErr) {
+          geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+          diagnostics.llmPath = llmPath || "vertex_chain_all_failed";
+          diagnostics.vertexJsonError = vertexJsonErrMsg;
+          diagnostics.vertexPlainError = vertexPlainErrMsg;
+          diagnostics.geminiJsonError = geminiErrMsg;
+          throw geminiErr;
+        }
       }
     }
   }
+
   diagnostics.llmPath = llmPath;
   diagnostics.vertexJsonError = vertexJsonErrMsg;
   diagnostics.vertexPlainError = vertexPlainErrMsg;
   diagnostics.geminiJsonError = geminiErrMsg;
+  diagnostics.openaiJsonError = openaiJsonErrMsg;
+  diagnostics.openaiPlainError = openaiPlainErrMsg;
   diagnostics.responseModel = response.model;
   diagnostics.responseProvider = response.provider ?? null;
   diagnostics.responseFinishReason = response.choices?.[0]?.finish_reason ?? null;
@@ -3736,6 +3782,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           title: z.string().min(1).max(220),
           scriptContext: z.string().min(1).max(12000),
           kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
+          /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
+          progressJobId: z.string().min(8).max(64).optional(),
           executionDetails: z.string().max(4000).optional(),
           /** 與單幀一致：英文 prompt 翻譯引擎 */
           imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
@@ -3775,8 +3823,34 @@ ${JSON.stringify(platformEvidence, null, 2)}
           );
         }
 
+        const progressJobIdRaw = String(input.progressJobId ?? "").trim();
+        const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
+
+        let detachLiveProgress: (() => void) | undefined;
+
         const { generatePlatformCompositeSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
         const imageGenFlowLog: string[] = [];
+
+        if (progressJobId) {
+          try {
+            await insertRunningCompositeSheetProgressJob({
+              id: progressJobId,
+              userId: String(userId),
+              sceneId: input.sceneId,
+              kind: input.kind,
+              titleSlice: input.title.slice(0, 80),
+            });
+          } catch (pe) {
+            console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "無法建立實時進度任務，請稍後再試",
+            });
+          }
+          const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
+          detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
+        }
+
         appendImageFlowLog(
           imageGenFlowLog,
           `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)}`,
@@ -3795,6 +3869,15 @@ ${JSON.stringify(platformEvidence, null, 2)}
             flowLog: imageGenFlowLog,
           });
         } catch (error: any) {
+          detachLiveProgress?.();
+          detachLiveProgress = undefined;
+          if (progressJobId) {
+            const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
+            await markJobFailed(
+              progressJobId,
+              tail ? `${error instanceof Error ? error.message : String(error)}\n── log ──\n${tail}` : String(error),
+            );
+          }
           const rawMessage = error instanceof Error ? error.message : String(error);
 
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
@@ -3827,6 +3910,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         if (!imageUrl) {
+          detachLiveProgress?.();
+          if (progressJobId) {
+            await markJobFailed(progressJobId, "imageUrl 为空");
+          }
           if (!isAdminUser) {
             await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
           }
@@ -3872,6 +3959,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+        detachLiveProgress?.();
+        if (progressJobId) {
+          await markJobSucceeded(progressJobId, {
+            imageGenFlowLog,
+            compositeSheetProgress: true,
+            done: true,
+          });
+        }
         return {
           success: true as const,
           imageUrl,
@@ -4023,7 +4118,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * Stage 2 文案與選題：僅入隊，由 jobs worker 執行 buildPlatformContent；前端輪詢 GET /api/jobs/:id。
+     * Stage 2 文案與選題：推薦前端走 getPlatformContent（長鏈直連 Fly）；本入口保留供腳本/舊客戶端入隊。
      */
     enqueuePlatformContentJob: publicProcedure
       .input(

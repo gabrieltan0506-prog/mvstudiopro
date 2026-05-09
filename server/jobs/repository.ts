@@ -19,12 +19,57 @@ function parseMaybeJson(value: unknown): unknown {
   }
 }
 
+/** platform 任務 input 頂層 action（與 processPlatformJob 一致） */
+function getPlatformJobAction(input: unknown): string | null {
+  const v = parseMaybeJson(input);
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const a = (v as { action?: unknown }).action;
+  return typeof a === "string" ? a : null;
+}
+
+/** 每次拾取時掃描前方若干個 queued，避免 Stage2 文案永遠卡在長時間 platform_topic_image 之後 */
+const QUEUE_SCAN_FOR_BUILD_CONTENT = 40;
+
 function normalizeJob(job: Job): NormalizedJob {
   return {
     ...job,
     input: parseMaybeJson(job.input),
     output: parseMaybeJson(job.output),
   };
+}
+
+/**
+ * 寬幅合成專用：**已 running** 的進度占位 job（不進 worker 佇列），供 GET /api/jobs 輪詢 `output.imageGenFlowLog`。
+ */
+export async function insertRunningCompositeSheetProgressJob(data: {
+  id: string;
+  userId: string;
+  sceneId: string;
+  kind: string;
+  titleSlice: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot create job");
+
+  await db.insert(jobs).values({
+    id: data.id,
+    userId: data.userId,
+    type: "platform",
+    provider: "vertex",
+    status: "running",
+    input: {
+      action: "platform_composite_sheet_progress",
+      params: { sceneId: data.sceneId, kind: data.kind },
+    } as InsertJob["input"],
+    output: {
+      imageGenFlowLog: [] as string[],
+      compositeSheetProgress: true,
+      sceneId: data.sceneId,
+      kind: data.kind,
+      titleSlice: data.titleSlice,
+    } as InsertJob["output"],
+    attempts: 1,
+  } as InsertJob);
 }
 
 export async function createJob(data: {
@@ -138,7 +183,49 @@ export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
 }
 
 export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
-  return claimNextQueuedJobExcluding(["pdf_export"]);
+  const db = await getDb();
+  if (!db) return null;
+
+  const excludeTypes = ["pdf_export"];
+  let rows: Job[] = [];
+  try {
+    const condition =
+      excludeTypes.length > 0
+        ? and(eq(jobs.status, "queued"), notInArray(jobs.type, excludeTypes))
+        : eq(jobs.status, "queued");
+    rows = await db
+      .select()
+      .from(jobs)
+      .where(condition)
+      .orderBy(asc(jobs.createdAt))
+      .limit(QUEUE_SCAN_FOR_BUILD_CONTENT);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextQueuedJob select failed:", error);
+    return null;
+  }
+
+  if (rows.length === 0) return null;
+
+  const preferred =
+    rows.find(
+      (j) => j.type === "platform" && getPlatformJobAction(j.input) === "platform_build_content",
+    ) ?? rows[0];
+
+  try {
+    await db
+      .update(jobs)
+      .set({
+        status: "running",
+        attempts: (preferred.attempts ?? 0) + 1,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.id, preferred.id), eq(jobs.status, "queued")));
+
+    return await getJobById(preferred.id);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextQueuedJob update failed:", error);
+    return null;
+  }
 }
 
 export async function markJobSucceeded(id: string, output: unknown, provider?: string): Promise<void> {

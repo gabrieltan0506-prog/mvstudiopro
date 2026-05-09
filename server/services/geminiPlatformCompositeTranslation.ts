@@ -190,10 +190,11 @@ TAG:STORYBOARD_2X4_SHEET
 
 【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape）】
 1. Output **one** English block；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious.**No character limit**—use more English if eight beats need it.
-2. LAYOUT: wide ~16:9 landscape master, **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard / contact-sheet, masterpiece, 8k, intricate cinematic film stills per cell upper area.
-3. **MANDATORY 简体中文字幕表（讯息分格）inside every panel**: reserve the **bottom ~25–30%** of **each** cell for a **compact Simplified Chinese caption table** (shot breakdown strip): **2–4 short labeled rows** (e.g. 镜头 / 景别, 情绪 / 氛围, 口播要点 or 画面说明)—styled like professional storyboard 「分格说明」or the reference phrase **"Chinese text tables below each image"**; thin grid lines or rules allowed; text must be **legible 简体中文 only** in these tables (no English in the table body). **Do not** leave panels wholly wordless.
-4. Upper ~70–75% of each cell: pure cinematic imagery only (no floating subtitles outside the reserved table band).
-5. Avoid layouts that break the grid: one full-bleed hero for the whole canvas, magazine left-text strip + one photo only, 50/50 two-panel only, or any **four-quadrant-only** note layout — this task is **eight** panels, not four.
+2. **MANDATORY TOP TITLE STRIP (简体中文) ABOVE THE GRID**: reserve the **top ~8–12%** of the **entire** canvas as a **full-width horizontal title band** with **one prominent main title in legible Simplified Chinese** (系列标题 / 成片主题 / 视频标题—summarize from the script hook). Optional smaller 简体中文 subtitle or kicker under the main line; thin rule or soft divider between this band and the grid. **Do not** place the first row of panels flush against the top edge—**the title band must sit above all eight cells.**
+3. LAYOUT below the title band: wide ~16:9 landscape master continues with **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard / contact-sheet, masterpiece, 8k, intricate cinematic film stills per cell upper area (within each cell).
+4. **MANDATORY 简体中文字幕表（讯息分格）inside every panel**: reserve the **bottom ~25–30%** of **each** cell for a **compact Simplified Chinese caption table** (shot breakdown strip): **2–4 short labeled rows** (e.g. 镜头 / 景别, 情绪 / 氛围, 口播要点 or 画面说明)—styled like professional storyboard 「分格说明」or the reference phrase **"Chinese text tables below each image"**; thin grid lines or rules allowed; text must be **legible 简体中文 only** in these tables (no English in the table body). **Do not** leave panels wholly wordless.
+5. Upper ~70–75% of each cell (the film-still zone): pure cinematic imagery only (no floating subtitles outside the reserved table band inside that cell).
+6. Avoid layouts that break the grid: one full-bleed hero for the whole canvas, **titleless** top (no strip), magazine left-text strip + one photo only, 50/50 two-panel only, or any **four-quadrant-only** note layout — this task is **eight** panels under a **简体中文** header, not four.
 `.trim();
 
 /** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
@@ -280,7 +281,9 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
     `
 You turn the Chinese script into **one English image prompt** for GPT Image. Prefer comma-separated tags / short fragments so the frame reads as **8 panels in 2 rows × 4 columns** with clear gutters—not a single full-bleed poster. Longer English is fine if it helps lock all eight beats.
 
-**Non-negotiable:** every panel must include a **lower caption zone** with **legible Simplified Chinese** in a **small table / labeled rows** (讯息分格表、分镜说明), same idea as: "Chinese text tables below each image" in cinematic 2×4 reference boards—not optional, not English-only UI.
+**Non-negotiable — top title:** the canvas must begin with a **full-width top band (~8–12% height)** containing **one main title in legible Simplified Chinese** (成片 / 系列主题，紧扣剧本钩子)。**All eight storyboard panels sit below this strip**—never flush to the top edge without a 简体中文 header.
+
+**Non-negotiable — panels:** every panel must include a **lower caption zone** with **legible Simplified Chinese** in a **small table / labeled rows** (讯息分格表、分镜说明), same idea as: "Chinese text tables below each image" in cinematic 2×4 reference boards—not optional, not English-only UI.
 
 [cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette (you may cite cold/warm contrast, wuxia, medical authority, etc. when the script fits).
 
