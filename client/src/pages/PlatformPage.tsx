@@ -240,6 +240,7 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
     const o = bp as Record<string, unknown>;
     const keys = [
       "stage2MaxOutputTokens",
+      "stage2MaxOutputTokensEnv",
       "stage2SubStepsSummary",
       "phase2SkippedReason",
       "phase1CreativeReasoningEffortResolved",
@@ -2995,14 +2996,16 @@ export default function PlatformPage() {
                       </span>
                     </div>
                     <div>
-                      3f. Stage2 max_output 請求:{" "}
+                      3f. Stage2 輸出上限（max_tokens / maxOutputTokens）:{" "}
                       <span className="font-mono text-[#ffdd44]">
                         {String(
                           (contentDebug?.buildPlatformContent as { stage2MaxOutputTokens?: number } | undefined)
                             ?.stage2MaxOutputTokens ?? "—",
                         )}
                       </span>
-                      <span className="text-gray-500">（見 Stage 2 · debug JSON · buildPlatformContent）</span>
+                      <span className="text-gray-500">
+                        （`PLATFORM_STAGE2_LLM` 為 openai 或 vertex/gemini 時皆讀同一 env：PLATFORM_STAGE2_MAX_OUTPUT_TOKENS；非「Vertex 專用 GPT 配額」語意）
+                      </span>
                     </div>
                     <div className="break-words">
                       3g. GPT‑5 reasoning 診斷（OpenAI 路徑生效）:{" "}
