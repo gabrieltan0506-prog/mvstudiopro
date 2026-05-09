@@ -420,6 +420,23 @@ const platformFollowUpResponseSchema = z.object({
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
+/**
+ * Stage 2 · getPlatformContent（同步 HTTP / tRPC）：LLM 期间连接上可能长时间无字节，Fly `http_service.http_options.idle_timeout` 默认 900s，
+ * 超过则由边缘返回 **502 空体**，浏览器 `response.json()` → Unexpected end of JSON input。队列版 job 仍可走 20min+，不受此上限绑定。
+ * 覆盖：PLATFORM_STAGE2_SYNC_TIMEOUT_MS（毫秒，≥120000）；在 Fly（FLY_APP_NAME）上自动封顶为 idle 以下留余量。
+ */
+const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.PLATFORM_STAGE2_SYNC_TIMEOUT_MS);
+  const requested = Number.isFinite(raw) && raw >= 120_000 ? Math.min(Math.floor(raw), 25 * 60_000) : 20 * 60_000;
+  const flyIdleMs = 900_000;
+  const flyHeadroomMs = 55_000; // store 读、序列化、网络
+  const flySyncCap = Math.max(120_000, flyIdleMs - flyHeadroomMs);
+  if (String(process.env.FLY_APP_NAME || "").trim()) {
+    return Math.min(requested, flySyncCap);
+  }
+  return requested;
+})();
+
 /** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
 const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
   const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
@@ -4107,10 +4124,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
             ),
             new Promise<Stage2RaceTimeout>((resolve) => {
               setTimeout(() => {
-                console.warn(`[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_LLM_TIMEOUT_MS}ms，返回空结果`);
+                console.warn(
+                  `[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS}ms，返回空结果`,
+                );
                 stage2TimedOut = true;
                 resolve({ kind: "timeout" });
-              }, PLATFORM_LLM_TIMEOUT_MS);
+              }, PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS);
             }),
           ]);
 
@@ -4153,6 +4172,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             stage2Error,
             stage2TimedOut,
             platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
+            platformStage2SyncTimeoutMs: PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS,
             buildPlatformContent: buildDiagnostics,
           },
         };
