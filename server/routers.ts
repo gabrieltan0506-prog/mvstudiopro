@@ -1236,8 +1236,7 @@ export async function buildPlatformContent(params: {
   diagnostics.jsonParseStrategy = jsonParseStrategy;
   diagnostics.rawContentChars = rawContent.length;
   diagnostics.rawContentEmpty = !rawContent.trim();
-  diagnostics.rawContentHead280 = rawContent.slice(0, 280);
-  diagnostics.rawContentTail280 = rawContent.slice(-280);
+  /** 勿寫入 raw 正文片段進 diagnostics：進 job/HTTP 會放大序列化與持有期；除錯用 rawContentChars + 服務端日誌即可。 */
 
   /**
    * 模型常返回**截断 JSON**（末尾缺少引号/括号）→ 所有 JSON.parse 失败。
@@ -1335,14 +1334,36 @@ export async function buildPlatformContent(params: {
 
 const STAGE2_DIAG_JOB_STRING_MAX = 3500;
 
+/** 嚴禁進入 job / 同步 tRPC debug 的鍵（避免把 snapshot、prompt、流水與原始請求塞回客戶端）。 */
+const STAGE2_DIAG_JOB_DROP_KEYS: readonly string[] = [
+  "snapshot",
+  "snapshotSummary",
+  "snapshotData",
+  "prompt",
+  "systemPrompt",
+  "userPrompt",
+  "messages",
+  "contentMessages",
+  "flowLog",
+  "imageGenFlowLog",
+  "rawRequest",
+  "rawResponse",
+  "requestBody",
+  "responseBody",
+  "rawContent",
+  "rawContentHead280",
+  "rawContentTail280",
+];
+
 /**
- * platform_build_content 寫入 job / 回傳前瘦身 diagnostics，避免長字串與多餘片段在序列化與持有期佔滿堆。
- * （完整診斷仍可由服務端 console / 日誌追；此處只保留除錯足夠的預覽。）
+ * platform_build_content 寫入 job / 回傳前瘦身 diagnostics。
+ * 注意：**job.input.params.snapshotSummary** 仍由 worker 需要而保留在 DB；此函數只處理 **output.debug.buildPlatformContent**，不回收入庫前已載入的記憶體。
  */
 export function slimBuildPlatformContentDiagnosticsForJob(d: Record<string, unknown>): Record<string, unknown> {
   const slim: Record<string, unknown> = { ...d };
-  delete slim.rawContentHead280;
-  delete slim.rawContentTail280;
+  for (const k of STAGE2_DIAG_JOB_DROP_KEYS) {
+    delete slim[k];
+  }
   const trunc = (s: string, max: number) =>
     s.length <= max ? s : `${s.slice(0, max)}\n…[truncated ${s.length - max} chars for job payload]`;
   for (const key of Object.keys(slim)) {
@@ -4296,7 +4317,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
             stage2TimedOut,
             platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
             platformStage2SyncTimeoutMs: PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS,
-            buildPlatformContent: buildDiagnostics,
+            buildPlatformContent:
+              buildDiagnostics && typeof buildDiagnostics === "object"
+                ? slimBuildPlatformContentDiagnosticsForJob(buildDiagnostics as Record<string, unknown>)
+                : buildDiagnostics,
           },
         };
       }),
