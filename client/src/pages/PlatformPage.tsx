@@ -3027,7 +3027,9 @@ export default function PlatformPage() {
                     </div>
                     <div className="break-words">
                       3h. Stage 2 拆步{" "}
-                      <span className="text-gray-500">（2‑1 GPT‑5.5 推理 → 2‑2 GPT‑5.4 組裝；見 JSON 字段 stage2SubSteps）</span>:
+                      <span className="text-gray-500">
+                        （預設單階 OpenAI JSON；設 Fly `PLATFORM_STAGE2_OPENAI_TWO_PHASE=1` 時為 2‑1 GPT‑5.5→2‑2 GPT‑5.4。見 JSON 字段 stage2SubSteps）
+                      </span>:
                       <div className="mt-1 space-y-0.5 pl-1 font-mono text-[10px] text-[#d7d0ef]">
                         {(() => {
                           const bp = contentDebug?.buildPlatformContent as
