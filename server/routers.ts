@@ -450,10 +450,12 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
   return requested;
 })();
 
-/** Stage 2 文案链：长 JSON 易被截断；預設 8192（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆蓋，下限 4096） */
-const STAGE2_VERTEX_MAX_OUTPUT_TOKENS = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "8192");
-  if (!Number.isFinite(raw) || raw < 4096) return 8192;
+/**
+ * Stage 2 `buildPlatformContent`：**max_output/completion token 上限**。與線路標籤無關：`PLATFORM_STAGE2_LLM=openai` 為 GPT，`vertex`/`gemini` 為 Google Gemini——兩線都讀同一個 **`PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`**。此請勿將常數理解成「只給 Vertex 用」；Vertex 在此專案僅為 Gemini 的一種發佈端點名稱。長 JSON 易截斷；預設 16384，下限 4096。
+ */
+const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
+  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
+  if (!Number.isFinite(raw) || raw < 4096) return 16384;
   return Math.min(65536, Math.floor(raw));
 })();
 
@@ -762,7 +764,7 @@ async function buildPlatformDashboard(params: {
   });
 
   // Phase 0-C: Robust JSON extraction — greedy bracket extraction, then fence strip fallback
-  const rawContent = String(response.choices[0]?.message?.content || "");
+  const rawContent = extractFirstChoicePlainText(response);
   // Step 1: greedy bracket extraction — find the outermost { … } block in the raw output
   // This is the most reliable method when Gemini adds preamble/postamble text
   const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
@@ -970,7 +972,9 @@ export async function buildPlatformContent(params: {
     requestedPlatforms: params.requestedPlatforms,
     contextLen: String(params.context || "").length,
     platformMenuCount: Array.isArray(params.platformMenu) ? params.platformMenu.length : 0,
-    stage2MaxOutputTokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+    stage2MaxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+    /** env 鍵名；數值同時影響 OpenAI 與 Gemini 路線。 */
+    stage2MaxOutputTokensEnv: "PLATFORM_STAGE2_MAX_OUTPUT_TOKENS",
     openaiGpt5ReasoningEffort: getOpenAiGpt5ReasoningEffortDiagnostics(),
   };
   try {
@@ -1191,7 +1195,7 @@ export async function buildPlatformContent(params: {
         response = await invokeLLM({
           provider: "openai",
           modelName: openaiCreativeModel,
-          max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+          max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
           response_format: { type: "json_object" },
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
@@ -1206,7 +1210,7 @@ export async function buildPlatformContent(params: {
           response = await invokeLLM({
             provider: "openai",
             modelName: openaiCreativeModel,
-            max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+            max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
             messages: structuredStage2Messages,
             abortSignal: params.abortSignal,
             ...(fromTwoPhaseFailure ? { reasoningEffort: "low" as const } : {}),
@@ -1349,7 +1353,7 @@ export async function buildPlatformContent(params: {
       response = await invokeLLM({
         provider: "vertex",
         modelName: "gemini-3.1-pro-preview",
-        max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
         messages: structuredStage2Messages,
         abortSignal: params.abortSignal,
@@ -1362,7 +1366,7 @@ export async function buildPlatformContent(params: {
         response = await invokeLLM({
           provider: "vertex",
           modelName: "gemini-3.1-pro-preview",
-          max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+          max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
         });
@@ -1374,7 +1378,7 @@ export async function buildPlatformContent(params: {
           response = await invokeLLM({
             provider: "gemini",
             modelName: "gemini-3.1-pro-preview",
-            max_tokens: STAGE2_VERTEX_MAX_OUTPUT_TOKENS,
+            max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
             response_format: { type: "json_object" },
             messages: structuredStage2Messages,
             abortSignal: params.abortSignal,
@@ -1478,7 +1482,7 @@ export async function buildPlatformContent(params: {
   diagnostics.responseFinishReason = response.choices?.[0]?.finish_reason ?? null;
   diagnostics.usage = response.usage ?? null;
   // Robust JSON extraction — greedy bracket extraction, then fence strip fallback
-  const rawContent = String(response.choices[0]?.message?.content || "");
+  const rawContent = extractFirstChoicePlainText(response);
   const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
   const bracketExtracted = bracketMatch ? bracketMatch[0].trim() : "";
   
