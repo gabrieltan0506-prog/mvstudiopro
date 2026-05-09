@@ -221,9 +221,10 @@ const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
   "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. FORBIDDEN: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells.";
 
+/** 单次 GPT-IMAGE-2（含 OhMyGPT 转发）fetch 超时；封面/分镜/图文笔记共用。可用 GPT_IMAGE_FETCH_TIMEOUT_MS 覆盖。 */
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
-  300_000,
-  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 300_000),
+  20 * 60_000,
+  Math.max(60_000, Number(process.env.GPT_IMAGE_FETCH_TIMEOUT_MS) || 10 * 60_000),
 );
 
 /**
