@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
+import { isPlatformWeekendGcpEscape } from "../config/platformSwitches.js";
 
 /** 寫入平台頁 / 寬幅合成 debug 時間線（與 imageGenFlowLog 同源）。 */
 function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): void {
@@ -592,6 +593,21 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
   return callVertexGemini31ProForImagePrompt(prompt);
 }
 
+/** GPT 三輪無效且 GCP 停權時：跳過 Vertex Flash，返回可送 strip 的英文應急指令（避免 403/帳單錯誤）。 */
+function buildEmergencyEnglishPrompt(prompt: string, flowLog?: string[]): string {
+  appendGpt54TranslationDebug(
+    flowLog,
+    "[GCP避險] GPT 三輪無可用輸出 · 跳過 Vertex Flash · 使用應急英文包裝（計費恢復後請關閉 PLATFORM_WEEKEND_GCP_ESCAPE）",
+  );
+  const t = String(prompt || "").trim();
+  const body = t.length > 14_000 ? `${t.slice(0, 14_000)}\n…(emergency trim)` : t;
+  return [
+    "Single English image-generation instruction. Emergency mode: GCP Vertex skipped (billing suspended).",
+    "masterpiece, 8k, editorial or cinematic luxury; translate the creative brief below into pixels (keep layout grid intent if the brief describes 2×4 / 2×2 / 9:16).",
+    body,
+  ].join("\n\n");
+}
+
 /**
  * 平台生图英文化：**GPT 5.4 最多 3 次**（第 1 次立即；若異常或空 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次）。
  * 三次仍無有效英文 → **僅**改走 Vertex **Gemini 3.1 Flash Live Preview**（預設 global · JSON），不再疊更多 GPT 輪次。
@@ -752,6 +768,9 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
     flowLog,
     `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
   );
+  if (isPlatformWeekendGcpEscape()) {
+    return buildEmergencyEnglishPrompt(prompt, flowLog);
+  }
   try {
     return await callVertexGeminiFlashTranslation(prompt, flowLog);
   } catch (vertexErr: unknown) {
@@ -774,8 +793,16 @@ export async function callGemini31ProForImagePrompt(
   translationTask: string,
   options?: { translator?: PlatformImagePromptTranslator; flowLog?: string[] },
 ): Promise<string> {
-  const translator: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
+  const requested: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
+  const billingEscape = isPlatformWeekendGcpEscape();
+  const translator: PlatformImagePromptTranslator = billingEscape ? "gpt54" : requested;
   const flowLog = options?.flowLog;
+  if (billingEscape && requested === "vertex_gemini_31_pro_preview") {
+    appendGpt54TranslationDebug(
+      flowLog,
+      "[GCP避險] 英文化已從 Vertex 探索強制改為 GPT 5.4 路徑（避免調用 Vertex Flash）",
+    );
+  }
   const vertexModel = resolveVertexFlashTranslationModelName();
   const vertexLoc = resolveVertexFlashTranslationLocation();
   const label =
@@ -841,6 +868,13 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
 
   if (options.engine === "gemini31flash") {
+    if (isPlatformWeekendGcpEscape()) {
+      appendVertexFlashDebug(
+        flowLog,
+        "[GCP避險] engine=gemini31flash 已改走 GPT 5.4（跳过 Vertex Flash）",
+      );
+      return callGemini31ProForImagePrompt(task, { translator: "gpt54", flowLog });
+    }
     console.log(
       `[platformComposite] engine=gemini31flash → Vertex ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`,
     );

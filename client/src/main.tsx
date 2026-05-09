@@ -73,7 +73,6 @@ const queryClient = new QueryClient();
 const MV_ANALYSIS_LONG_TRPC_PATHS = new Set([
   "mvAnalysis.getGrowthSnapshot",
   "mvAnalysis.getPlatformDashboard",
-  "mvAnalysis.getPlatformContent",
 ]);
 
 const DEFAULT_MV_ANALYSIS_TRPC_ORIGIN = "https://mvstudiopro.fly.dev/api/trpc";

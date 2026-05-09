@@ -2,6 +2,8 @@
  * 默认：Stage2 = OpenAI，平台图 = Fly 卷。
  * 对照其它栈：`PLATFORM_STAGE2_LLM=vertex`；`PLATFORM_IMAGE_STORAGE=gcs`。
  * 换 OpenAI 模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5）。
+ *
+ * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
  */
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
@@ -11,7 +13,44 @@ function norm(s: string | undefined): string {
   return String(s ?? "").trim().toLowerCase();
 }
 
+/**
+ * **主開關：** `true` = 平台 Stage2/存圖/英文化兜底可按 env 走 Vertex·GCS；`false` = 強制避險（OpenAI+Fly、跳 Vertex 生圖兜底等）。與語音辨識等獨立服務無關。
+ */
+export const PLATFORM_USE_GOOGLE_GCP = true;
+
+/**
+ * 在 {@link PLATFORM_USE_GOOGLE_GCP} 為 `true` 時，仍可單獨用此常數或環境變數觸發避險。
+ */
+export const PLATFORM_WEEKEND_GCP_ESCAPE = false;
+
+/**
+ * Vertex **Nano Banana 2**（`generateGeminiImage` 生圖兜底）代碼默認關閉。
+ * 路徑恢復可用時：設環境變數 `PLATFORM_VERTEX_NANO_BANANA2=1`，或改此常數為 `true`。
+ * {@link isPlatformWeekendGcpEscape} 為真時仍會關閉（與本項無關的其它 GCP 可繼續用）。
+ */
+export const PLATFORM_VERTEX_NANO_BANANA2_ENABLED = false;
+
+/** 是否允許在 GPT-IMAGE-2 失敗後調用 Vertex Nano Banana 2。 */
+export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
+  if (isPlatformWeekendGcpEscape()) return false;
+  const v = norm(process.env.PLATFORM_VERTEX_NANO_BANANA2);
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
+  return PLATFORM_VERTEX_NANO_BANANA2_ENABLED;
+}
+
+/** 平台圖/Stage2 相關避險（關閉主開關、週末旗標、billing/環境變數）。不影響語音或其它非平台管線。 */
+export function isPlatformWeekendGcpEscape(): boolean {
+  if (!PLATFORM_USE_GOOGLE_GCP) return true;
+  if (PLATFORM_WEEKEND_GCP_ESCAPE) return true;
+  const billing = norm(process.env.GCP_BILLING_STATUS);
+  if (billing === "suspended" || billing === "suspension") return true;
+  const esc = norm(process.env.PLATFORM_WEEKEND_ESCAPE);
+  return esc === "1" || esc === "true" || esc === "yes";
+}
+
 export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
+  if (isPlatformWeekendGcpEscape()) return "openai";
   const primary = norm(process.env.PLATFORM_STAGE2_LLM);
   if (primary === "openai" || primary === "gpt" || primary === "gpt55" || primary === "gpt-5.5") {
     return "openai";
@@ -46,11 +85,13 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
 }
 
 export function getPlatformStage2OpenAiModel(): string {
+  if (isPlatformWeekendGcpEscape()) return "gpt-5.5";
   const m = String(process.env.PLATFORM_STAGE2_OPENAI_MODEL || "gpt-5.5").trim();
   return m || "gpt-5.5";
 }
 
 export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver {
+  if (isPlatformWeekendGcpEscape()) return "fly";
   const raw = norm(process.env.PLATFORM_IMAGE_STORAGE || process.env.MV_PLATFORM_IMAGE_STORAGE);
   if (raw === "fly" || raw === "volume" || raw === "fly_volume") {
     return "fly";
@@ -64,4 +105,18 @@ export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver 
   if (legacy === "0") return "gcs";
 
   return "fly";
+}
+
+/** 文檔/呼叫端命名 alias，等同於 {@link resolvePlatformStage2LlmMode} */
+export function getPlatformStage2Llm(): PlatformStage2LlmMode {
+  return resolvePlatformStage2LlmMode();
+}
+
+/** 小寫 openai 拼寫別名 */
+export function getPlatformStage2OpenaiModel(): string {
+  return getPlatformStage2OpenAiModel();
+}
+
+export function getPlatformImageStorage(): PlatformImageStorageDriver {
+  return resolvePlatformImageStorageDriver();
 }

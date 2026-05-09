@@ -179,8 +179,8 @@ export const CREDIT_COSTS = {
   // ─── 创作者成长营 / 平台趋势 / 节点工作流（与 server/plans 数值一致，供前端定价展示与扣费逻辑共用）─
   growthCampGrowth: 40,
   growthCampRemix: 50,
-  platformTrend: 30,
-  platformTrendFollowUp: 5,
+  platformTrend: 150,
+  platformTrendFollowUp: 18,
   workflowNodes: 20,
   workflowScript: 0,
   workflowScriptExtra: 2,
@@ -250,16 +250,16 @@ export const CREDIT_COSTS = {
   klingImageV2_1K: 5,
   klingImageV2_2K: 7,
 
-  // ─── 平台趋势·参考图生成 ─────────────────────
-  platformRefImage: 12,
-  /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2 主路径 · Nano Banana 2 兜底） */
-  platformTopicFrameGraphic: 9,
+  // ─── 平台趋势·参考图 / 生图（与 server/plans 一致 · 扣点 3× 慎用完）────────────
+  platformRefImage: 36,
+  /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2） */
+  platformTopicFrameGraphic: 27,
   /** 平台页：选题单帧 · 短视频竖版分镜参考条 */
-  platformTopicFrameVideo: 5,
-  /** 平台页：分镜 2×4 宽幅合成（16 cr） */
-  platformStoryboardSheet: 16,
-  /** 平台页：小红书 2×4 八格图文（24 cr · Vertex 兜底 2K；API kind 仍为 xiaohongshu_dual_note） */
-  platformXhsDualNote: 24,
+  platformTopicFrameVideo: 15,
+  /** 平台页：分镜 2×4 宽幅合成 */
+  platformStoryboardSheet: 48,
+  /** 平台页：小红书 2×4 八格图文（API kind 仍为 xiaohongshu_dual_note） */
+  platformXhsDualNote: 72,
 } as const;
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */
@@ -286,7 +286,7 @@ export const IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS = { x2: 3, x4: 5 } as const
 export const UPSCALE_COST_OVERRIDES: Partial<
   Record<ImageUpscaleBaseCreditKey, Record<keyof typeof IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS, number>>
 > = {
-  platformRefImage: { x2: 36, x4: 48 },
+  platformRefImage: { x2: 108, x4: 144 },
 };
 
 export function imageUpscaleTotalCredits(

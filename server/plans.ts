@@ -181,11 +181,11 @@ export const CREDIT_COSTS = {
   growthCampGrowthMusic: 10,    // 成长营·配乐生成（GROWTH）：10 cr
   growthCampRemix: 60,          // 二创分析（REMIX）：60 cr
   growthCampRemixMusic: 8,      // 二创·配乐生成（REMIX）：8 cr
-  platformTrend: 50,            // 平台数据分析（主看板）：50 cr
-  platformTrendFollowUp: 6,     // 平台趋势·趋势数据续分析：正式包每日首次免费，之后 6 cr
-  platformRefImage: 12,         // 平台趋势·生成参考图：12 cr/张
-  platformRefImageUpscale2x: 36, // 参考图高清放大 2×：36 cr
-  platformRefImageUpscale4x: 48, // 参考图高清放大 4×：48 cr
+  platformTrend: 150,           // 平台数据分析（主看板）：150 cr（GPT-image-2 等成本上调 · 3×）
+  platformTrendFollowUp: 18,    // 平台趋势·趋势数据续分析：正式包每日首次免费，之后 18 cr（3×）
+  platformRefImage: 36,         // 平台趋势·生成参考图：36 cr/张（3×）
+  platformRefImageUpscale2x: 108, // 参考图高清放大 2×：108 cr（3×）
+  platformRefImageUpscale4x: 144, // 参考图高清放大 4×：144 cr（3×）
   workflowNodes: 20,            // 节点工作流整体（已废弃，改为逐步计费）
 
   // ─── 节点工作流（逐步计费，脚本每日首通免费）────────
@@ -256,13 +256,13 @@ export const CREDIT_COSTS = {
   // ─── 音频分析 ────────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 
-  // ─── 平台页·选题单帧参考（一键批量 / 单张重绘 · GPT-IMAGE-2）──────────────────
-  platformTopicFrameGraphic: 9,  // 图文/小红书竖版封面
-  platformTopicFrameVideo: 5,     // 短视频分镜参考条
+  // ─── 平台页·选题单帧参考（一键批量 / 单张重绘 · GPT-IMAGE-2）·扣点 3×──────────────
+  platformTopicFrameGraphic: 27, // 图文/小红书竖版封面
+  platformTopicFrameVideo: 15,  // 短视频分镜参考条
 
-  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────
-  platformStoryboardSheet: 16,  // 分镜 2×4（双语编导；生图采用 GPT-IMAGE-2）
-  platformXhsDualNote: 24,       // 小红书 2×4 八格图文（字多图密 · Vertex 兜底 2K；内部 kind 仍 xiaohongshu_dual_note）
+  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）·扣点 3×──────────────────
+  platformStoryboardSheet: 48,  // 分镜 2×4（双语编导；生图 GPT-IMAGE-2）
+  platformXhsDualNote: 72,       // 小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
 } as const;
 
 export interface CreditFeatureBreakdownRow {
@@ -283,11 +283,11 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "创作者成长营", subFeature: "REMIX 配乐生成", credits: CREDIT_COSTS.growthCampRemixMusic, note: "额外扣费" },
   // ─── 平台趋势分析 ─────────────────────────────────────────
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
-  { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 6 cr；试用包不支持" },
-  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 5 cr，生图采用 GPT-IMAGE-2 主路径 · Nano Banana 2 兜底" },
-  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 9 cr，生图采用 GPT-IMAGE-2 主路径 · Nano Banana 2 兜底" },
-  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图采用 GPT-IMAGE-2 · 失败兜底" },
-  { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；GPT-IMAGE-2 主路径 · Vertex 2K 兜底" },
+  { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
+  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 27 cr，生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },
   { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },
   { product: "平台数据分析", subFeature: "参考图高清放大 4×", credits: CREDIT_COSTS.platformRefImageUpscale4x },
