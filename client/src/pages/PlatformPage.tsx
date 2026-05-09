@@ -240,6 +240,7 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
     const o = bp as Record<string, unknown>;
     const keys = [
       "stage2MaxOutputTokens",
+      "stage2SubStepsSummary",
       "openaiGpt5ReasoningEffort",
       "jsonParseStrategy",
       "rawContentEmpty",
@@ -3010,6 +3011,29 @@ export default function PlatformPage() {
                           return r != null ? JSON.stringify(r) : "—（任務完成後由後端寫入）";
                         })()}
                       </span>
+                    </div>
+                    <div className="break-words">
+                      3h. Stage 2 拆步{" "}
+                      <span className="text-gray-500">（2‑1 GPT‑5.5 推理 → 2‑2 GPT‑5.4 組裝；見 JSON 字段 stage2SubSteps）</span>:
+                      <div className="mt-1 space-y-0.5 pl-1 font-mono text-[10px] text-[#d7d0ef]">
+                        {(() => {
+                          const bp = contentDebug?.buildPlatformContent as
+                            | {
+                                stage2SubSteps?: { id: string; title: string; model?: string; status: string }[];
+                              }
+                            | undefined;
+                          const sub = bp?.stage2SubSteps;
+                          if (!Array.isArray(sub) || sub.length === 0) {
+                            return <div>— 完成任務後顯示；若皆無請展開下方 Stage 2 · debug。</div>;
+                          }
+                          return sub.map((s) => (
+                            <div key={s.id}>
+                              <span className="text-[#ffdd44]">{s.id}</span> {s.title}
+                              {s.model ? <span className="text-gray-500"> · model={s.model}</span> : null} · {s.status}
+                            </div>
+                          ));
+                        })()}
+                      </div>
                     </div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
                     <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>

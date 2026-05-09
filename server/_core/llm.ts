@@ -82,6 +82,10 @@ export type InvokeParams = {
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   /** When aborted (e.g. client disconnected), in-flight provider requests are cancelled. */
   abortSignal?: AbortSignal;
+  /**
+   * 若傳入：返回前會寫入經 {@link truncateForMemory} 裁剪的 messages 摘要與首條選擇正文，避免巨型 diagnostics 長期佔 Heap。
+   */
+  memorySafeDiagnostics?: MemorySafeLlmDiagnostics;
 };
 
 export type ToolCall = {
@@ -126,6 +130,72 @@ export type ResponseFormat =
   | { type: "text" }
   | { type: "json_object" }
   | { type: "json_schema"; json_schema: JsonSchema };
+
+/** invokeLLM 可選填入的裁剪診斷（由調用端持有物件位址）。 */
+export type MemorySafeLlmDiagnostics = {
+  phase?: string;
+  prompt?: string;
+  response?: string;
+};
+
+/**
+ * Diagnostics / 長字串持有者：將字串裁剪至 maxLen，避免雙階 LLM 中間稿撐爆堆。
+ */
+export const truncateForMemory = (str: unknown, maxLen = 3000): string => {
+  const safeStr = typeof str === "string" ? str : JSON.stringify(str ?? "");
+  if (safeStr.length <= maxLen) return safeStr;
+  return `${safeStr.substring(0, maxLen)}\n\n... [為了記憶體安全已截斷 ${safeStr.length - maxLen} 字] ...`;
+};
+
+function summarizeMessagesForPeek(messages: Message[], maxChars = 24_000): string {
+  const parts: string[] = [];
+  for (const m of messages) {
+    const { role, content } = m;
+    if (typeof content === "string") {
+      parts.push(`${role}: ${content}`);
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
+    const flat = content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (!part || typeof part !== "object") return "";
+        if (part.type === "text" && typeof part.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    parts.push(`${role}: ${flat}`);
+    if (parts.join("\n---\n").length > maxChars) break;
+  }
+  const joined = parts.join("\n---\n").trim();
+  return joined.length > maxChars ? joined.slice(0, maxChars) : joined;
+}
+
+export function extractFirstChoicePlainText(result: InvokeResult): string {
+  const c = result?.choices?.[0]?.message?.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return c
+      .map((part) =>
+        typeof part === "object" && part !== null && "text" in part && typeof part.text === "string"
+          ? part.text
+          : "",
+      )
+      .join("");
+  }
+  return "";
+}
+
+function applyMemorySafeDiagnostics(
+  params: InvokeParams & { model?: ModelTier },
+  result: InvokeResult,
+) {
+  const sink = params.memorySafeDiagnostics;
+  if (!sink) return;
+  sink.prompt = truncateForMemory(summarizeMessagesForPeek(params.messages));
+  sink.response = truncateForMemory(extractFirstChoicePlainText(result));
+}
 
 type ModelTier = "flash" | "pro" | "gpt5" | "gpt54";
 type Provider = "vertex" | "gemini" | "cometapi" | "openai";
@@ -925,19 +995,19 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
   const target = resolveTarget(params.model, params.provider, params.modelName);
 
+  let raw: InvokeResult;
   if (target.provider === "vertex") {
-    return invokeVertex(params, target);
+    raw = await invokeVertex(params, target);
+  } else if (target.provider === "gemini") {
+    raw = await invokeGemini(params, target);
+  } else if (target.provider === "openai") {
+    raw = await invokeOpenAI(params, target);
+  } else {
+    raw = await invokeCometApi(params, target);
   }
 
-  if (target.provider === "gemini") {
-    return invokeGemini(params, target);
-  }
-
-  if (target.provider === "openai") {
-    return invokeOpenAI(params, target);
-  }
-
-  return invokeCometApi(params, target);
+  applyMemorySafeDiagnostics(params, raw);
+  return raw;
 }
 
 /**
