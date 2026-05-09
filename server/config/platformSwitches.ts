@@ -3,6 +3,8 @@
  * 对照其它栈：`PLATFORM_STAGE2_LLM=vertex`；`PLATFORM_IMAGE_STORAGE=gcs`。
  * 换 OpenAI 模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5）。
  *
+ * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
+ *
  * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
  *
  * **週末生存模式：** {@link PLATFORM_WEEKEND_SURVIVAL_MODE} 為 `true` 時，等同開啟平台 GCP 避險（Stage2→OpenAI、gpt‑5.5、 Fly 存圖、英文化不調 Vertex）。帳單恢復後請改回 `false`。
@@ -13,6 +15,12 @@ export type PlatformImageStorageDriver = "fly" | "gcs";
 
 /** 🚨 鎖定 OpenAI + Fly 平台鏈路；並令 {@link isPlatformWeekendGcpEscape} 為真。 */
 export const PLATFORM_WEEKEND_SURVIVAL_MODE = true;
+
+/**
+ * Vertex / Gemini 3.1 Pro（Stage 2 長文鏈）暫不可用時為 `true`，強制 Stage2 → OpenAI。
+ * 下週 Vertex 就緒後改 `false`，或保持 `true` 並設環境變數 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1` 放行 vertex 模式。
+ */
+export const PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED = true;
 
 function norm(s: string | undefined): string {
   return String(s ?? "").trim().toLowerCase();
@@ -56,6 +64,15 @@ export function isPlatformWeekendGcpEscape(): boolean {
 }
 
 export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
+  const vertexAvailEnv = norm(process.env.PLATFORM_STAGE2_VERTEX_AVAILABLE);
+  const vertexExplicitlyOn =
+    vertexAvailEnv === "1" ||
+    vertexAvailEnv === "true" ||
+    vertexAvailEnv === "yes" ||
+    vertexAvailEnv === "on";
+  if (PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED && !vertexExplicitlyOn) {
+    return "openai";
+  }
   if (isPlatformWeekendGcpEscape()) return "openai";
   const primary = norm(process.env.PLATFORM_STAGE2_LLM);
   if (primary === "openai" || primary === "gpt" || primary === "gpt55" || primary === "gpt-5.5") {
@@ -98,6 +115,23 @@ export function getPlatformStage2OpenAiModel(): string {
   if (isPlatformWeekendGcpEscape()) return "gpt-5.5";
   const m = String(process.env.PLATFORM_STAGE2_OPENAI_MODEL || "gpt-5.5").trim();
   return m || "gpt-5.5";
+}
+
+/**
+ * Stage 2 OpenAI **第二階** JSON 封裝：預設 gpt‑5.4（成本較低），可用 `PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL` / `OPENAI_GPT54_MODEL` 覆蓋。
+ */
+export function getPlatformStage2StructureOpenAiModel(): string {
+  const explicit = String(process.env.PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL || "").trim();
+  if (explicit) return explicit;
+  const from54 = String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim();
+  return from54 || "gpt-5.4";
+}
+
+/** 預設啟用雙階（創意文本 → JSON）；設 `PLATFORM_STAGE2_OPENAI_TWO_PHASE=0` 可回退單次 `json_object`。 */
+export function isPlatformStage2OpenAiTwoPhaseEnabled(): boolean {
+  const v = norm(process.env.PLATFORM_STAGE2_OPENAI_TWO_PHASE);
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
+  return true;
 }
 
 export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver {
