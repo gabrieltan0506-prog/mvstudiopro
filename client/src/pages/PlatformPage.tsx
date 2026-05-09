@@ -886,8 +886,8 @@ export default function PlatformPage() {
       maxWaitMs: 25 * 60_000,
       adaptiveBackoffAfterAttempts: 36,
       maxIntervalMs: 8000,
-      onPoll: ({ attempt, status, elapsedMs }) => {
-        const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms）`;
+      onPoll: ({ attempt, status }) => {
+        const line = `轮询 #${attempt} · status=${status}`;
         setContentJobPollTrace((prev) =>
           prev && prev.jobId === jobId
             ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
@@ -1161,8 +1161,8 @@ export default function PlatformPage() {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
           maxWaitMs: 18 * 60_000,
-          onPoll: ({ attempt, status, elapsedMs, output }) => {
-            const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms） · ${pollLabel}`;
+          onPoll: ({ attempt, status, output }) => {
+            const line = `轮询 #${attempt} · status=${status} · ${pollLabel}`;
             const flowRaw = output?.imageGenFlowLog;
             let extraLines: string[] = [];
             if (Array.isArray(flowRaw)) {

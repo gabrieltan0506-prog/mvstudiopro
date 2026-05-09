@@ -51,10 +51,10 @@ RUN pnpm build \
 EXPOSE 3000
 
 # Fly / 容器內必須監聽 0.0.0.0；PORT 與 fly.toml internal_port / 健康檢查一致
-# 堆上限以 fly.toml [env] NODE_OPTIONS 為準；此處僅作本地 docker run 無 fly 時的兜底
+# 與 fly.toml 10GB VM 對齊（8GB 堆）；Fly 部署時以 fly.toml [env] / Secrets 為準
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
-ENV NODE_OPTIONS=--max-old-space-size=5120
+ENV NODE_OPTIONS=--max-old-space-size=8192
 
 CMD ["pnpm","exec","tsx","server/_core/index.ts"]

@@ -1333,6 +1333,27 @@ export async function buildPlatformContent(params: {
   };
 }
 
+const STAGE2_DIAG_JOB_STRING_MAX = 3500;
+
+/**
+ * platform_build_content 寫入 job / 回傳前瘦身 diagnostics，避免長字串與多餘片段在序列化與持有期佔滿堆。
+ * （完整診斷仍可由服務端 console / 日誌追；此處只保留除錯足夠的預覽。）
+ */
+export function slimBuildPlatformContentDiagnosticsForJob(d: Record<string, unknown>): Record<string, unknown> {
+  const slim: Record<string, unknown> = { ...d };
+  delete slim.rawContentHead280;
+  delete slim.rawContentTail280;
+  const trunc = (s: string, max: number) =>
+    s.length <= max ? s : `${s.slice(0, max)}\n…[truncated ${s.length - max} chars for job payload]`;
+  for (const key of Object.keys(slim)) {
+    const v = slim[key];
+    if (typeof v === "string" && v.length > STAGE2_DIAG_JOB_STRING_MAX) {
+      slim[key] = trunc(v, STAGE2_DIAG_JOB_STRING_MAX);
+    }
+  }
+  return slim;
+}
+
 function buildFallbackPlatformDashboard(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
   context?: string;
