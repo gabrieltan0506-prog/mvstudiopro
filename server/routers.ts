@@ -423,13 +423,19 @@ const platformFollowUpResponseSchema = z.object({
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
 /**
- * Stage 2 · getPlatformContent（同步 tRPC，直连 Fly）：须与 platform_build_content job 默认 20min 对齐，避免「队列版能跑满、同步版 8min 被裁断」。
- * 覆盖：PLATFORM_STAGE2_SYNC_TIMEOUT_MS（毫秒，≥120000，封顶 25min）。
+ * Stage 2 · getPlatformContent（同步 HTTP / tRPC）：默认与 platform_build_content job 同级（20min，`PLATFORM_STAGE2_SYNC_TIMEOUT_MS`，封顶 25min）。
+ * Fly 上长等待无下行字节会触发 idle_timeout（900s）→ 502 空体；若设 FLY_APP_NAME 则再封顶 ~845s。队列版 job 不受此限。
  */
 const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
   const raw = Number(process.env.PLATFORM_STAGE2_SYNC_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 120_000) return Math.min(Math.floor(raw), 25 * 60_000);
-  return 20 * 60_000;
+  const requested = Number.isFinite(raw) && raw >= 120_000 ? Math.min(Math.floor(raw), 25 * 60_000) : 20 * 60_000;
+  const flyIdleMs = 900_000;
+  const flyHeadroomMs = 55_000;
+  const flySyncCap = Math.max(120_000, flyIdleMs - flyHeadroomMs);
+  if (String(process.env.FLY_APP_NAME || "").trim()) {
+    return Math.min(requested, flySyncCap);
+  }
+  return requested;
 })();
 
 /** Stage 2 文案链：长 JSON 易被截断，默认抬高 Vertex 输出上限（可用 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 覆盖） */
