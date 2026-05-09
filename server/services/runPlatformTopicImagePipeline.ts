@@ -116,8 +116,14 @@ export async function runPlatformTopicImagePipeline(
     callGemini31ProForImagePrompt,
     extractChineseVisualBrief,
   } = await import("./geminiPlatformCompositeTranslation.js");
-  const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } =
-    await import("./proxyImageService.js");
+  const {
+    buildImagePromptStats,
+    generateImageGpt2WithImagenFallback,
+    generateGptImage2FromRawEnglishPrompt,
+    condenseImagePromptIfNeeded,
+    resolvePlatformPageGptImageRequestTimeoutMs,
+  } = await import("./proxyImageService.js");
+  const platformGptTimeoutMs = resolvePlatformPageGptImageRequestTimeoutMs();
 
   const ctxStr = String(input.context || "").trim();
   const coverPersona = String(input.coverPersonaContext || "").trim();
@@ -192,6 +198,7 @@ export async function runPlatformTopicImagePipeline(
           aspectRatio: "9:16",
           gcsSubdir: "platform_topic_reference",
           flowLog: topicImageCondenseLog,
+          gptImageRequestTimeoutMs: platformGptTimeoutMs,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -216,6 +223,7 @@ export async function runPlatformTopicImagePipeline(
             mode,
             isTrial: false,
             flowLog: topicImageCondenseLog,
+            requestTimeoutMs: platformGptTimeoutMs,
           });
         } catch (e) {
           topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤3] 兜底异常: ${e instanceof Error ? e.message : String(e)}`);

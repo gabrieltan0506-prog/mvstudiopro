@@ -1375,6 +1375,45 @@ export function slimBuildPlatformContentDiagnosticsForJob(d: Record<string, unkn
   return slim;
 }
 
+/** 單行 JSON，供 Fly/日誌聚合檢索；與 job/tRPC 回傳的瘦 debug 無關。 */
+export function logStage2BuildPlatformContentLine(params: {
+  jobId?: string | null;
+  route: "platform_build_content" | "mvAnalysis.getPlatformContent";
+  ms: number;
+  diagnostics: Record<string, unknown>;
+  error?: string | null;
+  hasContent?: boolean;
+  stage2TimedOut?: boolean;
+}): void {
+  const d = params.diagnostics;
+  console.log(
+    JSON.stringify({
+      evt: "stage2_build_platform_content",
+      jobId: params.jobId ?? null,
+      route: params.route,
+      ms: params.ms,
+      hasContent: params.hasContent ?? null,
+      stage2TimedOut: params.stage2TimedOut ?? null,
+      error: params.error != null && params.error !== "" ? params.error : null,
+      zodPath: d.zodPath ?? null,
+      rawContentChars: d.rawContentChars ?? null,
+      rawContentEmpty: d.rawContentEmpty ?? null,
+      jsonParseStrategy: d.jsonParseStrategy ?? null,
+      stage2LlmMode: d.stage2LlmMode ?? null,
+      platformStage2OpenAiModel: d.platformStage2OpenAiModel ?? null,
+      llmPath: d.llmPath ?? null,
+      responseFinishReason: d.responseFinishReason ?? null,
+      responseProvider: d.responseProvider ?? null,
+      blueprintCountAfterCoerce: d.blueprintCountAfterCoerce ?? null,
+      monetizationCountAfterCoerce: d.monetizationCountAfterCoerce ?? null,
+      storeReadMs: d.storeReadMs ?? null,
+      storeReadTimedOut: d.storeReadTimedOut ?? null,
+      stage2FailureReason: d.stage2FailureReason ?? null,
+      stage2Exception: d.stage2Exception ?? null,
+    }),
+  );
+}
+
 function buildFallbackPlatformDashboard(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
   context?: string;
@@ -4305,6 +4344,18 @@ ${JSON.stringify(platformEvidence, null, 2)}
             storeReadElapsedMs: Date.now() - storeReadT0,
           };
         }
+        logStage2BuildPlatformContentLine({
+          jobId: null,
+          route: "mvAnalysis.getPlatformContent",
+          ms: Date.now() - t0,
+          diagnostics:
+            buildDiagnostics && typeof buildDiagnostics === "object"
+              ? (buildDiagnostics as Record<string, unknown>)
+              : {},
+          error: stage2Error,
+          hasContent: Boolean(platformContent),
+          stage2TimedOut,
+        });
         return {
           success: true,
           platformContent,

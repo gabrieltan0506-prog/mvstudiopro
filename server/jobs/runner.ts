@@ -27,7 +27,12 @@ import {
   type FalKlingEndpoint,
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
-import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
+import {
+  appRouter,
+  buildPlatformContent,
+  logStage2BuildPlatformContentLine,
+  slimBuildPlatformContentDiagnosticsForJob,
+} from "../routers";
 import { invokeLLM, extractJsonString } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
 import { getDb } from "../db";
@@ -952,75 +957,96 @@ async function processPlatformJob(
 
     // ── platform_build_content（Creator Growth · Stage 2 文案與選題）────────────────
     if (input.action === "platform_build_content") {
-      const context = String(params.context || "");
-      const windowDays = Number(params.windowDays ?? 15);
-      const platformMenu = Array.isArray(params.platformMenu) ? params.platformMenu : [];
-      const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
-      const preferFlyLive = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
-      const requestedPlatforms = normalizePlatforms([
-        ...((snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) =>
-          String(item?.platform || ""),
-        ),
-        ...((platformMenu || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
-      ]);
-      const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<
-        ReturnType<typeof readTrendStore>
-      >;
-      const storeReadPromise = requestedPlatforms.length
-        ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive })
-        : readTrendStore({ preferDerivedFiles: true, preferFlyLive });
-      const store = await new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
-        let settled = false;
-        const timer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          resolve(storeNull);
-        }, 20_000);
-        storeReadPromise
-          .then((s) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            resolve(s);
-          })
-          .catch(() => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            resolve(storeNull);
-          });
-      });
       const t0 = Date.now();
-      const built = await buildPlatformContent({
-        snapshot: snapshotSummary,
-        platformMenu,
-        context: context || undefined,
-        windowDays,
-        requestedPlatforms,
-        store,
-        abortSignal: undefined,
-      });
-      const diag = built.diagnostics as Record<string, unknown>;
-      const respProv = diag?.responseProvider;
-      return {
-        provider: typeof respProv === "string" && respProv ? respProv : "vertex",
-        output: {
-          success: true,
-          platformContent: built.data,
-          debug: {
-            route: "platform_build_content",
-            totalMs: Date.now() - t0,
-            hasContent: Boolean(built.data),
-            preferFlyLive,
-            stage2Error: null as string | null,
-            stage2TimedOut: false,
-            platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
-            buildPlatformContent: slimBuildPlatformContentDiagnosticsForJob(
-              built.diagnostics as Record<string, unknown>,
-            ),
+      try {
+        const context = String(params.context || "");
+        const windowDays = Number(params.windowDays ?? 15);
+        const platformMenu = Array.isArray(params.platformMenu) ? params.platformMenu : [];
+        const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
+        const preferFlyLive = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
+        const requestedPlatforms = normalizePlatforms([
+          ...((snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) =>
+            String(item?.platform || ""),
+          ),
+          ...((platformMenu || []) as Array<{ platform?: string }>).map((item) => String(item?.platform || "")),
+        ]);
+        const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<
+          ReturnType<typeof readTrendStore>
+        >;
+        const storeReadPromise = requestedPlatforms.length
+          ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true, preferFlyLive })
+          : readTrendStore({ preferDerivedFiles: true, preferFlyLive });
+        const store = await new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            resolve(storeNull);
+          }, 20_000);
+          storeReadPromise
+            .then((s) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve(s);
+            })
+            .catch(() => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve(storeNull);
+            });
+        });
+        const built = await buildPlatformContent({
+          snapshot: snapshotSummary,
+          platformMenu,
+          context: context || undefined,
+          windowDays,
+          requestedPlatforms,
+          store,
+          abortSignal: undefined,
+        });
+        const diag = built.diagnostics as Record<string, unknown>;
+        const respProv = diag?.responseProvider;
+        const totalMs = Date.now() - t0;
+        logStage2BuildPlatformContentLine({
+          jobId: platformJobId ?? null,
+          route: "platform_build_content",
+          ms: totalMs,
+          diagnostics: built.diagnostics as Record<string, unknown>,
+          hasContent: Boolean(built.data),
+          stage2TimedOut: false,
+        });
+        return {
+          provider: typeof respProv === "string" && respProv ? respProv : "vertex",
+          output: {
+            success: true,
+            platformContent: built.data,
+            debug: {
+              route: "platform_build_content",
+              totalMs,
+              hasContent: Boolean(built.data),
+              preferFlyLive,
+              stage2Error: null as string | null,
+              stage2TimedOut: false,
+              platformLlmTimeoutMs: PLATFORM_LLM_TIMEOUT_MS,
+              buildPlatformContent: slimBuildPlatformContentDiagnosticsForJob(
+                built.diagnostics as Record<string, unknown>,
+              ),
+            },
           },
-        },
-      };
+        };
+      } catch (stage2Err) {
+        logStage2BuildPlatformContentLine({
+          jobId: platformJobId ?? null,
+          route: "platform_build_content",
+          ms: Date.now() - t0,
+          diagnostics: {},
+          error: stage2Err instanceof Error ? stage2Err.message : String(stage2Err),
+          hasContent: false,
+        });
+        throw stage2Err;
+      }
     }
 
     // ── platform_topic_image（平台单帧封面 · 异步 worker）──────────────────────────
