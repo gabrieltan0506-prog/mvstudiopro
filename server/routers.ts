@@ -1084,6 +1084,10 @@ export async function buildPlatformContent(params: {
 
   const stage2LlmMode = resolvePlatformStage2LlmMode();
   diagnostics.stage2LlmMode = stage2LlmMode;
+  console.log("[buildPlatformContent] Stage2 LLM", {
+    stage2LlmMode,
+    openaiModel: stage2LlmMode === "openai" ? getPlatformStage2OpenAiModel() : null,
+  });
 
   /** Stage 2：`PLATFORM_STAGE2_LLM` 一鍵 OpenAI（GPT‑5.5）或 Vertex/Gemini 鏈。 */
   let response: Awaited<ReturnType<typeof invokeLLM>>;
@@ -4118,7 +4122,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * Stage 2 文案與選題：推薦前端走 getPlatformContent（長鏈直連 Fly）；本入口保留供腳本/舊客戶端入隊。
+     * Stage 2 文案與選題：**推薦前端** `enqueuePlatformContentJob` → worker `platform_build_content` → 短 tRPC + GET /api/jobs 轮询。
+     * `getPlatformContent` 保留給腳本/調試（長 HTTP，易觸發邊緣斷連或 OOM）。
      */
     enqueuePlatformContentJob: publicProcedure
       .input(

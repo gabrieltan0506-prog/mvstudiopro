@@ -1000,13 +1000,15 @@ async function processPlatformJob(
         store,
         abortSignal: undefined,
       });
+      const diag = built.diagnostics as Record<string, unknown>;
+      const respProv = diag?.responseProvider;
       return {
-        provider: "vertex",
+        provider: typeof respProv === "string" && respProv ? respProv : "vertex",
         output: {
           success: true,
           platformContent: built.data,
           debug: {
-            route: "mvAnalysis.getPlatformContent",
+            route: "platform_build_content",
             totalMs: Date.now() - t0,
             hasContent: Boolean(built.data),
             preferFlyLive,

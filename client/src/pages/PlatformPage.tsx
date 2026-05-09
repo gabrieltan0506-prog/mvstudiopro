@@ -231,7 +231,7 @@ type ClientJobPollTrace = {
   terminalStatus?: string;
 };
 
-/** Stage 2 失敗或空載荷時，從 getPlatformContent.debug 摘錄高信號欄位寫入輪詢區（避免只看 toast）。 */
+/** Stage 2 失敗或空載荷時，從 `debug.buildPlatformContent` 摘錄高信號欄位寫入輪詢區（避免只看 toast）。 */
 function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefined): string {
   if (!debug || typeof debug !== "object") return "";
   const parts: string[] = [];
@@ -774,7 +774,7 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
-  /** Stage 2 走 jobs 轮询时的错误信息（替代原 getPlatformContent mutation error） */
+  /** Stage 2：platform_build_content job + GET /api/jobs 輪詢時的錯誤說明 */
   const [contentJobError, setContentJobError] = useState<string | null>(null);
   /** Debug：Stage 2 文案 job 的 jobId、每次 GET、终态 */
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
@@ -843,29 +843,7 @@ export default function PlatformPage() {
     },
   );
 
-  const getPlatformContentMutation = trpc.mvAnalysis.getPlatformContent.useMutation();
-
-  /** Stage 2 單次直連無中間態：pending 期間定期追加「已等待 N 秒」至 Debug 流水，避免像卡住。 */
-  useEffect(() => {
-    if (!getPlatformContentMutation.isPending) return;
-    const t0 = Date.now();
-    const intervalMs = 12_000;
-    const id = window.setInterval(() => {
-      const sec = Math.round((Date.now() - t0) / 1000);
-      setContentJobPollTrace((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          pollCount: prev.pollCount + 1,
-          lines: appendPollDebugLine(
-            prev.lines,
-            `${new Date().toISOString()}  [进行中] getPlatformContent 已等待 ${sec}s（长篇 JSON 常见 60–300s，请勿重复点击分析）`,
-          ),
-        };
-      });
-    }, intervalMs);
-    return () => window.clearInterval(id);
-  }, [getPlatformContentMutation.isPending]);
+  const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
 
   // Stage 1 Mutation: 戰略看板
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
@@ -876,22 +854,60 @@ export default function PlatformPage() {
         setIsContentLoading(true);
         try {
           const tStart = new Date().toISOString();
-          const syncId = `trpc-stage2-${Date.now()}`;
-          setContentJobPollTrace({
-            jobId: syncId,
-            label: "Stage 2 · getPlatformContent（直连 Fly，不经 job 队列）",
-            lines: appendPollDebugLine(
-              [],
-              `${tStart} 调用 mvAnalysis.getPlatformContent（与 worker 内 buildPlatformContent 相同；避免与 platform_topic_image 共队列堵塞）`,
-            ),
-            pollCount: 1,
-          });
-          const res = await getPlatformContentMutation.mutateAsync({
+          const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
             context: focusPrompt || undefined,
             windowDays: selectedWindowDays,
             platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu || [],
             snapshotSummary: variables.snapshotSummary || {},
           });
+          setContentJobPollTrace({
+            jobId,
+            label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
+            lines: appendPollDebugLine(
+              [],
+              `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 约每 2.5s 轮询（worker 默认最长约 20min，免长 HTTP / 边缘断连）`,
+            ),
+            pollCount: 0,
+          });
+          const j = await pollJobUntilTerminal(jobId, {
+            intervalMs: 2500,
+            maxWaitMs: 25 * 60_000,
+            onPoll: ({ attempt, status, elapsedMs }) => {
+              const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms）`;
+              setContentJobPollTrace((prev) =>
+                prev && prev.jobId === jobId
+                  ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
+                  : prev,
+              );
+            },
+          });
+          const tPollEnd = new Date().toISOString();
+          setContentJobPollTrace((prev) =>
+            prev && prev.jobId === jobId
+              ? {
+                  ...prev,
+                  terminalStatus: j.status,
+                  lines: appendPollDebugLine(
+                    prev.lines,
+                    `${tPollEnd} 轮询结束 · status=${j.status}${j.error ? ` · error=${j.error}` : ""}`,
+                  ),
+                }
+              : prev,
+          );
+          if (j.status === "failed") {
+            throw new Error(j.error || "專屬文案任務失敗");
+          }
+          const raw = j.output;
+          if (!raw || typeof raw !== "object") {
+            throw new Error("任務已完成但無有效輸出，請重試");
+          }
+          const out = raw as Record<string, unknown>;
+          const res = {
+            platformContent: (out.platformContent ?? null) as typeof out.platformContent,
+            debug: (out.debug && typeof out.debug === "object" && !Array.isArray(out.debug)
+              ? (out.debug as Record<string, unknown>)
+              : {}) as Record<string, unknown>,
+          };
           const dbg = res.debug as
             | {
                 totalMs?: number;
@@ -911,14 +927,12 @@ export default function PlatformPage() {
             term = "empty";
           }
           setContentJobPollTrace((prev) =>
-            prev && prev.jobId === syncId
+            prev && prev.jobId === jobId
               ? {
                   ...prev,
-                  pollCount: 1,
-                  terminalStatus: term,
                   lines: appendPollDebugLine(
                     prev.lines,
-                    `${tEnd} 完成 · totalMs=${dbg?.totalMs ?? "?"} · terminal=${term}`,
+                    `${tEnd} 解析輸出完成 · totalMs=${dbg?.totalMs ?? "?"} · terminal=${term}`,
                   ),
                 }
               : prev,
@@ -936,27 +950,27 @@ export default function PlatformPage() {
             if (bp === 0 && ml === 0) {
               const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
               setContentJobPollTrace((prev) =>
-                prev && prev.jobId === syncId
+                prev && prev.jobId === jobId
                   ? {
                       ...prev,
                       lines: appendPollDebugLine(
                         prev.lines,
                         snippet
-                          ? `${new Date().toISOString()} Stage 2 接口成功但 0 條選題 · 摘要: ${snippet}`
-                          : `${new Date().toISOString()} Stage 2 接口成功但 0 條選題（无 buildPlatformContent 摘要）`,
+                          ? `${new Date().toISOString()} Stage 2 任務成功但 0 條選題 · 摘要: ${snippet}`
+                          : `${new Date().toISOString()} Stage 2 任務成功但 0 條選題（无 buildPlatformContent 摘要）`,
                       ),
                     }
                   : prev,
               );
               toast.error(
-                "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「getPlatformContent」查看原因，或重新分析一次。",
+                "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
               );
             }
             setPlatformContent(res.platformContent as any);
           } else {
             const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
             setContentJobPollTrace((prev) =>
-              prev && prev.jobId === syncId
+              prev && prev.jobId === jobId
                 ? {
                     ...prev,
                     lines: appendPollDebugLine(
@@ -973,7 +987,7 @@ export default function PlatformPage() {
           }
           setContentDebug((res.debug as Record<string, unknown>) ?? {});
         } catch (e) {
-          console.warn("[PlatformPage] Stage 2 getPlatformContent error:", e);
+          console.warn("[PlatformPage] Stage 2 platform_build_content error:", e);
           const msg = e instanceof Error ? e.message : String(e);
           setContentJobError(msg);
           toast.error(`文案生成失敗: ${msg}`);
@@ -2847,7 +2861,7 @@ export default function PlatformPage() {
                     <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
-                    <div>3. 深度原创分析（mvAnalysis.getPlatformContent 直连 Fly，不经 job 队列）</div>
+                    <div>3. 深度原创分析（enqueuePlatformContentJob → Fly worker，GET /api/jobs 轮询，避免长 HTTP 断连）</div>
                     <div>
                       3a. 状态:{" "}
                       <span>
@@ -2873,7 +2887,7 @@ export default function PlatformPage() {
                       {contentJobPollTrace?.terminalStatus
                         ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
                         : ""}
-                      <span className="text-gray-500">（直连期间约每 12s 追加一行等待进度）</span>
+                      <span className="text-gray-500">（轮询约每 2.5s 一行，worker 默认最长约 20min）</span>
                     </div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
                     <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
@@ -2892,7 +2906,7 @@ export default function PlatformPage() {
                         typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
                         typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
                         stage2EmptyPayload
-                          ? "Stage 2 返回空選題：請查看下方 getPlatformContent.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
+                          ? "Stage 2 返回空選題：請查看下方 Stage 2.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
                           : null,
                       ]
                         .filter(Boolean)
@@ -2915,7 +2929,7 @@ export default function PlatformPage() {
                   </pre>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4 xl:col-span-2">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">getPlatformContent.debug（Stage 2）</div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">Stage 2 · debug</div>
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
                     {JSON.stringify(contentDebug || null, null, 2)}
                   </pre>
@@ -2930,7 +2944,7 @@ export default function PlatformPage() {
                 </p>
                 <div className="mt-3 grid gap-4 lg:grid-cols-2">
                   <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                    <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · getPlatformContent（直连）</div>
+                    <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content + 轮询</div>
                     <div className="mt-1 space-y-1 text-[10px] text-gray-400">
                       <div>
                         jobId:{" "}
@@ -2946,7 +2960,7 @@ export default function PlatformPage() {
                     <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
                       {(contentJobPollTrace?.lines ?? []).length > 0
                         ? (contentJobPollTrace?.lines ?? []).join("\n")
-                        : "尚无记录。Stage 1 完成后会自动调用 getPlatformContent（直连 Fly）；进行中约每 12s 追加等待进度。"}
+                        : "尚无记录。Stage 1 完成后会入队 platform_build_content 并轮询 GET /api/jobs。"}
                     </pre>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-black/35 p-3">
@@ -3187,11 +3201,11 @@ export default function PlatformPage() {
                     Fly Jobs · 客户端轮询（GET /api/jobs/:id）
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    与上方「快照区」Debug 相同数据源：Stage 2 为 getPlatformContent 单次直连流水（约每 12s 追加等待进度）；封面单帧仍为 job 入队与 GET /api/jobs 轮询。
+                    与上方「快照区」Debug 相同数据源：Stage 2 为 platform_build_content 轮询流水（约每 2.5s）；封面单帧仍为 job 入队与 GET /api/jobs 轮询。
                   </p>
                   <div className="mt-3 grid gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                      <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · getPlatformContent（直连）</div>
+                      <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content + 轮询</div>
                       <div className="mt-1 space-y-1 text-[10px] text-gray-400">
                         <div>
                           jobId:{" "}
@@ -3207,7 +3221,7 @@ export default function PlatformPage() {
                       <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
                         {(contentJobPollTrace?.lines ?? []).length > 0
                           ? (contentJobPollTrace?.lines ?? []).join("\n")
-                          : "尚无记录。完成 Stage 1 后将出现直连流水。"}
+                          : "尚无记录。完成 Stage 1 后将出现轮询流水。"}
                       </pre>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-black/35 p-3">

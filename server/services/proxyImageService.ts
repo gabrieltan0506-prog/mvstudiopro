@@ -1,4 +1,7 @@
-import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
+import {
+  isPlatformVertexNanoBanana2FallbackEnabled,
+  resolvePlatformImageStorageDriver,
+} from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import {
   callGemini31ProForImagePrompt,
@@ -750,6 +753,13 @@ async function fallbackNanoBanana2FromPrompt(
   flowLog?: string[],
 ): Promise<string | null> {
   const L = flowLog;
+  if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
+    appendImageFlowLog(
+      L,
+      "[生圖兜底] Vertex Nano Banana 2 已關閉（僅 GPT-IMAGE-2）。開啟：PLATFORM_VERTEX_NANO_BANANA2=1 或 platformSwitches 中 PLATFORM_VERTEX_NANO_BANANA2_ENABLED",
+    );
+    return null;
+  }
   try {
     const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
     if (!isGeminiImageAvailable()) {
@@ -983,6 +993,16 @@ export async function generatePlatformCompositeSheetImage(options: {
         L,
         "[2×4·步骤2] GPT-IMAGE-2 未返回图像 → Vertex 企业级 Nano Banana 2 · **同一完整 prompt** · 16:9 兜底…",
       );
+
+      if (isPlatformWeekendGcpEscape()) {
+        appendImageFlowLog(
+          L,
+          "[GCP避險] 已跳过 2×4 Vertex Nano（仅依赖 GPT-IMAGE-2）；设置 PLATFORM_WEEKEND_ESCAPE=0 可恢复兜底",
+        );
+        throw new Error(
+          "GPT-IMAGE-2 未出图；GCP 避險模式已关闭 Vertex 图像兜底。请检查 OhMyGPT/PROXY_OPENAI_API_KEY 或配额后重试。",
+        );
+      }
 
       try {
         const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
