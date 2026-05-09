@@ -75,6 +75,15 @@ const MV_ANALYSIS_LONG_TRPC_PATHS = new Set([
   "mvAnalysis.getPlatformDashboard",
 ]);
 
+/**
+ * 分钟级 GPT-IMAGE-2 / 编导链：不从 httpBatchLink 拼车发送，减轻中间层对大体量 JSON 的请求异常与「Pending 过久 → Failed to fetch」体感。
+ */
+const MV_ANALYSIS_UNBATCH_IMAGE_MUTATION_PATHS = new Set([
+  "mvAnalysis.generatePlatformCompositeSheet",
+  "mvAnalysis.generateTopicImage",
+  "mvAnalysis.generateAllPlatformTopicImages",
+]);
+
 const DEFAULT_MV_ANALYSIS_TRPC_ORIGIN = "https://mvstudiopro.fly.dev/api/trpc";
 
 function resolveMvAnalysisLongTrpcUrl(): string | null {
@@ -111,6 +120,10 @@ function useMvAnalysisLongTrpcLink(op: { path: string }) {
   return Boolean(mvAnalysisLongTrpcUrl) && MV_ANALYSIS_LONG_TRPC_PATHS.has(op.path);
 }
 
+function useMvAnalysisUnbatchImageMutationLink(op: { path: string }) {
+  return MV_ANALYSIS_UNBATCH_IMAGE_MUTATION_PATHS.has(op.path);
+}
+
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
@@ -141,18 +154,8 @@ queryClient.getMutationCache().subscribe((event: any) => {
 const trpcClient = trpc.createClient({
   links: [
     splitLink({
-      condition: useMvAnalysisLongTrpcLink,
+      condition: useMvAnalysisUnbatchImageMutationLink,
       true: httpLink({
-        url: mvAnalysisLongTrpcUrl!,
-        transformer: superjson,
-        fetch(input, init) {
-          return globalThis.fetch(input, {
-            ...(init ?? {}),
-            credentials: "omit",
-          });
-        },
-      }),
-      false: httpBatchLink({
         url: "/api/trpc",
         transformer: superjson,
         fetch(input, init) {
@@ -161,6 +164,29 @@ const trpcClient = trpc.createClient({
             credentials: "include",
           });
         },
+      }),
+      false: splitLink({
+        condition: useMvAnalysisLongTrpcLink,
+        true: httpLink({
+          url: mvAnalysisLongTrpcUrl!,
+          transformer: superjson,
+          fetch(input, init) {
+            return globalThis.fetch(input, {
+              ...(init ?? {}),
+              credentials: "omit",
+            });
+          },
+        }),
+        false: httpBatchLink({
+          url: "/api/trpc",
+          transformer: superjson,
+          fetch(input, init) {
+            return globalThis.fetch(input, {
+              ...(init ?? {}),
+              credentials: "include",
+            });
+          },
+        }),
       }),
     }),
   ],

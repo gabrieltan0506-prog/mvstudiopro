@@ -1582,8 +1582,13 @@ export default function PlatformPage() {
         variables.kind === "xiaohongshu_dual_note"
           ? CREDIT_COSTS.platformXhsDualNote
           : CREDIT_COSTS.platformStoryboardSheet;
-      const head = `❌ 2x4 合成失败 · kind=${variables.kind} · sceneId=${variables.sceneId} · title=${String(variables.title ?? "").slice(0, 80)} · 已退回 ${refunded} 积分`;
       const fullMsg = error instanceof Error ? error.message : String(error);
+      const looksLikeTransport =
+        /\bFailed to fetch\b|Load failed|NetworkError|ECONNRESET|ERR_NETWORK\b/i.test(fullMsg);
+      const refundPhrase = looksLikeTransport
+        ? `网络层中断（常见于代理/链路抖动）；若服务端已扣款，请以页面刷新后实际结果为准；有疑问请查积分明细或 Debug 服务端流水`
+        : `已退回 ${refunded} 积分`;
+      const head = `❌ 2x4 合成失败 · kind=${variables.kind} · sceneId=${variables.sceneId} · title=${String(variables.title ?? "").slice(0, 80)} · ${refundPhrase}`;
       const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…（完整见下方 Debug）` : fullMsg;
       toast.error(`${head}\n\n${preview}`, { duration: 14_000 });
       console.error("[PlatformPage] generatePlatformCompositeSheet failed:", error);
