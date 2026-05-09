@@ -991,16 +991,16 @@ export async function generatePlatformCompositeSheetImage(options: {
 
       appendImageFlowLog(
         L,
-        "[2×4·步骤2] GPT-IMAGE-2 未返回图像 → Vertex 企业级 Nano Banana 2 · **同一完整 prompt** · 16:9 兜底…",
+        "[2×4·步骤2] GPT-IMAGE-2 未返回图像 → 若允许则走 Vertex Nano 兜底（否则仅 GPT-IMAGE-2）…",
       );
 
-      if (isPlatformWeekendGcpEscape()) {
+      if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
         appendImageFlowLog(
           L,
-          "[GCP避險] 已跳过 2×4 Vertex Nano（仅依赖 GPT-IMAGE-2）；设置 PLATFORM_WEEKEND_ESCAPE=0 可恢复兜底",
+          "[2×4·兜底] 已跳过 Vertex Nano（GCP 避险或 PLATFORM_VERTEX_NANO_BANANA2 未开启）",
         );
         throw new Error(
-          "GPT-IMAGE-2 未出图；GCP 避險模式已关闭 Vertex 图像兜底。请检查 OhMyGPT/PROXY_OPENAI_API_KEY 或配额后重试。",
+          "GPT-IMAGE-2 未出图；当前未启用 Vertex 图像兜底。请检查 OhMyGPT/PROXY_OPENAI_API_KEY 或配额；需兜底可设 PLATFORM_VERTEX_NANO_BANANA2=1 并确保未触发平台 GCP 避险。",
         );
       }
 
