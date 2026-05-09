@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
-import { isPlatformWeekendGcpEscape } from "../config/platformSwitches.js";
+import { isPlatformWeekendGcpEscape, PLATFORM_WEEKEND_SURVIVAL_MODE } from "../config/platformSwitches.js";
 
 /** 寫入平台頁 / 寬幅合成 debug 時間線（與 imageGenFlowLog 同源）。 */
 function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): void {
@@ -609,11 +609,13 @@ function buildEmergencyEnglishPrompt(prompt: string, flowLog?: string[]): string
 }
 
 /**
- * 平台生图英文化：**GPT 5.4 最多 3 次**（第 1 次立即；若異常或空 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次）。
- * 三次仍無有效英文 → **僅**改走 Vertex **Gemini 3.1 Flash Live Preview**（預設 global · JSON），不再疊更多 GPT 輪次。
+ * 平台生图英文化：**OpenAI（預設 gpt-5.4，與 Stage 2 長文 gpt-5.5 分離）** 最多 3 次。
+ * 三次仍無有效英文 → 非避險時改走 Vertex Flash；避險 / Vertex 失敗時改 **應急英文**。
  */
 export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: string[]): Promise<string> {
-  const modelName = process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4";
+  /** 英文化走較廉價預設；勿改 gpt-5.5（多輪重試費用高）。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
+  const modelName =
+    process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
   const gpt54MaxOut = Math.min(
     16_384,
     Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 8192),
@@ -769,6 +771,7 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
     `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
   );
   if (isPlatformWeekendGcpEscape()) {
+    appendGpt54TranslationDebug(flowLog, "[GCP避險] 三周無可用英文 · 跳過 Vertex · 應急英文包裝");
     return buildEmergencyEnglishPrompt(prompt, flowLog);
   }
   try {
@@ -778,10 +781,13 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
     const vm = resolveVertexFlashTranslationModelName();
     const vl = resolveVertexFlashTranslationLocation();
     appendVertexFlashDebug(flowLog, `[Vertex·Flash·fallback] 失敗 · ${vDetail}`);
-    throw new Error(
-      `【GPT54 已三輪無效】${summary}\n` +
-        `【Vertex 兜底失敗 · ${vm} · ${vl}】\n${vDetail}`,
+    console.error("[平台英文化] OpenAI 三輪後 Vertex 兜底失敗:", vertexErr instanceof Error ? vertexErr.message : vertexErr);
+    console.error("🚨 改走應急英文 prompt，避免整條生圖管線中斷（見 imageGenFlowLog）");
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[應急] Vertex 兜底失敗（${vm}·${vl}）· ${summary.slice(0, 400)} → buildEmergencyEnglishPrompt`,
     );
+    return buildEmergencyEnglishPrompt(prompt, flowLog);
   }
 }
 
@@ -866,6 +872,14 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
     : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
   appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
+
+  if (PLATFORM_WEEKEND_SURVIVAL_MODE) {
+    appendVertexFlashDebug(
+      flowLog,
+      "[生存模式] 強制 OpenAI 英文化鏈（忽略 engine / translator 選項）",
+    );
+    return callGemini31ProForImagePrompt(task, { translator: "gpt54", flowLog });
+  }
 
   if (options.engine === "gemini31flash") {
     if (isPlatformWeekendGcpEscape()) {

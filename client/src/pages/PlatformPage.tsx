@@ -239,6 +239,8 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
   if (bp && typeof bp === "object") {
     const o = bp as Record<string, unknown>;
     const keys = [
+      "stage2MaxOutputTokens",
+      "openaiGpt5ReasoningEffort",
       "jsonParseStrategy",
       "rawContentEmpty",
       "vertexFinishReason",
@@ -774,8 +776,15 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
+  /** Stage 2：佇列/worker 狀態文案（不宣稱具體模型已完成，僅描述後台進度） */
+  const [contentLoadingText, setContentLoadingText] = useState("等待戰略看板就緒…");
+  const [stage2Failed, setStage2Failed] = useState(false);
   /** Stage 2：platform_build_content job + GET /api/jobs 輪詢時的錯誤說明 */
   const [contentJobError, setContentJobError] = useState<string | null>(null);
+  /** 供「重新生成文案」：上次入隊的快照（避免虛構成功） */
+  const lastStage2InputRef = useRef<{ snapshotSummary: Record<string, unknown>; windowDays: 15 | 30 | 45 } | null>(
+    null,
+  );
   /** Debug：Stage 2 文案 job 的 jobId、每次 GET、终态 */
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
@@ -789,6 +798,30 @@ export default function PlatformPage() {
     const ml = Array.isArray(platformContent.monetizationLanes) ? platformContent.monetizationLanes.length : 0;
     return bp === 0 && ml === 0;
   }, [platformContent]);
+
+  /** 與後台實際結果一致：不宣稱具體模型「已完成」，只描述任務狀態 */
+  const stage2UserFacingLine = useMemo(() => {
+    if (isContentLoading) return contentLoadingText;
+    if (stage2Failed || contentJobError) return `無法完成：${contentJobError || "請重試"}`;
+    if (stage2EmptyPayload) {
+      return "後台已返回，但沒有有效選題（0 條）。請展開 Debug「Stage 2」或使用重試。";
+    }
+    if (platformContent && !stage2EmptyPayload) {
+      return "✅ 專屬選題與文案已由後台寫入（可下滑查看卡片）";
+    }
+    if (platformDashboard && !platformContent) {
+      return "戰略看板已就緒；若未自動出現文案，請確認分析流程是否跑完或重試。";
+    }
+    return "完成戰略看板後，將自動排程專屬文案後台任務。";
+  }, [
+    isContentLoading,
+    contentLoadingText,
+    stage2Failed,
+    contentJobError,
+    stage2EmptyPayload,
+    platformContent,
+    platformDashboard,
+  ]);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
   const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
@@ -845,6 +878,177 @@ export default function PlatformPage() {
 
   const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
 
+  /** Fly worker 回傳後解析 platformContent（輪詢與錯誤處理集中一處，供初次與重試共用） */
+  const runStage2FromJobId = useCallback(async (jobId: string) => {
+    setContentLoadingText("後台正在處理專屬文案…");
+    const j = await pollJobUntilTerminal(jobId, {
+      intervalMs: 2500,
+      maxWaitMs: 25 * 60_000,
+      adaptiveBackoffAfterAttempts: 36,
+      maxIntervalMs: 8000,
+      onPoll: ({ attempt, status, elapsedMs }) => {
+        const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms）`;
+        setContentJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
+            : prev,
+        );
+        if (status === "queued") {
+          setContentLoadingText("任務排隊中，請稍候…");
+        } else if (status === "running") {
+          if (attempt < 12) setContentLoadingText("後台正在生成專屬文案（撰寫與校對中）…");
+          else if (attempt < 28) setContentLoadingText("內容較長，後台仍在處理…");
+          else setContentLoadingText("已等待較久，後台仍在處理；請勿關閉頁面…");
+        }
+      },
+    });
+    const tPollEnd = new Date().toISOString();
+    setContentJobPollTrace((prev) =>
+      prev && prev.jobId === jobId
+        ? {
+            ...prev,
+            terminalStatus: j.status,
+            lines: appendPollDebugLine(
+              prev.lines,
+              `${tPollEnd} 轮询结束 · status=${j.status}${j.error ? ` · error=${j.error}` : ""}`,
+            ),
+          }
+        : prev,
+    );
+    if (j.status === "failed") {
+      throw new Error(j.error || "專屬文案任務失敗");
+    }
+    const raw = j.output;
+    if (!raw || typeof raw !== "object") {
+      throw new Error("任務已完成但無有效輸出，請重試");
+    }
+    const out = raw as Record<string, unknown>;
+    const res = {
+      platformContent: (out.platformContent ?? null) as typeof out.platformContent,
+      debug: (out.debug && typeof out.debug === "object" && !Array.isArray(out.debug)
+        ? (out.debug as Record<string, unknown>)
+        : {}) as Record<string, unknown>,
+    };
+    const dbg = res.debug as
+      | {
+          totalMs?: number;
+          stage2Error?: string | null;
+          stage2TimedOut?: boolean;
+        }
+      | undefined;
+    const tEnd = new Date().toISOString();
+    let term: string;
+    if (res.platformContent) {
+      term = "succeeded";
+    } else if (dbg?.stage2TimedOut) {
+      term = "timeout";
+    } else if (dbg?.stage2Error) {
+      term = "failed";
+    } else {
+      term = "empty";
+    }
+    setContentJobPollTrace((prev) =>
+      prev && prev.jobId === jobId
+        ? {
+            ...prev,
+            lines: appendPollDebugLine(
+              prev.lines,
+              `${tEnd} 解析輸出完成 · totalMs=${dbg?.totalMs ?? "?"} · terminal=${term}`,
+            ),
+          }
+        : prev,
+    );
+    if (dbg?.stage2Error) {
+      throw new Error(dbg.stage2Error);
+    }
+    if (dbg?.stage2TimedOut) {
+      throw new Error("專屬文案生成逾時，請稍後再試或縮短背景描述");
+    }
+    if (res.platformContent) {
+      const pc = res.platformContent as { contentBlueprints?: unknown[]; monetizationLanes?: unknown[] };
+      const bp = Array.isArray(pc.contentBlueprints) ? pc.contentBlueprints.length : 0;
+      const ml = Array.isArray(pc.monetizationLanes) ? pc.monetizationLanes.length : 0;
+      if (bp === 0 && ml === 0) {
+        const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
+        setContentJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                lines: appendPollDebugLine(
+                  prev.lines,
+                  snippet
+                    ? `${new Date().toISOString()} Stage 2 任務成功但 0 條選題 · 摘要: ${snippet}`
+                    : `${new Date().toISOString()} Stage 2 任務成功但 0 條選題（无 buildPlatformContent 摘要）`,
+                ),
+              }
+            : prev,
+        );
+        toast.error(
+          "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
+        );
+      }
+      setPlatformContent(res.platformContent as any);
+    } else {
+      const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
+      setContentJobPollTrace((prev) =>
+        prev && prev.jobId === jobId
+          ? {
+              ...prev,
+              lines: appendPollDebugLine(
+                prev.lines,
+                snippet
+                  ? `${new Date().toISOString()} 未返回 platformContent · 摘要: ${snippet}`
+                  : `${new Date().toISOString()} 未返回 platformContent（无 debug 摘要）`,
+              ),
+            }
+          : prev,
+      );
+      setContentJobError("專屬文案生成失敗：任務完成但未返回有效內容");
+      toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
+    }
+    setContentDebug((res.debug as Record<string, unknown>) ?? {});
+  }, []);
+
+  const retryStage2Content = useCallback(async () => {
+    if (!platformDashboard || !lastStage2InputRef.current) {
+      toast.error("無法重試：請先完成戰略看板並觸發過專屬文案任務");
+      return;
+    }
+    const inp = lastStage2InputRef.current;
+    setContentJobError(null);
+    setIsContentLoading(true);
+    setStage2Failed(false);
+    setContentLoadingText("重新提交後台任務…");
+    try {
+      const tStart = new Date().toISOString();
+      const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
+        context: focusPrompt || undefined,
+        windowDays: inp.windowDays,
+        platformMenu: platformDashboard.platformMenu || [],
+        snapshotSummary: inp.snapshotSummary,
+      });
+      setContentJobPollTrace({
+        jobId,
+        label: "Stage 2 · platform_build_content（重試）",
+        lines: appendPollDebugLine(
+          [],
+          `${tStart} 重新入队 enqueuePlatformContentJob → jobId=${jobId}`,
+        ),
+        pollCount: 0,
+      });
+      await runStage2FromJobId(jobId);
+    } catch (e) {
+      console.warn("[PlatformPage] Stage 2 retry error:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      setContentJobError(msg);
+      setStage2Failed(true);
+      toast.error(`文案生成失敗: ${msg}`);
+      setContentDebug(null);
+    } finally {
+      setIsContentLoading(false);
+    }
+  }, [platformDashboard, focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId]);
+
   // Stage 1 Mutation: 戰略看板
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
     onSuccess: async (result, variables) => {
@@ -852,6 +1056,12 @@ export default function PlatformPage() {
         setPlatformDashboard(result.platformDashboard as PlatformDashboard);
         setContentJobError(null);
         setIsContentLoading(true);
+        setStage2Failed(false);
+        setContentLoadingText("正在提交專屬文案後台任務…");
+        lastStage2InputRef.current = {
+          snapshotSummary: (variables.snapshotSummary || {}) as Record<string, unknown>,
+          windowDays: selectedWindowDays,
+        };
         try {
           const tStart = new Date().toISOString();
           const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
@@ -865,130 +1075,15 @@ export default function PlatformPage() {
             label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
             lines: appendPollDebugLine(
               [],
-              `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 约每 2.5s 轮询（worker 默认最长约 20min，免长 HTTP / 边缘断连）`,
+              `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 前段約每 2.5s 轮询、第 37 次起間隔加倍（最多 8s；worker 默认最长約 20min）`,
             ),
             pollCount: 0,
           });
-          const j = await pollJobUntilTerminal(jobId, {
-            intervalMs: 2500,
-            maxWaitMs: 25 * 60_000,
-            onPoll: ({ attempt, status, elapsedMs }) => {
-              const line = `${new Date().toISOString()} 轮询 #${attempt} · GET /api/jobs/${jobId} → status=${status}（${elapsedMs}ms）`;
-              setContentJobPollTrace((prev) =>
-                prev && prev.jobId === jobId
-                  ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
-                  : prev,
-              );
-            },
-          });
-          const tPollEnd = new Date().toISOString();
-          setContentJobPollTrace((prev) =>
-            prev && prev.jobId === jobId
-              ? {
-                  ...prev,
-                  terminalStatus: j.status,
-                  lines: appendPollDebugLine(
-                    prev.lines,
-                    `${tPollEnd} 轮询结束 · status=${j.status}${j.error ? ` · error=${j.error}` : ""}`,
-                  ),
-                }
-              : prev,
-          );
-          if (j.status === "failed") {
-            throw new Error(j.error || "專屬文案任務失敗");
-          }
-          const raw = j.output;
-          if (!raw || typeof raw !== "object") {
-            throw new Error("任務已完成但無有效輸出，請重試");
-          }
-          const out = raw as Record<string, unknown>;
-          const res = {
-            platformContent: (out.platformContent ?? null) as typeof out.platformContent,
-            debug: (out.debug && typeof out.debug === "object" && !Array.isArray(out.debug)
-              ? (out.debug as Record<string, unknown>)
-              : {}) as Record<string, unknown>,
-          };
-          const dbg = res.debug as
-            | {
-                totalMs?: number;
-                stage2Error?: string | null;
-                stage2TimedOut?: boolean;
-              }
-            | undefined;
-          const tEnd = new Date().toISOString();
-          let term: string;
-          if (res.platformContent) {
-            term = "succeeded";
-          } else if (dbg?.stage2TimedOut) {
-            term = "timeout";
-          } else if (dbg?.stage2Error) {
-            term = "failed";
-          } else {
-            term = "empty";
-          }
-          setContentJobPollTrace((prev) =>
-            prev && prev.jobId === jobId
-              ? {
-                  ...prev,
-                  lines: appendPollDebugLine(
-                    prev.lines,
-                    `${tEnd} 解析輸出完成 · totalMs=${dbg?.totalMs ?? "?"} · terminal=${term}`,
-                  ),
-                }
-              : prev,
-          );
-          if (dbg?.stage2Error) {
-            throw new Error(dbg.stage2Error);
-          }
-          if (dbg?.stage2TimedOut) {
-            throw new Error("專屬文案生成逾時，請稍後再試或縮短背景描述");
-          }
-          if (res.platformContent) {
-            const pc = res.platformContent as { contentBlueprints?: unknown[]; monetizationLanes?: unknown[] };
-            const bp = Array.isArray(pc.contentBlueprints) ? pc.contentBlueprints.length : 0;
-            const ml = Array.isArray(pc.monetizationLanes) ? pc.monetizationLanes.length : 0;
-            if (bp === 0 && ml === 0) {
-              const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
-              setContentJobPollTrace((prev) =>
-                prev && prev.jobId === jobId
-                  ? {
-                      ...prev,
-                      lines: appendPollDebugLine(
-                        prev.lines,
-                        snippet
-                          ? `${new Date().toISOString()} Stage 2 任務成功但 0 條選題 · 摘要: ${snippet}`
-                          : `${new Date().toISOString()} Stage 2 任務成功但 0 條選題（无 buildPlatformContent 摘要）`,
-                      ),
-                    }
-                  : prev,
-              );
-              toast.error(
-                "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
-              );
-            }
-            setPlatformContent(res.platformContent as any);
-          } else {
-            const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
-            setContentJobPollTrace((prev) =>
-              prev && prev.jobId === jobId
-                ? {
-                    ...prev,
-                    lines: appendPollDebugLine(
-                      prev.lines,
-                      snippet
-                        ? `${new Date().toISOString()} 未返回 platformContent · 摘要: ${snippet}`
-                        : `${new Date().toISOString()} 未返回 platformContent（无 debug 摘要）`,
-                    ),
-                  }
-                : prev,
-            );
-            setContentJobError("專屬文案生成失敗：任務完成但未返回有效內容");
-            toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
-          }
-          setContentDebug((res.debug as Record<string, unknown>) ?? {});
+          await runStage2FromJobId(jobId);
         } catch (e) {
           console.warn("[PlatformPage] Stage 2 platform_build_content error:", e);
           const msg = e instanceof Error ? e.message : String(e);
+          setStage2Failed(true);
           setContentJobError(msg);
           toast.error(`文案生成失敗: ${msg}`);
           setContentDebug(null);
@@ -2887,7 +2982,29 @@ export default function PlatformPage() {
                       {contentJobPollTrace?.terminalStatus
                         ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
                         : ""}
-                      <span className="text-gray-500">（轮询约每 2.5s 一行，worker 默认最长约 20min）</span>
+                      <span className="text-gray-500">
+                        （前段約每 2.5s；第 37 次起間隔拉長至最多 8s；worker 默认最长約 20min）
+                      </span>
+                    </div>
+                    <div>
+                      3f. Stage2 max_output 請求:{" "}
+                      <span className="font-mono text-[#ffdd44]">
+                        {String(
+                          (contentDebug?.buildPlatformContent as { stage2MaxOutputTokens?: number } | undefined)
+                            ?.stage2MaxOutputTokens ?? "—",
+                        )}
+                      </span>
+                      <span className="text-gray-500">（見 Stage 2 · debug JSON · buildPlatformContent）</span>
+                    </div>
+                    <div className="break-words">
+                      3g. GPT‑5 reasoning 診斷（OpenAI 路徑生效）:{" "}
+                      <span className="font-mono text-[10px] text-[#d7d0ef]">
+                        {(() => {
+                          const r = (contentDebug?.buildPlatformContent as { openaiGpt5ReasoningEffort?: unknown } | undefined)
+                            ?.openaiGpt5ReasoningEffort;
+                          return r != null ? JSON.stringify(r) : "—（任務完成後由後端寫入）";
+                        })()}
+                      </span>
                     </div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
                     <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
@@ -2940,7 +3057,7 @@ export default function PlatformPage() {
                   Fly Jobs · 客户端轮询（GET /api/jobs/:id）
                 </div>
                 <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                  任务状态落在 Neon；前端仅按间隔拉取终态。下面为每次入队 jobId、轮询序号与 HTTP 结果摘要。
+                  任务状态落在 Neon；前端按间隔拉取终态（前段 2.5s，第 37 次起加倍至最多 8s）。下面为每次入队 jobId、轮询序号与 HTTP 结果摘要。
                 </p>
                 <div className="mt-3 grid gap-4 lg:grid-cols-2">
                   <div className="rounded-xl border border-white/10 bg-black/35 p-3">
@@ -3201,7 +3318,7 @@ export default function PlatformPage() {
                     Fly Jobs · 客户端轮询（GET /api/jobs/:id）
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    与上方「快照区」Debug 相同数据源：Stage 2 为 platform_build_content 轮询流水（约每 2.5s）；封面单帧仍为 job 入队与 GET /api/jobs 轮询。
+                    与上方「快照区」Debug 相同数据源：Stage 2 为 platform_build_content；前段約每 2.5s 拉取，第 37 次起間隔加倍（最多 8s）；封面单帧仍为 job 入队与 GET /api/jobs 轮询。
                   </p>
                   <div className="mt-3 grid gap-4 lg:grid-cols-2">
                     <div className="rounded-xl border border-white/10 bg-black/35 p-3">
@@ -3395,6 +3512,45 @@ export default function PlatformPage() {
               </div>
             </div>
 
+            <section className="mt-2 px-1" aria-label="專屬選題與文案狀態">
+              <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <h2 className="flex flex-wrap items-center gap-2 text-lg font-bold tracking-tight text-white sm:text-xl">
+                    <Sparkles className="h-5 w-5 shrink-0 text-[#c4b5fd]" />
+                    專屬選題與文案
+                    {isContentLoading ? (
+                      <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#c4b5fd]" aria-hidden />
+                    ) : null}
+                  </h2>
+                  <p
+                    className={`mt-1 text-sm leading-relaxed ${
+                      isContentLoading
+                        ? "text-[#c4b5fd]/90"
+                        : stage2Failed || contentJobError
+                          ? "text-red-400"
+                          : stage2EmptyPayload
+                            ? "text-amber-400/95"
+                            : platformContent && !stage2EmptyPayload
+                              ? "text-emerald-400/95"
+                              : "text-gray-500"
+                    }`}
+                  >
+                    {stage2UserFacingLine}
+                  </p>
+                </div>
+                {stage2Failed && platformDashboard && !isContentLoading ? (
+                  <button
+                    type="button"
+                    onClick={() => void retryStage2Content()}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-red-500/35 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    重新生成專屬文案
+                  </button>
+                ) : null}
+              </div>
+            </section>
+
             <div className="grid gap-4">
               <div className={shellCardClasses("p-6")}>
                 <div className="mb-8 border-b border-white/10 pb-6">
@@ -3415,7 +3571,7 @@ export default function PlatformPage() {
                           生图 · 英文化翻译引擎
                         </div>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                          作用于封面单帧、一键逐张、2×4 / 小红书合成等。默认 GPT 5.4（英文化最多 3 轮，失败再 Vertex）；探索项走 Vertex（模型/区域见服务端默认，可用环境变量覆寫）。
+                          作用于封面单帧、一键逐张、2×4 / 小红书合成等。後台若啟用生存模式則強制走 OpenAI 英文化；否則默認 OpenAI（最多 3 輪，失敗再嘗試 Vertex）；探索項選 Vertex。
                         </p>
                         <div className="mt-3 flex rounded-xl bg-black/45 p-1 ring-1 ring-white/10">
                           <button
