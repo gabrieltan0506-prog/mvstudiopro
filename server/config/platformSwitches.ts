@@ -1,13 +1,15 @@
 /**
- * 默认：Stage2 = OpenAI，平台图 = Fly 卷。
- * 对照其它栈：`PLATFORM_STAGE2_LLM=vertex`；`PLATFORM_IMAGE_STORAGE=gcs`。
+ * 默认：Stage2 = OpenAI，**平台图 = GCS**（`PLATFORM_IMAGE_STORAGE` 未设时）。
+ * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。对照：`PLATFORM_STAGE2_LLM=vertex`；`PLATFORM_IMAGE_STORAGE=gcs`。
  * 换 OpenAI 模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5）。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
  *
  * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
  *
- * **週末生存模式：** {@link PLATFORM_WEEKEND_SURVIVAL_MODE} 為 `true` 時，等同開啟平台 GCP 避險（Stage2→OpenAI、gpt‑5.5、 Fly 存圖、英文化不調 Vertex）。帳單恢復後請改回 `false`。
+ * **週末生存模式：** {@link PLATFORM_WEEKEND_SURVIVAL_MODE} 為 `true` 時，等同開啟平台 GCP 避險（Stage2→OpenAI、gpt‑5.5 等）。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。帳單恢復後請將生存模式改回 `false`（若不再需要整體避險）。
+ *
+ * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
@@ -27,7 +29,7 @@ function norm(s: string | undefined): string {
 }
 
 /**
- * **主開關：** `true` = 平台 Stage2/存圖/英文化兜底可按 env 走 Vertex·GCS；`false` = 強制避險（OpenAI+Fly、跳 Vertex 生圖兜底等）。與語音辨識等獨立服務無關。
+ * **主開關：** `true` = 平台 Stage2/存圖/英文化兜底可按 env 走 Vertex·GCS；`false` = 強制避險（OpenAI 等；存圖見 `PLATFORM_IMAGE_STORAGE`）。與語音辨識等獨立服務無關。
  */
 export const PLATFORM_USE_GOOGLE_GCP = true;
 
@@ -61,6 +63,27 @@ export function isPlatformWeekendGcpEscape(): boolean {
   if (billing === "suspended" || billing === "suspension") return true;
   const esc = norm(process.env.PLATFORM_WEEKEND_ESCAPE);
   return esc === "1" || esc === "true" || esc === "yes";
+}
+
+/**
+ * 僅讀環境變數：**Vertex Flash 英文化**（譯英文 prompt、非戰略封面）是否允許。
+ * `false` = 關閉 Flash 調用（實作保留）；與 {@link isPlatformWeekendGcpEscape} 無關——後者為真時仍會整體避險。
+ */
+export function isPlatformVertexFlashTranslationEnvEnabled(): boolean {
+  const off = norm(process.env.PLATFORM_VERTEX_FLASH_TRANSLATION_OFF);
+  if (off === "1" || off === "true" || off === "yes" || off === "on") return false;
+  const main = norm(process.env.PLATFORM_VERTEX_FLASH_TRANSLATION);
+  if (main === "0" || main === "false" || main === "no" || main === "off") return false;
+  return true;
+}
+
+/**
+ * 是否允許本階段調用 **Vertex Flash** 做平台英文化（顯式選 Flash、engine=gemini31flash、GPT 三輪後兜底）。
+ * `false` 當 {@link isPlatformWeekendGcpEscape} 為真，或 {@link isPlatformVertexFlashTranslationEnvEnabled} 為假。
+ */
+export function isPlatformVertexFlashTranslationEnabled(): boolean {
+  if (isPlatformWeekendGcpEscape()) return false;
+  return isPlatformVertexFlashTranslationEnvEnabled();
 }
 
 export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
@@ -139,7 +162,6 @@ export function isPlatformStage2OpenAiTwoPhaseEnabled(): boolean {
 }
 
 export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver {
-  if (isPlatformWeekendGcpEscape()) return "fly";
   const raw = norm(process.env.PLATFORM_IMAGE_STORAGE || process.env.MV_PLATFORM_IMAGE_STORAGE);
   if (raw === "fly" || raw === "volume" || raw === "fly_volume") {
     return "fly";
@@ -152,7 +174,8 @@ export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver 
   if (legacy === "1") return "fly";
   if (legacy === "0") return "gcs";
 
-  return "fly";
+  /** 預設 GCS；日後若要暫回 Fly，設 `PLATFORM_IMAGE_STORAGE=fly` 即可，無需刪除 GCS 路徑。 */
+  return "gcs";
 }
 
 /** 文檔/呼叫端命名 alias，等同於 {@link resolvePlatformStage2LlmMode} */

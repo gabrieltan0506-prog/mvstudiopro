@@ -14,8 +14,8 @@ import {
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
 /**
- * 平台選題生圖：預設 Fly 卷 + flyVolumeMedia；設 `PLATFORM_IMAGE_STORAGE=gcs` 則 GCS 簽名 URL。
- * 兼容 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=0` 強制走 GCS。
+ * 平台選題生圖：預設 **GCS** + 簽名 URL；設 `PLATFORM_IMAGE_STORAGE=fly` 則 Fly 卷 + flyVolumeMedia。
+ * 兼容 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=1` 強制走 Fly。
  */
 function isFlyPlatformTopicImageStorage(): boolean {
   return resolvePlatformImageStorageDriver() === "fly";
@@ -924,7 +924,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     appendImageFlowLog(
       L,
       `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；默认 GPT 5.4 · 失败或空则 Vertex ${resolveVertexFlashTranslationModelName()}）· ${
-        tr === "vertex_gemini_31_pro_preview" ? "直走 Vertex" : "先试 GPT 5.4"
+        tr === "vertex_gemini_3_flash_preview" ? "直走 Vertex" : "先试 GPT 5.4"
       } …`,
     );
 

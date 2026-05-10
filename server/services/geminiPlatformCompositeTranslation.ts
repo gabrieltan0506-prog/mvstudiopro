@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 import { isPlatformWeekendGcpEscape, PLATFORM_WEEKEND_SURVIVAL_MODE } from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
@@ -122,6 +123,60 @@ export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
 }
 
+/**
+ * Vertex Flash 英文化溫度（可 `VERTEX_FLASH_TRANSLATION_TEMPERATURE` 覆寫，0～2）。
+ * 預設 **0.9**：偏向**更有創意、更有表現力**的英文 image prompt；輸出形態仍由 `responseMimeType: application/json` 與 system 指令約束在 `{"prompt":"..."}`。
+ * 若產線更在意極致穩定可改環境變數為 **0.35～0.5**。
+ */
+export function resolveVertexFlashTranslationTemperature(): number {
+  const raw = process.env.VERTEX_FLASH_TRANSLATION_TEMPERATURE;
+  if (raw != null && String(raw).trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0 && n <= 2) return n;
+  }
+  return 0.9;
+}
+
+/**
+ * Gemini 3 系可選 **thinkingConfig**（@google/genai 會原樣帶入 Vertex REST）。
+ * - `VERTEX_FLASH_TRANSLATION_THINKING_LEVEL`：`MINIMAL` | `LOW` | `MEDIUM` | `HIGH`，預設 **`HIGH`**（更深推演，延時與成本較高）。
+ * - 設為 `OFF` / `NONE` / `FALSE` / `0` 則**不送** thinking 欄位（兼容舊端點）。
+ */
+export function resolveVertexFlashThinkingConfigForSdk(): {
+  thinkingConfig?: { thinkingLevel: string; includeThoughts: boolean };
+} {
+  const raw = String(process.env.VERTEX_FLASH_TRANSLATION_THINKING_LEVEL ?? "HIGH").trim().toUpperCase();
+  if (!raw || raw === "OFF" || raw === "NONE" || raw === "FALSE" || raw === "0") {
+    return {};
+  }
+  const allowed = new Set(["MINIMAL", "LOW", "MEDIUM", "HIGH"]);
+  const level = allowed.has(raw) ? raw : "HIGH";
+  return {
+    thinkingConfig: {
+      thinkingLevel: level,
+      includeThoughts: false,
+    },
+  };
+}
+
+/**
+ * Vertex Flash 英文化 **`maxOutputTokens`**（可 `VERTEX_FLASH_TRANSLATION_MAX_TOKENS` 覆寫）。
+ * 預設 **16384**：長版 JSON / 長英文 prompt 較不易被截斷；Flash 本身偏快，故將輸出預算拉高以換成品質。
+ * 合法範圍 **4096～65536**（非數字或超出範圍時回退預設）。
+ */
+export function resolveVertexFlashTranslationMaxOutputTokens(): number {
+  const fallback = 16384;
+  const raw = process.env.VERTEX_FLASH_TRANSLATION_MAX_TOKENS;
+  if (raw != null && String(raw).trim() !== "") {
+    const n = Math.floor(Number(raw));
+    if (Number.isFinite(n)) {
+      const clamped = Math.min(65536, Math.max(4096, n));
+      return clamped;
+    }
+  }
+  return fallback;
+}
+
 /** 從環境變數構造 google-auth-library 可用的 credentials（Fly / Vercel JSON）。 */
 function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: string; private_key: string } } | undefined {
   const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
@@ -146,8 +201,23 @@ function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: st
   return undefined;
 }
 
-/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_*` 为 Vertex Flash Live · 預設 us-central1）。 */
-export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
+/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_gemini_3_flash_preview` = Vertex **Gemini 3 Flash Preview** Live · 預設 us-central1）。 */
+export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
+
+/**
+ * tRPC / 作業入參：接受新 slug 與舊版錯名 `vertex_gemini_31_pro_preview`（自動正規化為 Flash）。
+ */
+export const zPlatformImagePromptTranslatorInput = z
+  .union([
+    z.literal("gpt54"),
+    z.literal("vertex_gemini_3_flash_preview"),
+    z.literal("vertex_gemini_31_pro_preview"),
+  ])
+  .optional()
+  .transform((v) => {
+    if (v === "vertex_gemini_31_pro_preview") return "vertex_gemini_3_flash_preview";
+    return v;
+  });
 
 /**
  * **双语编导（Gemini）**：读中文剧本 / 封面文案，产出纯英文视觉 prompt。
@@ -458,7 +528,8 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 }
 
 /**
- * 探索 / 極速：Vertex AI **Gemini 3.1 Flash Live Preview** + `responseMimeType: application/json`。
+ * 探索 / 極速：Vertex AI **Gemini 3 Flash Preview** + `responseMimeType: application/json`。
+ * `temperature` 見 {@link resolveVertexFlashTranslationTemperature}（預設 0.9，偏創意）；`thinkingConfig` 見 {@link resolveVertexFlashThinkingConfigForSdk}（預設思考層級 **HIGH**）；`maxOutputTokens` 見 {@link resolveVertexFlashTranslationMaxOutputTokens}（預設 **16384**）。
  * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **us-central1**；可用環境變數改）。
  * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。三次仍失敗則拋錯。
@@ -487,9 +558,14 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     flowLog,
     `── Flash Live 英文化開始 ── project=${project} · location=${location} · model=${model} · auth=${authMode}`,
   );
+  const flashTemp = resolveVertexFlashTranslationTemperature();
+  const flashThinking = resolveVertexFlashThinkingConfigForSdk();
+  const flashMaxOut = resolveVertexFlashTranslationMaxOutputTokens();
   appendVertexFlashDebug(
     flowLog,
-    `請求參數 · responseMimeType=application/json · maxOutputTokens=4096 · temperature=0.6 · task 約 ${task.length} 字`,
+    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · thinkingConfig=${
+      flashThinking.thinkingConfig ? JSON.stringify(flashThinking.thinkingConfig) : "(未設定)"
+    } · task 約 ${task.length} 字`,
   );
 
   const systemInstruction = [
@@ -511,16 +587,18 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
 
   const runFlashAttempt = async (): Promise<string> => {
     appendVertexFlashDebug(flowLog, `調用 ai.models.generateContent({ model }) …`);
+    const genConfig = {
+      systemInstruction,
+      responseMimeType: "application/json" as const,
+      temperature: flashTemp,
+      topP: 0.95,
+      maxOutputTokens: flashMaxOut,
+      ...flashThinking,
+    };
     const response = await ai.models.generateContent({
       model,
       contents: `请返回 JSON：{"prompt":"..."}。\n${task}`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        temperature: 0.6,
-        topP: 0.95,
-        maxOutputTokens: 4096,
-      },
+      config: genConfig as any,
     });
 
     type GenContentDebug = {
@@ -848,7 +926,7 @@ export async function callGemini31ProForImagePrompt(
   const billingEscape = isPlatformWeekendGcpEscape();
   const translator: PlatformImagePromptTranslator = billingEscape ? "gpt54" : requested;
   const flowLog = options?.flowLog;
-  if (billingEscape && requested === "vertex_gemini_31_pro_preview") {
+  if (billingEscape && requested === "vertex_gemini_3_flash_preview") {
     appendGpt54TranslationDebug(
       flowLog,
       "[GCP避險] 英文化已從 Vertex 探索強制改為 GPT 5.4 路徑（避免調用 Vertex Flash）",
@@ -857,13 +935,13 @@ export async function callGemini31ProForImagePrompt(
   const vertexModel = resolveVertexFlashTranslationModelName();
   const vertexLoc = resolveVertexFlashTranslationLocation();
   const label =
-    translator === "vertex_gemini_31_pro_preview"
+    translator === "vertex_gemini_3_flash_preview"
       ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
       : "GPT 5.4（OpenAI）";
   try {
-    const statCtx = translator === "vertex_gemini_31_pro_preview" ? undefined : options?.pipelineStatCtx;
+    const statCtx = translator === "vertex_gemini_3_flash_preview" ? undefined : options?.pipelineStatCtx;
     const raw =
-      translator === "vertex_gemini_31_pro_preview"
+      translator === "vertex_gemini_3_flash_preview"
         ? await callVertexGemini31ProForImagePrompt(translationTask, flowLog)
         : await callGemini3_1_Pro_AiStudio(translationTask, flowLog, statCtx);
     const out = stripGeminiModelOutput(raw);

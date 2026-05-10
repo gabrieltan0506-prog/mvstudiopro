@@ -1048,8 +1048,7 @@ async function processPlatformJob(
         context: typeof params.context === "string" ? params.context : undefined,
         coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
         sceneId: typeof params.sceneId === "string" ? params.sceneId : undefined,
-        imagePromptTranslator:
-          params.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? "vertex_gemini_31_pro_preview" : undefined,
+        imagePromptTranslator: "gpt54",
         creationIdOut,
         isFreeRetry: Boolean(params.isFreeRetry),
         newJobMetaBase,

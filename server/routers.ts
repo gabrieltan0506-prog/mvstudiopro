@@ -55,10 +55,7 @@ import {
   getRuntimeMetricsMeta,
   summarizeRuntimeMetrics,
 } from "./services/runtimeMetricsBuffer.js";
-import {
-  resolveVertexFlashTranslationLocation,
-  resolveVertexFlashTranslationModelName,
-} from "./services/geminiPlatformCompositeTranslation.js";
+import { zPlatformImagePromptTranslatorInput } from "./services/geminiPlatformCompositeTranslation.js";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -3731,8 +3728,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           failedJobId: z.string().max(32).optional(),
           /** 单帧付费重绘成功后写入新 creation 行，便于下次绑定 scene */
           sceneId: z.string().max(128).optional(),
-          /** 英文化：默认 GPT 5.4；Vertex gemini-3.1-pro-preview 供对照测试 */
-          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
+          /** @deprecated 封面單幀固定 GPT 5.4；此欄位忽略。 */
+          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -3879,13 +3876,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
         );
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
         const enrichedContext = mergeCoverContextWithDbHint(input.context, coverHistoryHint);
+        void input.imagePromptTranslator;
         return runPlatformTopicImagePipeline({
           topicHook: input.topicHook,
           format: input.format,
           context: enrichedContext,
           coverPersonaContext: input.coverPersonaContext,
           sceneId: input.sceneId,
-          imagePromptTranslator: input.imagePromptTranslator,
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
@@ -3904,7 +3901,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           coverPersonaContext: z.string().max(4000).optional(),
           failedJobId: z.string().max(32).optional(),
           sceneId: z.string().max(128).optional(),
-          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
+          /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
+          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4051,7 +4049,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               context: enrichedContext,
               coverPersonaContext: input.coverPersonaContext,
               sceneId: input.sceneId,
-              imagePromptTranslator: input.imagePromptTranslator,
+              imagePromptTranslator: "gpt54",
               isFreeRetry,
               newJobMetaBase,
             },
@@ -4069,7 +4067,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           platformType: z.enum(["video", "graphic"]),
           /** 与单张 generateTopicImage.coverPersonaContext 一致，批量时复用同一人设 */
           coverPersonaContext: z.string().max(4000).optional(),
-          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
+          /** @deprecated 批量封面固定 GPT 5.4；此欄位忽略。 */
+          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           scenes: z
             .array(
               z
@@ -4092,13 +4091,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const batchCoverPersona = String(input.coverPersonaContext || "").trim();
-        const imagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
-        const vertexLoc = resolveVertexFlashTranslationLocation();
-        const vertexModel = resolveVertexFlashTranslationModelName();
-        const translatorLogLabel =
-          imagePromptTranslator === "vertex_gemini_31_pro_preview"
-            ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
-            : "GPT 5.4（OpenAI）";
+        void input.imagePromptTranslator;
+        const imagePromptTranslator = "gpt54" as const;
+        const translatorLogLabel = "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? CREDIT_COSTS.platformTopicFrameVideo : CREDIT_COSTS.platformTopicFrameGraphic;
@@ -4316,7 +4311,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           progressJobId: z.string().min(8).max(64).optional(),
           executionDetails: z.string().max(4000).optional(),
           /** 與單幀一致：英文 prompt 翻譯引擎 */
-          imagePromptTranslator: z.enum(["gpt54", "vertex_gemini_31_pro_preview"]).optional(),
+          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
           creationRecordId: z.number().int().positive().optional(),
         }),
@@ -4324,6 +4319,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
+          input.imagePromptTranslator ?? "gpt54";
+        if (
+          imagePromptTranslatorForComposite === "vertex_gemini_3_flash_preview" &&
+          !isAdminUser
+        ) {
+          imagePromptTranslatorForComposite = "gpt54";
+        }
         const cost =
           input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? CREDIT_COSTS.platformStoryboardSheet
@@ -4395,7 +4398,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             scriptContext: input.scriptContext,
             isTrial,
             executionDetails: input.executionDetails,
-            imagePromptTranslator: input.imagePromptTranslator,
+            imagePromptTranslator: imagePromptTranslatorForComposite,
             flowLog: imageGenFlowLog,
           });
         } catch (error: any) {
