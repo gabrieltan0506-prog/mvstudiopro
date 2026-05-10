@@ -1,24 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
 import { useAuth } from "../_core/hooks/useAuth";
-
-/** 首页 Hero 维护提示：仅在东八区日历 2026-05-09～05-10 显示 */
-function useHomeHeroMaintenanceActive() {
-  return useMemo(() => {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Shanghai",
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-    }).formatToParts(new Date());
-    const n = (t: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === t)?.value || 0);
-    const y = n("year");
-    const m = n("month");
-    const d = n("day");
-    if (y !== 2026 || m !== 5) return false;
-    return d === 9 || d === 10;
-  }, []);
-}
 
 const slides = [
   {
@@ -57,7 +39,6 @@ const slides = [
 
 export default function HomeHero() {
   const { isAuthenticated } = useAuth({ autoFetch: true });
-  const maintenanceActive = useHomeHeroMaintenanceActive();
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
@@ -85,24 +66,6 @@ export default function HomeHero() {
           boxShadow: "0 30px 80px rgba(0,0,0,0.45)",
         }}
       >
-        {maintenanceActive ? (
-          <div
-            role="status"
-            style={{
-              marginBottom: 16,
-              padding: "14px 16px",
-              borderRadius: 16,
-              background: "rgba(251, 191, 36, 0.12)",
-              border: "1px solid rgba(251, 191, 36, 0.35)",
-              color: "#fef3c7",
-              fontSize: 14,
-              lineHeight: 1.55,
-              fontWeight: 600,
-            }}
-          >
-            系统升级维护中（5月9日–5月10日，北京时间）。当前系统依赖的云端能力正在切换与加固，期间部分功能可能暂时不可用，敬请谅解。
-          </div>
-        ) : null}
         <div
           className="home-hero-grid"
           style={{
