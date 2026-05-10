@@ -40,6 +40,7 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
+import { platformTitleStatsRouter } from "./routers/platformTitleStats";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
@@ -119,6 +120,7 @@ import {
   growthSnapshotSchema,
   growthTitleExecutionSchema,
 } from "@shared/growth";
+import { buildTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
@@ -481,6 +483,19 @@ const platformContentResponseSchema = z.object({
   contentBlueprints: z.array(z.any()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
+
+function attachTitleVariantsToPlatformContent(
+  data: z.infer<typeof platformContentResponseSchema>,
+): z.infer<typeof platformContentResponseSchema> {
+  const list = Array.isArray(data.contentBlueprints) ? data.contentBlueprints : [];
+  return {
+    ...data,
+    contentBlueprints: list.map((bp: Record<string, unknown>, i: number) => ({
+      ...bp,
+      titleVariants: buildTitleVariantsForBlueprint(bp, i),
+    })),
+  };
+}
 
 const PLATFORM_MENU_TARGET_MIN = 3;
 const PLATFORM_MENU_TARGET_MAX = 4;
@@ -1453,7 +1468,10 @@ export async function buildPlatformContent(params: {
 
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) {
-    return { data: parseResult.data, diagnostics: { ...diagnostics, zodPath: "strict_ok" } };
+    return {
+      data: attachTitleVariantsToPlatformContent(parseResult.data),
+      diagnostics: { ...diagnostics, zodPath: "strict_ok" },
+    };
   }
 
   console.error("[buildPlatformContent] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
@@ -1464,16 +1482,19 @@ export async function buildPlatformContent(params: {
     monetizationLanes: monetizationCoerced,
   });
   if (looseResult.success) {
-    return { data: looseResult.data, diagnostics: { ...diagnostics, zodPath: "loose_ok" } };
+    return {
+      data: attachTitleVariantsToPlatformContent(looseResult.data),
+      diagnostics: { ...diagnostics, zodPath: "loose_ok" },
+    };
   }
   console.error("[buildPlatformContent] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
   diagnostics.zodLooseIssues = (looseResult.error as any).issues?.slice(0, 12) ?? String(looseResult.error.message);
   /** 最後一道：绝不让 Stage 2 因校验抛错而整包 null（文案可事后人工改） */
   return {
-    data: {
+    data: attachTitleVariantsToPlatformContent({
       contentBlueprints: blueprintsForSchema as any[],
       monetizationLanes: monetizationCoerced as any[],
-    },
+    }),
     diagnostics: { ...diagnostics, zodPath: "fallback_coerced_no_throw" },
   };
 }
@@ -2079,6 +2100,7 @@ export const appRouter = router({
   suno: sunoRouter,
   creations: creationsRouter,
   enterpriseAgents: enterpriseAgentsRouter,
+  platformTitleStats: platformTitleStatsRouter,
   workflow: workflowRouter,
   videoParser: router({
     parse: protectedProcedure

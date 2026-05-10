@@ -15,6 +15,7 @@
 | `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（已合并） |
 | `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（已合并） |
 | `0003_users_enterprise_trial_paid.sql` | `users` 表加 `enterpriseTrialPaid`（与 `drizzle/schema.ts` 一致） | 未执行会导致查询 users 失败、易被重定向登录 |
+| `0004_platform_title_variant_events.sql` | Stage2 選題卡標題 A/B 曝光與選用事實表 | 未執行則統計接口寫入失敗 |
 
 ## 应用流程（生产 Neon）
 
@@ -101,7 +102,12 @@ SELECT column_name, data_type, column_default
 
 兼容性：已有行自动为 `false`，无需 backfill。
 
+### Step 3c — 应用 0004（`platform_title_variant_events`）
+
+Stage2 選題卡「兩條標題」的看過 / 選用次數。部署讀寫該表代碼前在 Neon 執行 `drizzle/postgres/0004_platform_title_variant_events.sql`（建議先 `BEGIN` … `ROLLBACK` 演練）。
+
 ---
+
 
 兼容性（0002）：
 - 默认 NULL，无需 backfill

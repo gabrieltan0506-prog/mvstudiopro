@@ -89,6 +89,7 @@ export * from "./schema-workflow";
 export * from "./schema-video-short-links";
 export * from "./schema-feedback";
 export * from "./schema-enterprise-agents";
+export * from "./schema-platform-title-stats";
 
 export const workflowRuns = pgTable("workflow_runs", {
   id: varchar("id", { length: 64 }).primaryKey(),

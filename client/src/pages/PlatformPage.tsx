@@ -22,6 +22,8 @@ import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
 } from "@/lib/pdfHtmlOptimize";
+import type { PlatformTitleVariant } from "@shared/platformTitleVariants";
+import { buildTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
 import {
   Activity,
   ArrowLeft,
@@ -628,6 +630,100 @@ function readOptionalReportBindingCreationId(): number | undefined {
   if (!raw) return undefined;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleVariant[]): PlatformTitleVariant[] {
+  if (!Array.isArray(raw) || raw.length < 2) return fallback;
+  const out: PlatformTitleVariant[] = [];
+  for (const row of raw) {
+    if (out.length >= 2) break;
+    if (!row || typeof row !== "object") continue;
+    const id = (row as { id?: unknown }).id;
+    const title = String((row as { title?: unknown }).title ?? "").trim();
+    if (!title) continue;
+    if (id === "a" || id === "b") {
+      out.push({ id, title });
+    }
+  }
+  return out.length >= 2 ? out : fallback;
+}
+
+function PlatformTitleVariantStrip(props: {
+  topicId: string;
+  variants: PlatformTitleVariant[];
+  isAuthenticated: boolean;
+}) {
+  const { topicId, variants, isAuthenticated } = props;
+  const ref = useRef<HTMLDivElement>(null);
+  const utils = trpc.useUtils();
+  const variantKey = variants.map((v) => `${v.id}:${v.title}`).join("|");
+  const { data } = trpc.platformTitleStats.aggregates.useQuery({ topicId }, { staleTime: 20_000 });
+  const record = trpc.platformTitleStats.record.useMutation({
+    onSuccess: () => void utils.platformTitleStats.aggregates.invalidate({ topicId }),
+  });
+  const recordMutateRef = useRef(record.mutate);
+  recordMutateRef.current = record.mutate;
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const el = ref.current;
+    if (!el || variants.length === 0) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        for (const v of variants) {
+          const k = `ptv:v:${topicId}:${v.id}`;
+          try {
+            if (sessionStorage.getItem(k)) continue;
+            sessionStorage.setItem(k, "1");
+          } catch {
+            /* private mode */
+            continue;
+          }
+          recordMutateRef.current({ topicId, variantId: v.id, kind: "view" });
+        }
+        obs.disconnect();
+      },
+      { threshold: 0.25 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [isAuthenticated, topicId, variantKey, variants]);
+
+  if (!variants.length) return null;
+
+  return (
+    <div ref={ref} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {variants.map((v) => {
+        const views = data?.byVariant?.[v.id]?.views ?? 0;
+        const picks = data?.byVariant?.[v.id]?.picks ?? 0;
+        return (
+          <div key={v.id} className="rounded-lg border border-white/10 bg-black/25 p-3 text-left">
+            <div className="text-sm leading-snug text-white/90">{v.title}</div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-white/45">
+              <span>
+                看过 {views} · 选用 {picks}
+              </span>
+              <button
+                type="button"
+                className="rounded-md border border-[#ff4fb8]/45 bg-[#ff4fb8]/15 px-2.5 py-1 text-[11px] font-semibold text-[#ffc9ec] hover:bg-[#ff4fb8]/25 disabled:opacity-50"
+                onClick={() => {
+                  if (!isAuthenticated) {
+                    toast.error("请先登录");
+                    return;
+                  }
+                  record.mutate({ topicId, variantId: v.id, kind: "pick" });
+                }}
+                disabled={record.isPending}
+              >
+                选用
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /** 執行選題卡 DOM id：穩定錨點 `execution-card-…`（畫廊不綁定點擊滾動） */
@@ -2581,6 +2677,12 @@ export default function PlatformPage() {
           scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
         }
 
+        const fallbackVariants = buildTitleVariantsForBlueprint(
+          { ...item, title, hook, copywriting },
+          index,
+        );
+        const titleVariants = normalizeTitleVariantsFromServer(item.titleVariants, fallbackVariants);
+
         return {
           id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
           // Task II: Support theme / titleExample / contentHook keys from strict JSON template
@@ -2598,6 +2700,7 @@ export default function PlatformPage() {
             lightingAndCamera: renderSafeText(lightCam),
             stepByStepScript: scriptSteps
           },
+          titleVariants,
         };
       });
     }
@@ -2616,6 +2719,14 @@ export default function PlatformPage() {
       copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
       production: "",
       format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
+      titleVariants: buildTitleVariantsForBlueprint(
+        {
+          title: item.title,
+          hook: item.howToUse,
+          copywriting: item.whyHot,
+        },
+        index,
+      ),
     }));
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
 
@@ -4634,6 +4745,11 @@ export default function PlatformPage() {
                             {copyFlat.length > 60 ? "…" : ""}
                           </p>
                         ) : null}
+                        <PlatformTitleVariantStrip
+                          topicId={item.id}
+                          variants={item.titleVariants ?? []}
+                          isAuthenticated={isAuthenticated}
+                        />
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
                           <summary className="cursor-pointer select-none text-[15px] font-black text-[#ff9900] animate-pulse transition-colors hover:text-[#ffb84d]">
                             ▶ 执行细项、分镜与发布（点击展开查看详细步骤）
