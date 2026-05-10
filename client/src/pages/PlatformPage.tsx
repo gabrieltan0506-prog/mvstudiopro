@@ -3284,18 +3284,27 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                  <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <div className="mt-3 rounded-xl border border-[#6366f1]/35 bg-[rgba(99,102,241,0.08)] px-3 py-2.5 text-[11px] leading-5 text-[#d4d4ff] md:text-xs md:leading-6">
+                  <span className="font-bold text-[#a5b4fc]">積分說明：</span>
+                  上方「<span className="text-white">开始平台分析</span>」只生成<strong className="text-emerald-300/95">快照與戰略看板</strong>，
+                  <strong className="text-white">不扣</strong>專屬長文案積分。會扣{" "}
+                  <strong className="text-[#fde68a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
+                  的是分析完成後、報告裡的「
+                  <span className="text-white">生成專屬文案</span>」按鈕（彈窗按確定後<strong className="text-[#fca5a5]">立即扣費</strong>）。
                   {hasAnalyzed ? (
-                    <p className="mt-3 rounded-xl border border-[#fbbf24]/40 bg-[rgba(251,191,36,0.08)] px-3 py-2 text-xs leading-6 text-[#fef3c7]">
-                      <span className="font-semibold text-[#fde68a]">專屬文案</span>：戰略看板出現後，                      點「生成專屬文案」並在彈窗確認後，會
-                      <strong className="text-white">立即扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
-                      再開始後台撰寫。
-                      <a href="#platform-stage2-copy" className="ml-1 font-semibold text-[#fde68a] underline underline-offset-2 hover:text-white">
-                        跳到生成區
+                    <>
+                      {" "}
+                      <a
+                        href="#platform-stage2-copy"
+                        className="font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
+                      >
+                        跳到該按鈕
                       </a>
-                    </p>
+                    </>
                   ) : null}
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={() => void handleAnalyze()}
