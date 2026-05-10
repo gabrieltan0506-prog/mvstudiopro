@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
@@ -436,6 +437,109 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
+/** menu 項常見欄位順序（先找中文標籤；若無漢字再整段掃一次取英文 slug 等）。 */
+function stringContainsHan(text: string): boolean {
+  /** 日用汉字區間檢測；不依賴需 ES2018+ 的 Unicode 屬性轉義。 */
+  return /[\u4e00-\u9fff]/.test(text);
+}
+
+/** LLM／示例 JSON 常用的假渠道占位（會被過濾，改走快照 hinted 名或可讀英文字段）。 */
+function looksLikeGarbagePlatformMenuLabel(raw: string): boolean {
+  const s = String(raw || "").trim();
+  if (!s) return true;
+  const compact = s.replace(/\s+/g, "");
+  const lower = s.toLowerCase();
+  if (/^platform\s*\d+$/.test(lower)) return true;
+  if (/^[p]\d+$/.test(lower)) return true;
+  if (/^平台\d+$/.test(compact)) return true;
+  if (/^平台[0-9０-９一二三四五六七八九十百千]+$/.test(compact)) return true;
+  if (/^(平台一|平台二|平台三|平台四)$/.test(compact)) return true;
+  return false;
+}
+
+/** 解析不出具體渠道名時的順位備援（不使用「平台 1、2」式占位）。 */
+function platformMenuRankFallback(index: number): string {
+  switch (index) {
+    case 0:
+      return "首选顺位";
+    case 1:
+      return "次要顺位";
+    case 2:
+      return "第三顺位";
+    case 3:
+      return "第四顺位";
+    default:
+      return `第 ${index + 1} 顺位`;
+  }
+}
+
+/**
+ * platformMenu：優先後端約定的 platform / displayName，再掃 passthrough 欄位。
+ * `snapshotHint` 為快照里對應順位的真實平台名／展示名（補模型漏欄時用）。
+ */
+function resolvePlatformMenuDisplayName(
+  item: Record<string, unknown> | null | undefined,
+  rankIndex: number,
+  snapshotHint?: string | null,
+): string {
+  const hint = typeof snapshotHint === "string" ? snapshotHint.trim() : "";
+
+  const tryCoerce = (v: unknown): string => {
+    if (v == null) return "";
+    if (typeof v === "string") return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+    if (typeof v === "object") {
+      const n =
+        (v as { zh?: unknown; name?: unknown; label?: unknown; title?: unknown }).zh
+        ?? (v as { name?: unknown }).name
+        ?? (v as { label?: unknown }).label
+        ?? (v as { title?: unknown }).title;
+      return typeof n === "string" ? n.trim() : "";
+    }
+    return "";
+  };
+
+  const candidates: string[] = [];
+  if (item && typeof item === "object") {
+    const o = item as Record<string, unknown>;
+    /** 順序對齊 growthPlatformMenuItemSchema + Prompt 明示的 platform / displayName。 */
+    const keys: unknown[] = [
+      o.platform,
+      o.displayName,
+      o.platformLabel,
+      o.platformName,
+      o.platform_name,
+      o.label,
+      o.name,
+      o["平台"],
+      o.channel,
+      o["渠道"],
+      o.slug,
+      o.platformKey,
+      o.signal,
+    ];
+    for (const k of keys) {
+      const t = tryCoerce(k);
+      if (t) candidates.push(t);
+    }
+  }
+
+  const ordered = [...candidates];
+  if (hint) ordered.push(hint);
+
+  for (const raw of ordered) {
+    if (looksLikeGarbagePlatformMenuLabel(raw)) continue;
+    if (raw && stringContainsHan(raw)) return raw;
+  }
+  for (const raw of ordered) {
+    if (!looksLikeGarbagePlatformMenuLabel(raw) && raw) return raw;
+  }
+
+  return hint && !looksLikeGarbagePlatformMenuLabel(hint)
+    ? hint
+    : platformMenuRankFallback(rankIndex);
+}
+
 function buildPlatformSceneText(item: {
   title: string;
   hook: string;
@@ -833,6 +937,146 @@ function CoverGenerationWaitCarousel({
   );
 }
 
+type PlatformSignalsCarouselTone = "platform" | "topic" | "action";
+
+type PlatformSignalsCarouselItem = {
+  title: string;
+  summary: string;
+  detail: string;
+  tone: PlatformSignalsCarouselTone;
+};
+
+function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
+  switch (tone) {
+    case "platform":
+      return "from-[#49e6ff]/50 via-[#7d73ff]/35 to-transparent";
+    case "topic":
+      return "from-[#ff4fb8]/50 via-[#ff7fd5]/38 to-transparent";
+    default:
+      return "from-[#ffdd44]/52 via-[#ffb020]/40 to-transparent";
+  }
+}
+
+/** 分析報告輪播大卡：與「分析中」「分鏡／封面區」共用。 */
+function PlatformSignalsCarouselPanel(props: {
+  items: PlatformSignalsCarouselItem[];
+  activeIndex: number;
+  onPickIndex: (i: number) => void;
+  subtitle: string;
+  eyebrow?: string;
+}) {
+  const { items, activeIndex, onPickIndex, subtitle, eyebrow = "战略信号 · 自动轮播" } = props;
+  if (!items.length) return null;
+  const safeIdx = activeIndex % items.length;
+  const active = items[safeIdx] ?? items[0];
+  const toneCn =
+    active.tone === "platform" ? "平台信号" : active.tone === "topic" ? "热点切口" : "动作建议";
+
+  return (
+    <div
+      className={`${shellCardClasses("relative overflow-hidden p-6 md:p-8")}`}
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="平台与热点信号轮播"
+    >
+      <div className={`pointer-events-none absolute inset-x-0 top-0 h-[4px] bg-gradient-to-r ${toneGlowFrom(active.tone)}`} />
+      <div className="pointer-events-none absolute -right-20 -top-24 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(73,230,255,0.16),transparent_65%)] motion-safe:opacity-75 motion-safe:animate-[platformCarouselGlow_10s_ease-in-out_infinite]" />
+
+      <div className="relative flex flex-col gap-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Sparkles className="h-5 w-5 shrink-0 text-[#ffdd44] motion-safe:animate-pulse" />
+              <span className="text-base font-black tracking-tight text-white md:text-lg">{eyebrow}</span>
+              <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.09)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">
+                LIVE
+              </span>
+            </div>
+            <p className="mt-3 max-w-lg text-sm leading-7 text-[#c8bfe7] md:text-[15px]">{subtitle}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 self-start rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-[11px] text-[#dfe6ff]">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#49e6ff]/50" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#49e6ff]" />
+            </span>
+            每 <span className="mx-1 font-bold text-[#8cefff]">4.5</span> 秒自动切换 · 亦可点下方卡片预览
+          </div>
+        </div>
+
+        <div className="h-2 overflow-hidden rounded-full bg-white/[0.08]" aria-hidden>
+          <div
+            key={`prog-${safeIdx}`}
+            className="h-full w-full origin-left scale-x-0 bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]"
+            style={{
+              animation: "platformCarouselProg 4.5s linear forwards",
+            }}
+          />
+        </div>
+
+        <div className="relative min-h-[clamp(220px,32vw,340px)]">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={`${toneCn}-${safeIdx}-${active.title}`}
+              initial={{ opacity: 0, y: 16, scale: 0.985 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.99 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="rounded-[28px] border border-white/14 bg-[linear-gradient(135deg,rgba(73,230,255,0.11),rgba(125,115,255,0.07),rgba(255,117,189,0.09))] p-6 md:p-8 shadow-[0_28px_80px_rgba(0,0,0,0.35)] backdrop-blur-sm"
+            >
+              <div
+                className={`text-[12px] font-bold uppercase tracking-[0.26em] ${
+                  toneCn === "平台信号" ? "text-[#8cefff]" : toneCn === "热点切口" ? "text-[#ff98d9]" : "text-[#ffe77a]"
+                }`}
+              >
+                {toneCn}
+              </div>
+              <div className="mt-5 text-[1.65rem] font-black leading-[1.08] tracking-tight text-white md:text-4xl xl:text-[2.35rem]">
+                {active.title}
+              </div>
+              <div className="mt-5 text-base font-medium leading-relaxed text-[#eef6ff] md:text-lg">{active.summary}</div>
+              <div className="mt-6 rounded-[22px] border border-white/12 bg-[rgba(8,6,22,0.55)] px-5 py-4 text-sm leading-8 text-[#d9d1f5] md:text-[15px]">
+                {active.detail}
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        <div className="flex gap-2.5 overflow-x-auto pb-1 custom-scrollbar [-webkit-overflow-scrolling:touch]">
+          {items.map((item, idx) => {
+            const selected = idx === safeIdx;
+            return (
+              <button
+                key={`${item.title}-${idx}-${item.tone}`}
+                type="button"
+                onClick={() => onPickIndex(idx)}
+                title={item.title}
+                className={`min-w-[7.25rem] max-w-[min(11rem,calc((100vw-4rem)/2))] shrink-0 rounded-2xl border px-3 py-2.5 text-left transition hover:border-[#49e6ff]/35 hover:bg-[rgba(73,230,255,0.06)] md:min-w-[8.75rem] ${
+                  selected
+                    ? "border-[#49e6ff]/50 bg-[rgba(73,230,255,0.12)] shadow-[0_0_28px_-8px_rgba(73,230,255,0.55)]"
+                    : "border-white/12 bg-black/25"
+                }`}
+              >
+                <div
+                  className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${
+                    item.tone === "platform"
+                      ? "text-[#7ceaff]"
+                      : item.tone === "topic"
+                        ? "text-[#ff94d9]"
+                        : "text-[#ffe07a]"
+                  }`}
+                >
+                  {item.tone === "platform" ? "平台" : item.tone === "topic" ? "热点" : "动作"}
+                </div>
+                <div className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-white">{item.title}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 3A：四維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
 function PlatformIpDimensionGuide() {
   return (
@@ -1188,7 +1432,8 @@ export default function PlatformPage() {
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
     onSuccess: async (result, variables) => {
       if (result.platformDashboard) {
-        setPlatformDashboard(result.platformDashboard as PlatformDashboard);
+        const dash = result.platformDashboard as unknown as PlatformDashboard;
+        setPlatformDashboard(dash);
         setContentJobError(null);
         setIsContentLoading(true);
         setStage2Failed(false);
@@ -1202,7 +1447,7 @@ export default function PlatformPage() {
           const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
             context: focusPrompt || undefined,
             windowDays: selectedWindowDays,
-            platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu || [],
+            platformMenu: dash.platformMenu || [],
             snapshotSummary: variables.snapshotSummary || {},
           });
           setContentJobPollTrace({
@@ -1826,8 +2071,14 @@ export default function PlatformPage() {
         }
         if (platformDashboard?.platformMenu?.length) {
           summaryLines.push("\n📊 平台分析");
-          platformDashboard.platformMenu.slice(0, 4).forEach((p: any) => {
-            summaryLines.push(`• ${p.label || p.name || p}`);
+          const snapPdf = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
+          const pdfRec = snapPdf?.platformRecommendations?.slice(0, 4) ?? [];
+          const pdfPf = snapPdf?.platformSnapshots?.slice(0, 4) ?? [];
+          platformDashboard.platformMenu.slice(0, 4).forEach((p: any, i: number) => {
+            const nameHint = String(pdfRec[i]?.name ?? pdfPf[i]?.displayName ?? "").trim();
+            summaryLines.push(
+              `• ${resolvePlatformMenuDisplayName(p as Record<string, unknown>, i, nameHint || undefined)}`,
+            );
           });
         }
         recordSnapshotMutation.mutate({
@@ -2093,7 +2344,17 @@ export default function PlatformPage() {
       };
 
       const sig0 = getSignal(0, platformDashboard.headline || "先收口成一个明确方向", platformDashboard.subheadline || "先把最容易拿到反馈的平台和切口做透。");
-      const sig1 = getSignal(1, platformDashboard.platformMenu?.[0]?.platform || "先做当前优先平台", platformDashboard.platformMenu?.[0]?.whyNow || "先做最容易拿到正反馈的平台版本。");
+      const menu0 = platformDashboard.platformMenu?.[0];
+      const menuSnapHint =
+        String(recommendedPlatforms[0]?.name ?? "").trim() ||
+        String(primaryPlatforms[0]?.displayName ?? "").trim();
+      const sig1 = getSignal(
+        1,
+        menu0 != null
+          ? resolvePlatformMenuDisplayName(menu0 as Record<string, unknown>, 0, menuSnapHint || undefined)
+          : platformMenuRankFallback(0),
+        menu0?.whyNow || "先做最容易拿到正反馈的平台版本。",
+      );
       
       // Task 1: 彻底物理消灭"电商带货"幽灵 — 严格的 Skeleton 状态，不显示任何兜底文本
       const sig2 = isContentLoading
@@ -2140,7 +2401,17 @@ export default function PlatformPage() {
         isLoadingSkeleton: true,
       },
     ];
-  }, [businessTranslation, isContentLoading, mainPath, recommendationHeadline, snapshot, topRecommendation, platformDashboard]);
+  }, [
+    businessTranslation,
+    isContentLoading,
+    mainPath,
+    recommendationHeadline,
+    snapshot,
+    topRecommendation,
+    platformDashboard,
+    recommendedPlatforms,
+    primaryPlatforms,
+  ]);
 
   const platformDecisionRows = useMemo(
     () => {
@@ -2152,10 +2423,19 @@ export default function PlatformPage() {
           // Use renderSafeText to prevent [object Object] when Gemini returns nested objects
           const boosters = Array.isArray(item.trafficBoosters) ? item.trafficBoosters.map((b: any) => renderSafeText(b)) : [];
           const rSafe = (v: any) => renderSafeText(v);
+          const snapshotNameHint =
+            String(recommendedPlatforms[index]?.name ?? "").trim() ||
+            String(primaryPlatforms[index]?.displayName ?? "").trim() ||
+            String(platformActivities[index]?.platformLabel ?? "").trim();
+          const menuLabel = resolvePlatformMenuDisplayName(
+            item as Record<string, unknown>,
+            index,
+            snapshotNameHint || undefined,
+          );
           return {
-            id: `${item.platform || item.name || item["平台"] || index}-${item.label || item.displayName || index}`,
-            name: item.label || item.displayName || item.name || item.platform || item["平台"] || `平台 ${index + 1}`,
-            lane: cleanUserCopy(rSafe(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || ""), item.label || `平台 ${index + 1}`),
+            id: `${menuLabel}-${index}`,
+            name: menuLabel,
+            lane: cleanUserCopy(rSafe(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || ""), menuLabel),
             trend: cleanUserCopy(rSafe(item.recommendedFormat || item.trend || item.format || item["内容形式"] || item["推荐形式"] || ""), "先从更顺手的表达方式切入"),
             whyNow: cleanUserCopy(rSafe(item.whyNow || item.reason || item.summary || item["为什么"] || item["推荐理由"] || ""), "当前窗口里，这个平台更容易拿到第一轮反馈。"),
             nextMove: cleanUserCopy(rSafe(item.titleExample || item.nextMove || item.action || item["标题示例"] || item["下一步"] || ""), "先发一版内容拿反馈。"),
@@ -2198,7 +2478,17 @@ export default function PlatformPage() {
         };
       });
     },
-    [monetizationStrategies, platformActivities, platformDashboard, primaryPlatforms, recommendedPlatforms, snapshot, titleExecutions, validationPlan],
+    [
+      isDashboardLoading,
+      monetizationStrategies,
+      platformActivities,
+      platformDashboard,
+      primaryPlatforms,
+      recommendedPlatforms,
+      snapshot,
+      titleExecutions,
+      validationPlan,
+    ],
   );
 
   const monetizationCards = useMemo(() => {
@@ -2632,14 +2922,14 @@ export default function PlatformPage() {
         tone: "action",
       },
     ];
-    return [...platformCards, ...topicCards, ...actionCards].length ? [...platformCards, ...topicCards, ...actionCards] : fallback;
+    return [...platformCards, ...topicCards, ...actionCards].length
+      ? ([...platformCards, ...topicCards, ...actionCards] as PlatformSignalsCarouselItem[])
+      : (fallback as PlatformSignalsCarouselItem[]);
   }, [actionSteps, primaryPlatforms, topTopics]);
-  const activeRotatingCard = immersiveRotatingCards[rotatingCardIndex % immersiveRotatingCards.length] || null;
 
   useEffect(() => {
     if (!isAnalyzing) {
       setElapsedTime(0);
-      setRotatingCardIndex(0);
       return;
     }
     const timer = window.setInterval(() => {
@@ -2649,12 +2939,14 @@ export default function PlatformPage() {
   }, [isAnalyzing]);
 
   useEffect(() => {
-    if (!isAnalyzing || immersiveRotatingCards.length <= 1) return;
+    if (immersiveRotatingCards.length <= 1 || !hasAnalyzed) return;
+    const shouldRotate = isAnalyzing || Boolean(snapshot);
+    if (!shouldRotate) return;
     const timer = window.setInterval(() => {
       setRotatingCardIndex((value) => (value + 1) % immersiveRotatingCards.length);
     }, 4500);
     return () => window.clearInterval(timer);
-  }, [immersiveRotatingCards.length, isAnalyzing]);
+  }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
   const handleAnalyze = async () => {
     // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
@@ -2794,7 +3086,7 @@ export default function PlatformPage() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
-      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}`}</style>
+      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
 
       {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
       <IpProfileModal
@@ -3054,42 +3346,13 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <div className={shellCardClasses("p-6")}>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <Sparkles className="h-4 w-4 text-[#ffdd44]" />
-                    轮播看板
-                  </div>
-                  <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">
-                    在报告生成过程中，先把当前窗口里最关键的平台、热点和承接线索轮播出来，避免用户空等。
-                  </div>
-                </div>
-                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#b7add8]">
-                  每 4.5 秒轮播
-                </div>
-              </div>
-              {activeRotatingCard ? (
-                <div className="mt-5 rounded-[28px] border border-[#2f2558] bg-[linear-gradient(135deg,rgba(73,230,255,0.10),rgba(125,115,255,0.08),rgba(255,117,189,0.08))] p-6">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
-                    {activeRotatingCard.tone === "platform" ? "平台信号" : activeRotatingCard.tone === "topic" ? "热点切口" : "动作建议"}
-                  </div>
-                  <div className="mt-3 text-2xl font-bold text-white">{activeRotatingCard.title}</div>
-                  <div className="mt-4 text-sm leading-8 text-[#eef5ff]">{activeRotatingCard.summary}</div>
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-[rgba(9,6,24,0.36)] p-4 text-sm leading-7 text-[#d3caef]">
-                    {activeRotatingCard.detail}
-                  </div>
-                </div>
-              ) : null}
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                {immersiveRotatingCards.slice(0, 3).map((item, index) => (
-                  <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                    <div className="text-sm font-semibold text-white">{item.title}</div>
-                    <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.summary}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <PlatformSignalsCarouselPanel
+              eyebrow="轮播看板"
+              items={immersiveRotatingCards}
+              activeIndex={rotatingCardIndex}
+              onPickIndex={setRotatingCardIndex}
+              subtitle="在报告生成阶段，用大卡轮换播放当前窗口里最关键的平台脉搏、热点切口与可先执行的动作，避免干等。"
+            />
           </section>
         ) : null}
 
@@ -3770,7 +4033,20 @@ export default function PlatformPage() {
               </div>
             </section>
 
-            <div className="grid gap-4">
+            <div className="space-y-4">
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(300px,420px)] xl:items-start xl:gap-8">
+                <aside className="order-1 w-full xl:sticky xl:top-28 xl:z-[8] xl:order-2 xl:self-start xl:overflow-y-auto xl:max-h-[calc(100dvh-7rem)]">
+                  {immersiveRotatingCards.length > 0 ? (
+                    <PlatformSignalsCarouselPanel
+                      eyebrow="与分镜并排 · 信号轮播"
+                      items={immersiveRotatingCards}
+                      activeIndex={rotatingCardIndex}
+                      onPickIndex={setRotatingCardIndex}
+                      subtitle="生成封面前先看大卡：本平台判断、热点切口、下一轮动作自动轮换，用不着在一行小字里找。"
+                    />
+                  ) : null}
+                </aside>
+                <div className="order-2 min-w-0 xl:order-1">
               <div className={shellCardClasses("p-6")}>
                 <div className="mb-8 border-b border-white/10 pb-6">
                   <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -4561,6 +4837,8 @@ export default function PlatformPage() {
                       );
                     })
                   )}
+                </div>
+              </div>
                 </div>
               </div>
 
