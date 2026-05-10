@@ -945,6 +945,8 @@ type PlatformSignalsCarouselItem = {
   summary: string;
   detail: string;
   tone: PlatformSignalsCarouselTone;
+  /** 平台卡：引導購買趨勢分析額度 / 積分加值包 */
+  purchaseCta?: { href: string; label: string };
 };
 
 function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
@@ -1034,10 +1036,21 @@ function PlatformSignalsCarouselPanel(props: {
               <div className="mt-5 text-[1.65rem] font-black leading-[1.08] tracking-tight text-white md:text-4xl xl:text-[2.35rem]">
                 {active.title}
               </div>
-              <div className="mt-5 text-base font-medium leading-relaxed text-[#eef6ff] md:text-lg">{active.summary}</div>
+              <div className="mt-5 whitespace-pre-line text-base font-medium leading-relaxed text-[#eef6ff] md:text-lg">
+                {active.summary}
+              </div>
               <div className="mt-6 rounded-[22px] border border-white/12 bg-[rgba(8,6,22,0.55)] px-5 py-4 text-sm leading-8 text-[#d9d1f5] md:text-[15px]">
                 {active.detail}
               </div>
+              {active.purchaseCta ? (
+                <a
+                  href={active.purchaseCta.href}
+                  className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-[#8cefff] underline-offset-4 hover:text-[#49e6ff] hover:underline"
+                >
+                  {active.purchaseCta.label}
+                  <ChevronRight className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                </a>
+              ) : null}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -1157,15 +1170,15 @@ export default function PlatformPage() {
     if (isContentLoading) return contentLoadingText;
     if (stage2Failed || contentJobError) return `無法完成：${contentJobError || "請重試"}`;
     if (stage2EmptyPayload) {
-      return "後台已返回，但沒有有效選題（0 條）。請展開 Debug「Stage 2」或使用重試。";
+      return "後台已返回，但沒有有效選題（0 條）。請展開 Debug「Stage 2」或點擊重試（將再次扣除積分）。";
     }
     if (platformContent && !stage2EmptyPayload) {
       return "✅ 專屬選題與文案已由後台寫入（可下滑查看卡片）";
     }
     if (platformDashboard && !platformContent) {
-      return "戰略看板已就緒；若未自動出現文案，請確認分析流程是否跑完或重試。";
+      return "戰略看板已就緒。若流程中斷，可點下方手動「生成專屬文案」繼續。";
     }
-    return "完成戰略看板後，將自動排程專屬文案後台任務。";
+    return `點擊「开始全案分析」將一次跑完戰略看板與專屬文案（入隊時扣 ${CREDIT_COSTS.platformStage2Copywriting} 積分）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -1377,110 +1390,88 @@ export default function PlatformPage() {
     setContentDebug((res.debug as Record<string, unknown>) ?? {});
   }, []);
 
-  const retryStage2Content = useCallback(async () => {
+  /** 入隊並輪詢專屬文案（扣費發生在後端 enqueue 時）；供主流程鏈式調用與手動重試 */
+  const enqueueAndPollExclusiveContent = useCallback(
+    async (
+      dash: PlatformDashboard,
+      snapshotSummary: Record<string, unknown>,
+      windowDays: 15 | 30 | 45,
+    ) => {
+      setContentJobError(null);
+      setIsContentLoading(true);
+      setStage2Failed(false);
+      setContentLoadingText("正在提交專屬文案後台任務…");
+      try {
+        const tStart = new Date().toISOString();
+        const cost = CREDIT_COSTS.platformStage2Copywriting;
+        const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
+          context: focusPrompt || undefined,
+          windowDays,
+          platformMenu: dash.platformMenu || [],
+          snapshotSummary,
+        });
+        setContentJobPollTrace({
+          jobId,
+          label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
+          lines: appendPollDebugLine(
+            [],
+            `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 扣費 ${cost} 積分（後端入隊時）`,
+          ),
+          pollCount: 0,
+        });
+        await runStage2FromJobId(jobId);
+      } catch (e) {
+        console.warn("[PlatformPage] Stage 2 enqueue/poll error:", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        setStage2Failed(true);
+        setContentJobError(msg);
+        toast.error(`文案生成失敗: ${msg}`);
+        setContentDebug(null);
+        setContentJobPollTrace((prev) =>
+          prev
+            ? {
+                ...prev,
+                terminalStatus: prev.terminalStatus ?? "client_error",
+                lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
+              }
+            : prev,
+        );
+      } finally {
+        setIsContentLoading(false);
+      }
+    },
+    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId],
+  );
+
+  /** 用戶確認後入隊 Stage 2（後端立即扣積分）並輪詢直至完成 */
+  const startStage2ContentGeneration = useCallback(async () => {
     if (!platformDashboard || !lastStage2InputRef.current) {
-      toast.error("無法重試：請先完成戰略看板並觸發過專屬文案任務");
+      toast.error("請先完成戰略看板分析");
       return;
     }
     const inp = lastStage2InputRef.current;
-    setContentJobError(null);
-    setIsContentLoading(true);
-    setStage2Failed(false);
-    setContentLoadingText("重新提交後台任務…");
-    try {
-      const tStart = new Date().toISOString();
-      const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
-        context: focusPrompt || undefined,
-        windowDays: inp.windowDays,
-        platformMenu: platformDashboard.platformMenu || [],
-        snapshotSummary: inp.snapshotSummary,
-      });
-      setContentJobPollTrace({
-        jobId,
-        label: "Stage 2 · platform_build_content（重試）",
-        lines: appendPollDebugLine(
-          [],
-          `${tStart} 重新入队 enqueuePlatformContentJob → jobId=${jobId}`,
-        ),
-        pollCount: 0,
-      });
-      await runStage2FromJobId(jobId);
-    } catch (e) {
-      console.warn("[PlatformPage] Stage 2 retry error:", e);
-      const msg = e instanceof Error ? e.message : String(e);
-      setContentJobError(msg);
-      setStage2Failed(true);
-      toast.error(`文案生成失敗: ${msg}`);
-      setContentDebug(null);
-    } finally {
-      setIsContentLoading(false);
+    const cost = CREDIT_COSTS.platformStage2Copywriting;
+    if (
+      !window.confirm(
+        `專屬文案與選題將消耗 ${cost} 積分，確認後立即扣費並由後台生成（約數分鐘，請勿關閉頁面）。是否繼續？`,
+      )
+    ) {
+      return;
     }
-  }, [platformDashboard, focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId]);
+    await enqueueAndPollExclusiveContent(platformDashboard, inp.snapshotSummary, inp.windowDays);
+  }, [platformDashboard, enqueueAndPollExclusiveContent]);
 
-  // Stage 1 Mutation: 戰略看板
+  const retryStage2Content = useCallback(async () => {
+    await startStage2ContentGeneration();
+  }, [startStage2ContentGeneration]);
+
+  // Stage 1 Mutation: 戰略看板（除 handleAnalyze 外通常不單獨觸發；onSuccess 僅同步 debug）
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
-    onSuccess: async (result, variables) => {
-      if (result.platformDashboard) {
-        const dash = result.platformDashboard as unknown as PlatformDashboard;
-        setPlatformDashboard(dash);
-        setContentJobError(null);
-        setIsContentLoading(true);
-        setStage2Failed(false);
-        setContentLoadingText("正在提交專屬文案後台任務…");
-        lastStage2InputRef.current = {
-          snapshotSummary: (variables.snapshotSummary || {}) as Record<string, unknown>,
-          windowDays: selectedWindowDays,
-        };
-        try {
-          const tStart = new Date().toISOString();
-          const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
-            context: focusPrompt || undefined,
-            windowDays: selectedWindowDays,
-            platformMenu: dash.platformMenu || [],
-            snapshotSummary: variables.snapshotSummary || {},
-          });
-          setContentJobPollTrace({
-            jobId,
-            label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
-            lines: appendPollDebugLine(
-              [],
-              `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 前段約每 2.5s 轮询、第 37 次起間隔加倍（最多 8s；worker 默认最长約 20min）`,
-            ),
-            pollCount: 0,
-          });
-          await runStage2FromJobId(jobId);
-        } catch (e) {
-          console.warn("[PlatformPage] Stage 2 platform_build_content error:", e);
-          const msg = e instanceof Error ? e.message : String(e);
-          setStage2Failed(true);
-          setContentJobError(msg);
-          toast.error(`文案生成失敗: ${msg}`);
-          setContentDebug(null);
-          setContentJobPollTrace((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  terminalStatus: prev.terminalStatus ?? "client_error",
-                  lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
-                }
-              : prev,
-          );
-        } finally {
-          setIsContentLoading(false);
-        }
-      } else {
-        console.warn("[PlatformPage] Stage 1 AI 解析失敗:", result.debug?.error);
-        toast.error(
-          `戰略看板生成失敗：AI 數據格式異常，請重試 (${String((result.debug as { error?: unknown })?.error ?? "未知")})`,
-        );
-      }
+    onSuccess: (result) => {
       setDashboardDebug(result.debug as Record<string, unknown>);
-      setIsDashboardLoading(false);
     },
     onError: (error) => {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
-      setIsDashboardLoading(false);
-      toast.error(`分析網路錯誤: ${error.message}`);
     },
   });
 
@@ -2873,12 +2864,42 @@ export default function PlatformPage() {
     [processingSteps, elapsedTime],
   );
   const immersiveRotatingCards = useMemo(() => {
-    const platformCards = primaryPlatforms.slice(0, 4).map((item) => ({
-      title: `${item.displayName} 当前信号`,
-      summary: item.summary,
-      detail: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore} / 竞争 ${item.competitionLevel}`,
-      tone: "platform",
-    }));
+    const trendLayers = snapshot?.trendLayers ?? [];
+    const competitionZh = (level: string) =>
+      level === "low" ? "低" : level === "medium" ? "中" : level === "high" ? "高" : String(level);
+
+    const platformCards = primaryPlatforms.slice(0, 4).map((item) => {
+      const topicLines = (item.sampleTopics || []).map((t) => String(t).trim()).filter(Boolean);
+      const layerLines = trendLayers
+        .filter((l) => l.platform === item.platform)
+        .flatMap((l) => (Array.isArray(l.items) ? l.items : []).map((i) => String(i).trim()))
+        .filter(Boolean);
+      const libraryLines = (snapshot?.topicLibrary ?? [])
+        .filter((row) => row.platform === item.platform)
+        .map((row) => String(row.title || "").trim())
+        .filter(Boolean);
+      const activityLines = (snapshot?.platformActivities ?? [])
+        .filter((a) => a.platform === item.platform)
+        .flatMap((a) =>
+          [...(a.hotTopics ?? []), ...(a.suggestedTopics ?? [])].map((s) => String(s).trim()).filter(Boolean),
+        );
+      const merged = Array.from(new Set([...topicLines, ...libraryLines, ...activityLines, ...layerLines])).slice(0, 5);
+      const summary =
+        merged.length > 0
+          ? merged.map((line, i) => `${i + 1}. ${line}`).join("\n")
+          : "本平台在当前快照里还没有可用的样本标题或趋势层条目。请先完成一次上方「平台趋势分析」（会按次扣减积分），采集回传后再查看具体热点。";
+
+      return {
+        title: `${item.displayName} 当前信号`,
+        summary,
+        detail: `动量 ${item.momentumScore} · 适配 ${item.audienceFitScore} · 竞争 ${competitionZh(item.competitionLevel)}`,
+        tone: "platform" as const,
+        purchaseCta: {
+          href: "/pricing",
+          label: "购买积分 · 用于平台趋势分析与续报",
+        },
+      };
+    });
     const topicCards = topTopics.slice(0, 3).map((item) => ({
       title: item.title,
       summary: item.whyHot,
@@ -2914,7 +2935,7 @@ export default function PlatformPage() {
     return [...platformCards, ...topicCards, ...actionCards].length
       ? ([...platformCards, ...topicCards, ...actionCards] as PlatformSignalsCarouselItem[])
       : (fallback as PlatformSignalsCarouselItem[]);
-  }, [actionSteps, primaryPlatforms, topTopics]);
+  }, [actionSteps, primaryPlatforms, topTopics, snapshot]);
 
   useEffect(() => {
     if (!isAnalyzing) {
@@ -2944,6 +2965,17 @@ export default function PlatformPage() {
       toast.message("启动战略推演前，请先载入企业专属 IP 基因");
       return;
     }
+
+    const cost = CREDIT_COSTS.platformStage2Copywriting;
+    if (
+      !window.confirm(
+        `【平台全案分析】將基於四平台實時樣本與你的 IP 背景，一次性交付：戰略優先級看板 + 專屬選題與可拍攝長文案／分鏡級內容（結構化落地稿，而非 ChatGPT 式泛泛建議）。\n\n` +
+          `專屬文案任務入隊時扣除 ${cost} 積分；全程約數分鐘，請勿關閉頁面。是否開始？`,
+      )
+    ) {
+      return;
+    }
+
     setAskResult(null);
     setPlatformDashboard(null);
     setDashboardDebug(null);
@@ -2951,26 +2983,60 @@ export default function PlatformPage() {
     setPlatformContent(null);
     setContentDebug(null);
     setIsContentLoading(false);
+    setStage2Failed(false);
+    setContentJobError(null);
+    setContentJobPollTrace(null);
     setElapsedTime(0);
     setRotatingCardIndex(0);
 
-    // Call 1: fast snapshot (skips dashboard)
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
       toast.error("平台分析暂时没有返回结果");
       return;
     }
     setHasAnalyzed(true);
-    toast.success(`快照已生成，正在进行深度分析...`);
+    toast.success("快照已就緒，正在生成戰略看板與專屬文案…");
 
-    // 🔴 恢复 Progressive Rendering：先呼叫 Stage 1，让前端提早解锁看板
     const snap = result.data.snapshot;
+    const snapSummary = snap as Record<string, unknown>;
     setIsDashboardLoading(true);
-    getPlatformDashboardMutation.mutate({
-      context: focusPrompt || undefined,
-      windowDays: selectedWindowDays,
-      snapshotSummary: snap as any,
-    });
+    try {
+      const dashResult = await getPlatformDashboardMutation.mutateAsync({
+        context: focusPrompt || undefined,
+        windowDays: selectedWindowDays,
+        snapshotSummary: snap as any,
+      });
+
+      if (!dashResult.platformDashboard) {
+        console.warn("[PlatformPage] Stage 1 AI 解析失敗:", dashResult.debug?.error);
+        toast.error(
+          `戰略看板生成失敗：AI 數據格式異常，請重試 (${String((dashResult.debug as { error?: unknown })?.error ?? "未知")})`,
+        );
+        return;
+      }
+
+      const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
+      setPlatformDashboard(dash);
+      setContentJobError(null);
+      setStage2Failed(false);
+      setPlatformContent(null);
+      setContentDebug(null);
+      lastStage2InputRef.current = {
+        snapshotSummary: snapSummary,
+        windowDays: selectedWindowDays,
+      };
+      setIsDashboardLoading(false);
+
+      await enqueueAndPollExclusiveContent(dash, snapSummary, selectedWindowDays);
+    } catch (e) {
+      console.warn("[PlatformPage] handleAnalyze chain error:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!String(msg).includes("文案生成失敗")) {
+        toast.error(`分析中斷：${msg}`);
+      }
+    } finally {
+      setIsDashboardLoading(false);
+    }
   };
 
   const handleUploadQaFile = useCallback(async (file: File) => {
@@ -3253,8 +3319,14 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
-                <div className="mt-4 flex flex-wrap items-center gap-3">
+                <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+                  🎤 支持{" "}
+                  <span className="rounded-md border border-[#6366f1]/50 bg-[rgba(99,102,241,0.16)] px-1.5 py-0.5 font-semibold text-[#a5b4fc] shadow-[0_0_12px_rgba(99,102,241,0.12)]">
+                    Chrome、Edge、Safari
+                  </span>{" "}
+                  浏览器
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3">
                   <button
                     type="button"
                     onClick={() => void handleAnalyze()}
@@ -3262,8 +3334,14 @@ export default function PlatformPage() {
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    开始平台分析
+                    开始全案分析
                   </button>
+                  <span
+                    className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
+                    title="已含專屬選題與長文案／分鏡稿；任務入隊時扣除右側積分（與通用聊天不同，結合當前窗口樣本與 IP 基因）"
+                  >
+                    {CREDIT_COSTS.platformStage2Copywriting} 積分
+                  </span>
                   {hasAnalyzed ? (
                     <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
                       当前窗口：近 {selectedWindowDays} 天
@@ -3280,6 +3358,20 @@ export default function PlatformPage() {
                     </button>
                   )}
                 </div>
+                <p className="mt-2 max-w-xl text-[11px] leading-5 text-white/38">
+                  點擊後會<strong className="text-white/80">自動接續</strong>生成專屬選題與長文案／分鏡稿；扣款在<strong className="text-[#fef08a]">後台任務入隊時</strong>，金額即右側標示。
+                  {hasAnalyzed ? (
+                    <>
+                      {" "}
+                      <a
+                        href="#platform-stage2-copy"
+                        className="font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
+                      >
+                        跳至生成區
+                      </a>
+                    </>
+                  ) : null}
+                </p>
               </div>
             </div>
           </div>
@@ -3400,7 +3492,7 @@ export default function PlatformPage() {
                     <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
-                    <div>3. 深度原创分析（enqueuePlatformContentJob → Fly worker，GET /api/jobs 轮询，避免长 HTTP 断连）</div>
+                    <div>3. 專屬文案（enqueuePlatformContentJob · 需登入，入隊時扣 {CREDIT_COSTS.platformStage2Copywriting} 積分 → Fly worker，GET /api/jobs 轮询）</div>
                     <div>
                       3a. 状态:{" "}
                       <span>
@@ -3584,8 +3676,10 @@ export default function PlatformPage() {
               <div className="flex items-center gap-3">
                 <Loader2 className="h-5 w-5 animate-spin text-[#49e6ff]" />
                 <div>
-                  <div className="text-sm font-semibold text-white">平台数据已就绪，正在生成个性化分析...</div>
-                  <div className="mt-1 text-xs text-[#b7add8]">正在根据你的背景生成专属平台策略与选题文案，通常需要 30–90 秒。</div>
+                  <div className="text-sm font-semibold text-white">平台样本已就绪，正在生成战略优先级看板…</div>
+                  <div className="mt-1 text-xs text-[#b7add8]">
+                    通常 30–90 秒。看板就绪后将<strong className="text-[#d4d4ff]">自动接续</strong>專屬選題與長文案／分鏡稿（結合實時樣本與你的 IP，非泛泛建議），全程請勿關閉頁面。
+                  </div>
                 </div>
               </div>
             </div>
@@ -3594,6 +3688,26 @@ export default function PlatformPage() {
 
         {snapshot && platformDashboard ? (
           <section id="platform-report" className="mt-8 space-y-6">
+            <div
+              className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
+              role="region"
+              aria-label="全案分析扣費說明"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
+                  <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
+                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
+                </div>
+                <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
+                  首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
+                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
+                  並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
+                  。任務失敗、逾時或結果不滿意，
+                  <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
+                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
+                </div>
+              </div>
+            </div>
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -3941,7 +4055,7 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <section className="mt-2 px-1" aria-label="專屬選題與文案狀態">
+            <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="專屬選題與文案狀態">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <h2 className="flex flex-wrap items-center gap-2 text-lg font-bold tracking-tight text-white sm:text-xl">
@@ -3967,16 +4081,32 @@ export default function PlatformPage() {
                     {stage2UserFacingLine}
                   </p>
                 </div>
-                {stage2Failed && platformDashboard && !isContentLoading ? (
-                  <button
-                    type="button"
-                    onClick={() => void retryStage2Content()}
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-red-500/35 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    重新生成專屬文案
-                  </button>
-                ) : null}
+                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                  {platformDashboard &&
+                  !isContentLoading &&
+                  !platformContent &&
+                  !stage2Failed &&
+                  !stage2EmptyPayload ? (
+                    <button
+                      type="button"
+                      onClick={() => void startStage2ContentGeneration()}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[#c4b5fd]/40 bg-[linear-gradient(135deg,rgba(196,181,253,0.18),rgba(125,115,255,0.14))] px-5 py-2.5 text-sm font-bold text-white shadow-[0_8px_28px_rgba(125,115,255,0.25)] transition hover:brightness-110"
+                    >
+                      <CircleDollarSign className="h-4 w-4 text-[#fde68a]" aria-hidden />
+                      補跑專屬文案（全案未自動入隊時 · {CREDIT_COSTS.platformStage2Copywriting} 積分）
+                    </button>
+                  ) : null}
+                  {(stage2Failed || stage2EmptyPayload) && platformDashboard && !isContentLoading ? (
+                    <button
+                      type="button"
+                      onClick={() => void retryStage2Content()}
+                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-red-500/35 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      重新生成（再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分）
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </section>
 
@@ -3989,7 +4119,7 @@ export default function PlatformPage() {
                       items={immersiveRotatingCards}
                       activeIndex={rotatingCardIndex}
                       onPickIndex={setRotatingCardIndex}
-                      subtitle="生成封面前先看大卡：本平台判断、热点切口、下一轮动作自动轮换，用不着在一行小字里找。"
+                      subtitle="热点文案来自当前快照里的样本题与趋势层，非顾问套话。需要更大采集窗口或续报，请先购买积分（套餐页）后再跑趋势分析。"
                     />
                   ) : null}
                 </aside>
@@ -4237,9 +4367,8 @@ export default function PlatformPage() {
                       const isBlackImageOrTimeout =
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
-                      const normalCoverCost = isGraphicCover
-                        ? CREDIT_COSTS.platformTopicFrameGraphic
-                        : CREDIT_COSTS.platformTopicFrameVideo;
+                      /** 單張豎版封面統一按「圖文封面」定價扣點（與後端 generateTopicImage 一致），與選題是短視頻還是圖文無關 */
+                      const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
@@ -4923,7 +5052,13 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+                      🎤 支持{" "}
+                      <span className="rounded-md border border-[#6366f1]/50 bg-[rgba(99,102,241,0.16)] px-1.5 py-0.5 font-semibold text-[#a5b4fc] shadow-[0_0_12px_rgba(99,102,241,0.12)]">
+                        Chrome、Edge、Safari
+                      </span>{" "}
+                      浏览器
+                    </p>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input

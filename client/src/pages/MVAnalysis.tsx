@@ -3469,7 +3469,13 @@ export default function MVAnalysisPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+                  🎤 支持{" "}
+                  <span className="rounded-md border border-[#6366f1]/50 bg-[rgba(99,102,241,0.16)] px-1.5 py-0.5 font-semibold text-[#a5b4fc] shadow-[0_0_12px_rgba(99,102,241,0.12)]">
+                    Chrome、Edge、Safari
+                  </span>{" "}
+                  浏览器
+                </p>
               </div>
 
               <div className="mt-5">
