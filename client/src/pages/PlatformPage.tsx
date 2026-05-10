@@ -126,6 +126,12 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
   }
 }
 
+/** 選題封面 URL 若為占位、逾時或失敗標記則視為未就緒（與卡片区 isBlackImageOrTimeout 對齊）。 */
+function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
+  const raw = typeof url === "string" ? url.trim().toLowerCase() : "";
+  return !raw || raw.includes("timeout") || raw.includes("error");
+}
+
 const WINDOW_OPTIONS = [
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
   { days: 30 as const, label: "30天", description: "看平台主流结构与相对稳定方向" },
@@ -242,8 +248,8 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
       "stage2MaxOutputTokens",
       "stage2MaxOutputTokensEnv",
       "stage2SubStepsSummary",
-      "phase2SkippedReason",
-      "phase1CreativeReasoningEffortResolved",
+      "stage2OpenAiAssistantEmptyBeforeRecovery",
+      "stage2OpenAiAssistantEmptyRecoveryPath",
       "openaiGpt5ReasoningEffort",
       "jsonParseStrategy",
       "rawContentEmpty",
@@ -663,6 +669,33 @@ function buildCompositeImageGenPendingLines(input: {
   ];
 }
 
+/**
+ * 從輪詢或響應合併後的 snapshot 文案推測進度標籤，減少用戶以為「卡住」。
+ * （僅為 UX 輔助；細節仍以下方 Debug imageGenFlowLog 為準）
+ */
+function deriveCompositeUxPhaseHint(snapshotLines: readonly string[]): string {
+  const tail = snapshotLines.length ? snapshotLines.slice(-48).join("\n") : "";
+  if (/整链(?:重试|[\s\S]*?\d+\/\d+\s*次失败)/i.test(tail) || /\b第\s*\d+\/\d+\s*次失败/.test(tail)) {
+    return "整链重试：重新英文化 + 生图，可能仍需数分钟…";
+  }
+  if (/Nano Banana|\[2×4·步骤3\] Vertex/.test(tail)) {
+    return "兜底绘图：Vertex 图像引擎…";
+  }
+  if (/\[GPT-IMAGE-2\]|GPT-IMAGE-2/.test(tail)) {
+    return "绘制中 · GPT-IMAGE-2（单尺寸偶需 3～5 分钟仍属正常）";
+  }
+  if (/\[2×4·步骤2|\[步骤2\]/.test(tail)) {
+    return "准备生图（像素锁已定）…";
+  }
+  if (/步骤1b|PROMPT_CONDENSE|\[Prompt 提炼\]/.test(tail)) {
+    return "精炼英文 prompt …";
+  }
+  if (/GPT54·英文化|骨架·GPT54|extractChineseVisualBrief|\[GPT54·翻译\]/.test(tail)) {
+    return "英文 prompt · GPT 5.4／骨架抽取（多数 1～3 分钟内）…";
+  }
+  return "英文化与绘图合计大约 3～5 分钟，请勿中途刷新 ";
+}
+
 /** Stage 2 等長任務：用 shimmer / 光斑 / 節拍點轉移注意力（不向用戶展示技術細節） */
 function PlatformGeneratingCharm(props: {
   className?: string;
@@ -709,6 +742,89 @@ function PlatformGeneratingCharm(props: {
               key={i}
               className={`h-1.5 w-1.5 rounded-full ${c} motion-safe:animate-bounce opacity-90`}
               style={{ animationDelay: `${i * 0.18}s` }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 封面生成等待期間：輪播前四條選題文案摘要；每條約 60s；顯示持續至當前列表內每條選題均有有效封面 URL（不依賴任務旗標提前收起）。 */
+const COVER_GEN_WAIT_CAROUSEL_MS = 60_000;
+
+type CoverGenWaitCarouselItem = { id: string; title: string; excerpt: string };
+
+function CoverGenerationWaitCarousel({
+  items,
+  itemsKey,
+}: {
+  items: CoverGenWaitCarouselItem[];
+  itemsKey: string;
+}) {
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    setIdx(0);
+  }, [itemsKey, items.length]);
+
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const id = window.setInterval(() => setIdx((i) => (i + 1) % items.length), COVER_GEN_WAIT_CAROUSEL_MS);
+    return () => window.clearInterval(id);
+  }, [items.length]);
+
+  if (items.length === 0) return null;
+
+  const slide = items[idx]!;
+  const slideAnimateKey = `${itemsKey}:${idx}:${slide.id}`;
+  const barDurationSec = COVER_GEN_WAIT_CAROUSEL_MS / 1000;
+
+  return (
+    <div
+      className="col-span-full overflow-hidden rounded-2xl border border-[#ff4fb8]/20 bg-[linear-gradient(135deg,rgba(255,79,184,0.08),rgba(106,92,255,0.06))] p-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)] md:p-5"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#ff9fe0]" aria-hidden />
+        <span className="text-[11px] font-semibold tracking-wide text-[#ff9fe0]/90">封面绘制中</span>
+        <span className="text-[11px] text-white/48">
+          合计常需约 3～5 分钟 · 每条预览约 1 分钟 · 全部选题均有有效封面后自动收起
+        </span>
+      </div>
+
+      <div key={slideAnimateKey} className="mt-4 animate-in fade-in-0 slide-in-from-bottom-1 duration-500">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h4 className="max-w-[min(100%,48rem)] text-[15px] font-bold leading-snug text-white">{slide.title}</h4>
+          <span className="shrink-0 tabular-nums text-[10px] text-white/40">
+            {idx + 1} / {items.length}
+          </span>
+        </div>
+        {slide.excerpt.trim() ? (
+          <p className="mt-2 line-clamp-5 text-[13px] leading-relaxed text-[#dcd5f5]/92">{slide.excerpt}</p>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex items-center gap-3">
+        <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/10" aria-hidden>
+          <div
+            key={`${slideAnimateKey}-bar`}
+            className="h-full w-full origin-left scale-x-0 bg-gradient-to-r from-[#ff4fb8]/85 to-[#6a5cff]/85 motion-reduce:!scale-x-100 motion-reduce:!animate-none"
+            style={{
+              animation: `coverGenWaitCarouselProgress ${barDurationSec}s linear forwards`,
+            }}
+          />
+        </div>
+        <div className="flex shrink-0 gap-1">
+          {items.map((it, i) => (
+            <span
+              key={it.id}
+              className={`h-1.5 w-1.5 rounded-full transition-colors duration-300 ${
+                i === idx ? "bg-[#ff4fb8] shadow-[0_0_8px_rgba(255,79,184,0.45)]" : "bg-white/18"
+              }`}
+              aria-hidden
             />
           ))}
         </div>
@@ -828,6 +944,8 @@ export default function PlatformPage() {
   ]);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
+  /** 用戶發起封面繪製後置為 true；收起條件為當前視窗內每一條選題均有有效封面 URL（與 Stage1 輪播只看「任務旗標」區分）。 */
+  const [coverWaitCarouselEngaged, setCoverWaitCarouselEngaged] = useState(false);
   const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
   const [compositeLoadRetriedKeys, setCompositeLoadRetriedKeys] = useState<Set<string>>(() => new Set());
   /** 橫版 16:9 執行分鏡表（單張合成）；API kind 仍為 storyboard_sheet_portrait */
@@ -849,6 +967,19 @@ export default function PlatformPage() {
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
   );
+  /** 2×4 / 小红书合成進行中：由 live log 粗略推進度標籤 */
+  const compositePendingUxHints = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const snap of platformImageGenFlowSnapshots) {
+      if (snap.kind !== "composite_2x4") continue;
+      if (snap.meta?.pending !== true) continue;
+      const sid = String(snap.meta?.sceneId ?? "").trim();
+      const apiKind = String(snap.meta?.apiKind ?? "").trim();
+      if (!sid || !apiKind) continue;
+      map[`${sid}::${apiKind}`] = deriveCompositeUxPhaseHint(snap.lines);
+    }
+    return map;
+  }, [platformImageGenFlowSnapshots]);
   /** 单张封面「重新生成」进行中（显示骨架，避免无反馈） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
@@ -2247,6 +2378,58 @@ export default function PlatformPage() {
     [platformTopicCount],
   );
 
+  const coverGenWaitCarouselItems = useMemo((): CoverGenWaitCarouselItem[] => {
+    return contentExecutionCards.slice(0, 4).map((c) => {
+      const hook = (c.hook || "").replace(/\s+/g, " ").trim();
+      const body = (c.copywriting || "").replace(/\s+/g, " ").trim();
+      const pick = hook.length >= 48 ? hook : body.length >= 24 ? body : hook || body;
+      const excerptRaw = pick;
+      const excerpt =
+        excerptRaw.length > 260 ? `${excerptRaw.slice(0, 260)}…` : excerptRaw;
+      return {
+        id: c.id,
+        title: (c.title || "").trim(),
+        excerpt,
+      };
+    });
+  }, [contentExecutionCards]);
+
+  const coverGenWaitCarouselItemsKey = useMemo(
+    () => coverGenWaitCarouselItems.map((row) => row.id).join("|"),
+    [coverGenWaitCarouselItems],
+  );
+
+  const anyCoverImagePipelineBusy = useMemo(
+    () =>
+      regeneratingCoverSceneId !== null ||
+      isSequentialCoverBatchGenerating ||
+      batchGeneratingCoverIds.size > 0 ||
+      coverSilentRetryIds.size > 0,
+    [
+      regeneratingCoverSceneId,
+      isSequentialCoverBatchGenerating,
+      batchGeneratingCoverIds,
+      coverSilentRetryIds,
+    ],
+  );
+
+  const allTopicCoverImagesReady = useMemo(() => {
+    if (contentExecutionCards.length === 0) return true;
+    return contentExecutionCards.every((row) => {
+      const u = platformImageMap[row.id];
+      return typeof u === "string" && u.trim().length > 0 && !platformCoverImageUrlLooksInvalid(u);
+    });
+  }, [contentExecutionCards, platformImageMap]);
+
+  useEffect(() => {
+    if (anyCoverImagePipelineBusy) setCoverWaitCarouselEngaged(true);
+  }, [anyCoverImagePipelineBusy]);
+
+  useEffect(() => {
+    if (!coverWaitCarouselEngaged || !allTopicCoverImagesReady) return;
+    setCoverWaitCarouselEngaged(false);
+  }, [coverWaitCarouselEngaged, allTopicCoverImagesReady]);
+
   /** 頂部「2×4 / 小紅書合成」畫廊：各選題合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
     type StripItem = {
@@ -2611,7 +2794,7 @@ export default function PlatformPage() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
-      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}`}</style>
+      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}`}</style>
 
       {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
       <IpProfileModal
@@ -2996,7 +3179,7 @@ export default function PlatformPage() {
                       </span>
                     </div>
                     <div>
-                      3f. Stage2 輸出上限（max_tokens / maxOutputTokens）:{" "}
+                      3f. Stage2 請求輸出上限 max_tokens/maxOutput:{" "}
                       <span className="font-mono text-[#ffdd44]">
                         {String(
                           (contentDebug?.buildPlatformContent as { stage2MaxOutputTokens?: number } | undefined)
@@ -3004,7 +3187,7 @@ export default function PlatformPage() {
                         )}
                       </span>
                       <span className="text-gray-500">
-                        （`PLATFORM_STAGE2_LLM` 為 openai 或 vertex/gemini 時皆讀同一 env：PLATFORM_STAGE2_MAX_OUTPUT_TOKENS；非「Vertex 專用 GPT 配額」語意）
+                        （`PLATFORM_STAGE2_LLM`=openai 或 vertex/gemini 皆共用 env `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`，與線路標籤無關）
                       </span>
                     </div>
                     <div className="break-words">
@@ -3018,20 +3201,9 @@ export default function PlatformPage() {
                       </span>
                     </div>
                     <div className="break-words">
-                      3g1. Phase 2 跳過說明:{" "}
-                      <span className="font-mono text-[10px] text-[#d7d0ef]">
-                        {(() => {
-                          const t = (
-                            contentDebug?.buildPlatformContent as { phase2SkippedReason?: string } | undefined
-                          )?.phase2SkippedReason;
-                          return typeof t === "string" && t.trim() ? t : "—（雙階順利或單階模式時為空）";
-                        })()}
-                      </span>
-                    </div>
-                    <div className="break-words">
-                      3h. Stage 2 拆步{" "}
+                      3h. Stage 2 步驟概要{" "}
                       <span className="text-gray-500">
-                        （預設單階 OpenAI JSON；設 Fly `PLATFORM_STAGE2_OPENAI_TWO_PHASE=1` 時為 2‑1 GPT‑5.5→2‑2 GPT‑5.4。見 JSON 字段 stage2SubSteps）
+                        （OpenAI：單次呼叫推理並輸出 JSON；Vertex：`gemini-3.1-pro-preview` 單階。見 JSON `stage2SubSteps`）
                       </span>:
                       <div className="mt-1 space-y-0.5 pl-1 font-mono text-[10px] text-[#d7d0ef]">
                         {(() => {
@@ -3785,11 +3957,15 @@ export default function PlatformPage() {
                                     }}
                                   />
                                 ) : ref.pending ? (
-                                  <div className="flex flex-col items-center justify-center gap-3 opacity-80">
+                                  <div className="flex flex-col items-center justify-center gap-3 px-4 text-center opacity-80">
                                     <Loader2
                                       className={`h-8 w-8 animate-spin ${isXhs ? "text-[#ff4fb8]" : "text-[#10B981]"}`}
                                     />
-                                    <span className="text-xs text-gray-400">正在绘制高定画面...</span>
+                                    <span className="max-w-[20rem] text-xs leading-snug text-gray-400">
+                                      {compositePendingUxHints[
+                                        `${ref.sceneId}::${isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait"}`
+                                      ] ?? "正在绘制高定画面 · 合计常需约 3～5 分钟，请勿中途刷新"}
+                                    </span>
                                   </div>
                                 ) : null}
                               </div>
@@ -3822,6 +3998,12 @@ export default function PlatformPage() {
                 {platformDashboard ? <PlatformIpDimensionGuide /> : null}
 
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {contentExecutionCards.length > 0 &&
+                  coverWaitCarouselEngaged &&
+                  !allTopicCoverImagesReady &&
+                  coverGenWaitCarouselItems.some((row) => row.title || row.excerpt.trim()) ? (
+                    <CoverGenerationWaitCarousel items={coverGenWaitCarouselItems} itemsKey={coverGenWaitCarouselItemsKey} />
+                  ) : null}
                   {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
                     <div className="col-span-full flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
                       <Loader2 className="mb-2 h-6 w-6 animate-spin" />
@@ -3851,6 +4033,9 @@ export default function PlatformPage() {
                         compositeMutationBusy &&
                         pendingCompositeSheet?.sceneId === item.id &&
                         pendingCompositeSheet?.kind === compositeKind;
+                      const compositePhaseHint =
+                        compositePendingUxHints[`${item.id}::${compositeKind}`] ??
+                        "英文 prompt → GPT-IMAGE-2 · 合计常需 3～5 分钟，请勿中途刷新";
                       const currentImageUrl = platformImageMap[item.id] || "";
                       const isBlackImageOrTimeout =
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
@@ -3861,6 +4046,86 @@ export default function PlatformPage() {
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
+                      const singleCoverFooterPointsLabel =
+                        isEligibleFreeRetry ? "免费补救" : `${normalCoverCost} 点`;
+                      const handleGenerateSingleCoverFooter = () => {
+                        if (!isAuthenticated) {
+                          toast.error("请先登录");
+                          return;
+                        }
+                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        if (!topicHook) {
+                          toast.error("选题缺少标题或钩子，无法生成");
+                          return;
+                        }
+                        const displayedUrl = (platformImageMap[item.id] || "").trim();
+                        const hasDisplayedUrl = displayedUrl.length > 0;
+
+                        if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
+                          const warning =
+                            "检测到超时黑图，但由于页面刷新，本地安全凭证已丢失。本次补发将作为新任务消耗积分，是否继续？(建议：勿在生图期间刷新页面)";
+                          if (!window.confirm(warning)) return;
+                        } else if (!supervisorAccess) {
+                          let confirmNote: string;
+                          if (isEligibleFreeRetry) {
+                            confirmNote = "检测到黑图，本次将免费补发，是否继续？";
+                          } else if (!hasDisplayedUrl) {
+                            confirmNote = `将为本选题生成竖版封面（单帧 GPT-IMAGE-2），消耗 ${normalCoverCost} 积分，是否继续？`;
+                          } else {
+                            confirmNote = `将为该选题重新生成竖版封面，消耗 ${normalCoverCost} 积分（沿用当前选题文案与人设锚点），是否继续？`;
+                          }
+                          if (!window.confirm(confirmNote)) return;
+                        }
+                        setRegeneratingCoverSceneId(item.id);
+                        void runThrottledPlatformImageRequest(`single-cover:${item.id}`, () =>
+                          runEnqueueTopicImageAndPoll({
+                            topicHook,
+                            format: isGraphicCover ? "图文" : "短视频",
+                            context: buildPlatformSceneText({
+                              title: item.title,
+                              hook: item.hook ?? "",
+                              copywriting: item.copywriting ?? "",
+                              executionDetails: (
+                                item as {
+                                  executionDetails?: {
+                                    environmentAndWardrobe?: string;
+                                    lightingAndCamera?: string;
+                                  };
+                                }
+                              ).executionDetails,
+                            }),
+                            coverPersonaContext:
+                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
+                            failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
+                            sceneId: item.id,
+                            pollDebugLabel: `单张选题封面 · ${item.id}`,
+                          }),
+                        )
+                          .then((res) => {
+                            const finalUrl =
+                              res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+                            if (res.creationId != null) {
+                              setSceneJobIds((prev) => ({
+                                ...prev,
+                                [item.id]: String(res.creationId),
+                              }));
+                            }
+                            if (res.success && finalUrl) {
+                              setPlatformImageMap((prev) => ({
+                                ...prev,
+                                [item.id]: finalUrl,
+                              }));
+                              toast.success(hasDisplayedUrl ? "单张封面已更新" : "单张封面已生成");
+                            } else {
+                              toast.error("单帧生图失败，可稍后在本卡重试或联系支持。");
+                            }
+                            setRegeneratingCoverSceneId(null);
+                          })
+                          .catch((err) => {
+                            setRegeneratingCoverSceneId(null);
+                            toast.error(err.message || "操作失败");
+                          });
+                      };
                       const handleManualRegenerateCover = () => {
                         if (!isAuthenticated) {
                           toast.error("请先登录");
@@ -4240,11 +4505,55 @@ export default function PlatformPage() {
                               } ${isThisCompositeLoading ? `cursor-wait ring-2 ${compositeRingClass} [&:disabled]:opacity-100` : ""}`}
                             >
                               {isThisCompositeLoading ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                                <span className="flex max-w-[16rem] flex-col items-start gap-0.5 text-left leading-tight">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                                    生成中（约 3～5 分钟）
+                                  </span>
+                                  <span className="pl-5 text-[10px] font-medium normal-case tracking-normal text-white/70">
+                                    {compositePhaseHint}
+                                  </span>
+                                </span>
                               ) : (
-                                <CompositeIcon className="h-3.5 w-3.5 shrink-0" />
+                                <>
+                                  <CompositeIcon className="h-3.5 w-3.5 shrink-0" />
+                                  {`${compositeLabel} · ${compositeCost} 点`}
+                                </>
                               )}
-                              {isThisCompositeLoading ? "生成中…" : `${compositeLabel} · ${compositeCost} 点`}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                !isAuthenticated ||
+                                compositeMutationBusy ||
+                                isSequentialCoverBatchGenerating ||
+                                regeneratingCoverSceneId !== null ||
+                                batchGeneratingCoverIds.has(item.id) ||
+                                coverSilentRetryIds.has(item.id) ||
+                                isDashboardLoading ||
+                                isContentLoading
+                              }
+                              onClick={handleGenerateSingleCoverFooter}
+                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#ff4fb8]/45 bg-[#ff4fb8]/12 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/22 ${
+                                compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""
+                              } ${regeneratingCoverSceneId === item.id ? "cursor-wait ring-2 ring-[#ff4fb8]/35 opacity-95 [&:disabled]:opacity-95" : ""}`}
+                              title={
+                                isEligibleFreeRetry
+                                  ? "检测到黑图，本次可走免费补救链路（免扣积分）"
+                                  : `仅此选题生成竖版封面单帧 · ${normalCoverCost} 点`
+                              }
+                            >
+                              {regeneratingCoverSceneId === item.id ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                                  封面生成中…
+                                </span>
+                              ) : (
+                                <>
+                                  <Image className="h-3.5 w-3.5 shrink-0 opacity-95" aria-hidden />
+                                  {`生成单张封面 · ${singleCoverFooterPointsLabel}`}
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
