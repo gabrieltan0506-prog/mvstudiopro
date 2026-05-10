@@ -40,7 +40,6 @@ import {
   FileText,
   Film,
   Flame,
-  FlaskConical,
   Globe,
   Heart,
   Image,
@@ -71,8 +70,10 @@ import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
-const PLATFORM_IMAGE_PROMPT_TRANSLATOR_KEY = "mvplatform.imagePromptTranslator";
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
+
+/** 英文化翻譯固定走 GPT 5.4；Vertex Flash 僅後端失敗兜底，不對一般用戶開切換（長 prompt 不適配 Flash）。 */
+const PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED: PlatformImagePromptTranslator = "gpt54";
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
 const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
@@ -1106,18 +1107,6 @@ function PlatformIpDimensionGuide() {
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
-  const [imagePromptTranslator, setImagePromptTranslator] = useState<PlatformImagePromptTranslator>(() => {
-    if (typeof window === "undefined") return "gpt54";
-    const v = window.localStorage.getItem(PLATFORM_IMAGE_PROMPT_TRANSLATOR_KEY);
-    return v === "vertex_gemini_31_pro_preview" ? "vertex_gemini_31_pro_preview" : "gpt54";
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PLATFORM_IMAGE_PROMPT_TRANSLATOR_KEY, imagePromptTranslator);
-    } catch {
-      /* ignore */
-    }
-  }, [imagePromptTranslator]);
   const { isAuthenticated, loading, user } = useAuth({
     autoFetch: true,
     redirectOnUnauthenticated: !supervisorAccess,
@@ -1523,7 +1512,7 @@ export default function PlatformPage() {
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
         ...inp,
-        imagePromptTranslator: inp.imagePromptTranslator ?? imagePromptTranslator,
+        imagePromptTranslator: inp.imagePromptTranslator ?? PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED,
       });
       const tEnq = new Date().toISOString();
       setTopicImageJobPollTrace({
@@ -1607,7 +1596,7 @@ export default function PlatformPage() {
         imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
       };
     },
-    [enqueueGenerateTopicImageMutation, imagePromptTranslator],
+    [enqueueGenerateTopicImageMutation],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -1619,7 +1608,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. ${variables.imagePromptTranslator === "vertex_gemini_31_pro_preview" ? `Vertex Flash（服务端默认模型/区域）` : "GPT 5.4（最多 3 轮再 Vertex）"} 翻译英文 prompt → 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. GPT 5.4 翻译英文 prompt（最多 3 轮，失败再走服务端 Vertex 兜底）→ 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
           ],
           meta: {
             localOpId,
@@ -2884,7 +2873,7 @@ export default function PlatformPage() {
     [processingSteps, elapsedTime],
   );
   const immersiveRotatingCards = useMemo(() => {
-    const platformCards = primaryPlatforms.slice(0, 3).map((item) => ({
+    const platformCards = primaryPlatforms.slice(0, 4).map((item) => ({
       title: `${item.displayName} 当前信号`,
       summary: item.summary,
       detail: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore} / 竞争 ${item.competitionLevel}`,
@@ -3654,48 +3643,6 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 </div>
-                {(supervisorAccess || user?.role === "supervisor" || user?.role === "admin") ? (
-                  <div className="mt-4 rounded-2xl border border-[#6366f1]/40 bg-[rgba(99,102,241,0.08)] p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#a5b4fc]">
-                      单帧英文化 · 翻译模型（对照测试）
-                    </div>
-                    <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
-                      作用于并入队的封面单帧任务（重新生成、一键逐张、静默补发等）。默认 GPT 5.4（英文化最多 3 轮，与前述 2×4 相同逻辑）；选探索时走{" "}
-                      <code className="text-[#c4b5fd]">@google/genai</code> + Vertex AI，模型与区域以服务端默认为准（可用{" "}
-                      <code className="text-[#c4b5fd]">VERTEX_GEMINI_FLASH_TRANSLATION_MODEL</code> /{" "}
-                      <code className="text-[#c4b5fd]">VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION</code> 覆寫），
-                      <code className="text-[#c4b5fd]"> responseMimeType: application/json</code>。选项保存在本机 localStorage。
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
-                      <div className="flex rounded-lg bg-black/50 p-0.5 ring-1 ring-white/10">
-                        <button
-                          type="button"
-                          onClick={() => setImagePromptTranslator("gpt54")}
-                          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
-                            imagePromptTranslator === "gpt54"
-                              ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/45"
-                              : "text-gray-500 hover:text-gray-300"
-                          }`}
-                        >
-                          <Zap className="h-3 w-3 shrink-0" />
-                          GPT 5.4（穩定）
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setImagePromptTranslator("vertex_gemini_31_pro_preview")}
-                          className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium transition ${
-                            imagePromptTranslator === "vertex_gemini_31_pro_preview"
-                              ? "bg-violet-500/20 text-violet-300 ring-1 ring-violet-500/45"
-                              : "text-gray-500 hover:text-gray-300"
-                          }`}
-                        >
-                          <FlaskConical className="h-3 w-3 shrink-0" />
-                          Vertex 3.1 Flash Live（探索）
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
@@ -4062,38 +4009,12 @@ export default function PlatformPage() {
                     <div className="flex w-full flex-shrink-0 flex-col gap-3 md:w-auto md:max-w-md md:items-end">
                       <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
                         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#c4b5fd]">
-                          <FlaskConical className="h-3.5 w-3.5 text-violet-300" />
-                          生图 · 英文化翻译引擎
+                          <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                          生图 · 英文化（GPT 5.4）
                         </div>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                          作用于封面单帧、一键逐张、2×4 / 小红书合成等。後台若啟用生存模式則強制走 OpenAI 英文化；否則默認 OpenAI（最多 3 輪，失敗再嘗試 Vertex）；探索項選 Vertex。
+                          封面单帧、一键逐张、2×4 / 小红书合成等统一走 GPT 5.4 英文化（长 prompt 更稳）。服务端在 OpenAI 多次失败后可自动走 Vertex 兜底；不再提供前端切换，避免误选短上下文 Flash 译废整条链路。
                         </p>
-                        <div className="mt-3 flex rounded-xl bg-black/45 p-1 ring-1 ring-white/10">
-                          <button
-                            type="button"
-                            onClick={() => setImagePromptTranslator("gpt54")}
-                            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-semibold transition sm:text-[13px] ${
-                              imagePromptTranslator === "gpt54"
-                                ? "bg-cyan-500/25 text-cyan-200 ring-1 ring-cyan-400/50 shadow-[0_0_16px_rgba(34,211,238,0.15)]"
-                                : "text-gray-500 hover:text-gray-300"
-                            }`}
-                          >
-                            <Zap className="h-3.5 w-3.5 shrink-0" />
-                            GPT 5.4
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setImagePromptTranslator("vertex_gemini_31_pro_preview")}
-                            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-xs font-semibold transition sm:text-[13px] ${
-                              imagePromptTranslator === "vertex_gemini_31_pro_preview"
-                                ? "bg-violet-500/25 text-violet-200 ring-1 ring-violet-400/50 shadow-[0_0_16px_rgba(167,139,250,0.15)]"
-                                : "text-gray-500 hover:text-gray-300"
-                            }`}
-                          >
-                            <FlaskConical className="h-3.5 w-3.5 shrink-0" />
-                            Vertex Flash
-                          </button>
-                        </div>
                       </div>
                       {platformTopicCount > 0 ? (
                         <button
@@ -4189,7 +4110,7 @@ export default function PlatformPage() {
                               kind: compositeKind,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               creationRecordId: readOptionalReportBindingCreationId(),
-                              imagePromptTranslator,
+                              imagePromptTranslator: PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED,
                               progressJobId: newPlatformCompositeProgressJobId(),
                             });
                           };
@@ -4771,7 +4692,7 @@ export default function PlatformPage() {
                                     kind: compositeKind,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     creationRecordId: readOptionalReportBindingCreationId(),
-                                    imagePromptTranslator,
+                                    imagePromptTranslator: PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED,
                                     progressJobId: newPlatformCompositeProgressJobId(),
                                   }),
                                 ).catch(() => {});
