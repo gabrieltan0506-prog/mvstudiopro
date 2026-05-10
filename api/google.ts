@@ -17,7 +17,7 @@ export const config = {
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - op=vertexTranslate（Vertex IAM 纯文本翻译；先 us-central1，非 2xx 且非 400 时再试 global；模型 gemini-3.1-flash-live-preview-04-2026 固定版，供 TestLab）
+ * - op=vertexTranslate（Vertex IAM 纯文本翻译；先 us-central1，非 2xx 且非 400 时再试 global；模型 gemini-3-flash-preview，供 TestLab）
  * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
@@ -355,13 +355,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw });
     }
 
-    // ---------------- Vertex：TestLab 翻译（Flash Live 固定版 04-2026；先 us-central1，失败再 global；与 geminiScript 同为 IAM REST，非 @google-cloud/vertexai SDK） ----------------
+    // ---------------- Vertex：TestLab 翻译（gemini-3-flash-preview；先 us-central1，失败再 global；与 geminiScript 同为 IAM REST，非 @google-cloud/vertexai SDK） ----------------
     if (op === "vertexTranslate") {
       const sourceText = s(b.prompt || b.text || q.prompt || "").trim();
       if (!sourceText) return res.status(400).json({ ok: false, error: "missing_prompt" });
 
       const targetLang = s(b.targetLang || q.targetLang || "English").trim() || "English";
-      const model = "gemini-3.1-flash-live-preview-04-2026";
+      const model = "gemini-3-flash-preview";
       const instruction =
         `You are a professional translator. Translate the user text into ${targetLang}. ` +
         "Preserve meaning and tone. Output ONLY the translation, with no preamble or markdown.";

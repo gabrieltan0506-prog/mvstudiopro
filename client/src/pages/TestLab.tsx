@@ -793,7 +793,7 @@ export default function TestLab() {
         <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>Vertex · 翻译（TestLab）</div>
           <div style={{ marginTop: 8, opacity: 0.8 }}>
-            模型 <code style={{ fontSize: 12 }}>gemini-3.1-flash-live-preview-04-2026</code>（固定版本），区域先 <code style={{ fontSize: 12 }}>us-central1</code>，失败（非 400）时回退 <code style={{ fontSize: 12 }}>global</code>；与「脚本」同属 Vertex IAM <code>/api/google</code> 闸道；本接口为 REST <code>generateContent</code>（与 <code>@google-cloud/vertexai</code> SDK 并存，此处不强制改用 SDK）。
+            模型 <code style={{ fontSize: 12 }}>gemini-3-flash-preview</code>，区域先 <code style={{ fontSize: 12 }}>us-central1</code>，失败（非 400）时回退 <code style={{ fontSize: 12 }}>global</code>；与「脚本」同属 Vertex IAM <code>/api/google</code> 闸道；本接口为 REST <code>generateContent</code>（与 <code>@google-cloud/vertexai</code> SDK 并存，此处不强制改用 SDK）。
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <div>
