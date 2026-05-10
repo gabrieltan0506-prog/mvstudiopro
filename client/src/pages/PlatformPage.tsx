@@ -24,7 +24,11 @@ import {
   optimizePdfSnapshotHtml,
 } from "@/lib/pdfHtmlOptimize";
 import type { PlatformTitleVariant } from "@shared/platformTitleVariants";
-import { buildTitleVariantsForBlueprint, coverAppealHintForCover } from "@shared/platformTitleVariants";
+import {
+  buildAutoPickedTitleVariantsForBlueprint,
+  buildTitleVariantsForBlueprint,
+  pickPreferredTitleVariant,
+} from "@shared/platformTitleVariants";
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { buildSimulatedAdvancedAIReport } from "@shared/advancedPredictionEngine";
 import {
@@ -652,39 +656,31 @@ function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleV
   return out.length >= 2 ? out : fallback;
 }
 
-function PlatformTitleVariantStrip(props: {
-  variants: PlatformTitleVariant[];
-  selectedId: "a" | "b";
-  onSelect: (id: "a" | "b") => void;
-}) {
-  const { variants, selectedId, onSelect } = props;
-  if (!variants.length) return null;
-  return (
-    <div className="mt-3 space-y-1.5">
-      <p className="text-[11px] leading-relaxed text-white/42">
-        同一套正文不换，只换列表/封面上的主标题说法，点一条用于本卡展示和出图。
-      </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {variants.map((v) => {
-          const active = selectedId === v.id;
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => onSelect(v.id)}
-              className={`rounded-lg border p-3 text-left text-sm leading-snug transition ${
-                active
-                  ? "border-[#ff4fb8]/55 bg-[#ff4fb8]/12 text-white"
-                  : "border-white/10 bg-black/25 text-white/90 hover:border-white/22"
-              }`}
-            >
-              {v.title}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
+/** 與後端單條展示標題對齊（具體規則在 shared / 後台）。 */
+function resolveExecutionCardTitleVariants(
+  rawItem: Record<string, unknown>,
+  title: string,
+  hook: string,
+  copywriting: string,
+  index: number,
+): PlatformTitleVariant[] {
+  const hookStr = String(hook || "").replace(/\s+/g, " ").trim();
+  const seed = { ...rawItem, title, hook, copywriting };
+  const fallbackPair = buildTitleVariantsForBlueprint(seed, index);
+  const raw = rawItem.titleVariants;
+  if (Array.isArray(raw) && raw.length >= 2) {
+    const normalized = normalizeTitleVariantsFromServer(raw, fallbackPair);
+    const w = pickPreferredTitleVariant(normalized, hookStr);
+    return [{ id: "a", title: w.title }];
+  }
+  if (Array.isArray(raw) && raw.length === 1) {
+    const row = raw[0];
+    if (row && typeof row === "object") {
+      const t = String((row as { title?: unknown }).title ?? "").trim();
+      if (t) return [{ id: "a", title: t }];
+    }
+  }
+  return buildAutoPickedTitleVariantsForBlueprint(seed, index);
 }
 
 /** 執行選題卡 DOM id：穩定錨點 `execution-card-…`（畫廊不綁定點擊滾動） */
@@ -1285,8 +1281,6 @@ export default function PlatformPage() {
   }, [platformImageGenFlowSnapshots]);
   /** 单张封面「重新生成」进行中（显示骨架，避免无反馈） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
-  /** 選題卡：僅本地記錄「用哪句當發文大標」，不寫庫、不占 Neon。 */
-  const [titleVariantPickBySceneId, setTitleVariantPickBySceneId] = useState<Record<string, "a" | "b">>({});
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
   /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
@@ -2719,22 +2713,20 @@ export default function PlatformPage() {
           scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
         }
 
-        const fallbackVariants = buildTitleVariantsForBlueprint(
-          { ...item, title, hook, copywriting },
+        const titleVariants = resolveExecutionCardTitleVariants(
+          item as Record<string, unknown>,
+          String(title),
+          String(hook),
+          String(copywriting),
           index,
         );
-        const normalized = normalizeTitleVariantsFromServer(item.titleVariants, fallbackVariants);
         const baseTitle = cleanUserCopy(
-          renderSafeText(title || item.theme || item.titleExample, `内容方案 ${index + 1}`),
+          renderSafeText(
+            titleVariants[0]?.title || title || item.theme || item.titleExample,
+            `内容方案 ${index + 1}`,
+          ),
           `内容方案 ${index + 1}`,
         );
-        const titleVariants =
-          normalized.length >= 2
-            ? [
-                { id: "a" as const, title: baseTitle },
-                { id: "b" as const, title: normalized[1]!.title },
-              ]
-            : normalized;
 
         return {
           id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
@@ -2765,22 +2757,20 @@ export default function PlatformPage() {
 
     // Pre-analysis state only: show snapshot topics as preview placeholders
     return topTopics.slice(0, 4).map((item, index) => {
-      const baseTitle = cleanUserCopy(item.title, `内容方案 ${index + 1}`);
-      const tvs = buildTitleVariantsForBlueprint(
-        {
-          title: item.title,
-          hook: item.howToUse,
-          copywriting: item.whyHot,
-        },
+      const baseTitleRaw = item.title;
+      const hookRaw = item.howToUse;
+      const copyRaw = item.whyHot;
+      const titleVariants = resolveExecutionCardTitleVariants(
+        { title: baseTitleRaw, hook: hookRaw, copywriting: copyRaw },
+        baseTitleRaw,
+        hookRaw,
+        copyRaw,
         index,
       );
-      const titleVariants =
-        tvs.length >= 2
-          ? [
-              { id: "a" as const, title: baseTitle },
-              { id: "b" as const, title: tvs[1]!.title },
-            ]
-          : tvs;
+      const baseTitle = cleanUserCopy(
+        titleVariants[0]?.title || baseTitleRaw,
+        `内容方案 ${index + 1}`,
+      );
       return {
       id: String((item as any).id || (item as any).sceneId || `topic-${index}`),
       title: baseTitle,
@@ -2814,9 +2804,6 @@ export default function PlatformPage() {
       });
       return next;
     });
-    setTitleVariantPickBySceneId((prev) =>
-      Object.fromEntries(Object.entries(prev).filter(([key]) => validIds.has(key))) as Record<string, "a" | "b">,
-    );
   }, [contentExecutionCards, contentExecutionCardsKey]);
 
   const platformTopicCount = contentExecutionCards.length;
@@ -4624,6 +4611,16 @@ export default function PlatformPage() {
                 {/* 3A：選題卡片 Grid 上方 — IP 維度引導（含底部提示） */}
                 {platformDashboard ? <PlatformIpDimensionGuide /> : null}
 
+                {contentExecutionCards.length > 0 ? (
+                  <div
+                    className="mt-4 rounded-xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] px-4 py-3 text-sm leading-relaxed text-[#c8eef9]"
+                    role="status"
+                  >
+                    本期已启用<strong className="text-white">选题与封面展示优化</strong>
+                    ，由系统在后台自动处理展示标题与出图方向，无需额外设置，可直接生成封面。
+                  </div>
+                ) : null}
+
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length > 0 &&
                   coverWaitCarouselEngaged &&
@@ -4644,12 +4641,7 @@ export default function PlatformPage() {
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const digest = copyFlat.slice(0, 60);
-                      const variants = item.titleVariants ?? [];
-                      const tvPick = titleVariantPickBySceneId[item.id] ?? "a";
-                      const headlineTitle =
-                        tvPick === "b" && variants[1]?.title
-                          ? variants[1].title
-                          : variants[0]?.title || item.title;
+                      const headlineTitle = item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
                       const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
                       const compositeCost = isGraphicFormat
@@ -4938,18 +4930,6 @@ export default function PlatformPage() {
                           <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-gray-400">
                             {digest}
                             {copyFlat.length > 60 ? "…" : ""}
-                          </p>
-                        ) : null}
-                        <PlatformTitleVariantStrip
-                          variants={item.titleVariants ?? []}
-                          selectedId={tvPick}
-                          onSelect={(id) =>
-                            setTitleVariantPickBySceneId((prev) => ({ ...prev, [item.id]: id }))
-                          }
-                        />
-                        {variants.length ? (
-                          <p className="mt-2 text-[11px] leading-relaxed text-white/45">
-                            {coverAppealHintForCover(headlineTitle, item.hook ?? "")}
                           </p>
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">

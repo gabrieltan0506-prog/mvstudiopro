@@ -66,26 +66,45 @@ export function buildTitleVariantsFromBlueprint(bp: Record<string, unknown>, ind
   ];
 }
 
-/** 與 buildTitleVariantsFromBlueprint 相同（舊名保留）。 */
-export const buildTitleVariantsForBlueprint = buildTitleVariantsFromBlueprint;
-
 /**
- * 封面這句話對「想不想點進來」的粗判（不報 CTR、不報假小數）。
- * 給用戶一句能不能照拍照發的去向提示。
+ * 粗粒度「封面主句點擊意圖」分數（僅內部排序用，不對用戶報 CTR 或小數）。
+ * 分數高者優先作為出圖與列表主標題。
  */
-export function coverAppealHintForCover(title: string, hook: string): string {
+export function scoreTitleForCoverClickAppeal(title: string, hook: string): number {
   const t = (title || "").replace(/\s+/g, " ").trim();
   const h = (hook || "").replace(/\s+/g, " ").trim();
   let score = 0;
   const len = t.length;
-  if (len >= 8 && len <= 44) score++;
-  if (h.length >= 10) score++;
-  if (/[？?！!]|[0-9]{1,2}|为什么|怎样|如何|别再|千万不要|我以为|其实/.test(t + h)) score++;
-  if (score >= 3) {
-    return "这句封面话信息够具体，按脚本拍、字够大通常更容易把人点进来；有没有带来咨询或变现，以你这条赛道真实反馈为准。";
-  }
-  if (score === 2) {
-    return "可以首发。封面主句再大一点、对比再强一点，前 3 秒把结论亮出来，更容易拿到第一批互动。";
-  }
-  return "建议把封面主句再收紧一点（少一点空词、多一点可感知的结果），且正文不用改，调好再发。";
+  if (len >= 8 && len <= 44) score += 2;
+  else if (len >= 6 && len <= 52) score += 1;
+  if (h.length >= 10) score += 1;
+  if (/[？?！!]|[0-9]{1,2}|为什么|怎样|如何|别再|千万不要|我以为|其实/.test(t + h)) score += 1;
+  if (/痛|亏|秘密|真相|误区|后悔|千万别|居然|居然/.test(t)) score += 1;
+  return score;
 }
+
+/** 在 A/B 兩句標題中選封面意圖較高的一句；平手保留 A。 */
+export function pickPreferredTitleVariant(variants: PlatformTitleVariant[], hook: string): PlatformTitleVariant {
+  if (variants.length === 0) return { id: "a", title: "" };
+  const a = variants[0]!;
+  if (variants.length === 1) return { id: "a", title: a.title };
+  const b = variants[1]!;
+  const sa = scoreTitleForCoverClickAppeal(a.title, hook);
+  const sb = scoreTitleForCoverClickAppeal(b.title, hook);
+  if (sb > sa) return { id: "a", title: b.title };
+  return { id: "a", title: a.title };
+}
+
+/**
+ * 後端 / 列表統一：自動選定一條主標題（不向用戶展示二選一）。
+ * 與 buildTitleVariantsFromBlueprint 同源種子，只輸出勝者一條（id 統一為 a）。
+ */
+export function buildAutoPickedTitleVariantsForBlueprint(bp: Record<string, unknown>, index: number): PlatformTitleVariant[] {
+  const pair = buildTitleVariantsFromBlueprint(bp, index);
+  const hook = String(bp.hook ?? bp.openingHook ?? bp.contentHook ?? "").replace(/\s+/g, " ").trim();
+  const w = pickPreferredTitleVariant(pair, hook);
+  return [{ id: "a", title: w.title }];
+}
+
+/** 與 {@link buildTitleVariantsFromBlueprint} 同義（舊匯入名）。 */
+export const buildTitleVariantsForBlueprint = buildTitleVariantsFromBlueprint;
