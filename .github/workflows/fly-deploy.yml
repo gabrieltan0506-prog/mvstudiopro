@@ -33,21 +33,44 @@ jobs:
             sleep 10
           done
           echo "Warning: failed to fetch pre-deploy growth status, continuing deploy"
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Configure Docker for Fly registry
-        # Fly registry / org API 偶发 503；短暂重试可避免整次流水线失败。
+      - uses: superfly/flyctl-actions/setup-flyctl@v1
+      - name: Authenticate Fly registry & build-push image
+        # Fly「flyctl auth docker」寫入的 Registry 口令約 5 分鐘有效（官方文檔）。
+        # 將 auth 緊鄰於 buildx --push；若 Registry 間歇性報錯（含 tls/access），在重試環內重新 auth。
+        # setup-flyctl 使用 @v1 避免上游 @master 行為漂移。
         run: |
           set -e
-          for attempt in 1 2 3 4 5 6; do
-            echo "flyctl auth docker attempt $attempt/6..."
-            if flyctl auth docker; then exit 0; fi
-            if [ "$attempt" -lt 6 ]; then sleep 25; fi
+          fly_auth_retries() {
+            local attempt
+            for attempt in 1 2 3 4 5 6; do
+              echo "flyctl auth docker attempt ${attempt}/6..."
+              if flyctl auth docker; then return 0; fi
+              if [ "${attempt}" -lt 6 ]; then sleep 25; fi
+            done
+            return 1
+          }
+
+          push_attempt=1
+          max_push_attempts=3
+          while [ "${push_attempt}" -le "${max_push_attempts}" ]; do
+            echo ">>> Registry push attempt ${push_attempt}/${max_push_attempts} (fresh flyctl auth docker before buildx --push)"
+
+            fly_auth_retries || exit 1
+
+            if docker buildx build --platform linux/amd64 -t "$IMAGE_REF" --push .; then
+              exit 0
+            fi
+
+            if [ "${push_attempt}" -lt "${max_push_attempts}" ]; then
+              echo "buildx push failed; waiting 30s before re-auth retry..."
+              sleep 30
+            fi
+            push_attempt=$((push_attempt + 1))
           done
+
           exit 1
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-      - name: Build deploy image
-        run: docker buildx build --platform linux/amd64 -t "$IMAGE_REF" --push .
       - name: Deploy prebuilt image
         # --ha=false：禁止 Fly 在 deploy 时自动繁殖副本机器。
         #   单机部署 + 持久卷 growth_data（jobs / deep-research 写盘）模式下，多机
