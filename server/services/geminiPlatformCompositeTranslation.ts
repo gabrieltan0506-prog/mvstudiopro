@@ -116,7 +116,7 @@ export function resolveVertexFlashTranslationLocation(): string {
 }
 
 /** Vertex 英文化預設模型（可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫） */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview";
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview-latest";
 
 export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
