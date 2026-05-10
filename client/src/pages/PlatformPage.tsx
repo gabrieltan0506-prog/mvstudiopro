@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
@@ -34,6 +35,10 @@ import {
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { buildSimulatedAdvancedAIReport } from "@shared/advancedPredictionEngine";
 import {
+  formatDecisionIntelDateRangeZh,
+  pickPrimaryDecisionIntelPlatformHint,
+} from "@shared/decisionIntelligencePlatformHint";
+import {
   Activity,
   ArrowLeft,
   ArrowRight,
@@ -59,6 +64,7 @@ import {
   Layers,
   Loader2,
   Lock,
+  Map,
   MessageSquareText,
   Mic,
   Palette,
@@ -90,6 +96,11 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
 const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
+/** 英雄區「付费能力」锚点：接線至下方對應區塊 */
+const PLATFORM_SECTION_DECISION_INTEL_ID = "platform-decision-intel";
+const PLATFORM_SECTION_DEEP_QA_ID = "platform-deep-qa";
+const PLATFORM_SECTION_TREND_RUN_ID = "platform-trend-run";
+const PLATFORM_SECTION_TREND_SIGNALS_ID = "platform-trend-signals";
 
 /** 快照克隆前：單張圖 load/error 逾時（選題多時並行等待，總耗時≈最慢一張） */
 const PLATFORM_PDF_PER_IMAGE_WAIT_MS = 12_000;
@@ -1183,6 +1194,8 @@ export default function PlatformPage() {
     redirectOnUnauthenticated: !supervisorAccess,
     redirectPath: getLoginUrl(),
   });
+  const queryClient = useQueryClient();
+  const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
@@ -1326,6 +1339,8 @@ export default function PlatformPage() {
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
   /** 封面图 onError：已对原始 URL 尝试过一次 cache-bust（避免误用「免扣 failedJobId」清图） */
   const coverImageCacheBustTriedRef = useRef<Set<string>>(new Set());
+  /** 每次点击「开始全案分析」确认后递增，随决策智库 mutation 写入 requestHash，避免命中上一轮同参缓存 */
+  const platformAnalysisEpochRef = useRef(0);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -1338,7 +1353,7 @@ export default function PlatformPage() {
     },
     {
       enabled: false,
-      staleTime: 300_000,
+      staleTime: 0,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       refetchOnMount: false,
@@ -2306,6 +2321,10 @@ export default function PlatformPage() {
   const monetizationStrategies = snapshot?.monetizationStrategies ?? [];
 
   const primaryPlatforms = useMemo(() => snapshot?.platformSnapshots.slice(0, 4) ?? [], [snapshot]);
+  const decisionIntelPlatformHint = useMemo(
+    () => pickPrimaryDecisionIntelPlatformHint(primaryPlatforms),
+    [primaryPlatforms],
+  );
   const maxFit = Math.max(...primaryPlatforms.map((item) => item.audienceFitScore), 100);
   const maxMomentum = Math.max(...primaryPlatforms.map((item) => item.momentumScore), 100);
   const topTopics = useMemo(
@@ -2328,14 +2347,14 @@ export default function PlatformPage() {
       hotTopics: platformDashboard?.hotTopics?.slice(0, 12),
       monetizationLanes: platformDashboard?.monetizationLanes?.slice(0, 6),
       trendNarrative: snapshot?.overview?.trendNarrative,
-      /** Stage 2 專屬文案／選題結構 — 決策智庫僅在寫入完成後開放，一併納入分析 */
+      /** Stage 2 专属文案／选题结构 — 决策智库仅在写入完成后开放，一并纳入分析 */
       stage2ContentBlueprints: platformContent?.contentBlueprints?.slice(0, 8),
       stage2MonetizationLanes: platformContent?.monetizationLanes?.slice(0, 8),
     }),
     [platformDashboard, snapshot, platformContent],
   );
 
-  /** 全案專屬文案（Stage 2）成功落地後才允許示意預覽與扣點生成；價格查詢不受此限。 */
+  /** 全案专属文案（Stage 2）成功落地后才允许示意预览与扣点生成；价格查询不受此限。 */
   const decisionIntelInputReady = useMemo(() => {
     if (!snapshot || !platformDashboard) return false;
     if (isContentLoading) return false;
@@ -2353,27 +2372,34 @@ export default function PlatformPage() {
   ]);
   const strategicMapTopic = useMemo(() => {
     const raw = (platformDashboard?.headline || platformDashboard?.subheadline || "").trim();
-    return raw.slice(0, 160) || "個性化戰略選題";
+    return raw.slice(0, 160) || "个性化战略选题";
   }, [platformDashboard]);
 
   /**
-   * 僅在全案專屬文案已落地後演算示意預覽，避免用淺層看板做出「很滿」的假預覽誤導付費。
-   * 與付費入庫同一套引擎與輸入；鎖定態僅作模糊示意（非外製靜態 Demo）。
+   * 仅在全案专属文案已落地后演算示意预览，避免用浅层看板做出「很满」的假预览误导付费。
+   * 与付费入库同一套引擎与输入；锁定态仅作模糊示意（非外制静态 Demo）。
    */
   const strategicMapPreviewReport = useMemo((): AdvancedAIReportData | null => {
     if (!decisionIntelInputReady || !platformDashboard) return null;
-    const now = new Date();
-    const dateRange = `${new Date(now.getTime() - 15 * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
+    const dateRange = formatDecisionIntelDateRangeZh(selectedWindowDays);
     return buildSimulatedAdvancedAIReport({
       topic: strategicMapTopic,
       dateRange,
       contentBlueprint: strategicMapBlueprint,
-      platformData: { platform: "douyin" },
+      platformData: { platform: decisionIntelPlatformHint },
       thinkingLevel: "HIGH",
+      windowDays: selectedWindowDays,
     });
-  }, [decisionIntelInputReady, platformDashboard, strategicMapTopic, strategicMapBlueprint]);
+  }, [
+    decisionIntelInputReady,
+    platformDashboard,
+    strategicMapTopic,
+    strategicMapBlueprint,
+    selectedWindowDays,
+    decisionIntelPlatformHint,
+  ]);
 
-  /** 價格與歷史報告始終可查，避免按鈕無價、介面像故障或誘導 */
+  /** 价格与历史报告始终可查，避免按钮无价、界面像故障或诱导 */
   const decisionIntelPricingQuery = trpc.mvAnalysis.getDecisionIntelligencePricing.useQuery(undefined, {
     enabled: isAuthenticated && !!platformDashboard && !!snapshot,
     staleTime: 60_000,
@@ -2383,11 +2409,11 @@ export default function PlatformPage() {
   });
   const generateDecisionIntelMutation = trpc.mvAnalysis.generateDecisionIntelligenceReport.useMutation({
     onSuccess: () => {
-      toast.success("戰略地圖已解鎖，報告已為您存檔（未查看也會保留）");
+      toast.success("战略地图已解锁，报告已为您存档（未查看也会保留）");
       void decisionIntelLatestQuery.refetch();
       void decisionIntelPricingQuery.refetch();
     },
-    onError: (e) => toast.error(e.message || "解鎖失敗"),
+    onError: (e) => toast.error(e.message || "解锁失败"),
   });
   const unlockedStrategicReport = useMemo((): AdvancedAIReportData | null => {
     const fromLatest = decisionIntelLatestQuery.data?.report;
@@ -2401,7 +2427,7 @@ export default function PlatformPage() {
     const el = strategicReportDashboardRef.current;
     const report = unlockedStrategicReport;
     if (!el || !report) {
-      toast.error("請先解鎖報告後再導出");
+      toast.error("请先解锁报告后再导出");
       return;
     }
     setIsExportingStrategicPng(true);
@@ -2418,13 +2444,13 @@ export default function PlatformPage() {
       const link = document.createElement("a");
       const rawTopic = String(report.topic || "decision-report").replace(/[\\/:*?"<>|]/g, "·");
       const safeTopic = rawTopic.slice(0, 48);
-      link.download = `mvstudiopro-決策智庫-${safeTopic}-${Date.now()}.png`;
+      link.download = `mvstudiopro-决策智库-${safeTopic}-${Date.now()}.png`;
       link.href = dataUrl;
       link.click();
-      toast.success("報告圖已下載（PNG）");
+      toast.success("报告图已下载（PNG）");
     } catch (e) {
       console.error(e);
-      toast.error("導出圖片失敗，請稍後再試");
+      toast.error("导出图片失败，请稍后再试");
     } finally {
       setIsExportingStrategicPng(false);
     }
@@ -3209,6 +3235,10 @@ export default function PlatformPage() {
       return;
     }
 
+    platformAnalysisEpochRef.current += 1;
+    void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
+    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+
     setAskResult(null);
     setPlatformDashboard(null);
     setDashboardDebug(null);
@@ -3221,6 +3251,27 @@ export default function PlatformPage() {
     setContentJobPollTrace(null);
     setElapsedTime(0);
     setRotatingCardIndex(0);
+    setPlatformImageMap({});
+    setPlatformStoryboardSheetMap({});
+    setPlatformXhsNoteMap({});
+    setSceneJobIds({});
+    setPendingCompositeSheet(null);
+    compositeSheetLivePollCtxRef.current = null;
+    setPlatformImageGenFlowSnapshots([]);
+    setRegeneratingCoverSceneId(null);
+    setCoverWaitCarouselEngaged(false);
+    setCoverLoadRetriedIds(() => new Set());
+    setCompositeLoadRetriedKeys(() => new Set());
+    setCoverSilentRetryIds(() => new Set());
+    setBatchGeneratingCoverIds(() => new Set());
+    setIsSequentialCoverBatchGenerating(false);
+    topicImagePollFlowLogCursorRef.current = 0;
+    setTopicImageJobPollTrace(null);
+    coverImageCacheBustTriedRef.current = new Set();
+
+    void trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport.invalidate();
+    void trpcUtils.mvAnalysis.getDecisionIntelligencePricing.invalidate();
+    generateDecisionIntelMutation.reset();
 
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
@@ -3344,6 +3395,35 @@ export default function PlatformPage() {
     }
   };
 
+  const scrollToPaidDecisionIntel = useCallback(() => {
+    const el = document.getElementById(PLATFORM_SECTION_DECISION_INTEL_ID);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    toast.message("请先完成全案分析：右侧「开始全案分析」入队后，待专属文案写入即可在本页解锁决策智库视图。");
+    document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const scrollToPaidDeepQa = useCallback(() => {
+    const el = document.getElementById(PLATFORM_SECTION_DEEP_QA_ID);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    toast.message("深度追问在报告区下方：请先生成战略看板与报告内容。");
+    document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const scrollToPaidPlatformTrends = useCallback(() => {
+    if (snapshot) {
+      document.getElementById(PLATFORM_SECTION_TREND_SIGNALS_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    toast.message("平台趋势来自当前窗口快照：请在右侧选择天数与判断焦点，并点击「开始全案分析」。");
+    document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [snapshot]);
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0b0620] text-white">
@@ -3442,6 +3522,65 @@ export default function PlatformPage() {
                 <TrendingUp className="h-3.5 w-3.5" />
                 平台顾问台
               </div>
+              <div className="mt-4 flex flex-col gap-2">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8cefff]/90">本页付费能力 · 一键直达</div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => void scrollToPaidPlatformTrends()}
+                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-white/12 bg-[rgba(255,255,255,0.05)] px-4 py-3 text-left transition hover:border-[#49e6ff]/35 hover:bg-[rgba(73,230,255,0.08)] sm:min-w-[12.5rem] sm:flex-none"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 text-[#8cefff]">
+                      <BarChart3 className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-white">平台趋势分析</span>
+                        <span className="rounded-full border border-[#fef08a]/35 bg-[rgba(254,240,138,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#fef08a]">
+                          {CREDIT_COSTS.platformStage2Copywriting} 积分起
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-[#b7add8]">全案入队读取窗口样本、热点与平台信号</p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void scrollToPaidDecisionIntel()}
+                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-white/12 bg-[rgba(255,255,255,0.05)] px-4 py-3 text-left transition hover:border-[#ff4fb8]/35 hover:bg-[rgba(255,79,184,0.08)] sm:min-w-[12.5rem] sm:flex-none"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ffc6e8]">
+                      <Map className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-white">个人战略全景</span>
+                        <span className="rounded-full border border-[#f472b6]/40 bg-[rgba(244,114,182,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#fbcfe8]">
+                          智库加购
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-[#b7add8]">专属文案就绪后可解锁一页可视化决策地图</p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void scrollToPaidDeepQa()}
+                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-white/12 bg-[rgba(255,255,255,0.05)] px-4 py-3 text-left transition hover:border-[#a78bfa]/40 hover:bg-[rgba(167,139,250,0.10)] sm:min-w-[12.5rem] sm:flex-none"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#a78bfa]/35 bg-[#a78bfa]/12 text-[#ddd6fe]">
+                      <MessageSquareText className="h-5 w-5" aria-hidden />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-white">深度追问</span>
+                        <span className="rounded-full border border-[#c4b5fd]/35 bg-[rgba(196,181,253,0.10)] px-2 py-0.5 text-[10px] font-semibold text-[#e9d5ff]">
+                          按次扣点
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] leading-snug text-[#b7add8]">基于当前窗口数据追问到形式、节奏与承接</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
               <h1 className="mt-5 max-w-5xl text-[40px] font-black leading-[0.92] text-white md:text-[64px] xl:text-[76px]">
                 不是告诉你"平台都能做"
                 <span className="mt-2 block bg-[linear-gradient(135deg,#5af2ff,#7d73ff_45%,#ff75bd_85%)] bg-clip-text text-transparent">
@@ -3501,7 +3640,7 @@ export default function PlatformPage() {
               </button>
             </div>
 
-            <div className="grid gap-4">
+            <div id={PLATFORM_SECTION_TREND_RUN_ID} className="scroll-mt-20 grid gap-4">
               <div className="rounded-[26px] border border-[#2a1c55] bg-[linear-gradient(180deg,rgba(28,16,60,0.96),rgba(12,8,28,0.96))] p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <CalendarRange className="h-4 w-4 text-[#49e6ff]" />
@@ -3670,7 +3809,10 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section
+          id={PLATFORM_SECTION_TREND_SIGNALS_ID}
+          className="scroll-mt-20 mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+        >
           {resultSummaryCards.map((item, index) => (
             <div key={`${item.label}-${index}`} className={shellCardClasses("p-5 flex flex-col justify-center")}>
               {item.isLoadingSkeleton ? (
@@ -3942,22 +4084,25 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5">
+            <div
+              id={PLATFORM_SECTION_DECISION_INTEL_ID}
+              className="scroll-mt-20 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5"
+            >
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/10">
                     <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white md:text-lg">個性化戰略地圖（決策智庫視圖）</h3>
+                    <h3 className="text-base font-bold text-white md:text-lg">个性化战略地图（决策智库视图）</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      在<strong className="text-white">全案專屬文案已成功寫入</strong>後，將本頁戰略看板與長稿要點<strong className="text-white">收斂成一頁可視化報告</strong>
-                      （雷達、執行向建議與閱讀用排行條；均為<strong className="text-white">輔助決策的模型推演</strong>，不構成效果承諾）。解鎖為
-                      <strong className="text-white"> 加購模組</strong>
-                      ，與全案入隊扣點分開計：首次體驗{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 積分</strong>，之後每次{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 積分</strong>。
-                      扣費於後台<strong className="text-white">成功產出後結算</strong>並存檔；除可驗證的系統故障外，<strong className="text-red-200/95">與全案相同不因主觀不滿意而退點</strong>。
+                      在<strong className="text-white">全案专属文案已成功写入</strong>后，将本页战略看板与长稿要点<strong className="text-white">收敛成一页可视化报告</strong>
+                      （雷达、执行向建议与阅读用排行条；均为<strong className="text-white">辅助决策的模型推演</strong>，不构成效果承诺）。解锁为
+                      <strong className="text-white"> 加购模块</strong>
+                      ，与全案入队扣点分开计：首次体验{" "}
+                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
+                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
+                      扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
                   </div>
                 </div>
@@ -3965,20 +4110,20 @@ export default function PlatformPage() {
                   <div className="flex shrink-0 flex-col items-stretch gap-2 md:items-end">
                     <span className="text-[11px] text-gray-500">
                       {decisionIntelPricingQuery.data?.priorCompletedCount
-                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 點`
-                        : `尚未解鎖 · 首次體驗 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 點`}
+                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 点`
+                        : `尚未解锁 · 首次体验 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 点`}
                     </span>
                     {!decisionIntelInputReady ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
                         {isContentLoading
-                          ? "專屬文案生成中，完成後才可扣點解鎖（價格已標示於上）。"
+                          ? "专属文案生成中，完成后才可扣点解锁（价格已标示于上）。"
                           : stage2Failed || contentJobError
-                            ? "專屬文案未完成，請重試全案文案後再解鎖本模組。"
+                            ? "专属文案未完成，请重试全案文案后再解锁本模块。"
                             : stage2EmptyPayload
-                              ? "後台未返回有效選題請重試；完成後再解鎖。"
+                              ? "后台未返回有效选题请重试；完成后再解锁。"
                               : platformDashboard && !platformContent
-                                ? "請先完成專屬文案入隊結果，再解鎖本報告。"
-                                : "請完成全案專屬文案後再解鎖。"}
+                                ? "请先完成专属文案入队结果，再解锁本报告。"
+                                : "请完成全案专属文案后再解锁。"}
                       </span>
                     ) : null}
                     <button
@@ -3991,16 +4136,30 @@ export default function PlatformPage() {
                       onClick={() => {
                         const next = decisionIntelPricingQuery.data?.nextCredits;
                         if (next == null) return;
+                        const latestWd = decisionIntelLatestQuery.data?.windowDays;
+                        if (
+                          latestWd != null &&
+                          latestWd !== selectedWindowDays &&
+                          decisionIntelLatestQuery.data?.report
+                        ) {
+                          const okWin = window.confirm(
+                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
+                          );
+                          if (!okWin) return;
+                        }
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `將扣除 ${next} 積分，基於當前「戰略看板 + 已寫入的專屬文案」生成決策智庫報告並存檔。\n\n報告為模型輔助閱讀與推演，非效果保證；成功出貨後恕不因主觀不滿意退點（與全案說明一致）。是否繼續？`,
+                            `将扣除 ${next} 积分，基于当前「战略看板 + 已写入的专属文案」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
                           );
                           if (!ok) return;
                         }
                         generateDecisionIntelMutation.mutate({
                           topic: strategicMapTopic,
                           contentBlueprint: strategicMapBlueprint,
-                          platformHint: "douyin",
+                          platformHint: decisionIntelPlatformHint,
+                          windowDays: selectedWindowDays,
+                          dateRange: formatDecisionIntelDateRangeZh(selectedWindowDays),
+                          platformAnalysisEpoch: platformAnalysisEpochRef.current,
                         });
                       }}
                       className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#ff4fb8]/50 bg-[#ff4fb8]/15 px-4 py-2 text-sm font-bold text-[#ffc6e8] transition hover:bg-[#ff4fb8]/25 disabled:opacity-45"
@@ -4008,7 +4167,7 @@ export default function PlatformPage() {
                       {generateDecisionIntelMutation.isPending ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                          解鎖中…
+                          解锁中…
                         </>
                       ) : unlockedStrategicReport ? (
                         <>
@@ -5072,12 +5231,21 @@ export default function PlatformPage() {
                         id={executionCardDomId(item.id)}
                         className="group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            {item.format === "图文" ? <Image className="h-4 w-4 shrink-0 text-[#ff7fd5]" /> : <Video className="h-4 w-4 shrink-0 text-[#49e6ff]" />}
-                            <div className="truncate text-lg font-bold text-white">{headlineTitle}</div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-1 items-start gap-2">
+                            {item.format === "图文" ? (
+                              <Image className="mt-0.5 h-4 w-4 shrink-0 text-[#ff7fd5]" />
+                            ) : (
+                              <Video className="mt-0.5 h-4 w-4 shrink-0 text-[#49e6ff]" />
+                            )}
+                            <h3
+                              className="min-w-0 flex-1 whitespace-normal break-words text-xl font-bold leading-snug text-white"
+                              title={headlineTitle}
+                            >
+                              {headlineTitle}
+                            </h3>
                           </div>
-                          <div className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                          <div className="mt-0.5 shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
                             {item.format}
                           </div>
                         </div>
@@ -5466,7 +5634,7 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <div className={shellCardClasses("p-6")}>
+              <div id={PLATFORM_SECTION_DEEP_QA_ID} className={`scroll-mt-20 ${shellCardClasses("p-6")}`}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <MessageSquareText className="h-4 w-4 text-[#8cefff]" />
                   深度追问

@@ -1,6 +1,6 @@
 /**
  * B 端「爆款決策與增長管線」智庫報告資料結構。
- * 用於內部決策／智庫 PDF 等場景；數值可由模擬引擎或日後真實模型填充。
+ * 用于内部决策／智库 PDF 等场景；数值由参考历史数据与蓝图的预测引擎填充，并可持续对接真实模型。
  */
 
 export type AdvancedMABVariantMode = "utilize" | "explore";
@@ -18,6 +18,11 @@ export interface AdvancedAIReportGlobalPredictions {
   totalViewsPredicted: number;
   averageConversionRate: number;
   hitPotentialRadar: AdvancedAIReportHitPotentialRadar;
+  /**
+   * 主戰場平台切片雷達（五維定義與全局一致，數值依平台特性與藍圖獨立演算）。
+   * 舊存檔可能闕漏，前端可退回為從全局衍生之保守近似。
+   */
+  platformHitPotentialRadar?: AdvancedAIReportHitPotentialRadar;
 }
 
 export interface AdvancedAIReportCoreInsight {

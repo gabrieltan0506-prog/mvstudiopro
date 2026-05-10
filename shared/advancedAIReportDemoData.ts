@@ -1,8 +1,8 @@
 import type { AdvancedAIReportData } from "./advancedAIReport";
 
-/** 離線／元件預設演示用；上線產品請用 {@link ./advancedPredictionEngine.ts} 與當前戰略上下文組裝。 */
+/** 离线／组件预设演示用；上线产品请用 {@link ./advancedPredictionEngine.ts} 与当前战略上下文组装。 */
 export const DEMO_ADVANCED_AI_REPORT_DATA: AdvancedAIReportData = {
-  topic: "女性心病 × 生活美學",
+  topic: "女性心病 × 生活美学",
   dateRange: "2026/04/25 — 2026/05/10",
   globalPredictions: {
     totalViewsPredicted: 2_150_000,
@@ -14,32 +14,39 @@ export const DEMO_ADVANCED_AI_REPORT_DATA: AdvancedAIReportData = {
       platformPotential: 88,
       mabEfficiency: 95,
     },
+    platformHitPotentialRadar: {
+      views: 82,
+      conversion: 88,
+      brandFit: 86,
+      platformPotential: 79,
+      mabEfficiency: 91,
+    },
   },
   coreInsights: [
     {
       id: 1,
       title: "核心洞察 1",
       content:
-        "判斷1：女性心病 × 宋代點茶，是近 15 天最強勁的跨界賽道；適合主軸故事化 + 清單體分流。",
-      metricsText: "預測播放量區間與轉化率已納入敘事結構加權。",
+        "判断1：女性心病 × 宋代点茶，是近 15 天最强劲的跨界赛道；适合主轴故事化 + 清单体分流。",
+      metricsText: "预测播放量区间与转化率已纳入叙事结构加权。",
     },
     {
       id: 2,
       title: "核心洞察 2",
-      content: "判斷2：爵士情緒線可拉高高活躍客群停留，建議前 3 秒給出可感知結果。",
-      metricsText: "轉化模型對「情緒 + 節奏」組合給予正向偏置。",
+      content: "判断2：爵士情绪线可拉高活跃客群停留，建议前 3 秒给出可感知结果。",
+      metricsText: "转化模型对「情绪 + 节奏」组合给予正向偏置。",
     },
     {
       id: 3,
       title: "核心洞察 3",
-      content: "判斷3：衛教清單在圖文場景下更易承接私域；短視頻則需強封面主句。",
-      metricsText: "平台爆款潛力雷達已區分圖文/短視頻權重。",
+      content: "判断3：卫教清单在图文场景下更易承接私域；短视频则需强封面主句。",
+      metricsText: "平台爆款潜力雷达已区分图文/短视频权重。",
     },
     {
       id: 4,
       title: "核心洞察 4",
-      content: "判斷4：應保留試錯節奏給新題組合，避免過早鎖死單一標題模版。",
-      metricsText: "右欄為多版本對照與執行節奏標記（利用／探索）。",
+      content: "判断4：应保留试错节奏给新题组合，避免过早锁死单一标题模版。",
+      metricsText: "右栏为多版本对照与执行节奏标记（利用／探索）。",
     },
   ],
   executionSuggestions: {
@@ -47,7 +54,7 @@ export const DEMO_ADVANCED_AI_REPORT_DATA: AdvancedAIReportData = {
       {
         id: "v1",
         type: "utilize",
-        title: "爵士與心悸：女性心病的跨界處方",
+        title: "爵士与心悸：女性心病的跨界处方",
         viewsPredicted: 1_250_000,
         conversionRatePredicted: 9.2,
         ucbScore: 0.112,
@@ -55,50 +62,53 @@ export const DEMO_ADVANCED_AI_REPORT_DATA: AdvancedAIReportData = {
       {
         id: "v2",
         type: "explore",
-        title: "宋茶養心：被忽視的女性情緒療癒",
+        title: "宋茶养心：被忽视的女性情绪疗愈",
         viewsPredicted: 950_000,
         conversionRatePredicted: 7.1,
         ucbScore: 0.098,
       },
     ],
     personalization: [
-      { topicDirection: "宋代點茶 × 情緒療癒", brandMatchScore: 98, viewsPredicted: 2_150_000 },
-      { topicDirection: "女性心病衛教 × 爵士樂美學", brandMatchScore: 85, viewsPredicted: 1_190_000 },
-      { topicDirection: "女性心病衛教 × 專業數據", brandMatchScore: 60, viewsPredicted: 770_000 },
+      { topicDirection: "宋代点茶 × 情绪疗愈", brandMatchScore: 98, viewsPredicted: 2_150_000 },
+      { topicDirection: "女性心病卫教 × 爵士乐美学", brandMatchScore: 85, viewsPredicted: 1_190_000 },
+      { topicDirection: "女性心病卫教 × 专业数据", brandMatchScore: 60, viewsPredicted: 770_000 },
     ],
   },
   topicStructureExamples: [
     {
-      title: "最佳宋代點茶敘事線",
-      structure: "共鳴開場 → 史觀一句 → 可重複步驟 → 溫和轉化",
+      title: "最佳宋代点茶叙事线",
+      structure: "共鸣开场 → 史观一句 → 可重复步骤 → 温和转化",
       predictedCtr: 5.2,
       predictedConversion: 8.1,
       brandMatchFit: 91,
     },
     {
-      title: "爵士 × 心率話題切入",
-      structure: "反差標題 → 個人故事 → 醫學底稿一句 → 互動提問",
+      title: "爵士 × 心率话题切入",
+      structure: "反差标题 → 个人故事 → 医学底稿一句 → 互动提问",
       predictedCtr: 6.4,
       predictedConversion: 9.0,
       brandMatchFit: 86,
     },
     {
-      title: "預防醫學清單體",
-      structure: "清單封面 → 三條幹貨 → 免責一句 → 關注引導",
+      title: "预防医学清单体",
+      structure: "清单封面 → 三条干货 → 免责一句 → 关注引导",
       predictedCtr: 4.1,
       predictedConversion: 7.4,
       brandMatchFit: 78,
     },
     {
-      title: "宋茶 × 女性情緒療癒",
-      structure: "美感鏡頭 → 情緒命名 → 儀式步驟 → 預約/留言",
+      title: "宋茶 × 女性情绪疗愈",
+      structure: "美感镜头 → 情绪命名 → 仪式步骤 → 预约/留言",
       predictedCtr: 5.8,
       predictedConversion: 8.6,
       brandMatchFit: 93,
     },
   ],
   platformDetailedData: {
-    summary: "熱榜 + 品牌契合（可掛接現有 growth 管線輸出）",
-    miniRadarNote: "多平台雷達可由此處延伸為子圖卡片",
+    summary: "热榜 + 品牌契合（可挂接现有 growth 管线输出）",
+    miniRadarNote: "多平台雷达可由此处延伸为子图卡片",
+    matchedPlatform: "douyin",
+    matchedPlatformLabel: "抖音",
+    autoMatchExplanation: "演示数据：实线上将依您的看板自动对齐主战场平台。",
   },
 };
