@@ -273,10 +273,10 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
     },
     {
       id: 4,
-      title: "MAB 執行節奏",
+      title: "戰略升級方向",
       content:
-        "判斷4：UCB1 會在高考量臂上保留「利用」，在曝光少的臂上保留「探索」；新鮮組合（宋茶×情緒）建議給足探索配額。",
-      metricsText: `賽馬效能指標：${radar.mabEfficiency}/100。`,
+        "判斷4：動態對照下，表現穩定的版本適合加大曝光；新鮮組合（如宋茶×情緒）宜保留試錯節奏，避免過早鎖死單一敘事模版。",
+      metricsText: `執行節奏綜合評分：${radar.mabEfficiency}/100。`,
     },
   ];
 

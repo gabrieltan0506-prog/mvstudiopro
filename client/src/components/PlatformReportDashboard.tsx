@@ -1,6 +1,6 @@
 /**
  * B 端智庫「爆款決策與增長管線」儀表板 — 供閱讀模式或 Puppeteer 截 PDF。
- * 指標為決策輔助／模擬用，請勿與一般用戶端「不暴露 CTR/MAB」產品面混淆路由。
+ * 橫向寬幅排布，避免區塊內上下捲動；指標為決策輔助／模擬用。
  */
 
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
@@ -18,7 +18,6 @@ import {
 
 export interface PlatformReportDashboardProps {
   data?: AdvancedAIReportData;
-  /** 外層可套 min-h / print 樣式 */
   className?: string;
 }
 
@@ -54,87 +53,158 @@ export function PlatformReportDashboard({
     mabEfficiency: Math.round(g.hitPotentialRadar.mabEfficiency * 0.87),
   });
 
+  const chartH = 168;
+
   return (
     <div
-      className={`box-border w-[1280px] min-h-[720px] overflow-hidden border border-gray-800 bg-[#0B0F19] p-6 font-sans text-white ${className}`.trim()}
+      className={`box-border w-[min(1680px,100vw)] max-w-[1680px] shrink-0 overflow-hidden border border-gray-800 bg-[#0B0F19] px-5 pb-4 pt-4 font-sans text-white md:w-[1680px] ${className}`.trim()}
     >
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-800 pb-4">
-        <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-wide">
+      <header className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-gray-800 pb-3">
+        <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold tracking-wide md:text-2xl">
           <span className="text-purple-500">M</span>
           <span>MV Studio Pro AI 決策智庫報告</span>
-          <span className="text-sm font-normal text-gray-400">（{data.topic}）</span>
+          <span className="text-xs font-normal text-gray-400 md:text-sm">（{data.topic}）</span>
         </h1>
-        <div className="text-sm text-gray-400">{data.dateRange}</div>
+        <div className="text-xs text-gray-400 md:text-sm">{data.dateRange}</div>
       </header>
 
-      <div className="grid grid-cols-12 gap-6">
-        <div className="col-span-12 flex flex-col gap-6 lg:col-span-5">
-          <section className="flex flex-1 flex-col rounded-lg border border-gray-800/50 bg-[#131B2B] p-5">
-            <h2 className="mb-2 text-lg font-semibold">全局 AI 決策面板</h2>
-            <div className="flex min-h-[12rem] flex-col gap-4 sm:flex-row">
-              <div className="h-48 w-full sm:w-1/2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
-                    <PolarGrid stroke="#374151" />
-                    <PolarAngleAxis dataKey="subject" tick={{ fill: "#9CA3AF", fontSize: 10 }} />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                    <Radar name="潛力" dataKey="A" stroke="#10B981" fill="#10B981" fillOpacity={0.2} />
-                  </RadarChart>
-                </ResponsiveContainer>
+      {/* 橫向第一帶：全局 / 平台雷達 / 戰略對照 */}
+      <div className="mb-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <section className="flex flex-col rounded-lg border border-gray-800/50 bg-[#131B2B] p-3">
+          <h2 className="mb-1 text-sm font-semibold text-gray-100">全局 AI 決策面板</h2>
+          <div className="flex min-h-0 flex-1 flex-row gap-2">
+            <div className="min-h-[168px] min-w-0 flex-1" style={{ height: chartH }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart cx="50%" cy="50%" outerRadius="72%" data={radarData}>
+                  <PolarGrid stroke="#374151" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fill: "#9CA3AF", fontSize: 9 }} />
+                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                  <Radar name="潛力" dataKey="A" stroke="#10B981" fill="#10B981" fillOpacity={0.2} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex w-[42%] min-w-[7.5rem] flex-col justify-center gap-2 border-l border-gray-800/60 pl-2">
+              <div>
+                <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                  <BarChart3 size={12} className="text-emerald-400" />
+                  總播放量預測
+                </div>
+                <div className="text-xl font-bold leading-tight text-white md:text-2xl">
+                  {formatInt(g.totalViewsPredicted)}
+                </div>
               </div>
-              <div className="flex w-full flex-col justify-center gap-4 sm:w-1/2 sm:pl-4">
-                <div>
-                  <div className="flex items-center gap-1 text-sm text-gray-400">
-                    <BarChart3 size={14} className="text-emerald-400" />
-                    全局總播放量預測
-                  </div>
-                  <div className="mt-1 text-3xl font-bold text-white">{formatInt(g.totalViewsPredicted)}</div>
+              <div>
+                <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                  <RefreshCcw size={12} className="text-blue-400" />
+                  平均轉化率
                 </div>
-                <div>
-                  <div className="flex items-center gap-1 text-sm text-gray-400">
-                    <RefreshCcw size={14} className="text-blue-400" />
-                    平均轉化率
-                  </div>
-                  <div className="mt-1 text-2xl font-bold text-white">{g.averageConversionRate.toFixed(1)}%</div>
-                </div>
+                <div className="text-lg font-bold text-white md:text-xl">{g.averageConversionRate.toFixed(1)}%</div>
               </div>
             </div>
-          </section>
+          </div>
+        </section>
 
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <section className="rounded-lg border border-gray-800/50 bg-[#131B2B] p-3">
+          <h2 className="mb-1 text-sm font-semibold text-gray-100">平台雷達圖譜</h2>
+          <div className="flex min-h-[168px] flex-row gap-2" style={{ minHeight: chartH }}>
+            <div className="min-h-[168px] min-w-0 flex-[1.1] rounded-md border border-gray-800/40 bg-[#0B0F19]/60 p-1">
+              <ResponsiveContainer width="100%" height="100%" minHeight={chartH}>
+                <RadarChart cx="50%" cy="50%" outerRadius="76%" data={subRadar}>
+                  <PolarGrid stroke="#374151" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fill: "#9CA3AF", fontSize: 9 }} />
+                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
+                  <Radar name="子盤" dataKey="A" stroke="#38BDF8" fill="#38BDF8" fillOpacity={0.22} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex min-w-[7rem] flex-[0.85] flex-col justify-center rounded-md border border-gray-800/40 bg-[#0B0F19]/60 p-2 text-[10px] leading-snug text-gray-400">
+              <p className="font-semibold text-gray-200">熱榜 + 品牌契合</p>
+              <p className="mt-1 line-clamp-6">
+                {typeof data.platformDetailedData.summary === "string"
+                  ? data.platformDetailedData.summary
+                  : "此區可掛載多平台熱榜與帳號基因匹配摘要。"}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-gray-800/50 bg-[#131B2B] p-3">
+          <h2 className="mb-1 text-sm font-semibold text-gray-100">戰略升級 · 多版本對照</h2>
+          <p className="mb-2 line-clamp-2 text-[10px] leading-snug text-gray-500">
+            動態測試對照敘事主線；「利用」加量驗證成熟句型，「探索」保留新組合試錯。
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {data.executionSuggestions.mabVariants.map((variant, idx) => (
+              <div key={variant.id} className="relative rounded-md border border-gray-700 bg-[#0B0F19] px-2 pb-2 pt-3">
+                <div
+                  className={`absolute left-2 top-1 rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${
+                    variant.type === "utilize"
+                      ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-400"
+                      : "border-blue-500/30 bg-blue-500/20 text-blue-400"
+                  }`}
+                >
+                  {mabBadgeLabel(variant.type)}
+                </div>
+                <div className="mt-3 text-center">
+                  <span className="mr-1 text-[10px] font-bold text-gray-500">版本{idx + 1}</span>
+                  <span className="text-[11px] font-bold leading-tight text-white">{variant.title}</span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap justify-center gap-1">
+                  <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[9px]">
+                    播放 {formatInt(variant.viewsPredicted)}
+                  </span>
+                  <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[9px]">
+                    轉化 {variant.conversionRatePredicted.toFixed(1)}%
+                  </span>
+                  {variant.ucbScore != null ? (
+                    <span className="rounded bg-gray-800/80 px-1.5 py-0.5 text-[9px] text-gray-400">
+                      加權 {variant.ucbScore}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      {/* 橫向第二帶：洞察 + 選題實例 + IP */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-stretch">
+        <div className="lg:col-span-5">
+          <section className="grid h-full grid-cols-2 gap-2 rounded-lg border border-gray-800/50 bg-[#131B2B]/80 p-2.5">
             {data.coreInsights.map((ins) => (
-              <article key={ins.id} className="rounded-lg border border-gray-800/50 bg-[#131B2B] p-4">
-                <h3 className="mb-2 text-sm font-semibold text-gray-300">{ins.title}</h3>
-                <p className="text-xs leading-relaxed text-gray-400">{ins.content}</p>
+              <article key={ins.id} className="rounded-md border border-gray-800/40 bg-[#131B2B] p-2">
+                <h3 className="mb-0.5 text-[11px] font-semibold text-gray-300">{ins.title}</h3>
+                <p className="line-clamp-4 text-[10px] leading-snug text-gray-400">{ins.content}</p>
                 {ins.metricsText ? (
-                  <p className="mt-2 text-[11px] leading-snug text-emerald-400/90">{ins.metricsText}</p>
+                  <p className="mt-1 line-clamp-2 text-[9px] leading-snug text-emerald-400/90">{ins.metricsText}</p>
                 ) : null}
               </article>
             ))}
           </section>
+        </div>
 
-          <section className="rounded-lg border border-gray-800/50 bg-[#131B2B] p-4">
-            <h2 className="mb-3 text-sm font-semibold text-gray-200">選題結構實例</h2>
-            <div className="space-y-3">
+        <div className="lg:col-span-4">
+          <section className="h-full rounded-lg border border-gray-800/50 bg-[#131B2B] p-2.5">
+            <h2 className="mb-1.5 text-xs font-semibold text-gray-200">選題結構實例</h2>
+            <div className="grid grid-cols-2 gap-1.5">
               {data.topicStructureExamples.map((ex) => (
                 <div
                   key={ex.title}
-                  className="rounded-lg border border-gray-800/40 bg-[#0B0F19]/80 p-3 text-left"
+                  className="rounded-md border border-gray-800/40 bg-[#0B0F19]/80 p-1.5 text-left"
                 >
-                  <div className="text-sm font-semibold text-white">{ex.title}</div>
-                  <p className="mt-1 text-[11px] leading-relaxed text-gray-500">{ex.structure}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-200/95">
-                      <Zap size={10} className="shrink-0" />
-                      預期 CTR {ex.predictedCtr}%
+                  <div className="line-clamp-2 text-[11px] font-semibold leading-tight text-white">{ex.title}</div>
+                  <p className="mt-0.5 line-clamp-2 text-[9px] leading-snug text-gray-500">{ex.structure}</p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-medium text-amber-200/95">
+                      <Zap size={8} className="shrink-0" />
+                      封面 {ex.predictedCtr}%
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-200/95">
-                      <RefreshCcw size={10} className="shrink-0" />
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[8px] font-medium text-sky-200/95">
                       轉化 {ex.predictedConversion}%
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-200/95">
-                      <Target size={10} className="shrink-0" />
-                      品牌契合 {ex.brandMatchFit}
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[8px] font-medium text-emerald-200/95">
+                      契合 {ex.brandMatchFit}
                     </span>
                   </div>
                 </div>
@@ -143,64 +213,25 @@ export function PlatformReportDashboard({
           </section>
         </div>
 
-        <div className="col-span-12 flex flex-col gap-6 lg:col-span-7">
-          <section className="rounded-lg border border-gray-800/50 bg-[#131B2B] p-5">
-            <h2 className="mb-4 text-lg font-semibold">執行建議：AI 動態賽馬（UCB1）</h2>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              {data.executionSuggestions.mabVariants.map((variant, idx) => (
-                <div
-                  key={variant.id}
-                  className="relative rounded-lg border border-gray-700 bg-[#0B0F19] p-4"
-                >
-                  <div
-                    className={`absolute -top-3 left-4 rounded-full border px-3 py-1 text-xs font-bold ${
-                      variant.type === "utilize"
-                        ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-400"
-                        : "border-blue-500/30 bg-blue-500/20 text-blue-400"
-                    }`}
-                  >
-                    {mabBadgeLabel(variant.type)}
-                  </div>
-                  <div className="mb-2 mt-3 text-center">
-                    <span className="mr-2 text-sm font-bold text-gray-500">V{idx + 1}</span>
-                    <span className="font-bold text-white">{variant.title}</span>
-                  </div>
-                  <div className="mt-4 flex flex-wrap justify-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-[10px]">
-                      <BarChart3 size={10} className="text-emerald-400" />
-                      預測播放量 {formatInt(variant.viewsPredicted)}
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-[10px]">
-                      <RefreshCcw size={10} className="text-blue-400" />
-                      轉化率 {variant.conversionRatePredicted.toFixed(1)}%
-                    </span>
-                    {variant.ucbScore != null ? (
-                      <span className="inline-flex items-center gap-1 rounded bg-gray-800/80 px-2 py-1 text-[10px] text-gray-400">
-                        UCB {variant.ucbScore}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="flex flex-1 flex-col rounded-lg border border-gray-800/50 bg-[#131B2B] p-5">
-            <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold">
-              <Target size={18} className="text-red-400" />
-              IP 契合度 & 個性化推薦
+        <div className="lg:col-span-3">
+          <section className="flex h-full flex-col rounded-lg border border-gray-800/50 bg-[#131B2B] p-2.5">
+            <h2 className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
+              <Target size={14} className="text-red-400" />
+              IP 契合與推薦
             </h2>
-            <div className="space-y-4">
-              <div className="flex border-b border-gray-800 pb-2 text-xs text-gray-500">
-                <div className="w-1/2">選題方向</div>
-                <div className="w-1/4 text-center">品牌契合度</div>
-                <div className="w-1/4 text-right">播放量預測</div>
+            <div className="min-h-0 flex-1 space-y-1">
+              <div className="flex border-b border-gray-800 pb-1 text-[9px] text-gray-500">
+                <div className="w-[46%]">選題方向</div>
+                <div className="w-[27%] text-center">契合</div>
+                <div className="w-[27%] text-right">播放</div>
               </div>
               {data.executionSuggestions.personalization.map((item) => (
-                <div key={item.topicDirection} className="flex items-center text-sm">
-                  <div className="w-1/2 font-medium text-gray-300">{item.topicDirection}</div>
-                  <div className="flex w-1/4 justify-center">
-                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-gray-800">
+                <div key={item.topicDirection} className="flex items-center py-0.5 text-[11px]">
+                  <div className="w-[46%] truncate pr-1 font-medium text-gray-300" title={item.topicDirection}>
+                    {item.topicDirection}
+                  </div>
+                  <div className="flex w-[27%] justify-center">
+                    <div className="h-1 w-14 overflow-hidden rounded-full bg-gray-800">
                       <div
                         className={`h-full ${
                           item.brandMatchScore > 90
@@ -213,39 +244,17 @@ export function PlatformReportDashboard({
                       />
                     </div>
                   </div>
-                  <div className="w-1/4 text-right font-mono text-gray-400">{formatInt(item.viewsPredicted)}</div>
+                  <div className="w-[27%] text-right font-mono text-[10px] text-gray-400">
+                    {formatInt(item.viewsPredicted)}
+                  </div>
                 </div>
               ))}
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-gray-800/50 bg-[#131B2B] p-5">
-            <h2 className="mb-3 text-lg font-semibold">平台詳細數據</h2>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="h-40 rounded-md border border-gray-800/40 bg-[#0B0F19]/60 p-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart cx="50%" cy="50%" outerRadius="65%" data={subRadar}>
-                    <PolarGrid stroke="#374151" />
-                    <PolarAngleAxis dataKey="subject" tick={{ fill: "#6B7280", fontSize: 9 }} />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} axisLine={false} />
-                    <Radar name="子盤" dataKey="A" stroke="#38BDF8" fill="#38BDF8" fillOpacity={0.18} />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex flex-col justify-center rounded-md border border-gray-800/40 bg-[#0B0F19]/60 p-4 text-xs text-gray-400">
-                <p className="font-semibold text-gray-300">熱榜 + 品牌契合</p>
-                <p className="mt-2 leading-relaxed">
-                  {typeof data.platformDetailedData.summary === "string"
-                    ? data.platformDetailedData.summary
-                    : "此區可掛載多平台熱榜與帳號基因匹配摘要。"}
-                </p>
-              </div>
             </div>
           </section>
         </div>
       </div>
 
-      <p className="mt-6 text-center text-[10px] text-gray-600">
+      <p className="mt-3 text-center text-[9px] text-gray-600">
         B 端智庫專用視圖 · 數值為模型模擬或內部演算結果 · 不宜直接作為對一般用戶的承諾指標
       </p>
     </div>

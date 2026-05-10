@@ -263,9 +263,9 @@ export const CREDIT_COSTS = {
   // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）·扣点 3×──────────────────
   platformStoryboardSheet: 48,  // 分镜 2×4（双语编导；生图 GPT-IMAGE-2）
   platformXhsDualNote: 72,       // 小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
-  /** 平台頁增值：個性化戰略地圖／決策智庫報告（首購見 decisionIntelligenceReportFirst） */
-  decisionIntelligenceReport: 500,
-  decisionIntelligenceReportFirst: 400,
+  /** 平台頁增值：個性化戰略地圖／決策智庫報告（首次體驗見 decisionIntelligenceReportFirst） */
+  decisionIntelligenceReport: 200,
+  decisionIntelligenceReportFirst: 150,
   /** 平台页 Stage 2：專屬選題與長文案（入隊時扣費；失敗不退積分，與其他 LLM 任務一致） */
   platformStage2Copywriting: 60,
 } as const;
@@ -298,7 +298,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
     product: "平台数据分析",
     subFeature: "個性化戰略地圖（決策智庫）",
     credits: CREDIT_COSTS.decisionIntelligenceReport,
-    note: `首購 ${CREDIT_COSTS.decisionIntelligenceReportFirst} cr（八折），之後每次 ${CREDIT_COSTS.decisionIntelligenceReport} cr；報告入庫沉澱`,
+    note: `首次體驗 ${CREDIT_COSTS.decisionIntelligenceReportFirst} cr，之後每次 ${CREDIT_COSTS.decisionIntelligenceReport} cr；報告入庫沉澱`,
   },
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },
   { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },

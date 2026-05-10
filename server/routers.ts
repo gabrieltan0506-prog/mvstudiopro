@@ -3263,7 +3263,7 @@ export const appRouter = router({
         }
       }),
 
-    /** 個性化戰略地圖：首購積分與歷史次數（登入後可查） */
+    /** 個性化戰略地圖：首次體驗價與歷史次數（登入後可查） */
     getDecisionIntelligencePricing: protectedProcedure.query(async ({ ctx }) => {
       const database = await db.getDb();
       if (!database) {
