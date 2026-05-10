@@ -1,6 +1,13 @@
 /**
  * 推薦與預測引擎（實驗）：啟發式 CTR、UCB 多臂賭博機、用戶偏好加權。
- * 前端可安全導入；不依賴 Node 專屬 API。
+ * 前端可安全導入；不依賴 Node 專有 API。
+ *
+ * ### 接大模型前的紀律（必讀）
+ * - 在把任何「自訂欄位 / 內部標記 / 非標準字元」送入供應商 API 之前，**必須核對該路徑的官方參數、
+ *   JSON Schema、response_format、max_output_tokens 等限制**，否則易造成拒答、截斷或整鏈失敗。
+ * - 本模組的 `predictedCtr`、`mabVariants`、`personalizationScore` 等欄位應只做 **Stage 2
+ *   已解析／已歸一化結果之後**的附加層；**不應**在未經驗證的情況下回灌進下一輪 LLM system/user 文本，
+ *   除非你已確認供應商接受該結構。
  */
 
 export type MabVariantState = {

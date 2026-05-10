@@ -1452,6 +1452,7 @@ export async function buildPlatformContent(params: {
   diagnostics.blueprintCountAfterCoerce = blueprintsForSchema.length;
   diagnostics.monetizationCountAfterCoerce = monetizationCoerced.length;
 
+  /** 預測／MAB 僅附加在已通過校驗的結構上；勿將擴充欄位未審核即填回下一輪 LLM（供應商參數須先查閱）。 */
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) {
     return {
