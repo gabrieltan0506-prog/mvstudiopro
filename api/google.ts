@@ -17,7 +17,7 @@ export const config = {
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - op=vertexTranslate (Vertex IAM 纯文本翻译；固定 location=global、模型 gemini-3.1-flash-preview，供 TestLab 验证)
+ * - op=vertexTranslate (Vertex IAM 纯文本翻译；固定 location=global、模型 gemini-3.1-flash-live-preview，供 TestLab 验证)
  * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
@@ -357,7 +357,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const targetLang = s(b.targetLang || q.targetLang || "English").trim() || "English";
       const location = "global";
-      const model = "gemini-3.1-flash-preview";
+      const model = "gemini-3.1-flash-live-preview";
       const base = baseUrlFor(location);
       const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
