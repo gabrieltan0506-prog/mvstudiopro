@@ -482,6 +482,54 @@ const platformContentResponseSchema = z.object({
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
 
+const PLATFORM_MENU_TARGET_MIN = 3;
+const PLATFORM_MENU_TARGET_MAX = 4;
+
+/** LLM 有時只給 2 條 platformMenu；與輪播/文案提及的平台不一致時，用快照補齊至少 3 條（含快手等弱樣本）。 */
+function padPlatformMenuFromSnapshot(
+  dashboard: z.infer<typeof platformDashboardResponseSchema>,
+  snapshot: z.infer<typeof growthSnapshotSchema>,
+): z.infer<typeof platformDashboardResponseSchema> {
+  const menu: any[] = Array.isArray(dashboard.platformMenu) ? [...dashboard.platformMenu] : [];
+  const keyOf = (row: Record<string, unknown>): string => {
+    const p = String(row.platform ?? row["平台"] ?? "").trim().toLowerCase();
+    if (p) return p;
+    return String(row.label ?? row.displayName ?? row.name ?? "")
+      .trim()
+      .toLowerCase();
+  };
+  const seen = new Set<string>();
+  for (const row of menu) {
+    const k = keyOf(row as Record<string, unknown>);
+    if (k) seen.add(k);
+  }
+  for (const snap of snapshot.platformSnapshots.slice(0, PLATFORM_MENU_TARGET_MAX)) {
+    if (menu.length >= PLATFORM_MENU_TARGET_MIN) break;
+    const p = String(snap.platform || "").trim().toLowerCase();
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    const topic0 =
+      Array.isArray(snap.sampleTopics) && snap.sampleTopics[0] ? String(snap.sampleTopics[0]) : "";
+    const why =
+      String(snap.summary || "").trim() ||
+      `近窗补充顺位：${snap.displayName} 动量 ${snap.momentumScore} / 适配 ${snap.audienceFitScore}（样本较少也单列，便于与热点叙述中的平台一致）。`;
+    const nextMove = topic0
+      ? `在${snap.displayName}先发一条验证：围绕「${topic0.slice(0, 56)}」，开头直接抛出你的专业结论，观察评论与完播。`
+      : `在${snap.displayName}用一条轻量主题验证：讲清「你是谁、为什么现在值得看」，再引导用户下一步互动。`;
+    menu.push({
+      platform: snap.platform,
+      displayName: snap.displayName,
+      label: snap.displayName,
+      whyNow: why,
+      nextMove,
+      primaryTrack: topic0 || String(snap.summary || "").trim().slice(0, 80) || "",
+      referenceAccounts: [],
+      trafficBoosters: [],
+    });
+  }
+  return { ...dashboard, platformMenu: menu.slice(0, PLATFORM_MENU_TARGET_MAX) };
+}
+
 async function buildPlatformDashboard(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
   context?: string;
@@ -645,7 +693,7 @@ async function buildPlatformDashboard(params: {
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
-3. platformMenu：最多 3 个平台，每个平台必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
+3. platformMenu：**必须输出至少 3 条、至多 4 条**。凡是上方 \`platforms\` 数组中出现的抖音 / 快手 / 小红书 / B站，只要带有 summary 或动量/适配分数，就应各占一条 platformMenu（**快手样本稀疏也必须写 nextMove**，不得以「数据少」整条省略；顺位仍可 1→4 排序）。**严禁只输出 2 条就结束。** 每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
    【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
 5. conversationStarters：3 个让用户愿意继续追问的问题。
@@ -672,7 +720,7 @@ async function buildPlatformDashboard(params: {
             summary: item.summary,
             sampleTopics: item.sampleTopics.slice(0, 3),
           })),
-          topRecommendations: params.snapshot.platformRecommendations.slice(0, 2).map((item) => ({
+          topRecommendations: params.snapshot.platformRecommendations.slice(0, 4).map((item) => ({
             name: item.name,
             reason: item.reason,
             action: item.action,
@@ -748,7 +796,7 @@ async function buildPlatformDashboard(params: {
   }
   const parseResult = platformDashboardResponseSchema.safeParse(partial);
   if (parseResult.success) {
-    return parseResult.data;
+    return padPlatformMenuFromSnapshot(parseResult.data, params.snapshot);
   }
   console.error("[buildPlatformDashboard] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
   console.warn("[buildPlatformDashboard] attempting loose parse with defaults");
@@ -765,7 +813,7 @@ async function buildPlatformDashboard(params: {
     actionCards: Array.isArray(partial.actionCards) ? partial.actionCards : [],
     conversationStarters: Array.isArray(partial.conversationStarters) ? partial.conversationStarters : [],
   });
-  if (looseResult.success) return looseResult.data;
+  if (looseResult.success) return padPlatformMenuFromSnapshot(looseResult.data, params.snapshot);
   console.error("[buildPlatformDashboard] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
   throw new Error(`buildPlatformDashboard: loose parse failed. errors: ${JSON.stringify((looseResult.error as any).issues?.slice(0, 3) ?? looseResult.error.message)}`);
 }
