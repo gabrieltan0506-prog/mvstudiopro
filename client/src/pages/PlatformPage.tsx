@@ -3284,8 +3284,18 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
-                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                  {hasAnalyzed ? (
+                    <p className="mt-3 rounded-xl border border-[#fbbf24]/40 bg-[rgba(251,191,36,0.08)] px-3 py-2 text-xs leading-6 text-[#fef3c7]">
+                      <span className="font-semibold text-[#fde68a]">專屬文案</span>：戰略看板出現後，                      點「生成專屬文案」並在彈窗確認後，會
+                      <strong className="text-white">立即扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
+                      再開始後台撰寫。
+                      <a href="#platform-stage2-copy" className="ml-1 font-semibold text-[#fde68a] underline underline-offset-2 hover:text-white">
+                        跳到生成區
+                      </a>
+                    </p>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={() => void handleAnalyze()}
@@ -3625,6 +3635,25 @@ export default function PlatformPage() {
 
         {snapshot && platformDashboard ? (
           <section id="platform-report" className="mt-8 space-y-6">
+            <div
+              className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
+              role="region"
+              aria-label="專屬文案扣費說明"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
+                  <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
+                  <span className="text-base font-black tracking-tight text-white sm:text-lg">專屬文案 · 扣費說明</span>
+                </div>
+                <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
+                  每次點擊<strong className="text-white">「生成專屬文案」</strong>，在瀏覽器確認視窗按確定後，系統會
+                  <strong className="text-[#fef08a]">立刻扣除 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
+                  ，再排程後台生成選題與長文案。任務失敗、逾時或結果不滿意，
+                  <strong className="text-red-200">積分不予退還</strong>（與站內其他 LLM 任務相同）；若點「重新生成」會
+                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
+                </div>
+              </div>
+            </div>
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -3972,7 +4001,7 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <section className="mt-2 px-1" aria-label="專屬選題與文案狀態">
+            <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="專屬選題與文案狀態">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <h2 className="flex flex-wrap items-center gap-2 text-lg font-bold tracking-tight text-white sm:text-xl">
@@ -4025,24 +4054,6 @@ export default function PlatformPage() {
                   ) : null}
                 </div>
               </div>
-              {platformDashboard && !platformContent && !isContentLoading && !stage2Failed && !stage2EmptyPayload ? (
-                <div
-                  className={`mb-6 rounded-2xl border border-[#fde68a]/35 bg-[linear-gradient(135deg,rgba(253,230,138,0.10),rgba(125,115,255,0.08))] px-4 py-4 text-sm leading-7 text-[#ede9fe] md:px-5`}
-                  role="note"
-                >
-                  <div className="flex items-start gap-3">
-                    <CircleDollarSign className="mt-0.5 h-5 w-5 shrink-0 text-[#fde68a]" aria-hidden />
-                    <div>
-                      <p className="font-semibold text-white">付費說明（請先閱讀）</p>
-                      <p className="mt-2 text-[#d7cdf0]">
-                        專屬選題與長文案由後台模型逐條撰寫，每次點擊「生成」並在確認視窗按確定後，系統會<strong className="text-[#fde68a]">立即扣除</strong>
-                        {CREDIT_COSTS.platformStage2Copywriting} 積分，再排程生成。任務失敗或結果不滿意時積分<strong className="text-[#fca5a5]">不予退還</strong>
-                        （與站內其他 LLM 任務一致）；若要重試請再次點擊並接受扣費。
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
             </section>
 
             <div className="space-y-4">
