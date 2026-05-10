@@ -79,6 +79,7 @@ import {
   getProductPackageDisplayRows,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
+import { enrichPlatformStage2Content } from "../shared/predictionEngine";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
@@ -1451,9 +1452,13 @@ export async function buildPlatformContent(params: {
   diagnostics.blueprintCountAfterCoerce = blueprintsForSchema.length;
   diagnostics.monetizationCountAfterCoerce = monetizationCoerced.length;
 
+  /** 預測／MAB 僅附加在已通過校驗的結構上；勿將擴充欄位未審核即填回下一輪 LLM（供應商參數須先查閱）。 */
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) {
-    return { data: parseResult.data, diagnostics: { ...diagnostics, zodPath: "strict_ok" } };
+    return {
+      data: enrichPlatformStage2Content(parseResult.data, { context: params.context }),
+      diagnostics: { ...diagnostics, zodPath: "strict_ok" },
+    };
   }
 
   console.error("[buildPlatformContent] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
@@ -1464,16 +1469,22 @@ export async function buildPlatformContent(params: {
     monetizationLanes: monetizationCoerced,
   });
   if (looseResult.success) {
-    return { data: looseResult.data, diagnostics: { ...diagnostics, zodPath: "loose_ok" } };
+    return {
+      data: enrichPlatformStage2Content(looseResult.data, { context: params.context }),
+      diagnostics: { ...diagnostics, zodPath: "loose_ok" },
+    };
   }
   console.error("[buildPlatformContent] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
   diagnostics.zodLooseIssues = (looseResult.error as any).issues?.slice(0, 12) ?? String(looseResult.error.message);
   /** 最後一道：绝不让 Stage 2 因校验抛错而整包 null（文案可事后人工改） */
   return {
-    data: {
-      contentBlueprints: blueprintsForSchema as any[],
-      monetizationLanes: monetizationCoerced as any[],
-    },
+    data: enrichPlatformStage2Content(
+      {
+        contentBlueprints: blueprintsForSchema as any[],
+        monetizationLanes: monetizationCoerced as any[],
+      },
+      { context: params.context },
+    ),
     diagnostics: { ...diagnostics, zodPath: "fallback_coerced_no_throw" },
   };
 }
