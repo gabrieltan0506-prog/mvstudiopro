@@ -38,8 +38,8 @@ export const DEMO_ADVANCED_AI_REPORT_DATA: AdvancedAIReportData = {
     {
       id: 4,
       title: "核心洞察 4",
-      content: "判斷4：MAB 應保留探索配额給新題組合，避免過早鎖死單一標題模版。",
-      metricsText: "UCB1 利用/探索標記見右欄執行卡片。",
+      content: "判斷4：應保留試錯節奏給新題組合，避免過早鎖死單一標題模版。",
+      metricsText: "右欄為多版本對照與執行節奏標記（利用／探索）。",
     },
   ],
   executionSuggestions: {

@@ -3885,7 +3885,7 @@ export default function PlatformPage() {
                       在<strong className="text-white">全案專屬文案已成功寫入</strong>後，將本頁戰略看板與長稿要點<strong className="text-white">收斂成一頁可視化報告</strong>
                       （雷達、執行向建議與閱讀用排行條；均為<strong className="text-white">輔助決策的模型推演</strong>，不構成效果承諾）。解鎖為
                       <strong className="text-white"> 加購模組</strong>
-                      ，與全案入隊扣點分開計：首購{" "}
+                      ，與全案入隊扣點分開計：首次體驗{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 積分</strong>，之後每次{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 積分</strong>。
                       扣費於後台<strong className="text-white">成功產出後結算</strong>並存檔；除可驗證的系統故障外，<strong className="text-red-200/95">與全案相同不因主觀不滿意而退點</strong>。
@@ -3897,7 +3897,7 @@ export default function PlatformPage() {
                     <span className="text-[11px] text-gray-500">
                       {decisionIntelPricingQuery.data?.priorCompletedCount
                         ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 點`
-                        : `尚未解鎖 · 首購 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 點`}
+                        : `尚未解鎖 · 首次體驗 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 點`}
                     </span>
                     {!decisionIntelInputReady ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
