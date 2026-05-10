@@ -1,6 +1,20 @@
 import { GoogleGenAI } from "@google/genai";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 import { isPlatformWeekendGcpEscape, PLATFORM_WEEKEND_SURVIVAL_MODE } from "../config/platformSwitches.js";
+import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
+
+/** 給 GPT54 翻譯路徑的營運打點（可選）；見 {@link emitPlatformImagePipelineStat} */
+export type Gpt54PlatformImagePromptStatCtx = {
+  pipeline: "topic_cover" | "composite_sheet" | "prompt_condense" | "other";
+  compositeSheetAttempt?: number;
+  compositeSheetMaxAttempts?: number;
+  sheetKind?: PlatformCompositeSheetKindForStat;
+};
+
+export type PlatformCompositeSheetKindForStat =
+  | "storyboard_sheet_portrait"
+  | "storyboard_sheet_landscape"
+  | "xiaohongshu_dual_note";
 
 /** 寫入平台頁 / 寬幅合成 debug 時間線（與 imageGenFlowLog 同源）。 */
 function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): void {
@@ -612,7 +626,11 @@ function buildEmergencyEnglishPrompt(prompt: string, flowLog?: string[]): string
  * 平台生图英文化：**OpenAI（預設 gpt-5.4，與 Stage 2 長文 gpt-5.5 分離）** 最多 3 次。
  * 三次仍無有效英文 → 非避險時改走 Vertex Flash；避險 / Vertex 失敗時改 **應急英文**。
  */
-export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: string[]): Promise<string> {
+export async function callGemini3_1_Pro_AiStudio(
+  prompt: string,
+  flowLog?: string[],
+  statCtx?: Gpt54PlatformImagePromptStatCtx,
+): Promise<string> {
   /** 英文化走較廉價預設；勿改 gpt-5.5（多輪重試費用高）。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
@@ -713,6 +731,27 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
       `${a} · 汇总 · prompt 字段 trim 长度=${fromPrompt.length} · String(parsed?.prompt||raw).trim 长度=${out.length} · 判定: ${out ? "本轮有非空输出（可进入 stripGeminiModelOutput）" : "本轮无有效输出 → 将计为无效并重试或走 fallback"}`,
     );
 
+    const completionTok = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+    const promptTok = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+    emitPlatformImagePipelineStat({
+      event: "gpt54_platform_image_translate",
+      pipeline: statCtx?.pipeline ?? "other",
+      sheetKind: statCtx?.sheetKind ?? null,
+      compositeSheetAttempt: statCtx?.compositeSheetAttempt ?? null,
+      compositeSheetMaxAttempts: statCtx?.compositeSheetMaxAttempts ?? null,
+      gpt54RoundOf3: attempt,
+      modelName,
+      finishReason: finishReason ?? null,
+      maxTokensConfigured: gpt54MaxOut,
+      promptCharsUpstream: taskChars,
+      promptTokens: promptTok,
+      completionTokens: completionTok,
+      tokenPressureApprox:
+        completionTok != null && gpt54MaxOut > 0 ? Math.round((completionTok / gpt54MaxOut) * 1000) / 1000 : null,
+      hasValidEnglishPrompt: out.length > 0,
+      rawContentChars: raw.length,
+    });
+
     if (!out) {
       const fr = finishReason ?? "n/a";
       let why: string;
@@ -797,7 +836,11 @@ export async function callGemini3_1_Pro_AiStudio(prompt: string, flowLog?: strin
  */
 export async function callGemini31ProForImagePrompt(
   translationTask: string,
-  options?: { translator?: PlatformImagePromptTranslator; flowLog?: string[] },
+  options?: {
+    translator?: PlatformImagePromptTranslator;
+    flowLog?: string[];
+    pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx;
+  },
 ): Promise<string> {
   const requested: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
   const billingEscape = isPlatformWeekendGcpEscape();
@@ -816,10 +859,11 @@ export async function callGemini31ProForImagePrompt(
       ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
       : "GPT 5.4（OpenAI）";
   try {
+    const statCtx = translator === "vertex_gemini_31_pro_preview" ? undefined : options?.pipelineStatCtx;
     const raw =
       translator === "vertex_gemini_31_pro_preview"
         ? await callVertexGemini31ProForImagePrompt(translationTask, flowLog)
-        : await callGemini3_1_Pro_AiStudio(translationTask, flowLog);
+        : await callGemini3_1_Pro_AiStudio(translationTask, flowLog, statCtx);
     const out = stripGeminiModelOutput(raw);
     if (!out) {
       appendGpt54TranslationDebug(flowLog, `[GPT54·崩溃原因] stripGeminiModelOutput 后为空 · label=${label}`);
@@ -859,8 +903,33 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   engine?: "gpt54" | "gemini31flash";
   /** 寬幅合成 / debug：寫入 imageGenFlowLog */
   flowLog?: string[];
+  /** 供 {@link emitPlatformImagePipelineStat}：整鏈第幾次、上限（對應 2×4 日誌「第 k/N 次尝试」） */
+  compositeSheetAttempt?: number;
+  compositeSheetMaxAttempts?: number;
 }): Promise<string> {
   const flowLog = options.flowLog;
+  const compositeStatCtx: Gpt54PlatformImagePromptStatCtx | undefined =
+    typeof options.compositeSheetAttempt === "number" &&
+    typeof options.compositeSheetMaxAttempts === "number" &&
+    Number.isFinite(options.compositeSheetAttempt) &&
+    Number.isFinite(options.compositeSheetMaxAttempts) &&
+    options.compositeSheetAttempt >= 1
+      ? {
+          pipeline: "composite_sheet",
+          sheetKind: options.kind,
+          compositeSheetAttempt: Math.floor(options.compositeSheetAttempt),
+          compositeSheetMaxAttempts: Math.floor(options.compositeSheetMaxAttempts),
+        }
+      : undefined;
+  const gptImgBridgeOpts = (translator: PlatformImagePromptTranslator): {
+    translator: PlatformImagePromptTranslator;
+    flowLog?: string[];
+    pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx;
+  } => ({
+    translator,
+    flowLog,
+    pipelineStatCtx: compositeStatCtx,
+  });
   const isStoryboard =
     options.kind === "storyboard_sheet_portrait" || options.kind === "storyboard_sheet_landscape";
   appendVertexFlashDebug(
@@ -878,7 +947,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
       flowLog,
       "[生存模式] 強制 OpenAI 英文化鏈（忽略 engine / translator 選項）",
     );
-    return callGemini31ProForImagePrompt(task, { translator: "gpt54", flowLog });
+    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
   }
 
   if (options.engine === "gemini31flash") {
@@ -887,7 +956,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
         flowLog,
         "[GCP避險] engine=gemini31flash 已改走 GPT 5.4（跳过 Vertex Flash）",
       );
-      return callGemini31ProForImagePrompt(task, { translator: "gpt54", flowLog });
+      return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
     }
     console.log(
       `[platformComposite] engine=gemini31flash → Vertex ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`,
@@ -896,8 +965,8 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   }
   if (options.engine === "gpt54") {
     console.log("[platformComposite] engine=gpt54 → GPT 5.4");
-    return callGemini31ProForImagePrompt(task, { translator: "gpt54", flowLog });
+    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
   }
 
-  return callGemini31ProForImagePrompt(task, { translator: options.translator, flowLog });
+  return callGemini31ProForImagePrompt(task, gptImgBridgeOpts(options.translator ?? "gpt54"));
 }

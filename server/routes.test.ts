@@ -74,6 +74,7 @@ describe("router structure", () => {
     expect(procedures).toContain("credits.balance");
     expect(procedures).toContain("team.createTeam");
     expect(procedures).toContain("admin.stats");
+    expect(procedures).toContain("admin.runtimeMetricsOverview");
     expect(procedures).toContain("admin.creditBreakdown");
   });
 });
