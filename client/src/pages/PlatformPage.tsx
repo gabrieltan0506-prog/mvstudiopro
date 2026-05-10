@@ -18,7 +18,7 @@ import type {
   GrowthTitleExecution,
 } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
-import { calculateMABVariant, type MabVariantState } from "@shared/predictionEngine";
+import { calculateMABVariant, enrichPlatformStage2Content, type MabVariantState } from "@shared/predictionEngine";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
@@ -2615,7 +2615,23 @@ export default function PlatformPage() {
         ? platformDashboard!.contentBlueprints
         : null;
     if (blueprintsSource && blueprintsSource.length > 0) {
-      return blueprintsSource.slice(0, 4).map((item: any, index: number) => {
+      const monetizationSource = Array.isArray(platformContent?.monetizationLanes)
+        ? platformContent!.monetizationLanes
+        : Array.isArray(platformDashboard?.monetizationLanes)
+          ? platformDashboard!.monetizationLanes
+          : [];
+
+      const allBlueprints = blueprintsSource as Record<string, unknown>[];
+      /** Vercel 預覽前端常連正式 Fly API：若後端尚未帶 prediction 欄位，在此用同一套 shared 邏輯補齊（避免使用者看不到 CTR/MAB）。 */
+      const serverHasPrediction = allBlueprints.some((bp) => typeof (bp as { predictedCtr?: unknown }).predictedCtr === "number");
+      const blueprintsForCards: Record<string, unknown>[] = serverHasPrediction
+        ? allBlueprints
+        : enrichPlatformStage2Content(
+            { contentBlueprints: allBlueprints, monetizationLanes: monetizationSource as unknown[] },
+            { context: focusPrompt || "" },
+          ).contentBlueprints;
+
+      return blueprintsForCards.slice(0, 4).map((item: any, index: number) => {
         const format = item.format || item["格式"] || item["内容形式"] || item["形式"] || "";
         const title = item.title || item["标题"] || item["选题标题"] || "";
         const hook = item.hook || item.openingHook || item["开头文案钩子"] || item["hook"] || item["开头钩子"] || "";
@@ -2710,7 +2726,7 @@ export default function PlatformPage() {
       mabVariants: undefined as MabVariantState[] | undefined,
       mabRecommendedVariantId: undefined as string | undefined,
     }));
-  }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
+  }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics, focusPrompt]);
 
   const contentExecutionCardsKey = useMemo(
     () =>
