@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Mic } from "lucide-react";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
 import { useAuth } from "../_core/hooks/useAuth";
 
@@ -127,12 +128,12 @@ export default function HomeHero() {
                   <span
                     key={tag}
                     style={{
-                      padding: "7px 10px",
+                      padding: "10px 14px",
                       borderRadius: 999,
-                      background: "rgba(8,8,16,0.48)",
-                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: "rgba(8,8,16,0.52)",
+                      border: "1px solid rgba(255,255,255,0.14)",
                       color: "white",
-                      fontSize: 12,
+                      fontSize: 14,
                       fontWeight: 800,
                     }}
                   >
@@ -266,6 +267,46 @@ export default function HomeHero() {
                 新增 GPT-image-2 生图模型
               </div>
 
+              <div
+                style={{
+                  marginTop: 14,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  flexWrap: "wrap",
+                  padding: "16px 20px",
+                  borderRadius: 18,
+                  background:
+                    "linear-gradient(135deg, rgba(99,102,241,0.22) 0%, rgba(167,139,250,0.12) 100%)",
+                  border: "1px solid rgba(167,139,250,0.45)",
+                  boxShadow: "0 10px 36px rgba(99,102,241,0.18)",
+                }}
+              >
+                <div
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 14,
+                    background: "rgba(99,102,241,0.35)",
+                    border: "1px solid rgba(199,210,254,0.35)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Mic size={24} color="#e9d5ff" strokeWidth={2.25} aria-hidden />
+                </div>
+                <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                  <div style={{ fontSize: 19, fontWeight: 900, color: "#f5f3ff", letterSpacing: "0.02em" }}>
+                    文本支持语音输入
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 15, fontWeight: 600, color: "rgba(233,213,255,0.88)", lineHeight: 1.55 }}>
+                    成长营、平台分析与工作流等多处输入框均可点麦克风，中文语音识别写入文案，免双手长段描述。
+                  </div>
+                </div>
+              </div>
+
               <div style={{ fontSize: 42, fontWeight: 900, lineHeight: 1.12, color: "white", marginTop: 18 }}>
                 从爆款洞察到大片生成，
                 <br />
@@ -276,7 +317,7 @@ export default function HomeHero() {
                 深度融合顶级 AI 逻辑分析与影院级视频生成能力。为您提供赛道级数据分析、爆款脚本无损拆解与全自动影音生成。告别低效产能，用 AI 掌控流量密码。
               </div>
 
-              <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
+              <div style={{ display: "grid", gap: 14, marginTop: 22 }}>
                 {[
                   { label: "IP 战略指挥室", desc: "上传竞品或灵感碎片，AI 输出万字商业战略与导演级分镜", href: "/creator-growth-camp" },
                   { label: "爆款解构引擎", desc: "一键拆解对标爆款底层逻辑，重塑个人 IP 风格二创脚本", href: "/creator-growth-camp/premium-remix" },
@@ -287,18 +328,42 @@ export default function HomeHero() {
                     key={item.label}
                     href={item.href}
                     style={{
-                      padding: "12px 14px",
-                      borderRadius: 14,
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                      color: "rgba(255,255,255,0.86)",
-                      fontSize: 14,
+                      padding: "20px 22px",
+                      borderRadius: 18,
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      color: "rgba(255,255,255,0.9)",
                       textDecoration: "none",
                       display: "block",
+                      boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
+                      transition: "transform 0.18s, border-color 0.18s, background 0.18s",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-2px)";
+                      (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,138,91,0.35)";
+                      (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,138,91,0.08)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLAnchorElement).style.transform = "none";
+                      (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.10)";
+                      (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.06)";
                     }}
                   >
-                    <span style={{ fontWeight: 800, color: "white" }}>{item.label}</span>
-                    <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 8, fontSize: 13 }}>{item.desc}</span>
+                    <span style={{ fontWeight: 900, color: "white", fontSize: 18, display: "block", lineHeight: 1.35 }}>
+                      {item.label}
+                    </span>
+                    <span
+                      style={{
+                        display: "block",
+                        marginTop: 8,
+                        color: "rgba(255,255,255,0.58)",
+                        fontSize: 15,
+                        lineHeight: 1.65,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {item.desc}
+                    </span>
                   </a>
                 ))}
               </div>

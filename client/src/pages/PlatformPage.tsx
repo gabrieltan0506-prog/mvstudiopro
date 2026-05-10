@@ -3522,61 +3522,63 @@ export default function PlatformPage() {
                 <TrendingUp className="h-3.5 w-3.5" />
                 平台顾问台
               </div>
-              <div className="mt-4 flex flex-col gap-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8cefff]/90">本页付费能力 · 一键直达</div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <div className="mt-4 flex flex-col gap-3">
+                <div className="text-sm font-bold uppercase tracking-[0.14em] text-[#8cefff] md:text-base">
+                  本页付费能力 · 一键直达
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                   <button
                     type="button"
                     onClick={() => void scrollToPaidPlatformTrends()}
-                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-white/12 bg-[rgba(255,255,255,0.05)] px-4 py-3 text-left transition hover:border-[#49e6ff]/35 hover:bg-[rgba(73,230,255,0.08)] sm:min-w-[12.5rem] sm:flex-none"
+                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#49e6ff]/45 hover:bg-[rgba(73,230,255,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
                   >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 text-[#8cefff]">
-                      <BarChart3 className="h-5 w-5" aria-hidden />
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/15 text-[#8cefff] md:h-14 md:w-14">
+                      <BarChart3 className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-bold text-white">平台趋势分析</span>
-                        <span className="rounded-full border border-[#fef08a]/35 bg-[rgba(254,240,138,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#fef08a]">
+                        <span className="text-base font-bold text-white md:text-lg">平台趋势分析</span>
+                        <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fef08a]">
                           {CREDIT_COSTS.platformStage2Copywriting} 积分起
                         </span>
                       </div>
-                      <p className="mt-0.5 text-[11px] leading-snug text-[#b7add8]">全案入队读取窗口样本、热点与平台信号</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">全案入队读取窗口样本、热点与平台信号</p>
                     </div>
                   </button>
                   <button
                     type="button"
                     onClick={() => void scrollToPaidDecisionIntel()}
-                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-white/12 bg-[rgba(255,255,255,0.05)] px-4 py-3 text-left transition hover:border-[#ff4fb8]/35 hover:bg-[rgba(255,79,184,0.08)] sm:min-w-[12.5rem] sm:flex-none"
+                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#ff4fb8]/45 hover:bg-[rgba(255,79,184,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
                   >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#ff4fb8]/30 bg-[#ff4fb8]/10 text-[#ffc6e8]">
-                      <Map className="h-5 w-5" aria-hidden />
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#ff4fb8]/35 bg-[#ff4fb8]/15 text-[#ffc6e8] md:h-14 md:w-14">
+                      <Map className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-bold text-white">个人战略全景</span>
-                        <span className="rounded-full border border-[#f472b6]/40 bg-[rgba(244,114,182,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[#fbcfe8]">
+                        <span className="text-base font-bold text-white md:text-lg">个人战略全景</span>
+                        <span className="rounded-full border border-[#f472b6]/45 bg-[rgba(244,114,182,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fbcfe8]">
                           智库加购
                         </span>
                       </div>
-                      <p className="mt-0.5 text-[11px] leading-snug text-[#b7add8]">专属文案就绪后可解锁一页可视化决策地图</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">专属文案就绪后可解锁一页可视化决策地图</p>
                     </div>
                   </button>
                   <button
                     type="button"
                     onClick={() => void scrollToPaidDeepQa()}
-                    className="group flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-white/12 bg-[rgba(255,255,255,0.05)] px-4 py-3 text-left transition hover:border-[#a78bfa]/40 hover:bg-[rgba(167,139,250,0.10)] sm:min-w-[12.5rem] sm:flex-none"
+                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#a78bfa]/50 hover:bg-[rgba(167,139,250,0.14)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
                   >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#a78bfa]/35 bg-[#a78bfa]/12 text-[#ddd6fe]">
-                      <MessageSquareText className="h-5 w-5" aria-hidden />
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#a78bfa]/40 bg-[#a78bfa]/18 text-[#ddd6fe] md:h-14 md:w-14">
+                      <MessageSquareText className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-bold text-white">深度追问</span>
-                        <span className="rounded-full border border-[#c4b5fd]/35 bg-[rgba(196,181,253,0.10)] px-2 py-0.5 text-[10px] font-semibold text-[#e9d5ff]">
+                        <span className="text-base font-bold text-white md:text-lg">深度追问</span>
+                        <span className="rounded-full border border-[#c4b5fd]/40 bg-[rgba(196,181,253,0.14)] px-2.5 py-0.5 text-xs font-semibold text-[#e9d5ff]">
                           按次扣点
                         </span>
                       </div>
-                      <p className="mt-0.5 text-[11px] leading-snug text-[#b7add8]">基于当前窗口数据追问到形式、节奏与承接</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">基于当前窗口数据追问到形式、节奏与承接</p>
                     </div>
                   </button>
                 </div>
@@ -3691,13 +3693,17 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
-                  🎤 支持{" "}
-                  <span className="rounded-md border border-[#6366f1]/50 bg-[rgba(99,102,241,0.16)] px-1.5 py-0.5 font-semibold text-[#a5b4fc] shadow-[0_0_12px_rgba(99,102,241,0.12)]">
-                    Chrome、Edge、Safari
-                  </span>{" "}
-                  浏览器
-                </p>
+                <div className="mt-3 rounded-xl border border-[#6366f1]/40 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(79,70,229,0.08))] px-4 py-3.5 shadow-[0_8px_28px_rgba(99,102,241,0.12)]">
+                  <p className="text-base font-black tracking-tight text-[#e9d5ff] sm:text-lg">文本支持语音输入</p>
+                  <p className="mt-1.5 text-sm leading-relaxed text-white/65 sm:text-[15px]">
+                    点击输入框旁 <span className="font-semibold text-[#c4b5fd]">麦克风</span>
+                    ，说话即可写入本框焦点；中文识别。推荐使用{" "}
+                    <span className="rounded-md border border-[#818cf8]/50 bg-[rgba(129,140,248,0.2)] px-1.5 py-0.5 font-semibold text-[#c7d2fe]">
+                      Chrome、Edge、Safari
+                    </span>
+                    。
+                  </p>
+                </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3">
                   <button
                     type="button"
@@ -4954,7 +4960,6 @@ export default function PlatformPage() {
                   ) : (
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
-                      const digest = copyFlat.slice(0, 60);
                       const headlineTitle = item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
                       const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
@@ -5249,10 +5254,9 @@ export default function PlatformPage() {
                             {item.format}
                           </div>
                         </div>
-                        {digest ? (
-                          <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-gray-400">
-                            {digest}
-                            {copyFlat.length > 60 ? "…" : ""}
+                        {copyFlat ? (
+                          <p className="mt-3 whitespace-normal break-words text-sm leading-relaxed text-gray-400">
+                            {copyFlat}
                           </p>
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
@@ -5673,13 +5677,17 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
-                      🎤 支持{" "}
-                      <span className="rounded-md border border-[#6366f1]/50 bg-[rgba(99,102,241,0.16)] px-1.5 py-0.5 font-semibold text-[#a5b4fc] shadow-[0_0_12px_rgba(99,102,241,0.12)]">
-                        Chrome、Edge、Safari
-                      </span>{" "}
-                      浏览器
-                    </p>
+                    <div className="mt-3 rounded-xl border border-[#6366f1]/40 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(79,70,229,0.08))] px-4 py-3.5 shadow-[0_8px_28px_rgba(99,102,241,0.12)]">
+                      <p className="text-base font-black tracking-tight text-[#e9d5ff] sm:text-lg">文本支持语音输入</p>
+                      <p className="mt-1.5 text-sm leading-relaxed text-white/65 sm:text-[15px]">
+                        点击输入框旁 <span className="font-semibold text-[#c4b5fd]">麦克风</span>
+                        ，说话即可写入追问内容。推荐使用{" "}
+                        <span className="rounded-md border border-[#818cf8]/50 bg-[rgba(129,140,248,0.2)] px-1.5 py-0.5 font-semibold text-[#c7d2fe]">
+                          Chrome、Edge、Safari
+                        </span>
+                        。
+                      </p>
+                    </div>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input
