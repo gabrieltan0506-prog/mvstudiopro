@@ -24,7 +24,8 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
+import { useLayoutEffect, useRef } from "react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -37,6 +38,31 @@ import {
 export interface PlatformReportDashboardProps {
   data?: AdvancedAIReportData;
   className?: string;
+}
+
+/** 預設展開；使用者可收起。React 19 的 defaultOpen 在 @types/react 尚未收錄，故用 ref 初始化。 */
+function TopicStructureDetails({
+  className,
+  summaryClassName,
+  summary,
+  children,
+}: {
+  className?: string;
+  summaryClassName?: string;
+  summary: ReactNode;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) el.open = true;
+  }, []);
+  return (
+    <details ref={ref} className={className}>
+      <summary className={summaryClassName}>{summary}</summary>
+      {children}
+    </details>
+  );
 }
 
 function formatInt(n: number): string {
@@ -347,10 +373,25 @@ export function PlatformReportDashboard({
                     <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-black/25 text-amber-200">
                       <Sparkles size={12} aria-hidden />
                     </span>
-                    <div className="line-clamp-2 text-sm font-semibold leading-snug text-white">{ex.title}</div>
+                    <div className="min-w-0 flex-1 whitespace-normal break-words text-sm font-semibold leading-snug text-white">
+                      {ex.title}
+                    </div>
                   </div>
-                  <p className="mt-1 line-clamp-2 pl-7 text-xs leading-relaxed text-gray-300">{ex.structure}</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1 pl-7">
+                  <TopicStructureDetails
+                    className="mt-2 pl-7"
+                    summaryClassName="cursor-pointer select-none text-[11px] font-bold text-amber-200/95 [-webkit-tap-highlight-color:transparent] list-none [&::-webkit-details-marker]:hidden"
+                    summary={
+                      <span className="rounded-md border border-amber-500/25 bg-amber-950/30 px-2 py-1 text-amber-100/95">
+                        完整结构文案
+                        <span className="ml-1 font-normal text-white/45">（点击可收起 / 展开）</span>
+                      </span>
+                    }
+                  >
+                    <p className="mt-2 whitespace-pre-wrap break-words border-l-2 border-amber-400/35 pl-2 text-[13px] leading-relaxed text-gray-200">
+                      {ex.structure}
+                    </p>
+                  </TopicStructureDetails>
+                  <div className="mt-2 flex flex-wrap gap-1 pl-7">
                     <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-50">
                       <Zap size={10} className="shrink-0 text-amber-300" aria-hidden />
                       封面 {ex.predictedCtr}%
