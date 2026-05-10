@@ -263,6 +263,8 @@ export const CREDIT_COSTS = {
   // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）·扣点 3×──────────────────
   platformStoryboardSheet: 48,  // 分镜 2×4（双语编导；生图 GPT-IMAGE-2）
   platformXhsDualNote: 72,       // 小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
+  /** 平台页 Stage 2：專屬選題與長文案（入隊時扣費；失敗不退積分，與其他 LLM 任務一致） */
+  platformStage2Copywriting: 60,
 } as const;
 
 export interface CreditFeatureBreakdownRow {
@@ -282,6 +284,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "创作者成长营", subFeature: "二创分析（REMIX）", credits: CREDIT_COSTS.growthCampRemix, note: "图/文/视频参考 + 二创策划" },
   { product: "创作者成长营", subFeature: "REMIX 配乐生成", credits: CREDIT_COSTS.growthCampRemixMusic, note: "额外扣费" },
   // ─── 平台趋势分析 ─────────────────────────────────────────
+  { product: "平台数据分析", subFeature: "專屬選題與文案（Stage 2）", credits: CREDIT_COSTS.platformStage2Copywriting, note: "每次入隊生成扣 60 cr；點擊確認後立即扣費" },
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },

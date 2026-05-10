@@ -4363,10 +4363,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * Stage 2 文案與選題：**推薦前端** `enqueuePlatformContentJob` → worker `platform_build_content` → 短 tRPC + GET /api/jobs 轮询。
-     * `getPlatformContent` 保留給腳本/調試（長 HTTP，易觸發邊緣斷連或 OOM）。
+     * Stage 2 文案與選題：**已登入使用者**點擊生成後扣 {@link CREDIT_COSTS.platformStage2Copywriting} 積分並入隊 `platform_build_content`。
      */
-    enqueuePlatformContentJob: publicProcedure
+    enqueuePlatformContentJob: protectedProcedure
       .input(
         z.object({
           context: z.string().optional(),
@@ -4376,8 +4375,26 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }),
       )
       .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        if (!isAdminUser) {
+          const cost = CREDIT_COSTS.platformStage2Copywriting;
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，專屬文案生成需要 ${cost} 點（當前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(
+            userId,
+            "platformStage2Copywriting",
+            `專屬選題與文案（Stage 2 · ${input.windowDays} 天窗口）`,
+          );
+        }
+
         const jobId = nanoid(16);
-        const uid = ctx.user?.id != null ? String(ctx.user.id) : "public";
+        const uid = String(userId);
         await createJobRecord({
           id: jobId,
           userId: uid,

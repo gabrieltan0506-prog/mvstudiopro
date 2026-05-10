@@ -260,6 +260,8 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 48,
   /** 平台页：小红书 2×4 八格图文（API kind 仍为 xiaohongshu_dual_note） */
   platformXhsDualNote: 72,
+  /** 平台页 Stage 2：專屬選題與長文案（platform_build_content · 點擊入隊時扣費） */
+  platformStage2Copywriting: 60,
 } as const;
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */

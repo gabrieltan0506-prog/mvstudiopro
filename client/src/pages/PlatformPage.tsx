@@ -1170,15 +1170,15 @@ export default function PlatformPage() {
     if (isContentLoading) return contentLoadingText;
     if (stage2Failed || contentJobError) return `無法完成：${contentJobError || "請重試"}`;
     if (stage2EmptyPayload) {
-      return "後台已返回，但沒有有效選題（0 條）。請展開 Debug「Stage 2」或使用重試。";
+      return "後台已返回，但沒有有效選題（0 條）。請展開 Debug「Stage 2」或點擊重試（將再次扣除積分）。";
     }
     if (platformContent && !stage2EmptyPayload) {
       return "✅ 專屬選題與文案已由後台寫入（可下滑查看卡片）";
     }
     if (platformDashboard && !platformContent) {
-      return "戰略看板已就緒；若未自動出現文案，請確認分析流程是否跑完或重試。";
+      return `戰略看板已就緒。生成專屬選題與長文案每次 ${CREDIT_COSTS.platformStage2Copywriting} 積分，點擊下方按鈕並確認後即扣費、後台開始撰寫。`;
     }
-    return "完成戰略看板後，將自動排程專屬文案後台任務。";
+    return `完成戰略看板後，可手動生成專屬文案（每次 ${CREDIT_COSTS.platformStage2Copywriting} 積分）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -1390,16 +1390,25 @@ export default function PlatformPage() {
     setContentDebug((res.debug as Record<string, unknown>) ?? {});
   }, []);
 
-  const retryStage2Content = useCallback(async () => {
+  /** 用戶確認後入隊 Stage 2（後端立即扣積分）並輪詢直至完成 */
+  const startStage2ContentGeneration = useCallback(async () => {
     if (!platformDashboard || !lastStage2InputRef.current) {
-      toast.error("無法重試：請先完成戰略看板並觸發過專屬文案任務");
+      toast.error("請先完成戰略看板分析");
       return;
     }
     const inp = lastStage2InputRef.current;
+    const cost = CREDIT_COSTS.platformStage2Copywriting;
+    if (
+      !window.confirm(
+        `專屬文案與選題將消耗 ${cost} 積分，確認後立即扣費並由後台生成（約數分鐘，請勿關閉頁面）。是否繼續？`,
+      )
+    ) {
+      return;
+    }
     setContentJobError(null);
     setIsContentLoading(true);
     setStage2Failed(false);
-    setContentLoadingText("重新提交後台任務…");
+    setContentLoadingText("正在提交專屬文案後台任務…");
     try {
       const tStart = new Date().toISOString();
       const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
@@ -1410,77 +1419,53 @@ export default function PlatformPage() {
       });
       setContentJobPollTrace({
         jobId,
-        label: "Stage 2 · platform_build_content（重試）",
+        label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
         lines: appendPollDebugLine(
           [],
-          `${tStart} 重新入队 enqueuePlatformContentJob → jobId=${jobId}`,
+          `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 扣費 ${cost} 積分（後端入隊時）`,
         ),
         pollCount: 0,
       });
       await runStage2FromJobId(jobId);
     } catch (e) {
-      console.warn("[PlatformPage] Stage 2 retry error:", e);
+      console.warn("[PlatformPage] Stage 2 enqueue/poll error:", e);
       const msg = e instanceof Error ? e.message : String(e);
-      setContentJobError(msg);
       setStage2Failed(true);
+      setContentJobError(msg);
       toast.error(`文案生成失敗: ${msg}`);
       setContentDebug(null);
+      setContentJobPollTrace((prev) =>
+        prev
+          ? {
+              ...prev,
+              terminalStatus: prev.terminalStatus ?? "client_error",
+              lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
+            }
+          : prev,
+      );
     } finally {
       setIsContentLoading(false);
     }
   }, [platformDashboard, focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId]);
 
+  const retryStage2Content = useCallback(async () => {
+    await startStage2ContentGeneration();
+  }, [startStage2ContentGeneration]);
+
   // Stage 1 Mutation: 戰略看板
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
-    onSuccess: async (result, variables) => {
+    onSuccess: (result, variables) => {
       if (result.platformDashboard) {
         const dash = result.platformDashboard as unknown as PlatformDashboard;
         setPlatformDashboard(dash);
         setContentJobError(null);
-        setIsContentLoading(true);
         setStage2Failed(false);
-        setContentLoadingText("正在提交專屬文案後台任務…");
+        setPlatformContent(null);
+        setContentDebug(null);
         lastStage2InputRef.current = {
           snapshotSummary: (variables.snapshotSummary || {}) as Record<string, unknown>,
-          windowDays: selectedWindowDays,
+          windowDays: variables.windowDays,
         };
-        try {
-          const tStart = new Date().toISOString();
-          const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
-            context: focusPrompt || undefined,
-            windowDays: selectedWindowDays,
-            platformMenu: dash.platformMenu || [],
-            snapshotSummary: variables.snapshotSummary || {},
-          });
-          setContentJobPollTrace({
-            jobId,
-            label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
-            lines: appendPollDebugLine(
-              [],
-              `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 前段約每 2.5s 轮询、第 37 次起間隔加倍（最多 8s；worker 默认最长約 20min）`,
-            ),
-            pollCount: 0,
-          });
-          await runStage2FromJobId(jobId);
-        } catch (e) {
-          console.warn("[PlatformPage] Stage 2 platform_build_content error:", e);
-          const msg = e instanceof Error ? e.message : String(e);
-          setStage2Failed(true);
-          setContentJobError(msg);
-          toast.error(`文案生成失敗: ${msg}`);
-          setContentDebug(null);
-          setContentJobPollTrace((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  terminalStatus: prev.terminalStatus ?? "client_error",
-                  lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
-                }
-              : prev,
-          );
-        } finally {
-          setIsContentLoading(false);
-        }
       } else {
         console.warn("[PlatformPage] Stage 1 AI 解析失敗:", result.debug?.error);
         toast.error(
@@ -2994,6 +2979,9 @@ export default function PlatformPage() {
     setPlatformContent(null);
     setContentDebug(null);
     setIsContentLoading(false);
+    setStage2Failed(false);
+    setContentJobError(null);
+    setContentJobPollTrace(null);
     setElapsedTime(0);
     setRotatingCardIndex(0);
 
@@ -3443,7 +3431,7 @@ export default function PlatformPage() {
                     <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
-                    <div>3. 深度原创分析（enqueuePlatformContentJob → Fly worker，GET /api/jobs 轮询，避免长 HTTP 断连）</div>
+                    <div>3. 專屬文案（enqueuePlatformContentJob · 需登入，入隊時扣 {CREDIT_COSTS.platformStage2Copywriting} 積分 → Fly worker，GET /api/jobs 轮询）</div>
                     <div>
                       3a. 状态:{" "}
                       <span>
@@ -4010,17 +3998,51 @@ export default function PlatformPage() {
                     {stage2UserFacingLine}
                   </p>
                 </div>
-                {stage2Failed && platformDashboard && !isContentLoading ? (
-                  <button
-                    type="button"
-                    onClick={() => void retryStage2Content()}
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-red-500/35 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    重新生成專屬文案
-                  </button>
-                ) : null}
+                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                  {platformDashboard &&
+                  !isContentLoading &&
+                  !platformContent &&
+                  !stage2Failed &&
+                  !stage2EmptyPayload ? (
+                    <button
+                      type="button"
+                      onClick={() => void startStage2ContentGeneration()}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[#c4b5fd]/40 bg-[linear-gradient(135deg,rgba(196,181,253,0.18),rgba(125,115,255,0.14))] px-5 py-2.5 text-sm font-bold text-white shadow-[0_8px_28px_rgba(125,115,255,0.25)] transition hover:brightness-110"
+                    >
+                      <CircleDollarSign className="h-4 w-4 text-[#fde68a]" aria-hidden />
+                      生成專屬文案（{CREDIT_COSTS.platformStage2Copywriting} 積分）
+                    </button>
+                  ) : null}
+                  {(stage2Failed || stage2EmptyPayload) && platformDashboard && !isContentLoading ? (
+                    <button
+                      type="button"
+                      onClick={() => void retryStage2Content()}
+                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-red-500/35 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      重新生成（再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分）
+                    </button>
+                  ) : null}
+                </div>
               </div>
+              {platformDashboard && !platformContent && !isContentLoading && !stage2Failed && !stage2EmptyPayload ? (
+                <div
+                  className={`mb-6 rounded-2xl border border-[#fde68a]/35 bg-[linear-gradient(135deg,rgba(253,230,138,0.10),rgba(125,115,255,0.08))] px-4 py-4 text-sm leading-7 text-[#ede9fe] md:px-5`}
+                  role="note"
+                >
+                  <div className="flex items-start gap-3">
+                    <CircleDollarSign className="mt-0.5 h-5 w-5 shrink-0 text-[#fde68a]" aria-hidden />
+                    <div>
+                      <p className="font-semibold text-white">付費說明（請先閱讀）</p>
+                      <p className="mt-2 text-[#d7cdf0]">
+                        專屬選題與長文案由後台模型逐條撰寫，每次點擊「生成」並在確認視窗按確定後，系統會<strong className="text-[#fde68a]">立即扣除</strong>
+                        {CREDIT_COSTS.platformStage2Copywriting} 積分，再排程生成。任務失敗或結果不滿意時積分<strong className="text-[#fca5a5]">不予退還</strong>
+                        （與站內其他 LLM 任務一致）；若要重試請再次點擊並接受扣費。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <div className="space-y-4">
