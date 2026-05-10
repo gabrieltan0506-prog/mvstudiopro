@@ -3469,8 +3469,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const isGraphic = input.format === "图文";
-        const cost = isGraphic ? CREDIT_COSTS.platformTopicFrameGraphic : CREDIT_COSTS.platformTopicFrameVideo;
+        /** 單張豎版封面 / platform_topic_frame：無論選題格式，統一按封面價扣點（與批量 graphic 一致）。 */
+        const cost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -3636,8 +3636,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const isGraphic = input.format === "图文";
-        const cost = isGraphic ? CREDIT_COSTS.platformTopicFrameGraphic : CREDIT_COSTS.platformTopicFrameVideo;
+        /** 與 generateTopicImage 一致：單張豎版封面統一按 platformTopicFrameGraphic 扣點 */
+        const cost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");

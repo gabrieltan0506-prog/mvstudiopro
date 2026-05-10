@@ -252,8 +252,8 @@ export const CREDIT_COSTS = {
 
   // ─── 平台趋势·参考图 / 生图（与 server/plans 一致 · 扣点 3× 慎用完）────────────
   platformRefImage: 36,
-  /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2） */
-  platformTopicFrameGraphic: 27,
+  /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2）；单张「生成封面」統一走此價 */
+  platformTopicFrameGraphic: 32,
   /** 平台页：选题单帧 · 短视频竖版分镜参考条 */
   platformTopicFrameVideo: 15,
   /** 平台页：分镜 2×4 宽幅合成 */

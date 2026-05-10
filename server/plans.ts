@@ -257,7 +257,7 @@ export const CREDIT_COSTS = {
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 
   // ─── 平台页·选题单帧参考（一键批量 / 单张重绘 · GPT-IMAGE-2）·扣点 3×──────────────
-  platformTopicFrameGraphic: 27, // 图文/小红书竖版封面
+  platformTopicFrameGraphic: 32, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
   platformTopicFrameVideo: 15,  // 短视频分镜参考条
 
   // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）·扣点 3×──────────────────
@@ -285,7 +285,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
-  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 27 cr，生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 32 cr，生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },

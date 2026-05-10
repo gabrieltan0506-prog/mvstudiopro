@@ -945,6 +945,8 @@ type PlatformSignalsCarouselItem = {
   summary: string;
   detail: string;
   tone: PlatformSignalsCarouselTone;
+  /** 平台卡：引導購買趨勢分析額度 / 積分加值包 */
+  purchaseCta?: { href: string; label: string };
 };
 
 function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
@@ -1034,10 +1036,21 @@ function PlatformSignalsCarouselPanel(props: {
               <div className="mt-5 text-[1.65rem] font-black leading-[1.08] tracking-tight text-white md:text-4xl xl:text-[2.35rem]">
                 {active.title}
               </div>
-              <div className="mt-5 text-base font-medium leading-relaxed text-[#eef6ff] md:text-lg">{active.summary}</div>
+              <div className="mt-5 whitespace-pre-line text-base font-medium leading-relaxed text-[#eef6ff] md:text-lg">
+                {active.summary}
+              </div>
               <div className="mt-6 rounded-[22px] border border-white/12 bg-[rgba(8,6,22,0.55)] px-5 py-4 text-sm leading-8 text-[#d9d1f5] md:text-[15px]">
                 {active.detail}
               </div>
+              {active.purchaseCta ? (
+                <a
+                  href={active.purchaseCta.href}
+                  className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-[#8cefff] underline-offset-4 hover:text-[#49e6ff] hover:underline"
+                >
+                  {active.purchaseCta.label}
+                  <ChevronRight className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                </a>
+              ) : null}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -2873,12 +2886,42 @@ export default function PlatformPage() {
     [processingSteps, elapsedTime],
   );
   const immersiveRotatingCards = useMemo(() => {
-    const platformCards = primaryPlatforms.slice(0, 4).map((item) => ({
-      title: `${item.displayName} 当前信号`,
-      summary: item.summary,
-      detail: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore} / 竞争 ${item.competitionLevel}`,
-      tone: "platform",
-    }));
+    const trendLayers = snapshot?.trendLayers ?? [];
+    const competitionZh = (level: string) =>
+      level === "low" ? "低" : level === "medium" ? "中" : level === "high" ? "高" : String(level);
+
+    const platformCards = primaryPlatforms.slice(0, 4).map((item) => {
+      const topicLines = (item.sampleTopics || []).map((t) => String(t).trim()).filter(Boolean);
+      const layerLines = trendLayers
+        .filter((l) => l.platform === item.platform)
+        .flatMap((l) => (Array.isArray(l.items) ? l.items : []).map((i) => String(i).trim()))
+        .filter(Boolean);
+      const libraryLines = (snapshot?.topicLibrary ?? [])
+        .filter((row) => row.platform === item.platform)
+        .map((row) => String(row.title || "").trim())
+        .filter(Boolean);
+      const activityLines = (snapshot?.platformActivities ?? [])
+        .filter((a) => a.platform === item.platform)
+        .flatMap((a) =>
+          [...(a.hotTopics ?? []), ...(a.suggestedTopics ?? [])].map((s) => String(s).trim()).filter(Boolean),
+        );
+      const merged = Array.from(new Set([...topicLines, ...libraryLines, ...activityLines, ...layerLines])).slice(0, 5);
+      const summary =
+        merged.length > 0
+          ? merged.map((line, i) => `${i + 1}. ${line}`).join("\n")
+          : "本平台在当前快照里还没有可用的样本标题或趋势层条目。请先完成一次上方「平台趋势分析」（会按次扣减积分），采集回传后再查看具体热点。";
+
+      return {
+        title: `${item.displayName} 当前信号`,
+        summary,
+        detail: `动量 ${item.momentumScore} · 适配 ${item.audienceFitScore} · 竞争 ${competitionZh(item.competitionLevel)}`,
+        tone: "platform" as const,
+        purchaseCta: {
+          href: "/pricing",
+          label: "购买积分 · 用于平台趋势分析与续报",
+        },
+      };
+    });
     const topicCards = topTopics.slice(0, 3).map((item) => ({
       title: item.title,
       summary: item.whyHot,
@@ -2914,7 +2957,7 @@ export default function PlatformPage() {
     return [...platformCards, ...topicCards, ...actionCards].length
       ? ([...platformCards, ...topicCards, ...actionCards] as PlatformSignalsCarouselItem[])
       : (fallback as PlatformSignalsCarouselItem[]);
-  }, [actionSteps, primaryPlatforms, topTopics]);
+  }, [actionSteps, primaryPlatforms, topTopics, snapshot]);
 
   useEffect(() => {
     if (!isAnalyzing) {
@@ -3989,7 +4032,7 @@ export default function PlatformPage() {
                       items={immersiveRotatingCards}
                       activeIndex={rotatingCardIndex}
                       onPickIndex={setRotatingCardIndex}
-                      subtitle="生成封面前先看大卡：本平台判断、热点切口、下一轮动作自动轮换，用不着在一行小字里找。"
+                      subtitle="热点文案来自当前快照里的样本题与趋势层，非顾问套话。需要更大采集窗口或续报，请先购买积分（套餐页）后再跑趋势分析。"
                     />
                   ) : null}
                 </aside>
@@ -4237,9 +4280,8 @@ export default function PlatformPage() {
                       const isBlackImageOrTimeout =
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
-                      const normalCoverCost = isGraphicCover
-                        ? CREDIT_COSTS.platformTopicFrameGraphic
-                        : CREDIT_COSTS.platformTopicFrameVideo;
+                      /** 單張豎版封面統一按「圖文封面」定價扣點（與後端 generateTopicImage 一致），與選題是短視頻還是圖文無關 */
+                      const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
