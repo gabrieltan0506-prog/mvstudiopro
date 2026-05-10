@@ -5,8 +5,6 @@ import { eq } from "drizzle-orm";
 import * as db from "../db";
 import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
-  resolveVertexFlashTranslationLocation,
-  resolveVertexFlashTranslationModelName,
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
 
@@ -75,7 +73,7 @@ export type RunPlatformTopicImagePipelineInput = {
   context?: string;
   coverPersonaContext?: string;
   sceneId?: string;
-  /** 英文化：預設 GPT 5.4；Vertex 供 Debug/對照（需 GCP 憑證）。 */
+  /** @deprecated 封面單幀英文化**固定 GPT 5.4**；保留欄位僅兼容舊 job 入參，會被忽略。 */
   imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
   isFreeRetry: boolean;
@@ -100,11 +98,9 @@ export async function runPlatformTopicImagePipeline(
 ): Promise<RunPlatformTopicImagePipelineResult> {
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
-  const imagePromptTranslator: PlatformImagePromptTranslator = input.imagePromptTranslator ?? "gpt54";
-  const translatorLogLabel =
-    imagePromptTranslator === "vertex_gemini_31_pro_preview"
-      ? `Vertex @google/genai · ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}（JSON）`
-      : "GPT 5.4（OpenAI）";
+  void input.imagePromptTranslator;
+  const imagePromptTranslator: PlatformImagePromptTranslator = "gpt54";
+  const translatorLogLabel = "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
   const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
   const creationIdOut = input.creationIdOut ?? undefined;

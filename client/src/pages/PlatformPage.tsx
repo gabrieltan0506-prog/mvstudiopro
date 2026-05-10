@@ -83,10 +83,10 @@ import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
-type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
+type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 
-/** 英文化翻譯固定走 GPT 5.4；Vertex Flash 僅後端失敗兜底，不對一般用戶開切換（長 prompt 不適配 Flash）。 */
-const PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED: PlatformImagePromptTranslator = "gpt54";
+const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromptTranslator.v1";
+/** ↑ 管理員／監管帳號可見的 2×4 英文化開關偏好；一般帳號合成固定走 gpt54（後端同判）。 */
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
 const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
@@ -798,13 +798,15 @@ function buildCompositeImageGenPendingLines(input: {
   kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   sceneId: string;
   title: string;
-  imagePromptTranslator?: PlatformImagePromptTranslator;
+  imagePromptTranslator?: PlatformImagePromptTranslator | "vertex_gemini_31_pro_preview";
   progressJobId?: string;
 }): string[] {
   const ts = new Date().toISOString();
-  const tr = input.imagePromptTranslator ?? "gpt54";
+  const rawTr = input.imagePromptTranslator ?? "gpt54";
+  const tr: PlatformImagePromptTranslator =
+    rawTr === "vertex_gemini_31_pro_preview" ? "vertex_gemini_3_flash_preview" : rawTr;
   const trLine =
-    tr === "vertex_gemini_31_pro_preview"
+    tr === "vertex_gemini_3_flash_preview"
       ? "探索：直走 Vertex Flash（application/json），不經 GPT 三輪"
       : "默認 GPT 5.4：英文化最多 3 輪（間隔 3s/6s），無效後 Vertex Flash 兜底";
   const kindLabel =
@@ -1190,6 +1192,37 @@ export default function PlatformPage() {
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
+  const [platformImagePromptTranslator, setPlatformImagePromptTranslator] = useState<PlatformImagePromptTranslator>(() => {
+    if (typeof window === "undefined") return "gpt54";
+    try {
+      const v = window.localStorage.getItem(PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY);
+      if (v === "vertex_gemini_31_pro_preview") return "vertex_gemini_3_flash_preview";
+      if (v === "vertex_gemini_3_flash_preview" || v === "gpt54") return v;
+    } catch {
+      /* ignore */
+    }
+    return "gpt54";
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY, platformImagePromptTranslator);
+    } catch {
+      /* ignore */
+    }
+  }, [platformImagePromptTranslator]);
+
+  const canConfigureCompositeImageTranslator =
+    user?.role === "admin" || user?.role === "supervisor";
+
+  const effectiveCompositeImagePromptTranslator = useMemo((): PlatformImagePromptTranslator => {
+    if (
+      canConfigureCompositeImageTranslator &&
+      platformImagePromptTranslator === "vertex_gemini_3_flash_preview"
+    ) {
+      return "vertex_gemini_3_flash_preview";
+    }
+    return "gpt54";
+  }, [canConfigureCompositeImageTranslator, platformImagePromptTranslator]);
   // Separate state for dashboard — populated by the second call after snapshot loads
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
@@ -1551,8 +1584,6 @@ export default function PlatformPage() {
       coverPersonaContext?: string;
       failedJobId?: string;
       sceneId?: string;
-      /** 與服務端 PlatformImagePromptTranslator 一致；省略則 GPT 5.4 */
-      imagePromptTranslator?: PlatformImagePromptTranslator;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
     }) => {
@@ -1560,7 +1591,8 @@ export default function PlatformPage() {
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
         ...inp,
-        imagePromptTranslator: inp.imagePromptTranslator ?? PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED,
+        /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
+        imagePromptTranslator: "gpt54",
       });
       const tEnq = new Date().toISOString();
       setTopicImageJobPollTrace({
@@ -1705,7 +1737,6 @@ export default function PlatformPage() {
             failedJobId: String(cid),
             sceneId: r.id,
             pollDebugLabel: `批量兜底重试 · ${r.id}`,
-            imagePromptTranslator: variables.imagePromptTranslator,
           });
           const recoveredUrl = String(retried.imageUrl ?? retried.url ?? "").trim();
           if (recoveredUrl) {
@@ -4485,13 +4516,75 @@ export default function PlatformPage() {
                     </div>
                     <div className="flex w-full flex-shrink-0 flex-col gap-3 md:w-auto md:max-w-md md:items-end">
                       <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
-                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-[#c4b5fd]">
-                          <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
-                          生图 · 英文化（GPT 5.4）
-                        </div>
-                        <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                          封面单帧、一键逐张、2×4 / 小红书合成等统一走 GPT 5.4 英文化（长 prompt 更稳）。服务端在 OpenAI 多次失败后可自动走 Vertex 兜底；不再提供前端切换，避免误选短上下文 Flash 译废整条链路。
-                        </p>
+                        {canConfigureCompositeImageTranslator ? (
+                          <>
+                            <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
+                              <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                              2×4 合成 · 英文化引擎
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setPlatformImagePromptTranslator("gpt54")}
+                                className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                                  platformImagePromptTranslator === "gpt54"
+                                    ? "bg-[#6366f1] text-white shadow-md"
+                                    : "border border-white/15 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white"
+                                }`}
+                              >
+                                GPT 5.4（默认）
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPlatformImagePromptTranslator("vertex_gemini_3_flash_preview")}
+                                className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                                  platformImagePromptTranslator === "vertex_gemini_3_flash_preview"
+                                    ? "bg-[#0d9488] text-white shadow-md"
+                                    : "border border-white/15 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white"
+                                }`}
+                              >
+                                Gemini 3 Flash（Vertex）
+                              </button>
+                            </div>
+                            <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
+                              选题<strong className="text-gray-400">竖版封面单帧</strong>
+                              （一键封面、单卡生成、批量逐张）由{" "}
+                              <strong className="text-gray-300">GPT-IMAGE-2</strong> 生成。仅{" "}
+                              <strong className="text-gray-300">2×4 分镜主表</strong>与
+                              <strong className="text-gray-300">小红书 2×4 八格图文</strong>{" "}
+                              宽幅合成可依此开关选择英文化引擎；选择已保存在本机浏览器。
+                            </p>
+                            <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
+                              {platformImagePromptTranslator === "gpt54" ? (
+                                <>
+                                  <strong className="text-gray-300">2×4 / 小红书</strong>：默认{" "}
+                                  <strong className="text-gray-300">GPT 5.4</strong>
+                                  英文化（长 prompt 更稳）。OpenAI 多次无效时服务端仍可自动走 Vertex Flash 兜底。
+                                </>
+                              ) : (
+                                <>
+                                  <strong className="text-gray-300">2×4 / 小红书</strong>：英文化直走{" "}
+                                  <strong className="text-[#5eead4]">Vertex · gemini-3-flash-preview</strong>
+                                  ：預設較高 <strong className="text-gray-300">temperature</strong>
+                                  ，英文更有創意與畫面表現力；仍鎖定{" "}
+                                  <strong className="text-gray-300">JSON · prompt 單欄</strong>；服務端預設思考層級{" "}
+                                  <strong className="text-gray-300">HIGH</strong>、輸出 token 預算偏高（可用{" "}
+                                  <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_THINKING_LEVEL</code> 與{" "}
+                                  <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_MAX_TOKENS</code>{" "}
+                                  覆寫）。若 Flash 配額/區域異常請切回 GPT 5.4。
+                                </>
+                              )}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-[11px] leading-relaxed text-gray-400">
+                            选题<strong className="text-gray-400">竖版封面单帧</strong>
+                            （一键封面、单卡生成、批量逐张）由 <strong className="text-gray-300">GPT-IMAGE-2</strong>{" "}
+                            生成。<strong className="text-gray-300">2×4 分镜主表</strong>与
+                            <strong className="text-gray-300">小红书 2×4 八格图文</strong>
+                            宽幅合成走平台默认流程。
+                          </p>
+                        )}
                       </div>
                       {platformTopicCount > 0 ? (
                         <button
@@ -4587,7 +4680,7 @@ export default function PlatformPage() {
                               kind: compositeKind,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               creationRecordId: readOptionalReportBindingCreationId(),
-                              imagePromptTranslator: PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED,
+                              imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                               progressJobId: newPlatformCompositeProgressJobId(),
                             });
                           };
@@ -5181,7 +5274,7 @@ export default function PlatformPage() {
                                     kind: compositeKind,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     creationRecordId: readOptionalReportBindingCreationId(),
-                                    imagePromptTranslator: PLATFORM_IMAGE_PROMPT_TRANSLATOR_FIXED,
+                                    imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                                     progressJobId: newPlatformCompositeProgressJobId(),
                                   }),
                                 ).catch(() => {});
