@@ -107,16 +107,18 @@ function resolveVertexProjectIdForGenAi(): string {
 }
 
 /**
- * 平台英文化 · Flash Live Preview：**預設 `global`**（與 Live 預覽路由一致）。
- * 可 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫（例如仍設 `us-central1` 做對照）。
+ * 平台英文化 · Flash Live：**預設 `global`**（與部分 Live 路由一致）。
+ * 使用固定版本模型（見 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，`-04-2026`）時，建議設
+ * `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION=us-central1` 與模型開通區域一致。
+ * 可隨時以 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫。
  */
 export function resolveVertexFlashTranslationLocation(): string {
   const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "global").trim();
   return loc || "global";
 }
 
-/** Vertex 英文化預設模型（可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫） */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview-latest";
+/** 帶 `-MM-YYYY` 後綴的固定版本，降低底層權重更新導致結構化輸出跑版風險。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview-04-2026";
 
 export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
