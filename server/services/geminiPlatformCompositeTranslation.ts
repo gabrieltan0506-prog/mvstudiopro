@@ -107,16 +107,16 @@ function resolveVertexProjectIdForGenAi(): string {
 }
 
 /**
- * 平台英文化 · Flash Live Preview：**預設 `global`**（與 Live 預覽路由一致）。
- * 可 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫（例如仍設 `us-central1` 做對照）。
+ * 平台英文化 · Flash Live：**預設 `us-central1`**（與 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL} 固定版 \`-04-2026\` 開通區域一致）。
+ * 可隨時以 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫（例如改回 `global` 做對照）。
  */
 export function resolveVertexFlashTranslationLocation(): string {
-  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "global").trim();
-  return loc || "global";
+  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "us-central1").trim();
+  return loc || "us-central1";
 }
 
-/** Vertex 英文化預設模型（可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫） */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview-latest";
+/** 帶 `-MM-YYYY` 後綴的固定版本，降低底層權重更新導致結構化輸出跑版風險。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview-04-2026";
 
 export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
@@ -146,7 +146,7 @@ function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: st
   return undefined;
 }
 
-/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_*` 为 Vertex Flash Live · global）。 */
+/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_*` 为 Vertex Flash Live · 預設 us-central1）。 */
 export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
 
 /**
@@ -457,7 +457,7 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 
 /**
  * 探索 / 極速：Vertex AI **Gemini 3.1 Flash Live Preview** + `responseMimeType: application/json`。
- * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **global**；可用環境變數改）。
+ * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **us-central1**；可用環境變數改）。
  * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。三次仍失敗則拋錯。
  */
@@ -596,7 +596,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
 }
 
 /**
- * 舊名保留：平台「探索」英文化走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · 預設 global）。
+ * 舊名保留：平台「探索」英文化走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · 預設 us-central1）。
  */
 export async function callVertexGemini31ProForImagePrompt(translationTask: string, flowLog?: string[]): Promise<string> {
   return callVertexGeminiFlashTranslation(translationTask, flowLog);
@@ -831,7 +831,7 @@ export async function callGemini3_1_Pro_AiStudio(
 }
 
 /**
- * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時走 **Flash Live Preview（預設 global）**。
+ * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時走 **Flash Live Preview（預設 us-central1）**。
  * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(
@@ -899,7 +899,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   scriptContext: string;
   /** A/B：預設 GPT 5.4；與 {@link engine} 併用時以 engine 為準 */
   translator?: PlatformImagePromptTranslator;
-  /** A/B：`gemini31flash` 強制走 Flash Live（預設 global）；`gpt54` 強制 GPT 5.4 */
+  /** A/B：`gemini31flash` 強制走 Flash Live（預設 us-central1）；`gpt54` 強制 GPT 5.4 */
   engine?: "gpt54" | "gemini31flash";
   /** 寬幅合成 / debug：寫入 imageGenFlowLog */
   flowLog?: string[];
