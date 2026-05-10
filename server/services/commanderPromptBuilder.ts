@@ -83,7 +83,8 @@ export async function loadFreshPlatformBriefing(opts?: {
       // ✨ v4：按"增长潜力"挑（18 天窗口 + 排企业号 + 同账号突然爆发加权 + 强制行业归类）
       const { selected, debug } = selectByGrowthPotential(collection.items, { topN, windowDays: 18 });
       const lines = selected.map(formatScoredItem).join("\n");
-      const updatedLine = `（采集时间 ${collection.collectedAt} · 18 天窗口爆款 · 入池 ${collection.items.length} 条 → 过滤后 ${debug.kept} 条 [窗外 ${debug.excluded.outOfWindow} · 无发布时间 ${debug.excluded.noPublishedAt} · 企业号 ${debug.excluded.enterprise}]）`;
+      const paidExcl = debug.excluded.paidPromotion ?? 0;
+      const updatedLine = `（采集时间 ${collection.collectedAt} · 18 天窗口爆款 · 入池 ${collection.items.length} 条 → 过滤后 ${debug.kept} 条 [窗外 ${debug.excluded.outOfWindow} · 无发布时间 ${debug.excluded.noPublishedAt} · 企业/机构号 ${debug.excluded.enterprise} · 付费推广 ${paidExcl}]）`;
       sections.push(`### ${PLATFORM_LABELS[platform] || platform}\n${updatedLine}\n${lines || "（18 天窗口内无可用爆款）"}`);
     }
 
@@ -159,7 +160,8 @@ export async function listFreshTrendItems(opts?: {
       covered.push(platform);
 
       const { selected, debug } = selectByGrowthPotential(collection.items, { topN, windowDays: 18 });
-      debugSummary.push(`${PLATFORM_LABELS[platform]}: ${collection.items.length}→${debug.kept} (窗外${debug.excluded.outOfWindow}/无时间${debug.excluded.noPublishedAt}/企业号${debug.excluded.enterprise})`);
+      const paidExcl = debug.excluded.paidPromotion ?? 0;
+      debugSummary.push(`${PLATFORM_LABELS[platform]}: ${collection.items.length}→${debug.kept} (窗外${debug.excluded.outOfWindow}/无时间${debug.excluded.noPublishedAt}/企业号${debug.excluded.enterprise}/推广${paidExcl})`);
 
       for (const s of selected) {
         entries.push({

@@ -945,22 +945,28 @@ function buildPlatformRecommendations(
         .map((item) => item.trim())
         .filter((item) => item.length >= 2),
     ));
-    const liveTopicIdeas = (collection?.items || [])
-      .filter((item) => item.title && item.contentType !== "topic")
-      .filter((item) => {
-        if (!keywords.length) return true;
-        const haystack = `${item.title} ${normalizeStringList(item.tags).join(" ")}`.toLowerCase();
-        return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
-      })
-      .sort((left, right) => ((right.likes || 0) + (right.views || 0)) - ((left.likes || 0) + (left.views || 0)))
-      .slice(0, 5)
-      .map((item, index) => ({
+    const topicIdeaWindowDays = 30;
+    const basePool = (collection?.items || []).filter((item) => item.title && item.contentType !== "topic");
+    const keywordMatch = (item: (typeof basePool)[number]) => {
+      if (!keywords.length) return true;
+      const haystack = `${item.title} ${normalizeStringList(item.tags).join(" ")}`.toLowerCase();
+      return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+    };
+    let keywordPool = basePool.filter(keywordMatch);
+    let { selected: topicGrowthSelected } = selectByGrowthPotential(keywordPool, { topN: 5, windowDays: topicIdeaWindowDays });
+    if (!topicGrowthSelected.length && keywords.length && basePool.length) {
+      ({ selected: topicGrowthSelected } = selectByGrowthPotential(basePool, { topN: 5, windowDays: topicIdeaWindowDays }));
+    }
+    const liveTopicIdeas = topicGrowthSelected.map((scored, index) => {
+      const item = scored.item;
+      return {
         title: item.title,
         angle: `优先切入 ${normalizeStringList(item.tags).slice(0, 2).join(" / ") || "相似高表现主题"}，把它改写成更贴近你当前业务的人群和结果。`,
         expansion: index === 0
           ? "先做首发版，再拆成对比版和案例版。"
           : "保留同一主题，往不同人群场景或行动指令继续展开。",
-      }));
+      };
+    });
     if (liveTopicIdeas.length) return liveTopicIdeas;
     return [
       {
@@ -1286,9 +1292,9 @@ function buildPlatformActivities(
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
     const recommendation = platformRecommendations.find((item) => parsePlatformFromRecommendation(item.name) === platform);
     const items = (collection?.items || []).filter((item) => item.contentType !== "topic" && item.bucket !== "douyin_topics");
-    // ✨ v4：用增长潜力算法选 hotTopics（18 天窗口 + 排企业号 + 同账号突然爆发 + 强制行业归类）
+    // ✨ v4：用增长潜力算法选 hotTopics（≈30 天窗口 + 排商业/企业号 + 同账号突然爆发 + 强制行业归类）
     //    替换原"点赞+播放+评论*3"绝对值排行，避免两年前老作品污染
-    const { selected: hotScored } = selectByGrowthPotential(items, { topN: 4, windowDays: 18 });
+    const { selected: hotScored } = selectByGrowthPotential(items, { topN: 4, windowDays: 30 });
     const hotTopics = hotScored.map((s) => s.item.title).filter(Boolean);
     const activityLevel = items.length >= 40 ? "高" : items.length >= 15 ? "中" : "低";
     const suggestedTopics = recommendation?.topicIdeas?.slice(0, 3).map((item) => item.title)
@@ -2539,7 +2545,14 @@ export function buildGrowthSnapshotFromCollections(params: {
         metricWindow.avgLikes >= 30_000 ? "high" :
         metricWindow.avgLikes >= 8_000 ? "medium" :
         "low",
-      sampleTopics: filterRelevantTopics(collection.items.map((item) => item.title), context),
+      sampleTopics: (() => {
+        const rankedPool = collection.items.filter((item) => item.title && item.contentType !== "topic");
+        const pool = rankedPool.length ? rankedPool : collection.items.filter((item) => Boolean(item.title));
+        const { selected: sampleScored } = selectByGrowthPotential(pool, { topN: 12, windowDays: 30 });
+        const ordered = sampleScored.map((s) => s.item.title).filter(Boolean);
+        const fallback = collection.items.map((item) => item.title).filter(Boolean);
+        return filterRelevantTopics(ordered.length ? ordered : fallback, context);
+      })(),
     } satisfies GrowthPlatformSnapshot;
   });
 

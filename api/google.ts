@@ -17,6 +17,7 @@ export const config = {
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
+ * - op=vertexTranslate (Vertex IAM 纯文本翻译；固定 location=global、模型 gemini-3.1-flash-preview，供 TestLab 验证)
  * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
@@ -347,6 +348,49 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const raw = r.json ?? r.rawText;
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw });
+    }
+
+    // ---------------- Vertex：TestLab 翻译（Flash、global） ----------------
+    if (op === "vertexTranslate") {
+      const sourceText = s(b.prompt || b.text || q.prompt || "").trim();
+      if (!sourceText) return res.status(400).json({ ok: false, error: "missing_prompt" });
+
+      const targetLang = s(b.targetLang || q.targetLang || "English").trim() || "English";
+      const location = "global";
+      const model = "gemini-3.1-flash-preview";
+      const base = baseUrlFor(location);
+      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+
+      const instruction =
+        `You are a professional translator. Translate the user text into ${targetLang}. ` +
+        "Preserve meaning and tone. Output ONLY the translation, with no preamble or markdown.";
+      const userPayload = `---\n${sourceText}`;
+
+      const r = await fetchJson(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: `${instruction}\n\n${userPayload}` }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+        }),
+      });
+
+      const raw = r.json ?? r.rawText;
+      const parts = Array.isArray((raw as any)?.candidates?.[0]?.content?.parts)
+        ? (raw as any).candidates[0].content.parts
+        : [];
+      const translated = parts.map((p: any) => s(p?.text)).join("").trim();
+
+      return res.status(r.ok ? 200 : 502).json({
+        ok: r.ok,
+        status: r.status,
+        url: r.url,
+        model,
+        location,
+        targetLang,
+        translated: translated || null,
+        raw,
+      });
     }
 
     // ---------------- Nano Banana (image) ----------------
