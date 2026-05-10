@@ -116,8 +116,8 @@ export function resolveVertexFlashTranslationLocation(): string {
   return loc || "global";
 }
 
-/** 帶 `-MM-YYYY` 後綴的固定版本，降低底層權重更新導致結構化輸出跑版風險。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3.1-flash-live-preview-04-2026";
+/** Vertex Flash 英文化默认模型（高开通率；可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫）。 */
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3-flash-preview";
 
 export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
