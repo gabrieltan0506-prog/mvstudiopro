@@ -1,6 +1,6 @@
 /**
- * 決策智庫 · 雙軌 Gemini Flash 擴寫（與 {@link ../../shared/advancedPredictionEngine.ts} 數字殼解耦）。
- * Call A：核心洞察；Call B：賽馬標題、個性化方向、選題結構。並行 + allSettled，雙reject 則拋錯。
+ * 决策智库 · 双轨 Gemini Flash 扩写（与 {@link ../../shared/advancedPredictionEngine.ts} 数字壳解耦）。
+ * Call A：核心洞察；Call B：赛马标题、个性化方向、选题结构。并行 + allSettled，双 reject 则抛错。
  */
 
 import { createHash } from "node:crypto";
@@ -8,11 +8,12 @@ import { createHash } from "node:crypto";
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { extractJsonString, invokeLLM } from "../_core/llm";
 import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
+import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
 
 const PLATFORM_LABEL: Record<string, string> = {
   douyin: "抖音",
   bilibili: "B站",
-  xiaohongshu: "小紅書",
+  xiaohongshu: "小红书",
   kuaishou: "快手",
 };
 
@@ -32,16 +33,20 @@ function globalPredictionsJson(base: AdvancedAIReportData): string {
   }
 }
 
-/** 與 mutation 側一致：穩定指紋，用於快取命中。 */
+/** 与 mutation 侧一致：稳定指纹，用于缓存命中。（可选 platformAnalysisEpoch 由全案分析递增，避免误命中旧报告。） */
 export function hashDecisionIntelligenceRequest(payload: {
   topic: string;
   contentBlueprint: unknown;
   platformHint: string;
+  windowDays: number;
+  platformAnalysisEpoch?: number;
 }): string {
   const payloadString = JSON.stringify({
     topic: payload.topic,
     platformHint: payload.platformHint,
+    windowDays: payload.windowDays,
     blueprint: payload.contentBlueprint,
+    ...(payload.platformAnalysisEpoch != null ? { platformAnalysisEpoch: payload.platformAnalysisEpoch } : {}),
   });
   return createHash("sha256").update(payloadString).digest("hex");
 }
@@ -60,18 +65,20 @@ async function flashCallAnalysisEngine(params: {
   abortSignal?: AbortSignal;
 }): Promise<CallAOutput> {
   const modelName = resolveGrowthCampExtractorModel();
-  const system = `你是一位頂級的商業戰略顧問與數據分析師。
-你的任務是根據提供的「內容藍圖」與「大盤預測數據」，撰寫出 4 條「核心洞察 (Core Insights)」。
-【語氣】
-- 專業、客觀；輸出繁體中文為主。
-- 嚴禁「保證」「絕對能達到」等字眼；改用「預期具備潛力」「模型推演顯示」等。
-- 只輸出一個 JSON 物件，鍵名 coreInsights；陣列長度必須為 4，id 依序 1～4。`;
+  const system = `你是一位顶级的商业战略顾问与数据分析师。
+你的任务是根据提供的「内容蓝图」与「大盘预测数据」，撰写出 4 条「核心洞察 (Core Insights)」。
+【语气】
+- 专业、客观；输出简体中文为主。
+- 严禁「保证」「绝对能达到」等字眼；改用「预期具备潜力」「结合历史窗口样本」等。
+- metricsText 为一条短附注（建议≤45字）：只用简体中文；禁止出现「模拟」「模擬」「pp」「PP」等字样。
+- 若 metricsText 写转化率变化，须用「约高/约低 X 个百分点」，并避免缩写：百分点指转化率数字上的加减（例如从 8% 到 8.6% 即高约 0.6 个百分点）。
+- 只输出一个 JSON 对象，键名 coreInsights；数组长度必须为 4，id 依次为 1～4。`;
 
-  const user = `【選題方向】：${params.topic}
-【全局數據快照】：${globalPredictionsJson(params.base)}
-【內容藍圖】：${blueprintJsonForPrompt(params.contentBlueprint)}
+  const user = `【选题方向】：${params.topic}
+【全局数据快照】：${globalPredictionsJson(params.base)}
+【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
-請給出 4 條戰略洞察。每條 content 約 50～90 字；metricsText 簡要呼應快照中的數量級（勿與快照數字矛盾）。`;
+请给出 4 条战略洞察。每条 content 约 50～90 字；metricsText 简要呼应快照中的数量级（勿与快照矛盾），且禁止写「模拟」或「pp」。`;
 
   const response = await invokeLLM({
     model: "flash",
@@ -99,23 +106,23 @@ async function flashCallCreativeEngine(params: {
   const modelName = resolveGrowthCampExtractorModel();
   const platformLabel = PLATFORM_LABEL[params.platformHint] || params.platformHint;
   const ids = params.base.executionSuggestions.mabVariants.map((v) => v.id).join(", ");
-  const system = `你是深諳抖音、小紅書、B 站等平台的資深內容操盤手。
-根據內容藍圖產出高吸引力的賽馬標題、延伸選題與內容結構。
-【規則】
-- 只負責文字；不計算分數、機率、CTR 小數。
-- 只輸出一個 JSON，欄位：mabVariants、personalization、topicStructureExamples。
-- mabVariants 必須與輸入 id 完全一致且順序一致（通常 2 條）。
-- personalization 必須恰好 3 條（與本地骨架列數一致）。
-- topicStructureExamples 必須恰好 4 條，每條含 title、structure（structure 可用「段落1 → 段落2」）。`;
+  const system = `你是深谙抖音、小红书、B 站等平台的资深内容操盘手。
+根据内容蓝图产出高吸引力的赛马标题、延伸选题与内容结构。
+【规则】
+- 只负责文字；不计算分数、概率、CTR 小数。
+- 只输出一个 JSON，字段：mabVariants、personalization、topicStructureExamples。
+- mabVariants 必须与输入 id 完全一致且顺序一致（通常 2 条）。
+- personalization 必须恰好 3 条（与本地骨架列数一致）。
+- topicStructureExamples 必须恰好 4 条，每条含 title、structure（structure 可用「段落1 → 段落2」）。`;
 
-  const user = `【選題方向】：${params.topic}
-【目標平台】：${platformLabel}
-【內容藍圖】：${blueprintJsonForPrompt(params.contentBlueprint)}
+  const user = `【选题方向】：${params.topic}
+【目标平台】：${platformLabel}
+【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
-請產出：
-1) mabVariants：為 id 序 ${ids} 各寫 1 個吸睛標題（JSON 內含 id 與 title）。
-2) personalization：3 個延伸個性化選題方向（topicDirection）。
-3) topicStructureExamples：4 組 title + structure。`;
+请产出：
+1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题（JSON 内含 id 与 title）。
+2) personalization：3 个延伸个性化选题方向（topicDirection）。
+3) topicStructureExamples：4 组 title + structure。`;
 
   const response = await invokeLLM({
     model: "flash",
@@ -140,14 +147,18 @@ function mergeFlashIntoBase(base: AdvancedAIReportData, parsedA: CallAOutput | n
     enriched.coreInsights = base.coreInsights.map((row, index) => {
       const insight = parsedA.coreInsights![index];
       if (!insight) return row;
+      const mergedMetrics =
+        typeof insight.metricsText === "string" && insight.metricsText.trim()
+          ? insight.metricsText.trim()
+          : row.metricsText;
       return {
         id: row.id,
         title: typeof insight.title === "string" && insight.title.trim() ? insight.title.trim() : row.title,
         content: typeof insight.content === "string" && insight.content.trim() ? insight.content.trim() : row.content,
         metricsText:
-          typeof insight.metricsText === "string" && insight.metricsText.trim()
-            ? insight.metricsText.trim()
-            : row.metricsText,
+          typeof mergedMetrics === "string" && mergedMetrics.trim()
+            ? sanitizeDecisionIntelMetricsText(mergedMetrics)
+            : mergedMetrics,
       };
     });
   }
@@ -188,11 +199,16 @@ function mergeFlashIntoBase(base: AdvancedAIReportData, parsedA: CallAOutput | n
     });
   }
 
+  /* 文案扩写不应覆写数字壳；深拷贝后仍显式保留平台切片雷达，避免日后合并字段时被误清。 */
+  if (base.globalPredictions?.platformHitPotentialRadar) {
+    enriched.globalPredictions.platformHitPotentialRadar = base.globalPredictions.platformHitPotentialRadar;
+  }
+
   return enriched;
 }
 
 /**
- * 並行 Call A / Call B；僅當兩者 Promise 皆 rejected 時拋錯（不扣點由呼叫方處理）。
+ * 并行 Call A / Call B；仅当两者 Promise 皆 rejected 时抛错（不扣点由调用方处理）。
  * 若 fulfilled 但 JSON 異常，在內部 try/catch 視為該路徑無效，另一路仍可能成功。
  */
 export async function runGeminiFlashPipeline(params: {
@@ -242,7 +258,7 @@ export async function runGeminiFlashPipeline(params: {
     }
   }
 
-  /** 兩路都沒帶回可 merge 的結構時，與「雙 reject」同等：不應扣點。 */
+  /** 两路都没带回可 merge 的结构时，与「双 reject」同等：不应扣点。 */
   if (!parsedA && !parsedB) {
     throw new Error(
       `DECISION_INTEL_FLASH_ALL_FAILED: no_usable_json (A=${settledA.status}, B=${settledB.status})`,

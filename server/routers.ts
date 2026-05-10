@@ -3260,7 +3260,7 @@ export const appRouter = router({
         }
       }),
 
-    /** 個性化戰略地圖：首次體驗價與歷史次數（登入後可查） */
+    /** 个性化战略地图：首次体验价与历史次数（登录后可查） */
     getDecisionIntelligencePricing: protectedProcedure.query(async ({ ctx }) => {
       const database = await db.getDb();
       if (!database) {
@@ -3291,11 +3291,17 @@ export const appRouter = router({
       };
     }),
 
-    /** 最近一次已付費生成的戰略地圖（免費重看，不必再次扣點） */
+    /** 最近一次已付费生成的战略地图（免费重看，不必再次扣点） */
     getLatestDecisionIntelligenceReport: protectedProcedure.query(async ({ ctx }) => {
       const database = await db.getDb();
       if (!database) {
-        return { report: null, creationId: null as number | null, createdAt: null as string | null };
+        return {
+          report: null,
+          creationId: null as number | null,
+          createdAt: null as string | null,
+          windowDays: null as null | 15 | 30 | 45,
+          dateRange: null as string | null,
+        };
       }
       const { userCreations } = await import("../drizzle/schema-creations");
       const { and, eq, desc } = await import("drizzle-orm");
@@ -3312,26 +3318,33 @@ export const appRouter = router({
         .orderBy(desc(userCreations.createdAt))
         .limit(1);
       if (!row?.metadata) {
-        return { report: null, creationId: null, createdAt: null };
+        return { report: null, creationId: null, createdAt: null, windowDays: null, dateRange: null };
       }
       try {
         const meta = JSON.parse(row.metadata) as { report?: unknown };
         if (meta?.report && typeof meta.report === "object") {
+          const wdRaw = (meta as { windowDays?: unknown }).windowDays;
+          const windowDays =
+            typeof wdRaw === "number" && (wdRaw === 15 || wdRaw === 30 || wdRaw === 45) ? wdRaw : null;
+          const drRaw = (meta as { dateRange?: unknown }).dateRange;
+          const dateRange = typeof drRaw === "string" && drRaw.trim() ? drRaw.trim() : null;
           return {
             report: meta.report,
             creationId: row.id,
             createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
+            windowDays,
+            dateRange,
           };
         }
       } catch {
         /* ignore */
       }
-      return { report: null, creationId: row.id, createdAt: null };
+      return { report: null, creationId: row.id, createdAt: null, windowDays: null, dateRange: null };
     }),
 
     /**
-     * 解鎖並生成個性化戰略地圖：本地數字殼 + 並行 Gemini Flash 擴寫；快取命中免扣點；
-     * 雙軌 Flash 皆失敗不扣點；成功後才扣點並寫入 user_creations。
+     * 解锁并生成个性化战略地图：本地数字壳 + 并行 Gemini Flash 扩写；缓存命中免扣点；
+     * 双轨 Flash 皆失败不扣点；成功后才扣点并写入 user_creations。
      */
     generateDecisionIntelligenceReport: protectedProcedure
       .input(
@@ -3340,6 +3353,9 @@ export const appRouter = router({
           contentBlueprint: z.unknown().optional(),
           platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
           dateRange: z.string().max(120).optional(),
+          windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+          /** 每次「全案分析」由前端递增，写入 requestHash，避免命中 user_creations 中上一份同参报告缓存。 */
+          platformAnalysisEpoch: z.number().int().min(0).max(1_000_000_000).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -3371,10 +3387,11 @@ export const appRouter = router({
         );
 
         const now = new Date();
+        const windowDays = input.windowDays ?? 15;
         const dateRange =
           input.dateRange?.trim() ||
-          `${new Date(now.getTime() - 15 * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
-        const topic = (input.topic || "").trim() || "個性化戰略選題";
+          `${new Date(now.getTime() - windowDays * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
+        const topic = (input.topic || "").trim() || "个性化战略选题";
         const platformHint = input.platformHint ?? "douyin";
         const contentBlueprint =
           input.contentBlueprint ??
@@ -3388,6 +3405,8 @@ export const appRouter = router({
           topic,
           contentBlueprint,
           platformHint,
+          windowDays,
+          platformAnalysisEpoch: input.platformAnalysisEpoch,
         });
 
         const [cached] = await database
@@ -3425,7 +3444,7 @@ export const appRouter = router({
         if (preCredits.totalAvailable < cost) {
           throw new TRPCError({
             code: "PRECONDITION_FAILED",
-            message: `積分不足。解鎖智庫戰略地圖需要 ${cost} 點（當前可用 ${preCredits.totalAvailable}）。`,
+            message: `积分不足。解锁智库战略地图需要 ${cost} 点（当前可用 ${preCredits.totalAvailable}）。`,
           });
         }
 
@@ -3435,6 +3454,7 @@ export const appRouter = router({
           contentBlueprint,
           platformData: { platform: platformHint },
           thinkingLevel: "HIGH",
+          windowDays,
         });
 
         let enrichedReport: typeof baseReport;
@@ -3451,30 +3471,32 @@ export const appRouter = router({
           if (msg.startsWith("DECISION_INTEL_FLASH_ALL_FAILED")) {
             throw new TRPCError({
               code: "SERVICE_UNAVAILABLE",
-              message: "智庫文案擴寫暫時不可用，請稍後重試（未扣點）。",
+              message: "智库文案扩写暂时不可用，请稍后重试（未扣点）。",
             });
           }
           throw err;
         }
 
-        await deductCreditsAmount(ctx.user.id, cost, "decisionIntel", `個性化戰略地圖（${cost}點）`);
+        await deductCreditsAmount(ctx.user.id, cost, "decisionIntel", `个性化战略地图（${cost}点）`);
 
         const plan = await getUserPlan(ctx.user.id);
         const creationId = await recordCreation({
           userId: ctx.user.id,
           type: "advanced_decision_report",
-          title: `戰略地圖 · ${enrichedReport.topic}`.slice(0, 250),
+          title: `战略地图 · ${enrichedReport.topic}`.slice(0, 250),
           metadata: {
             report: enrichedReport,
             schemaVersion: 2,
             requestHash,
+            windowDays,
+            dateRange,
             chargedCredits: cost,
             dataRetention: "user_ledger_advanced_decision_report",
             flashModel: "gemini-3-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
           },
           creditsUsed: cost,
           plan,
-          quality: "決策智庫",
+          quality: "决策智库",
         });
 
         const creditsInfo = await getCredits(ctx.user.id);
