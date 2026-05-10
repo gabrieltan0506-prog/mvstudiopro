@@ -1468,6 +1468,7 @@ export default function PlatformPage() {
           windowDays,
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
+          strategicDashboard: dash as unknown as Record<string, unknown>,
         });
         setContentJobPollTrace({
           jobId,
