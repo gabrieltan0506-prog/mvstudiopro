@@ -71,7 +71,7 @@ import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
-/** MAB·UCB 實驗區：本地模擬點擊，演示探索–利用與後端入場建議 */
+/** 多臂賽馬（MAB）· 置信上界（UCB）實驗區：僅瀏覽器內模擬點擊，演示試新與選優 */
 function PlatformMabSandbox({
   variants,
   serverRecommended,
@@ -86,16 +86,19 @@ function PlatformMabSandbox({
   return (
     <div className="mt-4 rounded-lg border border-white/10 bg-[rgba(8,6,20,0.88)] p-3">
       <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
-        MAB 賽馬標題 · UCB 動態分發（實驗演示）
+        標題多版本試跑（多臂賽馬 MAB）· 按數據優選（置信上界 UCB）（實驗演示）
       </h4>
+      <p className="mb-2 text-[10px] leading-relaxed text-gray-500">
+        兩個標題版本並列對比；點下方「模擬點擊」只在本頁累計次數，用於演示如何平衡「多試新」與「選表現好的」。MAB、UCB 為業界常用演算法簡稱。
+      </p>
       <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
         {serverRecommended ? (
           <span className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-300">
-            入場: {serverRecommended}
+            系統初始推薦版本：{serverRecommended}（UCB）
           </span>
         ) : null}
         <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-200/95">
-          當前 UCB: {ucbPick || "—"}
+          當前優選版本：{ucbPick || "—"}（UCB）
         </span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -107,10 +110,12 @@ function PlatformMabSandbox({
             }`}
           >
             <div className="min-w-0 flex-1">
-              <span className="mr-2 font-bold text-blue-400">V{idx + 1}</span>
+              <span className="mr-2 font-bold text-blue-400">
+                方案 {idx + 1}（V{idx + 1}）
+              </span>
               <span className="text-sm text-gray-200">{variant.title}</span>
               <div className="mt-0.5 text-[10px] text-gray-500 tabular-nums">
-                曝光 {variant.impressions} · 點擊 {variant.clicks}
+                展示次數（曝光）{variant.impressions} · 點擊次數 {variant.clicks}
               </div>
             </div>
             <button
@@ -126,7 +131,7 @@ function PlatformMabSandbox({
                 );
               }}
             >
-              模擬點擊
+              模擬點擊（僅本頁演示）
             </button>
           </div>
         ))}
@@ -4726,12 +4731,12 @@ export default function PlatformPage() {
                                         : "border-emerald-500/50 bg-emerald-500/20 text-emerald-400"
                                     }`}
                                   >
-                                    ⚡ 預估 CTR: {item.predictedCtr}%
+                                    ⚡ 預估點閱率（CTR）：{item.predictedCtr}%
                                   </span>
                                 ) : null}
                                 {typeof item.personalizationScore === "number" ? (
                                   <span className="rounded-md border border-purple-500/50 bg-purple-500/20 px-2 py-1 text-xs font-medium text-purple-300">
-                                    🎯 匹配度: {item.personalizationScore}x
+                                    🎯 與您偏好的契合倍率（個性化 Personalization）：{item.personalizationScore}×
                                   </span>
                                 ) : null}
                               </div>
