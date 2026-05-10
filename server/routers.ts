@@ -84,6 +84,7 @@ import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
 import { createGcsSignedUploadUrl, uploadBufferToGcs, resolvePdfExportBucketName } from "./services/gcs";
 import { fetchPdfBufferFromWorker, getPdfWorkerFetchTimeoutMs } from "./services/pdfWorkerClient";
+import { buildStage1StrategicHandoffForStage2 } from "./services/stage1StrategicHandoff.js";
 import {
   createJob as createJobRecord,
   getJobById,
@@ -119,7 +120,7 @@ import {
   growthSnapshotSchema,
   growthTitleExecutionSchema,
 } from "@shared/growth";
-import { buildTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
+import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
@@ -489,10 +490,17 @@ function attachTitleVariantsToPlatformContent(
   const list = Array.isArray(data.contentBlueprints) ? data.contentBlueprints : [];
   return {
     ...data,
-    contentBlueprints: list.map((bp: Record<string, unknown>, i: number) => ({
-      ...bp,
-      titleVariants: buildTitleVariantsForBlueprint(bp, i),
-    })),
+    contentBlueprints: list.map((bp: Record<string, unknown>, i: number) => {
+      const titleVariants = buildAutoPickedTitleVariantsForBlueprint(bp, i);
+      const picked = String(titleVariants[0]?.title ?? "").trim();
+      const prev = String(bp.title ?? bp["标题"] ?? bp["选题标题"] ?? "").trim();
+      const title = picked || prev;
+      return {
+        ...bp,
+        title,
+        titleVariants,
+      };
+    }),
   };
 }
 
@@ -965,6 +973,8 @@ export async function buildPlatformContent(params: {
   requestedPlatforms: string[];
   store: Awaited<ReturnType<typeof readTrendStore>>;
   abortSignal?: AbortSignal;
+  /** Stage 1 戰略看板清洗摘要（標題／文案／分鏡種子）；由 worker 或同步路由注入 */
+  stage1Handoff?: ReturnType<typeof buildStage1StrategicHandoffForStage2> | null;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -981,6 +991,14 @@ export async function buildPlatformContent(params: {
     stage2MaxOutputTokensEnv: "PLATFORM_STAGE2_MAX_OUTPUT_TOKENS",
     openaiGpt5ReasoningEffort: getOpenAiGpt5ReasoningEffortDiagnostics(),
   };
+  const handoff = params.stage1Handoff ?? null;
+  if (handoff) {
+    diagnostics.stage1HandoffSourceNote = handoff.sourceNote;
+    diagnostics.stage1HandoffSeedCount = handoff.contentSeeds.length;
+  } else {
+    diagnostics.stage1HandoffSourceNote = null;
+    diagnostics.stage1HandoffSeedCount = 0;
+  }
   try {
     const cols = (params.store?.collections || {}) as Record<string, { items?: unknown[] }>;
     diagnostics.storeCollectionKeys = Object.keys(cols);
@@ -1054,6 +1072,8 @@ export async function buildPlatformContent(params: {
             growthPlan: params.snapshot.growthPlan || [],
             creationAssist: params.snapshot.creationAssist || {},
           },
+          /** Stage 1 看板清洗手遞：含 contentSeeds（title/hook/copywriting/分鏡欄位） */
+          stage1StrategicHandoff: handoff,
           ipContextBinding:
             "当前用户真实的 IP 定位与行业背景，必须据此生成恰好 4 条、四维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
         });
@@ -1064,6 +1084,8 @@ export async function buildPlatformContent(params: {
         content: `你是一个顶级的个人IP商业文案顾问。
 
 根据已生成的平台方向与用户背景数据，请为这位创作者制定深度内容的执行蓝图与商业变现路径。
+
+【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。你必须在此基础上产出 4 条更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但不得偏离人设与 headline/subheadline/persona 主线；若种子不足 4 条，可补充新选题但必须与同一 IP 身份一致。
 
 【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，必须重写）：
 - "电商带货" / "带货" / "橱窗"
@@ -4635,6 +4657,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
           windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
           platformMenu: z.array(z.any()).optional(),
           snapshotSummary: z.record(z.string(), z.any()),
+          /** Stage 1 完整戰略看板：後端清洗為 stage1StrategicHandoff 再併入 Stage 2 提示 */
+          strategicDashboard: z.record(z.string(), z.any()).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4670,6 +4694,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               windowDays: input.windowDays,
               platformMenu: input.platformMenu ?? [],
               snapshotSummary: input.snapshotSummary,
+              strategicDashboard: input.strategicDashboard,
             },
           },
         });
@@ -4682,6 +4707,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         platformMenu: z.array(z.any()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
+        strategicDashboard: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const t0 = Date.now();
@@ -4725,6 +4751,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
           });
           const storeReadMs = Date.now() - storeReadT0;
 
+          const stage1Handoff = buildStage1StrategicHandoffForStage2(
+            input.strategicDashboard,
+            input.snapshotSummary,
+          );
+
           type Stage2RaceDone = { kind: "done"; data: z.infer<typeof platformContentResponseSchema>; diagnostics: Record<string, unknown> };
           type Stage2RaceTimeout = { kind: "timeout" };
           const raced = await Promise.race([
@@ -4736,6 +4767,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               requestedPlatforms,
               store,
               abortSignal: ctx.clientDisconnected,
+              stage1Handoff,
             }).then(
               (r): Stage2RaceDone => ({
                 kind: "done",

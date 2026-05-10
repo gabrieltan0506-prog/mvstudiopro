@@ -30,6 +30,7 @@ import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
+import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
 import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -956,6 +957,8 @@ async function processPlatformJob(
       const windowDays = Number(params.windowDays ?? 15);
       const platformMenu = Array.isArray(params.platformMenu) ? params.platformMenu : [];
       const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
+      const strategicDashboard = (params as Record<string, unknown>).strategicDashboard;
+      const stage1Handoff = buildStage1StrategicHandoffForStage2(strategicDashboard, snapshotSummary);
       const preferFlyLive = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
       const requestedPlatforms = normalizePlatforms([
         ...((snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) =>
@@ -999,6 +1002,7 @@ async function processPlatformJob(
         requestedPlatforms,
         store,
         abortSignal: undefined,
+        stage1Handoff,
       });
       const diag = built.diagnostics as Record<string, unknown>;
       const respProv = diag?.responseProvider;

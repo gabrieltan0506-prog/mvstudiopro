@@ -412,6 +412,7 @@ VERTICAL 9:16 STORYBOARD STRIP (not 2x4 landscape):
 - gutters between panels
 - short-form video beats
 - not single full-bleed poster
+- **Panel 1 (thumbnail crop):** largest readable Simplified-Chinese title treatment for the hook; high contrast; composed so a **feed thumbnail crop** still reads the core tension.
 - main title based on 「${hook}」
 ` : `
 COVER DESIGN ONLY:
@@ -429,6 +430,7 @@ COVER DESIGN ONLY:
 - not account UI
 - not comment bar
 - The image must behave like a high-click cover, not an image-text note.
+- **Thumbnail-first layout:** reserve the **upper ~35–45%** as a safe zone for **large, ultra-legible Simplified-Chinese** hero type summarizing the hook; **strong luminance contrast** (light-on-deep or inverse); one dominant subject; avoid tiny caption-only compositions that die at feed thumbnail size.
 - FORBIDDEN LAYOUTS (even if trendy): storyboard grids, 2×4 panels, eight-panel montage, numbered scene strips, comic gutters, film contact-sheet layout, "救赎/逆袭" generic businessman arcs unrelated to the medical hook.
 - ANTI-HALLUCINATION: The scene MUST match the themes of the hook 「${hook}」and Context (e.g. medicine, doctor persona, study, books, journal props, landscape art, wellness). If an identity anchor block appears above, the on-camera subject, wardrobe, props, and environment tier MUST align with it. Unless the hook or Context clearly names food, cooking, recipes, ingredients, or specific dishes, DO NOT show: kitchens, recipe infographics, ingredient grids, cooking steps, noodle bowls, restaurant plating, or dual-column recipe lesson layouts.
 - main title based on 「${hook}」

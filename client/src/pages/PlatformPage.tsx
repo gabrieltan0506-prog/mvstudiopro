@@ -24,7 +24,11 @@ import {
   optimizePdfSnapshotHtml,
 } from "@/lib/pdfHtmlOptimize";
 import type { PlatformTitleVariant } from "@shared/platformTitleVariants";
-import { buildTitleVariantsForBlueprint, coverAppealHintForCover } from "@shared/platformTitleVariants";
+import {
+  buildAutoPickedTitleVariantsForBlueprint,
+  buildTitleVariantsForBlueprint,
+  pickPreferredTitleVariant,
+} from "@shared/platformTitleVariants";
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { buildSimulatedAdvancedAIReport } from "@shared/advancedPredictionEngine";
 import {
@@ -652,39 +656,31 @@ function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleV
   return out.length >= 2 ? out : fallback;
 }
 
-function PlatformTitleVariantStrip(props: {
-  variants: PlatformTitleVariant[];
-  selectedId: "a" | "b";
-  onSelect: (id: "a" | "b") => void;
-}) {
-  const { variants, selectedId, onSelect } = props;
-  if (!variants.length) return null;
-  return (
-    <div className="mt-3 space-y-1.5">
-      <p className="text-[11px] leading-relaxed text-white/42">
-        同一套正文不换，只换列表/封面上的主标题说法，点一条用于本卡展示和出图。
-      </p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {variants.map((v) => {
-          const active = selectedId === v.id;
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => onSelect(v.id)}
-              className={`rounded-lg border p-3 text-left text-sm leading-snug transition ${
-                active
-                  ? "border-[#ff4fb8]/55 bg-[#ff4fb8]/12 text-white"
-                  : "border-white/10 bg-black/25 text-white/90 hover:border-white/22"
-              }`}
-            >
-              {v.title}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
+/** 與後端單條展示標題對齊（具體規則在 shared / 後台）。 */
+function resolveExecutionCardTitleVariants(
+  rawItem: Record<string, unknown>,
+  title: string,
+  hook: string,
+  copywriting: string,
+  index: number,
+): PlatformTitleVariant[] {
+  const hookStr = String(hook || "").replace(/\s+/g, " ").trim();
+  const seed = { ...rawItem, title, hook, copywriting };
+  const fallbackPair = buildTitleVariantsForBlueprint(seed, index);
+  const raw = rawItem.titleVariants;
+  if (Array.isArray(raw) && raw.length >= 2) {
+    const normalized = normalizeTitleVariantsFromServer(raw, fallbackPair);
+    const w = pickPreferredTitleVariant(normalized, hookStr);
+    return [{ id: "a", title: w.title }];
+  }
+  if (Array.isArray(raw) && raw.length === 1) {
+    const row = raw[0];
+    if (row && typeof row === "object") {
+      const t = String((row as { title?: unknown }).title ?? "").trim();
+      if (t) return [{ id: "a", title: t }];
+    }
+  }
+  return buildAutoPickedTitleVariantsForBlueprint(seed, index);
 }
 
 /** 執行選題卡 DOM id：穩定錨點 `execution-card-…`（畫廊不綁定點擊滾動） */
@@ -1285,8 +1281,6 @@ export default function PlatformPage() {
   }, [platformImageGenFlowSnapshots]);
   /** 单张封面「重新生成」进行中（显示骨架，避免无反馈） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
-  /** 選題卡：僅本地記錄「用哪句當發文大標」，不寫庫、不占 Neon。 */
-  const [titleVariantPickBySceneId, setTitleVariantPickBySceneId] = useState<Record<string, "a" | "b">>({});
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
   /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
@@ -1468,6 +1462,7 @@ export default function PlatformPage() {
           windowDays,
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
+          strategicDashboard: dash as unknown as Record<string, unknown>,
         });
         setContentJobPollTrace({
           jobId,
@@ -2297,17 +2292,40 @@ export default function PlatformPage() {
       hotTopics: platformDashboard?.hotTopics?.slice(0, 12),
       monetizationLanes: platformDashboard?.monetizationLanes?.slice(0, 6),
       trendNarrative: snapshot?.overview?.trendNarrative,
+      /** Stage 2 專屬文案／選題結構 — 決策智庫僅在寫入完成後開放，一併納入分析 */
+      stage2ContentBlueprints: platformContent?.contentBlueprints?.slice(0, 8),
+      stage2MonetizationLanes: platformContent?.monetizationLanes?.slice(0, 8),
     }),
-    [platformDashboard, snapshot],
+    [platformDashboard, snapshot, platformContent],
   );
+
+  /** 全案專屬文案（Stage 2）成功落地後才允許示意預覽與扣點生成；價格查詢不受此限。 */
+  const decisionIntelInputReady = useMemo(() => {
+    if (!snapshot || !platformDashboard) return false;
+    if (isContentLoading) return false;
+    if (stage2Failed || contentJobError) return false;
+    if (!platformContent || stage2EmptyPayload) return false;
+    return true;
+  }, [
+    snapshot,
+    platformDashboard,
+    isContentLoading,
+    stage2Failed,
+    contentJobError,
+    platformContent,
+    stage2EmptyPayload,
+  ]);
   const strategicMapTopic = useMemo(() => {
     const raw = (platformDashboard?.headline || platformDashboard?.subheadline || "").trim();
     return raw.slice(0, 160) || "個性化戰略選題";
   }, [platformDashboard]);
 
-  /** 與付費入庫同一套引擎與輸入；鎖定態僅作模糊示意（非外製靜態 Demo）。 */
+  /**
+   * 僅在全案專屬文案已落地後演算示意預覽，避免用淺層看板做出「很滿」的假預覽誤導付費。
+   * 與付費入庫同一套引擎與輸入；鎖定態僅作模糊示意（非外製靜態 Demo）。
+   */
   const strategicMapPreviewReport = useMemo((): AdvancedAIReportData | null => {
-    if (!platformDashboard) return null;
+    if (!decisionIntelInputReady || !platformDashboard) return null;
     const now = new Date();
     const dateRange = `${new Date(now.getTime() - 15 * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
     return buildSimulatedAdvancedAIReport({
@@ -2317,14 +2335,15 @@ export default function PlatformPage() {
       platformData: { platform: "douyin" },
       thinkingLevel: "HIGH",
     });
-  }, [platformDashboard, strategicMapTopic, strategicMapBlueprint]);
+  }, [decisionIntelInputReady, platformDashboard, strategicMapTopic, strategicMapBlueprint]);
 
+  /** 價格與歷史報告始終可查，避免按鈕無價、介面像故障或誘導 */
   const decisionIntelPricingQuery = trpc.mvAnalysis.getDecisionIntelligencePricing.useQuery(undefined, {
-    enabled: isAuthenticated && !!platformDashboard,
+    enabled: isAuthenticated && !!platformDashboard && !!snapshot,
     staleTime: 60_000,
   });
   const decisionIntelLatestQuery = trpc.mvAnalysis.getLatestDecisionIntelligenceReport.useQuery(undefined, {
-    enabled: isAuthenticated && !!platformDashboard,
+    enabled: isAuthenticated && !!platformDashboard && !!snapshot,
   });
   const generateDecisionIntelMutation = trpc.mvAnalysis.generateDecisionIntelligenceReport.useMutation({
     onSuccess: () => {
@@ -2694,22 +2713,20 @@ export default function PlatformPage() {
           scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
         }
 
-        const fallbackVariants = buildTitleVariantsForBlueprint(
-          { ...item, title, hook, copywriting },
+        const titleVariants = resolveExecutionCardTitleVariants(
+          item as Record<string, unknown>,
+          String(title),
+          String(hook),
+          String(copywriting),
           index,
         );
-        const normalized = normalizeTitleVariantsFromServer(item.titleVariants, fallbackVariants);
         const baseTitle = cleanUserCopy(
-          renderSafeText(title || item.theme || item.titleExample, `内容方案 ${index + 1}`),
+          renderSafeText(
+            titleVariants[0]?.title || title || item.theme || item.titleExample,
+            `内容方案 ${index + 1}`,
+          ),
           `内容方案 ${index + 1}`,
         );
-        const titleVariants =
-          normalized.length >= 2
-            ? [
-                { id: "a" as const, title: baseTitle },
-                { id: "b" as const, title: normalized[1]!.title },
-              ]
-            : normalized;
 
         return {
           id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
@@ -2740,22 +2757,20 @@ export default function PlatformPage() {
 
     // Pre-analysis state only: show snapshot topics as preview placeholders
     return topTopics.slice(0, 4).map((item, index) => {
-      const baseTitle = cleanUserCopy(item.title, `内容方案 ${index + 1}`);
-      const tvs = buildTitleVariantsForBlueprint(
-        {
-          title: item.title,
-          hook: item.howToUse,
-          copywriting: item.whyHot,
-        },
+      const baseTitleRaw = item.title;
+      const hookRaw = item.howToUse;
+      const copyRaw = item.whyHot;
+      const titleVariants = resolveExecutionCardTitleVariants(
+        { title: baseTitleRaw, hook: hookRaw, copywriting: copyRaw },
+        baseTitleRaw,
+        hookRaw,
+        copyRaw,
         index,
       );
-      const titleVariants =
-        tvs.length >= 2
-          ? [
-              { id: "a" as const, title: baseTitle },
-              { id: "b" as const, title: tvs[1]!.title },
-            ]
-          : tvs;
+      const baseTitle = cleanUserCopy(
+        titleVariants[0]?.title || baseTitleRaw,
+        `内容方案 ${index + 1}`,
+      );
       return {
       id: String((item as any).id || (item as any).sceneId || `topic-${index}`),
       title: baseTitle,
@@ -2789,9 +2804,6 @@ export default function PlatformPage() {
       });
       return next;
     });
-    setTitleVariantPickBySceneId((prev) =>
-      Object.fromEntries(Object.entries(prev).filter(([key]) => validIds.has(key))) as Record<string, "a" | "b">,
-    );
   }, [contentExecutionCards, contentExecutionCardsKey]);
 
   const platformTopicCount = contentExecutionCards.length;
@@ -3870,12 +3882,13 @@ export default function PlatformPage() {
                   <div>
                     <h3 className="text-base font-bold text-white md:text-lg">個性化戰略地圖（決策智庫視圖）</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      將戰略看板濃縮為<strong className="text-white">雷達、賽馬建議與契合度排行</strong>。
-                      預設上鎖；解鎖後首購{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 積分（八折）</strong>，
-                      之後每次{" "}
+                      在<strong className="text-white">全案專屬文案已成功寫入</strong>後，將本頁戰略看板與長稿要點<strong className="text-white">收斂成一頁可視化報告</strong>
+                      （雷達、執行向建議與閱讀用排行條；均為<strong className="text-white">輔助決策的模型推演</strong>，不構成效果承諾）。解鎖為
+                      <strong className="text-white"> 加購模組</strong>
+                      ，與全案入隊扣點分開計：首購{" "}
+                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 積分</strong>，之後每次{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 積分</strong>。
-                      扣費成功即寫入您的檔案；<strong className="text-white">即使暫不查看也會留存</strong>，作為可用戶回溯與平台數據沉澱。
+                      扣費於後台<strong className="text-white">成功產出後結算</strong>並存檔；除可驗證的系統故障外，<strong className="text-red-200/95">與全案相同不因主觀不滿意而退點</strong>。
                     </p>
                   </div>
                 </div>
@@ -3886,15 +3899,32 @@ export default function PlatformPage() {
                         ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 點`
                         : `尚未解鎖 · 首購 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 點`}
                     </span>
+                    {!decisionIntelInputReady ? (
+                      <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
+                        {isContentLoading
+                          ? "專屬文案生成中，完成後才可扣點解鎖（價格已標示於上）。"
+                          : stage2Failed || contentJobError
+                            ? "專屬文案未完成，請重試全案文案後再解鎖本模組。"
+                            : stage2EmptyPayload
+                              ? "後台未返回有效選題請重試；完成後再解鎖。"
+                              : platformDashboard && !platformContent
+                                ? "請先完成專屬文案入隊結果，再解鎖本報告。"
+                                : "請完成全案專屬文案後再解鎖。"}
+                      </span>
+                    ) : null}
                     <button
                       type="button"
-                      disabled={generateDecisionIntelMutation.isPending || !decisionIntelPricingQuery.data}
+                      disabled={
+                        generateDecisionIntelMutation.isPending ||
+                        !decisionIntelPricingQuery.data ||
+                        !decisionIntelInputReady
+                      }
                       onClick={() => {
                         const next = decisionIntelPricingQuery.data?.nextCredits;
                         if (next == null) return;
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `將扣除 ${next} 積分解鎖個性化戰略地圖（決策智庫報告），並為您存檔。是否繼續？`,
+                            `將扣除 ${next} 積分，基於當前「戰略看板 + 已寫入的專屬文案」生成決策智庫報告並存檔。\n\n報告為模型輔助閱讀與推演，非效果保證；成功出貨後恕不因主觀不滿意退點（與全案說明一致）。是否繼續？`,
                           );
                           if (!ok) return;
                         }
@@ -3937,16 +3967,28 @@ export default function PlatformPage() {
                       {strategicMapPreviewReport ? (
                         <PlatformReportDashboard data={strategicMapPreviewReport} />
                       ) : (
-                        <div className="flex h-40 items-center justify-center text-xs text-gray-500">
-                          戰略看板就緒後即生成本平臺預覽
+                        <div className="flex min-h-[240px] flex-col items-center justify-center gap-2 px-6 text-center text-xs text-gray-500">
+                          <p className="text-gray-400">示意預覽將在<strong className="text-gray-300">專屬文案成功寫入後</strong>生成</p>
+                          <p>與解鎖後報告同套引擎；未完成文案前不展示模擬畫面，避免與實際可購內容錯位。</p>
                         </div>
                       )}
                     </div>
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#070a12]/78 px-4 text-center">
                       <Lock className="h-8 w-8 text-[#8cefff]/90" aria-hidden />
-                      <p className="max-w-md text-sm font-semibold text-white">示意預覽（模糊）</p>
+                      <p className="max-w-md text-sm font-semibold text-white">
+                        {strategicMapPreviewReport ? "示意預覽（模糊）" : "待專屬文案就緒"}
+                      </p>
                       <p className="max-w-lg text-xs leading-relaxed text-gray-400">
-                        畫面由<strong className="text-gray-300">本平台決策引擎</strong>依您當前戰略看板即時演算，解鎖後為同一路徑的清晰版並存檔。
+                        {strategicMapPreviewReport ? (
+                          <>
+                            由<strong className="text-gray-300">本平台決策引擎</strong>依當前全案結果演算；解鎖後為同一路徑清晰版並存檔。
+                          </>
+                        ) : (
+                          <>
+                            請先完成本頁全案流程中的<strong className="text-gray-300">專屬文案</strong>
+                            ，再預覽或解鎖；價格已在上文標明。
+                          </>
+                        )}
                       </p>
                     </div>
                   </>
@@ -4569,6 +4611,18 @@ export default function PlatformPage() {
                 {/* 3A：選題卡片 Grid 上方 — IP 維度引導（含底部提示） */}
                 {platformDashboard ? <PlatformIpDimensionGuide /> : null}
 
+                {contentExecutionCards.length > 0 ? (
+                  <div
+                    className="mt-4 rounded-xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] px-4 py-3 text-sm leading-relaxed text-[#c8eef9]"
+                    role="status"
+                  >
+                    已启用<strong className="text-white">选题与封面一体化优化</strong>
+                    ：后台会为每条方案<strong className="text-white">择优主标题</strong>
+                    并与出图主句对齐（正文与分镜不改编），竖版封面强调
+                    <strong className="text-white">信息流缩略图可读</strong>。您只需一键生成封面即可。
+                  </div>
+                ) : null}
+
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length > 0 &&
                   coverWaitCarouselEngaged &&
@@ -4589,12 +4643,7 @@ export default function PlatformPage() {
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const digest = copyFlat.slice(0, 60);
-                      const variants = item.titleVariants ?? [];
-                      const tvPick = titleVariantPickBySceneId[item.id] ?? "a";
-                      const headlineTitle =
-                        tvPick === "b" && variants[1]?.title
-                          ? variants[1].title
-                          : variants[0]?.title || item.title;
+                      const headlineTitle = item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
                       const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
                       const compositeCost = isGraphicFormat
@@ -4883,18 +4932,6 @@ export default function PlatformPage() {
                           <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-gray-400">
                             {digest}
                             {copyFlat.length > 60 ? "…" : ""}
-                          </p>
-                        ) : null}
-                        <PlatformTitleVariantStrip
-                          variants={item.titleVariants ?? []}
-                          selectedId={tvPick}
-                          onSelect={(id) =>
-                            setTitleVariantPickBySceneId((prev) => ({ ...prev, [item.id]: id }))
-                          }
-                        />
-                        {variants.length ? (
-                          <p className="mt-2 text-[11px] leading-relaxed text-white/45">
-                            {coverAppealHintForCover(headlineTitle, item.hook ?? "")}
                           </p>
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
