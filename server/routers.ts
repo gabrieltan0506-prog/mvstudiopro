@@ -120,7 +120,7 @@ import {
   growthSnapshotSchema,
   growthTitleExecutionSchema,
 } from "@shared/growth";
-import { buildTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
+import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
@@ -492,7 +492,7 @@ function attachTitleVariantsToPlatformContent(
     ...data,
     contentBlueprints: list.map((bp: Record<string, unknown>, i: number) => ({
       ...bp,
-      titleVariants: buildTitleVariantsForBlueprint(bp, i),
+      titleVariants: buildAutoPickedTitleVariantsForBlueprint(bp, i),
     })),
   };
 }
