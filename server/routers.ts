@@ -490,10 +490,17 @@ function attachTitleVariantsToPlatformContent(
   const list = Array.isArray(data.contentBlueprints) ? data.contentBlueprints : [];
   return {
     ...data,
-    contentBlueprints: list.map((bp: Record<string, unknown>, i: number) => ({
-      ...bp,
-      titleVariants: buildAutoPickedTitleVariantsForBlueprint(bp, i),
-    })),
+    contentBlueprints: list.map((bp: Record<string, unknown>, i: number) => {
+      const titleVariants = buildAutoPickedTitleVariantsForBlueprint(bp, i);
+      const picked = String(titleVariants[0]?.title ?? "").trim();
+      const prev = String(bp.title ?? bp["标题"] ?? bp["选题标题"] ?? "").trim();
+      const title = picked || prev;
+      return {
+        ...bp,
+        title,
+        titleVariants,
+      };
+    }),
   };
 }
 

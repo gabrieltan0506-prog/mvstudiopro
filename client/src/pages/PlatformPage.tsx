@@ -4616,8 +4616,10 @@ export default function PlatformPage() {
                     className="mt-4 rounded-xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] px-4 py-3 text-sm leading-relaxed text-[#c8eef9]"
                     role="status"
                   >
-                    本期已启用<strong className="text-white">选题与封面展示优化</strong>
-                    ，由系统在后台自动处理展示标题与出图方向，无需额外设置，可直接生成封面。
+                    已启用<strong className="text-white">选题与封面一体化优化</strong>
+                    ：后台会为每条方案<strong className="text-white">择优主标题</strong>
+                    并与出图主句对齐（正文与分镜不改编），竖版封面强调
+                    <strong className="text-white">信息流缩略图可读</strong>。您只需一键生成封面即可。
                   </div>
                 ) : null}
 
