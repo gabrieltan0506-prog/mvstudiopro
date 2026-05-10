@@ -46,7 +46,90 @@ export type TrendItem = {
   industryLabels?: string[];
   ageLabels?: string[];
   contentLabels?: string[];
+  /** 信息流 / DOU+ / 薯条 / 品牌合作标等——平台若返回则标记，便于从「自然爆款」池剔除 */
+  isPaidPromotion?: boolean;
+  paidPromotionReason?: string;
 };
+
+/** 抖音 Web author 常见字段：企业认证、政务媒体、蓝标文案（用于结构化排除商业号） */
+function metaFromDouyinAuthor(author: unknown): Partial<Pick<TrendItem, "accountType" | "accountTypeReason" | "authorVerified">> {
+  const a = author as Record<string, any> | null | undefined;
+  if (!a || typeof a !== "object") return {};
+  const ent = String(a.enterprise_verify_reason ?? a.enterpriseVerifyReason ?? "").trim();
+  if (ent) {
+    return { accountType: "enterprise", accountTypeReason: "douyin:enterprise_verify_reason", authorVerified: true };
+  }
+  if (a.is_government_media === true || a.isGovernmentMedia === true) {
+    return { accountType: "government", accountTypeReason: "douyin:is_government_media", authorVerified: true };
+  }
+  const custom = String(a.custom_verify ?? a.customVerify ?? "").trim();
+  if (custom && /(媒体|新闻|日报社|广播电视台|中央广播电视|财经网|经济观察)/.test(custom)) {
+    return { accountType: "media", accountTypeReason: "douyin:custom_verify_media", authorVerified: true };
+  }
+  if (custom && /(政府|政务|公安|法院|检察|发布|司法局)/.test(custom)) {
+    return { accountType: "government", accountTypeReason: "douyin:custom_verify_gov", authorVerified: true };
+  }
+  return {};
+}
+
+/** 抖音单条：信息流广告 / raw_ad 等 */
+function metaFromDouyinAweme(item: unknown): Partial<Pick<TrendItem, "isPaidPromotion" | "paidPromotionReason">> {
+  const it = item as Record<string, any> | null | undefined;
+  if (!it || typeof it !== "object") return {};
+  if (it.is_ads === 1 || it.is_ads === true) {
+    return { isPaidPromotion: true, paidPromotionReason: "douyin:is_ads" };
+  }
+  if (it.raw_ad_data != null && typeof it.raw_ad_data === "object") {
+    return { isPaidPromotion: true, paidPromotionReason: "douyin:raw_ad_data" };
+  }
+  if (it.advertisement != null || it.aweme_advertisement != null) {
+    return { isPaidPromotion: true, paidPromotionReason: "douyin:advertisement" };
+  }
+  if (Number(it.ad_label_version ?? it.adLabelVersion ?? 0) > 0) {
+    return { isPaidPromotion: true, paidPromotionReason: "douyin:ad_label_version" };
+  }
+  return {};
+}
+
+/** 小红书 noteCard / 搜索 note：企业专业号、品牌合作笔记 */
+function metaFromXhsNote(noteCard: unknown): Partial<Pick<TrendItem, "accountType" | "accountTypeReason" | "authorVerified" | "isPaidPromotion" | "paidPromotionReason">> {
+  const nc = noteCard as Record<string, any> | null | undefined;
+  if (!nc || typeof nc !== "object") return {};
+  const out: Partial<Pick<TrendItem, "accountType" | "accountTypeReason" | "authorVerified" | "isPaidPromotion" | "paidPromotionReason">> = {};
+  const user = nc.user as Record<string, any> | undefined;
+  if (user && typeof user === "object") {
+    const vt = Number(user.redOfficialVerifyType ?? user.red_official_verify_type ?? NaN);
+    // 社区常见：2 ≈ 企业 / 品牌专业号（具体枚举未公开文档，仅用明确企业类）
+    if (vt === 2) {
+      out.accountType = "enterprise";
+      out.accountTypeReason = "xhs:redOfficialVerifyType=2";
+      out.authorVerified = true;
+    }
+    const ut = String(user.userType ?? user.user_type ?? "").trim();
+    if (/品牌|企业|商家|机构/.test(ut)) {
+      out.accountType = "enterprise";
+      out.accountTypeReason = "xhs:userType";
+      out.authorVerified = true;
+    }
+  }
+  const hasCoop = (Array.isArray(nc.cooperateBinds) && nc.cooperateBinds.length > 0)
+    || (Array.isArray(nc.cooperate_binds) && nc.cooperate_binds.length > 0);
+  const commercialFlag = Number(nc.commercialFlag ?? nc.commercial_flag ?? 0);
+  const commercialNote = nc.commercial === true
+    || nc.noteAttributes?.commercial === true
+    || nc.note_activity_info?.commercial === true;
+  if (hasCoop) {
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "xhs:cooperateBinds";
+  } else if (commercialFlag === 1) {
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "xhs:commercialFlag";
+  } else if (commercialNote) {
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "xhs:commercial_note";
+  }
+  return out;
+}
 
 export type TrendCollectionStats = {
   platform: GrowthPlatform;
@@ -601,6 +684,8 @@ function extractDouyinCreatorItems(state: unknown) {
             .map((entry) => String(entry?.hashtag_name ?? "").trim())
             .filter(Boolean)
           : [],
+        ...metaFromDouyinAuthor(author),
+        ...metaFromDouyinAweme(record.aweme_info ?? record),
       });
     }
 
@@ -642,6 +727,8 @@ function extractDouyinCreatorBillboardItems(payload: unknown, bucket: string) {
           tags: Array.isArray(record.key_words)
             ? record.key_words.map((item) => String(item ?? "").trim()).filter(Boolean)
             : [],
+          ...metaFromDouyinAuthor(author),
+          ...metaFromDouyinAweme(entry),
         });
       });
       return;
@@ -1944,6 +2031,8 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
               hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
               contentType: "video" as const,
               tags,
+              ...metaFromDouyinAuthor(author),
+              ...metaFromDouyinAweme(item),
             } satisfies TrendItem;
           })
           .filter(Boolean) as TrendItem[];
@@ -2140,6 +2229,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
             comments: parseChineseCount(noteCard.interactInfo?.commentCount),
             shares: parseChineseCount(noteCard.interactInfo?.shareCount),
             contentType: noteCard.video ? "video" : "note",
+            ...metaFromXhsNote(noteCard),
           } satisfies TrendItem;
         })
         .filter(Boolean) as TrendItem[];
@@ -2192,6 +2282,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
                 shares: parseChineseCount(note.interactInfo?.shareCount ?? note.shareCount),
                 contentType: note.video ? "video" : "note",
                 tags: [keyword, sort],
+                ...metaFromXhsNote(note.noteCard ?? note),
               } satisfies TrendItem;
             })
             .filter(Boolean) as TrendItem[];

@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 
-type TabKey = "script" | "image" | "video" | "music";
+type TabKey = "script" | "translate" | "image" | "video" | "music";
 type GoogleImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
 type OpenAIImageModel = "gpt-image-2";
 type VeoMode = "rapid" | "pro";
@@ -193,6 +193,11 @@ export default function TestLab() {
   const [scriptBusy, setScriptBusy] = useState(false);
   const [scriptText, setScriptText] = useState("");
 
+  // Vertex translate (TestLab)
+  const [translateBusy, setTranslateBusy] = useState(false);
+  const [translateText, setTranslateText] = useState("");
+  const [translateTargetLang, setTranslateTargetLang] = useState("English");
+
   // Image
   const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3.1-flash-image-preview");
   /** 非空则覆盖「模型」下拉的 model 字符串（方便试 AI Studio 里复制的完整 ID） */
@@ -236,6 +241,8 @@ export default function TestLab() {
   const [selectedClipId, setSelectedClipId] = useState("");
 
   const [debug, setDebug] = useState<any>(null);
+  /** 底部調試區是否展開（預設展開，方便排錯） */
+  const [debugPanelOpen, setDebugPanelOpen] = useState(true);
 
   const stopRef = useRef(false);
 
@@ -300,6 +307,30 @@ export default function TestLab() {
       setDebug(buildClientFailureDebug(e, last, { action: "geminiScript" }));
     } finally {
       setScriptBusy(false);
+    }
+  }
+
+  async function runVertexTranslate() {
+    setTranslateBusy(true);
+    setTranslateText("");
+    setDebug({ ok: true, action: "vertexTranslate:start" });
+    let last: HttpSnapshot | undefined;
+    try {
+      const r = await fetchJsonish("/api/google?op=vertexTranslate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, targetLang: translateTargetLang.trim() || "English" }),
+      });
+      last = r;
+      setDebug({ ok: r.ok, action: "vertexTranslate", ...snapshotHttpForDebug(r) });
+      if (!r.ok) throw new Error("vertex_translate_failed");
+      const direct = String(r?.json?.translated ?? "").trim();
+      const txt = direct || getScriptText(r.json) || JSON.stringify(r.json, null, 2);
+      setTranslateText(txt);
+    } catch (e: any) {
+      setDebug(buildClientFailureDebug(e, last, { action: "vertexTranslate" }));
+    } finally {
+      setTranslateBusy(false);
     }
   }
 
@@ -677,6 +708,7 @@ export default function TestLab() {
 
       <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
         {tabButton("script", "脚本")}
+        {tabButton("translate", "翻译")}
         {tabButton("image", "图像")}
         {tabButton("video", "视频")}
         {tabButton("music", "音乐")}
@@ -752,6 +784,43 @@ export default function TestLab() {
             <div style={{ marginTop: 14 }}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>结果</div>
               <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 }}>{scriptText}</pre>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {tab === "translate" && (
+        <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>Vertex · 翻译（TestLab）</div>
+          <div style={{ marginTop: 8, opacity: 0.8 }}>
+            模型 <code style={{ fontSize: 12 }}>gemini-3.1-flash-preview</code>，区域 <code style={{ fontSize: 12 }}>global</code>，与「脚本」同属 Vertex IAM <code>/api/google</code> 闸道。
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>目标语言</div>
+              <input
+                value={translateTargetLang}
+                onChange={(e) => setTranslateTargetLang(e.target.value)}
+                placeholder="English"
+                style={{ width: 220, padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+              />
+            </div>
+            <button
+              onClick={runVertexTranslate}
+              disabled={translateBusy}
+              style={{ padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+            >
+              {translateBusy ? "翻译中…" : "翻译（Vertex）"}
+            </button>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+            原文请填在上方「公共输入」文本框。
+          </div>
+
+          {translateText ? (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>译文</div>
+              <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 }}>{translateText}</pre>
             </div>
           ) : null}
         </div>
@@ -1247,28 +1316,104 @@ export default function TestLab() {
         </div>
       )}
 
-      {/* Debug Panel */}
-      {debug ? (
-        <div style={{ marginTop: 24, borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.45)", padding: 16 }}>
-          <div style={{ fontWeight: 900, marginBottom: 8, color: debug?.ok === false ? "#ff6b6b" : "#6bffb8" }}>
-            {debug?.ok === false ? "❌ 调试输出（失败）" : "✅ 调试输出"}
+      {/* Debug：固定在頁面底部，一律可見，便於對照 HTTP / 錯誤 */}
+      <div
+        style={{
+          marginTop: 32,
+          paddingTop: 20,
+          borderTop: "1px solid rgba(255,255,255,0.12)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>返回数据（调试）</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => setDebugPanelOpen((v) => !v)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.08)",
+                color: "white",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {debugPanelOpen ? "收起" : "展开"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setDebug(null)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,100,100,0.35)",
+                background: "rgba(180,40,40,0.2)",
+                color: "#ffb4b4",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              清空
+            </button>
           </div>
-          {debug?.ok === false && debug?.clientThrownError ? (
-            <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 10, color: "#ffb4b4" }}>
-              客户端抛出：<code>{String(debug.clientThrownError)}</code>
-              {debug?.lastHttp ? " · 详见下方 <code>lastHttp</code>（HTTP 状态、structured、json、rawText）" : null}
-            </div>
-          ) : null}
-          {typeof debug?.rawWireCharacterCount === "number" && debug.rawWireCharacterCount >= DEBUG_RAW_WIRE_OMIT_MIN ? (
-            <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 8 }}>
-              响应体约 <code>{debug.rawWireCharacterCount}</code> 字符，已省略原始 <code>rawText</code> wire；结构请看 <code>redactedBodyText</code> / <code>json</code>（base64 已脱敏）。
-            </div>
-          ) : null}
-          <pre style={{ fontSize: 11, color: "#ccc", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "min(70vh, 720px)", overflowY: "auto" }}>
-            {JSON.stringify(debug, null, 2)}
-          </pre>
         </div>
-      ) : null}
+        <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 12 }}>
+          每次請求結束後會更新此處；若請求失敗請看 <code style={{ fontSize: 11 }}>ok</code>、<code style={{ fontSize: 11 }}>clientThrownError</code>、<code style={{ fontSize: 11 }}>lastHttp</code>、<code style={{ fontSize: 11 }}>structured</code>。
+        </div>
+
+        {debugPanelOpen ? (
+          <div
+            style={{
+              borderRadius: 14,
+              border: `1px solid ${debug?.ok === false ? "rgba(255,100,100,0.35)" : "rgba(255,255,255,0.12)"}`,
+              background: "rgba(0,0,0,0.45)",
+              padding: 16,
+            }}
+          >
+            {!debug ? (
+              <div style={{ opacity: 0.65, fontSize: 13 }}>
+                尚无调试数据。请点击「生成脚本 / 翻译 / 生图 / 视频 / 音乐」等按钮后，此处会显示最近一次请求的摘要与脱敏 JSON。
+              </div>
+            ) : (
+              <>
+                <div style={{ fontWeight: 900, marginBottom: 8, color: debug?.ok === false ? "#ff6b6b" : "#6bffb8" }}>
+                  {debug?.ok === false ? "❌ 最近一次：失败" : "✅ 最近一次：成功或进行中"}
+                  {debug?.action ? <span style={{ marginLeft: 8, opacity: 0.85, fontWeight: 600 }}>（{String(debug.action)}）</span> : null}
+                </div>
+                {debug?.ok === false && debug?.clientThrownError ? (
+                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 10, color: "#ffb4b4" }}>
+                    客户端抛出：<code>{String(debug.clientThrownError)}</code>
+                    {debug?.lastHttp ? " · 详见下方 <code>lastHttp</code>" : null}
+                  </div>
+                ) : null}
+                {typeof debug?.rawWireCharacterCount === "number" && debug.rawWireCharacterCount >= DEBUG_RAW_WIRE_OMIT_MIN ? (
+                  <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 8 }}>
+                    响应体约 <code>{debug.rawWireCharacterCount}</code> 字符，已省略原始 <code>rawText</code> wire；结构请看 <code>redactedBodyText</code> / <code>json</code>（base64 已脱敏）。
+                  </div>
+                ) : null}
+                <pre
+                  style={{
+                    fontSize: 11,
+                    color: "#ccc",
+                    overflowX: "auto",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    maxHeight: "min(70vh, 720px)",
+                    overflowY: "auto",
+                    margin: 0,
+                  }}
+                >
+                  {JSON.stringify(debug, null, 2)}
+                </pre>
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
 
     </div>
   );

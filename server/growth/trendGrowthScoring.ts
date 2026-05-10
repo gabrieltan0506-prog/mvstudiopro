@@ -4,12 +4,12 @@
  * 用户痛点（2026-04-29）：
  * - 旧排序公式 = `hotValue + views/1000 + likes/100`，本质是绝对值排行
  * - 两年前的老作品点赞天然多（那时创作者少），混进来是历史污染
- * - 企业号花钱投流（DOU+ / 薯条 / 星图）→ 数据不真实
+ * - 企业号 / 商业号花钱投流（DOU+ / 薯条 / 星图 / 巨量）→ 曝光失真，不宜当作「自然爆款」标杆
  * - 行业归类经常跑出"待判定行业"，让大模型分析时分类失败
  *
  * 新规则：
  *   1. 严格 18 天窗口（按 publishedAt；缺失视为不可信）
- *   2. 排除企业号 / 媒体号 / 政务号（accountType + 启发式正则双保险）
+ *   2. 排除企业号 / 商业号 / 媒体号 / 政务号（accountType + 旗舰店等平台商家昵称启发式）
  *   3. growthScore = 互动密度 × 时效衰减 × 同账号突然爆发倍率
  *      ⚠️ 故意降权 likes（容易被刷 / 历史失真），加重评论 + 转发权重
  *   4. 行业强制归类：industryLabels 为空 / 含"待判定/待定/未分类/通用" → 用 title+tags 启发式归类
@@ -24,13 +24,20 @@ import type { TrendItem } from "./trendCollector";
 const WINDOW_DAYS = 18;
 const BREAKOUT_RATIO = 2; // 当前互动 ≥ 该作者历史均值 2 倍 → 标记 isBreakout
 
-/** 企业号 / 媒体号 / 政务号识别正则（投流嫌疑大，必须排除）
- *  — 经验值：覆盖大多数中文平台的官方 / 品牌 / 旗舰店 / 媒体号命名
+/** 企业号 / 商业号 / 媒体号 / 政务号识别正则（投流嫌疑大，必须排除）
+ *  — 经验值：覆盖大多数中文平台的官方 / 品牌 / 旗舰店 / MCN / 媒体号命名
  *  — 同时 accountType 字段已显式标 enterprise/media/government 的也直接排除
  */
 const ENTERPRISE_NAME_PATTERNS = [
   /官方(账号|旗舰店|号)?$/i,
   /旗舰店/,
+  /商业号|机构号/,
+  /(^|[\s·•])mcn([\s·•]|$)/i,
+  /mcn$/i,
+  /企业店|专卖店|专营店|授权店|品牌店|官方店/,
+  /巨量引擎|巨量广告|星图(?:任务|合作)?|蒲公英官方/,
+  /^[@＠]?(?:天猫|京东超市|京东(?:自营|旗舰)|抖音商城|拼多多|唯品会|苏宁易购|1688)/i,
+  /好物(?:甄选|严选)官|福利社|种草官|带货达人营/,
   /品牌/i,
   /集团/,
   /(股份|有限)公司/,
@@ -45,7 +52,14 @@ const ENTERPRISE_NAME_PATTERNS = [
   /(集团|总裁|CEO|董事长|创始人).*?(俱乐部|联盟|圈)/,
 ];
 
+function exclusionIsPaidPromotionReason(reason?: string): boolean {
+  return String(reason || "").startsWith("paid_promotion:");
+}
+
 function isEnterpriseAccount(item: TrendItem): { excluded: boolean; reason?: string } {
+  if (item.isPaidPromotion) {
+    return { excluded: true, reason: `paid_promotion:${item.paidPromotionReason || "unknown"}` };
+  }
   // 1. 显式字段
   if (item.accountType && (item.accountType === "enterprise" || item.accountType === "media" || item.accountType === "government")) {
     return { excluded: true, reason: `accountType=${item.accountType}` };
@@ -156,6 +170,7 @@ export interface SelectionDebug {
     noPublishedAt: number;
     outOfWindow: number;
     enterprise: number;
+    paidPromotion: number;
   };
   kept: number;
   topCategoryDistribution: Record<string, number>;
@@ -177,7 +192,7 @@ export function selectByGrowthPotential(
 
   const debug: SelectionDebug = {
     total: items.length,
-    excluded: { noPublishedAt: 0, outOfWindow: 0, enterprise: 0 },
+    excluded: { noPublishedAt: 0, outOfWindow: 0, enterprise: 0, paidPromotion: 0 },
     kept: 0,
     topCategoryDistribution: {},
   };
@@ -197,7 +212,8 @@ export function selectByGrowthPotential(
     }
     const ent = isEnterpriseAccount(it);
     if (ent.excluded) {
-      debug.excluded.enterprise += 1;
+      if (exclusionIsPaidPromotionReason(ent.reason)) debug.excluded.paidPromotion += 1;
+      else debug.excluded.enterprise += 1;
       continue;
     }
     survivors.push(it);
