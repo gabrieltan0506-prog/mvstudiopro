@@ -30,6 +30,8 @@ const creationTypeSchema = z.enum([
   // PR-3 新增：企业专属智能体（AaaS）每次推演调用记一条
   // 让客户在「我的作品」页能回溯历史 agent session
   "enterprise_agent_session",
+  /** 平台頁增值：決策智庫／個性化戰略地圖（扣點後寫入，供用戶查看與平台數據沉澱） */
+  "advanced_decision_report",
 ]);
 
 export type CreationType = z.infer<typeof creationTypeSchema>;

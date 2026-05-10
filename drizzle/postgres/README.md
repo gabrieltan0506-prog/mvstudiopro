@@ -101,7 +101,12 @@ SELECT column_name, data_type, column_default
 
 兼容性：已有行自动为 `false`，无需 backfill。
 
+### Step 3c — 应用 0004（`platform_title_variant_events`）
+
+Stage2 選題卡「兩條標題」的看過 / 選用次數。部署讀寫該表代碼前在 Neon 執行 `drizzle/postgres/0004_platform_title_variant_events.sql`（建議先 `BEGIN` … `ROLLBACK` 演練）。
+
 ---
+
 
 兼容性（0002）：
 - 默认 NULL，无需 backfill

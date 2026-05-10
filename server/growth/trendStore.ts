@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
+import { growthPlatformValues, growthPlatformsForStatsAggregationList, isGrowthPlatformInStatsAggregate, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
@@ -378,8 +378,14 @@ function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
     updatedAt: store.updatedAt || nowShanghaiIso(),
     truthSource: "platform-current",
     totals: {
-      currentItems: Object.values(platforms).reduce((sum, item) => sum + Number(item?.currentTotal || 0), 0),
-      archivedItems: Object.values(platforms).reduce((sum, item) => sum + Number(item?.archivedTotal || 0), 0),
+      currentItems: growthPlatformsForStatsAggregationList().reduce(
+        (sum, platform) => sum + Number(platforms[platform]?.currentTotal || 0),
+        0,
+      ),
+      archivedItems: growthPlatformsForStatsAggregationList().reduce(
+        (sum, platform) => sum + Number(platforms[platform]?.archivedTotal || 0),
+        0,
+      ),
     },
     platforms,
   };
@@ -1800,12 +1806,13 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   const ageMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
   const contentMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
   const historyPlatforms = store.history?.platforms || {};
-  const historyPlatformKeys = growthPlatformValues.filter((platform) => {
+  const historyPlatformKeys = growthPlatformsForStatsAggregationList().filter((platform) => {
     const summary = historyPlatforms[platform];
     return Boolean(summary?.archivedItems);
   });
   for (const collection of Object.values(store.collections)) {
     if (!collection) continue;
+    if (!isGrowthPlatformInStatsAggregate(collection.platform)) continue;
     const bucketCounts = collection.stats?.bucketCounts || getBucketCounts(collection.items);
     const reference = getReferenceRange(collection);
     platformMap.set(collection.platform, {
@@ -1856,6 +1863,7 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   }
 
   for (const entry of store.archiveIndex || []) {
+    if (!isGrowthPlatformInStatsAggregate(entry.platform)) continue;
     const platformStats = platformMap.get(entry.platform) || {
       platform: entry.platform,
       currentTotal: 0,
@@ -1880,7 +1888,7 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     platformMap.set(entry.platform, platformStats);
   }
 
-  for (const platform of growthPlatformValues) {
+  for (const platform of growthPlatformsForStatsAggregationList()) {
     const history = historyPlatforms[platform];
     if (!history) continue;
     const platformStats = platformMap.get(platform) || {
@@ -1938,15 +1946,19 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     bucketMap.set(bucket, bucketStats);
   }
 
-  const platforms = Array.from(platformMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
+  const platforms = Array.from(platformMap.values())
+    .filter((row) => isGrowthPlatformInStatsAggregate(row.platform))
+    .sort((left, right) => right.currentTotal - left.currentTotal);
   const buckets = Array.from(bucketMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
   const scheduler = Object.values(store.scheduler || {}).sort((left, right) => left.platform.localeCompare(right.platform));
   const coverageWindows = LOOKBACK_WINDOWS.map((days) => {
     const threshold = Date.now() - days * 24 * 60 * 60 * 1000;
-    const entries = (store.archiveIndex || []).filter((item) => {
-      const time = new Date(item.archivedAt).getTime();
-      return Number.isFinite(time) && time >= threshold;
-    });
+    const entries = (store.archiveIndex || [])
+      .filter((item) => {
+        const time = new Date(item.archivedAt).getTime();
+        return Number.isFinite(time) && time >= threshold;
+      })
+      .filter((item) => isGrowthPlatformInStatsAggregate(item.platform));
     const activePlatforms = historyPlatformKeys.filter((platform) => {
       const summary = historyPlatforms[platform];
       const lastSeenTime = new Date(summary?.lastSeenAt || 0).getTime();
@@ -1971,17 +1983,19 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     coverageWindows.find((window) => window.days === DEFAULT_SELECTED_WINDOW_DAYS) ||
     coverageWindows[coverageWindows.length - 1];
 
+  const schedulerForStats = scheduler.filter((item) => isGrowthPlatformInStatsAggregate(item.platform));
+
   return {
     updatedAt: store.updatedAt,
     totals: {
       currentItems: platforms.reduce((sum, item) => sum + item.currentTotal, 0),
       currentPlatforms: platforms.filter((item) => item.currentTotal > 0).length,
-      archiveRuns: (store.archiveIndex || []).length,
+      archiveRuns: (store.archiveIndex || []).filter((e) => isGrowthPlatformInStatsAggregate(e.platform)).length,
       archivedItems: platforms.reduce((sum, item) => sum + item.archivedItems, 0),
-      schedulerTrackedPlatforms: scheduler.length,
-      burstEnterCount: scheduler.reduce((sum, item) => sum + (item.burstEnterCount || 0), 0),
-      burstExitCount: scheduler.reduce((sum, item) => sum + (item.burstExitCount || 0), 0),
-      burstActivePlatforms: scheduler.filter((item) => item.burstMode).length,
+      schedulerTrackedPlatforms: schedulerForStats.length,
+      burstEnterCount: schedulerForStats.reduce((sum, item) => sum + (item.burstEnterCount || 0), 0),
+      burstExitCount: schedulerForStats.reduce((sum, item) => sum + (item.burstExitCount || 0), 0),
+      burstActivePlatforms: schedulerForStats.filter((item) => item.burstMode).length,
     },
     references: {
       schedulerIntervals: [
