@@ -51,6 +51,12 @@ export default function AdminPanel() {
   const { data: betaQuotas, refetch: refetchBeta } = trpc.admin.betaList.useQuery(undefined, { enabled: isAdminOnly });
   const { data: teams } = trpc.admin.teamList.useQuery(undefined, { enabled: isAdminOnly });
 
+  const { data: runtimeMx, isFetching: runtimeMxFetching, refetch: refetchRuntimeMx } =
+    trpc.admin.runtimeMetricsOverview.useQuery(
+      { tail: 480 },
+      { enabled: isAdminOrSupervisor, refetchInterval: 14000 },
+    );
+
   const generateCodesMutation = trpc.betaCode.generate.useMutation({
     onSuccess: (data) => {
       setGeneratedCodes(data.codes);
@@ -191,6 +197,7 @@ export default function AdminPanel() {
             {!isSupervisorOnly && <TabsTrigger value="beta">Beta 审核</TabsTrigger>}
             {!isSupervisorOnly && <TabsTrigger value="verifications">身份认证</TabsTrigger>}
             <TabsTrigger value="invite-codes">邀请码</TabsTrigger>
+            {isAdminOrSupervisor ? <TabsTrigger value="runtime-metrics">运维打点</TabsTrigger> : null}
             {!isSupervisorOnly && <TabsTrigger value="credit-pricing">定价明细</TabsTrigger>}
           </TabsList>
 
@@ -384,6 +391,60 @@ export default function AdminPanel() {
                     ))}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* 單進程緩存指標 · 不重啟不累積 */}
+          <TabsContent value="runtime-metrics" className="space-y-4">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+                <CardTitle className="text-lg">運維打點（本進程）</CardTitle>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  disabled={runtimeMxFetching}
+                  onClick={() => void refetchRuntimeMx()}
+                >
+                  {runtimeMxFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  刷新
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-3 text-xs text-muted-foreground">
+                <p>
+                  · 資料僅保存在當前 Node 進程記憶體，<span className="text-foreground/90 font-medium">部署重啟即清空</span>。
+                  <br />· 聚合含：趨勢報表 generator（visual.report）、生圖管線 GPT54 / 合成成功次數等。
+                </p>
+                {runtimeMx?.meta ? (
+                  <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2 font-mono text-[11px] text-foreground/80">
+                    procStartISO={runtimeMx.meta.procStartIso} · buffer={runtimeMx.meta.totalRows}/{runtimeMx.meta.cap} rows
+                    {runtimeMx.meta.dropped ? ` · dropped=${runtimeMx.meta.dropped}` : ""}
+                  </div>
+                ) : null}
+                {runtimeMx?.rollup ? (
+                  <div className="rounded-lg border border-border/40 bg-black/35 p-3">
+                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-cyan-300/90">
+                      rollup（全缓冲）
+                    </div>
+                    <pre className="max-h-[14rem] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-emerald-100/95">
+                      {JSON.stringify(runtimeMx.rollup, null, 2)}
+                    </pre>
+                  </div>
+                ) : null}
+                <div className="rounded-lg border border-border/40 bg-black/35 p-3">
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-200/85">
+                    recent（時間正序尾部）
+                  </div>
+                  {runtimeMx?.recent?.length ? (
+                    <pre className="max-h-[22rem] overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-sky-50/92">
+                      {JSON.stringify(runtimeMx.recent, null, 2)}
+                    </pre>
+                  ) : (
+                    <div className="text-muted-foreground">尚无打点；跑一次「趋势报表生成器」或平台生图后即会出现。</div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

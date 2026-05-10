@@ -1,3 +1,4 @@
+import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   isPlatformVertexNanoBanana2FallbackEnabled,
   resolvePlatformImageStorageDriver,
@@ -110,6 +111,7 @@ export async function condenseImagePromptIfNeeded(
       const condensed = await callGemini31ProForImagePrompt(condenseTask, {
         translator: options?.translator ?? "gpt54",
         flowLog: log,
+        pipelineStatCtx: { pipeline: "prompt_condense" },
       });
       const out = condensed.trim();
       const outWords = countPromptWords(out);
@@ -151,6 +153,7 @@ export async function condenseImagePromptIfNeeded(
       await callGemini31ProForImagePrompt(finalForceTask, {
         translator: options?.translator ?? "gpt54",
         flowLog: log,
+        pipelineStatCtx: { pipeline: "prompt_condense" },
       })
     ).trim();
     const forcedWords = countPromptWords(forced);
@@ -933,6 +936,8 @@ export async function generatePlatformCompositeSheetImage(options: {
         scriptContext: options.scriptContext,
         translator: options.imagePromptTranslator,
         flowLog: L,
+        compositeSheetAttempt: attempt,
+        compositeSheetMaxAttempts: compositeMaxAttempts,
       });
 
       if (!String(englishCore || "").trim()) {
@@ -987,6 +992,12 @@ export async function generatePlatformCompositeSheetImage(options: {
       });
       if (primary) {
         appendImageFlowLog(L, `[2×4·步骤2] GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        emitPlatformImagePipelineStat({
+          event: "composite_sheet_gpt_image2_success",
+          sheetKind: k,
+          compositeSheetAttempt: attempt,
+          compositeSheetMaxAttempts: compositeMaxAttempts,
+        });
         return primary;
       }
 
@@ -1033,6 +1044,12 @@ export async function generatePlatformCompositeSheetImage(options: {
         );
         const mirrored = await mirrorNanoSheetUrlToGcs(fallbackUrl, subdir, L);
         appendImageFlowLog(L, `[2×4·步骤3] 整链第 ${attempt}/${compositeMaxAttempts} 次 · Nano 兜底成功`);
+        emitPlatformImagePipelineStat({
+          event: "composite_sheet_nano_fallback_success",
+          sheetKind: k,
+          compositeSheetAttempt: attempt,
+          compositeSheetMaxAttempts: compositeMaxAttempts,
+        });
         return mirrored;
       } catch (fallbackError: unknown) {
         const realError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);

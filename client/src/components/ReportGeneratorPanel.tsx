@@ -124,7 +124,10 @@ export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
         </div>
         <div>
           <div className="font-bold text-white">趋势报表生成器</div>
-          <div className="text-xs text-[#9080b8]">生成精美图文报表 · 一键下载 PNG</div>
+          <div className="text-xs text-[#9080b8]">
+            生成精美图文报表 · 一键下载 PNG · <span className="text-[#7ad4e8]/90">后端默认 GPT‑5.4</span>
+            （对比旧链路：部署设 <span className="font-mono text-[#cfefff]">VISUAL_REPORT_ENGINE=gemini</span>）
+          </div>
         </div>
         {!supervisorAccess && (
           <div className="ml-auto rounded-full border border-[#ffdd44]/20 bg-[rgba(255,221,68,0.08)] px-3 py-1 text-xs text-[#ffdd44]">

@@ -170,6 +170,7 @@ export async function runPlatformTopicImagePipeline(
         const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
           translator: imagePromptTranslator,
           flowLog: topicImageCondenseLog,
+          pipelineStatCtx: { pipeline: "topic_cover" },
         });
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
