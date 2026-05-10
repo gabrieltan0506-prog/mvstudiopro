@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
+import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -23,7 +24,9 @@ import {
   optimizePdfSnapshotHtml,
 } from "@/lib/pdfHtmlOptimize";
 import type { PlatformTitleVariant } from "@shared/platformTitleVariants";
-import { buildTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
+import { buildTitleVariantsForBlueprint, coverAppealHintForCover } from "@shared/platformTitleVariants";
+import type { AdvancedAIReportData } from "@shared/advancedAIReport";
+import { buildSimulatedAdvancedAIReport } from "@shared/advancedPredictionEngine";
 import {
   Activity,
   ArrowLeft,
@@ -48,6 +51,7 @@ import {
   Landmark,
   Layers,
   Loader2,
+  Lock,
   MessageSquareText,
   Mic,
   Palette,
@@ -649,79 +653,36 @@ function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleV
 }
 
 function PlatformTitleVariantStrip(props: {
-  topicId: string;
   variants: PlatformTitleVariant[];
-  isAuthenticated: boolean;
+  selectedId: "a" | "b";
+  onSelect: (id: "a" | "b") => void;
 }) {
-  const { topicId, variants, isAuthenticated } = props;
-  const ref = useRef<HTMLDivElement>(null);
-  const utils = trpc.useUtils();
-  const variantKey = variants.map((v) => `${v.id}:${v.title}`).join("|");
-  const { data } = trpc.platformTitleStats.aggregates.useQuery({ topicId }, { staleTime: 20_000 });
-  const record = trpc.platformTitleStats.record.useMutation({
-    onSuccess: () => void utils.platformTitleStats.aggregates.invalidate({ topicId }),
-  });
-  const recordMutateRef = useRef(record.mutate);
-  recordMutateRef.current = record.mutate;
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const el = ref.current;
-    if (!el || variants.length === 0) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        for (const v of variants) {
-          const k = `ptv:v:${topicId}:${v.id}`;
-          try {
-            if (sessionStorage.getItem(k)) continue;
-            sessionStorage.setItem(k, "1");
-          } catch {
-            /* private mode */
-            continue;
-          }
-          recordMutateRef.current({ topicId, variantId: v.id, kind: "view" });
-        }
-        obs.disconnect();
-      },
-      { threshold: 0.25 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [isAuthenticated, topicId, variantKey, variants]);
-
+  const { variants, selectedId, onSelect } = props;
   if (!variants.length) return null;
-
   return (
-    <div ref={ref} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-      {variants.map((v) => {
-        const views = data?.byVariant?.[v.id]?.views ?? 0;
-        const picks = data?.byVariant?.[v.id]?.picks ?? 0;
-        return (
-          <div key={v.id} className="rounded-lg border border-white/10 bg-black/25 p-3 text-left">
-            <div className="text-sm leading-snug text-white/90">{v.title}</div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-white/45">
-              <span>
-                看过 {views} · 选用 {picks}
-              </span>
-              <button
-                type="button"
-                className="rounded-md border border-[#ff4fb8]/45 bg-[#ff4fb8]/15 px-2.5 py-1 text-[11px] font-semibold text-[#ffc9ec] hover:bg-[#ff4fb8]/25 disabled:opacity-50"
-                onClick={() => {
-                  if (!isAuthenticated) {
-                    toast.error("请先登录");
-                    return;
-                  }
-                  record.mutate({ topicId, variantId: v.id, kind: "pick" });
-                }}
-                disabled={record.isPending}
-              >
-                选用
-              </button>
-            </div>
-          </div>
-        );
-      })}
+    <div className="mt-3 space-y-1.5">
+      <p className="text-[11px] leading-relaxed text-white/42">
+        同一套正文不换，只换列表/封面上的主标题说法，点一条用于本卡展示和出图。
+      </p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {variants.map((v) => {
+          const active = selectedId === v.id;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => onSelect(v.id)}
+              className={`rounded-lg border p-3 text-left text-sm leading-snug transition ${
+                active
+                  ? "border-[#ff4fb8]/55 bg-[#ff4fb8]/12 text-white"
+                  : "border-white/10 bg-black/25 text-white/90 hover:border-white/22"
+              }`}
+            >
+              {v.title}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1324,6 +1285,8 @@ export default function PlatformPage() {
   }, [platformImageGenFlowSnapshots]);
   /** 单张封面「重新生成」进行中（显示骨架，避免无反馈） */
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
+  /** 選題卡：僅本地記錄「用哪句當發文大標」，不寫庫、不占 Neon。 */
+  const [titleVariantPickBySceneId, setTitleVariantPickBySceneId] = useState<Record<string, "a" | "b">>({});
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
   /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
@@ -2325,6 +2288,60 @@ export default function PlatformPage() {
           })) ?? []),
     [platformDashboard, snapshot],
   );
+
+  const strategicMapBlueprint = useMemo(
+    () => ({
+      headline: platformDashboard?.headline,
+      subheadline: platformDashboard?.subheadline,
+      personaSummary: platformDashboard?.personaSummary,
+      hotTopics: platformDashboard?.hotTopics?.slice(0, 12),
+      monetizationLanes: platformDashboard?.monetizationLanes?.slice(0, 6),
+      trendNarrative: snapshot?.overview?.trendNarrative,
+    }),
+    [platformDashboard, snapshot],
+  );
+  const strategicMapTopic = useMemo(() => {
+    const raw = (platformDashboard?.headline || platformDashboard?.subheadline || "").trim();
+    return raw.slice(0, 160) || "個性化戰略選題";
+  }, [platformDashboard]);
+
+  /** 與付費入庫同一套引擎與輸入；鎖定態僅作模糊示意（非外製靜態 Demo）。 */
+  const strategicMapPreviewReport = useMemo((): AdvancedAIReportData | null => {
+    if (!platformDashboard) return null;
+    const now = new Date();
+    const dateRange = `${new Date(now.getTime() - 15 * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
+    return buildSimulatedAdvancedAIReport({
+      topic: strategicMapTopic,
+      dateRange,
+      contentBlueprint: strategicMapBlueprint,
+      platformData: { platform: "douyin" },
+      thinkingLevel: "HIGH",
+    });
+  }, [platformDashboard, strategicMapTopic, strategicMapBlueprint]);
+
+  const decisionIntelPricingQuery = trpc.mvAnalysis.getDecisionIntelligencePricing.useQuery(undefined, {
+    enabled: isAuthenticated && !!platformDashboard,
+    staleTime: 60_000,
+  });
+  const decisionIntelLatestQuery = trpc.mvAnalysis.getLatestDecisionIntelligenceReport.useQuery(undefined, {
+    enabled: isAuthenticated && !!platformDashboard,
+  });
+  const generateDecisionIntelMutation = trpc.mvAnalysis.generateDecisionIntelligenceReport.useMutation({
+    onSuccess: () => {
+      toast.success("戰略地圖已解鎖，報告已為您存檔（未查看也會保留）");
+      void decisionIntelLatestQuery.refetch();
+      void decisionIntelPricingQuery.refetch();
+    },
+    onError: (e) => toast.error(e.message || "解鎖失敗"),
+  });
+  const unlockedStrategicReport = useMemo((): AdvancedAIReportData | null => {
+    const fromLatest = decisionIntelLatestQuery.data?.report;
+    const fromMut = generateDecisionIntelMutation.data?.report;
+    const raw = fromLatest ?? fromMut;
+    if (!raw || typeof raw !== "object") return null;
+    return raw as AdvancedAIReportData;
+  }, [decisionIntelLatestQuery.data?.report, generateDecisionIntelMutation.data?.report]);
+
   const recommendedPlatforms = useMemo(() => snapshot?.platformRecommendations.slice(0, 4) ?? [], [snapshot]);
   const actionSteps = useMemo(
     () => {
@@ -2681,12 +2698,22 @@ export default function PlatformPage() {
           { ...item, title, hook, copywriting },
           index,
         );
-        const titleVariants = normalizeTitleVariantsFromServer(item.titleVariants, fallbackVariants);
+        const normalized = normalizeTitleVariantsFromServer(item.titleVariants, fallbackVariants);
+        const baseTitle = cleanUserCopy(
+          renderSafeText(title || item.theme || item.titleExample, `内容方案 ${index + 1}`),
+          `内容方案 ${index + 1}`,
+        );
+        const titleVariants =
+          normalized.length >= 2
+            ? [
+                { id: "a" as const, title: baseTitle },
+                { id: "b" as const, title: normalized[1]!.title },
+              ]
+            : normalized;
 
         return {
           id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
-          // Task II: Support theme / titleExample / contentHook keys from strict JSON template
-          title: cleanUserCopy(renderSafeText(title || item.theme || item.titleExample, `内容方案 ${index + 1}`), `内容方案 ${index + 1}`),
+          title: baseTitle,
           hook: cleanUserCopy(renderSafeText(hook || item.contentHook, "先用一句明确判断开头。"), "先用一句明确判断开头。"),
           copywriting: cleanUserCopy(renderSafeText(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"), "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
           production: cleanUserCopy(renderSafeText(productionRaw), ""),
@@ -2712,22 +2739,33 @@ export default function PlatformPage() {
     }
 
     // Pre-analysis state only: show snapshot topics as preview placeholders
-    return topTopics.slice(0, 4).map((item, index) => ({
-      id: String((item as any).id || (item as any).sceneId || `topic-${index}`),
-      title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
-      hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
-      copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
-      production: "",
-      format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
-      titleVariants: buildTitleVariantsForBlueprint(
+    return topTopics.slice(0, 4).map((item, index) => {
+      const baseTitle = cleanUserCopy(item.title, `内容方案 ${index + 1}`);
+      const tvs = buildTitleVariantsForBlueprint(
         {
           title: item.title,
           hook: item.howToUse,
           copywriting: item.whyHot,
         },
         index,
-      ),
-    }));
+      );
+      const titleVariants =
+        tvs.length >= 2
+          ? [
+              { id: "a" as const, title: baseTitle },
+              { id: "b" as const, title: tvs[1]!.title },
+            ]
+          : tvs;
+      return {
+      id: String((item as any).id || (item as any).sceneId || `topic-${index}`),
+      title: baseTitle,
+      hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
+      copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
+      production: "",
+      format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
+      titleVariants,
+    };
+    });
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
 
   const contentExecutionCardsKey = useMemo(
@@ -2751,6 +2789,9 @@ export default function PlatformPage() {
       });
       return next;
     });
+    setTitleVariantPickBySceneId((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => validIds.has(key))) as Record<string, "a" | "b">,
+    );
   }, [contentExecutionCards, contentExecutionCardsKey]);
 
   const platformTopicCount = contentExecutionCards.length;
@@ -3819,6 +3860,99 @@ export default function PlatformPage() {
                 </div>
               </div>
             </div>
+
+            <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/10">
+                    <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white md:text-lg">個性化戰略地圖（決策智庫視圖）</h3>
+                    <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
+                      將戰略看板濃縮為<strong className="text-white">雷達、賽馬建議與契合度排行</strong>。
+                      預設上鎖；解鎖後首購{" "}
+                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 積分（八折）</strong>，
+                      之後每次{" "}
+                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 積分</strong>。
+                      扣費成功即寫入您的檔案；<strong className="text-white">即使暫不查看也會留存</strong>，作為可用戶回溯與平台數據沉澱。
+                    </p>
+                  </div>
+                </div>
+                {isAuthenticated ? (
+                  <div className="flex shrink-0 flex-col items-stretch gap-2 md:items-end">
+                    <span className="text-[11px] text-gray-500">
+                      {decisionIntelPricingQuery.data?.priorCompletedCount
+                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 點`
+                        : `尚未解鎖 · 首購 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 點`}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={generateDecisionIntelMutation.isPending || !decisionIntelPricingQuery.data}
+                      onClick={() => {
+                        const next = decisionIntelPricingQuery.data?.nextCredits;
+                        if (next == null) return;
+                        if (!supervisorAccess) {
+                          const ok = window.confirm(
+                            `將扣除 ${next} 積分解鎖個性化戰略地圖（決策智庫報告），並為您存檔。是否繼續？`,
+                          );
+                          if (!ok) return;
+                        }
+                        generateDecisionIntelMutation.mutate({
+                          topic: strategicMapTopic,
+                          contentBlueprint: strategicMapBlueprint,
+                          platformHint: "douyin",
+                        });
+                      }}
+                      className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#ff4fb8]/50 bg-[#ff4fb8]/15 px-4 py-2 text-sm font-bold text-[#ffc6e8] transition hover:bg-[#ff4fb8]/25 disabled:opacity-45"
+                    >
+                      {generateDecisionIntelMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                          解鎖中…
+                        </>
+                      ) : unlockedStrategicReport ? (
+                        <>
+                          再次生成（{decisionIntelPricingQuery.data?.nextCredits ?? CREDIT_COSTS.decisionIntelligenceReport}{" "}
+                          點）
+                        </>
+                      ) : (
+                        <>付費解鎖戰略地圖</>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
+                )}
+              </div>
+
+              <div className="relative mt-5 overflow-hidden rounded-xl border border-white/10 bg-black/40">
+                {unlockedStrategicReport ? (
+                  <div className="max-h-[min(70vh,920px)] overflow-auto">
+                    <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="pointer-events-none max-h-[420px] overflow-hidden blur-sm opacity-50">
+                      {strategicMapPreviewReport ? (
+                        <PlatformReportDashboard data={strategicMapPreviewReport} />
+                      ) : (
+                        <div className="flex h-40 items-center justify-center text-xs text-gray-500">
+                          戰略看板就緒後即生成本平臺預覽
+                        </div>
+                      )}
+                    </div>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#070a12]/78 px-4 text-center">
+                      <Lock className="h-8 w-8 text-[#8cefff]/90" aria-hidden />
+                      <p className="max-w-md text-sm font-semibold text-white">示意預覽（模糊）</p>
+                      <p className="max-w-lg text-xs leading-relaxed text-gray-400">
+                        畫面由<strong className="text-gray-300">本平台決策引擎</strong>依您當前戰略看板即時演算，解鎖後為同一路徑的清晰版並存檔。
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -4455,6 +4589,12 @@ export default function PlatformPage() {
                     contentExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const digest = copyFlat.slice(0, 60);
+                      const variants = item.titleVariants ?? [];
+                      const tvPick = titleVariantPickBySceneId[item.id] ?? "a";
+                      const headlineTitle =
+                        tvPick === "b" && variants[1]?.title
+                          ? variants[1].title
+                          : variants[0]?.title || item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
                       const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
                       const compositeCost = isGraphicFormat
@@ -4490,7 +4630,7 @@ export default function PlatformPage() {
                           toast.error("请先登录");
                           return;
                         }
-                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
                         if (!topicHook) {
                           toast.error("选题缺少标题或钩子，无法生成");
                           return;
@@ -4519,7 +4659,7 @@ export default function PlatformPage() {
                             topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
                             context: buildPlatformSceneText({
-                              title: item.title,
+                              title: headlineTitle,
                               hook: item.hook ?? "",
                               copywriting: item.copywriting ?? "",
                               executionDetails: (
@@ -4568,7 +4708,7 @@ export default function PlatformPage() {
                           toast.error("请先登录");
                           return;
                         }
-                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
                         if (!topicHook) {
                           toast.error("选题缺少标题或钩子，无法生成");
                           return;
@@ -4591,7 +4731,7 @@ export default function PlatformPage() {
                             topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
                             context: buildPlatformSceneText({
-                              title: item.title,
+                              title: headlineTitle,
                               hook: item.hook ?? "",
                               copywriting: item.copywriting ?? "",
                               executionDetails: (
@@ -4641,7 +4781,7 @@ export default function PlatformPage() {
                       };
                       const queueSilentImageLoadRetry = () => {
                         if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
-                        const topicHook = String(item.hook || item.title || "").trim().slice(0, 500);
+                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
                         if (!topicHook) return;
 
                         /**
@@ -4670,7 +4810,7 @@ export default function PlatformPage() {
                         }
 
                         const ctxBody = buildPlatformSceneText({
-                          title: item.title,
+                          title: headlineTitle,
                           hook: item.hook ?? "",
                           copywriting: item.copywriting ?? "",
                           executionDetails: (
@@ -4733,7 +4873,7 @@ export default function PlatformPage() {
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-2">
                             {item.format === "图文" ? <Image className="h-4 w-4 shrink-0 text-[#ff7fd5]" /> : <Video className="h-4 w-4 shrink-0 text-[#49e6ff]" />}
-                            <div className="truncate text-lg font-bold text-white">{item.title}</div>
+                            <div className="truncate text-lg font-bold text-white">{headlineTitle}</div>
                           </div>
                           <div className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
                             {item.format}
@@ -4746,10 +4886,17 @@ export default function PlatformPage() {
                           </p>
                         ) : null}
                         <PlatformTitleVariantStrip
-                          topicId={item.id}
                           variants={item.titleVariants ?? []}
-                          isAuthenticated={isAuthenticated}
+                          selectedId={tvPick}
+                          onSelect={(id) =>
+                            setTitleVariantPickBySceneId((prev) => ({ ...prev, [item.id]: id }))
+                          }
                         />
+                        {variants.length ? (
+                          <p className="mt-2 text-[11px] leading-relaxed text-white/45">
+                            {coverAppealHintForCover(headlineTitle, item.hook ?? "")}
+                          </p>
+                        ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
                           <summary className="cursor-pointer select-none text-[15px] font-black text-[#ff9900] animate-pulse transition-colors hover:text-[#ffb84d]">
                             ▶ 执行细项、分镜与发布（点击展开查看详细步骤）
@@ -4932,7 +5079,7 @@ export default function PlatformPage() {
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
-                                    title: item.title,
+                                    title: headlineTitle,
                                     scriptContext: buildPlatformSheetScriptContext(item as any),
                                     kind: compositeKind,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),

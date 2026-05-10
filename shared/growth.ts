@@ -11,6 +11,18 @@ export const growthPlatformValues = [
 
 export const growthPlatformSchema = z.enum(growthPlatformValues);
 
+/** 不納入增長統計聚合的平台（樣本過少會拉歪口徑；仍可採集與單獨展示）。 */
+const growthPlatformsExcludedFromStatsAggregate = new Set<string>(["toutiao"]);
+
+export function isGrowthPlatformInStatsAggregate(platform: (typeof growthPlatformValues)[number]): boolean {
+  return !growthPlatformsExcludedFromStatsAggregate.has(platform);
+}
+
+/** 參與全站 trend 彙總、覆蓋窗口等統計的平台列表（與採集列表分離）。 */
+export function growthPlatformsForStatsAggregationList(): (typeof growthPlatformValues)[number][] {
+  return growthPlatformValues.filter((p) => isGrowthPlatformInStatsAggregate(p));
+}
+
 export const growthCampModelValues = [
   "gemini-2.5-pro",
   "gemini-3.1-pro-preview",

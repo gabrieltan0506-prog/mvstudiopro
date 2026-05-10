@@ -260,6 +260,10 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 48,
   /** 平台页：小红书 2×4 八格图文（API kind 仍为 xiaohongshu_dual_note） */
   platformXhsDualNote: 72,
+  /** 平台頁增值：個性化戰略地圖／決策智庫報告，之後每次原價 */
+  decisionIntelligenceReport: 500,
+  /** 同功能首購八折（與 decisionIntelligenceReport 搭配後端計次） */
+  decisionIntelligenceReportFirst: 400,
   /** 平台頁：全案流程之專屬選題與長文案／分鏡稿（platform_build_content · 任務入隊時扣費） */
   platformStage2Copywriting: 60,
 } as const;

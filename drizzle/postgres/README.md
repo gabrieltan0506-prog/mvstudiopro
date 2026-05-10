@@ -15,7 +15,6 @@
 | `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（已合并） |
 | `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（已合并） |
 | `0003_users_enterprise_trial_paid.sql` | `users` 表加 `enterpriseTrialPaid`（与 `drizzle/schema.ts` 一致） | 未执行会导致查询 users 失败、易被重定向登录 |
-| `0004_platform_title_variant_events.sql` | Stage2 選題卡標題 A/B 曝光與選用事實表 | 未執行則統計接口寫入失敗 |
 
 ## 应用流程（生产 Neon）
 

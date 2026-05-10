@@ -40,7 +40,6 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
-import { platformTitleStatsRouter } from "./routers/platformTitleStats";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
@@ -2100,7 +2099,6 @@ export const appRouter = router({
   suno: sunoRouter,
   creations: creationsRouter,
   enterpriseAgents: enterpriseAgentsRouter,
-  platformTitleStats: platformTitleStatsRouter,
   workflow: workflowRouter,
   videoParser: router({
     parse: protectedProcedure
@@ -3243,6 +3241,233 @@ export const appRouter = router({
         }
       }),
 
+    /** 個性化戰略地圖：首購積分與歷史次數（登入後可查） */
+    getDecisionIntelligencePricing: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "數據庫不可用" });
+      }
+      const { userCreations } = await import("../drizzle/schema-creations");
+      const { and, eq, count } = await import("drizzle-orm");
+      const [countRow] = await database
+        .select({ c: count() })
+        .from(userCreations)
+        .where(
+          and(
+            eq(userCreations.userId, ctx.user.id),
+            eq(userCreations.type, "advanced_decision_report"),
+            eq(userCreations.status, "completed"),
+          ),
+        );
+      const priorCompletedCount = Number(countRow?.c ?? 0);
+      const nextCredits =
+        priorCompletedCount === 0
+          ? CREDIT_COSTS.decisionIntelligenceReportFirst
+          : CREDIT_COSTS.decisionIntelligenceReport;
+      return {
+        priorCompletedCount,
+        nextCredits,
+        standardCredits: CREDIT_COSTS.decisionIntelligenceReport,
+        firstCredits: CREDIT_COSTS.decisionIntelligenceReportFirst,
+      };
+    }),
+
+    /** 最近一次已付費生成的戰略地圖（免費重看，不必再次扣點） */
+    getLatestDecisionIntelligenceReport: protectedProcedure.query(async ({ ctx }) => {
+      const database = await db.getDb();
+      if (!database) {
+        return { report: null, creationId: null as number | null, createdAt: null as string | null };
+      }
+      const { userCreations } = await import("../drizzle/schema-creations");
+      const { and, eq, desc } = await import("drizzle-orm");
+      const [row] = await database
+        .select()
+        .from(userCreations)
+        .where(
+          and(
+            eq(userCreations.userId, ctx.user.id),
+            eq(userCreations.type, "advanced_decision_report"),
+            eq(userCreations.status, "completed"),
+          ),
+        )
+        .orderBy(desc(userCreations.createdAt))
+        .limit(1);
+      if (!row?.metadata) {
+        return { report: null, creationId: null, createdAt: null };
+      }
+      try {
+        const meta = JSON.parse(row.metadata) as { report?: unknown };
+        if (meta?.report && typeof meta.report === "object") {
+          return {
+            report: meta.report,
+            creationId: row.id,
+            createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : null,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+      return { report: null, creationId: row.id, createdAt: null };
+    }),
+
+    /**
+     * 解鎖並生成個性化戰略地圖：本地數字殼 + 並行 Gemini Flash 擴寫；快取命中免扣點；
+     * 雙軌 Flash 皆失敗不扣點；成功後才扣點並寫入 user_creations。
+     */
+    generateDecisionIntelligenceReport: protectedProcedure
+      .input(
+        z.object({
+          topic: z.string().max(160).optional(),
+          contentBlueprint: z.unknown().optional(),
+          platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
+          dateRange: z.string().max(120).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const database = await db.getDb();
+        if (!database) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "數據庫不可用" });
+        }
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const { and, eq, count } = await import("drizzle-orm");
+        const [countRow] = await database
+          .select({ c: count() })
+          .from(userCreations)
+          .where(
+            and(
+              eq(userCreations.userId, ctx.user.id),
+              eq(userCreations.type, "advanced_decision_report"),
+              eq(userCreations.status, "completed"),
+            ),
+          );
+        const priorCompletedCount = Number(countRow?.c ?? 0);
+        const cost =
+          priorCompletedCount === 0
+            ? CREDIT_COSTS.decisionIntelligenceReportFirst
+            : CREDIT_COSTS.decisionIntelligenceReport;
+
+        const { buildSimulatedAdvancedAIReport } = await import("../shared/advancedPredictionEngine.js");
+        const { hashDecisionIntelligenceRequest, runGeminiFlashPipeline } = await import(
+          "./services/decisionIntelligenceFlashPipeline.js",
+        );
+
+        const now = new Date();
+        const dateRange =
+          input.dateRange?.trim() ||
+          `${new Date(now.getTime() - 15 * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
+        const topic = (input.topic || "").trim() || "個性化戰略選題";
+        const platformHint = input.platformHint ?? "douyin";
+        const contentBlueprint =
+          input.contentBlueprint ??
+          ({
+            summary: topic,
+            source: "platform_strategic_map",
+            userId: ctx.user.id,
+          } as Record<string, unknown>);
+
+        const requestHash = hashDecisionIntelligenceRequest({
+          topic,
+          contentBlueprint,
+          platformHint,
+        });
+
+        const [cached] = await database
+          .select()
+          .from(userCreations)
+          .where(
+            and(
+              eq(userCreations.userId, ctx.user.id),
+              eq(userCreations.type, "advanced_decision_report"),
+              eq(userCreations.status, "completed"),
+              sql`coalesce((${userCreations.metadata})::jsonb->>'requestHash','') = ${requestHash}`,
+            ),
+          )
+          .limit(1);
+
+        if (cached?.metadata) {
+          try {
+            const meta = JSON.parse(cached.metadata) as { report?: import("@shared/advancedAIReport").AdvancedAIReportData };
+            if (meta?.report && typeof meta.report === "object") {
+              const creditsInfo = await getCredits(ctx.user.id);
+              return {
+                report: meta.report,
+                chargedCredits: 0,
+                creationId: cached.id,
+                totalAvailable: creditsInfo.totalAvailable,
+                fromCache: true as const,
+              };
+            }
+          } catch {
+            /* 繼續正常生成 */
+          }
+        }
+
+        const preCredits = await getCredits(ctx.user.id);
+        if (preCredits.totalAvailable < cost) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: `積分不足。解鎖智庫戰略地圖需要 ${cost} 點（當前可用 ${preCredits.totalAvailable}）。`,
+          });
+        }
+
+        const baseReport = buildSimulatedAdvancedAIReport({
+          topic,
+          dateRange,
+          contentBlueprint,
+          platformData: { platform: platformHint },
+          thinkingLevel: "HIGH",
+        });
+
+        let enrichedReport: typeof baseReport;
+        try {
+          enrichedReport = await runGeminiFlashPipeline({
+            base: baseReport,
+            contentBlueprint,
+            platformHint,
+            topic,
+            abortSignal: ctx.clientDisconnected,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.startsWith("DECISION_INTEL_FLASH_ALL_FAILED")) {
+            throw new TRPCError({
+              code: "SERVICE_UNAVAILABLE",
+              message: "智庫文案擴寫暫時不可用，請稍後重試（未扣點）。",
+            });
+          }
+          throw err;
+        }
+
+        await deductCreditsAmount(ctx.user.id, cost, "decisionIntel", `個性化戰略地圖（${cost}點）`);
+
+        const plan = await getUserPlan(ctx.user.id);
+        const creationId = await recordCreation({
+          userId: ctx.user.id,
+          type: "advanced_decision_report",
+          title: `戰略地圖 · ${enrichedReport.topic}`.slice(0, 250),
+          metadata: {
+            report: enrichedReport,
+            schemaVersion: 2,
+            requestHash,
+            chargedCredits: cost,
+            dataRetention: "user_ledger_advanced_decision_report",
+            flashModel: "gemini-3-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
+          },
+          creditsUsed: cost,
+          plan,
+          quality: "決策智庫",
+        });
+
+        const creditsInfo = await getCredits(ctx.user.id);
+        return {
+          report: enrichedReport,
+          chargedCredits: cost,
+          creationId,
+          totalAvailable: creditsInfo.totalAvailable,
+          fromCache: false as const,
+        };
+      }),
+
     generateVisualReport: publicProcedure
       .input(z.object({
         // Extended to support short-form trend radar: 3d and 7d windows
@@ -3627,10 +3852,15 @@ ${JSON.stringify(platformEvidence, null, 2)}
         }
 
         const { runPlatformTopicImagePipeline } = await import("./services/runPlatformTopicImagePipeline.js");
+        const { buildPlatformCoverHistoryHintFromDb, mergeCoverContextWithDbHint } = await import(
+          "./services/platformCoverHistoryHint.js",
+        );
+        const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
+        const enrichedContext = mergeCoverContextWithDbHint(input.context, coverHistoryHint);
         return runPlatformTopicImagePipeline({
           topicHook: input.topicHook,
           format: input.format,
-          context: input.context,
+          context: enrichedContext,
           coverPersonaContext: input.coverPersonaContext,
           sceneId: input.sceneId,
           imagePromptTranslator: input.imagePromptTranslator,
@@ -3778,6 +4008,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
+        const { buildPlatformCoverHistoryHintFromDb, mergeCoverContextWithDbHint } = await import(
+          "./services/platformCoverHistoryHint.js",
+        );
+        const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
+        const enrichedContext = mergeCoverContextWithDbHint(input.context, coverHistoryHint);
+
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
@@ -3790,7 +4026,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               creationId: creationIdOut ?? null,
               topicHook: input.topicHook,
               format: input.format,
-              context: input.context,
+              context: enrichedContext,
               coverPersonaContext: input.coverPersonaContext,
               sceneId: input.sceneId,
               imagePromptTranslator: input.imagePromptTranslator,
@@ -3914,9 +4150,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
           }
         }
 
+        const { buildPlatformCoverHistoryHintFromDb } = await import("./services/platformCoverHistoryHint.js");
+        const batchCoverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
+
         const results = await mapWithPool(input.scenes, pool, async (s) => {
           const body = String(s.text ?? s.copywriting ?? "").trim();
-          const briefSource = [batchCoverPersona, String(s.title || "").trim(), body].filter(Boolean).join("\n\n");
+          const briefSource = [batchCoverPersona, batchCoverHistoryHint, String(s.title || "").trim(), body]
+            .filter(Boolean)
+            .join("\n\n");
           const flowLog: string[] = [];
           appendImageFlowLog(flowLog, `──────── 选题「${s.title.slice(0, 48)}」· id=${s.id} ────────`);
           appendImageFlowLog(
