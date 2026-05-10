@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
+import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -46,6 +48,7 @@ import {
   CircleDollarSign,
   Clock3,
   DollarSign,
+  Download,
   FileText,
   Film,
   Flame,
@@ -2135,6 +2138,8 @@ export default function PlatformPage() {
 
   const [qaJobId, setQaJobId] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [isExportingStrategicPng, setIsExportingStrategicPng] = useState(false);
+  const strategicReportDashboardRef = useRef<HTMLDivElement>(null);
   const qaPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // QA file attachment state
   const [qaFileUri, setQaFileUri] = useState<string | null>(null);
@@ -2360,6 +2365,39 @@ export default function PlatformPage() {
     if (!raw || typeof raw !== "object") return null;
     return raw as AdvancedAIReportData;
   }, [decisionIntelLatestQuery.data?.report, generateDecisionIntelMutation.data?.report]);
+
+  const handleExportStrategicDashboardPng = useCallback(async () => {
+    const el = strategicReportDashboardRef.current;
+    const report = unlockedStrategicReport;
+    if (!el || !report) {
+      toast.error("請先解鎖報告後再導出");
+      return;
+    }
+    setIsExportingStrategicPng(true);
+    try {
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        await (document as any).fonts.ready;
+      }
+      await new Promise((r) => setTimeout(r, 400));
+      const dataUrl = await toPng(el, {
+        pixelRatio: 2,
+        backgroundColor: "#0B0F19",
+        cacheBust: true,
+      });
+      const link = document.createElement("a");
+      const rawTopic = String(report.topic || "decision-report").replace(/[\\/:*?"<>|]/g, "·");
+      const safeTopic = rawTopic.slice(0, 48);
+      link.download = `mvstudiopro-決策智庫-${safeTopic}-${Date.now()}.png`;
+      link.href = dataUrl;
+      link.click();
+      toast.success("報告圖已下載（PNG）");
+    } catch (e) {
+      console.error(e);
+      toast.error("導出圖片失敗，請稍後再試");
+    } finally {
+      setIsExportingStrategicPng(false);
+    }
+  }, [unlockedStrategicReport]);
 
   const recommendedPlatforms = useMemo(() => snapshot?.platformRecommendations.slice(0, 4) ?? [], [snapshot]);
   const actionSteps = useMemo(
@@ -3950,6 +3988,26 @@ export default function PlatformPage() {
                         <>付費解鎖戰略地圖</>
                       )}
                     </button>
+                    {unlockedStrategicReport ? (
+                      <button
+                        type="button"
+                        disabled={isExportingStrategicPng}
+                        onClick={() => void handleExportStrategicDashboardPng()}
+                        className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
+                      >
+                        {isExportingStrategicPng ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                            導出中…
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4 shrink-0" />
+                            導出報告圖（PNG）
+                          </>
+                        )}
+                      </button>
+                    ) : null}
                   </div>
                 ) : (
                   <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
@@ -3958,38 +4016,40 @@ export default function PlatformPage() {
 
               <div className="relative mt-5 overflow-hidden rounded-xl border border-white/10 bg-black/40">
                 {unlockedStrategicReport ? (
-                  <div className="max-h-[min(70vh,920px)] overflow-auto">
-                    <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                  <div className="w-full overflow-x-auto overflow-y-visible">
+                    <div ref={strategicReportDashboardRef} className="inline-block align-top">
+                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                    </div>
                   </div>
                 ) : (
                   <>
-                    <div className="pointer-events-none max-h-[420px] overflow-hidden blur-sm opacity-50">
-                      {strategicMapPreviewReport ? (
-                        <PlatformReportDashboard data={strategicMapPreviewReport} />
-                      ) : (
-                        <div className="flex min-h-[240px] flex-col items-center justify-center gap-2 px-6 text-center text-xs text-gray-500">
-                          <p className="text-gray-400">示意預覽將在<strong className="text-gray-300">專屬文案成功寫入後</strong>生成</p>
-                          <p>與解鎖後報告同套引擎；未完成文案前不展示模擬畫面，避免與實際可購內容錯位。</p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#070a12]/78 px-4 text-center">
-                      <Lock className="h-8 w-8 text-[#8cefff]/90" aria-hidden />
-                      <p className="max-w-md text-sm font-semibold text-white">
-                        {strategicMapPreviewReport ? "示意預覽（模糊）" : "待專屬文案就緒"}
-                      </p>
-                      <p className="max-w-lg text-xs leading-relaxed text-gray-400">
-                        {strategicMapPreviewReport ? (
-                          <>
-                            由<strong className="text-gray-300">本平台決策引擎</strong>依當前全案結果演算；解鎖後為同一路徑清晰版並存檔。
-                          </>
-                        ) : (
-                          <>
-                            請先完成本頁全案流程中的<strong className="text-gray-300">專屬文案</strong>
-                            ，再預覽或解鎖；價格已在上文標明。
-                          </>
-                        )}
-                      </p>
+                    <DecisionIntelLockedDemoPreview
+                      footnote={
+                        strategicMapPreviewReport
+                          ? "上為匿名化演示樣張（英文與品牌區已打碼）。解鎖後將依您當前戰略看板與專屬文案生成清晰專屬版並存檔。"
+                          : "上為匿名化演示樣張（英文與品牌區已打碼）。完成專屬文案後即可付費解鎖，獲取基於您數據的完整報告。"
+                      }
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
+                      <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
+                        <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
+                        <p className="text-sm font-semibold text-white">
+                          {strategicMapPreviewReport ? "試讀樣張 · 解鎖拿專屬高清版" : "試讀樣張 · 完成文案後可解鎖"}
+                        </p>
+                        <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
+                          {strategicMapPreviewReport ? (
+                            <>
+                              解鎖後版式與演示一致，但數字與建議均來自<strong className="text-[#fde047]">您的全案結果</strong>
+                              ，非示意樣張。
+                            </>
+                          ) : (
+                            <>
+                              請先完成本頁<strong className="text-[#fde047]">專屬文案</strong>
+                              ；解鎖價格已列於上方。
+                            </>
+                          )}
+                        </p>
+                      </div>
                     </div>
                   </>
                 )}
