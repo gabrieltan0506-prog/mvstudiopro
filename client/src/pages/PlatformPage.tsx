@@ -18,6 +18,7 @@ import type {
   GrowthTitleExecution,
 } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
+import { calculateMABVariant, type MabVariantState } from "@shared/predictionEngine";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
@@ -69,6 +70,70 @@ import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+
+/** MAB·UCB 實驗區：本地模擬點擊，演示探索–利用與後端入場建議 */
+function PlatformMabSandbox({
+  variants,
+  serverRecommended,
+}: {
+  variants: MabVariantState[];
+  serverRecommended?: string;
+}) {
+  const [local, setLocal] = useState<MabVariantState[]>(() => variants.map((v) => ({ ...v })));
+
+  const ucbPick = useMemo(() => calculateMABVariant(local), [local]);
+
+  return (
+    <div className="mt-4 rounded-lg border border-white/10 bg-[rgba(8,6,20,0.88)] p-3">
+      <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+        MAB 賽馬標題 · UCB 動態分發（實驗演示）
+      </h4>
+      <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
+        {serverRecommended ? (
+          <span className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-300">
+            入場: {serverRecommended}
+          </span>
+        ) : null}
+        <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-amber-200/95">
+          當前 UCB: {ucbPick || "—"}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {local.map((variant, idx) => (
+          <div
+            key={variant.id}
+            className={`flex flex-col gap-2 rounded-md border bg-black/35 p-2 sm:flex-row sm:items-center sm:justify-between ${
+              ucbPick === variant.id ? "border-cyan-400/45 ring-1 ring-cyan-400/25" : "border-white/10"
+            }`}
+          >
+            <div className="min-w-0 flex-1">
+              <span className="mr-2 font-bold text-blue-400">V{idx + 1}</span>
+              <span className="text-sm text-gray-200">{variant.title}</span>
+              <div className="mt-0.5 text-[10px] text-gray-500 tabular-nums">
+                曝光 {variant.impressions} · 點擊 {variant.clicks}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded-md bg-blue-600/35 px-2 py-1 text-[11px] font-semibold text-blue-200 transition hover:bg-blue-600/55"
+              onClick={() => {
+                setLocal((prev) =>
+                  prev.map((v) =>
+                    v.id === variant.id
+                      ? { ...v, impressions: v.impressions + 1, clicks: v.clicks + 1 }
+                      : v,
+                  ),
+                );
+              }}
+            >
+              模擬點擊
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_31_pro_preview";
 
@@ -2581,6 +2646,16 @@ export default function PlatformPage() {
           scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
         }
 
+        const personalizationScore =
+          typeof item.personalizationScore === "number" ? item.personalizationScore : undefined;
+        const predictedCtr = typeof item.predictedCtr === "number" ? item.predictedCtr : undefined;
+        const mabRecommendedVariantId =
+          typeof item.mabRecommendedVariantId === "string" ? item.mabRecommendedVariantId : undefined;
+        const rawMab = item.mabVariants;
+        const mabVariants: MabVariantState[] | undefined = Array.isArray(rawMab)
+          ? (rawMab as MabVariantState[]).filter((v) => v && typeof v.id === "string")
+          : undefined;
+
         return {
           id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
           // Task II: Support theme / titleExample / contentHook keys from strict JSON template
@@ -2593,6 +2668,10 @@ export default function PlatformPage() {
           actionableSteps: actionSteps,
           detailedScript: renderSafeText(item.detailedScript || ""),
           publishingAdvice: renderSafeText(item.publishingAdvice || ""),
+          personalizationScore,
+          predictedCtr,
+          mabVariants,
+          mabRecommendedVariantId,
           executionDetails: {
             environmentAndWardrobe: renderSafeText(envWardrobe),
             lightingAndCamera: renderSafeText(lightCam),
@@ -2616,11 +2695,23 @@ export default function PlatformPage() {
       copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
       production: "",
       format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
+      suitablePlatforms: [] as string[],
+      actionableSteps: [] as string[],
+      detailedScript: "",
+      publishingAdvice: "",
+      executionDetails: { environmentAndWardrobe: "", lightingAndCamera: "", stepByStepScript: [] as string[] },
+      predictedCtr: undefined as number | undefined,
+      personalizationScore: undefined as number | undefined,
+      mabVariants: undefined as MabVariantState[] | undefined,
+      mabRecommendedVariantId: undefined as string | undefined,
     }));
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
 
   const contentExecutionCardsKey = useMemo(
-    () => contentExecutionCards.map((c) => c.id).join("|"),
+    () =>
+      contentExecutionCards
+        .map((c) => `${c.id}:${typeof c.predictedCtr === "number" ? c.predictedCtr : ""}`)
+        .join("|"),
     [contentExecutionCards],
   );
 
@@ -4619,10 +4710,32 @@ export default function PlatformPage() {
                         id={executionCardDomId(item.id)}
                         className="group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            {item.format === "图文" ? <Image className="h-4 w-4 shrink-0 text-[#ff7fd5]" /> : <Video className="h-4 w-4 shrink-0 text-[#49e6ff]" />}
-                            <div className="truncate text-lg font-bold text-white">{item.title}</div>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex min-w-0 flex-1 flex-col gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              {item.format === "图文" ? <Image className="h-4 w-4 shrink-0 text-[#ff7fd5]" /> : <Video className="h-4 w-4 shrink-0 text-[#49e6ff]" />}
+                              <div className="truncate text-lg font-bold text-white">{item.title}</div>
+                            </div>
+                            {typeof item.predictedCtr === "number" || typeof item.personalizationScore === "number" ? (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {typeof item.predictedCtr === "number" ? (
+                                  <span
+                                    className={`rounded-md border px-2 py-1 text-xs font-bold ${
+                                      item.predictedCtr > 10
+                                        ? "border-red-500/50 bg-red-500/20 text-red-400"
+                                        : "border-emerald-500/50 bg-emerald-500/20 text-emerald-400"
+                                    }`}
+                                  >
+                                    ⚡ 預估 CTR: {item.predictedCtr}%
+                                  </span>
+                                ) : null}
+                                {typeof item.personalizationScore === "number" ? (
+                                  <span className="rounded-md border border-purple-500/50 bg-purple-500/20 px-2 py-1 text-xs font-medium text-purple-300">
+                                    🎯 匹配度: {item.personalizationScore}x
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
                             {item.format}
@@ -4633,6 +4746,13 @@ export default function PlatformPage() {
                             {digest}
                             {copyFlat.length > 60 ? "…" : ""}
                           </p>
+                        ) : null}
+                        {Array.isArray(item.mabVariants) && item.mabVariants.length >= 2 ? (
+                          <PlatformMabSandbox
+                            key={`${contentExecutionCardsKey}-${item.id}`}
+                            variants={item.mabVariants}
+                            serverRecommended={item.mabRecommendedVariantId}
+                          />
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
                           <summary className="cursor-pointer select-none text-[15px] font-black text-[#ff9900] animate-pulse transition-colors hover:text-[#ffb84d]">
