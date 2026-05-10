@@ -17,7 +17,7 @@ export const config = {
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - op=vertexTranslate (Vertex IAM 纯文本翻译；location=us-central1、模型 gemini-3.1-flash-live-preview-04-2026 固定版本，供 TestLab 验证)
+ * - op=vertexTranslate（Vertex IAM 纯文本翻译；先 us-central1，非 2xx 且非 400 时再试 global；模型 gemini-3.1-flash-live-preview-04-2026 固定版，供 TestLab）
  * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
@@ -166,6 +166,11 @@ async function fetchJson(url:string, init:RequestInit){
   const t = await r.text();
   const j = jparse(t);
   return { ok:r.ok, status:r.status, url, json:j, rawText:t.slice(0,4000) };
+}
+
+/** vertexTranslate：先 us-central1；仅 HTTP 400（请求体/参数问题）不重试 global，其余错误再试 global。 */
+function vertexTranslateShouldTryGlobalFallback(status: number): boolean {
+  return status !== 400;
 }
 
 function shouldRetryVertexImage(status:number, json:any, rawText:string){
@@ -350,30 +355,44 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw });
     }
 
-    // ---------------- Vertex：TestLab 翻译（Flash Live 固定版 04-2026、us-central1；与 geminiScript 同为 IAM REST，非 @google-cloud/vertexai SDK） ----------------
+    // ---------------- Vertex：TestLab 翻译（Flash Live 固定版 04-2026；先 us-central1，失败再 global；与 geminiScript 同为 IAM REST，非 @google-cloud/vertexai SDK） ----------------
     if (op === "vertexTranslate") {
       const sourceText = s(b.prompt || b.text || q.prompt || "").trim();
       if (!sourceText) return res.status(400).json({ ok: false, error: "missing_prompt" });
 
       const targetLang = s(b.targetLang || q.targetLang || "English").trim() || "English";
-      const location = "us-central1";
       const model = "gemini-3.1-flash-live-preview-04-2026";
-      const base = baseUrlFor(location);
-      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-
       const instruction =
         `You are a professional translator. Translate the user text into ${targetLang}. ` +
         "Preserve meaning and tone. Output ONLY the translation, with no preamble or markdown.";
       const userPayload = `---\n${sourceText}`;
-
-      const r = await fetchJson(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: `${instruction}\n\n${userPayload}` }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
-        }),
+      const bodyStr = JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: `${instruction}\n\n${userPayload}` }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
       });
+
+      const locations = ["us-central1", "global"] as const;
+      let r!: Awaited<ReturnType<typeof fetchJson>>;
+      let usedLocation: (typeof locations)[number] = locations[0];
+      let primaryMeta: { location: string; status: number } | undefined;
+
+      for (let i = 0; i < locations.length; i++) {
+        const location = locations[i];
+        const base = baseUrlFor(location);
+        const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+        r = await fetchJson(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: bodyStr,
+        });
+        usedLocation = location;
+        if (r.ok) break;
+        if (i === 0 && vertexTranslateShouldTryGlobalFallback(r.status)) {
+          primaryMeta = { location, status: r.status };
+          continue;
+        }
+        break;
+      }
 
       const raw = r.json ?? r.rawText;
       const parts = Array.isArray((raw as any)?.candidates?.[0]?.content?.parts)
@@ -386,7 +405,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         status: r.status,
         url: r.url,
         model,
-        location,
+        location: usedLocation,
+        ...(primaryMeta && usedLocation === "global"
+          ? { locationFallbackFrom: primaryMeta.location, primaryAttemptStatus: primaryMeta.status }
+          : {}),
         targetLang,
         translated: translated || null,
         raw,
