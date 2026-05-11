@@ -1720,7 +1720,11 @@ export default function PlatformPage() {
       const o = raw as Record<string, unknown>;
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
-      const success = Boolean(o.success) && Boolean(imageUrl);
+      /** job output 若僅缺 success（序列化/進度合併），有 URL 也應寫入 platformImageMap */
+      const success =
+        Boolean(imageUrl) &&
+        o.success !== false &&
+        !platformCoverImageUrlLooksInvalid(imageUrl);
       return {
         success: success as boolean,
         imageUrl,

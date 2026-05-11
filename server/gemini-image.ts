@@ -26,6 +26,10 @@ export interface GeminiImageOptions {
   guidanceScale?: number;
   seed?: number;
   personGeneration?: "DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL";
+  /**
+   * 可選：與 {@link proxyImageService.appendImageFlowLog} 同格式寫入，平台 jobs 前端可見「Vertex 出圖後存 Fly/GCS」步驟。
+   */
+  imagePersistFlowLog?: string[];
 }
 
 export interface GeminiImageResult {
@@ -45,6 +49,105 @@ function resolveVertexNanoImageModelAndIds(): string[] {
 function shouldRetryVertexImage(status: number, json: any, rawText: string) {
   const message = String(json?.error?.status || json?.error?.message || rawText || "").toUpperCase();
   return status === 429 || message.includes("RESOURCE_EXHAUSTED");
+}
+
+function extFromVertexMime(mimeType: string): "jpg" | "png" | "webp" {
+  const m = String(mimeType || "").toLowerCase();
+  if (m.includes("webp")) return "webp";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  return "png";
+}
+
+function normalizeVertexPersistContentType(mimeType: string): string {
+  const m = String(mimeType || "").toLowerCase();
+  if (m.includes("webp")) return "image/webp";
+  if (m.includes("jpeg") || m.includes("jpg")) return "image/jpeg";
+  return "image/png";
+}
+
+function appendVertexPersistLog(log: string[] | undefined, message: string): void {
+  if (!log || !Array.isArray(log)) return;
+  log.push(`${new Date().toISOString()}  ${message}`);
+}
+
+/**
+ * Vertex inlineData → 瀏覽器可讀 URL（與平台 GPT-IMAGE-2 存圖一致：Fly 公開或 GCS V4 簽名）。
+ * 若先走 {@link storagePut} 到私密 R2，後續 {@link mirrorImageUrlToGcsSignedUrl} 匿名 fetch 會 403，前端也無法載入。
+ */
+async function persistVertexInlineImagePublicUrl(
+  buffer: Buffer,
+  mimeType: string,
+  flowLog?: string[],
+): Promise<string> {
+  const ct = normalizeVertexPersistContentType(mimeType);
+  const ext = extFromVertexMime(mimeType);
+  const subdir = "vertex_nano";
+  const bytes = buffer.byteLength;
+
+  const { resolvePlatformImageStorageDriver } = await import("./config/platformSwitches.js");
+  const driver = resolvePlatformImageStorageDriver();
+  appendVertexPersistLog(
+    flowLog,
+    `[Vertex·存图] 内联像素 ${bytes} bytes · ${ct} · PLATFORM_IMAGE_STORAGE=${driver}（fly=写卷+公开 URL；gcs=uploadBufferToGcs + V4 读签名 7d）`,
+  );
+  console.info(`[gemini-image] persist start bytes=${bytes} mime=${ct} driver=${driver}`);
+
+  try {
+    if (driver === "fly") {
+      const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
+        "./services/flyVolumeGeneratedImages.js",
+      );
+      const flyCt: "image/jpeg" | "image/png" | "image/webp" =
+        ct === "image/webp" ? "image/webp" : ct === "image/png" ? "image/png" : "image/jpeg";
+      const { relPath } = await writeFlyPlatformImageBuffer({
+        subdir,
+        buffer,
+        contentType: flyCt,
+      });
+      const flyUrl = buildFlyPlatformImagePublicUrl(relPath);
+      appendVertexPersistLog(
+        flowLog,
+        `[Vertex·存图] Fly 卷已写入 · relPath=${relPath} · 公开 URL 预览=${String(flyUrl).slice(0, 120)}…`,
+      );
+      console.info("[gemini-image] persist ok backend=fly", { relPath, urlPrefix: flyUrl.slice(0, 80) });
+      return flyUrl;
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    appendVertexPersistLog(flowLog, `[Vertex·存图] Fly 写入失败，改试 GCS · ${msg.slice(0, 240)}`);
+    console.warn("[gemini-image] Fly persist failed, trying GCS", msg);
+  }
+
+  try {
+    const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./services/gcs.js");
+    const objectName = `generated/${subdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    appendVertexPersistLog(flowLog, `[Vertex·存图] GCS JSON API 上传开始 · object=${objectName}`);
+    const { gcsUri } = await uploadBufferToGcs({
+      objectName,
+      buffer,
+      contentType: ct,
+    });
+    const signedRead = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+    appendVertexPersistLog(
+      flowLog,
+      `[Vertex·存图] GCS 已上传 · ${gcsUri} · 已生成 V4 签名读链（7d）· 预览=${String(signedRead).slice(0, 120)}…`,
+    );
+    console.info("[gemini-image] persist ok backend=gcs", { gcsUri, signedPrefix: signedRead.slice(0, 96) });
+    return signedRead;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    appendVertexPersistLog(flowLog, `[Vertex·存图] GCS 上传或签名失败，回退 storagePut · ${msg.slice(0, 280)}`);
+    console.warn("[gemini-image] GCS persist failed, falling back to storagePut", msg);
+  }
+
+  const fileKey = `vertex-images/inline/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { url } = await storagePut(fileKey, buffer, ct);
+  appendVertexPersistLog(
+    flowLog,
+    `[Vertex·存图] 已回退 storagePut · key=${fileKey} · url 预览=${String(url).slice(0, 100)}（若为私密桶，前端可能仍 403）`,
+  );
+  console.info("[gemini-image] persist fallback=storagePut", { fileKey, urlPrefix: String(url).slice(0, 80) });
+  return url;
 }
 
 async function sleep(ms: number) {
@@ -153,9 +256,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     const image = generated[index];
     const buffer = Buffer.from(image.data, "base64");
     const mimeType = image.mimeType || "image/png";
-    const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-    const fileKey = `vertex-images/${opts.quality}/${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const { url } = await storagePut(fileKey, buffer, mimeType);
+    const url = await persistVertexInlineImagePublicUrl(buffer, mimeType, opts.imagePersistFlowLog);
     imageUrls.push(url);
   }
 
