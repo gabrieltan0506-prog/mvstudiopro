@@ -34,7 +34,7 @@ function baseUrlFor(location: string) {
  */
 export function appendVertexProPhotographyPromptModifiers(
   basePrompt: string,
-  intent: "strategic_cover" | "platform_vertical_cover",
+  intent: "strategic_cover" | "platform_vertical_cover" | "platform_landscape_sheet",
 ): string {
   const base = String(basePrompt || "").trim();
   if (!base) return "";
@@ -46,6 +46,9 @@ export function appendVertexProPhotographyPromptModifiers(
   ].join(", ");
   if (intent === "strategic_cover") {
     return `${base}. ${modifiers}, dark gold aesthetics, masterpiece, highly detailed, vertical 9:16 aspect.`;
+  }
+  if (intent === "platform_landscape_sheet") {
+    return `${base}. ${modifiers}, wide 16:9 landscape master canvas, multi-panel graphic layout, high legibility, cohesive cinematic grade across the frame.`;
   }
   return `${base}. ${modifiers}, vertical 9:16 social feed cover, generous safe margin for bold on-image headline, high legibility, uncluttered composition.`;
 }

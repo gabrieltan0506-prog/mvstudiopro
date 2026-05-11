@@ -11,6 +11,7 @@ import {
   resolveVertexFlashTranslationModelName,
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
+import { appendVertexProPhotographyPromptModifiers } from "./imageGenerationService.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -806,6 +807,54 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
+ * 單幀封面：**僅 Vertex Nano Banana 2**（`generateGeminiImage`），不經 OhMyGPT GPT-IMAGE-2。
+ * 供 **Nano Banana Pro** 监管模式在 Pro 失败时的第一档兜底。
+ */
+export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
+  englishPrompt: string;
+  flowLog?: string[];
+}): Promise<string | null> {
+  const raw = String(options.englishPrompt || "").trim();
+  if (!raw) {
+    appendImageFlowLog(options.flowLog, "[NB2·封面] 英文 prompt 为空，跳过");
+    return null;
+  }
+  appendImageFlowLog(
+    options.flowLog,
+    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · 已叠與 Pro 相同視覺語彙（非 OhMyGPT）`,
+  );
+  const withProVisual = appendVertexProPhotographyPromptModifiers(raw, "platform_vertical_cover");
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", options.flowLog);
+}
+
+/**
+ * 版式兜底：**僅 Vertex Nano Banana 2**（零字版式 prompt），不經 GPT-IMAGE-2。
+ * 供监管 Pro 模式在最終階段使用（與 {@link generateImageGpt2WithImagenFallback} 的 NB2 段對齊，但跳過 OhMyGPT）。
+ */
+export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
+  title: string;
+  copywriting: string;
+  mode: ProxyImageTypographyMode;
+  isTrial?: boolean;
+  flowLog?: string[];
+}): Promise<string | null> {
+  const L = options.flowLog;
+  appendImageFlowLog(
+    L,
+    `${new Date().toISOString()}  [版式兜底·仅Vertex] buildTypographyImagePrompt → Nano Banana 2 · mode=${options.mode} · 9:16 · Pro 級視覺語彙（與 NB-Pro 一致）`,
+  );
+  const nbPrompt = buildTypographyImagePrompt({
+    title: options.title,
+    copywriting: options.copywriting,
+    mode: options.mode,
+    isTrial: options.isTrial,
+    forImagenFallback: true,
+  });
+  const withProVisual = appendVertexProPhotographyPromptModifiers(nbPrompt, "platform_vertical_cover");
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
+}
+
+/**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **GPT-IMAGE-2**（9:16 或 16:9）→ **Nano Banana 2** 兜底。图像 API **不**执行翻译。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
@@ -838,8 +887,10 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K`);
-  return fallbackNanoBanana2FromPrompt(prompt, options.aspectRatio, L);
+  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · Pro 級視覺語彙`);
+  const forNb2 =
+    options.aspectRatio === "9:16" ? appendVertexProPhotographyPromptModifiers(prompt, "platform_vertical_cover") : prompt;
+  return fallbackNanoBanana2FromPrompt(forNb2, options.aspectRatio, L);
 }
 
 /**
@@ -1039,8 +1090,16 @@ export async function generatePlatformCompositeSheetImage(options: {
             "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
           );
         }
+        const promptForNb2 = appendVertexProPhotographyPromptModifiers(
+          promptForImage,
+          "platform_landscape_sheet",
+        );
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤3] Nano Banana 2 兜底 · 已叠與 Pro 相同鏡頭/光影語彙 · 16:9 · prompt≈${promptForNb2.length} chars`,
+        );
         const vertexResult = await generateGeminiImage({
-          prompt: promptForImage,
+          prompt: promptForNb2,
           quality: isXhs ? "2k" : "1k",
           aspectRatio: "16:9",
           personGeneration: "ALLOW_ADULT",
@@ -1119,7 +1178,7 @@ export async function generateImageGpt2WithImagenFallback(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K");
+  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K · Pro 級視覺語彙");
   const nbPrompt = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
@@ -1127,7 +1186,8 @@ export async function generateImageGpt2WithImagenFallback(options: {
     isTrial: options.isTrial,
     forImagenFallback: true,
   });
-  return fallbackNanoBanana2FromPrompt(nbPrompt, "9:16", L);
+  const withProVisual = appendVertexProPhotographyPromptModifiers(nbPrompt, "platform_vertical_cover");
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
 }
 
 /** 深研报告场景配图：主路径 gpt-image-2，STRATEGIC 画风 + 试用水印。 */
