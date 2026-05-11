@@ -1,6 +1,7 @@
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   isPlatformVertexNanoBanana2FallbackEnabled,
+  isPlatformWeekendGcpEscape,
   isPlatformWeekendSurvivalModeEnabled,
   resolvePlatformImageStorageDriver,
 } from "../config/platformSwitches.js";
@@ -753,26 +754,47 @@ async function mirrorNanoSheetUrlToGcs(
   }
 }
 
+/**
+ * Vertex 生圖（Nano / Pro 圖像模型，見 server/gemini-image.ts 內選型）。
+ * - `optional_fallback_after_openai`：**GPT-IMAGE-2 主路徑失敗後**才走的兜底，受 `PLATFORM_VERTEX_NANO_BANANA2` / {@link PLATFORM_VERTEX_NANO_BANANA2_ENABLED} 約束。
+ * - `platform_vertex_cover_primary`：用戶已選「監管 Vertex 封面」，**主路徑即 Vertex**，不得被上述兜底開關誤殺（仍遵 {@link isPlatformWeekendGcpEscape}）。
+ */
+type NanoBanana2FromPromptRole =
+  | "optional_fallback_after_openai"
+  | "platform_vertex_cover_primary";
+
 /** GPT-IMAGE-2 失敗後：Vertex **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· 2K。 */
 async function fallbackNanoBanana2FromPrompt(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
   flowLog?: string[],
+  role: NanoBanana2FromPromptRole = "optional_fallback_after_openai",
 ): Promise<string | null> {
   const L = flowLog;
-  if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
+  const logTag = role === "platform_vertex_cover_primary" ? "[NB2·封面]" : "[单帧兜底]";
+
+  if (role === "optional_fallback_after_openai") {
+    if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
+      appendImageFlowLog(
+        L,
+        "[生圖兜底] Vertex Nano Banana 2 已關閉（僅 GPT-IMAGE-2）。開啟：PLATFORM_VERTEX_NANO_BANANA2=1 或 platformSwitches 中 PLATFORM_VERTEX_NANO_BANANA2_ENABLED",
+      );
+      return null;
+    }
+  } else if (isPlatformWeekendGcpEscape()) {
     appendImageFlowLog(
       L,
-      "[生圖兜底] Vertex Nano Banana 2 已關閉（僅 GPT-IMAGE-2）。開啟：PLATFORM_VERTEX_NANO_BANANA2=1 或 platformSwitches 中 PLATFORM_VERTEX_NANO_BANANA2_ENABLED",
+      `${logTag} 平台 GCP 避险中，监管 Vertex 封面暂停（与周末生存模式 / PLATFORM_WEEKEND_ESCAPE 等一致）`,
     );
     return null;
   }
+
   try {
     const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
     if (!isGeminiImageAvailable()) {
       appendImageFlowLog(
         L,
-        "[单帧兜底] Vertex 不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），跳过 Nano Banana 2",
+        `${logTag} Vertex 不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），跳过 Nano Banana 2`,
       );
       return null;
     }
@@ -784,7 +806,7 @@ async function fallbackNanoBanana2FromPrompt(
     });
     let url = String(vertexResult?.imageUrl || "").trim();
     if (!url) {
-      appendImageFlowLog(L, "[单帧兜底] Nano Banana 2 返回空 URL");
+      appendImageFlowLog(L, `${logTag} Nano Banana 2 返回空 URL`);
       return null;
     }
     try {
@@ -792,16 +814,16 @@ async function fallbackNanoBanana2FromPrompt(
     } catch (e: unknown) {
       appendImageFlowLog(
         L,
-        `[单帧兜底] Nano → GCS 镜像失败（仍返回 Vertex/storage 原始 URL，浏览器可能无法加载）: ${e instanceof Error ? e.message : String(e)}`,
+        `${logTag} Nano → GCS 镜像失败（仍返回 Vertex/storage 原始 URL，浏览器可能无法加载）: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
     appendImageFlowLog(
       L,
-      `[单帧兜底] Nano Banana 2 成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+      `${logTag} Nano Banana 2 成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
     );
     return url;
   } catch (e: unknown) {
-    appendImageFlowLog(L, `[单帧兜底] Nano Banana 2 失败: ${e instanceof Error ? e.message : String(e)}`);
+    appendImageFlowLog(L, `${logTag} Nano Banana 2 失败: ${e instanceof Error ? e.message : String(e)}`);
     console.warn("[proxyImageService] nano banana 2 fallback failed:", e);
     return null;
   }
@@ -829,7 +851,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     gpt2Aligned,
     "platform_vertical_cover_after_gpt2_aspect_lock",
   );
-  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", options.flowLog);
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", options.flowLog, "platform_vertex_cover_primary");
 }
 
 /**
@@ -860,7 +882,7 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
     withLock,
     "platform_vertical_cover_after_gpt2_aspect_lock",
   );
-  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
 }
 
 /**
@@ -981,7 +1003,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4**" : ""}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
+    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4**" : ""}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（2K）`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1115,11 +1137,11 @@ export async function generatePlatformCompositeSheetImage(options: {
         }
         appendImageFlowLog(
           L,
-          `[2×4·步骤3] Nano Banana 2 兜底 · 沿用步骤2同一条 prompt（已含鏡頭/光影與 16:9 宽幅语彙）· 16:9 · prompt≈${promptForImage.length} chars`,
+          `[2×4·步骤3] Nano Banana 2 兜底 · 2K · 沿用步骤2同一条 prompt（已含鏡頭/光影與 16:9 宽幅语彙）· 16:9 · prompt≈${promptForImage.length} chars`,
         );
         const vertexResult = await generateGeminiImage({
           prompt: promptForImage,
-          quality: isXhs ? "2k" : "1k",
+          quality: "2k",
           aspectRatio: "16:9",
           personGeneration: "ALLOW_ADULT",
         });
