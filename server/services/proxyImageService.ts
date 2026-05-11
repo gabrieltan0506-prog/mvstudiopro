@@ -12,6 +12,10 @@ import {
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
 import { appendVertexProPhotographyPromptModifiers } from "./imageGenerationService.js";
+import {
+  buildGptImage2AlignedPlatformTopicCoverPrompt,
+  PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX,
+} from "./platformTopicCoverPrompt.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -209,9 +213,6 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
 /** 9:16 竖版：白名单 + auto 兜底 */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "auto", "1024x1024"] as const;
 
-/** 豎版主路徑：拼在英文 prompt 末尾，鎖定 9:16（與 API `1024x1536` 預設一致）。 */
-const GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX =
-  "CRITICAL OUTPUT ASPECT: final image must be exactly 9:16 portrait (taller than wide), full-bleed vertical cover — not 16:9 landscape, not 1:1 square hero, not letterboxed cinematic wide frame.";
 /**
  * 宽幅分镜 / 小红书八格：优先 `1536x1024`（官方 landscape 预设，≈3:2），再 `auto`、`1024x1024`。
  * 勿使用 1792x1024 / 1536x864 等——多数网关按 OpenAI 枚举校验会直接 400。
@@ -821,9 +822,13 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   }
   appendImageFlowLog(
     options.flowLog,
-    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · 已叠與 Pro 相同視覺語彙（非 OhMyGPT）`,
+    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
   );
-  const withProVisual = appendVertexProPhotographyPromptModifiers(raw, "platform_vertical_cover");
+  const gpt2Aligned = buildGptImage2AlignedPlatformTopicCoverPrompt(raw);
+  const withProVisual = appendVertexProPhotographyPromptModifiers(
+    gpt2Aligned,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
   return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", options.flowLog);
 }
 
@@ -841,7 +846,7 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
   const L = options.flowLog;
   appendImageFlowLog(
     L,
-    `${new Date().toISOString()}  [版式兜底·仅Vertex] buildTypographyImagePrompt → Nano Banana 2 · mode=${options.mode} · 9:16 · Pro 級視覺語彙（與 NB-Pro 一致）`,
+    `${new Date().toISOString()}  [版式兜底·仅Vertex] buildTypographyImagePrompt → Nano Banana 2 · mode=${options.mode} · 9:16 · GPT-IMAGE-2 同款比例锁 + Pro 光影（與 NB-Pro 一致）`,
   );
   const nbPrompt = buildTypographyImagePrompt({
     title: options.title,
@@ -850,7 +855,11 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
     isTrial: options.isTrial,
     forImagenFallback: true,
   });
-  const withProVisual = appendVertexProPhotographyPromptModifiers(nbPrompt, "platform_vertical_cover");
+  const withLock = [nbPrompt, PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX].join("\n\n");
+  const withProVisual = appendVertexProPhotographyPromptModifiers(
+    withLock,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
   return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
 }
 
@@ -873,13 +882,17 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return null;
   }
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
-  const aspectLock =
-    options.aspectRatio === "9:16" ? GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX : "";
-  const prompt = [raw, aspectLock, suffix].filter(Boolean).join("\n\n");
+  const base =
+    options.aspectRatio === "9:16"
+      ? buildGptImage2AlignedPlatformTopicCoverPrompt(raw, suffix)
+      : [raw, suffix].filter(Boolean).join("\n\n");
+  const photoIntent =
+    options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
+  const prompt = appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
   appendImageFlowLog(
     L,
-    `[单帧主路径] GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 与 Vertex 共用鏡頭/光影語彙 · 英文 prompt 约 ${prompt.length} 字`,
   );
   const primary = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes, flowLog: L });
   if (primary) {
@@ -887,10 +900,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · Pro 級視覺語彙`);
-  const forNb2 =
-    options.aspectRatio === "9:16" ? appendVertexProPhotographyPromptModifiers(prompt, "platform_vertical_cover") : prompt;
-  return fallbackNanoBanana2FromPrompt(forNb2, options.aspectRatio, L);
+  appendImageFlowLog(
+    L,
+    `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · 沿用同一条 prompt（已含比例/宽幅约束与共用光影）`,
+  );
+  return fallbackNanoBanana2FromPrompt(prompt, options.aspectRatio, L);
 }
 
 /**
@@ -903,13 +917,18 @@ export async function generateGptImage2(options: {
   mode: ProxyImageTypographyMode;
   isTrial?: boolean;
 }): Promise<string | null> {
-  const finalPrompt = buildTypographyImagePrompt({
+  const core = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
     mode: options.mode,
     isTrial: options.isTrial,
     forImagenFallback: false,
   });
+  const withAspect = [core, PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX].join("\n\n");
+  const finalPrompt = appendVertexProPhotographyPromptModifiers(
+    withAspect,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
   return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase(), {});
 }
 
@@ -1038,11 +1057,15 @@ export async function generatePlatformCompositeSheetImage(options: {
           `[2×4·顶栏标题] 已并入生图 prompt · 简中选题标题 · len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
         );
       }
-      const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
+      const promptForImageBase = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
+      const promptForImage = appendVertexProPhotographyPromptModifiers(
+        promptForImageBase,
+        "platform_landscape_sheet",
+      );
 
       appendImageFlowLog(
         L,
-        `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 送生图总长约 ${promptForImage.length} 字符`,
+        `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
       );
 
       appendImageFlowLog(
@@ -1090,16 +1113,12 @@ export async function generatePlatformCompositeSheetImage(options: {
             "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
           );
         }
-        const promptForNb2 = appendVertexProPhotographyPromptModifiers(
-          promptForImage,
-          "platform_landscape_sheet",
-        );
         appendImageFlowLog(
           L,
-          `[2×4·步骤3] Nano Banana 2 兜底 · 已叠與 Pro 相同鏡頭/光影語彙 · 16:9 · prompt≈${promptForNb2.length} chars`,
+          `[2×4·步骤3] Nano Banana 2 兜底 · 沿用步骤2同一条 prompt（已含鏡頭/光影與 16:9 宽幅语彙）· 16:9 · prompt≈${promptForImage.length} chars`,
         );
         const vertexResult = await generateGeminiImage({
-          prompt: promptForNb2,
+          prompt: promptForImage,
           quality: isXhs ? "2k" : "1k",
           aspectRatio: "16:9",
           personGeneration: "ALLOW_ADULT",
@@ -1178,7 +1197,10 @@ export async function generateImageGpt2WithImagenFallback(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K · Pro 級視覺語彙");
+  appendImageFlowLog(
+    L,
+    "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 光影",
+  );
   const nbPrompt = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
@@ -1186,7 +1208,11 @@ export async function generateImageGpt2WithImagenFallback(options: {
     isTrial: options.isTrial,
     forImagenFallback: true,
   });
-  const withProVisual = appendVertexProPhotographyPromptModifiers(nbPrompt, "platform_vertical_cover");
+  const withLock = [nbPrompt, PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX].join("\n\n");
+  const withProVisual = appendVertexProPhotographyPromptModifiers(
+    withLock,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
   return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
 }
 

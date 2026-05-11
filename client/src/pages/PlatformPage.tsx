@@ -4790,7 +4790,9 @@ export default function PlatformPage() {
                             <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
                             ：启用后走 Vertex{" "}
                             <code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">gemini-3-pro-image-preview</code>（
-                            <strong className="text-amber-100/90">global</strong>，叠 Pro 级光影语彙）；失败自动回退 GPT-IMAGE-2。一般用户无此选项。
+                            <strong className="text-amber-100/90">global</strong>
+                            ，叠 Pro 级光影语彙）；失败仅走 Vertex（Nano Banana 2 → 版式+NB2），<strong className="text-amber-200">不调用</strong> OhMyGPT
+                            GPT-IMAGE-2。一般用户无此选项。
                           </span>
                         </label>
                       ) : null}
