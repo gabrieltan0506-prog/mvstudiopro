@@ -1149,19 +1149,13 @@ export async function processPdfJobsOnce() {
   }
 }
 
-/**
- * 每次喚醒最多處理 **一筆** queued job。
- *
- * 以往用 `while` 排空佇列時，`processing` 會連整段排空期間都為 true，
- * 期間所有 `GET /api/jobs/:id` 觸發的 `processJobsOnce()` 都會直接 return，
- * 封面等任務的輪詢無法「推」worker，體感長時間卡在 queued。
- * 改為單筆處理後釋放鎖；配合 1s interval 與輪詢觸發逐步消化佇列。
- */
 export async function processJobsOnce() {
   if (processing) return;
   processing = true;
   try {
-    await processOneJob();
+    while (await processOneJob()) {
+      // Continue until queue is drained.
+    }
   } finally {
     processing = false;
   }
