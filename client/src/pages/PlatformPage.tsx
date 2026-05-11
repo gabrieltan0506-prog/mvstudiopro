@@ -66,7 +66,6 @@ import {
   Layers,
   Loader2,
   Lock,
-  Map,
   MessageSquareText,
   Mic,
   Palette,
@@ -735,7 +734,12 @@ function newPlatformCompositeProgressJobId(): string {
 
 type PlatformImageGenFlowSnapshot = {
   at: string;
-  kind: "batch_topic_frames" | "composite_2x4" | "batch_topic_frames_failed" | "composite_2x4_failed";
+  kind:
+    | "batch_topic_frames"
+    | "batch_composite_2x4"
+    | "composite_2x4"
+    | "batch_topic_frames_failed"
+    | "composite_2x4_failed";
   lines: string[];
   meta?: Record<string, unknown>;
 };
@@ -1362,6 +1366,9 @@ export default function PlatformPage() {
   /** 一键封面：前端异步逐张生成（单张串行） */
   const [batchGeneratingCoverIds, setBatchGeneratingCoverIds] = useState<Set<string>>(() => new Set());
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
+  /** 一键 2×4 / 八格图文：串行逐张合成（与单卡共用一个 mutation，批量期间抑制逐张 toast） */
+  const [isSequentialCompositeBatchGenerating, setIsSequentialCompositeBatchGenerating] = useState(false);
+  const compositeBatchSilentUiRef = useRef(false);
   /** 封面生成区旁：决策智库对外试读样张（演示数据 + 脱敏） */
   const [coverDecisionTrialReadOpen, setCoverDecisionTrialReadOpen] = useState(false);
   /** 封面图 onError：已对原始 URL 尝试过一次 cache-bust（避免误用「免扣 failedJobId」清图） */
@@ -2069,7 +2076,9 @@ export default function PlatformPage() {
         variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
           ? "分镜图文参考"
           : "小红书 2×4 八格图文参考";
-      toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
+      if (!compositeBatchSilentUiRef.current) {
+        toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
+      }
     },
     onError: (error, variables, ctx) => {
       const refunded =
@@ -2084,7 +2093,9 @@ export default function PlatformPage() {
         : `已退回 ${refunded} 积分`;
       const head = `❌ 2x4 合成失败 · kind=${variables.kind} · sceneId=${variables.sceneId} · title=${String(variables.title ?? "").slice(0, 80)} · ${refundPhrase}`;
       const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…（完整见下方 Debug）` : fullMsg;
-      toast.error(`${head}\n\n${preview}`, { duration: 14_000 });
+      if (!compositeBatchSilentUiRef.current) {
+        toast.error(`${head}\n\n${preview}`, { duration: 14_000 });
+      }
       console.error("[PlatformPage] generatePlatformCompositeSheet failed:", error);
 
       setPlatformImageGenFlowSnapshots((prev) => {
@@ -2106,6 +2117,138 @@ export default function PlatformPage() {
       compositeSheetLivePollCtxRef.current = null;
     },
   });
+
+  const runSequentialCompositeBatchGeneration = async () => {
+    const cards = contentExecutionCards;
+    const localOpId = `batch-composite-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    compositeBatchSilentUiRef.current = true;
+    setIsSequentialCompositeBatchGenerating(true);
+    setPlatformImageGenFlowSnapshots((prev) =>
+      upsertPlatformImageFlowSnapshot(prev, {
+        at: new Date().toISOString(),
+        kind: "batch_composite_2x4",
+        lines: [
+          `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成已发起 · topicCount=${cards.length} · concurrency=1`,
+          `${new Date().toISOString()}  [等待中] 每条依选题格式扣点（短视频→分镜表 · 图文/小红书→八格笔记），单张约 3～5 分钟`,
+        ],
+        meta: {
+          localOpId,
+          platformType: "composite_2x4",
+          topicCount: cards.length,
+          concurrency: 1,
+          pending: true,
+        },
+      }),
+    );
+
+    let successCount = 0;
+    const liveLines: string[] = [];
+    try {
+      for (const item of cards) {
+        const headlineTitle = item.title;
+        const isGraphicFormat = item.format === "图文" || item.format === "小红书";
+        const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+        liveLines.push(`${new Date().toISOString()}  [客户端] 开始合成 · sceneId=${item.id} · kind=${compositeKind}`);
+        setPlatformImageGenFlowSnapshots((prev) =>
+          upsertPlatformImageFlowSnapshot(prev, {
+            at: new Date().toISOString(),
+            kind: "batch_composite_2x4",
+            lines: [
+              ...liveLines,
+              `${new Date().toISOString()}  [等待中] ${item.id}（详见下方各条 composite_2x4 服务端流水）`,
+            ],
+            meta: {
+              localOpId,
+              platformType: "composite_2x4",
+              topicCount: cards.length,
+              concurrency: 1,
+              currentSceneId: item.id,
+              successCount,
+              pending: true,
+            },
+          }),
+        );
+        try {
+          const res = await runThrottledPlatformImageRequest(
+            `composite:${item.id}:${compositeKind}`,
+            () =>
+              generatePlatformCompositeSheetMutation.mutateAsync({
+                sceneId: item.id,
+                title: headlineTitle,
+                scriptContext: buildPlatformSheetScriptContext(item as any),
+                kind: compositeKind,
+                executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                creationRecordId: readOptionalReportBindingCreationId(),
+                imagePromptTranslator: effectiveCompositeImagePromptTranslator,
+                progressJobId: newPlatformCompositeProgressJobId(),
+              }),
+            (waitMs) => {
+              liveLines.push(
+                `${new Date().toISOString()}  [客户端] 节流等待 ${Math.ceil(waitMs / 1000)} 秒 · 滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内已排满 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次发起 · sceneId=${item.id}`,
+              );
+              setPlatformImageGenFlowSnapshots((prev) =>
+                upsertPlatformImageFlowSnapshot(prev, {
+                  at: new Date().toISOString(),
+                  kind: "batch_composite_2x4",
+                  lines: [...liveLines],
+                  meta: {
+                    localOpId,
+                    platformType: "composite_2x4",
+                    topicCount: cards.length,
+                    concurrency: 1,
+                    currentSceneId: item.id,
+                    successCount,
+                    pending: true,
+                  },
+                }),
+              );
+            },
+          );
+          const out = String(res.imageUrl ?? "").trim();
+          const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
+            ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+            : [];
+          if (serverLines.length > 0) {
+            liveLines.push(...serverLines.slice(-12).map((ln) => `${new Date().toISOString()}  [服务端摘要] ${ln}`));
+          }
+          if (out) {
+            successCount += 1;
+            liveLines.push(`${new Date().toISOString()}  ✓ 合成完成 · sceneId=${item.id}`);
+          } else {
+            liveLines.push(`${new Date().toISOString()}  ✗ 合成无图 · sceneId=${item.id}`);
+          }
+        } catch (err) {
+          liveLines.push(
+            `${new Date().toISOString()}  ✗ 合成异常 · sceneId=${item.id} · ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    } finally {
+      compositeBatchSilentUiRef.current = false;
+      setIsSequentialCompositeBatchGenerating(false);
+      setPlatformImageGenFlowSnapshots((prev) =>
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "batch_composite_2x4",
+          lines: [
+            ...liveLines,
+            `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成结束 · success=${successCount}/${cards.length}`,
+          ],
+          meta: {
+            localOpId,
+            platformType: "composite_2x4",
+            topicCount: cards.length,
+            concurrency: 1,
+            successCount,
+            pending: false,
+          },
+        }),
+      );
+      toast.success(
+        `已为 ${successCount}/${cards.length} 个选题完成 2×4 分镜／八格图文（合计 ${platformBulkCompositeCost} 积分）`,
+      );
+    }
+  };
 
   useEffect(() => {
     if (!generatePlatformCompositeSheetMutation.isPending) return;
@@ -2937,6 +3080,27 @@ export default function PlatformPage() {
     () => platformTopicCount * CREDIT_COSTS.platformTopicFrameGraphic,
     [platformTopicCount],
   );
+  const platformBulkCompositeCost = useMemo(() => {
+    let sum = 0;
+    for (const row of contentExecutionCards) {
+      const isGraphic = row.format === "图文" || row.format === "小红书";
+      sum += isGraphic ? CREDIT_COSTS.platformXhsDualNote : CREDIT_COSTS.platformStoryboardSheet;
+    }
+    return sum;
+  }, [contentExecutionCards]);
+
+  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（与单卡同价累加） */
+  function onBulkCompositeOneClick() {
+    if (!isAuthenticated) {
+      toast.error("请先登录");
+      return;
+    }
+    const note = supervisorAccess
+      ? ""
+      : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文（每条 ${CREDIT_COSTS.platformStoryboardSheet} 积分，合计 ${platformBulkCompositeCost} 积分；每条约 3～5 分钟），是否继续？`;
+    if (!supervisorAccess && !window.confirm(note)) return;
+    void runSequentialCompositeBatchGeneration();
+  }
 
   const coverGenWaitCarouselItems = useMemo((): CoverGenWaitCarouselItem[] => {
     return contentExecutionCards.slice(0, 4).map((c) => {
@@ -3581,8 +3745,14 @@ export default function PlatformPage() {
                     onClick={() => void scrollToPaidDecisionIntel()}
                     className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#ff4fb8]/45 hover:bg-[rgba(255,79,184,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
                   >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#ff4fb8]/35 bg-[#ff4fb8]/15 text-[#ffc6e8] md:h-14 md:w-14">
-                      <Map className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-[#0a0a0f] p-1 md:h-14 md:w-14">
+                      <img
+                        src="/brand/mvstudiopro-strategic-intel-logo.png"
+                        alt=""
+                        className="h-full w-full object-contain"
+                        width={112}
+                        height={112}
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -4397,7 +4567,9 @@ export default function PlatformPage() {
                             {snap.at} ·{" "}
                             {snap.kind === "batch_topic_frames"
                               ? "批量单帧"
-                              : snap.kind === "batch_topic_frames_failed"
+                              : snap.kind === "batch_composite_2x4"
+                                ? "批量 2×4 / 八格合成（串行）"
+                                : snap.kind === "batch_topic_frames_failed"
                                 ? "批量单帧 · 失败（客户端捕获）"
                                 : snap.kind === "composite_2x4_failed"
                                   ? "2×4 合成 · 失败（客户端捕获）"
@@ -4699,19 +4871,119 @@ export default function PlatformPage() {
                 </aside>
                 <div className="order-2 min-w-0 xl:order-1">
               <div className={shellCardClasses("p-6")}>
-                <div className="mb-8 border-b border-white/10 pb-6">
-                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="mb-8 space-y-4 border-b border-white/10 pb-6">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
                       <h3 className="flex items-center gap-2 text-xl font-bold text-white">
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
                         视频图文分镜表
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">
-                        一键生成的封面单图已放置于下方选题卡片内。此处仅展示高定 2×4 分镜与小红书 2×4 八格图文参考。
+                        一键封面在下方选题卡。此处可一键依次为全部选题生成 2×4 分镜或八格图文（短视频{" "}
+                        {CREDIT_COSTS.platformStoryboardSheet} 积分/条 · 图文/小红书 {CREDIT_COSTS.platformXhsDualNote}{" "}
+                        积分/条；当前 {platformTopicCount} 条合计约 {platformBulkCompositeCost} 积分）。
                       </p>
                     </div>
-                    <div className="flex w-full flex-shrink-0 flex-col gap-3 md:w-auto md:max-w-md md:items-end">
-                      <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
+                    {platformTopicCount > 0 ? (
+                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setCoverDecisionTrialReadOpen(true)}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-[#49e6ff]/50 bg-[#49e6ff]/12 px-6 py-2.5 text-sm font-semibold text-[#a5f3fc] shadow-[0_6px_24px_rgba(72,212,240,0.15)] transition hover:bg-[#49e6ff]/22 sm:w-auto"
+                        >
+                          <Eye className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                          点击试读 · 决策智库样张
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            isSequentialCoverBatchGenerating ||
+                            isSequentialCompositeBatchGenerating ||
+                            generatePlatformCompositeSheetMutation.isPending ||
+                            isDashboardLoading ||
+                            isContentLoading ||
+                            !isAuthenticated ||
+                            platformTopicCount === 0
+                          }
+                          onClick={() => {
+                            if (!isAuthenticated) {
+                              toast.error("请先登录");
+                              return;
+                            }
+                            const scenes = contentExecutionCards.map((row) => ({
+                              id: row.id,
+                              title: row.title,
+                              text: buildPlatformSceneText({
+                                title: row.title,
+                                hook: row.hook,
+                                copywriting: row.copywriting,
+                                executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
+                                  .executionDetails,
+                              }),
+                            }));
+                            const discountNote = supervisorAccess
+                              ? ""
+                              : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
+                            if (!supervisorAccess && !window.confirm(discountNote)) return;
+                            void runSequentialCoverBatchGeneration(
+                              scenes,
+                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                            );
+                          }}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
+                        >
+                          {isSequentialCoverBatchGenerating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-4 w-4" />
+                          )}
+                          {isSequentialCoverBatchGenerating
+                            ? "正在生成图文封面单帧…"
+                            : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            isSequentialCoverBatchGenerating ||
+                            isSequentialCompositeBatchGenerating ||
+                            generatePlatformCompositeSheetMutation.isPending ||
+                            isDashboardLoading ||
+                            isContentLoading ||
+                            !isAuthenticated ||
+                            platformTopicCount === 0
+                          }
+                          onClick={onBulkCompositeOneClick}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border-2 border-[#10B981] bg-[#10B981]/20 px-8 py-2.5 text-sm font-bold text-[#a7f3d0] shadow-[0_6px_24px_rgba(16,185,129,0.22)] transition hover:bg-[#10B981]/28 hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
+                        >
+                          {isSequentialCompositeBatchGenerating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Layers className="h-4 w-4" />
+                          )}
+                          {isSequentialCompositeBatchGenerating
+                            ? "正在生成 2×4 分镜…"
+                            : `一键生成分镜与八格图文 · ${platformBulkCompositeCost} 积分`}
+                        </button>
+                        <Dialog open={coverDecisionTrialReadOpen} onOpenChange={setCoverDecisionTrialReadOpen}>
+                          <DialogContent className="max-h-[92vh] max-w-[min(1720px,calc(100vw-1rem))] w-full gap-0 overflow-y-auto overflow-x-auto border border-white/12 bg-[#05080f] p-3 sm:max-w-[min(1720px,calc(100vw-1rem))]">
+                            <DialogHeader className="sr-only">
+                              <DialogTitle>决策智库试读样张</DialogTitle>
+                              <DialogDescription>
+                                演示数据排版，选题与正文类文案已脱敏；付费解锁后可查看基于您全案数据的完整报告。
+                              </DialogDescription>
+                            </DialogHeader>
+                            <PlatformReportDashboard
+                              data={DEMO_ADVANCED_AI_REPORT_DATA}
+                              presentation="trialRead"
+                              className="!box-border !w-[min(1680px,100%)] !max-w-[1680px] border-0 !px-3 !pb-4 !pt-3 md:!w-[1680px]"
+                            />
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex w-full flex-col gap-3 md:ms-auto md:max-w-lg">
+                    <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
                         {canConfigureCompositeImageTranslator ? (
                           <>
                             <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
@@ -4799,81 +5071,8 @@ export default function PlatformPage() {
                           </span>
                         </label>
                       ) : null}
-                      {platformTopicCount > 0 ? (
-                        <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-                          <button
-                            type="button"
-                            onClick={() => setCoverDecisionTrialReadOpen(true)}
-                            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-[#49e6ff]/50 bg-[#49e6ff]/12 px-6 py-2.5 text-sm font-semibold text-[#a5f3fc] shadow-[0_6px_24px_rgba(72,212,240,0.15)] transition hover:bg-[#49e6ff]/22 sm:w-auto"
-                          >
-                            <Eye className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
-                            点击试读 · 决策智库样张
-                          </button>
-                          <button
-                            type="button"
-                            disabled={
-                              isSequentialCoverBatchGenerating ||
-                              isDashboardLoading ||
-                              isContentLoading ||
-                              !isAuthenticated ||
-                              platformTopicCount === 0
-                            }
-                            onClick={() => {
-                              if (!isAuthenticated) {
-                                toast.error("请先登录");
-                                return;
-                              }
-                              const scenes = contentExecutionCards.map((row) => ({
-                                id: row.id,
-                                title: row.title,
-                                text: buildPlatformSceneText({
-                                  title: row.title,
-                                  hook: row.hook,
-                                  copywriting: row.copywriting,
-                                  executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
-                                    .executionDetails,
-                                }),
-                              }));
-                              const discountNote = supervisorAccess
-                                ? ""
-                                : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
-                              if (!supervisorAccess && !window.confirm(discountNote)) return;
-                              void runSequentialCoverBatchGeneration(
-                                scenes,
-                                buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
-                              );
-                            }}
-                            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
-                          >
-                            {isSequentialCoverBatchGenerating ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Sparkles className="h-4 w-4" />
-                            )}
-                            {isSequentialCoverBatchGenerating
-                              ? "正在生成图文封面单帧…"
-                              : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
-                          </button>
-                          <Dialog open={coverDecisionTrialReadOpen} onOpenChange={setCoverDecisionTrialReadOpen}>
-                            <DialogContent className="max-h-[92vh] max-w-[min(1720px,calc(100vw-1rem))] w-full gap-0 overflow-y-auto overflow-x-auto border border-white/12 bg-[#05080f] p-3 sm:max-w-[min(1720px,calc(100vw-1rem))]">
-                              <DialogHeader className="sr-only">
-                                <DialogTitle>决策智库试读样张</DialogTitle>
-                                <DialogDescription>
-                                  演示数据排版，选题与正文类文案已脱敏；付费解锁后可查看基于您全案数据的完整报告。
-                                </DialogDescription>
-                              </DialogHeader>
-                              <PlatformReportDashboard
-                                data={DEMO_ADVANCED_AI_REPORT_DATA}
-                                presentation="trialRead"
-                                className="!box-border !w-[min(1680px,100%)] !max-w-[1680px] border-0 !px-3 !pb-4 !pt-3 md:!w-[1680px]"
-                              />
-                            </DialogContent>
-                          </Dialog>
-                        </div>
-                      ) : null}
                     </div>
                   </div>
-                </div>
 
                 {contentExecutionCards.length > 0 ? (
                   <div
@@ -5441,6 +5640,7 @@ export default function PlatformPage() {
                                     disabled={
                                       !isAuthenticated ||
                                       isSequentialCoverBatchGenerating ||
+                                      isSequentialCompositeBatchGenerating ||
                                       regeneratingCoverSceneId !== null ||
                                       compositeMutationBusy ||
                                       isDashboardLoading ||
@@ -5501,7 +5701,13 @@ export default function PlatformPage() {
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              disabled={!isAuthenticated || compositeMutationBusy || isDashboardLoading || isContentLoading}
+                              disabled={
+                                !isAuthenticated ||
+                                compositeMutationBusy ||
+                                isSequentialCompositeBatchGenerating ||
+                                isDashboardLoading ||
+                                isContentLoading
+                              }
                               onClick={() => {
                                 if (!isAuthenticated) {
                                   toast.error("请先登录");
@@ -5551,6 +5757,7 @@ export default function PlatformPage() {
                                 !isAuthenticated ||
                                 compositeMutationBusy ||
                                 isSequentialCoverBatchGenerating ||
+                                isSequentialCompositeBatchGenerating ||
                                 regeneratingCoverSceneId !== null ||
                                 batchGeneratingCoverIds.has(item.id) ||
                                 coverSilentRetryIds.has(item.id) ||

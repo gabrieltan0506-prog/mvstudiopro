@@ -1,7 +1,7 @@
 /**
- * Vertex AI image generation service.
- * - Nano Banana 2 route: gemini-3.1-flash-image-preview @ global
- * - Nano Banana Pro route: gemini-3-pro-image-preview @ global
+ * Vertex AI image generation（平台政策：**僅 Nano Banana 2**，`gemini-3.1-flash-image-preview`）。
+ * 與 **`VERTEX_IMAGE_MODEL_FLASH`** 對應區域：`getVertexImageFlashLocation`。
+ * 像素主路徑另可走 OhMyGPT **GPT-IMAGE-2**（見 proxyImageService）；本模組不調用 `gemini-3-pro-image-preview`。
  */
 import { storagePut } from "./storage";
 import {
@@ -11,7 +11,6 @@ import {
   fetchVertexJson,
   getVertexAuthHeaders,
   getVertexImageFlashLocation,
-  getVertexImageProLocation,
   getVertexProjectId,
 } from "./services/vertexMedia";
 
@@ -37,10 +36,10 @@ export interface GeminiImageResult {
   location?: string;
 }
 
-function pickImageModels(quality: ImageQuality) {
+/** 僅 Nano Banana 2（Flash）；不串 Pro。`quality` 仍影響 Vertex `imageSize`（建議平台路徑傳 `2k`）。 */
+function resolveVertexNanoImageModelAndIds(): string[] {
   const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview").trim();
-  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview").trim();
-  return quality === "1k" ? [flashModel, proModel] : [proModel, flashModel];
+  return flashModel ? [flashModel] : ["gemini-3.1-flash-image-preview"];
 }
 
 function shouldRetryVertexImage(status: number, json: any, rawText: string) {
@@ -72,17 +71,15 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     },
   ];
 
-  const models = pickImageModels(opts.quality);
-  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview").trim();
+  const modelIds = resolveVertexNanoImageModelAndIds();
   let generated: { data: string; mimeType: string }[] | null = null;
   let selectedModel = "";
   let selectedLocation = "";
   let lastError = "";
 
-  for (const model of models) {
-    const location = model === proModel
-      ? getVertexImageProLocation()
-      : getVertexImageFlashLocation();
+  const location = getVertexImageFlashLocation();
+
+  for (const model of modelIds) {
     const baseUrl = baseUrlForVertex(location);
     const url = `${baseUrl}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
     let response = await fetchVertexJson(url, {
