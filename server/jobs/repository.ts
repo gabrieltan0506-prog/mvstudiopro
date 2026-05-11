@@ -19,6 +19,17 @@ function parseMaybeJson(value: unknown): unknown {
   }
 }
 
+/** platform 任務 input 頂層 action（與 processPlatformJob 一致） */
+function getPlatformJobAction(input: unknown): string | null {
+  const v = parseMaybeJson(input);
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const a = (v as { action?: unknown }).action;
+  return typeof a === "string" ? a : null;
+}
+
+/** 每次拾取時掃描前方若干個 queued，避免 Stage2 文案永遠卡在長時間 platform_topic_image 之後 */
+const QUEUE_SCAN_FOR_BUILD_CONTENT = 40;
+
 function normalizeJob(job: Job): NormalizedJob {
   return {
     ...job,
@@ -171,11 +182,6 @@ export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   }
 }
 
-/**
- * 主 worker 佇列：除 `pdf_export`（見 claimNextPdfExportJob）外，**所有** type（platform / video / image / audio）
- * 嚴格依 `createdAt` FIFO，不區分 `input.action`。因此 platform_topic_image、platform_build_content、
- * platform_analysis、platform_qa 以及影音任務彼此公平，避免任一類長期餓死。
- */
 export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;
@@ -187,7 +193,12 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
       excludeTypes.length > 0
         ? and(eq(jobs.status, "queued"), notInArray(jobs.type, excludeTypes))
         : eq(jobs.status, "queued");
-    rows = await db.select().from(jobs).where(condition).orderBy(asc(jobs.createdAt)).limit(1);
+    rows = await db
+      .select()
+      .from(jobs)
+      .where(condition)
+      .orderBy(asc(jobs.createdAt))
+      .limit(QUEUE_SCAN_FOR_BUILD_CONTENT);
   } catch (error) {
     console.error("[JobsRepo] claimNextQueuedJob select failed:", error);
     return null;
@@ -195,19 +206,22 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
 
   if (rows.length === 0) return null;
 
-  const next = rows[0]!;
+  const preferred =
+    rows.find(
+      (j) => j.type === "platform" && getPlatformJobAction(j.input) === "platform_build_content",
+    ) ?? rows[0];
 
   try {
     await db
       .update(jobs)
       .set({
         status: "running",
-        attempts: (next.attempts ?? 0) + 1,
+        attempts: (preferred.attempts ?? 0) + 1,
         updatedAt: new Date(),
       })
-      .where(and(eq(jobs.id, next.id), eq(jobs.status, "queued")));
+      .where(and(eq(jobs.id, preferred.id), eq(jobs.status, "queued")));
 
-    return await getJobById(next.id);
+    return await getJobById(preferred.id);
   } catch (error) {
     console.error("[JobsRepo] claimNextQueuedJob update failed:", error);
     return null;
