@@ -12,6 +12,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { processJobsOnce, startJobWorker } from "../jobs/runner";
+import { startStaleJobsReaper } from "../jobs/staleJobsReaper";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
 import { getSupervisorAllowlist } from "../services/access-policy";
@@ -422,6 +423,7 @@ async function startServer() {
     console.log(`Server listening on http://${host}:${port}/ (NODE_ENV=${process.env.NODE_ENV || "undefined"})`);
     // Defer background worker startup until the HTTP listener is ready.
     startJobWorker();
+    startStaleJobsReaper();
     // 启动时扫描并恢复孤儿 deepResearch 任务（机器重启/部署可能中断异步任务）
     import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {
       recoverOrphanedJobs().catch((e) => console.warn("[deepResearch] recover failed:", e));

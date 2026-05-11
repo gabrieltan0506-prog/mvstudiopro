@@ -1,4 +1,4 @@
-export type PlatformTitleVariant = { id: "a" | "b"; title: string };
+export type PlatformTitleVariant = { id: "a" | "b" | "c"; title: string };
 
 function clip(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
@@ -30,6 +30,40 @@ function hookSnippet(bp: Record<string, unknown>): string {
   return String(h).replace(/\s+/g, " ").trim().slice(0, 32);
 }
 
+function copyOpeningSnippet(bp: Record<string, unknown>): string {
+  const raw =
+    bp.copywriting ??
+    bp.body ??
+    bp["核心文案方向"] ??
+    bp["文案"] ??
+    bp["正文"] ??
+    "";
+  const s = String(raw).replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  const first = s.split(/[。！？!?；;\n]/)[0] ?? s;
+  return String(first).trim().slice(0, 72);
+}
+
+/**
+ * 第三句主標：從正文開頭或鉤子衍生，與 A/B 盡量錯開語感，供封面择优多一路。
+ */
+function buildThirdTitleCandidate(bp: Record<string, unknown>, main: string, second: string, index: number): string {
+  const hook = hookSnippet(bp);
+  const open = copyOpeningSnippet(bp);
+  let cand =
+    open.length >= 10 && open !== main && open !== second ? clip(open, 88) : "";
+  if (!cand) {
+    cand = hook
+      ? clip(`一文说清：${hook}`, 88)
+      : clip(`关于「${clip(main, 36)}」—多数人会忽略的关键`, 88);
+  }
+  if (cand === main || cand === second) cand = clip(`${main}·换一版开头（${index + 1}）`, 88);
+  if (cand === main || cand === second || !cand.trim()) {
+    cand = hook ? clip(`为什么${hook}值得现在看？`, 88) : clip(`「${clip(main, 40)}」—实操要点版`, 88);
+  }
+  return cand;
+}
+
 function readTitleAlternate(bp: Record<string, unknown>): string {
   const raw =
     bp.titleAlternate ??
@@ -42,16 +76,19 @@ function readTitleAlternate(bp: Record<string, unknown>): string {
 }
 
 /**
- * 同一條選題、同一套正文與鉤子：僅「發文大標 / 封面主句」兩種說法。
- * 優先用 Stage2 模型輸出的 titleAlternate；缺省時用規則補第二句（不另起選題）。
+ * 同一條選題：發文大標 / 封面主句 **A·B·C 三路**（C 多取自正文開頭或鉤子衍生）。
+ * 優先用 Stage2 模型輸出的 titleAlternate 作 B；缺省時用規則補 B 與 C（不另起選題）。
  */
 export function buildTitleVariantsFromBlueprint(bp: Record<string, unknown>, index: number): PlatformTitleVariant[] {
   const main = clip(canonicalMainTitle(bp, index), 88);
   const alt = readTitleAlternate(bp);
   if (alt.length >= 4 && alt !== main) {
+    const second = clip(alt, 88);
+    const third = buildThirdTitleCandidate(bp, main, second, index);
     return [
       { id: "a", title: main },
-      { id: "b", title: clip(alt, 88) },
+      { id: "b", title: second },
+      { id: "c", title: third },
     ];
   }
   const hook = hookSnippet(bp);
@@ -60,9 +97,11 @@ export function buildTitleVariantsFromBlueprint(bp: Record<string, unknown>, ind
     : clip(`关于「${clip(main, 40)}」，多数人忽略的一点`, 88);
   if (second === main) second = clip(`${main}（换一句开头）`, 88);
   if (!second || second === main) second = clip(`${main}·另一种说法`, 88);
+  const third = buildThirdTitleCandidate(bp, main, second, index);
   return [
     { id: "a", title: main },
     { id: "b", title: second },
+    { id: "c", title: third },
   ];
 }
 
@@ -83,16 +122,20 @@ export function scoreTitleForCoverClickAppeal(title: string, hook: string): numb
   return score;
 }
 
-/** 在 A/B 兩句標題中選封面意圖較高的一句；平手保留 A。 */
+/** 在 A/B/C 標題中選封面意圖較高的一句；平手保留最先候選。 */
 export function pickPreferredTitleVariant(variants: PlatformTitleVariant[], hook: string): PlatformTitleVariant {
   if (variants.length === 0) return { id: "a", title: "" };
-  const a = variants[0]!;
-  if (variants.length === 1) return { id: "a", title: a.title };
-  const b = variants[1]!;
-  const sa = scoreTitleForCoverClickAppeal(a.title, hook);
-  const sb = scoreTitleForCoverClickAppeal(b.title, hook);
-  if (sb > sa) return { id: "a", title: b.title };
-  return { id: "a", title: a.title };
+  let best = variants[0]!;
+  let bestScore = scoreTitleForCoverClickAppeal(best.title, hook);
+  for (let i = 1; i < variants.length; i++) {
+    const v = variants[i]!;
+    const s = scoreTitleForCoverClickAppeal(v.title, hook);
+    if (s > bestScore) {
+      best = v;
+      bestScore = s;
+    }
+  }
+  return { id: "a", title: best.title };
 }
 
 /**

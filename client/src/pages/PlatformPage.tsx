@@ -664,12 +664,12 @@ function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleV
   if (!Array.isArray(raw) || raw.length < 2) return fallback;
   const out: PlatformTitleVariant[] = [];
   for (const row of raw) {
-    if (out.length >= 2) break;
+    if (out.length >= 3) break;
     if (!row || typeof row !== "object") continue;
     const id = (row as { id?: unknown }).id;
     const title = String((row as { title?: unknown }).title ?? "").trim();
     if (!title) continue;
-    if (id === "a" || id === "b") {
+    if (id === "a" || id === "b" || id === "c") {
       out.push({ id, title });
     }
   }
