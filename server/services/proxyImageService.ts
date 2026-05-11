@@ -211,7 +211,7 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
  * 官方枚举：`1024x1024`、`1536x1024`（横版和宽幅默认）、`1024x1536`（竖版）、`auto`。
  * （文档另述「自定义分辨率」约束；代理若未开通宽表，勿传 1792×1024、1536×864 等非枚举值。）
  */
-/** 9:16 竖版：白名单 + auto 兜底 */
+/** 豎版：與 OhMyGPT/OpenAI 白名單一致，首選 **1024×1536**（~2:3，非自訂 9:16 像素）；`auto` 兜底 */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "auto", "1024x1024"] as const;
 
 /**
@@ -393,8 +393,8 @@ export function buildTypographyImagePrompt(options: {
   if (forImagenFallback) {
     return [
       allowChineseTypography
-        ? "Professional 9:16 editorial vertical scene with premium Simplified Chinese title integration."
-        : "Professional 9:16 editorial vertical scene — pure visuals only, absolutely no typography on the image.",
+        ? "Professional 1024×1536 portrait editorial vertical scene with premium Simplified Chinese title integration."
+        : "Professional 1024×1536 portrait editorial vertical scene — pure visuals only, absolutely no typography on the image.",
       allowChineseTypography
         ? `VISUAL BRIEF: ${visualContext}`
         : `VISUAL BRIEF (translate into imagery only; do NOT paint as readable text): ${visualContext}`,
@@ -403,18 +403,18 @@ export function buildTypographyImagePrompt(options: {
         : `SUBJECT / MOOD ANCHOR (for composition only; do NOT spell as text): ${displayHeading}`,
       `STYLE: ${stylePrompt}`,
       typographyBlock,
-      "Aspect ratio 9:16 vertical. 8k resolution, masterpiece, no browser or phone UI mockups.",
+      "Output framing: tall portrait matching OpenAI gpt-image-2 **1024×1536**. 8k aesthetic, masterpiece, no browser or phone UI mockups.",
     ].join("\n");
   }
 
   return `
 Model: GPT-Image-2
-Task: Create a professional 9:16 vertical image.
+Task: Create a professional 1024×1536 portrait vertical image (OpenAI tall preset).
 VISUAL BRIEF: ${visualContext}
 MOOD ANCHOR: ${displayHeading}
 STYLE: ${stylePrompt}
 ${typographyBlock}
-Aspect Ratio: 9:16. 8k resolution, masterpiece.
+Output size: 1024×1536 portrait. 8k aesthetic, masterpiece.
 `.trim();
 }
 
@@ -622,25 +622,29 @@ async function postGptImage2AndUpload(
         }
 
         const buffer = Buffer.from(b64, "base64");
+        const ohMyFormat = sniffBinaryImageMime(buffer);
+        const ohMyExt = ohMyFormat === "image/jpeg" ? "jpg" : "png";
         if (isFlyPlatformTopicImageStorage()) {
           const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
             "./flyVolumeGeneratedImages.js",
           );
+          const flyCt: "image/jpeg" | "image/png" =
+            ohMyFormat === "image/jpeg" ? "image/jpeg" : "image/png";
           const { relPath } = await writeFlyPlatformImageBuffer({
             subdir: gcsSubdir,
             buffer,
-            contentType: "image/jpeg",
+            contentType: flyCt,
           });
           const flyUrl = buildFlyPlatformImagePublicUrl(relPath);
           appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 成功，已写入 Fly 卷 · relPath=${relPath}`);
           appendImageFlowLog(L, `[GPT-IMAGE-2] 公開 URL 预览：${String(flyUrl).slice(0, 180)}…`);
           return flyUrl;
         }
-        const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+        const path = `generated/${gcsSubdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ohMyExt}`;
         const { gcsUri } = await uploadBufferToGcs({
           objectName: path,
           buffer,
-          contentType: "image/jpeg",
+          contentType: ohMyFormat,
         });
         const signedUrl = await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
         appendImageFlowLog(L, `[GPT-IMAGE-2] 尺寸 ${size} 成功，已上传 GCS · gcsUri=${gcsUri}`);
@@ -692,6 +696,27 @@ function normalizeImageUploadContentType(mime: string): string {
   const m = String(mime || "").toLowerCase();
   if (m.includes("jpeg") || m.includes("jpg")) return "image/jpeg";
   if (m.includes("webp")) return "image/webp";
+  return "image/png";
+}
+
+/** OhMyGPT `b64_json` 解碼後：依魔數辨識，與實際位元一致（OpenAI gpt-image-2 多為 PNG）。 */
+function sniffBinaryImageMime(buffer: Buffer): "image/png" | "image/jpeg" {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return "image/png";
+  }
   return "image/png";
 }
 
@@ -797,15 +822,15 @@ async function postGptImage2ViaFalAndUpload(
     appendImageFlowLog(L, "[FAL·GPT-IMAGE-2] 无 FAL_API_KEY/FAL_KEY，跳过 fal 主路径");
     return null;
   }
-  /** 與 OpenAI 白名單 1024×1536 語義接近的 9:16；寬高均為 16 的倍數（fal schema 要求） */
+  /** 與 OhMyGPT `size` 白名單一致：**1024×1536** 豎版、**1536×1024** 橫版（寬高皆 16 的倍數，符合 fal schema） */
   const image_size =
     aspectRatio === "9:16"
-      ? ({ width: 1024, height: 1824 } as const)
-      : ({ width: 1824, height: 1024 } as const);
+      ? ({ width: 1024, height: 1536 } as const)
+      : ({ width: 1536, height: 1024 } as const);
 
   appendImageFlowLog(
     L,
-    `[FAL·GPT-IMAGE-2] POST https://fal.run/openai/gpt-image-2 · ${aspectRatio} · ${image_size.width}×${image_size.height} · high · jpeg`,
+    `[FAL·GPT-IMAGE-2] POST https://fal.run/openai/gpt-image-2 · ${aspectRatio} · ${image_size.width}×${image_size.height} · high · png`,
   );
   try {
     const timeoutMs = GPT_IMAGE2_REQUEST_TIMEOUT_MS;
@@ -820,7 +845,7 @@ async function postGptImage2ViaFalAndUpload(
         image_size,
         quality: "high",
         num_images: 1,
-        output_format: "jpeg",
+        output_format: "png",
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -1037,7 +1062,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
 
   appendImageFlowLog(
     L,
-    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · ${options.aspectRatio === "9:16" ? "1024×1824" : "1824×1024"} · high · jpeg · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · ${options.aspectRatio === "9:16" ? "1024×1536" : "1536×1024"} · high · png · 英文 prompt 约 ${prompt.length} 字`,
   );
   const falFirst = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
   if (falFirst) {

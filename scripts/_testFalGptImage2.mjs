@@ -32,10 +32,10 @@ const prompt =
 
 const body = {
   prompt,
-  image_size: { width: MIN_W, height: MIN_H },
-  quality: "low",
+  image_size: { width: 1024, height: 1536 },
+  quality: "high",
   num_images: 1,
-  output_format: "jpeg",
+  output_format: "png",
 };
 
 console.log("POST https://fal.run/openai/gpt-image-2");
