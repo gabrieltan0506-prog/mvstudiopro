@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
-import { isPlatformWeekendGcpEscape, PLATFORM_WEEKEND_SURVIVAL_MODE } from "../config/platformSwitches.js";
+import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled } from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 
 /** 給 GPT54 翻譯路徑的營運打點（可選）；見 {@link emitPlatformImagePipelineStat} */
@@ -1022,7 +1022,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
   appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
 
-  if (PLATFORM_WEEKEND_SURVIVAL_MODE) {
+  if (isPlatformWeekendSurvivalModeEnabled()) {
     appendVertexFlashDebug(
       flowLog,
       "[生存模式] 強制 OpenAI 英文化鏈（忽略 engine / translator 選項）",

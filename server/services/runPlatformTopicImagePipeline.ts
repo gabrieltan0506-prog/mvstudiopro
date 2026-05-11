@@ -80,8 +80,8 @@ export type RunPlatformTopicImagePipelineInput = {
   newJobMetaBase: Record<string, unknown>;
   /** 異步 jobs worker 傳 job.id：管線執行中節流寫入 jobs.output.imageGenFlowLog，前端輪詢可見步驟 */
   progressJobId?: string | null;
-  /** 管理員專用：單幀主生圖改為 Vertex Nano Banana Pro（global · gemini-3-pro-image-preview） */
-  coverProEngine?: "nano_banana_pro";
+  /** 管理員專用：單幀主生圖改為 Vertex Nano Banana 2（9:16 · 官方 API；與主路徑共用光影語彙）。`nano_banana_pro` 為舊別名，行為相同。 */
+  coverProEngine?: "nano_banana_2" | "nano_banana_pro";
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -98,7 +98,8 @@ export type RunPlatformTopicImagePipelineResult = {
 export async function runPlatformTopicImagePipeline(
   input: RunPlatformTopicImagePipelineInput,
 ): Promise<RunPlatformTopicImagePipelineResult> {
-  const useNanoBananaPro = input.coverProEngine === "nano_banana_pro";
+  const useVertexNb2Cover =
+    input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro";
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
   void input.imagePromptTranslator;
@@ -123,7 +124,6 @@ export async function runPlatformTopicImagePipeline(
     generatePlatformTopicCoverNanoBanana2FromEnglishPrompt,
     generatePlatformTopicTypographyNanoBanana2Only,
   } = await import("./proxyImageService.js");
-  const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");
 
   const ctxStr = String(input.context || "").trim();
   const coverPersona = String(input.coverPersonaContext || "").trim();
@@ -147,15 +147,15 @@ export async function runPlatformTopicImagePipeline(
     );
     topicImageCondenseLog.push(
       `${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → ${
-        useNanoBananaPro
-          ? "Vertex Nano Banana Pro（gemini-3-pro-image-preview · global）"
+        useVertexNb2Cover
+          ? "Vertex Nano Banana 2（9:16 · generateGeminiImage）"
           : "generateGptImage2FromRawEnglishPrompt 9:16"
       }`,
     );
     topicImageCondenseLog.push(
       `${new Date().toISOString()}  说明: ${
-        useNanoBananaPro
-          ? "监管 Pro 模式：英文化仍为 GPT 5.4；出图仅 Vertex（Pro → Nano Banana 2 → 版式+NB2），不调用 OhMyGPT GPT-IMAGE-2"
+        useVertexNb2Cover
+          ? "监管 Vertex 封面模式：英文化仍为 GPT 5.4；出图主路径为 Nano Banana 2（失败 → 版式+NB2），不调用 OhMyGPT GPT-IMAGE-2"
           : "中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束"
       }`,
     );
@@ -201,25 +201,14 @@ export async function runPlatformTopicImagePipeline(
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
         );
-        if (useNanoBananaPro) {
+        if (useVertexNb2Cover) {
           topicImageCondenseLog.push(
-            `${new Date().toISOString()}  [步骤2-NB-Pro] Vertex global · gemini-3-pro-image-preview（Pro 光影語彙後綴已叠）…`,
+            `${new Date().toISOString()}  [步骤2-NB2] Vertex Nano Banana 2 · 9:16 · GPT-IMAGE-2 同款比例锁 + 共用光影（非 OhMyGPT）…`,
           );
-          try {
-            imageUrl = await generatePlatformTopicCoverNanoBananaProImage({
-              englishPrompt: safePrompt,
-              flowLog: topicImageCondenseLog,
-            });
-          } catch (eNb: unknown) {
-            const nbMsg = eNb instanceof Error ? eNb.message : String(eNb);
-            topicImageCondenseLog.push(
-              `${new Date().toISOString()}  [步骤2-NB-Pro] 异常: ${nbMsg} → 回退 Vertex Nano Banana 2（非 OhMyGPT）`,
-            );
-            imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
-              englishPrompt: safePrompt,
-              flowLog: topicImageCondenseLog,
-            });
-          }
+          imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
+            englishPrompt: safePrompt,
+            flowLog: topicImageCondenseLog,
+          });
         } else {
           topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
           imageUrl = await generateGptImage2FromRawEnglishPrompt({
@@ -243,9 +232,9 @@ export async function runPlatformTopicImagePipeline(
       if (!imageUrl) {
         try {
           fallbackUsed = true;
-          if (useNanoBananaPro) {
+          if (useVertexNb2Cover) {
             topicImageCondenseLog.push(
-              `${new Date().toISOString()}  [步骤3] Pro 链无图 → 版式 prompt + Vertex Nano Banana 2 仅（不调用 GPT-IMAGE-2）`,
+              `${new Date().toISOString()}  [步骤3] NB2 主路径无图 → 版式 prompt + Vertex Nano Banana 2 仅（不调用 GPT-IMAGE-2）`,
             );
             imageUrl = await generatePlatformTopicTypographyNanoBanana2Only({
               title: title || "Content",
