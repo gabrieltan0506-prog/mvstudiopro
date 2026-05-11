@@ -27,8 +27,9 @@ const PORT = process.env.PORT || 8080;
 //   PDF_GS_TIMEOUT_MS            默认 180_000
 //   PDF_SET_CONTENT_WAIT_UNTIL   默认 load
 //   PDF_SET_CONTENT_TIMEOUT_MS  默认 1_800_000（30min；把 Cloud Run 余量多留给 step5）
-//   PDF_PAGE_PDF_TIMEOUT_MS     默认 0（禁用 puppeteer 内置 30s step5 限时）
-//   PDF_UNIFY_CJK_FONT_STACK    默认 true（@media print 統一 Noto CJK，利於子集嵌入/GS 壓縮）
+//   PDF_VIEWPORT_WIDTH           默认 1920（须 ≥ 决策智库 1680 宽，可防横向裁切）
+//   PDF_VIEWPORT_HEIGHT          默认 1600（较高视口利长页纵向排版）
+//   page.pdf preferCSSPageSize   固定 true：尊重 HTML @page（平台横版 / 作品库直版）
 // ════════════════════════════════════════════════════════════════════════════
 const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.35;
 const POST_LAYOUT_WAIT_MS = Number(process.env.PDF_POST_LAYOUT_WAIT_MS) || 18_000;
@@ -49,6 +50,10 @@ const SET_CONTENT_WAIT_UNTIL = ALLOWED_WAIT.has(SET_CONTENT_WAIT_RAW)
 
 const SET_CONTENT_TIMEOUT_MS = Number(process.env.PDF_SET_CONTENT_TIMEOUT_MS) || 1_800_000;
 
+/** 決策智庫等寬幅快照：須 ≥ 儀表板 md 寬度（1680）以免 Puppeteer 排版裁切；可 env 覆寫 */
+const PDF_VIEWPORT_WIDTH = Math.min(4096, Math.max(1280, Number(process.env.PDF_VIEWPORT_WIDTH) || 1920));
+const PDF_VIEWPORT_HEIGHT = Math.min(8192, Math.max(800, Number(process.env.PDF_VIEWPORT_HEIGHT) || 1600));
+
 /** page.pdf 单步超时（ms）。0 = 禁用 Puppeteer 内置限时（其默认 30s 会害死 Max）。 */
 const PAGE_PDF_TIMEOUT_ENV = process.env.PDF_PAGE_PDF_TIMEOUT_MS;
 const PAGE_PDF_TIMEOUT_PARSED =
@@ -65,10 +70,11 @@ const UNIFY_CJK_FONT_STACK = process.env.PDF_UNIFY_CJK_FONT_STACK !== "false";
 
 console.log(
   `[pdf-worker] startup config: ` +
-  `scale=${SCALE_FACTOR}, postLayoutWaitMs=${POST_LAYOUT_WAIT_MS}, perImageWaitMs=${PER_IMAGE_WAIT_MS}, ` +
+  `viewport=${PDF_VIEWPORT_WIDTH}x${PDF_VIEWPORT_HEIGHT}, scale=${SCALE_FACTOR}, postLayoutWaitMs=${POST_LAYOUT_WAIT_MS}, perImageWaitMs=${PER_IMAGE_WAIT_MS}, ` +
   `setContentWaitUntil=${SET_CONTENT_WAIT_UNTIL} ` +
   `setContentTimeoutMs=${SET_CONTENT_TIMEOUT_MS} ` +
   `pagePdfTimeoutMs=${PAGE_PDF_TIMEOUT_MS === 0 ? "0(disabled)" : PAGE_PDF_TIMEOUT_MS} ` +
+  `preferCssPageSize=true ` +
   `unifyCjkFontStack=${UNIFY_CJK_FONT_STACK} ` +
   `gs=${ENABLE_GS_COMPRESS ? GS_LEVEL : "off"} dpi=color/${GS_COLOR_DPI} gray/${GS_GRAY_DPI} mono/${GS_MONO_DPI} ` +
   `gsTimeout=${GS_TIMEOUT_MS}ms`,
@@ -326,6 +332,7 @@ app.get("/health", (_req, res) =>
   res.json({
     ok: true,
     config: {
+      viewport: { width: PDF_VIEWPORT_WIDTH, height: PDF_VIEWPORT_HEIGHT },
       scaleFactor: SCALE_FACTOR,
       postLayoutWaitMs: POST_LAYOUT_WAIT_MS,
       perImageWaitMs: PER_IMAGE_WAIT_MS,
@@ -491,12 +498,12 @@ app.post("/generate-pdf", async (req, res) => {
       `[pdf-worker:${reqId}] step5/6 page.pdf start ` +
       `(通常最耗时；timeoutMs=${pdfTimeout === 0 ? "disabled" : pdfTimeout})`,
     );
+    // preferCSSPageSize=true：尊重快照 HTML 內 @page（平台決策智庫為 A4 landscape；作品庫為 portrait），
+    // 避免寬幅 Recharts 區塊在「強制 A4 直向」下被錯誤縮放出空白/截斷。
     const rawPdfBuffer = Buffer.from(
       await page.pdf({
-        format: "A4",
         printBackground: true,
-        preferCSSPageSize: false,
-        // 盡量減少白邊；若印表機預覽有裁切可改回 2–4mm
+        preferCSSPageSize: true,
         margin: { top: "0mm", bottom: "0mm", left: "0mm", right: "0mm" },
         timeout: pdfTimeout,
       }),
