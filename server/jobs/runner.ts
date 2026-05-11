@@ -1044,7 +1044,9 @@ async function processPlatformJob(
       const fmt = params.format;
       const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
       const coverProEngine =
-        rawCoverPro === "nano_banana_pro" ? ("nano_banana_pro" as const) : undefined;
+        rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
+          ? ("nano_banana_2" as const)
+          : undefined;
       const result = await runPlatformTopicImagePipeline({
         topicHook: String(params.topicHook || ""),
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,

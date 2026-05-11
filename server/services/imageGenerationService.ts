@@ -213,9 +213,10 @@ export async function generateAndStoreStrategicImage(
 }
 
 /**
- * 平台選題單幀封面：**僅管理員開關**啟用；Vertex **`gemini-3-pro-image-preview` @ `global`**。
- * Prompt 先與 {@link generateGptImage2FromRawEnglishPrompt} 主路徑一致（{@link buildGptImage2AlignedPlatformTopicCoverPrompt}），再叠鏡頭/光影；
- * 僅在首輪失敗時再加強「vertical 9:16 social feed…」版式語彙重试（官方 API 穩定，命中率低）。
+ * 平台選題單幀封面：**已棄用於主產品管線**（{@link runPlatformTopicImagePipeline} 改走 {@link generatePlatformTopicCoverNanoBanana2FromEnglishPrompt}）。
+ * 保留供日後實驗或手動調用；Vertex **`gemini-3-pro-image-preview` @ `global`**。
+ *
+ * @deprecated 監管封面主路徑已改為 Nano Banana 2；此函式不再被平台 enqueue 管線呼叫。
  */
 export async function generatePlatformTopicCoverNanoBananaProImage(options: {
   englishPrompt: string;

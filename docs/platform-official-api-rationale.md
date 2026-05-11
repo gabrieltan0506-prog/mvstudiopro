@@ -9,7 +9,7 @@
 
 - **計費鏈路**：Nano Banana Pro / Nano Banana 2 對應的是 **Google Cloud Vertex AI** 上的 **Gemini 圖像能力**（`generateContent` 等），屬 **直連原廠 API**。
 - **成本與可預見性**：相比多層聚合商轉售、或不明細的按次計價，官方計量與帳單維度通常 **更易對帳與預算**，在高頻兜底（單幀封面、宽幅 2×4、版式回退）時 **整體更易控本**——工程上常說的「沒那麼燒錢」主要指 **少中間環節、單價結構清楚**，而非單次調用一定最低。
-- **與主路徑的分工**：產品仍可保留 **GPT-IMAGE-2** 等主路徑（閘道、尺寸白名單、既有整合）；**監管 / 企業兜底** 走 Vertex，等於在穩定與成本之間多一條 **官方側** 備援。
+- **與主路徑的分工**：產品仍可保留 **GPT-IMAGE-2** 等主路徑（閘道、尺寸白名單、既有整合）；**監管 / 企業兜底** 走 Vertex，等於在穩定與成本之間多一條 **官方側** 備援。**平台選題單幀封面（監管開關）之主生圖已統一為 Vertex Nano Banana 2**（不再以 Nano Banana Pro 為首跳）。
 
 實作錨點：`server/services/imageGenerationService.ts`、`server/services/proxyImageService.ts`、`server/services/platformTopicCoverPrompt.ts`（共用光影語彙與 GPT-IMAGE-2 對齊的比例鎖）。
 
@@ -35,4 +35,4 @@
 
 | 日期 | 摘要 |
 |------|------|
-| 2026-05-11 | 初版：Nano Banana/Vertex 控本與直連；GPT 5.5 直連官方與 5.4 價差取捨。 |
+| 2026-05-11 | 初版（官方 API/成本）；同日 **監管封面主路徑改為 Nano Banana 2**（Pro 實作保留並標記棄用）。 |

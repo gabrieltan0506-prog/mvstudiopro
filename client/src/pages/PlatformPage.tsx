@@ -95,8 +95,10 @@ const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 
 const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromptTranslator.v1";
-/** 管理員／監管：單幀封面主生圖是否走 Nano Banana Pro（Vertex global） */
-const PLATFORM_COVER_NB_PRO_LS_KEY = "mvstudiopro.platform.coverNanoBananaPro.v1";
+/** 管理員／監管：單幀封面主生圖是否走 Vertex Nano Banana 2（官方 API） */
+const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
+/** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
+const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
 /** ↑ 管理員／監管帳號可見的 2×4 英文化開關偏好；一般帳號合成固定走 gpt54（後端同判）。 */
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
@@ -1229,21 +1231,23 @@ export default function PlatformPage() {
     }
   }, [platformImagePromptTranslator]);
 
-  const [platformCoverNanoBananaPro, setPlatformCoverNanoBananaPro] = useState(() => {
+  const [platformCoverVertexNb2, setPlatformCoverVertexNb2] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
-      return window.localStorage.getItem(PLATFORM_COVER_NB_PRO_LS_KEY) === "1";
+      if (window.localStorage.getItem(PLATFORM_COVER_NB2_LS_KEY) === "1") return true;
+      if (window.localStorage.getItem(PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY) === "1") return true;
+      return false;
     } catch {
       return false;
     }
   });
   useEffect(() => {
     try {
-      window.localStorage.setItem(PLATFORM_COVER_NB_PRO_LS_KEY, platformCoverNanoBananaPro ? "1" : "0");
+      window.localStorage.setItem(PLATFORM_COVER_NB2_LS_KEY, platformCoverVertexNb2 ? "1" : "0");
     } catch {
       /* ignore */
     }
-  }, [platformCoverNanoBananaPro]);
+  }, [platformCoverVertexNb2]);
 
   const canConfigureCompositeImageTranslator =
     user?.role === "admin" || user?.role === "supervisor";
@@ -1624,8 +1628,8 @@ export default function PlatformPage() {
       sceneId?: string;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
-      /** 管理員專用：Nano Banana Pro 主生圖 */
-      coverProEngine?: "nano_banana_pro";
+      /** 管理員專用：Vertex Nano Banana 2 主生圖（官方 API） */
+      coverProEngine?: "nano_banana_2";
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
@@ -1634,7 +1638,7 @@ export default function PlatformPage() {
         /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
         imagePromptTranslator: "gpt54",
         coverProEngine:
-          canConfigureCompositeImageTranslator && platformCoverNanoBananaPro ? "nano_banana_pro" : undefined,
+          canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
       });
       const tEnq = new Date().toISOString();
       setTopicImageJobPollTrace({
@@ -1718,7 +1722,7 @@ export default function PlatformPage() {
         imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverNanoBananaPro],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -4783,16 +4787,15 @@ export default function PlatformPage() {
                           <input
                             type="checkbox"
                             className="mt-0.5 h-4 w-4 shrink-0 rounded border-amber-400/60 accent-amber-400"
-                            checked={platformCoverNanoBananaPro}
-                            onChange={(e) => setPlatformCoverNanoBananaPro(e.target.checked)}
+                            checked={platformCoverVertexNb2}
+                            onChange={(e) => setPlatformCoverVertexNb2(e.target.checked)}
                           />
                           <span>
                             <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
-                            ：启用后走 Vertex{" "}
-                            <code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">gemini-3-pro-image-preview</code>（
-                            <strong className="text-amber-100/90">global</strong>
-                            ，叠 Pro 级光影语彙）；失败仅走 Vertex（Nano Banana 2 → 版式+NB2），<strong className="text-amber-200">不调用</strong> OhMyGPT
-                            GPT-IMAGE-2。一般用户无此选项。
+                            ：启用后走 Vertex <strong className="text-amber-100/90">Nano Banana 2</strong>
+                            （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">9:16</code>
+                            、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语彙）；主路径失败再走版式 + NB2，
+                            <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
                           </span>
                         </label>
                       ) : null}
