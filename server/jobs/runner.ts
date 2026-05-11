@@ -56,6 +56,7 @@ import {
   type JobType,
 } from "./repository";
 import { processPdfExportJob } from "./pdfExportJob";
+import { reapStaleJobsOnce } from "./staleJobsReaper";
 
 const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
@@ -1086,6 +1087,7 @@ async function executeJob(
 }
 
 async function processOneJob() {
+  await reapStaleJobsOnce();
   const job = await claimNextQueuedJob();
   if (!job) return false;
 
@@ -1111,6 +1113,7 @@ async function processOneJob() {
 }
 
 async function processOnePdfExportJob(): Promise<boolean> {
+  await reapStaleJobsOnce();
   const job = await claimNextPdfExportJob();
   if (!job) return false;
 
