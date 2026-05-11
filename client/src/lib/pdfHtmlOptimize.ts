@@ -56,14 +56,9 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 @media print{
 html,body{margin:0!important;padding:0!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
 #platform-report{margin:0!important;padding:0!important;max-width:none!important;}
-/* 決策智庫儀表板等寬幅區：列印時展開橫向捲動容器，避免可視高度為捲動視窗高度 → 空白頁 / 內容被推到下幾頁 */
-#platform-report .overflow-x-auto{overflow:visible!important;height:auto!important;max-height:none!important;width:100%!important;}
-#platform-report .overflow-x-auto>.inline-block{display:block!important;width:100%!important;max-width:100%!important;}
-/* 與 PNG / 桌面預覽一致：列印在紙上占滿寬度（pdf-worker 使用橫向 A4 + 寬 viewport） */
-[data-pdf-dashboard="1"]{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;}
 figure:not(.cover-page),img:not(:is(.cover-page img)),.echart-mount{page-break-inside:avoid!important;break-inside:avoid!important;}
 figure:not(.cover-page) img,.report-raw-html figure:not(.cover-page) img,img:not(:is(.cover-page img)){max-height:277mm!important;max-width:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;}
-@page{margin:0;size:A4 landscape;}
+@page{margin:0;size:A4 portrait;}
 }
 </style>`;
   if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);

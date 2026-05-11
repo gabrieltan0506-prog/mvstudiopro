@@ -340,14 +340,6 @@ app.get("/health", (_req, res) =>
   }),
 );
 
-function bodyLooksLikePlatformReportPdf(html: string): boolean {
-  return (
-    html.includes('id="platform-report"') ||
-    html.includes("id='platform-report'") ||
-    html.includes("data-pdf-dashboard=")
-  );
-}
-
 app.post("/generate-pdf", async (req, res) => {
   const { html, token } = req.body as { html?: string; token?: string };
 
@@ -392,15 +384,11 @@ app.post("/generate-pdf", async (req, res) => {
     console.log(`[pdf-worker:${reqId}] browser launched +${Date.now() - t0}ms`);
 
     const page = await browser.newPage();
-    const platformReportPdf = bodyLooksLikePlatformReportPdf(html);
     await page.setViewport({
-      width: platformReportPdf ? 1760 : 1280,
-      height: platformReportPdf ? 1000 : 800,
+      width: 1280,
+      height: 800,
       deviceScaleFactor: SCALE_FACTOR,
     });
-    if (platformReportPdf) {
-      console.log(`[pdf-worker:${reqId}] platform-report snapshot: wide viewport + A4 landscape`);
-    }
 
     // Load the static HTML snapshot directly via setContent.
     // This bypasses auth/state issues entirely — the DOM was already rendered by the user's browser.
@@ -506,10 +494,8 @@ app.post("/generate-pdf", async (req, res) => {
     const rawPdfBuffer = Buffer.from(
       await page.pdf({
         format: "A4",
-        landscape: platformReportPdf,
         printBackground: true,
-        /** 平台決策智庫：@page 定 A4 landscape，與 1680px 級寬幅栅格對齊，避免直向裁切右側 */
-        preferCSSPageSize: platformReportPdf,
+        preferCSSPageSize: false,
         // 盡量減少白邊；若印表機預覽有裁切可改回 2–4mm
         margin: { top: "0mm", bottom: "0mm", left: "0mm", right: "0mm" },
         timeout: pdfTimeout,
