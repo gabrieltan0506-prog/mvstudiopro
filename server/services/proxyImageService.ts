@@ -803,6 +803,7 @@ async function fallbackNanoBanana2FromPrompt(
       quality: "2k",
       aspectRatio,
       personGeneration: "ALLOW_ADULT",
+      imagePersistFlowLog: L,
     });
     let url = String(vertexResult?.imageUrl || "").trim();
     if (!url) {
@@ -1144,6 +1145,7 @@ export async function generatePlatformCompositeSheetImage(options: {
           quality: "2k",
           aspectRatio: "16:9",
           personGeneration: "ALLOW_ADULT",
+          imagePersistFlowLog: L,
         });
         const fallbackUrl = String(vertexResult?.imageUrl || "").trim();
         if (!fallbackUrl) {
