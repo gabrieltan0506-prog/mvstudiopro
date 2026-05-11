@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2, Copy, KeyRound, RefreshCw } from "lucide-react";
+import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2, Copy, KeyRound, RefreshCw, Eraser } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
 
@@ -56,6 +56,15 @@ export default function AdminPanel() {
       { tail: 480 },
       { enabled: isAdminOrSupervisor, refetchInterval: 14000 },
     );
+
+  const reapNeonJobsMutation = trpc.admin.reapStaleNeonJobs.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        `已清理過期佇列任務：刪除 running ${data.runningCleared} 條、queued ${data.queuedCleared} 條（規則與後台定時 reaper 一致）`,
+      );
+    },
+    onError: (err) => toast.error(err.message || "清理失敗"),
+  });
 
   const generateCodesMutation = trpc.betaCode.generate.useMutation({
     onSuccess: (data) => {
@@ -397,6 +406,43 @@ export default function AdminPanel() {
 
           {/* 單進程緩存指標 · 不重啟不累積 */}
           <TabsContent value="runtime-metrics" className="space-y-4">
+            <Card className="bg-card/50 border-amber-500/25 border">
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Eraser className="h-5 w-5 text-amber-400" />
+                  異步佇列殭屍清理（Neon jobs）
+                </CardTitle>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="gap-1.5"
+                  disabled={!isAdminOnly || reapNeonJobsMutation.isPending}
+                  onClick={() => reapNeonJobsMutation.mutate()}
+                >
+                  {reapNeonJobsMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Eraser className="h-3.5 w-3.5" />
+                  )}
+                  一鍵清理過期任務
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-2 text-xs text-muted-foreground">
+                <p>
+                  對資料庫 <span className="font-mono text-foreground/80">jobs</span> 表執行與伺服器定時 reaper
+                  <strong className="text-foreground/90"> 相同條件 </strong>的 <strong className="text-foreground/90">DELETE</strong>
+                  ：久未認領的 <span className="font-mono">queued</span>、以及 <span className="font-mono">running</span> 但{" "}
+                  <span className="font-mono">updatedAt</span> 長時間未更新的列（有進度的長任務不會誤刪）。
+                  戰略深研狀態不在此表，不受此按鈕影響。此按鈕為<strong className="text-foreground/90"> 手動強制 </strong>
+                  執行，即使已設定 <span className="font-mono">DISABLE_JOBS_STALE_REAPER</span> 關閉自動掃描也會刪除符合條件的列。
+                </p>
+                {!isAdminOnly ? (
+                  <p className="text-amber-200/90">請使用已登入的 Admin / Supervisor 帳號操作。</p>
+                ) : null}
+              </CardContent>
+            </Card>
+
             <Card className="bg-card/50 border-border/50">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-lg">運維打點（本進程）</CardTitle>

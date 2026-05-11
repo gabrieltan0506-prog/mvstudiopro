@@ -6875,6 +6875,15 @@ ${sceneSummary}
         return await reapStuckPaidJobs({ staleMs: input?.staleMs });
       }),
 
+    /**
+     * Neon `jobs` 表：與 `reapStaleJobsOnce`（staleJobsReaper）相同 DELETE 規則；
+     * 手動觸發時 **會略過** `DISABLE_JOBS_STALE_REAPER`（與定時器 / worker 前置掃描不同）。
+     */
+    reapStaleNeonJobs: adminProcedure.mutation(async () => {
+      const { reapStaleJobsOnce } = await import("./jobs/staleJobsReaper");
+      return await reapStaleJobsOnce({ bypassDisable: true });
+    }),
+
     runtimeMetricsOverview: adminProcedure
       .input(z.object({ tail: z.number().int().min(20).max(1200).optional() }).optional())
       .query(async ({ input }) => {
