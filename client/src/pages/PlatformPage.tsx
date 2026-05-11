@@ -2447,6 +2447,9 @@ export default function PlatformPage() {
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
       fragment.querySelectorAll("script").forEach((n) => n.remove());
       fragment.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+      fragment.querySelectorAll("[data-pdf-only]").forEach((n) => {
+        n.classList.remove("hidden");
+      });
       fragment.querySelectorAll("button").forEach((n) => n.remove());
       fragment
         .querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group")
@@ -4274,6 +4277,86 @@ export default function PlatformPage() {
 
         {snapshot && platformDashboard ? (
           <section id="platform-report" className="mt-8 space-y-6">
+            {/* 僅写入 PDF 快照：頁面視覺隱藏，克隆後於導出前移除 hidden（含顧問台主標 + 四格摘要，避免報告缺頭） */}
+            <div
+              data-pdf-only
+              className="hidden space-y-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(7,10,20,0.92)] p-4 md:p-5"
+            >
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#362561] bg-[rgba(23,13,53,0.9)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#aa95dc]">
+                <TrendingUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                平台顾问台
+              </div>
+              <p className="text-xs font-semibold text-[#8cefff]">分析窗口 · {getWindowLabel(selectedWindowDays)}</p>
+              <div className="space-y-3">
+                <div className="text-sm font-bold uppercase tracking-[0.14em] text-[#8cefff] md:text-base">
+                  本页付费能力 · 一键直达
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-bold text-white">平台趋势分析</span>
+                      <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2 py-0.5 text-[10px] font-semibold text-[#fef08a]">
+                        {CREDIT_COSTS.platformStage2Copywriting} 积分起
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">全案入队读取窗口样本、热点与平台信号</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-bold text-white">个人战略全景</span>
+                      <span className="rounded-full border border-[#f472b6]/45 bg-[rgba(244,114,182,0.15)] px-2 py-0.5 text-[10px] font-semibold text-[#fbcfe8]">
+                        智库加购
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">专属文案就绪后可解锁一页可视化决策地图</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-bold text-white">深度追问</span>
+                      <span className="rounded-full border border-[#c4b5fd]/40 bg-[rgba(196,181,253,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[#e9d5ff]">
+                        按次扣点
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">基于当前窗口数据追问到形式、节奏与承接</p>
+                  </div>
+                </div>
+              </div>
+              <h2 className="max-w-5xl text-2xl font-black leading-tight text-white md:text-4xl">
+                不是告诉你&quot;平台都能做&quot;
+                <span className="mt-2 block bg-[linear-gradient(135deg,#5af2ff,#7d73ff_45%,#ff75bd_85%)] bg-clip-text text-transparent">
+                  而是告诉你现在该先打哪里
+                </span>
+              </h2>
+              <p className="max-w-3xl text-sm leading-7 text-[#d3caef]">{personaSummary}</p>
+              <p className="max-w-3xl text-sm leading-7 text-[#b8afd9]">
+                {platformDashboard?.subheadline ||
+                  "这个页面不做视频上传，不做二次创作流程，不讲空泛平台画像。它只解决三件事：当前时间窗口里，哪个平台值得优先做；热点赛道该怎么切；以及你怎样把这轮内容机会变成真实商业承接。"}
+              </p>
+              <div className="grid gap-3 md:grid-cols-3">
+                {heroTrustPoints.map((item) => (
+                  <div
+                    key={`pdf-hero-${item.label}`}
+                    className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3"
+                  >
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">{item.label}</div>
+                    <div className="mt-2 text-sm leading-7 text-white">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {resultSummaryCards.map((item, index) => (
+                  <div
+                    key={`pdf-context-${index}-${item.label}`}
+                    className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3"
+                  >
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9ddcff]">{item.label}</div>
+                    <div className="mt-2 text-base font-bold leading-snug text-white">{item.value}</div>
+                    <div className="mt-2 text-sm leading-6 text-[#c9c0e6]">{item.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div
               className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
               role="region"
@@ -4415,7 +4498,7 @@ export default function PlatformPage() {
                 )}
               </div>
 
-              <div className="relative mt-5 overflow-hidden rounded-xl border border-white/10 bg-black/40">
+              <div className="platform-report-dashboard-shell relative mt-5 overflow-x-auto overflow-y-visible rounded-xl border border-white/10 bg-black/40">
                 {unlockedStrategicReport ? (
                   <div className="w-full overflow-x-auto overflow-y-visible">
                     <div ref={strategicReportDashboardRef} className="inline-block align-top">

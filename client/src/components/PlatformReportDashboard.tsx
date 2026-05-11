@@ -148,6 +148,7 @@ export function PlatformReportDashboard({
 
   return (
     <div
+      data-platform-report-dashboard="true"
       className={`box-border w-[min(1680px,100vw)] max-w-[1680px] shrink-0 overflow-hidden border border-gray-800 bg-[#0B0F19] px-5 pb-5 pt-5 text-[15px] leading-relaxed font-sans text-white md:w-[1680px] ${className}`.trim()}
     >
       {trial ? (

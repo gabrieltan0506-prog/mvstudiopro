@@ -54,11 +54,27 @@ ol[data-sonner-toaster],section[aria-label*="tific" i],section[aria-label*="é€šç
 [class*="sonner-toast"],.toaster.group,.toaster{display:none!important;visibility:hidden!important;
 height:0!important;width:0!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;}
 @media print{
-html,body{margin:0!important;padding:0!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+html,body{
+margin:0!important;padding:0!important;height:auto!important;min-height:0!important;overflow:visible!important;
+-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;
+}
 #platform-report{margin:0!important;padding:0!important;max-width:none!important;}
+#platform-report .platform-report-dashboard-shell{
+overflow:visible!important;max-height:none!important;height:auto!important;
+}
+#platform-report [data-platform-report-dashboard="true"]{
+width:100%!important;max-width:100%!important;min-width:0!important;
+overflow:visible!important;box-sizing:border-box!important;
+}
+#platform-report [data-platform-report-dashboard="true"] .recharts-responsive-container{
+min-height:184px!important;overflow:visible!important;
+}
+#platform-report [data-platform-report-dashboard="true"] .min-h-0{
+min-height:auto!important;
+}
 figure:not(.cover-page),img:not(:is(.cover-page img)),.echart-mount{page-break-inside:avoid!important;break-inside:avoid!important;}
 figure:not(.cover-page) img,.report-raw-html figure:not(.cover-page) img,img:not(:is(.cover-page img)){max-height:277mm!important;max-width:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;}
-@page{margin:0;size:A4 portrait;}
+@page{margin:0;size:A4 landscape;}
 }
 </style>`;
   if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);
