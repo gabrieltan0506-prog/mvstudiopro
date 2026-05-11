@@ -3752,11 +3752,15 @@ ${JSON.stringify(platformEvidence, null, 2)}
           sceneId: z.string().max(128).optional(),
           /** @deprecated 封面單幀固定 GPT 5.4；此欄位忽略。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          /** 管理員／監管：單幀主生圖可選 Nano Banana Pro（Vertex global）；普通帳戶傳入無效 */
+          coverProEngine: z.enum(["nano_banana_pro"]).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const coverProEngine =
+          input.coverProEngine === "nano_banana_pro" && isAdminUser ? ("nano_banana_pro" as const) : undefined;
         /** 單張豎版封面 / platform_topic_frame：無論選題格式，統一按封面價扣點（與批量 graphic 一致）。 */
         const cost = CREDIT_COSTS.platformTopicFrameGraphic;
 
@@ -3908,6 +3912,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
+          coverProEngine,
         });
       }),
 
@@ -3925,11 +3930,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
           sceneId: z.string().max(128).optional(),
           /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          coverProEngine: z.enum(["nano_banana_pro"]).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const coverProEngine =
+          input.coverProEngine === "nano_banana_pro" && isAdminUser ? ("nano_banana_pro" as const) : undefined;
         /** 與 generateTopicImage 一致：單張豎版封面統一按 platformTopicFrameGraphic 扣點 */
         const cost = CREDIT_COSTS.platformTopicFrameGraphic;
 
@@ -4074,6 +4082,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               imagePromptTranslator: "gpt54",
               isFreeRetry,
               newJobMetaBase,
+              coverProEngine,
             },
           },
         });

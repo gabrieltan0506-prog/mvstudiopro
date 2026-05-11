@@ -7,6 +7,7 @@ import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { DEMO_ADVANCED_AI_REPORT_DATA } from "@shared/advancedAIReportDemoData";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
 import { fallbackPlatformHitPotentialRadar } from "@shared/advancedPredictionEngine";
+import { cn } from "@/lib/utils";
 import {
   BarChart3,
   BookOpen,
@@ -38,6 +39,27 @@ import {
 export interface PlatformReportDashboardProps {
   data?: AdvancedAIReportData;
   className?: string;
+  /** 试读：图表与指标保留形态，选题与正文类文案模糊脱敏 */
+  presentation?: "default" | "trialRead";
+}
+
+/** 试读打码：模糊 + 轻度渐变遮蔽（不涉及真实用户数据时亦用于对外样张） */
+function TrialReadSensitive({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}): ReactElement {
+  return (
+    <span className={cn("relative isolate inline-block max-w-full align-top", className)}>
+      <span className="block select-none blur-[2.5px]">{children}</span>
+      <span
+        className="pointer-events-none absolute inset-0 block bg-gradient-to-b from-transparent via-[#0B0F19]/30 to-[#0B0F19]/55"
+        aria-hidden
+      />
+    </span>
+  );
 }
 
 /** 預設展開；使用者可收起。React 19 的 defaultOpen 在 @types/react 尚未收錄，故用 ref 初始化。 */
@@ -96,7 +118,9 @@ function buildRadarRows(r: AdvancedAIReportData["globalPredictions"]["hitPotenti
 export function PlatformReportDashboard({
   data = DEMO_ADVANCED_AI_REPORT_DATA,
   className = "",
+  presentation = "default",
 }: PlatformReportDashboardProps): ReactElement {
+  const trial = presentation === "trialRead";
   const g = data.globalPredictions;
   const radarData = buildRadarRows(g.hitPotentialRadar);
   const platformKey =
@@ -126,6 +150,14 @@ export function PlatformReportDashboard({
     <div
       className={`box-border w-[min(1680px,100vw)] max-w-[1680px] shrink-0 overflow-hidden border border-gray-800 bg-[#0B0F19] px-5 pb-5 pt-5 text-[15px] leading-relaxed font-sans text-white md:w-[1680px] ${className}`.trim()}
     >
+      {trial ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/40 bg-[linear-gradient(90deg,rgba(245,158,11,0.18),rgba(15,23,42,0.92))] px-3 py-2.5 text-[11px] font-semibold leading-snug text-amber-50 shadow-[0_6px_24px_rgba(245,158,11,0.12)]">
+          <ScanLine className="h-3.5 w-3.5 shrink-0 text-amber-200" aria-hidden />
+          <span>
+            对外试读样张：选题标题、结构正文、洞察与推荐用语已脱敏；版式与付费解锁后的决策智库报告一致，数值仅为演示形态。
+          </span>
+        </div>
+      ) : null}
       <header className="mb-5 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-gray-800/60 bg-[linear-gradient(125deg,rgba(99,102,241,0.08),rgba(15,23,42,0.95)_40%,rgba(16,185,129,0.06))] px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.25)]">
         <div>
           <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
@@ -143,7 +175,17 @@ export function PlatformReportDashboard({
               M
             </span>
             <span>MV Studio Pro AI 决策智库报告</span>
-            <span className="text-sm font-normal text-gray-300 md:text-base">（{data.topic}）</span>
+            <span className="text-sm font-normal text-gray-300 md:text-base">
+              {trial ? (
+                <span className="inline-flex items-center gap-1">
+                  （
+                  <TrialReadSensitive className="max-w-[min(24rem,70vw)]">{data.topic}</TrialReadSensitive>
+                  ）
+                </span>
+              ) : (
+                <>（{data.topic}）</>
+              )}
+            </span>
           </h1>
         </div>
         <div
@@ -236,7 +278,9 @@ export function PlatformReportDashboard({
                   </span>
                 ) : null}
               </p>
-              <p className="mt-1.5 line-clamp-6 text-[13px] text-gray-200">{platformAside}</p>
+              <p className="mt-1.5 line-clamp-6 text-[13px] text-gray-200">
+                {trial ? <TrialReadSensitive>{platformAside}</TrialReadSensitive> : platformAside}
+              </p>
             </div>
           </div>
         </section>
@@ -253,7 +297,13 @@ export function PlatformReportDashboard({
           </div>
           <div className="p-3.5 pt-3">
             <p className="mb-2.5 line-clamp-2 rounded-lg border border-violet-400/25 bg-violet-950/40 px-2.5 py-2 text-xs leading-snug text-violet-100/95">
-              动态测试对照叙事主线；「利用」加量验证成熟句型，「探索」保留新组合试错。
+              {trial ? (
+                <TrialReadSensitive>
+                  动态测试对照叙事主线；「利用」加量验证成熟句型，「探索」保留新组合试错。
+                </TrialReadSensitive>
+              ) : (
+                <>动态测试对照叙事主线；「利用」加量验证成熟句型，「探索」保留新组合试错。</>
+              )}
             </p>
             <div className="grid grid-cols-2 gap-2">
               {data.executionSuggestions.mabVariants.map((variant, idx) => (
@@ -283,7 +333,9 @@ export function PlatformReportDashboard({
                   </div>
                   <div className="mt-5 text-center">
                     <span className="mr-1 text-xs font-bold text-gray-400">版本{idx + 1}</span>
-                    <span className="text-sm font-bold leading-snug text-white">{variant.title}</span>
+                    <span className="block text-sm font-bold leading-snug text-white">
+                      {trial ? <TrialReadSensitive className="w-full">{variant.title}</TrialReadSensitive> : variant.title}
+                    </span>
                   </div>
                   <div className="mt-2 flex flex-wrap justify-center gap-1">
                     <span className="inline-flex items-center gap-0.5 rounded-md bg-black/30 px-2 py-0.5 text-[10px] font-medium text-gray-100">
@@ -333,12 +385,20 @@ export function PlatformReportDashboard({
                       <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${acc.badge}`}>
                         <CardIcon size={13} strokeWidth={2.25} aria-hidden />
                       </span>
-                      <span className="line-clamp-2 leading-snug">{ins.title}</span>
+                      <span className="line-clamp-2 leading-snug">
+                        {trial ? <TrialReadSensitive>{ins.title}</TrialReadSensitive> : ins.title}
+                      </span>
                     </h3>
-                    <p className="line-clamp-4 text-xs leading-relaxed text-gray-200/90">{ins.content}</p>
+                    <p className="line-clamp-4 text-xs leading-relaxed text-gray-200/90">
+                      {trial ? <TrialReadSensitive>{ins.content}</TrialReadSensitive> : ins.content}
+                    </p>
                     {ins.metricsText ? (
                       <p className="mt-1.5 line-clamp-2 rounded-md border border-emerald-400/35 bg-emerald-950/45 px-2 py-1 text-xs font-medium leading-snug text-emerald-100">
-                        {sanitizeDecisionIntelMetricsText(ins.metricsText)}
+                        {trial ? (
+                          <TrialReadSensitive>{sanitizeDecisionIntelMetricsText(ins.metricsText)}</TrialReadSensitive>
+                        ) : (
+                          sanitizeDecisionIntelMetricsText(ins.metricsText)
+                        )}
                       </p>
                     ) : null}
                   </article>
@@ -374,7 +434,7 @@ export function PlatformReportDashboard({
                       <Sparkles size={12} aria-hidden />
                     </span>
                     <div className="min-w-0 flex-1 whitespace-normal break-words text-sm font-semibold leading-snug text-white">
-                      {ex.title}
+                      {trial ? <TrialReadSensitive className="w-full">{ex.title}</TrialReadSensitive> : ex.title}
                     </div>
                   </div>
                   <TopicStructureDetails
@@ -388,7 +448,7 @@ export function PlatformReportDashboard({
                     }
                   >
                     <p className="mt-2 whitespace-pre-wrap break-words border-l-2 border-amber-400/35 pl-2 text-[13px] leading-relaxed text-gray-200">
-                      {ex.structure}
+                      {trial ? <TrialReadSensitive className="w-full">{ex.structure}</TrialReadSensitive> : ex.structure}
                     </p>
                   </TopicStructureDetails>
                   <div className="mt-2 flex flex-wrap gap-1 pl-7">
@@ -449,7 +509,11 @@ export function PlatformReportDashboard({
                   className="rounded-lg border border-rose-500/15 bg-[linear-gradient(90deg,rgba(244,63,94,0.06),transparent)] py-2 pl-2 pr-1 text-sm last:mb-0"
                 >
                   <div className="whitespace-normal break-words font-medium leading-snug text-gray-100 [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] overflow-hidden">
-                    {item.topicDirection}
+                    {trial ? (
+                      <TrialReadSensitive className="w-full">{item.topicDirection}</TrialReadSensitive>
+                    ) : (
+                      item.topicDirection
+                    )}
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                     <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -483,9 +547,21 @@ export function PlatformReportDashboard({
                 <Sparkles size={12} aria-hidden />
                 参照说明：
               </span>
-              契合度 0–100 以「内容蓝图全文」对「IP／品牌基因关键词」的覆盖与加权命中计算（引擎{" "}
-              <code className="rounded bg-black/35 px-1 text-[10px] text-amber-200/90">calculateIPFit</code>
-              ）；数值越高表示选题用语与您人设越一致。非平台官方指标，仅供内部决策参考。
+              {trial ? (
+                <TrialReadSensitive className="mt-1 block w-full">
+                  <span className="text-[11px] leading-relaxed text-amber-50/95">
+                    契合度 0–100 以「内容蓝图全文」对「IP／品牌基因关键词」的覆盖与加权命中计算（引擎{" "}
+                    <code className="rounded bg-black/35 px-1 text-[10px] text-amber-200/90">calculateIPFit</code>
+                    ）；数值越高表示选题用语与您人设越一致。非平台官方指标，仅供内部决策参考。
+                  </span>
+                </TrialReadSensitive>
+              ) : (
+                <>
+                  契合度 0–100 以「内容蓝图全文」对「IP／品牌基因关键词」的覆盖与加权命中计算（引擎{" "}
+                  <code className="rounded bg-black/35 px-1 text-[10px] text-amber-200/90">calculateIPFit</code>
+                  ）；数值越高表示选题用语与您人设越一致。非平台官方指标，仅供内部决策参考。
+                </>
+              )}
             </p>
           </section>
         </div>

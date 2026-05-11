@@ -1042,6 +1042,9 @@ async function processPlatformJob(
       const newJobMetaBase =
         meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
       const fmt = params.format;
+      const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
+      const coverProEngine =
+        rawCoverPro === "nano_banana_pro" ? ("nano_banana_pro" as const) : undefined;
       const result = await runPlatformTopicImagePipeline({
         topicHook: String(params.topicHook || ""),
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1053,6 +1056,7 @@ async function processPlatformJob(
         isFreeRetry: Boolean(params.isFreeRetry),
         newJobMetaBase,
         progressJobId: platformJobId,
+        coverProEngine,
       });
       return { provider: "vertex", output: result };
     }

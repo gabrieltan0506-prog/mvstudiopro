@@ -1,6 +1,7 @@
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   isPlatformVertexNanoBanana2FallbackEnabled,
+  PLATFORM_WEEKEND_SURVIVAL_MODE,
   resolvePlatformImageStorageDriver,
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
@@ -10,6 +11,11 @@ import {
   resolveVertexFlashTranslationModelName,
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
+import { appendVertexProPhotographyPromptModifiers } from "./imageGenerationService.js";
+import {
+  buildGptImage2AlignedPlatformTopicCoverPrompt,
+  PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX,
+} from "./platformTopicCoverPrompt.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -207,9 +213,6 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
 /** 9:16 竖版：白名单 + auto 兜底 */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "auto", "1024x1024"] as const;
 
-/** 豎版主路徑：拼在英文 prompt 末尾，鎖定 9:16（與 API `1024x1536` 預設一致）。 */
-const GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX =
-  "CRITICAL OUTPUT ASPECT: final image must be exactly 9:16 portrait (taller than wide), full-bleed vertical cover — not 16:9 landscape, not 1:1 square hero, not letterboxed cinematic wide frame.";
 /**
  * 宽幅分镜 / 小红书八格：优先 `1536x1024`（官方 landscape 预设，≈3:2），再 `auto`、`1024x1024`。
  * 勿使用 1792x1024 / 1536x864 等——多数网关按 OpenAI 枚举校验会直接 400。
@@ -805,6 +808,62 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
+ * 單幀封面：**僅 Vertex Nano Banana 2**（`generateGeminiImage`），不經 OhMyGPT GPT-IMAGE-2。
+ * 供 **Nano Banana Pro** 监管模式在 Pro 失败时的第一档兜底。
+ */
+export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
+  englishPrompt: string;
+  flowLog?: string[];
+}): Promise<string | null> {
+  const raw = String(options.englishPrompt || "").trim();
+  if (!raw) {
+    appendImageFlowLog(options.flowLog, "[NB2·封面] 英文 prompt 为空，跳过");
+    return null;
+  }
+  appendImageFlowLog(
+    options.flowLog,
+    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
+  );
+  const gpt2Aligned = buildGptImage2AlignedPlatformTopicCoverPrompt(raw);
+  const withProVisual = appendVertexProPhotographyPromptModifiers(
+    gpt2Aligned,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", options.flowLog);
+}
+
+/**
+ * 版式兜底：**僅 Vertex Nano Banana 2**（零字版式 prompt），不經 GPT-IMAGE-2。
+ * 供监管 Pro 模式在最終階段使用（與 {@link generateImageGpt2WithImagenFallback} 的 NB2 段對齊，但跳過 OhMyGPT）。
+ */
+export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
+  title: string;
+  copywriting: string;
+  mode: ProxyImageTypographyMode;
+  isTrial?: boolean;
+  flowLog?: string[];
+}): Promise<string | null> {
+  const L = options.flowLog;
+  appendImageFlowLog(
+    L,
+    `${new Date().toISOString()}  [版式兜底·仅Vertex] buildTypographyImagePrompt → Nano Banana 2 · mode=${options.mode} · 9:16 · GPT-IMAGE-2 同款比例锁 + Pro 光影（與 NB-Pro 一致）`,
+  );
+  const nbPrompt = buildTypographyImagePrompt({
+    title: options.title,
+    copywriting: options.copywriting,
+    mode: options.mode,
+    isTrial: options.isTrial,
+    forImagenFallback: true,
+  });
+  const withLock = [nbPrompt, PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX].join("\n\n");
+  const withProVisual = appendVertexProPhotographyPromptModifiers(
+    withLock,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
+}
+
+/**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **GPT-IMAGE-2**（9:16 或 16:9）→ **Nano Banana 2** 兜底。图像 API **不**执行翻译。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
@@ -823,13 +882,17 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return null;
   }
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
-  const aspectLock =
-    options.aspectRatio === "9:16" ? GPT_IMAGE2_9_16_ASPECT_LOCK_PROMPT_SUFFIX : "";
-  const prompt = [raw, aspectLock, suffix].filter(Boolean).join("\n\n");
+  const base =
+    options.aspectRatio === "9:16"
+      ? buildGptImage2AlignedPlatformTopicCoverPrompt(raw, suffix)
+      : [raw, suffix].filter(Boolean).join("\n\n");
+  const photoIntent =
+    options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
+  const prompt = appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
   appendImageFlowLog(
     L,
-    `[单帧主路径] GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 与 Vertex 共用鏡頭/光影語彙 · 英文 prompt 约 ${prompt.length} 字`,
   );
   const primary = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes, flowLog: L });
   if (primary) {
@@ -837,7 +900,10 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K`);
+  appendImageFlowLog(
+    L,
+    `[单帧兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · 沿用同一条 prompt（已含比例/宽幅约束与共用光影）`,
+  );
   return fallbackNanoBanana2FromPrompt(prompt, options.aspectRatio, L);
 }
 
@@ -851,13 +917,18 @@ export async function generateGptImage2(options: {
   mode: ProxyImageTypographyMode;
   isTrial?: boolean;
 }): Promise<string | null> {
-  const finalPrompt = buildTypographyImagePrompt({
+  const core = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
     mode: options.mode,
     isTrial: options.isTrial,
     forImagenFallback: false,
   });
+  const withAspect = [core, PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX].join("\n\n");
+  const finalPrompt = appendVertexProPhotographyPromptModifiers(
+    withAspect,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
   return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase(), {});
 }
 
@@ -891,9 +962,16 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
 
+  const survival = PLATFORM_WEEKEND_SURVIVAL_MODE;
   appendImageFlowLog(
     L,
-    `[2×4·英文化机制] translator=gpt54 时：**callGemini3_1_Pro_AiStudio 内 GPT 5.4 最多 3 轮**（间隔 3s/6s），仍无效再 **Vertex Flash**；探索模式直走 Vertex。分镜主表与小红书八格图文共用此逻辑。`,
+    survival
+      ? `[2×4·英文化机制] **PLATFORM_WEEKEND_SURVIVAL_MODE 已开启**：英文化统一走 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），**不受**面板 translator=vertex_gemini_3_flash_preview 影响。另有 **GCP 避险** 时亦可能压制 Vertex。`
+      : `[2×4·英文化机制] translator=gpt54：**GPT 5.4 英文化** 最多 3 轮（间隔 3s/6s），仍失败再 **Vertex Flash**；translator=vertex_gemini_3_flash_preview：**优先 Vertex Flash**（遇 GCP 避险则改 GPT 5.4）。`,
+  );
+  appendImageFlowLog(
+    L,
+    `[2×4·中文骨架] extractChineseVisualBrief 始终用 **GPT 5.4 JSON** 从中文剧本抽「视觉骨架」（日志标签 [骨架·中文视觉]），与下行「英文化」不是同一步。`,
   );
   appendImageFlowLog(
     L,
@@ -903,7 +981,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（translator=${tr}；Vertex 英文化=${vertexRef}）：① extractChineseVisualBrief → ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·翻译]/[Vertex·Flash] 行）→ ④ condenseImagePromptIfNeeded（超长；与 translator 一致）→ ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
+    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4**" : ""}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -911,7 +989,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 GPT 5.4 三轮（见上）与生图主/兜底链。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
+    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **英文化子链**（生存模式下为 GPT 5.4；否则见步骤1）与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
   let lastFailure: unknown = null;
@@ -923,8 +1001,12 @@ export async function generatePlatformCompositeSheetImage(options: {
     );
     appendImageFlowLog(
       L,
-      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；默认 GPT 5.4 · 失败或空则 Vertex ${resolveVertexFlashTranslationModelName()}）· ${
-        tr === "vertex_gemini_3_flash_preview" ? "直走 Vertex" : "先试 GPT 5.4"
+      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· ${
+        survival
+          ? "**生存模式 → 仅 GPT 5.4 英文化**"
+          : tr === "vertex_gemini_3_flash_preview"
+            ? "**配置为 Vertex Flash 英文化优先**（若日志出现 GCP 避险则改 GPT 5.4）"
+            : "**先 GPT 5.4 英文化**，失败或空再 Vertex Flash"
       } …`,
     );
 
@@ -975,11 +1057,15 @@ export async function generatePlatformCompositeSheetImage(options: {
           `[2×4·顶栏标题] 已并入生图 prompt · 简中选题标题 · len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
         );
       }
-      const promptForImage = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
+      const promptForImageBase = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
+      const promptForImage = appendVertexProPhotographyPromptModifiers(
+        promptForImageBase,
+        "platform_landscape_sheet",
+      );
 
       appendImageFlowLog(
         L,
-        `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 送生图总长约 ${promptForImage.length} 字符`,
+        `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
       );
 
       appendImageFlowLog(
@@ -1027,6 +1113,10 @@ export async function generatePlatformCompositeSheetImage(options: {
             "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
           );
         }
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤3] Nano Banana 2 兜底 · 沿用步骤2同一条 prompt（已含鏡頭/光影與 16:9 宽幅语彙）· 16:9 · prompt≈${promptForImage.length} chars`,
+        );
         const vertexResult = await generateGeminiImage({
           prompt: promptForImage,
           quality: isXhs ? "2k" : "1k",
@@ -1107,7 +1197,10 @@ export async function generateImageGpt2WithImagenFallback(options: {
     return primary;
   }
 
-  appendImageFlowLog(L, "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K");
+  appendImageFlowLog(
+    L,
+    "[版式兜底] GPT-IMAGE-2 无图 → Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 光影",
+  );
   const nbPrompt = buildTypographyImagePrompt({
     title: options.title,
     copywriting: options.copywriting,
@@ -1115,7 +1208,12 @@ export async function generateImageGpt2WithImagenFallback(options: {
     isTrial: options.isTrial,
     forImagenFallback: true,
   });
-  return fallbackNanoBanana2FromPrompt(nbPrompt, "9:16", L);
+  const withLock = [nbPrompt, PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX].join("\n\n");
+  const withProVisual = appendVertexProPhotographyPromptModifiers(
+    withLock,
+    "platform_vertical_cover_after_gpt2_aspect_lock",
+  );
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
 }
 
 /** 深研报告场景配图：主路径 gpt-image-2，STRATEGIC 画风 + 试用水印。 */
