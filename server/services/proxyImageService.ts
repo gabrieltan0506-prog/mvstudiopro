@@ -207,21 +207,69 @@ export const PROXY_IMAGE_CONTEXT_MAX_CHARS = 500;
 export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
 
 /**
- * gpt-image / gpt-image-2 经 OhMyGPT 转发时，`size` 须落在 **OpenAI GPT Image 模型白名单**内，否则会 HTTP 400（Args validation failed）。
- * 官方枚举：`1024x1024`、`1536x1024`（横版和宽幅默认）、`1024x1536`（竖版）、`auto`。
- * （文档另述「自定义分辨率」约束；代理若未开通宽表，勿传 1792×1024、1536×864 等非枚举值。）
+ * gpt-image-2 经 OhMyGPT / fal 转发时，`size` 或 `image_size` 须落在 **OpenAI GPT Image 模型白名单**内，否则会 HTTP 400。
+ * **平台主路径固定兩檔**：豎版 **1024×1536**、橫版 **1536×1024**（皆為 16 的倍數）；不再传 `auto`、`1024×1024` 等後備。
  */
-/** gpt-image-2 請求體：與 OpenAI 官方一致（OhMyGPT 轉發亦支援時生效）；JPEG 有利體積，落盤後仍寫 GCS/Fly。 */
+/** gpt-image-2 請求體：`output_format: png` 避免 JPEG 重壓縮；落盤後仍寫 GCS/Fly。 */
 const GPT_IMAGE2_API_QUALITY = "high" as const;
-const GPT_IMAGE2_OUTPUT_FORMAT = "jpeg" as const;
-/** 豎版：與 OhMyGPT/OpenAI 白名單一致，首選 **1024×1536**（~2:3，非自訂 9:16 像素）；`auto` 兜底 */
-const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "auto", "1024x1024"] as const;
+const GPT_IMAGE2_OUTPUT_FORMAT = "png" as const;
+/** 豎版：僅 **1024×1536**（與 OpenAI 白名單一致，2:3） */
+const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536"] as const;
+
+/** 橫幅 / 2×4 主表：僅 **1536×1024**（與 OpenAI 白名單一致，3:2） */
+const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x1024"] as const;
 
 /**
- * 宽幅分镜 / 小红书八格：优先 `1536x1024`（官方 landscape 预设，≈3:2），再 `auto`、`1024x1024`。
- * 勿使用 1792x1024 / 1536x864 等——多数网关按 OpenAI 枚举校验会直接 400。
+ * 白名單中第一個非 `auto` 的 `WxH`（現行白名單已無 `auto`，預期直接取唯一檔；fal 需明確寬高）。
  */
-const GPT_IMAGE2_LANDSCAPE_SIZES = ["1536x1024", "auto", "1024x1024"] as const;
+function firstConcreteOpenAiGptImage2Size(sizes: readonly string[]): string {
+  for (const s of sizes) {
+    const t = String(s || "").trim().toLowerCase();
+    if (t && t !== "auto") return String(s).trim();
+  }
+  throw new Error("gpt-image-2: 尺寸白名單為空（須為 1024x1536 或 1536x1024）");
+}
+
+/** `1024x1536` → fal `image_size`；不可為 `auto`。 */
+function gptImage2OpenAiSizeToFalImageSize(openAiSize: string): { width: number; height: number } {
+  const s = String(openAiSize || "").trim().toLowerCase();
+  if (s === "auto") throw new Error("gpt-image-2 fal: size 不可為 auto，請先 firstConcreteOpenAiGptImage2Size");
+  const m = /^(\d+)x(\d+)$/.exec(s);
+  if (!m) throw new Error(`gpt-image-2 fal: 無法解析 size: ${openAiSize}`);
+  const width = Number(m[1]);
+  const height = Number(m[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+    throw new Error(`gpt-image-2 fal: 無效尺寸: ${openAiSize}`);
+  }
+  return { width, height };
+}
+
+/** 與 {@link postGptImage2AndUpload} → OhMyGPT `images/generations` 欄位語義一致（單一真相來源：quality / output_format / model / n）。 */
+function buildOhMyGptGptImage2RequestBody(promptForApi: string, size: string) {
+  return {
+    model: "gpt-image-2",
+    prompt: promptForApi,
+    n: 1,
+    size,
+    quality: GPT_IMAGE2_API_QUALITY,
+    output_format: GPT_IMAGE2_OUTPUT_FORMAT,
+    response_format: "b64_json",
+  };
+}
+
+/**
+ * fal `openai/gpt-image-2`：鍵名依 fal schema，**值**與 OhMyGPT 共用 {@link GPT_IMAGE2_API_QUALITY}、{@link GPT_IMAGE2_OUTPUT_FORMAT}、
+ * 與同一組尺寸白名單推導出的 `openAiSize`（再轉 `image_size`）。
+ */
+function buildFalGptImage2RequestBody(prompt: string, openAiSize: string) {
+  return {
+    prompt,
+    image_size: gptImage2OpenAiSizeToFalImageSize(openAiSize),
+    quality: GPT_IMAGE2_API_QUALITY,
+    num_images: 1 as const,
+    output_format: GPT_IMAGE2_OUTPUT_FORMAT,
+  };
+}
 
 /** 拼在寬幅 2×4 合成英文 prompt 末尾：頂部簡中主標 + 幾何鎖定 + **每格底部簡中訊息分格表**（與 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
 const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
@@ -253,7 +301,7 @@ const GPT_IMAGE2_MAX_ATTEMPTS = Math.min(
 
 /**
  * **OhMyGPT 段**跨尺寸累計失敗熔斷：達此值後 `return null` 交 Vertex 等（產品順序：**fal → OhMyGPT → Vertex**）。
- * 預設為 `GPT_IMAGE2_MAX_ATTEMPTS * 3`（約覆蓋豎版/橫版各 3 個 size 各試滿），可用 `GPT_IMAGE2_PRIMARY_FAILS_BEFORE_FAL` 覆寫；上限 48。
+ * 預設為 `GPT_IMAGE2_MAX_ATTEMPTS * 3`；現行尺寸白名單僅各一檔（**1024×1536** / **1536×1024**），可 `GPT_IMAGE2_PRIMARY_FAILS_BEFORE_FAL` 覆寫；上限 48。
  */
 const GPT_IMAGE2_OHMYGPT_ABORT_AFTER_FAILS = Math.min(
   48,
@@ -562,15 +610,7 @@ async function postGptImage2AndUpload(
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            model: "gpt-image-2",
-            prompt: promptForApi,
-            n: 1,
-            size,
-            quality: GPT_IMAGE2_API_QUALITY,
-            output_format: GPT_IMAGE2_OUTPUT_FORMAT,
-            response_format: "b64_json",
-          }),
+          body: JSON.stringify(buildOhMyGptGptImage2RequestBody(promptForApi, size)),
           signal: AbortSignal.timeout(GPT_IMAGE2_REQUEST_TIMEOUT_MS),
         });
         const json: unknown = await r.json().catch(() => ({}));
@@ -704,7 +744,7 @@ function normalizeImageUploadContentType(mime: string): string {
   return "image/png";
 }
 
-/** OhMyGPT `b64_json` 解碼後：依魔數辨識，與實際位元一致（`output_format: jpeg` 時為 JPEG，否則常為 PNG）。 */
+/** OhMyGPT `b64_json` 解碼後：依魔數辨識（主路徑 `output_format: png` 時多為 PNG）。 */
 function sniffBinaryImageMime(buffer: Buffer): "image/png" | "image/jpeg" {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return "image/jpeg";
@@ -827,15 +867,14 @@ async function postGptImage2ViaFalAndUpload(
     appendImageFlowLog(L, "[FAL·GPT-IMAGE-2] 无 FAL_API_KEY/FAL_KEY，跳过 fal 主路径");
     return null;
   }
-  /** 與 OhMyGPT `size` 白名單一致：**1024×1536** 豎版、**1536×1024** 橫版（寬高皆 16 的倍數，符合 fal schema） */
-  const image_size =
-    aspectRatio === "9:16"
-      ? ({ width: 1024, height: 1536 } as const)
-      : ({ width: 1536, height: 1024 } as const);
+  const openAiSize = firstConcreteOpenAiGptImage2Size(
+    aspectRatio === "9:16" ? GPT_IMAGE2_PORTRAIT_SIZES : GPT_IMAGE2_LANDSCAPE_SIZES,
+  );
+  const image_size = gptImage2OpenAiSizeToFalImageSize(openAiSize);
 
   appendImageFlowLog(
     L,
-    `[FAL·GPT-IMAGE-2] POST https://fal.run/openai/gpt-image-2 · ${aspectRatio} · ${image_size.width}×${image_size.height} · high · jpeg`,
+    `[FAL·GPT-IMAGE-2] POST https://fal.run/openai/gpt-image-2 · ${aspectRatio} · openAiSize=${openAiSize} · fal image_size=${image_size.width}×${image_size.height} · quality=${GPT_IMAGE2_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT}`,
   );
   try {
     const timeoutMs = GPT_IMAGE2_REQUEST_TIMEOUT_MS;
@@ -845,13 +884,7 @@ async function postGptImage2ViaFalAndUpload(
         Authorization: `Key ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        prompt,
-        image_size,
-        quality: "high",
-        num_images: 1,
-        output_format: "jpeg",
-      }),
+      body: JSON.stringify(buildFalGptImage2RequestBody(prompt, openAiSize)),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const json: unknown = await r.json().catch(() => ({}));
@@ -1064,10 +1097,12 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
   const prompt = appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
+  const primaryOpenAiSize = firstConcreteOpenAiGptImage2Size(sizes);
+  const primaryFal = gptImage2OpenAiSizeToFalImageSize(primaryOpenAiSize);
 
   appendImageFlowLog(
     L,
-    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · ${options.aspectRatio === "9:16" ? "1024×1536" : "1536×1024"} · high · jpeg · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · openAiSize=${primaryOpenAiSize} · fal=${primaryFal.width}×${primaryFal.height} · quality=${GPT_IMAGE2_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT} · 英文 prompt 约 ${prompt.length} 字`,
   );
   const falFirst = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
   if (falFirst) {
@@ -1176,11 +1211,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   const compositeMaxAttempts = Math.min(
     8,
-    Math.max(1, Number(process.env.PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS) || 5),
+    Math.max(1, Number(process.env.PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS) || 3),
   );
   appendImageFlowLog(
     L,
-    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **英文化子链**（生存模式下为 GPT 5.4；否则见步骤1）与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
+    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试；環境變數未設時預設 3，與英文化/GPT-IMAGE-2 單段預設次數一致）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **英文化子链**（生存模式下为 GPT 5.4；否则见步骤1）与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
   let lastFailure: unknown = null;

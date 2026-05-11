@@ -739,7 +739,6 @@ export default function TestLab() {
               style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
             >
               <option value="16:9">16:9（横屏标准）</option>
-              <option value="9:16">9:16（竖屏短视频）</option>
               <option value="1:1">1:1（方形）</option>
               <option value="4:3">4:3</option>
               <option value="3:4">3:4</option>
