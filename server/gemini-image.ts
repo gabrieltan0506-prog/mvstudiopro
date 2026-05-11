@@ -47,6 +47,66 @@ function shouldRetryVertexImage(status: number, json: any, rawText: string) {
   return status === 429 || message.includes("RESOURCE_EXHAUSTED");
 }
 
+function extFromVertexMime(mimeType: string): "jpg" | "png" | "webp" {
+  const m = String(mimeType || "").toLowerCase();
+  if (m.includes("webp")) return "webp";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  return "png";
+}
+
+function normalizeVertexPersistContentType(mimeType: string): string {
+  const m = String(mimeType || "").toLowerCase();
+  if (m.includes("webp")) return "image/webp";
+  if (m.includes("jpeg") || m.includes("jpg")) return "image/jpeg";
+  return "image/png";
+}
+
+/**
+ * Vertex inlineData → 瀏覽器可讀 URL（與平台 GPT-IMAGE-2 存圖一致：Fly 公開或 GCS V4 簽名）。
+ * 若先走 {@link storagePut} 到私密 R2，後續 {@link mirrorImageUrlToGcsSignedUrl} 匿名 fetch 會 403，前端也無法載入。
+ */
+async function persistVertexInlineImagePublicUrl(buffer: Buffer, mimeType: string): Promise<string> {
+  const ct = normalizeVertexPersistContentType(mimeType);
+  const ext = extFromVertexMime(mimeType);
+  const subdir = "vertex_nano";
+
+  try {
+    const { resolvePlatformImageStorageDriver } = await import("./config/platformSwitches.js");
+    if (resolvePlatformImageStorageDriver() === "fly") {
+      const { writeFlyPlatformImageBuffer, buildFlyPlatformImagePublicUrl } = await import(
+        "./services/flyVolumeGeneratedImages.js",
+      );
+      const flyCt: "image/jpeg" | "image/png" | "image/webp" =
+        ct === "image/webp" ? "image/webp" : ct === "image/png" ? "image/png" : "image/jpeg";
+      const { relPath } = await writeFlyPlatformImageBuffer({
+        subdir,
+        buffer,
+        contentType: flyCt,
+      });
+      return buildFlyPlatformImagePublicUrl(relPath);
+    }
+  } catch (e: unknown) {
+    console.warn("[gemini-image] Fly persist failed, trying GCS", e instanceof Error ? e.message : e);
+  }
+
+  try {
+    const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./services/gcs.js");
+    const objectName = `generated/${subdir}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { gcsUri } = await uploadBufferToGcs({
+      objectName,
+      buffer,
+      contentType: ct,
+    });
+    return await signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+  } catch (e: unknown) {
+    console.warn("[gemini-image] GCS persist failed, falling back to storagePut", e instanceof Error ? e.message : e);
+  }
+
+  const fileKey = `vertex-images/inline/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { url } = await storagePut(fileKey, buffer, ct);
+  return url;
+}
+
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -153,9 +213,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     const image = generated[index];
     const buffer = Buffer.from(image.data, "base64");
     const mimeType = image.mimeType || "image/png";
-    const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-    const fileKey = `vertex-images/${opts.quality}/${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const { url } = await storagePut(fileKey, buffer, mimeType);
+    const url = await persistVertexInlineImagePublicUrl(buffer, mimeType);
     imageUrls.push(url);
   }
 
