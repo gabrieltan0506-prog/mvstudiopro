@@ -850,7 +850,7 @@ function buildCompositeImageGenPendingLines(input: {
       : [
           `${ts}  [提示] 未带 progressJobId，无法轮询实时步骤；仅能在请求结束后看完整日志`,
         ]),
-    `${ts}  [说明] 排查标签：[骨架·中文视觉]、[GPT54·英文化]、[Vertex·Flash]、[2×4·步骤…]、[GPT-IMAGE-2]、[2×4·整链]；整链失败最多 5 次完整重试`,
+    `${ts}  [说明] 排查标签：[骨架·中文视觉]、[GPT54·英文化]、[Vertex·Flash]、[2×4·步骤…]、[GPT-IMAGE-2]、[2×4·整链]；整链失败默认最多 3 次完整重试（可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫）`,
   ];
 }
 
@@ -5069,7 +5069,7 @@ export default function PlatformPage() {
                           <span>
                             <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
                             ：启用后走 Vertex <strong className="text-amber-100/90">Nano Banana 2</strong>
-                            （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">9:16</code>
+                            （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">1024×1536 竖版</code>
                             、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语彙）；主路径失败再走版式 + NB2，
                             <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
                           </span>

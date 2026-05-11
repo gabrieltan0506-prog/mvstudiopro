@@ -161,11 +161,11 @@ export function resolveVertexFlashThinkingConfigForSdk(): {
 
 /**
  * Vertex Flash 英文化 **`maxOutputTokens`**（可 `VERTEX_FLASH_TRANSLATION_MAX_TOKENS` 覆寫）。
- * 預設 **16384**：長版 JSON / 長英文 prompt 較不易被截斷；Flash 本身偏快，故將輸出預算拉高以換成品質。
+ * 預設 **32768**：長版 JSON / 長英文 prompt 更不易被截斷。
  * 合法範圍 **4096～65536**（非數字或超出範圍時回退預設）。
  */
 export function resolveVertexFlashTranslationMaxOutputTokens(): number {
-  const fallback = 16384;
+  const fallback = 32768;
   const raw = process.env.VERTEX_FLASH_TRANSLATION_MAX_TOKENS;
   if (raw != null && String(raw).trim() !== "") {
     const n = Math.floor(Number(raw));
@@ -318,7 +318,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
     response_format: { type: "json_object" },
-    max_tokens: 2048,
+    max_tokens: 8192,
     messages: [
       {
         role: "system",
@@ -529,7 +529,7 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 
 /**
  * 探索 / 極速：Vertex AI **Gemini 3 Flash Preview** + `responseMimeType: application/json`。
- * `temperature` 見 {@link resolveVertexFlashTranslationTemperature}（預設 0.9，偏創意）；`thinkingConfig` 見 {@link resolveVertexFlashThinkingConfigForSdk}（預設思考層級 **HIGH**）；`maxOutputTokens` 見 {@link resolveVertexFlashTranslationMaxOutputTokens}（預設 **16384**）。
+ * `temperature` 見 {@link resolveVertexFlashTranslationTemperature}（預設 0.9，偏創意）；`thinkingConfig` 見 {@link resolveVertexFlashThinkingConfigForSdk}（預設思考層級 **HIGH**）；`maxOutputTokens` 見 {@link resolveVertexFlashTranslationMaxOutputTokens}（預設 **32768**）。
  * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **global**；可用環境變數改）。
  * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。
@@ -726,8 +726,8 @@ export async function callGemini3_1_Pro_AiStudio(
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
   const gpt54MaxOut = Math.min(
-    16_384,
-    Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 8192),
+    65_536,
+    Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 16_384),
   );
   const taskChars = String(prompt || "").length;
 

@@ -369,7 +369,7 @@ function WorkflowCanvas(props: {
 function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChange: (state: PanelState) => void }) {
   const isTrial = useIsTrialUser();
   const [prompt, setPrompt] = useState("电影级博物馆展陈，柔和博物馆灯光，超高清，构图干净，适合做视频参考图");
-  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">("16:9");
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "1:1">("16:9");
   const [busy, setBusy] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
   const [debug, setDebug] = useState<any>(null);
@@ -426,9 +426,8 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
         </div>
         <div style={SUB_PANEL}>
           <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>画面比例</div>
-          <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as "16:9" | "9:16" | "1:1")} style={{ ...INPUT_STYLE, marginTop: 0 }}>
+          <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as "16:9" | "1:1")} style={{ ...INPUT_STYLE, marginTop: 0 }}>
             <option value="16:9">16:9（横屏）</option>
-            <option value="9:16">9:16（竖屏）</option>
             <option value="1:1">1:1（方形）</option>
           </select>
           <button onClick={start} disabled={busy} style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.7 : 1, marginTop: 12, width: "100%" }}>
