@@ -21,7 +21,7 @@
 - **選用 5.5 的補充理由**：除能力外，若路徑為 **直連 OpenAI（或其它原廠）官方 API**，計費與合規鏈路 **相對聚合轉售更透明**，與 Vertex 圖像選型邏輯一致——**願意為關鍵節點付費時，優先官方直連**。
 - **實務折衷**：高吞吐、可重試的流水線步驟（例如大量英文化、骨架抽取）預設 **5.4** 控本；**少而準**的步驟或開關控制的 **監管 / 提質** 路徑再升 **5.5**，避免全域默認高階模型導致帳單線性翻倍。
 
-具體預設與環境變數以倉庫內 `geminiPlatformCompositeTranslation.ts`、`PLATFORM_WEEKEND_SURVIVAL_MODE` 及面板 `translator` 為準。
+具體預設與環境變數以倉庫內 `geminiPlatformCompositeTranslation.ts`、**`isPlatformWeekendSurvivalModeEnabled()`**（環境變數 `PLATFORM_WEEKEND_SURVIVAL_MODE`）及面板 `translator` 為準。
 
 ---
 

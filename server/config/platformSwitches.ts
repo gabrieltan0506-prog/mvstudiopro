@@ -7,7 +7,7 @@
  *
  * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
  *
- * **週末生存模式：** {@link PLATFORM_WEEKEND_SURVIVAL_MODE} 為 `true` 時，等同開啟平台 GCP 避險（Stage2→OpenAI、gpt‑5.5 等）。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。帳單恢復後請將生存模式改回 `false`（若不再需要整體避險）。
+ * **週末生存模式（可切換）：佈署環境變數 `PLATFORM_WEEKEND_SURVIVAL_MODE=1`（或 `true`/`yes`/`on`）時啟用**，等同開啟平台 GCP 避險（Stage2→OpenAI、2×4 英文化鎖 GPT 5.4 等）。**未設定或非 truthy 時預設關閉**，2×4 可走 Vertex Flash 與面板 translator。見 {@link isPlatformWeekendSurvivalModeEnabled}。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。
  *
  * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
@@ -15,18 +15,27 @@
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
 
-/** 🚨 鎖定 OpenAI + Fly 平台鏈路；並令 {@link isPlatformWeekendGcpEscape} 為真。 */
-export const PLATFORM_WEEKEND_SURVIVAL_MODE = true;
+function norm(s: string | undefined): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+/**
+ * 週末／帳單避險 **生存模式**：由環境變數 **`PLATFORM_WEEKEND_SURVIVAL_MODE`** 切換（dual mode）。
+ * - **開啟**：`1` / `true` / `yes` / `on` → 觸發 {@link isPlatformWeekendGcpEscape} 內整鏈避險（含 2×4 英文化鎖 GPT 5.4）。
+ * - **關閉**：未設定、`0` / `false` / `no` / `off` → **預設**，可走 Vertex Flash 與面板 translator。
+ */
+export function isPlatformWeekendSurvivalModeEnabled(): boolean {
+  const v = norm(process.env.PLATFORM_WEEKEND_SURVIVAL_MODE);
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
+  return false;
+}
 
 /**
  * Vertex / Gemini 3.1 Pro（Stage 2 長文鏈）暫不可用時為 `true`，強制 Stage2 → OpenAI。
  * 下週 Vertex 就緒後改 `false`，或保持 `true` 並設環境變數 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1` 放行 vertex 模式。
  */
 export const PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED = true;
-
-function norm(s: string | undefined): string {
-  return String(s ?? "").trim().toLowerCase();
-}
 
 /**
  * **主開關：** `true` = 平台 Stage2/存圖/英文化兜底可按 env 走 Vertex·GCS；`false` = 強制避險（OpenAI 等；存圖見 `PLATFORM_IMAGE_STORAGE`）。與語音辨識等獨立服務無關。
@@ -56,7 +65,7 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 
 /** 平台圖/Stage2 相關避險（關閉主開關、週末旗標、billing/環境變數）。不影響語音或其它非平台管線。 */
 export function isPlatformWeekendGcpEscape(): boolean {
-  if (PLATFORM_WEEKEND_SURVIVAL_MODE) return true;
+  if (isPlatformWeekendSurvivalModeEnabled()) return true;
   if (!PLATFORM_USE_GOOGLE_GCP) return true;
   if (PLATFORM_WEEKEND_GCP_ESCAPE) return true;
   const billing = norm(process.env.GCP_BILLING_STATUS);

@@ -1,7 +1,7 @@
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   isPlatformVertexNanoBanana2FallbackEnabled,
-  PLATFORM_WEEKEND_SURVIVAL_MODE,
+  isPlatformWeekendSurvivalModeEnabled,
   resolvePlatformImageStorageDriver,
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
@@ -962,11 +962,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
 
-  const survival = PLATFORM_WEEKEND_SURVIVAL_MODE;
+  const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
     L,
     survival
-      ? `[2×4·英文化机制] **PLATFORM_WEEKEND_SURVIVAL_MODE 已开启**：英文化统一走 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），**不受**面板 translator=vertex_gemini_3_flash_preview 影响。另有 **GCP 避险** 时亦可能压制 Vertex。`
+      ? `[2×4·英文化机制] **生存模式已开启**（環境變數 PLATFORM_WEEKEND_SURVIVAL_MODE）：英文化统一走 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），**不受**面板 translator=vertex_gemini_3_flash_preview 影响。另有 **GCP 避险** 时亦可能压制 Vertex。`
       : `[2×4·英文化机制] translator=gpt54：**GPT 5.4 英文化** 最多 3 轮（间隔 3s/6s），仍失败再 **Vertex Flash**；translator=vertex_gemini_3_flash_preview：**优先 Vertex Flash**（遇 GCP 避险则改 GPT 5.4）。`,
   );
   appendImageFlowLog(
