@@ -44,6 +44,8 @@ export default function TrialWatermarkImage({
         src={src}
         alt={alt}
         className={className}
+        /** 外鏈生圖（GCS/R2 等）部分桶依 Referer 攔截嵌入；不帶 Referer 可避免封面/2×4 裂圖 */
+        referrerPolicy="no-referrer"
         draggable={isTrial ? false : undefined}
         onContextMenu={preventAction}
         onDragStart={preventAction}
