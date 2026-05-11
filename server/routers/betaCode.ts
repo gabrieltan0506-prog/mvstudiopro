@@ -5,14 +5,8 @@ import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { betaInviteCodes, betaCodeUsages } from "../../drizzle/schema-beta";
 import { addCredits } from "../credits";
-import { hasUnlimitedAccess } from "../services/access-policy";
+import { hasUnlimitedAccess, isValidSupervisorSecret } from "../services/access-policy";
 import { users } from "../../drizzle/schema";
-
-const SUPERVISOR_SECRET = process.env.SUPERVISOR_SECRET ?? "";
-
-function isSupervisorToken(token: string | null | undefined): boolean {
-  return !!SUPERVISOR_SECRET && !!token && token === SUPERVISOR_SECRET;
-}
 
 function generateCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -72,7 +66,7 @@ export const betaCodeRouter = router({
       await ensureBetaTables(db);
 
       // supervisor token 直接通过
-      const tokenOk = isSupervisorToken(input.supervisorToken);
+      const tokenOk = isValidSupervisorSecret(input.supervisorToken);
 
       if (!tokenOk) {
         // 需要登录 session
@@ -197,7 +191,7 @@ export const betaCodeRouter = router({
 
     await ensureBetaTables(db);
 
-    const tokenOk = isSupervisorToken(input?.supervisorToken);
+    const tokenOk = isValidSupervisorSecret(input?.supervisorToken);
     if (!tokenOk) {
       const userId = (ctx as any).user?.id;
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录" });

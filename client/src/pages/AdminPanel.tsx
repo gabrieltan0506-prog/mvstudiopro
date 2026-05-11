@@ -11,6 +11,7 @@ import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
+const SUPERVISOR_REAP_TOKEN_KEY = "mvs-supervisor-reap-token";
 
 function checkSupervisorUrl(): boolean {
   if (typeof window === "undefined") return false;
@@ -39,6 +40,7 @@ export default function AdminPanel() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
+  const [supervisorReapToken, setSupervisorReapToken] = useState("");
 
   const isAdminOrSupervisor = isSupervisorUrl || (isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"));
   const isAdminOnly = isAuthenticated && (user?.role === "admin" || user?.role === "supervisor");
@@ -131,7 +133,18 @@ export default function AdminPanel() {
     void fetchVerifications();
   }, [isAuthenticated, user?.role]);
 
+  useEffect(() => {
+    try {
+      const v = sessionStorage.getItem(SUPERVISOR_REAP_TOKEN_KEY);
+      if (v) setSupervisorReapToken(v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
+  const canReapNeonJobs =
+    isAdminOnly || (isSupervisorUrl && supervisorReapToken.trim().length > 0);
 
   // Redirect non-admin / non-supervisor（supervisor URL bypass 例外）
   if (!isSupervisorUrl && isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
@@ -417,8 +430,12 @@ export default function AdminPanel() {
                   size="sm"
                   variant="destructive"
                   className="gap-1.5"
-                  disabled={!isAdminOnly || reapNeonJobsMutation.isPending}
-                  onClick={() => reapNeonJobsMutation.mutate()}
+                  disabled={!canReapNeonJobs || reapNeonJobsMutation.isPending}
+                  onClick={() =>
+                    reapNeonJobsMutation.mutate(
+                      isAdminOnly ? undefined : { supervisorToken: supervisorReapToken.trim() },
+                    )
+                  }
                 >
                   {reapNeonJobsMutation.isPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -429,6 +446,29 @@ export default function AdminPanel() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-2 text-xs text-muted-foreground">
+                {isSupervisorUrl && !isAdminOnly ? (
+                  <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1.5">
+                    <label className="text-[11px] text-amber-200/90 font-medium block">
+                      Supervisor 密钥（與生成邀請碼相同 <span className="font-mono">SUPERVISOR_SECRET</span>，免登入）
+                    </label>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder="貼上後再點「一鍵清理」"
+                      value={supervisorReapToken}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSupervisorReapToken(v);
+                        try {
+                          sessionStorage.setItem(SUPERVISOR_REAP_TOKEN_KEY, v);
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      className="w-full max-w-md bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground font-mono"
+                    />
+                  </div>
+                ) : null}
                 <p>
                   對資料庫 <span className="font-mono text-foreground/80">jobs</span> 表執行與伺服器定時 reaper
                   <strong className="text-foreground/90"> 相同條件 </strong>的 <strong className="text-foreground/90">DELETE</strong>

@@ -211,6 +211,9 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
  * 官方枚举：`1024x1024`、`1536x1024`（横版和宽幅默认）、`1024x1536`（竖版）、`auto`。
  * （文档另述「自定义分辨率」约束；代理若未开通宽表，勿传 1792×1024、1536×864 等非枚举值。）
  */
+/** gpt-image-2 請求體：與 OpenAI 官方一致（OhMyGPT 轉發亦支援時生效）；JPEG 有利體積，落盤後仍寫 GCS/Fly。 */
+const GPT_IMAGE2_API_QUALITY = "high" as const;
+const GPT_IMAGE2_OUTPUT_FORMAT = "jpeg" as const;
 /** 豎版：與 OhMyGPT/OpenAI 白名單一致，首選 **1024×1536**（~2:3，非自訂 9:16 像素）；`auto` 兜底 */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536", "auto", "1024x1024"] as const;
 
@@ -564,6 +567,8 @@ async function postGptImage2AndUpload(
             prompt: promptForApi,
             n: 1,
             size,
+            quality: GPT_IMAGE2_API_QUALITY,
+            output_format: GPT_IMAGE2_OUTPUT_FORMAT,
             response_format: "b64_json",
           }),
           signal: AbortSignal.timeout(GPT_IMAGE2_REQUEST_TIMEOUT_MS),
@@ -699,7 +704,7 @@ function normalizeImageUploadContentType(mime: string): string {
   return "image/png";
 }
 
-/** OhMyGPT `b64_json` 解碼後：依魔數辨識，與實際位元一致（OpenAI gpt-image-2 多為 PNG）。 */
+/** OhMyGPT `b64_json` 解碼後：依魔數辨識，與實際位元一致（`output_format: jpeg` 時為 JPEG，否則常為 PNG）。 */
 function sniffBinaryImageMime(buffer: Buffer): "image/png" | "image/jpeg" {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return "image/jpeg";
@@ -830,7 +835,7 @@ async function postGptImage2ViaFalAndUpload(
 
   appendImageFlowLog(
     L,
-    `[FAL·GPT-IMAGE-2] POST https://fal.run/openai/gpt-image-2 · ${aspectRatio} · ${image_size.width}×${image_size.height} · high · png`,
+    `[FAL·GPT-IMAGE-2] POST https://fal.run/openai/gpt-image-2 · ${aspectRatio} · ${image_size.width}×${image_size.height} · high · jpeg`,
   );
   try {
     const timeoutMs = GPT_IMAGE2_REQUEST_TIMEOUT_MS;
@@ -845,7 +850,7 @@ async function postGptImage2ViaFalAndUpload(
         image_size,
         quality: "high",
         num_images: 1,
-        output_format: "png",
+        output_format: "jpeg",
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -1062,7 +1067,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
 
   appendImageFlowLog(
     L,
-    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · ${options.aspectRatio === "9:16" ? "1024×1536" : "1536×1024"} · high · png · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · ${options.aspectRatio === "9:16" ? "1024×1536" : "1536×1024"} · high · jpeg · 英文 prompt 约 ${prompt.length} 字`,
   );
   const falFirst = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
   if (falFirst) {

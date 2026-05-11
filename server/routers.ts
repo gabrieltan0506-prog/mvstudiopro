@@ -26,6 +26,7 @@ import { paymentRouter } from "./routers/payment";
 import { emailAuthRouter } from "./routers/emailAuth";
 import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
+import { isValidSupervisorSecret } from "./services/access-policy";
 import { feedbackRouter } from "./routers/feedback";
 import { inviteApplyRouter } from "./routers/inviteApply";
 import { staticPayRouter } from "./routers/staticPay";
@@ -6878,11 +6879,23 @@ ${sceneSummary}
     /**
      * Neon `jobs` 表：與 `reapStaleJobsOnce`（staleJobsReaper）相同 DELETE 規則；
      * 手動觸發時 **會略過** `DISABLE_JOBS_STALE_REAPER`（與定時器 / worker 前置掃描不同）。
+     * 允許 admin/supervisor 登入，或未登入但提供與 `betaCode.generate` 相同的 `supervisorToken`（`SUPERVISOR_SECRET`）。
      */
-    reapStaleNeonJobs: adminProcedure.mutation(async () => {
-      const { reapStaleJobsOnce } = await import("./jobs/staleJobsReaper");
-      return await reapStaleJobsOnce({ bypassDisable: true });
-    }),
+    reapStaleNeonJobs: publicProcedure
+      .input(z.object({ supervisorToken: z.string().optional() }).optional())
+      .mutation(async ({ ctx, input }) => {
+        const role = ctx.user?.role;
+        const sessionOk = role === "admin" || role === "supervisor";
+        const tokenOk = isValidSupervisorSecret(input?.supervisorToken);
+        if (!sessionOk && !tokenOk) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "需要管理員登入或有效的 supervisor token",
+          });
+        }
+        const { reapStaleJobsOnce } = await import("./jobs/staleJobsReaper");
+        return await reapStaleJobsOnce({ bypassDisable: true });
+      }),
 
     runtimeMetricsOverview: adminProcedure
       .input(z.object({ tail: z.number().int().min(20).max(1200).optional() }).optional())

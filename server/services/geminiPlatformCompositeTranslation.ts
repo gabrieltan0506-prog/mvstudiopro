@@ -108,12 +108,12 @@ function resolveVertexProjectIdForGenAi(): string {
 }
 
 /**
- * 平台英文化 · Flash：**預設 `us-central1`**（與 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL} 在 Vertex 上的常用區域對齊）。
- * 可隨時以 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫（例如改回 `global` 做對照）。
+ * 平台英文化 · Flash：**預設 `global`**（與專案 Console 開通習慣一致；文本高品質路徑見 `server/services/vertexGemini31ProGlobal.ts`）。
+ * 可 `VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION` 覆寫為 `us-central1` 等。
  */
 export function resolveVertexFlashTranslationLocation(): string {
-  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "us-central1").trim();
-  return loc || "us-central1";
+  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "global").trim();
+  return loc || "global";
 }
 
 /** 預設 Vertex Flash 翻譯模型 ID。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
@@ -201,7 +201,7 @@ function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: st
   return undefined;
 }
 
-/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_gemini_3_flash_preview` = Vertex **Gemini 3 Flash Preview** Live · 預設 us-central1）。 */
+/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_gemini_3_flash_preview` = Vertex **Gemini 3 Flash Preview**，預設 **global**，三輪後 fallback GPT 5.4）。 */
 export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 
 /**
@@ -530,9 +530,10 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 /**
  * 探索 / 極速：Vertex AI **Gemini 3 Flash Preview** + `responseMimeType: application/json`。
  * `temperature` 見 {@link resolveVertexFlashTranslationTemperature}（預設 0.9，偏創意）；`thinkingConfig` 見 {@link resolveVertexFlashThinkingConfigForSdk}（預設思考層級 **HIGH**）；`maxOutputTokens` 見 {@link resolveVertexFlashTranslationMaxOutputTokens}（預設 **16384**）。
- * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **us-central1**；可用環境變數改）。
+ * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **global**；可用環境變數改）。
  * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
- * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。三次仍失敗則拋錯。
+ * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。
+ * **三次仍失敗** → **fallback {@link callGemini3_1_Pro_AiStudio}（OpenAI GPT 5.4，同樣最多 3 輪，且不再回呼 Vertex）**。
  */
 export async function callVertexGeminiFlashTranslation(translationTask: string, flowLog?: string[]): Promise<string> {
   const task = String(translationTask || "").trim();
@@ -671,12 +672,19 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
   }
 
   appendVertexFlashDebug(flowLog, `[Flash·翻译] 已 3 次仍失败 · ${formatErrForVertexDebug(lastFailure)}`);
-  console.error(`[Vertex GenAI ${resolveVertexFlashTranslationModelName()} 翻译异常 · ${resolveVertexFlashTranslationLocation()}]:`, lastFailure);
-  throw lastFailure instanceof Error ? lastFailure : new Error(String(lastFailure));
+  appendVertexFlashDebug(
+    flowLog,
+    "[Flash·翻译] → fallback OpenAI GPT 5.4（callGemini3_1_Pro_AiStudio · skipVertexFallback · 最多 3 轮）",
+  );
+  console.warn(
+    `[Vertex GenAI ${resolveVertexFlashTranslationModelName()} 三輪失敗 · ${resolveVertexFlashTranslationLocation()}] 改走 GPT 5.4:`,
+    lastFailure instanceof Error ? lastFailure.message : lastFailure,
+  );
+  return await callGemini3_1_Pro_AiStudio(task, flowLog, undefined, { skipVertexFallback: true });
 }
 
 /**
- * 舊名保留：平台「探索」英文化走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · 預設 us-central1）。
+ * 舊名保留：平台「探索」英文化走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · 失敗 3 次後 GPT 5.4）。
  */
 export async function callVertexGemini31ProForImagePrompt(translationTask: string, flowLog?: string[]): Promise<string> {
   return callVertexGeminiFlashTranslation(translationTask, flowLog);
@@ -704,13 +712,16 @@ function buildEmergencyEnglishPrompt(prompt: string, flowLog?: string[]): string
 
 /**
  * 平台生图英文化：**OpenAI（預設 gpt-5.4，與 Stage 2 長文 gpt-5.5 分離）** 最多 3 次。
- * 三次仍無有效英文 → 非避險時改走 Vertex Flash；避險 / Vertex 失敗時改 **應急英文**。
+ * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 Vertex Flash；避險 / Vertex 失敗時改 **應急英文**。
+ * `skipVertexFallback`：由 {@link callVertexGeminiFlashTranslation} 在 Flash 三輪後呼叫，避免再次打 Vertex。
  */
 export async function callGemini3_1_Pro_AiStudio(
   prompt: string,
   flowLog?: string[],
   statCtx?: Gpt54PlatformImagePromptStatCtx,
+  opts?: { skipVertexFallback?: boolean },
 ): Promise<string> {
+  const skipVertexFallback = Boolean(opts?.skipVertexFallback);
   /** 英文化走較廉價預設；勿改 gpt-5.5（多輪重試費用高）。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
@@ -887,10 +898,20 @@ export async function callGemini3_1_Pro_AiStudio(
 
   appendGpt54TranslationDebug(
     flowLog,
-    `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
+    skipVertexFallback
+      ? `[GPT54·翻译] 已 3 次仍失败或为空 · skipVertex 模式 · 不发 Vertex`
+      : `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
   );
   if (isPlatformWeekendGcpEscape()) {
     appendGpt54TranslationDebug(flowLog, "[GCP避險] 三周無可用英文 · 跳過 Vertex · 應急英文包裝");
+    return buildEmergencyEnglishPrompt(prompt, flowLog);
+  }
+  if (skipVertexFallback) {
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[GPT54·翻译] Flash→GPT 兜底仍無可用英文 · ${summary.slice(0, 400)} → buildEmergencyEnglishPrompt`,
+    );
+    console.error("[平台英文化] Vertex Flash 三輪後 GPT 5.4 三輪仍失败 ·", summary.slice(0, 500));
     return buildEmergencyEnglishPrompt(prompt, flowLog);
   }
   try {
@@ -911,7 +932,7 @@ export async function callGemini3_1_Pro_AiStudio(
 }
 
 /**
- * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時走 **Flash Live Preview（預設 us-central1）**。
+ * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（見 {@link callVertexGeminiFlashTranslation}，三輪後自動改 **GPT 5.4**）。
  * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(
@@ -979,7 +1000,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   scriptContext: string;
   /** A/B：預設 GPT 5.4；與 {@link engine} 併用時以 engine 為準 */
   translator?: PlatformImagePromptTranslator;
-  /** A/B：`gemini31flash` 強制走 Flash Live（預設 us-central1）；`gpt54` 強制 GPT 5.4 */
+  /** A/B：`gemini31flash` 強制走 Flash Live（預設 global，見 `resolveVertexFlashTranslationLocation`）；`gpt54` 強制 GPT 5.4 */
   engine?: "gpt54" | "gemini31flash";
   /** 寬幅合成 / debug：寫入 imageGenFlowLog */
   flowLog?: string[];
