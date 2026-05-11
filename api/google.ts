@@ -17,7 +17,7 @@ export const config = {
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - op=vertexTranslate（Vertex IAM 纯文本翻译；先 us-central1，非 2xx 且非 400 时再试 global；模型 gemini-3-flash-preview，供 TestLab）
+ * - op=vertexTranslate（Vertex IAM 纯文本翻译；先 **global**，非 2xx 且非 400 时再试 us-central1；模型 gemini-3-flash-preview，供 TestLab）
  * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
@@ -355,7 +355,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw });
     }
 
-    // ---------------- Vertex：TestLab 翻译（gemini-3-flash-preview；先 us-central1，失败再 global；与 geminiScript 同为 IAM REST，非 @google-cloud/vertexai SDK） ----------------
+    // ---------------- Vertex：TestLab 翻译（gemini-3-flash-preview；先 global，失败（非 400）再 us-central1；与 geminiScript 同为 IAM REST，非 @google-cloud/vertexai SDK） ----------------
     if (op === "vertexTranslate") {
       const sourceText = s(b.prompt || b.text || q.prompt || "").trim();
       if (!sourceText) return res.status(400).json({ ok: false, error: "missing_prompt" });
@@ -371,7 +371,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
       });
 
-      const locations = ["us-central1", "global"] as const;
+      const locations = ["global", "us-central1"] as const;
       let r!: Awaited<ReturnType<typeof fetchJson>>;
       let usedLocation: (typeof locations)[number] = locations[0];
       let primaryMeta: { location: string; status: number } | undefined;
@@ -406,7 +406,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         url: r.url,
         model,
         location: usedLocation,
-        ...(primaryMeta && usedLocation === "global"
+        ...(primaryMeta && usedLocation !== primaryMeta.location
           ? { locationFallbackFrom: primaryMeta.location, primaryAttemptStatus: primaryMeta.status }
           : {}),
         targetLang,

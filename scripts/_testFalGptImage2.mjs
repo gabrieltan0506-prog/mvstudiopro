@@ -20,10 +20,6 @@ if (!key || !/^[\x21-\x7e]+$/.test(key)) {
   process.exit(1);
 }
 
-/** fal schema: total pixels in [655360, 8294400]; edges multiple of 16 */
-const MIN_W = 1024;
-const MIN_H = 640;
-
 const promptRaw = process.argv.slice(2).join(" ").trim();
 const prompt =
   promptRaw && /^[\x20-\x7E]+$/.test(promptRaw)
@@ -32,8 +28,8 @@ const prompt =
 
 const body = {
   prompt,
-  image_size: { width: MIN_W, height: MIN_H },
-  quality: "low",
+  image_size: { width: 1024, height: 1536 },
+  quality: "high",
   num_images: 1,
   output_format: "jpeg",
 };

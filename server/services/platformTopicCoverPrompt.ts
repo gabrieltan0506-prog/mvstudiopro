@@ -14,7 +14,7 @@ export const PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS = [
  * 供 Vertex Nano Banana Pro / Nano Banana 2 對齊 OhMyGPT gpt-image-2（`1024×1536` 豎版白名單語義）。
  */
 export const PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX =
-  "CRITICAL OUTPUT ASPECT: final image must be exactly 9:16 portrait (taller than wide), full-bleed vertical cover — not 16:9 landscape, not 1:1 square hero, not letterboxed cinematic wide frame.";
+  "CRITICAL OUTPUT SIZE: match OpenAI gpt-image-2 portrait **1024×1536** (taller than wide, ~2:3), full-bleed vertical cover — not 16:9 landscape, not 1:1 square hero, not letterboxed cinematic wide frame.";
 
 /**
  * 英文視覺主體（已含譯文/提煉）後拼 GPT-IMAGE-2 同款比例鎖；可選試讀水印尾（與 gpt-image 路徑一致）。

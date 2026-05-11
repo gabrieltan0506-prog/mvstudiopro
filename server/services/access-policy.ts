@@ -1,7 +1,14 @@
+const SUPERVISOR_SECRET = process.env.SUPERVISOR_SECRET ?? "";
+
 const SUPERVISOR_EMAILS = new Set([
   "gabrieltan0506@gmail.com",
   "benjamintan0506@163.com",
 ]);
+
+/** 與 env `SUPERVISOR_SECRET` 比對；用於免登入的高權限維運操作（如 betaCode.generate、reapStaleNeonJobs）。 */
+export function isValidSupervisorSecret(token: string | null | undefined): boolean {
+  return !!SUPERVISOR_SECRET && !!token && token === SUPERVISOR_SECRET;
+}
 
 function normalizeEmail(email: string | null | undefined): string {
   return (email ?? "").trim().toLowerCase();

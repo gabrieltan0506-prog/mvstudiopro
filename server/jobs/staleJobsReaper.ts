@@ -39,6 +39,11 @@ function wallCutoffSql(minutes: number) {
   return sql.raw(`NOW() - INTERVAL '${minutes} minutes'`);
 }
 
+export type ReapStaleJobsOnceOptions = {
+  /** 管理員面板手動觸發時置為 true，略過 `DISABLE_JOBS_STALE_REAPER`（定時器與 worker 前置掃描仍遵該開關）。 */
+  bypassDisable?: boolean;
+};
+
 /**
  * 單次掃描：**刪除**過舊的 `running` / `queued` 行（釋放 DB；輪詢端會 404）。
  *
@@ -46,8 +51,10 @@ function wallCutoffSql(minutes: number) {
  *   只要 worker 仍透過 `patchJobRunningProgress` / `recordPdfExportStep` 等刷新 `updatedAt` 即不會被清掉。
  * - **queued**：`createdAt` 早於門檻即刪（久未認領）。
  */
-export async function reapStaleJobsOnce(): Promise<{ runningCleared: number; queuedCleared: number }> {
-  if (process.env.DISABLE_JOBS_STALE_REAPER === "true") {
+export async function reapStaleJobsOnce(
+  options?: ReapStaleJobsOnceOptions,
+): Promise<{ runningCleared: number; queuedCleared: number }> {
+  if (!options?.bypassDisable && process.env.DISABLE_JOBS_STALE_REAPER === "true") {
     return { runningCleared: 0, queuedCleared: 0 };
   }
 
