@@ -303,13 +303,13 @@ export function stripGeminiModelOutput(raw: string): string {
 export async function extractChineseVisualBrief(rawContext: string, flowLog?: string[]): Promise<string> {
   const slice = String(rawContext || "").trim().slice(0, SCRIPT_SLICE);
   if (!slice) {
-    appendVertexFlashDebug(flowLog, `[骨架·GPT54] 輸入為空，跳過 extractChineseVisualBrief`);
+    appendVertexFlashDebug(flowLog, `[骨架·中文视觉] 輸入為空，跳過 extractChineseVisualBrief`);
     return "";
   }
 
   appendVertexFlashDebug(
     flowLog,
-    `[骨架·GPT54] extractChineseVisualBrief 開始 · 輸入約 ${slice.length} 字（上限切片 ${SCRIPT_SLICE}）`,
+    `[骨架·中文视觉] extractChineseVisualBrief 開始（GPT 5.4 → JSON brief）· 輸入約 ${slice.length} 字（上限切片 ${SCRIPT_SLICE}）`,
   );
 
   try {
@@ -350,11 +350,11 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
   const out = brief.slice(0, CHINESE_VISUAL_BRIEF_MAX_CHARS);
   appendVertexFlashDebug(
     flowLog,
-    `[骨架·GPT54] 完成 · brief 約 ${out.length} 字 · JSON 解析=${parsed ? "ok" : "失敗(用原始片段推理)"}`,
+    `[骨架·中文视觉] 完成 · brief 約 ${out.length} 字 · JSON 解析=${parsed ? "ok" : "失敗(用原始片段推理)"}`,
   );
   return out;
   } catch (e: unknown) {
-    appendVertexFlashDebug(flowLog, `[骨架·GPT54] 异常: ${formatErrForVertexDebug(e)}`);
+    appendVertexFlashDebug(flowLog, `[骨架·中文视觉] 异常: ${formatErrForVertexDebug(e)}`);
     throw e;
   }
 }

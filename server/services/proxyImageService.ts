@@ -1,6 +1,7 @@
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   isPlatformVertexNanoBanana2FallbackEnabled,
+  PLATFORM_WEEKEND_SURVIVAL_MODE,
   resolvePlatformImageStorageDriver,
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
@@ -891,9 +892,16 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
 
+  const survival = PLATFORM_WEEKEND_SURVIVAL_MODE;
   appendImageFlowLog(
     L,
-    `[2×4·英文化机制] translator=gpt54 时：**callGemini3_1_Pro_AiStudio 内 GPT 5.4 最多 3 轮**（间隔 3s/6s），仍无效再 **Vertex Flash**；探索模式直走 Vertex。分镜主表与小红书八格图文共用此逻辑。`,
+    survival
+      ? `[2×4·英文化机制] **PLATFORM_WEEKEND_SURVIVAL_MODE 已开启**：英文化统一走 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），**不受**面板 translator=vertex_gemini_3_flash_preview 影响。另有 **GCP 避险** 时亦可能压制 Vertex。`
+      : `[2×4·英文化机制] translator=gpt54：**GPT 5.4 英文化** 最多 3 轮（间隔 3s/6s），仍失败再 **Vertex Flash**；translator=vertex_gemini_3_flash_preview：**优先 Vertex Flash**（遇 GCP 避险则改 GPT 5.4）。`,
+  );
+  appendImageFlowLog(
+    L,
+    `[2×4·中文骨架] extractChineseVisualBrief 始终用 **GPT 5.4 JSON** 从中文剧本抽「视觉骨架」（日志标签 [骨架·中文视觉]），与下行「英文化」不是同一步。`,
   );
   appendImageFlowLog(
     L,
@@ -903,7 +911,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（translator=${tr}；Vertex 英文化=${vertexRef}）：① extractChineseVisualBrief → ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·翻译]/[Vertex·Flash] 行）→ ④ condenseImagePromptIfNeeded（超长；与 translator 一致）→ ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
+    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4**" : ""}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（${isXhs ? "2K" : "1K"}）`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -911,7 +919,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 GPT 5.4 三轮（见上）与生图主/兜底链。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
+    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **英文化子链**（生存模式下为 GPT 5.4；否则见步骤1）与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
   let lastFailure: unknown = null;
@@ -923,8 +931,12 @@ export async function generatePlatformCompositeSheetImage(options: {
     );
     appendImageFlowLog(
       L,
-      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt；默认 GPT 5.4 · 失败或空则 Vertex ${resolveVertexFlashTranslationModelName()}）· ${
-        tr === "vertex_gemini_3_flash_preview" ? "直走 Vertex" : "先试 GPT 5.4"
+      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· ${
+        survival
+          ? "**生存模式 → 仅 GPT 5.4 英文化**"
+          : tr === "vertex_gemini_3_flash_preview"
+            ? "**配置为 Vertex Flash 英文化优先**（若日志出现 GCP 避险则改 GPT 5.4）"
+            : "**先 GPT 5.4 英文化**，失败或空再 Vertex Flash"
       } …`,
     );
 

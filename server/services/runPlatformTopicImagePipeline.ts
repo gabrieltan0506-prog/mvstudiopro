@@ -80,6 +80,8 @@ export type RunPlatformTopicImagePipelineInput = {
   newJobMetaBase: Record<string, unknown>;
   /** 異步 jobs worker 傳 job.id：管線執行中節流寫入 jobs.output.imageGenFlowLog，前端輪詢可見步驟 */
   progressJobId?: string | null;
+  /** 管理員專用：單幀主生圖改為 Vertex Nano Banana Pro（global · gemini-3-pro-image-preview） */
+  coverProEngine?: "nano_banana_pro";
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -96,6 +98,7 @@ export type RunPlatformTopicImagePipelineResult = {
 export async function runPlatformTopicImagePipeline(
   input: RunPlatformTopicImagePipelineInput,
 ): Promise<RunPlatformTopicImagePipelineResult> {
+  const useNanoBananaPro = input.coverProEngine === "nano_banana_pro";
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
   void input.imagePromptTranslator;
@@ -114,6 +117,7 @@ export async function runPlatformTopicImagePipeline(
   } = await import("./geminiPlatformCompositeTranslation.js");
   const { buildImagePromptStats, generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt, condenseImagePromptIfNeeded } =
     await import("./proxyImageService.js");
+  const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");
 
   const ctxStr = String(input.context || "").trim();
   const coverPersona = String(input.coverPersonaContext || "").trim();
@@ -136,7 +140,11 @@ export async function runPlatformTopicImagePipeline(
       `${new Date().toISOString()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → generateGptImage2FromRawEnglishPrompt 9:16`,
+      `${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → ${
+        useNanoBananaPro
+          ? "Vertex Nano Banana Pro（gemini-3-pro-image-preview · global）"
+          : "generateGptImage2FromRawEnglishPrompt 9:16"
+      }`,
     );
     topicImageCondenseLog.push(
       `${new Date().toISOString()}  说明: 中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
@@ -183,13 +191,37 @@ export async function runPlatformTopicImagePipeline(
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
         );
-        topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
-        imageUrl = await generateGptImage2FromRawEnglishPrompt({
-          englishPrompt: safePrompt,
-          aspectRatio: "9:16",
-          gcsSubdir: "platform_topic_reference",
-          flowLog: topicImageCondenseLog,
-        });
+        if (useNanoBananaPro) {
+          topicImageCondenseLog.push(
+            `${new Date().toISOString()}  [步骤2-NB-Pro] Vertex global · gemini-3-pro-image-preview（Pro 光影語彙後綴已叠）…`,
+          );
+          try {
+            imageUrl = await generatePlatformTopicCoverNanoBananaProImage({
+              englishPrompt: safePrompt,
+              flowLog: topicImageCondenseLog,
+            });
+          } catch (eNb: unknown) {
+            const nbMsg = eNb instanceof Error ? eNb.message : String(eNb);
+            topicImageCondenseLog.push(
+              `${new Date().toISOString()}  [步骤2-NB-Pro] 异常: ${nbMsg} → 回退 GPT-IMAGE-2`,
+            );
+            topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
+            imageUrl = await generateGptImage2FromRawEnglishPrompt({
+              englishPrompt: safePrompt,
+              aspectRatio: "9:16",
+              gcsSubdir: "platform_topic_reference",
+              flowLog: topicImageCondenseLog,
+            });
+          }
+        } else {
+          topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
+          imageUrl = await generateGptImage2FromRawEnglishPrompt({
+            englishPrompt: safePrompt,
+            aspectRatio: "9:16",
+            gcsSubdir: "platform_topic_reference",
+            flowLog: topicImageCondenseLog,
+          });
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1/2] 主路径异常: ${msg}`);
