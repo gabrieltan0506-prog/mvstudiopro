@@ -174,3 +174,9 @@ gh pr view <num> --json baseRefName,headRefName  # 确认 base 是 main
 - 或纯手写 `client/public/sw.js`（更可控）
 
 加 npm 依赖**先问**用户。
+
+---
+
+## 平台圖像 / LLM：官方 API 註記（2026-05）
+
+為何採 **Nano Banana（Vertex）**、**GPT 5.5 vs 5.4** 與「直連官方計費」取向，見專文：**`docs/platform-official-api-rationale.md`**（與 GMGPT 交叉引用）。

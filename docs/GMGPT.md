@@ -30,6 +30,8 @@
 
 **同型管線補記（代碼已接線者）**：戰略智庫封面、GodView 章節扉頁、平台選題單張參考圖等，同樣為 **Gemini 產出英文 raw prompt → `generateGptImage2FromRawEnglishPrompt`（GPT-IMAGE-2）**，失敗再回退既有 Vertex / Imagen / `generateImageGpt2WithImagenFallback` 等路徑；細節以倉庫實作為準。
 
+**設計註記（官方 API / 成本取向）**：為何 Nano Banana（Vertex）與 GPT 5.5/5.4 取捨，見 [`docs/platform-official-api-rationale.md`](platform-official-api-rationale.md)。
+
 ---
 
 ## 3. 關鍵檔案
