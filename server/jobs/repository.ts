@@ -171,6 +171,11 @@ export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   }
 }
 
+/**
+ * 主 worker 佇列：除 `pdf_export`（見 claimNextPdfExportJob）外，**所有** type（platform / video / image / audio）
+ * 嚴格依 `createdAt` FIFO，不區分 `input.action`。因此 platform_topic_image、platform_build_content、
+ * platform_analysis、platform_qa 以及影音任務彼此公平，避免任一類長期餓死。
+ */
 export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;
