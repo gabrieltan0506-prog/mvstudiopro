@@ -33,6 +33,7 @@ import {
   pickPreferredTitleVariant,
 } from "@shared/platformTitleVariants";
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
+import { DEMO_ADVANCED_AI_REPORT_DATA } from "@shared/advancedAIReportDemoData";
 import { buildSimulatedAdvancedAIReport } from "@shared/advancedPredictionEngine";
 import {
   formatDecisionIntelDateRangeZh,
@@ -54,6 +55,7 @@ import {
   Clock3,
   DollarSign,
   Download,
+  Eye,
   FileText,
   Film,
   Flame,
@@ -86,6 +88,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
@@ -1337,6 +1340,8 @@ export default function PlatformPage() {
   /** 一键封面：前端异步逐张生成（单张串行） */
   const [batchGeneratingCoverIds, setBatchGeneratingCoverIds] = useState<Set<string>>(() => new Set());
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
+  /** 封面生成区旁：决策智库对外试读样张（演示数据 + 脱敏） */
+  const [coverDecisionTrialReadOpen, setCoverDecisionTrialReadOpen] = useState(false);
   /** 封面图 onError：已对原始 URL 尝试过一次 cache-bust（避免误用「免扣 failedJobId」清图） */
   const coverImageCacheBustTriedRef = useRef<Set<string>>(new Set());
   /** 每次点击「开始全案分析」确认后递增，随决策智库 mutation 写入 requestHash，避免命中上一轮同参缓存 */
@@ -4752,51 +4757,76 @@ export default function PlatformPage() {
                         )}
                       </div>
                       {platformTopicCount > 0 ? (
-                        <button
-                          type="button"
-                          disabled={
-                            isSequentialCoverBatchGenerating ||
-                            isDashboardLoading ||
-                            isContentLoading ||
-                            !isAuthenticated ||
-                            platformTopicCount === 0
-                          }
-                          onClick={() => {
-                            if (!isAuthenticated) {
-                              toast.error("请先登录");
-                              return;
+                        <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setCoverDecisionTrialReadOpen(true)}
+                            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-[#49e6ff]/50 bg-[#49e6ff]/12 px-6 py-2.5 text-sm font-semibold text-[#a5f3fc] shadow-[0_6px_24px_rgba(72,212,240,0.15)] transition hover:bg-[#49e6ff]/22 sm:w-auto"
+                          >
+                            <Eye className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                            点击试读 · 决策智库样张
+                          </button>
+                          <button
+                            type="button"
+                            disabled={
+                              isSequentialCoverBatchGenerating ||
+                              isDashboardLoading ||
+                              isContentLoading ||
+                              !isAuthenticated ||
+                              platformTopicCount === 0
                             }
-                            const scenes = contentExecutionCards.map((row) => ({
-                              id: row.id,
-                              title: row.title,
-                              text: buildPlatformSceneText({
+                            onClick={() => {
+                              if (!isAuthenticated) {
+                                toast.error("请先登录");
+                                return;
+                              }
+                              const scenes = contentExecutionCards.map((row) => ({
+                                id: row.id,
                                 title: row.title,
-                                hook: row.hook,
-                                copywriting: row.copywriting,
-                                executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
-                                  .executionDetails,
-                              }),
-                            }));
-                            const discountNote = supervisorAccess
-                              ? ""
-                              : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
-                            if (!supervisorAccess && !window.confirm(discountNote)) return;
-                            void runSequentialCoverBatchGeneration(
-                              scenes,
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
-                            );
-                          }}
-                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 md:w-auto"
-                        >
-                          {isSequentialCoverBatchGenerating ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Sparkles className="h-4 w-4" />
-                          )}
-                          {isSequentialCoverBatchGenerating
-                            ? "正在生成图文封面单帧…"
-                            : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
-                        </button>
+                                text: buildPlatformSceneText({
+                                  title: row.title,
+                                  hook: row.hook,
+                                  copywriting: row.copywriting,
+                                  executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
+                                    .executionDetails,
+                                }),
+                              }));
+                              const discountNote = supervisorAccess
+                                ? ""
+                                : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
+                              if (!supervisorAccess && !window.confirm(discountNote)) return;
+                              void runSequentialCoverBatchGeneration(
+                                scenes,
+                                buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                              );
+                            }}
+                            className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
+                          >
+                            {isSequentialCoverBatchGenerating ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-4 w-4" />
+                            )}
+                            {isSequentialCoverBatchGenerating
+                              ? "正在生成图文封面单帧…"
+                              : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
+                          </button>
+                          <Dialog open={coverDecisionTrialReadOpen} onOpenChange={setCoverDecisionTrialReadOpen}>
+                            <DialogContent className="max-h-[92vh] max-w-[min(1720px,calc(100vw-1rem))] w-full gap-0 overflow-y-auto overflow-x-auto border border-white/12 bg-[#05080f] p-3 sm:max-w-[min(1720px,calc(100vw-1rem))]">
+                              <DialogHeader className="sr-only">
+                                <DialogTitle>决策智库试读样张</DialogTitle>
+                                <DialogDescription>
+                                  演示数据排版，选题与正文类文案已脱敏；付费解锁后可查看基于您全案数据的完整报告。
+                                </DialogDescription>
+                              </DialogHeader>
+                              <PlatformReportDashboard
+                                data={DEMO_ADVANCED_AI_REPORT_DATA}
+                                presentation="trialRead"
+                                className="!box-border !w-[min(1680px,100%)] !max-w-[1680px] border-0 !px-3 !pb-4 !pt-3 md:!w-[1680px]"
+                              />
+                            </DialogContent>
+                          </Dialog>
+                        </div>
                       ) : null}
                     </div>
                   </div>
