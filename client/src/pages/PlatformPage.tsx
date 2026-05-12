@@ -5731,7 +5731,7 @@ export default function PlatformPage() {
                           return;
                         }
                         if (!supervisorAccess) {
-                          const note = `「超高点击率封面」将先由 Deep Research Pro（gemini-deep-research-pro-preview）做竞品清洗，通常数分钟完成（服务端本地等待上限约 8 分钟），再进入生图。消耗 ${highCtrCoverCost} 积分，是否继续？`;
+                          const note = `「超高点击率封面」将先由 Deep Research Pro（gemini-deep-research-pro-preview）做竞品清洗，通常数分钟完成（服务端本地等待上限约 8 分钟），再进入生图；并换主标角度、强化划停向视觉。消耗 ${highCtrCoverCost} 积分，是否继续？`;
                           if (!window.confirm(note)) return;
                         }
                         setRegeneratingCoverSceneId(item.id);
@@ -5988,7 +5988,7 @@ export default function PlatformPage() {
                                       }
                                       onClick={handleHighCtrCoverRegenerate}
                                       className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#fbbf24]/45 bg-[#fbbf24]/12 px-2.5 py-1 text-[11px] font-bold text-[#fde68a] transition hover:bg-[#fbbf24]/22 disabled:opacity-50"
-                                      title={`Deep Research Pro（gemini-deep-research-pro-preview）竞品清洗 · 通常数分钟 · 本地轮询上限约 8 分钟 + 生图 · ${highCtrCoverCost} 积分`}
+                                      title={`Deep Research Pro 竞品清洗 · 换主标/划停向强化 · 通常数分钟 · 本地轮询上限约 8 分钟 + 生图 · ${highCtrCoverCost} 积分`}
                                     >
                                       <TrendingUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
                                       生成超高点击率封面 · {highCtrCoverCost}点
