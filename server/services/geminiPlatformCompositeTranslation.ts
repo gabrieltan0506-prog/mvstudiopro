@@ -241,7 +241,7 @@ CONTENT STYLE (**not** a film storyboard): each cell should feel like a **Little
 
 TYPOGRAPHY POLICY: **Simplified Chinese is the primary on-image explanation** (headlines, main bullets, body). **English is allowed as auxiliary**—small keywords,micro-subtags, short secondary hints, stylized accent lines—must stay **secondary** in visual weight vs 中文主解说; do not replace Chinese body copy with English.
 
-**FORBIDDEN for this task:** restructuring the user's copy into **video-production callout tables** (e.g. dedicated rows/columns titled 情绪 / 灯光 / 拍摄环境 / 景别 / 机位 / 分镜表头-style grids). Those belong **only** to the separate **cinematic storyboard** pipeline — do not import that idiom here. Overall palette/vibe may appear as **brief** English tags, not a DP checklist.`;
+**Soft boundary:** avoid restructuring the user's copy into **video-production callout tables** (e.g. dedicated rows/columns titled 情绪 / 灯光 / 拍摄环境 / 景别 / 机位 / 分镜表头-style grids). Those fit the separate **cinematic storyboard** pipeline better. Palette/vibe may appear as **brief** English tags, not a long DP checklist.`;
 
 /** 小红书 2×4 八格：版式约束；输出体例见 {@link MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT}。 */
 export const XHS_GRAPHIC_NOTE_2X4_FOOTER = `
@@ -251,8 +251,8 @@ TAG:XHS_GRAPHIC_NOTE_2X4_SHEET
 1. Output **one** English string; preferred style: **comma-separated tags / 2–5 word phrases**. **No fixed character limit**—longer English is OK: richer staging makes **eight cells** feel **less cramped** and balances information across the grid.
 2. LAYOUT (keep explicit): wide ~16:9 landscape master (1536×1024 class), **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, masterpiece, 8k, premium Little Red Book / lifestyle-editorial note aesthetic.
 3. **TYPOGRAPHY:** **Primary** on-image copy = **legible 简体中文** in every cell (titles, main lists, hooks). **Optional English** as **secondary** accent only—keywords, micro-subtitles, short tags—smaller weight than Chinese; **do not** make English the main explanation body.
-4. **MANDATORY** in **each** cell: note-style density — bullets, icons, badges 01–08, pill tags, mini infographics as fits.**禁止**整页做成電影**分鏡網格註解**（如每格固定「镜头/景别/情绪/灯光/机位」製片表）；那是 **TAG:STORYBOARD_2X4_SHEET** 專用。
-5. Avoid (layout): single full-bleed hero for whole canvas; **four-quadrant 2×2 only** (wrong panel count); 50/50 two-panel only; one skinny horizontal row of eight strips; left type band + right single hero (magazine split); 2×3 / 3×2 unless script explicitly needs six cells.
+4. **MANDATORY** in **each** cell: note-style density — bullets, icons, badges 01–08, pill tags, mini infographics as fits.**建议避免**整页做成電影**分鏡網格註解**（如每格固定「镜头/景别/情绪/灯光/机位」製片表）；那是 **TAG:STORYBOARD_2X4_SHEET** 專用。
+5. **版式软边界：** 尽量不采用「整 canvas 单图满铺」「只有 2×2 四格」「整排八条过细横条」等会丢八格阅读性的布局；其余细节可由你根据脚本取舍。
 6. Per cell: distinct carousel beat; cohesive palette across the sheet.
 `.trim();
 
@@ -261,10 +261,10 @@ export const XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER = XHS_GRAPHIC_NOTE_2X4_FOOTER;
 
 /** 封面 / 分镜条等：英文以 tags 为主，**不設字數上限**，以利一次生圖成功。 */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
-【最高视觉指令约束 / OUTPUT】（GPT-IMAGE-2）
+【输出偏好 / OUTPUT】（GPT-IMAGE-2）
 1. 输出 **一段完整英文** 生图指令；**优先** comma-separated tags / 短語，必要時可用稍長句式把版式說清。**不限制字符數**，以模型能穩定執行為準。
-2. 保留：情绪、灯光、场景、主体/服装、标题语言（简中等）、版式提示。
-3. 标题与背景对比要说清；须含 masterpiece、8k。
+2. 建议保留：情绪、灯光、场景、主体/服装、标题语言（简中等）、版式提示——具体取舍由你判断。
+3. 标题与背景对比建议说清；须含 masterpiece、8k。
 `.trim();
 
 /**
@@ -279,17 +279,17 @@ TAG:STORYBOARD_2X4_SHEET
 3. LAYOUT below the title band: wide ~16:9 landscape master continues with **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard / contact-sheet, masterpiece, 8k, intricate cinematic film stills per cell upper area (within each cell).
 4. **MANDATORY 简体中文字幕表（讯息分格）inside every panel**: reserve the **bottom ~25–30%** of **each** cell for a **compact Simplified Chinese caption table** (shot breakdown strip): **2–4 short labeled rows** (e.g. 镜头 / 景别, 情绪 / 氛围, 口播要点 or 画面说明)—styled like professional storyboard 「分格说明」or the reference phrase **"Chinese text tables below each image"**; thin grid lines or rules allowed; text must be **legible 简体中文 only** in these tables (no English in the table body). **Do not** leave panels wholly wordless.
 5. Upper ~70–75% of each cell (the film-still zone): pure cinematic imagery only (no floating subtitles outside the reserved table band inside that cell).
-6. Avoid layouts that break the grid: one full-bleed hero for the whole canvas, **titleless** top (no strip), magazine left-text strip + one photo only, 50/50 two-panel only, or any **four-quadrant-only** note layout — this task is **eight** panels under a **简体中文** header, not four.
+6. **版式软边界：** 若丢了顶栏中文大标题、或把八格收成单张满幅 / 只剩四格笔记卡，会与「2×4 主表」产品意图不符；其余镜头设计与影调可充分发挥。
 `.trim();
 
 /** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
 const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【英文生图输出 / OUTPUT — graphic single-frame only】
 1. Output **one** English block for GPT-IMAGE-2.**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
-2. LAYOUT: **9:16 portrait**, single full-bleed hero, one dominant subject—avoid looking like 16:9 landscape or a multi-panel sheet unless the task explicitly asks.
-3. Prefer a **single** strong cover beat; avoid storyboard grids, 2×4 strips, numbered panels when this task is one cover image.
-4. SUBJECT: align with Hook + Context; skip unrelated generic stock tropes.
-5. Include masterpiece, 8k; state Simplified-Chinese headline / on-image copy needs when the brief requires 简中.
+2. **版式软边界：** 竖版 9:16、单主视觉；整体读起来像信息流 **单张封面**，而非宽幅多格主表（除非上游任务明确要求多格）。
+3. **发挥空间：** 光色、景深、道具与环境可大胆服务于 Hook 与 Context；在「像一个高点击封面」与「有记忆点」之间自由取舍。
+4. **题材软边界：** 优先贴合 Hook + Context + 身份锚定（若有）；无明显餐饮叙事时，不必主动画成厨房/食谱信息图，但不必僵硬禁止。
+5. Include masterpiece, 8k; brief 需要简中主标时，用英文说明「画内简中大字」要求即可。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -327,7 +327,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
-          "若正文没有食物/菜谱含义，就不必写厨房、食材表、食谱版式。",
+          "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
         ].join("\n"),
       },
@@ -456,7 +456,7 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   const personaBlock =
     personaRaw.length > 0
       ? `
-【单帧出镜 · 身份锚定】（英文 tags 须体现可视觉化身份与场景档次；封面单帧与竖版分镜条均适用）
+【单帧出镜 · 身份参考】（英文里尽量带出可拍的身份气质与场景质感；不必逐字复译）
 ${personaRaw}
 
 `.trim() + "\n\n"
@@ -466,8 +466,8 @@ ${personaRaw}
     `
 ${personaBlock}${
   isVideo
-    ? "You are a bilingual visual prompt director who specializes in vertical 9:16 multi-panel storyboard strips for short-form video—clear gutters between panels, shot progression and rhythm, not a landscape 2x4 master sheet."
-    : "You are a bilingual cover design director who specializes in premium single-image vertical covers with strong click appeal and high-end visual impact (this task is cover-only, not Xiaohongshu dual-card image-text notes)."
+    ? "You are a bilingual visual prompt director for **vertical 9:16 multi-panel storyboard strips**—clear gutters, shot rhythm, short-form beats; prefer this over a wide **2×4 landscape** master sheet unless the task names that layout."
+    : "You are a bilingual cover design director for **premium vertical feed covers**—high click appeal and clear visual hierarchy; treat this as **one cover frame** rather than a Little Red Book dual-card note layout unless the upstream task clearly asks for note chrome."
 }
 
 ${isVideo
@@ -475,35 +475,18 @@ ${isVideo
   : "Use Simplified Chinese as the main title language, with English allowed as secondary supporting text."}
 
 ${isVideo ? `
-VERTICAL 9:16 STORYBOARD STRIP (not 2x4 landscape):
-- vertical 9:16
-- multi-panel storyboard strip
-- at least 3 separated frames
-- gutters between panels
-- short-form video beats
-- not single full-bleed poster
-- **Panel 1 (thumbnail crop):** largest readable Simplified-Chinese title treatment for the hook; high contrast; composed so a **feed thumbnail crop** still reads the core tension.
+VERTICAL 9:16 STORYBOARD STRIP（軟邊界 · 偏竖版多分镜条）:
+- 整体：**vertical 9:16**，多分镜条、格与格之间有明确分期；**不要**做成横版 2×4 主表那种宽幅八格。
+- 建议 **≥3** 格、格间留 gutter；节奏像短影音 beat，**优先**多分镜条；若创意上更贴 hook，也可偏「强主标题 + 少格」但保持竖条气质。
+- **首格 / 缩略图友好：** 钩子的简中主标尽量对比强、缩略图仍能读出张力。
 - main title based on 「${hook}」
 ` : `
-COVER DESIGN ONLY:
-- **9:16 portrait mandatory** — never 16:9 landscape, never square 1:1 as the outer frame; one tall vertical cover only.
-- vertical 9:16
-- single-image cover
-- single dominant hero subject
-- premium editorial portrait or scene
-- strong focal point
-- **Feed-native vividness:** commit to **one** memorable visual device the scroll will recall—rim light / color wedge / symbolic prop / asymmetry / environmental tension—do not default to a bland centered template or stock “safe” flatness when the hook allows stronger staging.
-- not multi-panel storyboard
-- not dual-card layout
-- not Xiaohongshu note
-- not checklist
-- not bullet list
-- not account UI
-- not comment bar
-- The image must behave like a high-click cover, not an image-text note.
-- **Thumbnail-first layout:** reserve the **upper ~35–45%** as a safe zone for **large, ultra-legible Simplified-Chinese** hero type summarizing the hook; **strong luminance contrast** (light-on-deep or inverse); one dominant subject; avoid tiny caption-only compositions that die at feed thumbnail size.
-- FORBIDDEN LAYOUTS (even if trendy): storyboard grids, 2×4 panels, eight-panel montage, numbered scene strips, comic gutters, film contact-sheet layout, "救赎/逆袭" generic businessman arcs unrelated to the medical hook.
-- ANTI-HALLUCINATION: The scene MUST match the themes of the hook 「${hook}」and Context (e.g. medicine, doctor persona, study, books, journal props, landscape art, wellness). If an identity anchor block appears above, the on-camera subject, wardrobe, props, and environment tier MUST align with it. Unless the hook or Context clearly names food, cooking, recipes, ingredients, or specific dishes, DO NOT show: kitchens, recipe infographics, ingredient grids, cooking steps, noodle bowls, restaurant plating, or dual-column recipe lesson layouts.
+COVER DESIGN（軟邊界 · 单张竖版封面）:
+- **版式：** vertical 9:16、单张、一个主视觉；读作信息流 **封面**，而不是小红双卡笔记、也不是 2×4 / 八格合成表（除非任务明确要求）。
+- **主标区建议：** 上方约 **35–45%** 留给大号、可读的简中钩子；对比足；避免「只有脚注小字」导致缩略图信息弱——具体构图你自由安排。
+- **发挥：** 光影、色彩、环境、道具可大胆服务「${hook}」与 Context；尽量 **一个** 让人划走的记忆点（色块、轮廓光、符号道具、不对称、环境张力等均可）。
+- **身份：** 若有上方身份参考块，人物气质、着装与场景档次 **自然对齐** 即可，不必模板化。
+- **离奇素材：** 明显脱离钩子与 Context 的无关元素（例如全文不谈吃却画成套食谱信息图）成功率低，**倾向于** 不出现即可；其余不过度列举禁忌，由你权衡。
 - main title based on 「${hook}」
 `}
 
@@ -574,10 +557,9 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
     "你是頂級中英雙語編導，也是頂級視覺提示詞導演。",
     "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
-    "在遵守上游禁忌與版式鎖的前提下，允許更有記憶點的光色與構圖，避免機械重複的「保守安全」審美。",
+    "在滿足上游**版式軌道**（單封 / 多分鏡條 / 網格等）的前提下，盡情發揮光影與構圖；避免機械重複的「保守安全」審美。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面時避免寫成多格分鏡，除非任務明確要求。",
-    "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
+    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體。網格類任務請保留格數與閱讀順序等關鍵信息；單張封面則偏單一主視覺即好。",
   ].join("\n");
 
   appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
@@ -754,11 +736,10 @@ export async function callGemini3_1_Pro_AiStudio(
             GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
             "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
-            "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求。",
+            "版式轨道（2×2、2×4、9:16 单封面等）尽量与上游一致；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
-            "在满足版式与上游禁忌的前提下，鼓励更有张力的光色与构图取舍，避免每张都像同一条「安全商业模板」或千篇一律的平淡纵深。",
+            "在满足版式軌道的前提下，鼓励更有张力的光色与构图，避免千篇一律的「安全模板脸」。",
             "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
-            "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表。",
           ].join("\n"),
         },
         {
