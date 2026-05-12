@@ -810,6 +810,27 @@ function upsertPlatformImageFlowSnapshot(
   return [next, ...withoutSameOp].slice(0, 8);
 }
 
+function imageGenSnapshotKindLabel(kind: PlatformImageGenFlowSnapshot["kind"]): string {
+  switch (kind) {
+    case "batch_topic_frames":
+      return "批量单帧";
+    case "batch_topic_frames_failed":
+      return "批量单帧 · 失败";
+    case "composite_2x4":
+      return "2×4 分镜/合成";
+    case "composite_2x4_failed":
+      return "2×4 合成 · 失败";
+    case "batch_composite_2x4":
+      return "批量 2×4 / 八格";
+    default:
+      return kind;
+  }
+}
+
+function imageGenSnapshotIsFailed(kind: PlatformImageGenFlowSnapshot["kind"]): boolean {
+  return kind === "batch_topic_frames_failed" || kind === "composite_2x4_failed";
+}
+
 /** 滾動窗口內只保留「仍在 60s 內」的發起時間戳 */
 function prunePlatformImageRateWindow(times: number[], now: number, windowMs: number): void {
   while (times.length > 0 && times[0]! <= now - windowMs) {
@@ -1735,14 +1756,6 @@ export default function PlatformPage() {
     dashboardDebug,
   ]);
 
-  const platformImageGenFlowSnapshotsFailedOnly = useMemo(
-    () =>
-      platformImageGenFlowSnapshots.filter(
-        (s) => s.kind === "batch_topic_frames_failed" || s.kind === "composite_2x4_failed",
-      ),
-    [platformImageGenFlowSnapshots],
-  );
-
   const flyJobsPollDebugPanel = useMemo(() => {
     const traces = [contentJobPollTrace, topicImageJobPollTrace].filter(Boolean) as ClientJobPollTrace[];
     if (traces.length === 0) return null;
@@ -1790,6 +1803,81 @@ export default function PlatformPage() {
       </div>
     );
   }, [contentJobPollTrace, topicImageJobPollTrace]);
+
+  /** 封面 / 分镜 2×4 / 八格：保留完整 imageGenFlowLog 排查信息（精簡 UI 不等於刪除观测面） */
+  const platformImageGenFlowSnapshotsDebugPanel = useMemo(() => {
+    const snaps = platformImageGenFlowSnapshots;
+    return (
+      <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
+            出图流水（imageGenFlowLog · Debug）
+          </div>
+          {snaps.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setPlatformImageGenFlowSnapshots([])}
+              className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-gray-400 hover:bg-white/10"
+            >
+              清空全部快照
+            </button>
+          ) : null}
+        </div>
+        <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+          含封面批量、<strong className="text-gray-400">2×4 分镜/宽幅合成</strong>；轮询会附带服务端 imageGenFlowLog（末 80 行）。失败条目红框标出。
+        </p>
+        {snaps.length === 0 ? (
+          <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
+            尚无出图流水。发起单帧、批量或 2×4 合成后，此处逐条展示日志。
+          </div>
+        ) : (
+          <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
+            {snaps.map((snap, i) => {
+              const failed = imageGenSnapshotIsFailed(snap.kind);
+              return (
+                <div
+                  key={`${snap.at}-${snap.kind}-${String(snap.meta?.localOpId ?? "")}-${i}`}
+                  className={
+                    failed
+                      ? "rounded-xl border border-rose-500/40 bg-black/40 p-3"
+                      : "rounded-xl border border-white/10 bg-black/35 p-3"
+                  }
+                >
+                  <div className={`font-mono text-[10px] ${failed ? "text-rose-300" : "text-[#86efac]"}`}>
+                    {snap.at} · {imageGenSnapshotKindLabel(snap.kind)}
+                    {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
+                  </div>
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(snap.lines.join("\n"));
+                          toast.success("已复制本段日志");
+                        } catch {
+                          toast.error("复制失败，请手动选中下方文本");
+                        }
+                      }}
+                      className={
+                        failed
+                          ? "rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
+                          : "rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/10"
+                      }
+                    >
+                      复制本段日志
+                    </button>
+                  </div>
+                  <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
+                    {snap.lines.join("\n")}
+                  </pre>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }, [platformImageGenFlowSnapshots]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
 
@@ -2269,10 +2357,19 @@ export default function PlatformPage() {
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
       ];
+      const MAX_DONE_FLOW = 80;
+      const tailDone = serverLines.slice(-MAX_DONE_FLOW);
       const mergedLines =
-        serverLines.length > 0
-          ? [...headerLines, `${ts}  [收尾步骤] ${serverLines[serverLines.length - 1]}`]
-          : headerLines;
+        serverLines.length === 0
+          ? headerLines
+          : [
+              ...headerLines,
+              `${ts}  [服务端 imageGenFlowLog 共 ${serverLines.length} 行，展示末 ${tailDone.length} 行]`,
+              ...tailDone.map((row, i) => {
+                const n = serverLines.length - tailDone.length + i + 1;
+                return `${ts}  [log ${n}/${serverLines.length}] ${String(row)}`;
+              }),
+            ];
 
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
@@ -2496,11 +2593,19 @@ export default function PlatformPage() {
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
         const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
         const ts = new Date().toISOString();
-        const last = log.length > 0 ? String(log[log.length - 1]) : "";
+        const MAX_FLOW_LINES = 80;
+        const tail = log.slice(-MAX_FLOW_LINES);
         const lines: string[] = [
-          `${ts}  [实时进度] status=${j.status} · sceneId=${ctx.sceneId}`,
-          `${ts}  [当前步骤] ${last || "（等待服务端流水）"}`,
+          `${ts}  [实时进度] status=${j.status} · jobId=${ctx.jobId} · sceneId=${ctx.sceneId} · imageGenFlowLog=${log.length}行（展示末${tail.length}行）`,
         ];
+        if (tail.length === 0) {
+          lines.push(`${ts}  [当前步骤] （等待服务端 imageGenFlowLog）`);
+        } else {
+          const base = log.length - tail.length;
+          for (let i = 0; i < tail.length; i++) {
+            lines.push(`${ts}  [log ${base + i + 1}/${log.length}] ${String(tail[i])}`);
+          }
+        }
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
             at: ts,
@@ -4492,6 +4597,7 @@ export default function PlatformPage() {
                 </>
               ) : null}
 
+              {platformImageGenFlowSnapshotsDebugPanel}
               {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
             </div>
           </section>
@@ -4862,64 +4968,7 @@ export default function PlatformPage() {
                     </div>
                   </>
                 ) : null}
-                <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
-                      出图失败流水（imageGenFlowLog · 仅失败保留）
-                    </div>
-                    {platformImageGenFlowSnapshotsFailedOnly.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => setPlatformImageGenFlowSnapshots([])}
-                        className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-gray-400 hover:bg-white/10"
-                      >
-                        清空全部快照
-                      </button>
-                    ) : null}
-                  </div>
-                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    成功跑通的单帧 / 2×4 不再占用本區；僅在客戶端標記為失敗時顯示。
-                  </p>
-                  {platformImageGenFlowSnapshotsFailedOnly.length === 0 ? (
-                    <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
-                      目前無失敗流水。若批量或合成報錯，此處會出現紅框記錄。
-                    </div>
-                  ) : (
-                    <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
-                      {platformImageGenFlowSnapshotsFailedOnly.map((snap, i) => (
-                        <div
-                          key={`${snap.at}-fail-${snap.kind}-${i}`}
-                          className="rounded-xl border border-rose-500/40 bg-black/40 p-3"
-                        >
-                          <div className="font-mono text-[10px] text-rose-300">
-                            {snap.at} ·{" "}
-                            {snap.kind === "batch_topic_frames_failed" ? "批量单帧 · 失败" : "2×4 合成 · 失败"}
-                            {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
-                          </div>
-                          <div className="mt-2">
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(snap.lines.join("\n"));
-                                  toast.success("已复制本段日志（含 TRPC 详情）");
-                                } catch {
-                                  toast.error("复制失败，请手动选中下方文本");
-                                }
-                              }}
-                              className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
-                            >
-                              复制本段报错全文
-                            </button>
-                          </div>
-                          <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
-                            {snap.lines.join("\n")}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {platformImageGenFlowSnapshotsDebugPanel}
                 {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
               </div>
             ) : null}

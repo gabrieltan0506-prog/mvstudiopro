@@ -21,7 +21,7 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
     const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
     for (let i = 0; i <= retries; i++) {
       try {
-        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 8192, temperature: 0.4 });
+        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 16_834, temperature: 0.4 });
       } catch (e: any) {
         const msg = String(e?.message || e || "");
         if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
@@ -59,7 +59,7 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.4, maxOutputTokens: 8192 },
+    generationConfig: { temperature: 0.4, maxOutputTokens: 16_834 },
   });
 
   for (let i = 0; i <= retries; i++) {

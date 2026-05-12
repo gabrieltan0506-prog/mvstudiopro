@@ -79,14 +79,14 @@ export type CallGemini31ProOptions = {
   topP?: number;
 };
 
-/** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview @ global），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
+/** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview @ global），不依賴 GEMINI_API_KEY；預設輸出上限 16834。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
   const vertex_ai = getVertexClientForGemini31Pro();
   const modelName = resolveVertexGemini31ProModelId();
   const generativeModel = vertex_ai.getGenerativeModel({
     model: modelName,
     generationConfig: {
-      maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+      maxOutputTokens: opts?.maxOutputTokens ?? 16_834,
       temperature: opts?.temperature ?? 0.4,
       topP: opts?.topP ?? 0.8,
     },

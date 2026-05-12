@@ -326,7 +326,7 @@ async function generate(
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.2, // 🟢 深度研究需保持低溫，確保事實與邏輯嚴謹
-      maxOutputTokens: 8192, // 🟢 極致長文必備
+      maxOutputTokens: opts?.maxTokens ?? 16_834, // 🟢 深研輔助生成；可透過 opts.maxTokens 覆寫
       ...(opts?.topP != null ? { topP: opts.topP } : {}),
       ...(opts?.topK != null ? { topK: opts.topK } : {}),
     },
@@ -2353,12 +2353,12 @@ ${job.topic}
     // 合成参数（B 端 V3 锁定）：
     //   - temperature 0.7：策略生成的逻辑严谨与创意平衡
     //   - topP 0.95 + topK 40：保留长尾候选词，避免输出过于刻板
-    //   - maxTokens 8192：保证万字长报告输出完整不被截断
+    //   - maxTokens 16834：保证万字长报告输出完整不被截断
     const rawReportMarkdown = await generate(
       "gemini-3.1-pro-preview",
       promptForSynthesis,
       2,
-      { temperature: 0.7, topP: 0.95, topK: 40, maxTokens: 8192 },
+      { temperature: 0.7, topP: 0.95, topK: 40, maxTokens: 16_834 },
     );
 
     if (!rawReportMarkdown || rawReportMarkdown.length < 1500) {

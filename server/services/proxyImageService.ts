@@ -1498,7 +1498,7 @@ export async function callGemini3_1_Pro(
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+          maxOutputTokens: opts?.maxOutputTokens ?? 16_834,
           temperature: opts?.temperature ?? 0.4,
           topP: opts?.topP ?? 0.8,
         },
