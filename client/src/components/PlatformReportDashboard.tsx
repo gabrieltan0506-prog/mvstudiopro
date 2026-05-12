@@ -146,6 +146,27 @@ export function PlatformReportDashboard({
 
   const chartH = 184;
 
+  const ipFitExplainBody = (
+    <span className="block text-[11px] leading-relaxed text-amber-50/95">
+      <span className="mt-0.5 block font-semibold text-amber-100/95">IP 契合度（0–100）表示什么</span>
+      <span className="mt-1 block">
+        将每条选题对应的「内容蓝图全文」与您在基因库里配置的「IP／品牌关键词」做覆盖与加权命中，由引擎{" "}
+        <code className="rounded bg-black/35 px-1 text-[10px] text-amber-200/90">calculateIPFit</code>{" "}
+        输出分数。分数越高，选题标题、场景与用语越贴近您的人设与品牌叙事。
+      </span>
+      <span className="mt-2 block font-semibold text-amber-100/95">参考用法</span>
+      <span className="mt-1 block">
+        · <strong className="text-amber-50/95">排序与取舍</strong>：预估播放量相近时，可优先试拍契合度更高的方向；明显低于全表均值或长期低于 30 时，建议重写钩子或补强人设词后再跑一版。
+      </span>
+      <span className="mt-1 block">
+        · <strong className="text-amber-50/95">非平台官方流量</strong>：该分不反映任何平台官方流量分配或推荐承诺，不可外引为「平台保证」。
+      </span>
+      <span className="mt-1 block">
+        · <strong className="text-amber-50/95">迭代复盘</strong>：调整脚本或关键词前后对比分数，可快速判断本轮是否更贴近品牌基因。
+      </span>
+    </span>
+  );
+
   return (
     <div
       data-platform-report-dashboard="true"
@@ -491,7 +512,7 @@ export function PlatformReportDashboard({
                     选题方向
                   </span>
                 </div>
-                <div className="w-[4.5rem] shrink-0 text-center">
+                <div className="w-[4.75rem] shrink-0 text-center">
                   <span className="inline-flex items-center gap-0.5 justify-center">
                     <Target size={12} className="text-amber-300" aria-hidden />
                     契合度
@@ -504,44 +525,60 @@ export function PlatformReportDashboard({
                   </span>
                 </div>
               </div>
-              {data.executionSuggestions.personalization.map((item) => (
+              {data.executionSuggestions.personalization.map((item) => {
+                const fit = Math.min(100, Math.max(0, Math.round(Number(item.brandMatchScore) || 0)));
+                return (
                 <div
                   key={item.topicDirection}
-                  className="rounded-lg border border-rose-500/15 bg-[linear-gradient(90deg,rgba(244,63,94,0.06),transparent)] py-2 pl-2 pr-1 text-sm last:mb-0"
+                  className="rounded-lg border border-rose-500/15 bg-[linear-gradient(90deg,rgba(244,63,94,0.06),transparent)] px-2 py-2 text-sm last:mb-0"
                 >
-                  <div className="whitespace-normal break-words font-medium leading-snug text-gray-100 [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] overflow-hidden">
-                    {trial ? (
-                      <TrialReadSensitive className="w-full">{item.topicDirection}</TrialReadSensitive>
-                    ) : (
-                      item.topicDirection
-                    )}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-amber-400/25 bg-amber-500/15 px-1.5 py-0.5 font-mono text-xs font-bold tabular-nums text-amber-100">
-                        <Zap size={10} className="text-amber-300" aria-hidden />
-                        {item.brandMatchScore}
-                      </span>
-                      <div className="h-2 min-w-[3rem] flex-1 overflow-hidden rounded-full bg-gray-800/90 ring-1 ring-rose-500/20">
-                        <div
-                          className={`h-full ${
-                            item.brandMatchScore > 90
-                              ? "bg-emerald-400"
-                              : item.brandMatchScore > 70
-                                ? "bg-sky-400"
-                                : "bg-orange-400"
-                          }`}
-                          style={{ width: `${Math.min(100, Math.max(0, item.brandMatchScore))}%` }}
-                        />
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-2">
+                    <div className="min-w-0 flex-1 md:pr-1 md:min-w-0 md:flex-[1.1]">
+                      <div className="whitespace-normal break-words font-medium leading-snug text-gray-100 [display:-webkit-box] [-webkit-line-clamp:3] [-webkit-box-orient:vertical] overflow-hidden">
+                        {trial ? (
+                          <TrialReadSensitive className="w-full">{item.topicDirection}</TrialReadSensitive>
+                        ) : (
+                          item.topicDirection
+                        )}
                       </div>
                     </div>
-                    <div className="inline-flex shrink-0 items-center gap-0.5 text-right font-mono text-xs font-semibold text-emerald-100/95 tabular-nums">
-                      <TrendingUp size={12} className="text-emerald-400/80" aria-hidden />
-                      {formatInt(item.viewsPredicted)}
+                    <div
+                      className="flex items-center gap-2 md:w-[4.75rem] md:shrink-0 md:flex-col md:justify-center md:gap-1 md:py-0.5"
+                      title={`IP 契合度 ${fit} / 100（分值愈高，用语与人设愈一致）`}
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-2 md:w-full md:flex-col md:items-center md:gap-1">
+                        <span className="whitespace-nowrap font-mono text-sm font-black tabular-nums text-amber-100 md:text-center">
+                          <span aria-hidden="true" className="md:hidden text-[11px] font-semibold text-rose-200/80">
+                            契合{" "}
+                          </span>
+                          {fit}
+                          <span className="text-[11px] font-bold text-amber-200/55">/100</span>
+                        </span>
+                        <div
+                          className="h-2 min-w-[3.5rem] flex-1 overflow-hidden rounded-full bg-gray-800/90 ring-1 ring-rose-500/20 md:h-1.5 md:w-full md:max-w-[4.25rem] md:flex-none"
+                          aria-hidden
+                        >
+                          <div
+                            className={`h-full ${
+                              fit > 90 ? "bg-emerald-400" : fit > 70 ? "bg-sky-400" : "bg-orange-400"
+                            }`}
+                            style={{ width: `${fit}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className="sr-only">IP 契合度 {fit} 分，满分为 100</span>
+                    </div>
+                    <div className="flex shrink-0 items-center justify-end gap-1 md:w-[5.5rem] md:flex-col md:items-end md:justify-center md:gap-0">
+                      <span className="inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums text-emerald-100/95">
+                        <TrendingUp size={12} className="text-emerald-400/80" aria-hidden />
+                        {formatInt(item.viewsPredicted)}
+                      </span>
+                      <span className="hidden text-[10px] text-emerald-200/65 md:block">预估播放</span>
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <p className="m-3 mt-2 rounded-lg border-l-4 border-amber-400/70 bg-gradient-to-r from-amber-950/55 to-amber-950/25 px-2.5 py-2 text-[11px] leading-relaxed text-amber-50/95 shadow-inner">
               <span className="inline-flex items-center gap-1 font-semibold text-amber-200">
@@ -549,19 +586,9 @@ export function PlatformReportDashboard({
                 参照说明：
               </span>
               {trial ? (
-                <TrialReadSensitive className="mt-1 block w-full">
-                  <span className="text-[11px] leading-relaxed text-amber-50/95">
-                    契合度 0–100 以「内容蓝图全文」对「IP／品牌基因关键词」的覆盖与加权命中计算（引擎{" "}
-                    <code className="rounded bg-black/35 px-1 text-[10px] text-amber-200/90">calculateIPFit</code>
-                    ）；数值越高表示选题用语与您人设越一致。非平台官方指标，仅供内部决策参考。
-                  </span>
-                </TrialReadSensitive>
+                <TrialReadSensitive className="mt-1 block w-full">{ipFitExplainBody}</TrialReadSensitive>
               ) : (
-                <>
-                  契合度 0–100 以「内容蓝图全文」对「IP／品牌基因关键词」的覆盖与加权命中计算（引擎{" "}
-                  <code className="rounded bg-black/35 px-1 text-[10px] text-amber-200/90">calculateIPFit</code>
-                  ）；数值越高表示选题用语与您人设越一致。非平台官方指标，仅供内部决策参考。
-                </>
+                ipFitExplainBody
               )}
             </p>
           </section>
