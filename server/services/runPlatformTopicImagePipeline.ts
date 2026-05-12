@@ -139,7 +139,7 @@ export async function runPlatformTopicImagePipeline(
   const ctxStr = String(input.context || "").trim();
   const coverPersona = String(input.coverPersonaContext || "").trim();
   const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
-  const copywriting = [
+  let copywriting = [
     coverPersona ? `【封面身份锚点】\n${coverPersona}` : "",
     ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook,
   ]
@@ -170,6 +170,40 @@ export async function runPlatformTopicImagePipeline(
           : "中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束"
       }`,
     );
+    if (input.highFeedCtrBoost) {
+      topicImageCondenseLog.push(
+        `${new Date().toISOString()}  [超高点击率] 前置：Deep Research Pro（agent=gemini-deep-research-pro-preview）竞品清洗 · 本地轮询默认上限约 8 分钟，失败则回退原语境`,
+      );
+    }
+
+    let briefForExtract = briefSource;
+    if (input.highFeedCtrBoost) {
+      try {
+        const { runCoverCompetitorDeepResearchBrief } = await import("./deepResearchService.js");
+        const drBrief = await runCoverCompetitorDeepResearchBrief({
+          topicHook: String(input.topicHook || "").trim(),
+          appealHook: String(input.appealHook || "").trim(),
+          context: ctxStr,
+          format: isGraphic ? "图文" : "短视频",
+          flowLog: topicImageCondenseLog,
+          progressJobId: input.progressJobId ?? null,
+        });
+        if (drBrief && drBrief.trim().length > 0) {
+          briefForExtract = [briefSource, "【Deep Research Pro · 竞品清洗补充】", drBrief.trim()].join("\n\n");
+          copywriting = [
+            coverPersona ? `【封面身份锚点】\n${coverPersona}` : "",
+            [input.topicHook, ctxStr, `【Deep Research Pro · 竞品清洗】\n${drBrief.trim()}`].filter(Boolean).join("\n\n"),
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        topicImageCondenseLog.push(
+          `${new Date().toISOString()}  [Deep Research Pro] 未捕获异常，已回退原语境：${msg.slice(0, 200)}`,
+        );
+      }
+    }
 
     let promptStats: ImagePromptStats = {
       translatedPromptChars: 0,
@@ -187,7 +221,7 @@ export async function runPlatformTopicImagePipeline(
       try {
         const geminiTask = buildPlatformTopicReferenceGeminiTask({
           topicHook: input.topicHook,
-          context: (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000),
+          context: (await extractChineseVisualBrief(briefForExtract, topicImageCondenseLog)) || briefForExtract.slice(0, 2000),
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
           highFeedCtrBoost: Boolean(input.highFeedCtrBoost),
