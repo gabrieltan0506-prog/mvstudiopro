@@ -4,9 +4,10 @@
  */
 export const PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS = [
   "Shot on 35mm lens, f/1.4 aperture",
-  "cinematic lighting with motivated contrast and color grade—not flat e-commerce pack lighting unless the hook clearly asks for it",
+  "editorial realism: volumetric motivated light, gentle bloom and falloff, believable skin and fabric micro-texture",
+  "color grade with chromatic intent—punchy contrast or luxe muted blocking as the hook demands, not default stock gray",
   "hyper-detailed textures, ultra-photorealistic, 8k",
-  "award-winning photography: deliberate background—either generous negative space for hero type OR a rich contextual set that reinforces the hook; avoid generic gray voids and meaningless clutter",
+  "award-winning photography: deliberate background—generous negative space for hero type OR a rich contextual set; avoid generic gray voids",
 ].join(", ");
 
 /**

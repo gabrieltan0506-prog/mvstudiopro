@@ -228,9 +228,9 @@ const SCRIPT_SLICE = 3500;
 /** 中文视觉骨架：允许充分保留剧本信息，不再做 220 字硬砍（下游 GPT 5.4 可自主取舍）。 */
 const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 
-/** GPT 5.4 翻译大脑：用户定稿的莎士比亚式英文身份（system 首句，与中文规则并用） */
+/** GPT 5.4 / Flash 英文化首句：莎劇式語感與隱喻密度 + 當代編輯攝影寫實（可讀畫內標題與場景還原）。 */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN =
-  "You excel at distilling visual briefs into effective English for GPT Image models: prefer comma-separated tags and noun phrases when it helps; use longer phrasing whenever the brief needs more specificity—do not sacrifice fidelity to hit an arbitrary length.";
+  "You compose English image prompts with Shakespearean **compression and metaphor**—lyrical noun clusters, rhythm, memorable hooks in phrasing—while **grounding pixels in contemporary master-grade photorealism**: motivated light and shadow, tactile materials, believable skin and fabric, editorial color science (print or luxury digital). For **vertical covers**: restore the Chinese **title and body** as a **high-detail on-image scene**—legible hero typography with **visual punch** (weight, chromatic contrast, hierarchy)—not wallpaper glyphs; the translated **identity / persona** cues should read as **art-directed** character and setting, not flat bios.";
 
 /** 小红书 **多页** 图文笔记：**2×4 八格**；產品上≠視頻分鏡——**不要**用製片/DPP 式「情緒·燈光·景別·機位」欄位來組稿。 */
 export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×4 eight-panel GRAPHIC NOTES** (图文笔记拼圖 / viral note sheet) into **one** English block for GPT Image. Prefer **comma-separated tags and short noun phrases**; **do not** trim the English prompt too aggressively—when the translator goes longer, eight cells breathe and feel **less crowded**; prefer fidelity and clear per-cell beats over brevity.
@@ -263,8 +263,8 @@ export const XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER = XHS_GRAPHIC_NOTE_2X4_FOOTER;
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 【输出偏好 / OUTPUT】（GPT-IMAGE-2）
 1. 输出 **一段完整英文** 生图指令；**优先** comma-separated tags / 短語，必要時可用稍長句式把版式說清。**不限制字符數**，以模型能穩定執行為準。
-2. 建议保留：情绪、灯光、场景、主体/服装、标题语言（简中等）、版式提示——具体取舍由你判断。
-3. 标题与背景对比建议说清；须含 masterpiece、8k。
+2. 建议保留：情绪、灯光、场景、主体/服装、简中标题的**字色与层次**、版式提示——具体取舍由你判断。
+3. **莎剧式英文语感**（凝练、隐喻）可与 **当代写实摄影光学** 并处同一 prompt；标题与背景对比建议说清；须含 masterpiece、8k。
 `.trim();
 
 /**
@@ -287,9 +287,11 @@ const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【英文生图输出 / OUTPUT — graphic single-frame only】
 1. Output **one** English block for GPT-IMAGE-2.**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
 2. **版式软边界：** 竖版 9:16、单主视觉；整体读起来像信息流 **单张封面**，而非宽幅多格主表（除非上游任务明确要求多格）。
-3. **发挥空间：** 光色、景深、道具与环境可大胆服务于 Hook 与 Context；在「像一个高点击封面」与「有记忆点」之间自由取舍。
-4. **题材软边界：** 优先贴合 Hook + Context + 身份锚定（若有）；无明显餐饮叙事时，不必主动画成厨房/食谱信息图，但不必僵硬禁止。
-5. Include masterpiece, 8k; brief 需要简中主标时，用英文说明「画内简中大字」要求即可。
+3. **高細節還原 + 字色衝擊：** Explicitly stage **high-detail Simplified-Chinese hero type** (stroke weight, tracking, color vs background) and translate **body/context cues** into **photoreal scene elements**—light-motivated, tactile, editorial—not vague mood boards.
+4. **莎劇 × 寫實：** English wording may use **Shakespearean economy and metaphor**; the **image yield** must stay **contemporary editorial photorealism**—believable optics, luxury or gritty texture as the hook demands.
+5. **发挥空间：** 光色、景深、道具与环境大胆服务 Hook + Context；身份块经英文化后要 **art-directed**，有角色感。
+6. **题材软边界：** 优先贴合 Hook + Context + 身份（若有）；不相关的题材不必硬加。
+7. Include masterpiece, 8k; 画内简中主标用英文写清规格（位置、对比、语言）。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -326,6 +328,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "你是一位像莎士比亚剧场里锤炼台词那样锤炼画面的双语视觉编导：精通语言的节奏与意象，读中文时像读诗一样抓住「最省字、最有画面」的那几笔。",
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
+          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图** 以及 **内文关键场景**（可转译为画面的空间、道具、光线），供下游写出高细节封面而不会只剩抽象形容词。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
@@ -456,7 +459,7 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   const personaBlock =
     personaRaw.length > 0
       ? `
-【单帧出镜 · 身份参考】（英文里尽量带出可拍的身份气质与场景质感；不必逐字复译）
+【单帧出镜 · 身份参考】（英文化时请带 **莎剧式语言的凝练与隐喻美感**，同时用 **当代摄影大师级的写实光影与材质** 写清可拍场景；身份与 IP 信息经翻译后应像「角色上场」而非简历堆砌；不必逐字复译）
 ${personaRaw}
 
 `.trim() + "\n\n"
@@ -478,14 +481,15 @@ ${isVideo ? `
 VERTICAL 9:16 STORYBOARD STRIP（軟邊界 · 偏竖版多分镜条）:
 - 整体：**vertical 9:16**，多分镜条、格与格之间有明确分期；**不要**做成横版 2×4 主表那种宽幅八格。
 - 建议 **≥3** 格、格间留 gutter；节奏像短影音 beat，**优先**多分镜条；若创意上更贴 hook，也可偏「强主标题 + 少格」但保持竖条气质。
-- **首格 / 缩略图友好：** 钩子的简中主标尽量对比强、缩略图仍能读出张力。
+- **首格 / 缩略图友好：** 钩子的简中主标尽量对比强、缩略图仍能读出张力；各格影像可走 **当代写实光影**，英文 prompt 可用 **莎剧式短意象** 串起节奏。
 - main title based on 「${hook}」
 ` : `
 COVER DESIGN（軟邊界 · 单张竖版封面）:
 - **版式：** vertical 9:16、单张、一个主视觉；读作信息流 **封面**，而不是小红双卡笔记、也不是 2×4 / 八格合成表（除非任务明确要求）。
+- **主标 + 内文場景還原：** 用 **高細節** 英文指令让画内还原：钩子「${hook}」与 Context 中的关键意象——**标题字形、字重与配色**要有 **视觉冲力**（高对比或大胆单色楔入），内文线索转成 **可信的空间、道具与光线**，像杂志片场的 **一帧定镜**。
 - **主标区建议：** 上方约 **35–45%** 留给大号、可读的简中钩子；对比足；避免「只有脚注小字」导致缩略图信息弱——具体构图你自由安排。
-- **发挥：** 光影、色彩、环境、道具可大胆服务「${hook}」与 Context；尽量 **一个** 让人划走的记忆点（色块、轮廓光、符号道具、不对称、环境张力等均可）。
-- **身份：** 若有上方身份参考块，人物气质、着装与场景档次 **自然对齐** 即可，不必模板化。
+- **发挥：** 光影、色彩、环境、道具可大胆服务「${hook}」与 Context；尽量 **一个** 让人划走的记忆点（色块、轮廓光、符号道具、不对称、环境张力等均可）。英文 prompt 本身可带 **莎剧式短促意象**，画面执行则依赖 **当代写实摄影光效**（体积光、边缘光、景深、颗粒或编辑锐度按需）。
+- **身份：** 若有上方身份参考块，人物气质、着装与场景档次 **自然对齐** 即可；经翻译后在英文里应 **有艺术概括力**，不必模板化。
 - **离奇素材：** 明显脱离钩子与 Context 的无关元素（例如全文不谈吃却画成套食谱信息图）成功率低，**倾向于** 不出现即可；其余不过度列举禁忌，由你权衡。
 - main title based on 「${hook}」
 `}
@@ -558,6 +562,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     "你是頂級中英雙語編導，也是頂級視覺提示詞導演。",
     "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 網格等）的前提下，盡情發揮光影與構圖；避免機械重複的「保守安全」審美。",
+    "**單張豎封**：英文可帶莎劇式節奏與意象，但須寫清 **畫內簡中大標** 的層級與 **撞色/對比**，並把內文線索還原成 **寫實場景細節**；身份塊要翻成 **有戲劇張力的出場**，不是條列履歷。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
     "須含 masterpiece、8k；寫清情緒、燈光、場景、主體。網格類任務請保留格數與閱讀順序等關鍵信息；單張封面則偏單一主視覺即好。",
   ].join("\n");
@@ -736,6 +741,7 @@ export async function callGemini3_1_Pro_AiStudio(
             GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
             "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
+            "**竖版单封**：让 **简中标题** 呈现 **高冲击力**（字重、字距、与背景的色相对撞或金属/霓虹等克制用法）；把 Context 里的叙事 **落成可拍的写实场景**；身份／人设英文化要有 **莎剧式概括力**，画面光影走 **当代摄影编辑的写实逻辑**（体积光、边缘光、可信材质）。",
             "版式轨道（2×2、2×4、9:16 单封面等）尽量与上游一致；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
             "在满足版式軌道的前提下，鼓励更有张力的光色与构图，避免千篇一律的「安全模板脸」。",
