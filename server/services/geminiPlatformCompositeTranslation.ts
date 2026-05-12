@@ -577,10 +577,10 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
   return out;
 }
 
-/** GPT‑5.5 封面回退：`max_completion_tokens` 預設 **8192**（`GPT55_COVER_FALLBACK_MAX_TOKENS` 可覆寫，且 **不超過 8192**）。 */
+/** GPT‑5.5 封面回退：`max_completion_tokens` 預設 **16834**（`GPT55_COVER_FALLBACK_MAX_TOKENS` 可覆寫，且 **不超過 16834**）。 */
 const GPT55_COVER_FALLBACK_MAX_TOKENS = Math.min(
-  8192,
-  Math.max(256, Number(process.env.GPT55_COVER_FALLBACK_MAX_TOKENS) || 8192),
+  16_834,
+  Math.max(256, Number(process.env.GPT55_COVER_FALLBACK_MAX_TOKENS) || 16_834),
 );
 
 /**
