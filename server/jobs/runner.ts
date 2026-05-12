@@ -627,8 +627,21 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         return 20 * 60_000;
       }
       if (input.action === "platform_topic_image") {
+        const params = input.params ?? {};
         const raw = Number(process.env.PLATFORM_TOPIC_IMAGE_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 60_000) return raw;
+        const meta = params.newJobMetaBase;
+        const highCtr =
+          meta &&
+          typeof meta === "object" &&
+          !Array.isArray(meta) &&
+          Boolean((meta as Record<string, unknown>).coverHighClickAppeal);
+        if (highCtr) {
+          const rawHigh = Number(process.env.PLATFORM_TOPIC_IMAGE_HIGH_CTR_JOB_TIMEOUT_MS);
+          if (Number.isFinite(rawHigh) && rawHigh >= 120_000) return rawHigh;
+          /** Pro 竞品清洗（默认 ~8min 轮询上限）+ 生图主路径与兜底 */
+          return 18 * 60_000;
+        }
         return 15 * 60_000;
       }
     } catch {
