@@ -315,8 +315,9 @@ TAG:STORYBOARD_2X4_SHEET
 1. Output **one** English block **for GPT-Image-2 execution**；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious；必要時用編號句寫清頂欄比例、格線、gutter。**No character limit**—use enough English to lock all eight beats and the table schema。中文劇本僅作參考。
 2. **全表顶栏（仅此一处「上方主题」）：** 画布最上 **~8–12%** 为**通栏横条**，主信息为 **内容总结**（全片/全案梗概或本段剧情提要）；可并排或次行出现「· 分镜脚本」等定式后缀。**勿**将各格的分镜标题写进顶栏。**Do not** place the first row of panels flush against the top edge.
 3. **栅格：** 顶栏之下 **整整 8 格**，**2 行 × 4 列**，刚性格线与格间直 gutter、顺扫 row1 左→右再 row2；masterpiece、8k，每格主画面为写实电影感分镜静帧。
-4. **每一格自上而下：** (A) **格内顶：** **分镜主题描述**（仅本格一句醒目简中主题）；(B) **格内中：** 该分镜主画面（上区约 **70–75%**，除表格外纯影像）；(C) **格内底 ~25–30%：** 简中**四栏参考表**，表头固定为 **景别**、**运镜**、**画面内容**、**台词与音效**，四柱均有正文；可细网格；表内须为**简体中文**。**Do not** leave panels wholly wordless in the table band.
-5. **版式约束：** 禁止整画布单张满幅顶掉八格、无顶栏、或仅四宫格笔记版——本任务为 **八格主表**；若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，亦偏离产品主表意图；其余景别与光影可充分发挥。
+4. **每一格自上而下：** (A) **格内顶：** **分镜主题描述**（仅本格一句醒目简中主题）；(B) **格内中：** 该分镜主画面（上区约 **70–75%**，除表格外纯影像）；主静帧可走暗调／夜景／低 key；(C) **格内底 ~25–30%：** 简中**四栏参考表**，表头固定为 **景别**、**运镜**、**画面内容**、**台词与音效**，四柱均有正文；可细网格；表内须为**简体中文**。**Do not** leave panels wholly wordless in the table band。
+5. **主图 vs 表格对比（可读性硬约束）：** 底部四栏为 **読み物**——须与 (B) 暗调剧照 **拉开明度**：**浅色实底**（米色／淡奶油／暖灰纸／浅羊皮纸），**简体中文正文近似黑或深栗**，细 **深褐／黑** 格线或小标题可加粗；可做 **轻描边／窄白条**分隔静帧下边与表格顶。**禁止**整块表格带做成 **纯黑底 + 细白／浅灰反字**（简体密文刺眼难辨，医疗科普等更易翻车）。
+6. **版式约束：** 禁止整画布单张满幅顶掉八格、无顶栏、或仅四宫格笔记版——本任务为 **八格主表**；若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，亦偏离产品主表意图；其余景别与光影可充分发挥。
 `.trim();
 
 /** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
@@ -411,8 +412,10 @@ You turn the Chinese script into **one English image prompt** for **GPT-Image-2*
 
 **Non-negotiable — inside every panel (01→08):** each cell stacks vertically:
 1) **格内上方栏：** **分镜主题描述**（本分镜的主题概述）—one bold, legible **简体中文** line for **this shot only** (e.g. 宫门夜雪 / 对峙之刻).
-2) **格内中间：** the **cinematic storyboard still** for that beat (high detail).
+2) **格内中间：** the **cinematic storyboard still** for that beat (high detail). Stills **may be dark** (night interiors, crushed blacks)—that is OK.
 3) **格内下方栏：** a **compact Simplified Chinese table** with **exactly these four fields**, matching the reference layout: **景别**、**运镜**、**画面内容**、**台词与音效**—all four filled from the script per panel; table body **简体中文** (not English-only).
+
+**Readability lock — caption strip:** In English you **must** tell GPT-Image-2 to paint the bottom table band as a **paper-like light panel** (**warm off‑white / cream / parchment / light warm‑gray**) with **near‑black Simplified‑Chinese typography** inside cells; thin dark grid lines OK; optional subtle hairline/margin separating the still above from the caption band. **Forbidden:** inverted **dense white‑on‑black** datasheet UI (thin reversed columns of Chinese microcopy—hard on eyes).
 
 [cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette (you may cite cold/warm contrast, wuxia, medical authority, etc. when the script fits).
 
@@ -771,7 +774,7 @@ export async function callVertexGeminiFlashTranslation(
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
     "**單張豎封**：写清 **畫內簡中大標** 位置、層級、**撞色/對比**；Context 落成 **可拍場景**；身份塊→ **戲劇化出場**，非履歷條列。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
+    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；**每格底部四栏简体须 English 指令写死「浅纸本底（米色／淡奶油／暖灰）＋近似黑简体正文」，与中部可暗调的静帧区分开；禁用整黑底细白字表格。**单张 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
   ].join("\n");
 
@@ -940,7 +943,7 @@ export async function callGemini3_1_Pro_AiStudio(
             "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
             "**竖版单封**：**先**锁 **简中标题** 区（位置、字重、色相对撞/金属/霓虹等克制用法）与 **safe band**；再把 Context **落成可拍写实场景**；人设 → **art-directed** 出场，非散文复述。",
-            "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
+            "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧（可走暗夜景）→ 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。**必须用英文写明底部表格：浅色纸本实底（奶油／米色／暖灰纸幕）与深字头简体**，与上部剧照形成可读对比；勿写「整幅黑底白细字的制片表」。其余画面与光影用英文写清即可。",
             "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
             "**莎剧式文采**仅在版面与光学已写死后可少量点缀。",
