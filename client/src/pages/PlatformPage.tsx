@@ -279,7 +279,7 @@ type ClientJobPollTrace = {
   lines: string[];
   pollCount: number;
   terminalStatus?: string;
-  /** 進行中：僅保留一行「當前步驟」，不把整段 imageGenFlowLog / 輪詢流水刷進面板 */
+  /** 進行中：最後一行服務端步驟摘要；輪詢時同步將 imageGenFlowLog 增量寫入 lines */
   currentStep?: string;
 };
 
@@ -808,6 +808,23 @@ function upsertPlatformImageFlowSnapshot(
   }
   const withoutSameOp = prev.filter((item) => String(item.meta?.localOpId || "").trim() !== opId);
   return [next, ...withoutSameOp].slice(0, 8);
+}
+
+function platformImageFlowSnapshotTitle(kind: PlatformImageGenFlowSnapshot["kind"]): string {
+  switch (kind) {
+    case "batch_topic_frames":
+      return "批量单帧 / 封面";
+    case "batch_topic_frames_failed":
+      return "批量单帧 · 失败";
+    case "composite_2x4":
+      return "2×4 分镜 / 八格图文";
+    case "composite_2x4_failed":
+      return "2×4 合成 · 失败";
+    case "batch_composite_2x4":
+      return "批量 2×4 / 八格";
+    default:
+      return kind;
+  }
 }
 
 /** 滾動窗口內只保留「仍在 60s 內」的發起時間戳 */
@@ -1390,6 +1407,12 @@ export default function PlatformPage() {
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
+  /** Live 輪詢：累加 jobs.output.imageGenFlowLog，避免只顯示最後一行 */
+  const compositeLiveFlowAccumRef = useRef<{
+    jobId: string;
+    baseLines: string[];
+    flowCursor: number;
+  } | null>(null);
   /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
@@ -1733,26 +1756,12 @@ export default function PlatformPage() {
     dashboardDebug,
   ]);
 
-  const platformImageGenFlowSnapshotsFailedOnly = useMemo(
-    () =>
-      platformImageGenFlowSnapshots.filter(
-        (s) => s.kind === "batch_topic_frames_failed" || s.kind === "composite_2x4_failed",
-      ),
-    [platformImageGenFlowSnapshots],
-  );
-
   const flyJobsPollDebugPanel = useMemo(() => {
     const traces = [contentJobPollTrace, topicImageJobPollTrace].filter(Boolean) as ClientJobPollTrace[];
     if (traces.length === 0) return null;
 
     const totalPolls = traces.reduce((sum, t) => sum + t.pollCount, 0);
-    const showFailureLog = traces.some((t) => {
-      if (t.lines.length === 0) return false;
-      if (t.terminalStatus === "failed" || t.terminalStatus === "client_error") return true;
-      if (t.terminalStatus === "succeeded")
-        return t.lines.some((ln) => /无有效|无 output|异常|失败|✗/i.test(ln));
-      return true;
-    });
+    const showPollLines = traces.some((t) => t.lines.length > 0);
 
     const overviewText = traces
       .map((t) => {
@@ -1777,8 +1786,12 @@ export default function PlatformPage() {
         {stepText ? (
           <p className="mt-1.5 break-words text-[10px] leading-relaxed text-gray-300">当前步骤：{stepText}</p>
         ) : null}
-        {showFailureLog ? (
-          <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
+        <p className="mt-1.5 text-[10px] leading-relaxed text-gray-500">
+          「超高点击率封面」流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>，与服端{" "}
+          <code className="text-[#8cefff]">imageGenFlowLog</code> 同步。
+        </p>
+        {showPollLines ? (
+          <pre className="mt-3 max-h-[min(85vh,640px)] overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
             {traces
               .filter((t) => t.lines.length > 0)
               .map((t) => `── ${t.label} · ${t.jobId} ──\n${t.lines.join("\n")}`)
@@ -1823,10 +1836,21 @@ export default function PlatformPage() {
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
       });
+      const tEnq = new Date().toISOString();
+      let coverPollLines = appendPollDebugLine(
+        [],
+        `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
+      );
+      if (inp.coverHighClickAppeal) {
+        coverPollLines = appendPollDebugLine(
+          coverPollLines,
+          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
+        );
+      }
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: [],
+        lines: coverPollLines,
         pollCount: 0,
         currentStep: "已入队…",
       });
@@ -1835,25 +1859,28 @@ export default function PlatformPage() {
       try {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
-          maxWaitMs: 18 * 60_000,
+          maxWaitMs: inp.coverHighClickAppeal ? 25 * 60_000 : 18 * 60_000,
           onPoll: ({ attempt, status, output }) => {
             const flowRaw = output?.imageGenFlowLog;
             let lastNew = "";
-            if (Array.isArray(flowRaw)) {
-              const flow = flowRaw as string[];
-              const start = topicImagePollFlowLogCursorRef.current;
-              if (flow.length > start) {
-                topicImagePollFlowLogCursorRef.current = flow.length;
-                lastNew = String(flow[flow.length - 1] ?? "");
-              }
+            const flow = Array.isArray(flowRaw) ? (flowRaw as string[]) : [];
+            const start = topicImagePollFlowLogCursorRef.current;
+            const newRows = flow.length > start ? flow.slice(start).map((r) => String(r)) : [];
+            if (newRows.length > 0) {
+              topicImagePollFlowLogCursorRef.current = flow.length;
+              lastNew = String(flow[flow.length - 1] ?? "");
             }
             setTopicImageJobPollTrace((prev) => {
               if (!prev || prev.jobId !== jobId) return prev;
+              let lines = prev.lines;
+              for (const row of newRows) {
+                lines = appendPollDebugLine(lines, row);
+              }
               const step =
                 lastNew ||
                 prev.currentStep ||
                 (status === "queued" ? "排队中" : status === "running" ? "生图中…" : "处理中…");
-              return { ...prev, pollCount: attempt, currentStep: step };
+              return { ...prev, pollCount: attempt, currentStep: step, lines };
             });
           },
         });
@@ -1927,7 +1954,24 @@ export default function PlatformPage() {
         setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [inp.sceneId]: coverClickEstimate }));
       }
       if (success) {
-        setTopicImageJobPollTrace(null);
+        const flow = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]).map(String) : [];
+        setTopicImageJobPollTrace((prev) => {
+          if (!prev || prev.jobId !== jobId) return prev;
+          let lines = prev.lines;
+          const start = topicImagePollFlowLogCursorRef.current;
+          for (const row of flow.slice(start)) {
+            lines = appendPollDebugLine(lines, row);
+          }
+          topicImagePollFlowLogCursorRef.current = flow.length;
+          return {
+            ...prev,
+            terminalStatus: "succeeded",
+            lines: appendPollDebugLine(
+              lines,
+              `${new Date().toISOString()} 终态 succeeded · ${pollLabel}${imageUrl ? " · imageUrl 已返回" : ""}`,
+            ),
+          };
+        });
       } else {
         setTopicImageJobPollTrace((prev) =>
           prev && prev.jobId === jobId
@@ -2238,17 +2282,20 @@ export default function PlatformPage() {
         pid.length >= 8
           ? { jobId: pid, localOpId, sceneId: input.sceneId, kind: input.kind }
           : null;
+      const pendingLines = buildCompositeImageGenPendingLines({
+        kind: input.kind,
+        sceneId: input.sceneId,
+        title: input.title,
+        imagePromptTranslator: input.imagePromptTranslator,
+        progressJobId: pid.length >= 8 ? pid : undefined,
+      });
+      compositeLiveFlowAccumRef.current =
+        pid.length >= 8 ? { jobId: pid, baseLines: [...pendingLines], flowCursor: 0 } : null;
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
           kind: "composite_2x4",
-          lines: buildCompositeImageGenPendingLines({
-            kind: input.kind,
-            sceneId: input.sceneId,
-            title: input.title,
-            imagePromptTranslator: input.imagePromptTranslator,
-            progressJobId: pid.length >= 8 ? pid : undefined,
-          }),
+          lines: pendingLines,
           meta: {
             localOpId,
             apiKind: input.kind,
@@ -2269,10 +2316,7 @@ export default function PlatformPage() {
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
       ];
-      const mergedLines =
-        serverLines.length > 0
-          ? [...headerLines, `${ts}  [收尾步骤] ${serverLines[serverLines.length - 1]}`]
-          : headerLines;
+      const mergedLines = serverLines.length > 0 ? [...headerLines, ...serverLines.map(String)] : headerLines;
 
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
@@ -2340,6 +2384,7 @@ export default function PlatformPage() {
     onSettled: () => {
       setPendingCompositeSheet(null);
       compositeSheetLivePollCtxRef.current = null;
+      compositeLiveFlowAccumRef.current = null;
     },
   });
 
@@ -2494,18 +2539,19 @@ export default function PlatformPage() {
       try {
         const j = await getJob(ctx.jobId);
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
-        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
+        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog.map(String) : [];
         const ts = new Date().toISOString();
-        const last = log.length > 0 ? String(log[log.length - 1]) : "";
-        const lines: string[] = [
-          `${ts}  [实时进度] status=${j.status} · sceneId=${ctx.sceneId}`,
-          `${ts}  [当前步骤] ${last || "（等待服务端流水）"}`,
-        ];
+        const acc = compositeLiveFlowAccumRef.current;
+        if (!acc || acc.jobId !== ctx.jobId) return;
+        const newPart = log.slice(acc.flowCursor);
+        if (newPart.length === 0) return;
+        acc.flowCursor = log.length;
+        const merged = [...acc.baseLines, ...newPart];
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
             at: ts,
             kind: "composite_2x4",
-            lines,
+            lines: merged,
             meta: {
               localOpId: ctx.localOpId,
               apiKind: ctx.kind,
@@ -4467,6 +4513,10 @@ export default function PlatformPage() {
                       </div>
                       <div>4b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                     </div>
+                    <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                      「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
+                      与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致；完整行见下方 Fly Jobs 面板。
+                    </div>
                   </div>
 
                   <div className="mt-4 space-y-4">
@@ -4862,12 +4912,13 @@ export default function PlatformPage() {
                     </div>
                   </>
                 ) : null}
+                {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
                 <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
-                      出图失败流水（imageGenFlowLog · 仅失败保留）
+                      生图服务端流水（批量单帧 · 2×4 分镜 · 八格图文 · 成功与失败均保留）
                     </div>
-                    {platformImageGenFlowSnapshotsFailedOnly.length > 0 ? (
+                    {platformImageGenFlowSnapshots.length > 0 ? (
                       <button
                         type="button"
                         onClick={() => setPlatformImageGenFlowSnapshots([])}
@@ -4878,49 +4929,64 @@ export default function PlatformPage() {
                     ) : null}
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    成功跑通的单帧 / 2×4 不再占用本區；僅在客戶端標記為失敗時顯示。
+                    与上方 <span className="text-gray-400">Fly Jobs · 轮询</span> 并列：单帧超高点击率封面的{" "}
+                    <code className="text-[#8cefff]">imageGenFlowLog</code> 详见该面板；本区保留{" "}
+                    <span className="text-gray-400">批量封面</span>、<span className="text-gray-400">2×4 分镜</span>、
+                    <span className="text-gray-400">小红书八格</span>
+                    等 TRPC 返回或轮询累加的<strong className="text-gray-400">完整</strong>服务端步骤（含{" "}
+                    <code className="text-[#8cefff]">[Deep Research Pro]</code> 等与合成管線相关的行）。失败记录红框；成功为绿框。
                   </p>
-                  {platformImageGenFlowSnapshotsFailedOnly.length === 0 ? (
+                  {platformImageGenFlowSnapshots.length === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
-                      目前無失敗流水。若批量或合成報錯，此處會出現紅框記錄。
+                      暂无快照。发起单帧 / 批量 / 2×4 生成后，此处会保留最近若干条完整流水（最新在上）。
                     </div>
                   ) : (
                     <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
-                      {platformImageGenFlowSnapshotsFailedOnly.map((snap, i) => (
-                        <div
-                          key={`${snap.at}-fail-${snap.kind}-${i}`}
-                          className="rounded-xl border border-rose-500/40 bg-black/40 p-3"
-                        >
-                          <div className="font-mono text-[10px] text-rose-300">
-                            {snap.at} ·{" "}
-                            {snap.kind === "batch_topic_frames_failed" ? "批量单帧 · 失败" : "2×4 合成 · 失败"}
-                            {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
-                          </div>
-                          <div className="mt-2">
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(snap.lines.join("\n"));
-                                  toast.success("已复制本段日志（含 TRPC 详情）");
-                                } catch {
-                                  toast.error("复制失败，请手动选中下方文本");
-                                }
-                              }}
-                              className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
+                      {platformImageGenFlowSnapshots.map((snap, i) => {
+                        const failed =
+                          snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed";
+                        return (
+                          <div
+                            key={`${snap.at}-snap-${snap.kind}-${i}`}
+                            className={`rounded-xl border p-3 ${
+                              failed ? "border-rose-500/40 bg-black/40" : "border-emerald-500/30 bg-black/25"
+                            }`}
+                          >
+                            <div
+                              className={`font-mono text-[10px] ${failed ? "text-rose-300" : "text-emerald-200/90"}`}
                             >
-                              复制本段报错全文
-                            </button>
+                              {snap.at} · {platformImageFlowSnapshotTitle(snap.kind)}
+                              {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
+                            </div>
+                            <div className="mt-2">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(snap.lines.join("\n"));
+                                    toast.success("已复制本段日志全文");
+                                  } catch {
+                                    toast.error("复制失败，请手动选中下方文本");
+                                  }
+                                }}
+                                className={`rounded-lg border px-2 py-1 text-[10px] ${
+                                  failed
+                                    ? "border-rose-400/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+                                    : "border-emerald-400/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15"
+                                }`}
+                              >
+                                复制本段全文
+                              </button>
+                            </div>
+                            <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
+                              {snap.lines.join("\n")}
+                            </pre>
                           </div>
-                          <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
-                            {snap.lines.join("\n")}
-                          </pre>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
-                {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
               </div>
             ) : null}
 
@@ -5665,7 +5731,7 @@ export default function PlatformPage() {
                           return;
                         }
                         if (!supervisorAccess) {
-                          const note = `「超高点击率封面」将换主标角度并强化划停向视觉，消耗 ${highCtrCoverCost} 积分，是否继续？`;
+                          const note = `「超高点击率封面」将先由 Deep Research Pro（gemini-deep-research-pro-preview）做竞品清洗，通常数分钟完成（服务端本地等待上限约 8 分钟），再进入生图；并换主标角度、强化划停向视觉。消耗 ${highCtrCoverCost} 积分，是否继续？`;
                           if (!window.confirm(note)) return;
                         }
                         setRegeneratingCoverSceneId(item.id);
@@ -5922,7 +5988,7 @@ export default function PlatformPage() {
                                       }
                                       onClick={handleHighCtrCoverRegenerate}
                                       className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#fbbf24]/45 bg-[#fbbf24]/12 px-2.5 py-1 text-[11px] font-bold text-[#fde68a] transition hover:bg-[#fbbf24]/22 disabled:opacity-50"
-                                      title={`换主标角度 + 划停向极限强化 · ${highCtrCoverCost} 积分`}
+                                      title={`Deep Research Pro 竞品清洗 · 换主标/划停向强化 · 通常数分钟 · 本地轮询上限约 8 分钟 + 生图 · ${highCtrCoverCost} 积分`}
                                     >
                                       <TrendingUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
                                       生成超高点击率封面 · {highCtrCoverCost}点
