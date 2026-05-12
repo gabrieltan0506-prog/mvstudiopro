@@ -1674,13 +1674,20 @@ export default function PlatformPage() {
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
       });
       const tEnq = new Date().toISOString();
+      let coverPollLines = appendPollDebugLine(
+        [],
+        `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
+      );
+      if (inp.coverHighClickAppeal) {
+        coverPollLines = appendPollDebugLine(
+          coverPollLines,
+          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
+        );
+      }
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: appendPollDebugLine(
-          [],
-          `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
-        ),
+        lines: coverPollLines,
         pollCount: 0,
       });
       topicImagePollFlowLogCursorRef.current = 0;
@@ -4323,10 +4330,14 @@ export default function PlatformPage() {
                           : ""}
                       </div>
                     </div>
+                    <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                      「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
+                      与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致。
+                    </div>
                     <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
                       {(topicImageJobPollTrace?.lines ?? []).length > 0
                         ? (topicImageJobPollTrace?.lines ?? []).join("\n")
-                        : "尚无记录。Enqueue 封面任务后写入（手动 / 批量 / 静默补发）。"}
+                        : "尚无记录。Enqueue 封面任务后写入（手动 / 批量 / 静默补发 / 超高点击率封面）。"}
                     </pre>
                   </div>
                 </div>
@@ -4702,7 +4713,8 @@ export default function PlatformPage() {
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
                     位置：本卡片在 <span className="text-gray-400">askPlatformFollowUp.debug</span>{" "}
                     三块 JSON <strong className="text-gray-400">正下方</strong>。
-                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>（含 GPT-IMAGE-2 失败原因、重试与计费提示）；<strong className="text-rose-400/90">失败</strong>
+                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>（含 GPT-IMAGE-2 失败原因、重试与计费提示；<strong className="text-gray-400">超高点击率封面</strong>另含{" "}
+                    <code className="text-[#8cefff]">[Deep Research Pro]</code> 竞品清洗步骤）；<strong className="text-rose-400/90">失败</strong>
                     时 TRPC 错误正文也会附带最近若干行 <code className="text-[#8cefff]">imageGenFlowLog</code> 摘要（2×4 与空 URL 类错误）。
                   </p>
                   {platformImageGenFlowSnapshots.length === 0 ? (
@@ -4808,10 +4820,14 @@ export default function PlatformPage() {
                             : ""}
                         </div>
                       </div>
+                      <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                        「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
+                        与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致。
+                      </div>
                       <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
                         {(topicImageJobPollTrace?.lines ?? []).length > 0
                           ? (topicImageJobPollTrace?.lines ?? []).join("\n")
-                          : "尚无记录。"}
+                          : "尚无记录。Enqueue 封面任务后写入（手动 / 批量 / 静默补发 / 超高点击率封面）。"}
                       </pre>
                     </div>
                   </div>
