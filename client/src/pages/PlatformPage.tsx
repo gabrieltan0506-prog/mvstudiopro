@@ -1777,6 +1777,10 @@ export default function PlatformPage() {
         {stepText ? (
           <p className="mt-1.5 break-words text-[10px] leading-relaxed text-gray-300">当前步骤：{stepText}</p>
         ) : null}
+        <p className="mt-1.5 text-[10px] leading-relaxed text-gray-500">
+          「超高点击率封面」流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>，与服端{" "}
+          <code className="text-[#8cefff]">imageGenFlowLog</code> 同步。
+        </p>
         {showFailureLog ? (
           <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
             {traces
@@ -1823,10 +1827,21 @@ export default function PlatformPage() {
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
       });
+      const tEnq = new Date().toISOString();
+      let coverPollLines = appendPollDebugLine(
+        [],
+        `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
+      );
+      if (inp.coverHighClickAppeal) {
+        coverPollLines = appendPollDebugLine(
+          coverPollLines,
+          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
+        );
+      }
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: [],
+        lines: coverPollLines,
         pollCount: 0,
         currentStep: "已入队…",
       });
@@ -4467,6 +4482,10 @@ export default function PlatformPage() {
                       </div>
                       <div>4b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                     </div>
+                    <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                      「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
+                      与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致；完整行见下方 Fly Jobs 面板。
+                    </div>
                   </div>
 
                   <div className="mt-4 space-y-4">
@@ -4878,7 +4897,11 @@ export default function PlatformPage() {
                     ) : null}
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    成功跑通的单帧 / 2×4 不再占用本區；僅在客戶端標記為失敗時顯示。
+                    位置：本卡片在 <span className="text-gray-400">askPlatformFollowUp.debug</span>{" "}
+                    三块 JSON <strong className="text-gray-400">正下方</strong>。
+                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>（含 GPT-IMAGE-2 失败原因、重试与计费提示；<strong className="text-gray-400">超高点击率封面</strong>另含{" "}
+                    <code className="text-[#8cefff]">[Deep Research Pro]</code> 竞品清洗步骤）；<strong className="text-rose-400/90">失败</strong>
+                    时 TRPC 错误正文也会附带最近若干行 <code className="text-[#8cefff]">imageGenFlowLog</code> 摘要（2×4 与空 URL 类错误）。成功跑通的单帧 / 2×4 默认不占用本區。
                   </p>
                   {platformImageGenFlowSnapshotsFailedOnly.length === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
