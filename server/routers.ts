@@ -56,7 +56,10 @@ import {
   getRuntimeMetricsMeta,
   summarizeRuntimeMetrics,
 } from "./services/runtimeMetricsBuffer.js";
-import { zPlatformImagePromptTranslatorInput } from "./services/geminiPlatformCompositeTranslation.js";
+import {
+  PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE,
+  zPlatformImagePromptTranslatorInput,
+} from "./services/geminiPlatformCompositeTranslation.js";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -4335,7 +4338,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
       }),
 
     /**
-     * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底；分镜 16 cr / 小红书八格 24 cr（见 CREDIT_COSTS）。
+     * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底。
+     * 单条：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
+     * 一键 **四条** 套裝：合计 `platformCompositeBulkFourTopics`（168）點，四次 API 各扣 42；传 `bulkFourTopicsFlat168`。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
@@ -4352,21 +4357,28 @@ ${JSON.stringify(platformEvidence, null, 2)}
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
           creationRecordId: z.number().int().positive().optional(),
+          /**
+           * 一鍵四條選題批量：每次請求均摊 168/4 點（合計 168）。
+           * 僅在客戶端確有連續 4 次同批次時傳入；slotIndex 須為 0..3。
+           */
+          bulkFourTopicsFlat168: z
+            .object({
+              clientBatchKey: z.string().min(8).max(96),
+              slotIndex: z.number().int().min(0).max(3),
+            })
+            .optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
-          input.imagePromptTranslator ?? "gpt54";
-        if (
-          imagePromptTranslatorForComposite === "vertex_gemini_3_flash_preview" &&
-          !isAdminUser
-        ) {
-          imagePromptTranslatorForComposite = "gpt54";
-        }
-        const cost =
-          input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
+          input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
+        const bulkFour = input.bulkFourTopicsFlat168;
+        const bulkSlotCost = Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4);
+        const cost = bulkFour
+          ? bulkSlotCost
+          : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? CREDIT_COSTS.platformStoryboardSheet
             : CREDIT_COSTS.platformXhsDualNote;
 
@@ -4382,9 +4394,11 @@ ${JSON.stringify(platformEvidence, null, 2)}
             userId,
             cost,
             "platformCompositeSheet",
-            input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-              ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
-              : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`,
+            bulkFour
+              ? `2×4 四条套裝均摊 (${bulkFour.slotIndex + 1}/4 · ${cost} 点)· ${input.kind} · ${input.title.slice(0, 40)}`
+              : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
+                ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
+                : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`,
           );
         }
 
@@ -4424,7 +4438,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
         appendImageFlowLog(
           imageGenFlowLog,
-          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)}`,
+          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)}` +
+            (bulkFour
+              ? ` · 四条套裝均摊 ${bulkFour.slotIndex + 1}/4 · 本笔 ${cost} 点（套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics}）`
+              : ""),
         );
         const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
         appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
@@ -4459,8 +4476,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
           const hasFullLogInMessage =
             rawMessage.includes("执行日志:") || rawMessage.includes("—— imageGenFlowLog ——");
-          let clientMessage = `引擎错误 (积分已退回): \n${rawMessage}`;
-          if (!hasFullLogInMessage && imageGenFlowLog.length > 0) {
+          const isCompositeCapacity =
+            rawMessage.trim() === PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE ||
+            rawMessage.includes(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
+          let clientMessage = isCompositeCapacity
+            ? `${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}（积分已退回）`
+            : `引擎错误 (积分已退回): \n${rawMessage}`;
+          if (!isCompositeCapacity && !hasFullLogInMessage && imageGenFlowLog.length > 0) {
             const logTail = imageGenFlowLog
               .filter((s) => String(s).trim())
               .slice(-72)

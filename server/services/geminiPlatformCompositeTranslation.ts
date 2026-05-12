@@ -201,8 +201,11 @@ function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: st
   return undefined;
 }
 
-/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（GPT 5.4 默认；`vertex_gemini_3_flash_preview` = Vertex **Gemini 3 Flash Preview**，預設 **global**，三輪後 fallback GPT 5.4）。 */
+/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（單幀等可仍選 GPT 5.4 先；`vertex_gemini_3_flash_preview` = Vertex **Gemini 3 Flash** · 分鏡/小紅書八格預設 **Flash 三輪 → GPT 5.4 三輪**）。 */
 export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
+
+/** 分鏡圖 / 小紅書 2×4 圖文筆記：Flash 與 GPT 5.4 英文化各三輪仍失敗時對用戶顯示的訊息（見 {@link translatePlatformCompositeToEnglishPrompt}）。 */
+export const PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE = "系统算力紧张，请稍后再试";
 
 /**
  * tRPC / 作業入參：接受新 slug 與舊版錯名 `vertex_gemini_31_pro_preview`（自動正規化為 Flash）。
@@ -274,12 +277,11 @@ export const STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER = `
 TAG:STORYBOARD_2X4_SHEET
 
 【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape）】
-1. Output **one** English block；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious.**No character limit**—use more English if eight beats need it.
-2. **MANDATORY TOP TITLE STRIP (简体中文) ABOVE THE GRID**: reserve the **top ~8–12%** of the **entire** canvas as a **full-width horizontal title band** with **one prominent main title in legible Simplified Chinese** (系列标题 / 成片主题 / 视频标题—summarize from the script hook). Optional smaller 简体中文 subtitle or kicker under the main line; thin rule or soft divider between this band and the grid. **Do not** place the first row of panels flush against the top edge—**the title band must sit above all eight cells.**
-3. LAYOUT below the title band: wide ~16:9 landscape master continues with **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, obvious storyboard / contact-sheet, masterpiece, 8k, intricate cinematic film stills per cell upper area (within each cell).
-4. **MANDATORY 简体中文字幕表（讯息分格）inside every panel**: reserve the **bottom ~25–30%** of **each** cell for a **compact Simplified Chinese caption table** (shot breakdown strip): **2–4 short labeled rows** (e.g. 镜头 / 景别, 情绪 / 氛围, 口播要点 or 画面说明)—styled like professional storyboard 「分格说明」or the reference phrase **"Chinese text tables below each image"**; thin grid lines or rules allowed; text must be **legible 简体中文 only** in these tables (no English in the table body). **Do not** leave panels wholly wordless.
-5. Upper ~70–75% of each cell (the film-still zone): pure cinematic imagery only (no floating subtitles outside the reserved table band inside that cell).
-6. **版式软边界：** 若丢了顶栏中文大标题、或把八格收成单张满幅 / 只剩四格笔记卡，会与「2×4 主表」产品意图不符；其余镜头设计与影调可充分发挥。
+1. Output **one** English block；**prefer** comma-separated tags / short fragments；**No character limit**—use enough English to lock all eight beats and the table schema.
+2. **全表顶栏（仅此一处「上方主题」）：** 画布最上 **~8–12%** 为**通栏横条**，主信息为 **内容总结**（全片/全案梗概或本段剧情提要）；可并排或次行出现「· 分镜脚本」等定式后缀。**勿**将各格的分镜标题写进顶栏。
+3. **栅格：** 顶栏之下 **整整 8 格**，**2 行 × 4 列**，顺扫序 row1 左→右再 row2；格间直 gutter；8k / masterpiece，每格主画面为写实电影感分镜静帧。
+4. **每一格自上而下：** (A) **格内顶：** **分镜主题描述**（仅本格一句醒目简中主题）；(B) **格内中：** 该分镜主画面；(C) **格内底 ~25–30%：** 简中**四栏参考表**，表头/标签固定为 **景别**、**运镜**、**画面内容**、**台词与音效**，四柱均有正文；可细网格；表内正文须为**简体中文**。
+5. **版式软边界：** 若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，则偏离产品主表意图；其余景别与光影可充分发挥。
 `.trim();
 
 /** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
@@ -328,6 +330,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "你是一位像莎士比亚剧场里锤炼台词那样锤炼画面的双语视觉编导：精通语言的节奏与意象，读中文时像读诗一样抓住「最省字、最有画面」的那几笔。",
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
+          "若输入宽幅 2×4 **电影分镜主表**剧本：骨架里区分——**全文内容总结**（适合放在整表顶栏的一句汇总）与各格 **分镜主题**（每格一句）及可填入 **景别/运镜/画面内容/台词与音效** 的要点，勿把各格主题误并入「顶栏总结」混写。",
           "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图** 以及 **内文关键场景**（可转译为画面的空间、道具、光线），供下游写出高细节封面而不会只剩抽象形容词。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
@@ -369,9 +372,12 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
     `
 You turn the Chinese script into **one English image prompt** for GPT Image. Prefer comma-separated tags / short fragments so the frame reads as **8 panels in 2 rows × 4 columns** with clear gutters—not a single full-bleed poster. Longer English is fine if it helps lock all eight beats.
 
-**Non-negotiable — top title:** the canvas must begin with a **full-width top band (~8–12% height)** containing **one main title in legible Simplified Chinese** (成片 / 系列主题，紧扣剧本钩子)。**All eight storyboard panels sit below this strip**—never flush to the top edge without a 简体中文 header.
+**Non-negotiable — top title strip (全表唯一「上方主题」):** the **top ~8–12%** is **only** for **内容总结**—the overall thematic headline for the entire sheet (whole-script / episode summary). You may show 「{成片或系列名} · 分镜脚本」next to or above that summary line, but **never** put per-shot titles here—those live **only inside each panel**. **All eight cells sit entirely below this strip**—never align the first row of panels flush to the canvas top.
 
-**Non-negotiable — panels:** every panel must include a **lower caption zone** with **legible Simplified Chinese** in a **small table / labeled rows** (讯息分格表、分镜说明), same idea as: "Chinese text tables below each image" in cinematic 2×4 reference boards—not optional, not English-only UI.
+**Non-negotiable — inside every panel (01→08):** each cell stacks vertically:
+1) **格内上方栏：** **分镜主题描述**（本分镜的主题概述）—one bold, legible **简体中文** line for **this shot only** (e.g. 宫门夜雪 / 对峙之刻).
+2) **格内中间：** the **cinematic storyboard still** for that beat (high detail).
+3) **格内下方栏：** a **compact Simplified Chinese table** with **exactly these four fields**, matching the reference layout: **景别**、**运镜**、**画面内容**、**台词与音效**—all four filled from the script per panel; table body **简体中文** (not English-only).
 
 [cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette (you may cite cold/warm contrast, wuxia, medical authority, etc. when the script fits).
 
@@ -522,8 +528,13 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
  * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。
  * **三次仍失敗** → **fallback {@link callGemini3_1_Pro_AiStudio}（OpenAI GPT 5.4，同樣最多 3 輪，且不再回呼 Vertex）**。
+ * @param opts.compositeTranslationStrict 分鏡/八格專用：GPT 三輪仍失敗時改 **拋出** {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}。
  */
-export async function callVertexGeminiFlashTranslation(translationTask: string, flowLog?: string[]): Promise<string> {
+export async function callVertexGeminiFlashTranslation(
+  translationTask: string,
+  flowLog?: string[],
+  opts?: { compositeTranslationStrict?: boolean; pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx },
+): Promise<string> {
   const task = String(translationTask || "").trim();
   if (!task) {
     appendVertexFlashDebug(flowLog, `輸入 task 為空 → 中止`);
@@ -564,7 +575,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 網格等）的前提下，盡情發揮光影與構圖；避免機械重複的「保守安全」審美。",
     "**單張豎封**：英文可帶莎劇式節奏與意象，但須寫清 **畫內簡中大標** 的層級與 **撞色/對比**，並把內文線索還原成 **寫實場景細節**；身份塊要翻成 **有戲劇張力的出場**，不是條列履歷。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體。網格類任務請保留格數與閱讀順序等關鍵信息；單張封面則偏單一主視覺即好。",
+    "網格類任務請保留格數與閱讀順序等關鍵信息；**電影 2×4 分鏡主表**頂欄僅放 **內容總結**，每格內再放 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張封面則偏單一主視覺即好。",
   ].join("\n");
 
   appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
@@ -669,14 +680,17 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     `[Vertex GenAI ${resolveVertexFlashTranslationModelName()} 三輪失敗 · ${resolveVertexFlashTranslationLocation()}] 改走 GPT 5.4:`,
     lastFailure instanceof Error ? lastFailure.message : lastFailure,
   );
-  return await callGemini3_1_Pro_AiStudio(task, flowLog, undefined, { skipVertexFallback: true });
+  return await callGemini3_1_Pro_AiStudio(task, flowLog, opts?.pipelineStatCtx, {
+    skipVertexFallback: true,
+    compositeTranslationStrict: Boolean(opts?.compositeTranslationStrict),
+  });
 }
 
 /**
  * 舊名保留：平台「探索」英文化走 {@link callVertexGeminiFlashTranslation}（Flash Live Preview · 失敗 3 次後 GPT 5.4）。
  */
 export async function callVertexGemini31ProForImagePrompt(translationTask: string, flowLog?: string[]): Promise<string> {
-  return callVertexGeminiFlashTranslation(translationTask, flowLog);
+  return callVertexGeminiFlashTranslation(translationTask, flowLog, undefined);
 }
 
 /** 與 {@link callVertexGemini31ProForImagePrompt} 相同，便於對照文檔命名。 */
@@ -684,33 +698,20 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
   return callVertexGemini31ProForImagePrompt(prompt);
 }
 
-/** GPT 三輪無效且 GCP 停權時：跳過 Vertex Flash，返回可送 strip 的英文應急指令（避免 403/帳單錯誤）。 */
-function buildEmergencyEnglishPrompt(prompt: string, flowLog?: string[]): string {
-  appendGpt54TranslationDebug(
-    flowLog,
-    "[GCP避險] GPT 三輪無可用輸出 · 跳過 Vertex Flash · 使用應急英文包裝（計費恢復後請關閉 PLATFORM_WEEKEND_GCP_ESCAPE）",
-  );
-  const t = String(prompt || "").trim();
-  const body = t.length > 14_000 ? `${t.slice(0, 14_000)}\n…(emergency trim)` : t;
-  return [
-    "Single English image-generation instruction. Emergency mode: GCP Vertex skipped (billing suspended).",
-    "masterpiece, 8k, editorial or cinematic luxury; translate the creative brief below into pixels (keep layout grid intent if the brief describes 2×4 / 2×2 / 9:16).",
-    body,
-  ].join("\n\n");
-}
-
 /**
  * 平台生图英文化：**OpenAI（預設 gpt-5.4，與 Stage 2 長文 gpt-5.5 分離）** 最多 3 次。
- * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 Vertex Flash；避險 / Vertex 失敗時改 **應急英文**。
+ * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 Vertex Flash；**不再**偽裝可用 prompt：GCP 避險、`skipVertexFallback`、Vertex 兜底失敗等一律 **拋錯**（用戶向 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * `skipVertexFallback`：由 {@link callVertexGeminiFlashTranslation} 在 Flash 三輪後呼叫，避免再次打 Vertex。
+ * `compositeTranslationStrict`：分鏡/八格英文化；GPT 三輪盡力後不發 Vertex，直接拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}。
  */
 export async function callGemini3_1_Pro_AiStudio(
   prompt: string,
   flowLog?: string[],
   statCtx?: Gpt54PlatformImagePromptStatCtx,
-  opts?: { skipVertexFallback?: boolean },
+  opts?: { skipVertexFallback?: boolean; compositeTranslationStrict?: boolean },
 ): Promise<string> {
   const skipVertexFallback = Boolean(opts?.skipVertexFallback);
+  const compositeTranslationStrict = Boolean(opts?.compositeTranslationStrict);
   /** 英文化走較廉價預設；勿改 gpt-5.5（多輪重試費用高）。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
@@ -742,6 +743,7 @@ export async function callGemini3_1_Pro_AiStudio(
             "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
             "**竖版单封**：让 **简中标题** 呈现 **高冲击力**（字重、字距、与背景的色相对撞或金属/霓虹等克制用法）；把 Context 里的叙事 **落成可拍的写实场景**；身份／人设英文化要有 **莎剧式概括力**，画面光影走 **当代摄影编辑的写实逻辑**（体积光、边缘光、可信材质）。",
+            "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
             "版式轨道（2×2、2×4、9:16 单封面等）尽量与上游一致；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
             "在满足版式軌道的前提下，鼓励更有张力的光色与构图，避免千篇一律的「安全模板脸」。",
@@ -893,37 +895,47 @@ export async function callGemini3_1_Pro_AiStudio(
       : `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
   );
   if (isPlatformWeekendGcpEscape()) {
-    appendGpt54TranslationDebug(flowLog, "[GCP避險] 三周無可用英文 · 跳過 Vertex · 應急英文包裝");
-    return buildEmergencyEnglishPrompt(prompt, flowLog);
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[GCP避險] GPT 三輪無可用英文 · 跳過 Vertex · 終止（見 PLATFORM_WEEKEND_GCP_ESCAPE）· ${summary.slice(0, 400)}`,
+    );
+    throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
+  }
+  if (compositeTranslationStrict && !skipVertexFallback) {
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[GPT54·翻译] compositeTranslationStrict · GPT 三輪無效 · 不發 Vertex · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
+    );
+    throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
   }
   if (skipVertexFallback) {
     appendGpt54TranslationDebug(
       flowLog,
-      `[GPT54·翻译] Flash→GPT 兜底仍無可用英文 · ${summary.slice(0, 400)} → buildEmergencyEnglishPrompt`,
+      `[GPT54·翻译] Flash→GPT 兜底仍無可用英文 · ${summary.slice(0, 400)} · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
     );
     console.error("[平台英文化] Vertex Flash 三輪後 GPT 5.4 三輪仍失败 ·", summary.slice(0, 500));
-    return buildEmergencyEnglishPrompt(prompt, flowLog);
+    throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
   }
   try {
-    return await callVertexGeminiFlashTranslation(prompt, flowLog);
+    return await callVertexGeminiFlashTranslation(prompt, flowLog, undefined);
   } catch (vertexErr: unknown) {
     const vDetail = formatErrForVertexDebug(vertexErr);
     const vm = resolveVertexFlashTranslationModelName();
     const vl = resolveVertexFlashTranslationLocation();
     appendVertexFlashDebug(flowLog, `[Vertex·Flash·fallback] 失敗 · ${vDetail}`);
     console.error("[平台英文化] OpenAI 三輪後 Vertex 兜底失敗:", vertexErr instanceof Error ? vertexErr.message : vertexErr);
-    console.error("🚨 改走應急英文 prompt，避免整條生圖管線中斷（見 imageGenFlowLog）");
     appendGpt54TranslationDebug(
       flowLog,
-      `[應急] Vertex 兜底失敗（${vm}·${vl}）· ${summary.slice(0, 400)} → buildEmergencyEnglishPrompt`,
+      `[Vertex·Flash·兜底失敗]（${vm}·${vl}）· GPT 摘要: ${summary.slice(0, 400)} · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
     );
-    return buildEmergencyEnglishPrompt(prompt, flowLog);
+    throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
   }
 }
 
 /**
- * 平台 2×4 / 小紅書合成與選題單幀：預設 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（見 {@link callVertexGeminiFlashTranslation}，三輪後自動改 **GPT 5.4**）。
- * 戰略封面 / 章節扉頁文案仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
+ * 平台 **選題單幀**：預設 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（見 {@link callVertexGeminiFlashTranslation}，三輪後 **GPT 5.4**）。
+ * **分鏡主表 / 小紅書八格** 英文化見 {@link translatePlatformCompositeToEnglishPrompt}（預設 Flash→GPT，雙軌失敗拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
+ * 戰略封面 / 章節扉頁仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(
   translationTask: string,
@@ -988,7 +1000,7 @@ export async function callGemini31ProForImagePrompt(
 export async function translatePlatformCompositeToEnglishPrompt(options: {
   kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   scriptContext: string;
-  /** A/B：預設 GPT 5.4；與 {@link engine} 併用時以 engine 為準 */
+  /** 保留相容；分鏡/八格 **預設** 已改為 Vertex **Gemini 3 Flash** 三輪 → **GPT 5.4** 三輪；僅 `engine=gpt54` 時強制先 GPT */
   translator?: PlatformImagePromptTranslator;
   /** A/B：`gemini31flash` 強制走 Flash Live（預設 global，見 `resolveVertexFlashTranslationLocation`）；`gpt54` 強制 GPT 5.4 */
   engine?: "gpt54" | "gemini31flash";
@@ -1021,11 +1033,15 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     flowLog,
     pipelineStatCtx: compositeStatCtx,
   });
+  const compositeFlashOpts = {
+    compositeTranslationStrict: true as const,
+    pipelineStatCtx: compositeStatCtx,
+  };
   const isStoryboard =
     options.kind === "storyboard_sheet_portrait" || options.kind === "storyboard_sheet_landscape";
   appendVertexFlashDebug(
     flowLog,
-    `translatePlatformComposite · kind=${options.kind} · translator=${options.translator ?? "(默認 gpt54)"} · engine=${options.engine ?? "n/a"}`,
+    `translatePlatformComposite · kind=${options.kind} · translator=${options.translator ?? "(未指定)"} · engine=${options.engine ?? "n/a"}`,
   );
   const chineseBrief = await extractChineseVisualBrief(options.scriptContext, flowLog);
   const task = isStoryboard
@@ -1036,9 +1052,27 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   if (isPlatformWeekendSurvivalModeEnabled()) {
     appendVertexFlashDebug(
       flowLog,
-      "[生存模式] 強制 OpenAI 英文化鏈（忽略 engine / translator 選項）",
+      "[生存模式] 強制 OpenAI 英文化鏈（忽略 engine / translator 選項）· compositeTranslationStrict",
     );
-    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
+    try {
+      const raw = await callGemini3_1_Pro_AiStudio(task, flowLog, compositeStatCtx, {
+        compositeTranslationStrict: true,
+      });
+      const out = stripGeminiModelOutput(raw);
+      if (!out) {
+        appendGpt54TranslationDebug(
+          flowLog,
+          "[GPT54·崩溃原因] stripGeminiModelOutput 后为空 · survival+composite strict",
+        );
+        throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
+      }
+      return out;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE) throw error;
+      appendVertexFlashDebug(flowLog, `translatePlatformComposite survival 抛出 · ${formatErrForVertexDebug(error)}`);
+      throw new Error(`[GPT 5.4（OpenAI） 翻译崩溃]: ${message}`);
+    }
   }
 
   if (options.engine === "gemini31flash") {
@@ -1052,12 +1086,18 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     console.log(
       `[platformComposite] engine=gemini31flash → Vertex ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`,
     );
-    return callVertexGeminiFlashTranslation(task, flowLog);
+    return callVertexGeminiFlashTranslation(task, flowLog, compositeFlashOpts);
   }
   if (options.engine === "gpt54") {
     console.log("[platformComposite] engine=gpt54 → GPT 5.4");
     return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
   }
 
-  return callGemini31ProForImagePrompt(task, gptImgBridgeOpts(options.translator ?? "gpt54"));
+  if (options.translator === "gpt54") {
+    appendVertexFlashDebug(flowLog, "[相容] translator=gpt54 → 先 GPT 5.4 英文化（非預設路徑）");
+    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
+  }
+
+  appendVertexFlashDebug(flowLog, "[預設] Vertex Gemini 3 Flash ×3 → GPT 5.4 ×3 · compositeTranslationStrict");
+  return callVertexGeminiFlashTranslation(task, flowLog, compositeFlashOpts);
 }
