@@ -319,10 +319,11 @@ const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 5. **高級審美與質感：** **premium editorial** CMF—金屬/玻璃/織物/漆面等材質對比 **believable**；整體節制、像高價位品牌片場靜帧，**禁止**低幼剪貼畫感（除非題材明確要求卡通）。
 6. **主題圖示 + 簡中輔標：** 在主標周邊（下沿、側欄、角標帶）可安排 **與主題語義一致的象形圖示 / badge / pill / 簡潔符號**（適度、不塞滿）+ **可讀简体中文微文案**（短副標、括注、2–8 字級提示均可）。**層級：** 主標 **支配畫面**；圖示與小字 **點題、增資訊密度**，不得壓過主標可讀性。
 7. **視覺衝擊配色：** 明確 **dominant** 色調 + **razor accent**（色楔、色帶、霓虹漸變邊等）制造 **scroll-stop**；主標與背板 **對比足**；避免臟灰混色導致缩略圖糊掉。
-8. **高細節字體：** **Simplified-Chinese hero type**—字重、字距、與背景的 **color separation** 寫死；辅层简中字字號小一級但仍清晰。
-9. **莎劇 × 寫實：** **Optional** English flourish **after** (1–8) locked; image yield stays **contemporary editorial photorealism**.
-10. **题材软边界：** 贴合 Hook + Context + 身份（若有）；離題資訊圖無需硬塞。
-11. Include masterpiece、8k；画内简中主標與辅标用英文写清位置及对比規格。
+8. **生動創意 × 勾起好奇：** 整體 **conceptually lively**：構圖／道具／隱喻可 **大膽但可信**，一眼能感知 **钩子张力／戏剧性一瞬间／非常規對撞**，讓用戶在滑動信息流時 **想看第二眼、想知道「怎麼了／然後呢」**。英文務必写明 **visual hook + curiosity gap**（≠ 標題欺詐）；**杜绝**泛泛安全牌的「無信息量素材臉」——題材許可時要敢想一步。
+9. **高細節字體：** **Simplified-Chinese hero type**—字重、字距、與背景的 **color separation** 寫死；辅层简中字字號小一級但仍清晰。
+10. **莎劇 × 寫實：** **Optional** English flourish **after** (1–9) locked; image yield stays **contemporary editorial photorealism**.
+11. **题材软边界：** 贴合 Hook + Context + 身份（若有）；離題資訊圖無需硬塞。
+12. Include masterpiece、8k；画内简中主標與辅标用英文写清位置及对比規格。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -360,7 +361,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
           "若输入宽幅 2×4 **电影分镜主表**剧本：骨架里区分——**全文内容总结**（适合放在整表顶栏的一句汇总）与各格 **分镜主题**（每格一句）及可填入 **景别/运镜/画面内容/台词与音效** 的要点，勿把各格主题误并入「顶栏总结」混写。",
-          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图** 以及 **内文关键场景**（可转译为画面的空间、道具、光线），并可留下 **適合做小圖示/角標/badge 的具象關鍵詞**（与主题强相关）；供下游写出高细节封面而不会只剩抽象形容词。",
+          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并可留下 **適合做小圖示/角標/badge 的具象關鍵詞**（与主题强相关）；供下游写出高细节封面而不会只剩抽象形容词。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
@@ -481,7 +482,7 @@ MANDATORY RULES:
 `.trim();
 }
 
-/** 平台選題單幀：`graphic` / `video` 皆為 **單張竖版 9:16 信息流封面**，含頂級攝影布光、豐富布景道具、主題圖示與簡中輔標、撞色；宽幅 2×4 見 {@link buildVideoStoryboardGeminiPrompt}，八格見 {@link buildXhsNoteGeminiPrompt}。 */
+/** 平台選題單幀：`graphic` / `video` 皆為 **單張竖版 9:16 信息流封面**，須 **生動創意** 並快速勾起 **好奇心**；並含頂級攝影布光、豐富布景道具、主題圖示與簡中輔標、撞色。宽幅 2×4 見 {@link buildVideoStoryboardGeminiPrompt}，八格見 {@link buildXhsNoteGeminiPrompt}。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
   context: string;
@@ -512,20 +513,20 @@ ${personaRaw}
         ? `
 
 SHORT-VIDEO ULTRA-CTR BOOST（本任务专用）:
-- The **single hero frame** must read as an aggressive feed **scroll-stop** thumbnail for 「${hook}」—**one** photoreal editorial still: maximal tension/contrast plus **bold dominant+accent palette** (**razor-accent** wedges OK); **no** comic strip panels; icons/microcaptions OK if layered under the headline hierarchy.
+- The **single hero frame** must read as an aggressive feed **scroll-stop** thumbnail for 「${hook}」—**one** photoreal editorial still: maximal tension/contrast plus **bold dominant+accent palette** (**razor-accent** wedges OK); **visually lively / creative hook** that sparks **curiosity in one glance**; **no** comic strip panels; icons/microcaptions OK if layered under the headline hierarchy.
 `.trim()
         : `
 
 ULTRA-HIGH CTR COVER BOOST（本任务专用 · 超高点击率向）:
-- Treat this as a **maximum scroll-stop** cover: the hero title zone must land a **sharp curiosity gap or bold contrast** grounded in Context (no false clickbait).
+- Treat this as a **maximum scroll-stop** cover: **vivid staging + creative novelty** landing a **curiosity tap** grounded in Context (no false clickbait); the hero title zone must punch with **bold contrast**.
 - **Push** readability + punch further than a standard premium cover: stronger asymmetry, color wedge, or symbol prop when it serves the hook.
 `.trim();
   return (
     `
 ${personaBlock}${
   isVideo
-    ? "You are a bilingual cover design director for **short-video discovery thumbnails**—**one vertical 9:16** hero still in **premium advertising/editorial photography** quality: disciplined **motivated studio lighting** (key/fill/rim you can justify), rich **set dressing + props**, **high-impact but tasteful palette**, readable **hook-sized Simplified Chinese** hero type, optional **semantic micro-icons / badges / pills** plus smaller **supporting CN microcopy**. **Forbidden:** multi-panel storyboard gutter strip inside one image; **Forbidden:** landscape 2×4 master-sheet layout here."
-    : "You are a bilingual cover design director for **premium vertical feed covers**—**one hero frame**, same photographic bar as short-video covers: master-grade **motivated editorial lighting**, layered environment/props, **bold palette with clear separation** for typography, tasteful theme icons/CN ancillary lines as needed. Prefer Little Red Book **single-cover** readability; **do not default to dual-note chrome** unless the upstream task insists."
+    ? "You are a bilingual cover design director for **short-video discovery thumbnails**—**one vertical 9:16** hero still in **premium advertising/editorial photography** quality: disciplined **motivated studio lighting**, rich **set dressing + props**, **high-impact palette**, readable **hook-sized Simplified-Chinese** hero type, optional **semantic micro-icons / badges / pills** + **supporting CN microcopy**. The frame must feel **conceptually vivid and creatively charged**—a **thumbnail-scale curiosity hook** users want to tap; avoid bland stock composites. **Forbidden:** multi-panel storyboard gutters in one canvas; **Forbidden:** landscape 2×4 sheet here."
+    : "You are a bilingual cover design director for **premium vertical feed covers**—**one hero frame**, same photographic bar as short-video: master **motivated editorial lighting**, layered props/environment, **bold readable palette**, icons/ancillary CN lines as fits. Aim **lively staging + creative tension**—a clear **why should I tap** cue at thumbnail size—not a safe bland template. Prefer single-cover readability; don't default LR dual-note chrome unless demanded."
 }
 
 ${isVideo
@@ -540,6 +541,7 @@ SHORT-VIDEO SINGLE COVER（軟邊界 · 單張 9:16 封面 · 非分鏡條）
 - **高级感：** 材质、服装、場景档次走 **premium editorial**；体面、耐看。
 - **图标 + 小字：** **主题咬合**的简单 **象形符号／badge／pill** + **简体辅标副句**（字小一号但清晰）；**绝不能**压住大号主钩子。
 - **撞色冲击：** dominant + razor accent／色楔；thumb 級 **scroll-stop**，但别太脏。
+- **生動創意：** 避免「信息流安全牌臉」；畫面須有可讀 **好奇心鉤子**（瞬間對撞、未完動作、異常細節、隱喻），讓人用 **一眼**就想點進去看。
 - **禁止：** ≥2 分格纵条／漫画格子／2×4 宽幅主表 / 单列里套多分镜连续剧。
 - main title based on 「${hook}」
 ` : `
@@ -549,6 +551,7 @@ COVER DESIGN（軟邊界 · 单张竖版信息流封面）
 - **光：** motivated lighting 写死在英文 prompt；key/fill/rim 有据可依。
 - **图标 + 小字：** Context 允许的 **象形 icon / badge** + **辅标简体**（少而准）；层次：**主标题 > 一切辅元素**。
 - **配色：** 高冲击可读；大块面对比拉出主标题。
+- **創意張力：** 構圖有 **新意**／小驚喜，能快速挑起 **好奇**（不是標題騙點）。
 - **身份 / 离奇素材：** 身份自然对齐 Context；離題題材別硬拗。
 - main title based on 「${hook}」
 `}
@@ -628,7 +631,7 @@ export async function callVertexGeminiFlashTranslation(
     "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不得壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
-    "**單張豎封**：写清 **motivated editorial / premium ad-still lighting（key–fill–rim 有据）**、布景与道具层次；**畫內簡中大標** 与可选 **语义相关小图标 / badge / pill + 简体辅标微文案**（層級低于主標）；**撞色/對比**要强但耐看；Context 落成 **可拍场景**；身份块→ **戏剧化出场**，非履历条列。",
+    "**單張豎封**：写清 **motivated editorial / premium ad-still lighting（key–fill–rim 有据）**、布景与道具层次；**畫內簡中大標** 与可选 **语义相关小图标 / badge / pill + 简体辅标微文案**（層級低于主標）；**撞色/對比**要强但耐看；**一眼好奇**——构图有创意张力或小悬念，让读者想进一步了解；Context 落成 **可拍场景**；身份块→ **戏剧化出场**，非履历条列。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
     "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
@@ -798,7 +801,7 @@ export async function callGemini3_1_Pro_AiStudio(
             PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
             "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
-            "**竖版单封**：**先**锁 **简中标题**（位置、字重、撞色/楔形点缀）及可选 **象形小图标 + 简体辅标**（次级）；写清 **广告静拍級 motivated lighting（key/fill/rim）**、布景道具密度；再把 Context **落成可拍写实场景**；人设 → **art-directed** 出场，非散文复述。",
+            "**竖版单封**：**先**锁 **简中标题**（位置、字重、撞色/楔形点缀）及可选 **象形小图标 + 简体辅标**（次级）；写清 **广告静拍級 motivated lighting（key/fill/rim）**、布景道具密度；整体须 **conceptually vivid**、带 **thumbnail-level curiosity**，让用户想进一步了解；再把 Context **落成可拍写实场景**；人设 → **art-directed** 出场，非散文复述。",
             "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
             "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
