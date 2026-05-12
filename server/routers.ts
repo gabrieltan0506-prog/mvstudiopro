@@ -27,6 +27,7 @@ import { emailAuthRouter } from "./routers/emailAuth";
 import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
 import { isValidSupervisorSecret } from "./services/access-policy";
+import { buildIndustryGrowthHintMap, repairTrackGrowthRows } from "./services/visualReportTrackGrowth";
 import { feedbackRouter } from "./routers/feedback";
 import { inviteApplyRouter } from "./routers/inviteApply";
 import { staticPayRouter } from "./routers/staticPay";
@@ -3529,7 +3530,8 @@ export const appRouter = router({
         // Build date anchor — always report on the PAST, never the future
         const nowDate = new Date();
         const todayStr = nowDate.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
-        const pastDate = new Date(nowDate.getTime() - Number(input.windowDays) * 24 * 60 * 60 * 1000);
+        const wd = Number(input.windowDays);
+        const pastDate = new Date(nowDate.getTime() - wd * 24 * 60 * 60 * 1000);
         const pastStr = pastDate.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
 
         // Read store data for selected platforms (best-effort, 15s cap)
@@ -3543,7 +3545,7 @@ export const appRouter = router({
         const platformEvidence = input.platforms.map((platform) => {
           const col = (store.collections as any)?.[platform];
           const items: any[] = col?.items || [];
-          const windowCutoff = Date.now() - Number(input.windowDays) * 24 * 60 * 60 * 1000;
+          const windowCutoff = Date.now() - wd * 24 * 60 * 60 * 1000;
           const windowItems = items.filter((item: any) => {
             const ts = item?.collectedAt || item?.publishedAt || item?.date || null;
             if (!ts) return true;
@@ -3552,7 +3554,10 @@ export const appRouter = router({
           });
           const evidenceItems = windowItems.length > 0 ? windowItems : items.slice(0, 30);
           const hotTitles = evidenceItems.slice(0, 15).map((i: any) => i.title || i.keyword || "").filter(Boolean);
-          const playCounts = evidenceItems.map((i: any) => Number(i.playCount || i.play_count || 0)).filter((v) => v > 0).sort((a, b) => b - a);
+          const playCounts = evidenceItems
+            .map((i: any) => Number(i.playCount || i.play_count || i.likes || i.views || 0))
+            .filter((v) => v > 0)
+            .sort((a, b) => b - a);
           return {
             platform,
             displayName: PLATFORM_NAMES[platform] || platform,
@@ -3563,8 +3568,12 @@ export const appRouter = router({
           };
         });
 
+        const industryGrowthHintMap = buildIndustryGrowthHintMap(store, input.platforms as string[], wd);
+        const industryGrowthHintsObj = Object.fromEntries(
+          Array.from(industryGrowthHintMap.entries()).sort(([a], [b]) => a.localeCompare(b, "zh-Hans-CN")),
+        );
+
         // Fully dynamic prompt — windowDays drives all time references, no hardcoded day counts
-        const wd = Number(input.windowDays);
         const totalDays = wd * 2;
         const currentDateStr = todayStr; // ISO-style date already computed above
         const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于发现平台算法逻辑与赛道流量趋势。今天是 ${currentDateStr}。
@@ -3578,6 +3587,9 @@ export const appRouter = router({
 以下是从数据库提取的各平台真实近 ${wd} 天数据快照，你必须从中提取洞察，不可凭空捏造：
 ${JSON.stringify(platformEvidence, null, 2)}
 
+【行业样本环比（近 ${wd} 天 vs 前 ${wd} 天，按采集样本 industryLabels 条数；无样本的前窗则按当窗条数排序生成递减刻度；trackGrowth.growth 须与此表同向且不雷同）】
+${JSON.stringify(industryGrowthHintsObj, null, 2)}
+
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
 1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : ""}
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
@@ -3589,7 +3601,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
   - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
   - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
-- trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天爆款赛道增长排行，基于真实数据矩阵，绝对禁止捏造。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
+- trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天赛道增长排行；name 为细分赛道；growth 必须为 **短格式**（如 +18%、-3%），**与上表各标签数值有别**，禁止全部为同一百分比（如全员 +125%）。**严禁** N/A 与长句解释。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
@@ -3614,6 +3626,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             today: todayStr,
             pastDate: pastStr,
             platformEvidence,
+            industrySampleGrowth: industryGrowthHintsObj,
           });
 
           const response = visualReportUsesGemini25Pro
@@ -3706,9 +3719,16 @@ ${JSON.stringify(platformEvidence, null, 2)}
               insightSummary: Array.isArray(parsed.insightSummary)
                 ? parsed.insightSummary.map(normalizeInsightItem)
                 : [],
-              trackGrowth: Array.isArray(parsed.trackGrowth)
-                ? parsed.trackGrowth.map((t: any) => ({ name: safeStr(t?.name || t), growth: safeStr(t?.growth || ""), isHot: Boolean(t?.isHot) }))
-                : [],
+              trackGrowth: repairTrackGrowthRows(
+                Array.isArray(parsed.trackGrowth)
+                  ? parsed.trackGrowth.map((t: any) => ({
+                      name: safeStr(t?.name || t),
+                      growth: safeStr(t?.growth || ""),
+                      isHot: Boolean(t?.isHot),
+                    }))
+                  : [],
+                industryGrowthHintMap,
+              ),
               audiencesAndBiz: Array.isArray(parsed.audiencesAndBiz)
                 ? parsed.audiencesAndBiz.map((a: any) => ({ audience: safeStr(a?.audience || a), bizDirection: safeStr(a?.bizDirection || "") }))
                 : [],
