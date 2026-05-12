@@ -122,6 +122,42 @@ export function scoreTitleForCoverClickAppeal(title: string, hook: string): numb
   return score;
 }
 
+const CTR_BAND_HIGH_MIN_SCORE = 4;
+
+/**
+ * 依內部 {@link scoreTitleForCoverClickAppeal} 分成「高 / 中」兩檔，供封面生成後展示（非承諾實際 CTR）。
+ */
+export function estimateCoverCtrBand(
+  topicHook: string,
+  appealHook: string,
+): { band: "high" | "medium"; score: number; labelZh: string } {
+  const score = scoreTitleForCoverClickAppeal(topicHook, appealHook);
+  const high = score >= CTR_BAND_HIGH_MIN_SCORE;
+  return {
+    band: high ? "high" : "medium",
+    score,
+    labelZh: high ? "预估点击率：高" : "预估点击率：中",
+  };
+}
+
+/**
+ * 在 A/B/C 中選與基線主標不同、且點擊意圖分最高者，供「超高點擊率封面」再生成。
+ */
+export function pickHighCtrAlternateTitle(
+  variants: PlatformTitleVariant[],
+  hookSeed: string,
+  baselineTitle: string,
+): PlatformTitleVariant {
+  const ranked = variants
+    .map((v) => ({ v, s: scoreTitleForCoverClickAppeal(v.title, hookSeed) }))
+    .sort((a, b) => b.s - a.s);
+  const base = baselineTitle.replace(/\s+/g, " ").trim();
+  for (const { v } of ranked) {
+    if (v.title.replace(/\s+/g, " ").trim() !== base) return v;
+  }
+  return ranked[0]!.v;
+}
+
 /** 在 A/B/C 標題中選封面意圖較高的一句；平手保留最先候選。 */
 export function pickPreferredTitleVariant(variants: PlatformTitleVariant[], hook: string): PlatformTitleVariant {
   if (variants.length === 0) return { id: "a", title: "" };
