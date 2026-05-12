@@ -29,6 +29,12 @@ function appendGpt54TranslationDebug(flowLog: string[] | undefined, line: string
   flowLog.push(`${new Date().toISOString()}  [GPT54·英文化] ${line}`);
 }
 
+/** Vertex Pro 兩次失敗後：GPT 5.5 讀中文材料回退，與 imageGenFlowLog 同源。 */
+function appendGpt55CoverFallbackDebug(flowLog: string[] | undefined, line: string): void {
+  if (!flowLog) return;
+  flowLog.push(`${new Date().toISOString()}  [GPT55·封面回退] ${line}`);
+}
+
 /** Chat Completions 的 message.content：字串或 text part 陣列（與 OpenAI 回包一致）。 */
 function assistantMessageContentToPlainText(
   content: string | Array<{ type?: string; text?: string }> | undefined,
@@ -201,19 +207,23 @@ function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: st
   return undefined;
 }
 
-/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（單幀等可仍選 GPT 5.4 先；`vertex_gemini_3_flash_preview` = Vertex **Gemini 3 Flash** · 分鏡/小紅書八格預設 **Flash 三輪 → GPT 5.4 三輪**）。 */
-export type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
+/** 平台单帧 / 批量封面 / 宽幅合成：**英文化**引擎（`vertex_gemini_3_1_pro_preview` = Vertex **`gemini-3.1-pro-preview`**，適合封面雙語編導；`vertex_gemini_3_flash_preview` = Flash · 分鏡/八格預設 Flash→GPT；`gpt54` = OpenAI）。 */
+export type PlatformImagePromptTranslator =
+  | "gpt54"
+  | "vertex_gemini_3_flash_preview"
+  | "vertex_gemini_3_1_pro_preview";
 
 /** 分鏡圖 / 小紅書 2×4 圖文筆記：Flash 與 GPT 5.4 英文化各三輪仍失敗時對用戶顯示的訊息（見 {@link translatePlatformCompositeToEnglishPrompt}）。 */
 export const PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE = "系统算力紧张，请稍后再试";
 
 /**
- * tRPC / 作業入參：接受新 slug 與舊版錯名 `vertex_gemini_31_pro_preview`（自動正規化為 Flash）。
+ * tRPC / 作業入參：接受 `vertex_gemini_3_1_pro_preview`；舊版錯名 `vertex_gemini_31_pro_preview` 仍正規化為 Flash（歷史兼容）。
  */
 export const zPlatformImagePromptTranslatorInput = z
   .union([
     z.literal("gpt54"),
     z.literal("vertex_gemini_3_flash_preview"),
+    z.literal("vertex_gemini_3_1_pro_preview"),
     z.literal("vertex_gemini_31_pro_preview"),
   ])
   .optional()
@@ -565,6 +575,145 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
     throw new Error("封面指令返回空内容");
   }
   return out;
+}
+
+/** GPT‑5.5 封面回退：`max_completion_tokens` 預設 **8192**（`GPT55_COVER_FALLBACK_MAX_TOKENS` 可覆寫，且 **不超過 8192**）。 */
+const GPT55_COVER_FALLBACK_MAX_TOKENS = Math.min(
+  8192,
+  Math.max(256, Number(process.env.GPT55_COVER_FALLBACK_MAX_TOKENS) || 8192),
+);
+
+/**
+ * Vertex gemini-3.1-pro-preview 連續兩次失敗後：僅憑**中文材料**請 GPT‑5.5 產出 `{"prompt":"..."}`（供 GPT‑IMAGE‑2）。
+ * 模型 ID 見 `OPENAI_GPT55_MODEL`（預設 `gpt-5.5`）。
+ */
+export async function translateChineseCoverPayloadToEnglishImagePromptGpt55(
+  chinesePayload: string,
+  flowLog?: string[],
+  statCtx?: Gpt54PlatformImagePromptStatCtx,
+): Promise<string> {
+  const payload = String(chinesePayload || "").trim();
+  if (!payload) {
+    throw new Error("GPT55 封面回退：中文材料为空");
+  }
+  const modelName = String(process.env.OPENAI_GPT55_MODEL || "gpt-5.5").trim() || "gpt-5.5";
+
+  appendGpt55CoverFallbackDebug(
+    flowLog,
+    `invokeLLM(openai) · model=${modelName} · response_format=json_object · 中文材料约 ${payload.length} 字`,
+  );
+
+  const primaryResponse = await invokeLLM({
+    provider: "openai",
+    model: "gpt5",
+    modelName,
+    response_format: { type: "json_object" },
+    max_tokens: GPT55_COVER_FALLBACK_MAX_TOKENS,
+    messages: [
+      {
+        role: "system",
+        content: [
+          PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
+          "**任务**：上游 Vertex gemini-3.1-pro-preview 已两次未能给出可用英文生图指令。下面**仅有中文材料**（选题、视觉骨架、人设等）。你要输出 **一条** 可直接给 **GPT-IMAGE-2** 的 **英文** prompt，放在 JSON 的 `prompt` 字段。",
+          "**不得**在 prompt 字段里大段粘贴中文——中文只供你理解，成品须为可执行的英文（编号短句、tags、版式与简中标题区规格用英文写清）。须含 masterpiece、8k。",
+          "返回合法 JSON：{\"prompt\":\"...\"}；不要 markdown、不要解释。",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: `请根据以下中文材料输出 JSON：{"prompt":"..."}。\n\n${payload}`,
+      },
+    ],
+  });
+
+  const contentRaw = primaryResponse.choices?.[0]?.message?.content;
+  const rawBody = assistantMessageContentToPlainText(
+    contentRaw as string | Array<{ type?: string; text?: string }> | undefined,
+  );
+  const raw = rawBody.trim();
+  let parsed: Record<string, unknown> | null = null;
+  if (raw) {
+    try {
+      parsed = JSON.parse(extractJsonString(raw)) as Record<string, unknown>;
+    } catch {
+      parsed = null;
+    }
+  }
+  const fromPrompt = String(parsed?.prompt ?? "").trim();
+  const out = fromPrompt || stripGeminiModelOutput(raw);
+  if (!out) {
+    appendGpt55CoverFallbackDebug(flowLog, "GPT55 回退：JSON 与正文均无可用 prompt");
+    throw new Error("GPT55 封面回退：无有效英文 prompt");
+  }
+
+  emitPlatformImagePipelineStat({
+    event: "gpt55_cover_fallback_translate",
+    pipeline: statCtx?.pipeline ?? "other",
+    sheetKind: statCtx?.sheetKind ?? null,
+    compositeSheetAttempt: statCtx?.compositeSheetAttempt ?? null,
+    compositeSheetMaxAttempts: statCtx?.compositeSheetMaxAttempts ?? null,
+    gpt54RoundOf3: null,
+    modelName,
+    finishReason: primaryResponse.choices?.[0]?.finish_reason ?? null,
+    maxTokensConfigured: GPT55_COVER_FALLBACK_MAX_TOKENS,
+    promptCharsUpstream: payload.length,
+    promptTokens: typeof primaryResponse.usage?.prompt_tokens === "number" ? primaryResponse.usage.prompt_tokens : null,
+    completionTokens:
+      typeof primaryResponse.usage?.completion_tokens === "number" ? primaryResponse.usage.completion_tokens : null,
+    tokenPressureApprox: null,
+    hasValidEnglishPrompt: true,
+    rawContentChars: raw.length,
+  });
+
+  appendGpt55CoverFallbackDebug(flowLog, `GPT55 回退成功 · 英文 prompt 约 ${out.length} 字符`);
+  return out;
+}
+
+/**
+ * 選題封面：**Vertex Pro 英文化最多 2 次**；兩次皆失敗且提供 {@link gemini31ProFailureFallbackChinesePayload} 時改 **GPT‑5.5** 读中文产出英文。
+ */
+async function runVertexGemini31ProImagePromptWithTwoProThenGpt55(
+  translationTask: string,
+  options: {
+    flowLog?: string[];
+    gemini31ProFailureFallbackChinesePayload?: string;
+    pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx;
+  },
+): Promise<string> {
+  const flowLog = options.flowLog;
+  let lastProErr: unknown = null;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      if (attempt === 2) {
+        appendVertexFlashDebug(flowLog, "[Pro·英文化] 第 1 次未成功，等待 3000ms 后第 2 次 …");
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      const raw = await runGemini31ProPreviewText(translationTask);
+      if (raw.trim()) {
+        appendVertexFlashDebug(flowLog, `[Pro·英文化] 第 ${attempt}/2 次成功 · 约 ${raw.length} 字符`);
+        return raw.trim();
+      }
+      lastProErr = new Error("strip 后为空");
+      appendVertexFlashDebug(flowLog, `[Pro·英文化] 第 ${attempt}/2 次 · 输出为空`);
+    } catch (e) {
+      lastProErr = e;
+      appendVertexFlashDebug(
+        flowLog,
+        `[Pro·英文化] 第 ${attempt}/2 次异常 · ${formatErrForVertexDebug(e)}`,
+      );
+    }
+  }
+
+  const zh = options.gemini31ProFailureFallbackChinesePayload?.trim();
+  if (zh) {
+    appendGpt55CoverFallbackDebug(flowLog, "Vertex Pro 两次失败 · 回退 GPT 5.5（中文材料 → JSON prompt）→ GPT-IMAGE-2");
+    return await translateChineseCoverPayloadToEnglishImagePromptGpt55(zh, flowLog, options.pipelineStatCtx);
+  }
+
+  if (lastProErr instanceof Error) throw lastProErr;
+  if (lastProErr) throw new Error(String(lastProErr));
+  throw new Error("Vertex Pro 英文化失败且无中文回退材料");
 }
 
 /**
@@ -981,9 +1130,9 @@ export async function callGemini3_1_Pro_AiStudio(
 }
 
 /**
- * 平台 **選題單幀**：預設 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（見 {@link callVertexGeminiFlashTranslation}，三輪後 **GPT 5.4**）。
+ * 平台 **選題單幀**：預設可由調用方指定；常見為 **Vertex `gemini-3.1-pro-preview`**（{@link runGemini31ProPreviewText}）或 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（三輪後 **GPT 5.4**）。
  * **分鏡主表 / 小紅書八格** 英文化見 {@link translatePlatformCompositeToEnglishPrompt}（預設 Flash→GPT，雙軌失敗拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
- * 戰略封面 / 章節扉頁仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
+ * 戰略封面 / 章節扉頁亦走 `runGemini31ProPreviewText`（見 `buildStrategicCoverGeminiTask`）。
  */
 export async function callGemini31ProForImagePrompt(
   translationTask: string,
@@ -991,11 +1140,17 @@ export async function callGemini31ProForImagePrompt(
     translator?: PlatformImagePromptTranslator;
     flowLog?: string[];
     pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx;
+    /** Vertex Pro 兩次失敗後：以此中文材料交 GPT‑5.5 產出英文 prompt（僅 `vertex_gemini_3_1_pro_preview` 生效）。 */
+    gemini31ProFailureFallbackChinesePayload?: string;
   },
 ): Promise<string> {
   const requested: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
   const billingEscape = isPlatformWeekendGcpEscape();
-  const translator: PlatformImagePromptTranslator = billingEscape ? "gpt54" : requested;
+  const translator: PlatformImagePromptTranslator =
+    billingEscape &&
+    (requested === "vertex_gemini_3_flash_preview" || requested === "vertex_gemini_3_1_pro_preview")
+      ? "gpt54"
+      : requested;
   const flowLog = options?.flowLog;
   if (billingEscape && requested === "vertex_gemini_3_flash_preview") {
     appendGpt54TranslationDebug(
@@ -1003,19 +1158,39 @@ export async function callGemini31ProForImagePrompt(
       "[GCP避險] 英文化已從 Vertex 探索強制改為 GPT 5.4 路徑（避免調用 Vertex Flash）",
     );
   }
+  if (billingEscape && requested === "vertex_gemini_3_1_pro_preview") {
+    appendGpt54TranslationDebug(
+      flowLog,
+      "[GCP避險] 英文化已從 Vertex gemini-3.1-pro-preview 強制改為 GPT 5.4 路徑（避免調用 Vertex）",
+    );
+  }
   const vertexModel = resolveVertexFlashTranslationModelName();
   const vertexLoc = resolveVertexFlashTranslationLocation();
   const label =
     translator === "vertex_gemini_3_flash_preview"
       ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
-      : "GPT 5.4（OpenAI）";
+      : translator === "vertex_gemini_3_1_pro_preview"
+        ? "Vertex gemini-3.1-pro-preview"
+        : "GPT 5.4（OpenAI）";
   try {
-    const statCtx = translator === "vertex_gemini_3_flash_preview" ? undefined : options?.pipelineStatCtx;
-    const raw =
-      translator === "vertex_gemini_3_flash_preview"
-        ? await callVertexGemini31ProForImagePrompt(translationTask, flowLog)
-        : await callGemini3_1_Pro_AiStudio(translationTask, flowLog, statCtx);
-    const out = stripGeminiModelOutput(raw);
+    const statCtx =
+      translator === "vertex_gemini_3_flash_preview" || translator === "vertex_gemini_3_1_pro_preview"
+        ? undefined
+        : options?.pipelineStatCtx;
+    let out: string;
+    if (translator === "vertex_gemini_3_flash_preview") {
+      const raw = await callVertexGemini31ProForImagePrompt(translationTask, flowLog);
+      out = stripGeminiModelOutput(raw);
+    } else if (translator === "vertex_gemini_3_1_pro_preview") {
+      out = await runVertexGemini31ProImagePromptWithTwoProThenGpt55(translationTask, {
+        flowLog,
+        gemini31ProFailureFallbackChinesePayload: options?.gemini31ProFailureFallbackChinesePayload,
+        pipelineStatCtx: options?.pipelineStatCtx,
+      });
+    } else {
+      const raw = await callGemini3_1_Pro_AiStudio(translationTask, flowLog, statCtx);
+      out = stripGeminiModelOutput(raw);
+    }
     if (!out) {
       appendGpt54TranslationDebug(flowLog, `[GPT54·崩溃原因] stripGeminiModelOutput 后为空 · label=${label}`);
       throw new Error("[GPT54·崩溃原因] strip 后为空");

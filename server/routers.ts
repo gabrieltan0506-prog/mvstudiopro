@@ -3349,11 +3349,10 @@ export const appRouter = router({
 
     /**
      * 解锁并生成个性化战略地图：
-     * - **决策轨（本地）**：{@link buildSimulatedAdvancedAIReport} 锁数字壳与指标形态；
-     * - **扩写轨（并行）**：双路 Gemini Flash 扩写核心洞察 + 赛马/选题结构（{@link runGeminiFlashPipeline}）；
-     * - **Deep Research 轨**：不在此 mutation 内跑整段战略智库 Deep Research（成本/时延与 150～200 点定价不匹配）；
-     *   竞品式深研已接在「超高点击率封面」管线（{@link runCoverCompetitorDeepResearchBrief}）。
-     * 缓存命中免扣点；Flash 双路皆失败不扣点。
+     * - **决策轨（本地）**：{@link buildSimulatedAdvancedAIReport} 锁数字壳与指标形态；可读 `contentBlueprint.strategicMapContext brandGenes / mabTitles` 以贴合全景战略图；
+     * - **扩写轨（并行）**：核心洞察首选 **OpenAI GPT‑5.4**，失败回退 Vertex Flash；创作扩写（赛马标题、选题结构）用 **Vertex Flash**（{@link runGeminiFlashPipeline}）；提示词注入【全景战略图】摘要，与 B 端定位对齐；
+     * - **Deep Research 轨**：仍不在此 mutation 内跑整段战略智库深研（成本/时延与定价不匹配）；竞品式深研在「超高点击率封面」管线消费战略上下文即可；
+     * 缓存命中免扣点；扩写双路皆失败不扣点。
      */
     generateDecisionIntelligenceReport: protectedProcedure
       .input(
@@ -3362,8 +3361,8 @@ export const appRouter = router({
           /** 平台页已生成的战略看板/文案骨架（与 strategicMapContext 会合并） */
           contentBlueprint: z.unknown().optional(),
           /**
-           * 可选：全景战略图核心快照（Gemini 建议命名）；与 contentBlueprint 合并后进入指纹与 Flash 提示词。
-           * 仅传其一也可，后端会写入统一 blueprint。
+           * 可选：全景战略图核心快照；与 contentBlueprint 合并后参与指纹、本地 IP 基因 / MAB 种子、以及扩写提示词摘要。
+           * 建议字段（均可选）：summary、positioning、brandGenes[]、contentTracks[]、mabTitles（长度 2 的标题数组）、exploitTitle + exploreTitle 等。
            */
           strategicMapContext: z.unknown().optional(),
           platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
@@ -3527,7 +3526,8 @@ export const appRouter = router({
             dateRange,
             chargedCredits: cost,
             dataRetention: "user_ledger_advanced_decision_report",
-            flashModel: "gemini-3-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
+            flashModel:
+              "coreInsights=openai_gpt54_preferred_with_flash_fallback; creative=gemini-3-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
           },
           creditsUsed: cost,
           plan,
@@ -3800,13 +3800,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           format: z.enum(["短视频", "图文"]).optional(),
           /** @deprecated 忽略；语境僅從快照優化後取得。 */
           context: z.string().optional(),
-          /** 封面／单帧出镜身份：IP 基因 + persona 摘要等，注入 GPT 5.4，避免仅由选题文案猜测人设 */
+          /** 出镜身份 / IP 基因（中文）；注入双语编导，避免仅由选题文案猜测人设 */
           coverPersonaContext: z.string().max(4000).optional(),
           /** user_creations.id：须为当前用户、type=platform_topic_frame、status∈{failed,timeout} 且未消费过免费补发 */
           failedJobId: z.string().max(32).optional(),
           /** 單幀封面必須綁定選題 ID，以便從 DB 快照載入並優化文案 */
           sceneId: z.string().min(1).max(128),
-          /** @deprecated 封面單幀固定 GPT 5.4；此欄位忽略。 */
+          /** 封面英文化引擎；默認 Vertex `gemini-3.1-pro-preview`，可選 `gpt54` / Flash 探索链 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** 管理員／監管：單幀主生圖可選 Vertex Nano Banana 2（官方 API）；`nano_banana_pro` 為舊別名。普通帳戶傳入無效 */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
@@ -3998,7 +3998,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         );
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
-        void input.imagePromptTranslator;
+        const imagePromptTranslator =
+          input.imagePromptTranslator ?? ("vertex_gemini_3_1_pro_preview" as const);
         return runPlatformTopicImagePipeline({
           topicHook: finalTopicHook,
           format: finalFormatForPipeline,
@@ -4007,6 +4008,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           sceneId: input.sceneId,
           appealHook: resolvedCover.appealHook,
           highFeedCtrBoost: wantsHighCtr,
+          imagePromptTranslator,
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
@@ -4228,7 +4230,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               sceneId: input.sceneId,
               appealHook: resolvedCover.appealHook,
               highFeedCtrBoost: wantsHighCtr,
-              imagePromptTranslator: "gpt54",
+              imagePromptTranslator:
+                input.imagePromptTranslator ?? ("vertex_gemini_3_1_pro_preview" as const),
               isFreeRetry,
               newJobMetaBase,
               coverProEngine,
@@ -4247,7 +4250,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           platformType: z.enum(["video", "graphic"]),
           /** 与单张 generateTopicImage.coverPersonaContext 一致，批量时复用同一人设 */
           coverPersonaContext: z.string().max(4000).optional(),
-          /** @deprecated 批量封面固定 GPT 5.4；此欄位忽略。 */
+          /** 可選：英文化引擎（默認 Vertex gemini-3.1-pro-preview） */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           scenes: z
             .array(
@@ -4267,9 +4270,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const batchCoverPersona = String(input.coverPersonaContext || "").trim();
-        void input.imagePromptTranslator;
-        const imagePromptTranslator = "gpt54" as const;
-        const translatorLogLabel = "GPT 5.4（OpenAI）";
+        const imagePromptTranslator =
+          input.imagePromptTranslator ?? ("vertex_gemini_3_1_pro_preview" as const);
+        const translatorLogLabel =
+          imagePromptTranslator === "vertex_gemini_3_1_pro_preview"
+            ? "Vertex gemini-3.1-pro-preview"
+            : imagePromptTranslator === "vertex_gemini_3_flash_preview"
+              ? "Vertex Gemini 3 Flash（JSON）"
+              : "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? CREDIT_COSTS.platformTopicFrameVideo : CREDIT_COSTS.platformTopicFrameGraphic;
@@ -4393,17 +4401,31 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             condenseTriggered: false,
           };
           try {
+            const zhBrief =
+              (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000);
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
               topicHook: opt.topicHook,
-              context: (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000),
+              context: zhBrief,
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
             });
+            const fallbackZhPayload = [
+              `【选题钩子】${String(opt.topicHook || "").trim()}`,
+              batchCoverPersona ? `【出镜人设】\n${batchCoverPersona}` : "",
+              `【中文视觉骨架与语境】\n${zhBrief}`,
+              `【版式】${geminiVariant === "graphic" ? "竖版 9:16 单张信息流封面（GPT-IMAGE-2）" : "竖版 9:16 多分镜参考条（GPT-IMAGE-2）"}`,
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+            const condenseTranslator =
+              imagePromptTranslator === "vertex_gemini_3_1_pro_preview" ? ("gpt54" as const) : imagePromptTranslator;
             appendImageFlowLog(flowLog, `[步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`);
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
               translator: imagePromptTranslator,
               flowLog,
               pipelineStatCtx: { pipeline: "topic_cover" },
+              gemini31ProFailureFallbackChinesePayload:
+                imagePromptTranslator === "vertex_gemini_3_1_pro_preview" ? fallbackZhPayload : undefined,
             });
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
@@ -4413,7 +4435,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               throw new Error("英文 prompt 为空");
             }
         const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, {
-          translator: imagePromptTranslator,
+          translator: condenseTranslator,
           flowLog,
         });
             promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
@@ -4529,7 +4551,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
+        let imagePromptTranslatorForComposite:
+          | "gpt54"
+          | "vertex_gemini_3_flash_preview"
+          | "vertex_gemini_3_1_pro_preview" =
           input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
         const bulkFour = input.bulkFourTopicsFlat168;
         const bulkSlotCost = Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4);

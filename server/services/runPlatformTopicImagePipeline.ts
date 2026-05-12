@@ -1,5 +1,5 @@
 /**
- * 平台单帧生图（GPT 5.4 → GPT-IMAGE-2 → 兜底）——供 tRPC 同步调用与 jobs worker 共用，避免重复实现。
+ * 平台单帧生图（英文化預設 **Vertex gemini-3.1-pro-preview** → **GPT-IMAGE-2** → 兜底）——供 tRPC 同步调用与 jobs worker 共用。
  */
 import { eq } from "drizzle-orm";
 import * as db from "../db";
@@ -78,7 +78,7 @@ export type RunPlatformTopicImagePipelineInput = {
   appealHook?: string;
   /** 強化划停與主標衝擊（與「超高點擊率封面」加購一致） */
   highFeedCtrBoost?: boolean;
-  /** @deprecated 封面單幀英文化**固定 GPT 5.4**；保留欄位僅兼容舊 job 入參，會被忽略。 */
+  /** 英文化引擎；未傳時預設 `vertex_gemini_3_1_pro_preview`（Vertex · gemini-3.1-pro-preview）。 */
   imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
   isFreeRetry: boolean;
@@ -113,9 +113,14 @@ export async function runPlatformTopicImagePipeline(
     input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro";
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
-  void input.imagePromptTranslator;
-  const imagePromptTranslator: PlatformImagePromptTranslator = "gpt54";
-  const translatorLogLabel = "GPT 5.4（OpenAI）";
+  const imagePromptTranslator: PlatformImagePromptTranslator =
+    input.imagePromptTranslator ?? "vertex_gemini_3_1_pro_preview";
+  const translatorLogLabel =
+    imagePromptTranslator === "vertex_gemini_3_1_pro_preview"
+      ? "Vertex gemini-3.1-pro-preview"
+      : imagePromptTranslator === "vertex_gemini_3_flash_preview"
+        ? "Vertex Gemini 3 Flash（JSON）"
+        : "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
   const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
   const creationIdOut = input.creationIdOut ?? undefined;
@@ -219,13 +224,26 @@ export async function runPlatformTopicImagePipeline(
 
     try {
       try {
+        const zhBrief =
+          (await extractChineseVisualBrief(briefForExtract, topicImageCondenseLog)) || briefForExtract.slice(0, 2000);
         const geminiTask = buildPlatformTopicReferenceGeminiTask({
           topicHook: input.topicHook,
-          context: (await extractChineseVisualBrief(briefForExtract, topicImageCondenseLog)) || briefForExtract.slice(0, 2000),
+          context: zhBrief,
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
           highFeedCtrBoost: Boolean(input.highFeedCtrBoost),
         });
+        const fallbackZhPayload = [
+          `【选题钩子】${String(input.topicHook || "").trim()}`,
+          coverPersona ? `【出镜人设】\n${coverPersona}` : "",
+          `【中文视觉骨架与语境】\n${zhBrief}`,
+          `【版式】${isGraphic ? "竖版 9:16 单张信息流封面（GPT-IMAGE-2）" : "竖版 9:16 多分镜参考条（GPT-IMAGE-2）"}`,
+          input.highFeedCtrBoost ? "【强化】超高点击率向：划停、主标冲击" : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        const condenseTranslator =
+          imagePromptTranslator === "vertex_gemini_3_1_pro_preview" ? ("gpt54" as const) : imagePromptTranslator;
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,
         );
@@ -233,6 +251,8 @@ export async function runPlatformTopicImagePipeline(
           translator: imagePromptTranslator,
           flowLog: topicImageCondenseLog,
           pipelineStatCtx: { pipeline: "topic_cover" },
+          gemini31ProFailureFallbackChinesePayload:
+            imagePromptTranslator === "vertex_gemini_3_1_pro_preview" ? fallbackZhPayload : undefined,
         });
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
@@ -242,7 +262,7 @@ export async function runPlatformTopicImagePipeline(
           throw new Error("英文 prompt 为空");
         }
         const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, {
-          translator: imagePromptTranslator,
+          translator: condenseTranslator,
           flowLog: topicImageCondenseLog,
         });
         lastSafePrompt = String(safePrompt || "").trim() || null;

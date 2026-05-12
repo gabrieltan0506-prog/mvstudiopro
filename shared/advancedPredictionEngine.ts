@@ -248,6 +248,47 @@ function buildMabVariantsFromTitles(
   ];
 }
 
+const DEFAULT_BRAND_GENES = ["女性心病", "生活美学", "宋代点茶"] as const;
+
+function readStrategicMapRecord(contentBlueprint: unknown): Record<string, unknown> | null {
+  if (!contentBlueprint || typeof contentBlueprint !== "object" || Array.isArray(contentBlueprint)) return null;
+  const sm = (contentBlueprint as Record<string, unknown>).strategicMapContext;
+  if (!sm || typeof sm !== "object" || Array.isArray(sm)) return null;
+  return sm as Record<string, unknown>;
+}
+
+function brandGenesFromStrategicMap(strategic: Record<string, unknown> | null): string[] {
+  if (!strategic) return [];
+  const g = strategic.brandGenes ?? strategic.brandDNA ?? strategic.brandDna ?? strategic.dna;
+  if (Array.isArray(g)) {
+    return g
+      .filter((x): x is string => typeof x === "string")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 16);
+  }
+  if (typeof g === "string" && g.trim()) {
+    return g.split(/[,，、]/).map((s) => s.trim()).filter(Boolean).slice(0, 16);
+  }
+  return [];
+}
+
+function mabTitlesFromStrategicMap(strategic: Record<string, unknown> | null): [string, string] | undefined {
+  if (!strategic) return undefined;
+  const pair = strategic.mabTitles ?? strategic.mabSuggestedTitles;
+  if (Array.isArray(pair) && pair.length >= 2) {
+    const a = typeof pair[0] === "string" ? pair[0].trim() : "";
+    const b = typeof pair[1] === "string" ? pair[1].trim() : "";
+    if (a && b) return [a, b];
+  }
+  const e = strategic.exploitTitle;
+  const x = strategic.exploreTitle;
+  if (typeof e === "string" && typeof x === "string" && e.trim() && x.trim()) {
+    return [e.trim(), x.trim()];
+  }
+  return undefined;
+}
+
 export interface SimulatedAdvancedReportInput {
   topic: string;
   dateRange: string;
@@ -269,7 +310,15 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
   const platformData = input.platformData ?? {};
   const thinkingLevel = input.thinkingLevel ?? "HIGH";
   const windowDays = input.windowDays;
-  const userProfile = input.userProfile ?? { brandGenes: ["女性心病", "生活美学", "宋代点茶"] };
+  const strategicRec = readStrategicMapRecord(contentBlueprint);
+  const strategicGenes = brandGenesFromStrategicMap(strategicRec);
+  const userProfile = {
+    brandGenes: input.userProfile?.brandGenes?.length
+      ? input.userProfile.brandGenes
+      : strategicGenes.length
+        ? strategicGenes
+        : [...DEFAULT_BRAND_GENES],
+  };
   const text = JSON.stringify(contentBlueprint);
   const seed = `${topic}|${text.slice(0, 1500)}`;
 
@@ -280,8 +329,10 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
   const platformRadar = platformHitPotentialRadarFromBlueprint(text, seed, platformKey);
   const platformLabel = PLATFORM_LABEL_ZH[platformKey] ?? platformKey;
 
-  const v1 = input.mabTitles?.[0] ?? "听爵士，降10mmHg血压？这招绝了！";
-  const v2 = input.mabTitles?.[1] ?? "宋代点茶：女性心病的跨界美学处方笺";
+  const strategicMab = mabTitlesFromStrategicMap(strategicRec);
+  const mabTitles = input.mabTitles ?? strategicMab;
+  const v1 = mabTitles?.[0] ?? "听爵士，降10mmHg血压？这招绝了！";
+  const v2 = mabTitles?.[1] ?? "宋代点茶：女性心病的跨界美学处方笺";
 
   const mabVariants = buildMabVariantsFromTitles(v1, v2, text);
 
