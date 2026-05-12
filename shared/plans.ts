@@ -256,10 +256,12 @@ export const CREDIT_COSTS = {
   platformTopicFrameGraphic: 32,
   /** 平台页：选题单帧 · 短视频竖版分镜参考条 */
   platformTopicFrameVideo: 15,
-  /** 平台页：分镜 2×4 宽幅合成 */
+  /** 平台页：分镜 2×4 宽幅合成（单条） */
   platformStoryboardSheet: 48,
-  /** 平台页：小红书 2×4 八格图文（API kind 仍为 xiaohongshu_dual_note） */
+  /** 平台页：小红书 2×4 八格图文（单条） */
   platformXhsDualNote: 72,
+  /** 平台页：一键四条选题各一张 2×4 合成 — 合计扣费（均摊见 bulkFourTopicsFlat168） */
+  platformCompositeBulkFourTopics: 168,
   /** 平台頁增值：個性化戰略地圖／決策智庫報告，之後每次原價 */
   decisionIntelligenceReport: 200,
   /** 同功能首次體驗優惠價（與 decisionIntelligenceReport 搭配後端計次） */

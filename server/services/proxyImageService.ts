@@ -273,7 +273,7 @@ function buildFalGptImage2RequestBody(prompt: string, openAiSize: string) {
 
 /** 拼在寬幅 2×4 合成英文 prompt 末尾：頂部簡中主標 + 幾何鎖定 + **每格底部簡中訊息分格表**（與 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
 const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master frame. TOP ~8–12% HEIGHT: full-width horizontal TITLE STRIP with ONE prominent legible **Simplified Chinese** main title (系列标题 / 成片主题 / 视频标题); optional smaller 简体中文 subline; clear separation (rule or gradient) above the grid. BELOW that strip ONLY: EXACTLY eight equal panels in 2 rows × 4 columns with straight gutters; eight distinct cinematic stills. PER PANEL: upper ~70–75% of the cell = film still only; lower ~25–30% = compact legible Simplified Chinese caption table (讯息分格表): 2–4 short labeled rows (e.g. 镜头 / 景别, 情绪 / 氛围, 要点 / 口播), thin grid allowed; table text MUST be Simplified Chinese. FORBIDDEN: no top 简体中文 title band; first row of panels touching the top edge; whole-canvas single hero only; magazine left-text strip + right one photo; 50/50 two-panel only; wholly wordless panels; English-only caption tables.";
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled; thin grid OK; table body must be 简体中文. FORBIDDEN: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels.";
 
 /** 小紅書八格：幾何與分鏡同為 2×4；畫風偏資訊圖 / 筆記感，每格強簡中（與 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} 一致）。 */
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
@@ -495,14 +495,13 @@ Model: GPT-Image-2 / Gemini Image
 TASK: Cinematic 2×4 grid storyboard contact sheet — one single wide landscape master frame (~16:9), eight dramatic film stills, 8k, intricate details.
 
 COMPOSITION (NON-NEGOTIABLE):
-- TOP BAND FIRST: reserve the top ~8–12% of the **entire** image height as a **full-width Simplified Chinese title strip** with **one large legible main title** (use this anchor text in 简体中文): **${displayTitle}**. Optional subtitle in 简体中文 below; then a clear divider before the grid. **Do not** place storyboard panels against the top edge without this header.
-- BELOW the title strip: EXACTLY eight equal panels in 2 rows × 4 columns with straight horizontal and vertical gutters spanning the remaining canvas width. Eight distinct cinematic stills — no duplicate panels, no single full-bleed hero replacing both title + grid, no magazine left-text strip + right one photo, no 50/50 two-panel only.
-- PER PANEL: upper ~70–75% = film still only; lower ~25–30% = compact legible Simplified Chinese caption table (讯息分格表 / shot breakdown): 2–4 short labeled rows (e.g. 镜头 / 景别, 情绪 / 氛围, 要点 / 口播), thin grid or ruled lines allowed. All text in these lower bands MUST be Simplified Chinese. Same layout idiom as "Chinese text tables below each image" on a storyboard sheet.
-- FORBIDDEN: missing top 简体中文 title strip; wholly wordless panels; English-only caption tables; fake watermarks beyond intentional table labels.
+- TOP BAND FIRST (~8–12% height): **内容总结** — full-width **Simplified Chinese** strip for the **whole-sheet thematic summary** (episode / arc synopsis), **not** per-shot titles. You may append 「· 分镜脚本」or use this anchor line if it fits the summary: **${displayTitle}**. Clear divider before the grid. **Do not** put individual 分镜主题描述 in this band.
+- BELOW: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. Each panel **top → bottom**: (1) one bold **分镜主题描述** line in 简体中文 for that shot only; (2) cinematic still; (3) lower ~25–30% = **Simplified Chinese** table with **four fields**: **景别**、**运镜**、**画面内容**、**台词与音效** — all four with content; thin grid OK. Table body must be 简体中文.
+- FORBIDDEN: missing top summary strip; eight panels flush to top edge; English-only tables; empty panels; fewer than eight cells.
 
-MOOD / TITLE ANCHOR (must appear in the top title band): ${displayTitle}
+MOOD / TITLE ANCHOR (content summary may echo): ${displayTitle}
 
-VISUAL CONTEXT — SCENES (render as the film stills in the upper bands): ${scriptSlice}
+VISUAL CONTEXT — SCENES (render as the film stills): ${scriptSlice}
 
 CINEMA STAGING & LIGHTING: ${staging}
 
@@ -1174,7 +1173,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
-  /** 與單幀一致：預設 gpt54；探索為 Vertex Flash Live（預設 global） */
+  /** 與單幀一致：預設 Vertex Gemini 3 Flash（三輪後 GPT 5.4）；可傳 gpt54 強制先 GPT */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
@@ -1192,8 +1191,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   appendImageFlowLog(
     L,
     survival
-      ? `[2×4·英文化机制] **生存模式已开启**（環境變數 PLATFORM_WEEKEND_SURVIVAL_MODE）：英文化统一走 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），**不受**面板 translator=vertex_gemini_3_flash_preview 影响。另有 **GCP 避险** 时亦可能压制 Vertex。`
-      : `[2×4·英文化机制] translator=gpt54：**GPT 5.4 英文化** 最多 3 轮（间隔 3s/6s），仍失败再 **Vertex Flash**；translator=vertex_gemini_3_flash_preview：**优先 Vertex Flash**（遇 GCP 避险则改 GPT 5.4）。`,
+      ? `[2×4·英文化机制] **生存模式已开启**（環境變數 PLATFORM_WEEKEND_SURVIVAL_MODE）：英文化僅 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），失败宣告 **系统算力紧张**。另有 **GCP 避险** 时亦可能压制 Vertex。`
+      : `[2×4·英文化机制] **默认** **Vertex Gemini 3 Flash** 英文化最多 3 轮 → 失败则 **GPT 5.4** 最多 3 轮；双轨仍失败则 **系统算力紧张，请稍后再试**（不向用户伪造可用英文化结果）。显式 translator=gpt54：先 GPT 5.4 再 Vertex Flash（兼容旧序）。GCP 避险时强制仅 GPT 5.4，失败同样抛错。`,
   );
   appendImageFlowLog(
     L,
@@ -1203,11 +1202,11 @@ export async function generatePlatformCompositeSheetImage(options: {
     L,
     `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
-  const tr = options.imagePromptTranslator ?? "gpt54";
+  const tr = options.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4**" : ""}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（2K）`,
+    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4 · strict**" : " · 默认 Flash→GPT strict"}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（2K）`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1229,10 +1228,10 @@ export async function generatePlatformCompositeSheetImage(options: {
       L,
       `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· ${
         survival
-          ? "**生存模式 → 仅 GPT 5.4 英文化**"
-          : tr === "vertex_gemini_3_flash_preview"
-            ? "**配置为 Vertex Flash 英文化优先**（若日志出现 GCP 避险则改 GPT 5.4）"
-            : "**先 GPT 5.4 英文化**，失败或空再 Vertex Flash"
+          ? "**生存模式 → 仅 GPT 5.4 英文化 · strict**"
+          : tr === "gpt54"
+            ? "**相容路径：先 GPT 5.4**，无效再 Vertex Flash"
+            : "**默认：Vertex Gemini 3 Flash ×3 → GPT 5.4 ×3**（双轨失败则系统算力紧张）"
       } …`,
     );
 
@@ -1275,12 +1274,12 @@ export async function generatePlatformCompositeSheetImage(options: {
       const topicTitleZh = String(options.title || "").trim().slice(0, 80);
       const storyboardTitleInject =
         isStoryboard && topicTitleZh
-          ? `\n\nTOP TITLE (Simplified Chinese — render verbatim or nearly verbatim in the top title strip above the 2×4 grid): 「${topicTitleZh}」`
+          ? `\n\nTOP STRIP — **内容总结** (Simplified Chinese; overall arc / synopsis for the whole sheet — render in the top band above the 2×4 grid; **not** per-panel shot titles). Anchor text to include or paraphrase from: 「${topicTitleZh}」`
           : "";
       if (isStoryboard && topicTitleZh) {
         appendImageFlowLog(
           L,
-          `[2×4·顶栏标题] 已并入生图 prompt · 简中选题标题 · len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
+          `[2×4·顶栏] 已并入 prompt · 内容总结锚点（简中）· len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
         );
       }
       const promptForImageBase = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
