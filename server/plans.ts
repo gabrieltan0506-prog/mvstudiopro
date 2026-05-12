@@ -260,9 +260,11 @@ export const CREDIT_COSTS = {
   platformTopicFrameGraphic: 32, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
   platformTopicFrameVideo: 15,  // 短视频分镜参考条
 
-  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）·扣点 3×──────────────────
-  platformStoryboardSheet: 48,  // 分镜 2×4（双语编导；生图 GPT-IMAGE-2）
-  platformXhsDualNote: 72,       // 小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
+  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────────────
+  platformStoryboardSheet: 48, // 单条：分镜 2×4（双语编导；生图 GPT-IMAGE-2）
+  platformXhsDualNote: 72, // 单条：小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
+  /** 平台页：一键 **恰好四条** 选题各一张 2×4 合成 — **合计** 扣费（每条请求均摊 168/4，见 router bulkFourTopicsFlat168） */
+  platformCompositeBulkFourTopics: 168,
   /** 平台頁增值：個性化戰略地圖／決策智庫報告（首次體驗見 decisionIntelligenceReportFirst） */
   decisionIntelligenceReport: 200,
   decisionIntelligenceReportFirst: 150,
@@ -292,7 +294,13 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 32 cr，生图 GPT-IMAGE-2" },
-  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图 GPT-IMAGE-2" },
+  {
+    product: "平台数据分析",
+    subFeature: "2×4 合成四条套裝（一键四选题）",
+    credits: CREDIT_COSTS.platformCompositeBulkFourTopics,
+    note: "合计 168 点；四次 API 均摊扣费",
+  },
   { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图 GPT-IMAGE-2" },
   {
     product: "平台数据分析",

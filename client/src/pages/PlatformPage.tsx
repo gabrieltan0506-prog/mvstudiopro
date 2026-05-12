@@ -2085,8 +2085,9 @@ export default function PlatformPage() {
       }
     },
     onError: (error, variables, ctx) => {
-      const refunded =
-        variables.kind === "xiaohongshu_dual_note"
+      const refunded = variables.bulkFourTopicsFlat168
+        ? Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4)
+        : variables.kind === "xiaohongshu_dual_note"
           ? CREDIT_COSTS.platformXhsDualNote
           : CREDIT_COSTS.platformStoryboardSheet;
       const fullMsg = error instanceof Error ? error.message : String(error);
@@ -2133,7 +2134,11 @@ export default function PlatformPage() {
         kind: "batch_composite_2x4",
         lines: [
           `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成已发起 · topicCount=${cards.length} · concurrency=1`,
-          `${new Date().toISOString()}  [等待中] 每条依选题格式扣点（短视频→分镜表 · 图文/小红书→八格笔记），单张约 3～5 分钟`,
+          `${new Date().toISOString()}  [等待中] ${
+            cards.length === 4
+              ? `四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（4 次均摊）`
+              : "每条依选题格式扣点（短视频→分镜表 · 图文/小红书→八格笔记）"
+          }，单张约 3～5 分钟`,
         ],
         meta: {
           localOpId,
@@ -2148,7 +2153,8 @@ export default function PlatformPage() {
     let successCount = 0;
     const liveLines: string[] = [];
     try {
-      for (const item of cards) {
+      for (let slotIndex = 0; slotIndex < cards.length; slotIndex++) {
+        const item = cards[slotIndex]!;
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
@@ -2185,6 +2191,10 @@ export default function PlatformPage() {
                 creationRecordId: readOptionalReportBindingCreationId(),
                 imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                 progressJobId: newPlatformCompositeProgressJobId(),
+                bulkFourTopicsFlat168:
+                  cards.length === 4
+                    ? { clientBatchKey: localOpId, slotIndex }
+                    : undefined,
               }),
             (waitMs) => {
               liveLines.push(
@@ -3088,6 +3098,9 @@ export default function PlatformPage() {
     [platformTopicCount],
   );
   const platformBulkCompositeCost = useMemo(() => {
+    if (contentExecutionCards.length === 4) {
+      return CREDIT_COSTS.platformCompositeBulkFourTopics;
+    }
     let sum = 0;
     for (const row of contentExecutionCards) {
       const isGraphic = row.format === "图文" || row.format === "小红书";
@@ -3096,15 +3109,30 @@ export default function PlatformPage() {
     return sum;
   }, [contentExecutionCards]);
 
-  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（与单卡同价累加） */
+  /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
+  const platformBulkCompositeBreakdown = useMemo(() => {
+    let videoLike = 0;
+    let graphicLike = 0;
+    for (const row of contentExecutionCards) {
+      const isGraphic = row.format === "图文" || row.format === "小红书";
+      if (isGraphic) graphicLike++;
+      else videoLike++;
+    }
+    return { videoLike, graphicLike };
+  }, [contentExecutionCards]);
+
+  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四条套裝 168；否则按单条价累加） */
   function onBulkCompositeOneClick() {
     if (!isAuthenticated) {
       toast.error("请先登录");
       return;
     }
+    const bulkFourSlot = Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4);
     const note = supervisorAccess
       ? ""
-      : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文（每条 ${CREDIT_COSTS.platformStoryboardSheet} 积分，合计 ${platformBulkCompositeCost} 积分；每条约 3～5 分钟），是否继续？`;
+      : platformTopicCount === 4
+        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次请求均摊各 ${bulkFourSlot} 积分）。每条约 3～5 分钟。是否继续？`
+        : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。单条计价：短视频向 ${CREDIT_COSTS.platformStoryboardSheet} 积分/条，图文/小红书 ${CREDIT_COSTS.platformXhsDualNote} 积分/条；当前共 ${platformBulkCompositeBreakdown.videoLike} 条短视频向、${platformBulkCompositeBreakdown.graphicLike} 条图文/小红书向，合计 ${platformBulkCompositeCost} 积分。每条约 3～5 分钟。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCompositeBatchGeneration();
   }
@@ -4966,9 +4994,25 @@ export default function PlatformPage() {
                         视频图文分镜表
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">
-                        一键封面在下方选题卡。此处可一键依次为全部选题生成 2×4 分镜或八格图文（短视频{" "}
-                        {CREDIT_COSTS.platformStoryboardSheet} 积分/条 · 图文/小红书 {CREDIT_COSTS.platformXhsDualNote}{" "}
-                        积分/条；当前 {platformTopicCount} 条合计约 {platformBulkCompositeCost} 积分）。
+                        一键封面在下方选题卡。此处可一键依次为全部选题生成 2×4 分镜或八格图文。
+                        {platformTopicCount === 4 ? (
+                          <>
+                            当前为 <strong className="text-gray-300">4 条选题套裝</strong>：一键合计{" "}
+                            <strong className="text-gray-300">{CREDIT_COSTS.platformCompositeBulkFourTopics}</strong>{" "}
+                            积分（4 次请求均摊）。单条点「原生 2×4」仍为短视频向 {CREDIT_COSTS.platformStoryboardSheet}{" "}
+                            点 / 图文小红书 {CREDIT_COSTS.platformXhsDualNote} 点。
+                          </>
+                        ) : (
+                          <>
+                            单条：短视频向 {CREDIT_COSTS.platformStoryboardSheet} 积分/条 · 图文/小红书{" "}
+                            {CREDIT_COSTS.platformXhsDualNote} 积分/条。当前 {platformTopicCount} 条合计约{" "}
+                            {platformBulkCompositeCost} 积分
+                            {platformTopicCount > 0
+                              ? `（短视频向 ${platformBulkCompositeBreakdown.videoLike} 条 + 图文/小红书 ${platformBulkCompositeBreakdown.graphicLike} 条）`
+                              : ""}
+                            。
+                          </>
+                        )}
                       </p>
                     </div>
                     {platformTopicCount > 0 ? (
