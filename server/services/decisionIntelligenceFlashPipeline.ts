@@ -1,6 +1,8 @@
 /**
- * 决策智库 · 双轨 Gemini Flash 扩写（与 {@link ../../shared/advancedPredictionEngine.ts} 数字壳解耦）。
- * Call A：核心洞察；Call B：赛马标题、个性化方向、选题结构。并行 + allSettled，双 reject 则抛错。
+ * 决策智库 · 双轨扩写（与 {@link ../../shared/advancedPredictionEngine.ts} 数字壳解耦）。
+ * Call A：核心洞察 — 首选 OpenAI GPT‑5.4，失败或空结果时回退 Vertex Flash；提示词含【全景战略图】摘要（如有）。
+ * Call B：赛马标题、个性化方向、选题结构 — 始终 Vertex Flash。
+ * 并行 + allSettled，双路皆不可用则抛错。
  */
 
 import { createHash } from "node:crypto";
@@ -9,6 +11,7 @@ import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { extractJsonString, invokeLLM } from "../_core/llm";
 import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
+import { summarizeStrategicMapContextFromBlueprint } from "@shared/strategicMapContextForPrompt";
 
 const PLATFORM_LABEL: Record<string, string> = {
   douyin: "抖音",
@@ -58,13 +61,12 @@ type CallBOutput = {
   topicStructureExamples?: Array<{ title?: string; structure?: string }>;
 };
 
-async function flashCallAnalysisEngine(params: {
+function buildCoreInsightsPrompts(params: {
   topic: string;
   contentBlueprint: unknown;
   base: AdvancedAIReportData;
-  abortSignal?: AbortSignal;
-}): Promise<CallAOutput> {
-  const modelName = resolveGrowthCampExtractorModel();
+  strategicBrief: string;
+}): { system: string; user: string } {
   const system = `你是一位顶级的商业战略顾问与数据分析师。
 你的任务是根据提供的「内容蓝图」与「大盘预测数据」，撰写出 4 条「核心洞察 (Core Insights)」。
 【语气】
@@ -72,13 +74,32 @@ async function flashCallAnalysisEngine(params: {
 - 严禁「保证」「绝对能达到」等字眼；改用「预期具备潜力」「结合历史窗口样本」等。
 - metricsText 为一条短附注（建议≤45字）：只用简体中文；禁止出现「模拟」「模擬」「pp」「PP」等字样。
 - 若 metricsText 写转化率变化，须用「约高/约低 X 个百分点」，并避免缩写：百分点指转化率数字上的加减（例如从 8% 到 8.6% 即高约 0.6 个百分点）。
+- 若提供【全景战略图】摘要，四条洞察的叙事必须与其中定位、赛道、客群取向一致，不得捏造未在材料中出现的具体机构、学历、病例或监管承诺。
 - 只输出一个 JSON 对象，键名 coreInsights；数组长度必须为 4，id 依次为 1～4。`;
 
-  const user = `【选题方向】：${params.topic}
+  const panorama =
+    params.strategicBrief.trim().length > 0
+      ? `【全景战略图（B 端已对齐上下文）】：\n${params.strategicBrief.trim()}\n\n`
+      : "";
+
+  const user = `${panorama}【选题方向】：${params.topic}
 【全局数据快照】：${globalPredictionsJson(params.base)}
 【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
 请给出 4 条战略洞察。每条 content 约 50～90 字；metricsText 简要呼应快照中的数量级（勿与快照矛盾），且禁止写「模拟」或「pp」。`;
+
+  return { system, user };
+}
+
+async function flashCallCoreInsights(params: {
+  topic: string;
+  contentBlueprint: unknown;
+  base: AdvancedAIReportData;
+  strategicBrief: string;
+  abortSignal?: AbortSignal;
+}): Promise<CallAOutput> {
+  const modelName = resolveGrowthCampExtractorModel();
+  const { system, user } = buildCoreInsightsPrompts(params);
 
   const response = await invokeLLM({
     model: "flash",
@@ -96,11 +117,56 @@ async function flashCallAnalysisEngine(params: {
   return JSON.parse(extractJsonString(raw)) as CallAOutput;
 }
 
+async function gpt54CallCoreInsights(params: {
+  topic: string;
+  contentBlueprint: unknown;
+  base: AdvancedAIReportData;
+  strategicBrief: string;
+  abortSignal?: AbortSignal;
+}): Promise<CallAOutput> {
+  const { system, user } = buildCoreInsightsPrompts(params);
+
+  const response = await invokeLLM({
+    model: "gpt54",
+    provider: "openai",
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    response_format: { type: "json_object" },
+    maxTokens: 4096,
+    abortSignal: params.abortSignal,
+  });
+  const raw = String(response.choices[0]?.message?.content ?? "{}");
+  return JSON.parse(extractJsonString(raw)) as CallAOutput;
+}
+
+/** Call A：首选 GPT‑5.4；未配置 OpenAI、调用失败或返回空洞察时回退 Flash。 */
+async function callCoreInsightsPreferred(params: {
+  topic: string;
+  contentBlueprint: unknown;
+  base: AdvancedAIReportData;
+  strategicBrief: string;
+  abortSignal?: AbortSignal;
+}): Promise<CallAOutput> {
+  try {
+    const out = await gpt54CallCoreInsights(params);
+    if (Array.isArray(out?.coreInsights) && out.coreInsights.length > 0) {
+      return out;
+    }
+    throw new Error("gpt54_core_insights_empty");
+  } catch (err) {
+    console.warn("[decisionIntel] core insights: GPT‑5.4 unavailable or empty, falling back to Flash:", err);
+    return flashCallCoreInsights(params);
+  }
+}
+
 async function flashCallCreativeEngine(params: {
   topic: string;
   contentBlueprint: unknown;
   platformHint: string;
   base: AdvancedAIReportData;
+  strategicBrief: string;
   abortSignal?: AbortSignal;
 }): Promise<CallBOutput> {
   const modelName = resolveGrowthCampExtractorModel();
@@ -110,12 +176,18 @@ async function flashCallCreativeEngine(params: {
 根据内容蓝图产出高吸引力的赛马标题、延伸选题与内容结构。
 【规则】
 - 只负责文字；不计算分数、概率、CTR 小数。
+- 若提供【全景战略图】摘要，所有标题与选题方向必须与其定位、跨界组合与客群一致，不编造材料中未出现的背书信息。
 - 只输出一个 JSON，字段：mabVariants、personalization、topicStructureExamples。
 - mabVariants 必须与输入 id 完全一致且顺序一致（通常 2 条）。
 - personalization 必须恰好 3 条（与本地骨架列数一致）。
 - topicStructureExamples 必须恰好 4 条，每条含 title、structure（structure 可用「段落1 → 段落2」）。`;
 
-  const user = `【选题方向】：${params.topic}
+  const panorama =
+    params.strategicBrief.trim().length > 0
+      ? `【全景战略图（B 端已对齐上下文）】：\n${params.strategicBrief.trim()}\n\n`
+      : "";
+
+  const user = `${panorama}【选题方向】：${params.topic}
 【目标平台】：${platformLabel}
 【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
@@ -219,12 +291,13 @@ export async function runGeminiFlashPipeline(params: {
   abortSignal?: AbortSignal;
 }): Promise<AdvancedAIReportData> {
   const { base, contentBlueprint, platformHint, topic, abortSignal } = params;
+  const strategicBrief = summarizeStrategicMapContextFromBlueprint(contentBlueprint);
 
   const callA = async (): Promise<CallAOutput> => {
-    return flashCallAnalysisEngine({ topic, contentBlueprint, base, abortSignal });
+    return callCoreInsightsPreferred({ topic, contentBlueprint, base, strategicBrief, abortSignal });
   };
   const callB = async (): Promise<CallBOutput> => {
-    return flashCallCreativeEngine({ topic, contentBlueprint, platformHint, base, abortSignal });
+    return flashCallCreativeEngine({ topic, contentBlueprint, platformHint, base, strategicBrief, abortSignal });
   };
 
   const [settledA, settledB] = await Promise.allSettled([callA(), callB()]);

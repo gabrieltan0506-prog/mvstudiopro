@@ -91,7 +91,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
-type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
+type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview" | "vertex_gemini_3_1_pro_preview";
 
 const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromptTranslator.v1";
 /** 管理員／監管：單幀封面主生圖是否走 Vertex Nano Banana 2（官方 API） */
@@ -842,7 +842,9 @@ function buildCompositeImageGenPendingLines(input: {
   const trLine =
     tr === "vertex_gemini_3_flash_preview"
       ? "探索：直走 Vertex Flash（application/json），不經 GPT 三輪"
-      : "默認 GPT 5.4：英文化最多 3 輪（間隔 3s/6s），無效後 Vertex Flash 兜底";
+      : tr === "vertex_gemini_3_1_pro_preview"
+        ? "Vertex gemini-3.1-pro-preview：封面雙語編導（與單幀封面預設一致）"
+        : "默認 GPT 5.4：英文化最多 3 輪（間隔 3s/6s），無效後 Vertex Flash 兜底";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"

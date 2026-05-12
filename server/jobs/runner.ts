@@ -1119,6 +1119,11 @@ async function processPlatformJob(
         rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
           ? ("nano_banana_2" as const)
           : undefined;
+      const rawTr = (params as { imagePromptTranslator?: unknown }).imagePromptTranslator;
+      const imagePromptTranslatorForJob =
+        rawTr === "gpt54" || rawTr === "vertex_gemini_3_flash_preview" || rawTr === "vertex_gemini_3_1_pro_preview"
+          ? rawTr
+          : ("vertex_gemini_3_1_pro_preview" as const);
       const result = await runPlatformTopicImagePipeline({
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1127,7 +1132,7 @@ async function processPlatformJob(
         sceneId: typeof params.sceneId === "string" ? params.sceneId : undefined,
         appealHook: appealHookOut,
         highFeedCtrBoost: wantsHighCtr,
-        imagePromptTranslator: "gpt54",
+        imagePromptTranslator: imagePromptTranslatorForJob,
         creationIdOut,
         isFreeRetry: Boolean(params.isFreeRetry),
         newJobMetaBase,
