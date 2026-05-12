@@ -357,7 +357,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
     model: "gpt54",
     modelName: process.env.OPENAI_GPT54_MODEL?.trim() || "gpt-5.4",
     response_format: { type: "json_object" },
-    max_tokens: 8192,
+    max_tokens: 16_834,
     messages: [
       {
         role: "system",
