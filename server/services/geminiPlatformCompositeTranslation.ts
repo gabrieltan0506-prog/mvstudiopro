@@ -257,6 +257,18 @@ export const GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN =
  */
 export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORITY_EN} ${GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN}`;
 
+/**
+ * 選題 **信息流單張 9:16 封面**（圖文 / 短影音）：英文化 **身分與硬要求**。
+ * **三軌同源**：{@link callVertexGeminiFlashTranslation}（Gemini **3 Flash**）
+ * 與 {@link callGemini3_1_Pro_AiStudio} 的 OpenAI **`invokeLLM`(gpt54)** 路徑（實際 `modelName` 由 **`OPENAI_GPT54_MODEL` / `OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL`** 決定——常見 **gpt‑5.4** 或覆寫為 **gpt‑5.5**）須將本段 **全文**嵌入 `system` / `systemInstruction`，不得以模型不同而弱化。
+ * 與 upstream {@link buildPlatformTopicReferenceGeminiTask}、`PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER`（同檔內常量）語義對齊。
+ */
+export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
+  "**選題信息流單張豎封（9:16·單主視覺／抖音·小紅書式封面縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**。",
+  "**當 upstream task 屬選題封面（對應本常數所指產品）時必達：** （1）**photoreal editorial / 高端广告静拍級**質感；（2）**motivated lighting**—主光來向可信，寫清 **key / fill / rim** 層次與受控陰影，**禁止**平光貼字、廉價泛光；（3）**rich set dressing**—前景／中景／後景分层，用具象道具／手勢／環境服務 Hook；（4）可选 **语义象形小图标 / badge / pill + 简体中文辅标**（字級次级，**不得**压主標）；（5）**dominant hue + razor accent** 撞色、主標與背板對比強；（6）整体 **conceptually vivid**，缩略图上可见 **好奇心鉤 / visual curiosity**（非標題欺诈）；（7）**禁止** bland stock 臉譜封面、单列画布內多分镜纵条／2×4 宽幅主表。",
+  "**三軌勿偏航：** 不論 **Vertex Gemini 3 Flash** 或 **OpenAI**（`modelName` 常見 **gpt‑5.4**、可覆寫 **gpt‑5.5**），上列身份與版式規格 **須完整遵守、不得因模型不同而弱化**。",
+].join("\n");
+
 /** @deprecated 與 {@link PLATFORM_IMAGE_TRANSLATOR_BASE_EN} 同文，保留舊名避免外部引用斷裂。 */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN = PLATFORM_IMAGE_TRANSLATOR_BASE_EN;
 
@@ -631,7 +643,7 @@ export async function callVertexGeminiFlashTranslation(
     "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不得壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
-    "**單張豎封**：写清 **motivated editorial / premium ad-still lighting（key–fill–rim 有据）**、布景与道具层次；**畫內簡中大標** 与可选 **语义相关小图标 / badge / pill + 简体辅标微文案**（層級低于主標）；**撞色/對比**要强但耐看；**一眼好奇**——构图有创意张力或小悬念，让读者想进一步了解；Context 落成 **可拍场景**；身份块→ **戏剧化出场**，非履历条列。",
+    PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
     "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
@@ -758,7 +770,7 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
 }
 
 /**
- * 平台生图英文化：**OpenAI（預設 gpt-5.4，與 Stage 2 長文 gpt-5.5 分離）** 最多 3 次。
+ * 平台生图英文化：**OpenAI**（預設 gpt‑5.4，`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL`／`OPENAI_GPT54_MODEL` 可覆寫為 **gpt‑5.5**）最多 3 次；與 Stage 2 長文分離。**選題單封**身分見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，與 **Gemini 3 Flash** 同源。
  * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 Vertex Flash；**不再**偽裝可用 prompt：GCP 避險、`skipVertexFallback`、Vertex 兜底失敗等一律 **拋錯**（用戶向 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * `skipVertexFallback`：由 {@link callVertexGeminiFlashTranslation} 在 Flash 三輪後呼叫，避免再次打 Vertex。
  * `compositeTranslationStrict`：分鏡/八格英文化；GPT 三輪盡力後不發 Vertex，直接拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}。
@@ -771,7 +783,7 @@ export async function callGemini3_1_Pro_AiStudio(
 ): Promise<string> {
   const skipVertexFallback = Boolean(opts?.skipVertexFallback);
   const compositeTranslationStrict = Boolean(opts?.compositeTranslationStrict);
-  /** 英文化走較廉價預設；勿改 gpt-5.5（多輪重試費用高）。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
+  /** 模型名環境決定：**gpt‑5.4、gpt‑5.5** 等皆走此路—選題信息流單封身份與 **{@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}** 及 Gemini 3 Flash **一致**。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
   const gpt54MaxOut = Math.min(
@@ -801,7 +813,8 @@ export async function callGemini3_1_Pro_AiStudio(
             PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
             "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
-            "**竖版单封**：**先**锁 **简中标题**（位置、字重、撞色/楔形点缀）及可选 **象形小图标 + 简体辅标**（次级）；写清 **广告静拍級 motivated lighting（key/fill/rim）**、布景道具密度；整体须 **conceptually vivid**、带 **thumbnail-level curiosity**，让用户想进一步了解；再把 Context **落成可拍写实场景**；人设 → **art-directed** 出场，非散文复述。",
+            "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；選題信息流單封的 **身分與版式規格**必須與 Vertex Gemini 3 Flash 路徑 **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
+            PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
             "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
             "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
@@ -992,7 +1005,8 @@ export async function callGemini3_1_Pro_AiStudio(
 }
 
 /**
- * 平台 **選題單幀**：預設 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（見 {@link callVertexGeminiFlashTranslation}，三輪後 **GPT 5.4**）。
+ * 平台 **選題單幀**：預設 **GPT 5.4**（`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL` 可為 **gpt‑5.5**）；選 **Vertex 探索** 時先 **Flash**（{@link callVertexGeminiFlashTranslation}，三輪後 **同上 OpenAI 鏈**）。
+ * **選題信息流單封**之 **編導身分與規格** 見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，**Flash / GPT‑5.4 / GPT‑5.5（若配置）三軌同源**。
  * **分鏡主表 / 小紅書八格** 英文化見 {@link translatePlatformCompositeToEnglishPrompt}（預設 Flash→GPT，雙軌失敗拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * 戰略封面 / 章節扉頁仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
