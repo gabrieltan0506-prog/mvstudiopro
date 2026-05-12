@@ -117,7 +117,8 @@ export async function runPlatformTopicImagePipeline(
   const imagePromptTranslator: PlatformImagePromptTranslator = "gpt54";
   const translatorLogLabel = "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
-  const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
+  /** 单帧选题封面：兜底 Typography 統一 GRAPHIC（信息流封面），勿用 STORYBOARD 以免電影分鏡格画风。 */
+  const mode = "GRAPHIC";
   const creationIdOut = input.creationIdOut ?? undefined;
   const database = await db.getDb();
   const { userCreations } = await import("../../drizzle/schema-creations.js");
@@ -274,7 +275,7 @@ export async function runPlatformTopicImagePipeline(
           console.warn(`[runPlatformTopicImagePipeline] condenseImagePromptIfNeeded flowLog:\n${topicImageCondenseLog.join("\n")}`);
         }
         console.warn(
-          `[runPlatformTopicImagePipeline] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败:`,
+          `[runPlatformTopicImagePipeline] ${isGraphic ? "图文封面式" : "短视频单帧封面"} 主路径失败:`,
           e instanceof Error ? e.message : e,
         );
       }
