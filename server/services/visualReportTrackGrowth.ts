@@ -1,6 +1,6 @@
 /**
  * Visual report「赛道爆款增长率」：用 trend store 的 industryLabels 做近窗 vs 前一窗样本量环比；
- * 修补 LLM 输出，并避免「前窗为 0 时」多条行业同时顶到同一假峰值（旧版常见全为 +125%）。
+ * 修补 LLM 输出的 N/A / 说明性文字，并避免「前窗为 0 时」多条行业同时顶到同一假峰值（旧版常见全为 +125%）。
  */
 
 export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean };
@@ -168,6 +168,7 @@ function bestHintForTrackName(name: string, hintMap: Map<string, string>): strin
   return bestVal;
 }
 
+/** 是否为「可展示的」短增长率（禁止 N/A、漏数据说明等） */
 export function isValidGrowthString(g: string): boolean {
   const s = g.trim();
   if (!s) return false;
