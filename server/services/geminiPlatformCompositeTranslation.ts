@@ -492,6 +492,7 @@ COVER DESIGN ONLY:
 - single dominant hero subject
 - premium editorial portrait or scene
 - strong focal point
+- **Feed-native vividness:** commit to **one** memorable visual device the scroll will recall—rim light / color wedge / symbolic prop / asymmetry / environmental tension—do not default to a bland centered template or stock “safe” flatness when the hook allows stronger staging.
 - not multi-panel storyboard
 - not dual-card layout
 - not Xiaohongshu note
@@ -573,6 +574,7 @@ export async function callVertexGeminiFlashTranslation(translationTask: string, 
     GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
     "你是頂級中英雙語編導，也是頂級視覺提示詞導演。",
     "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
+    "在遵守上游禁忌與版式鎖的前提下，允許更有記憶點的光色與構圖，避免機械重複的「保守安全」審美。",
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
     "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面時避免寫成多格分鏡，除非任務明確要求。",
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
@@ -754,6 +756,7 @@ export async function callGemini3_1_Pro_AiStudio(
             "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
             "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
+            "在满足版式与上游禁忌的前提下，鼓励更有张力的光色与构图取舍，避免每张都像同一条「安全商业模板」或千篇一律的平淡纵深。",
             "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
             "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表。",
           ].join("\n"),

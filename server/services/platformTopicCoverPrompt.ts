@@ -4,9 +4,9 @@
  */
 export const PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS = [
   "Shot on 35mm lens, f/1.4 aperture",
-  "cinematic lighting, soft volumetric light",
+  "cinematic lighting with motivated contrast and color grade—not flat e-commerce pack lighting unless the hook clearly asks for it",
   "hyper-detailed textures, ultra-photorealistic, 8k",
-  "award-winning photography, clean uncluttered background",
+  "award-winning photography: deliberate background—either generous negative space for hero type OR a rich contextual set that reinforces the hook; avoid generic gray voids and meaningless clutter",
 ].join(", ");
 
 /**
