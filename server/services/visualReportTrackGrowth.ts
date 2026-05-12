@@ -1,6 +1,6 @@
 /**
- * Visual report「赛道爆款增长率」：用 trend store 的 industryLabels 做近窗 vs 前一窗样本量环比，
- * 修补 LLM 因缺少对照数据而输出的 N/A / 说明性文字。
+ * Visual report「赛道爆款增长率」：用 trend store 的 industryLabels 做近窗 vs 前一窗样本量环比；
+ * 修补 LLM 输出的 N/A / 说明性文字，并避免「前窗为 0 时」多条行业同时顶到同一假峰值（旧版常见全为 +125%）。
  */
 
 export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean };
@@ -12,7 +12,7 @@ function itemTimeMs(item: any): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** 与 generateVisualReport 一致：无时间戳的样本归入微窗（避免全部被丢弃） */
+/** 与 generateVisualReport 一致：无时间戳的样本归在近窗（避免全部被丢弃） */
 function collectIndustryWindowCounts(
   items: any[],
   windowDays: number,
@@ -62,7 +62,12 @@ function formatGrowthPct(pct: number): string {
   return "+0%";
 }
 
-/** 由样本条数推算行业环比（无权威播放环比时仍优于 N/A） */
+/**
+ * 由样本条数推算行业「增长率」展示值：
+ * - 前窗 p>0：真实样本环比 (c-p)/p*100
+ * - 前窗 p=0 且当窗 c>0（多条）：按 **当窗样本条数 c** 降序（tie 按 label），映射为 **递减** 的 +12%～+98% 刻度，避免旧版「45+min(80,c*4)」在 c≥20 时全员 +125%
+ * - 仅一条且 p=0：用 c/maxC 映射到 ~10%～98%（maxC 为全表最大当窗条数）
+ */
 export function buildIndustryGrowthHintMap(
   store: { collections?: Partial<Record<string, { items?: any[] }>> },
   platforms: string[],
@@ -79,27 +84,47 @@ export function buildIndustryGrowthHintMap(
     for (const [k, v] of Array.from(prior.entries())) mergedPrior.set(k, (mergedPrior.get(k) || 0) + v);
   }
 
-  const hintMap = new Map<string, string>();
   const labels = new Set<string>([
     ...Array.from(mergedCurrent.keys()),
     ...Array.from(mergedPrior.keys()),
   ]);
 
+  type Row = { label: string; c: number; p: number };
+  const rows: Row[] = [];
   for (const label of Array.from(labels)) {
     const c = mergedCurrent.get(label) || 0;
     const p = mergedPrior.get(label) || 0;
     if (c <= 0 && p <= 0) continue;
+    rows.push({ label, c, p });
+  }
 
-    let pct: number;
-    if (p <= 0 && c > 0) {
-      pct = Math.min(220, 45 + Math.min(80, c * 4));
-    } else if (p > 0) {
-      pct = Math.round(((c - p) / p) * 100);
-    } else {
-      pct = 0;
-    }
+  const maxC = Math.max(...rows.map((r) => r.c), 0);
+
+  const hintMap = new Map<string, string>();
+
+  for (const { label, c, p } of rows) {
+    if (p <= 0) continue;
+    let pct = Math.round(((c - p) / p) * 100);
     pct = Math.max(-99, Math.min(400, pct));
     hintMap.set(label, formatGrowthPct(pct));
+  }
+
+  const zeroPrior = rows.filter((r) => r.p <= 0 && r.c > 0);
+  zeroPrior.sort((a, b) => b.c - a.c || a.label.localeCompare(b.label, "zh-Hans-CN"));
+
+  if (zeroPrior.length === 1) {
+    const { label, c } = zeroPrior[0];
+    let pct =
+      maxC > 0 ? Math.round(10 + 88 * (c / maxC)) : 88;
+    pct = Math.max(-99, Math.min(400, pct));
+    hintMap.set(label, formatGrowthPct(pct));
+  } else if (zeroPrior.length > 1) {
+    const m = zeroPrior.length;
+    for (let i = 0; i < m; i++) {
+      const pct = Math.round(12 + 86 * ((m - 1 - i) / Math.max(m - 1, 1)));
+      const clamped = Math.max(-99, Math.min(400, pct));
+      hintMap.set(zeroPrior[i].label, formatGrowthPct(clamped));
+    }
   }
 
   return hintMap;
@@ -173,7 +198,7 @@ function rankFallbackGrowth(index: number, total: number): string {
 
 export function repairTrackGrowthRows(rows: TrackGrowthRow[], hintMap: Map<string, string>): TrackGrowthRow[] {
   const n = rows.length;
-  return rows.map((row, i) => {
+  const firstPass = rows.map((row, i) => {
     const raw = String(row.growth || "").trim();
     if (isValidGrowthString(raw)) {
       return { ...row, growth: normalizeGrowthDisplay(raw) };
@@ -184,4 +209,24 @@ export function repairTrackGrowthRows(rows: TrackGrowthRow[], hintMap: Map<strin
     }
     return { ...row, growth: rankFallbackGrowth(i, n) };
   });
+
+  if (n <= 1) return firstPass;
+
+  const growths = firstPass.map((r) => r.growth);
+  const allSame = growths.every((g) => g === growths[0]);
+
+  if (!allSame) return firstPass;
+
+  let second = firstPass.map((row, i) => {
+    const fromHint = bestHintForTrackName(String(row.name || ""), hintMap);
+    if (fromHint) {
+      return { ...row, growth: fromHint };
+    }
+    return { ...row, growth: rankFallbackGrowth(i, n) };
+  });
+
+  const g2 = second.map((r) => r.growth);
+  if (new Set(g2).size === g2.length) return second;
+
+  return second.map((row, i) => ({ ...row, growth: rankFallbackGrowth(i, n) }));
 }

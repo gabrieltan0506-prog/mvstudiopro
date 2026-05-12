@@ -45,6 +45,18 @@ function safeTxt(item: any): string {
   return String(item);
 }
 
+/** 解析「+72%」「-3%」「125」等为整数；失败返回 null */
+function parseGrowthPercentString(growth: string): number | null {
+  const s = String(growth || "").trim();
+  if (!s) return null;
+  const compact = s.replace(/\s/g, "").replace(/%$/i, "");
+  const m = compact.match(/^([+-]?)(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  const sign = m[1] === "-" ? -1 : 1;
+  const n = sign * Number(m[2]);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
 export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
   function VisualReportTemplate({ data }, ref) {
     const isDark = data.theme === "dark";
@@ -71,7 +83,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         <div style={{ flex: 1, height: "10px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
           <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${fillPct}%` }} />
         </div>
-        {valueTxt ? <span style={{ width: "44px", textAlign: "right", fontWeight: 700, fontSize: "12px", color, flexShrink: 0 }}>{valueTxt}</span> : null}
+        {valueTxt ? <span style={{ minWidth: "52px", textAlign: "right", fontWeight: 700, fontSize: "12px", color, flexShrink: 0 }}>{valueTxt}</span> : null}
         {tagTxt && tagColors ? (
           <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: tagColors.bg, color: tagColors.color, flexShrink: 0, whiteSpace: "nowrap" }}>{tagTxt}</span>
         ) : null}
@@ -177,15 +189,28 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 <div style={card()}>
                   <div style={ct(C[4])}><div style={dot(C[4])} />赛道爆款增长率排行</div>
                   {(data.trackGrowth || []).map((t, i) => {
-                    const pct = Math.max(10, 100 - i * 12);
                     const color = C[i % C.length];
                     const gStr = safeTxt(t.growth || "");
-                    const isNeg = gStr.startsWith("-");
+                    const parsed = parseGrowthPercentString(gStr);
+                    let fillPct: number;
+                    let valueTxt: string;
+                    const isNeg = parsed != null && parsed < 0;
+                    if (isNeg) {
+                      fillPct = 10;
+                      valueTxt = /%/.test(gStr) ? gStr.trim() : `${parsed}%`;
+                    } else if (parsed != null) {
+                      const clamped = Math.min(100, Math.max(8, parsed));
+                      fillPct = clamped;
+                      valueTxt = `+${clamped}%`;
+                    } else {
+                      fillPct = Math.max(10, 100 - i * 12);
+                      valueTxt = `+${fillPct}%`;
+                    }
                     return barRow(
                       safeTxt(t.name || t),
-                      isNeg ? 10 : pct,
+                      isNeg ? 10 : fillPct,
                       isNeg ? muted : color,
-                      gStr || `${pct}%`,
+                      valueTxt,
                       t.isHot ? "热" : undefined,
                       t.isHot ? { bg: "#3a0e2a", color: "#ff4fb8" } : undefined
                     );

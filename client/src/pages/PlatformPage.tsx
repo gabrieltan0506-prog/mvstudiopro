@@ -279,7 +279,49 @@ type ClientJobPollTrace = {
   lines: string[];
   pollCount: number;
   terminalStatus?: string;
+  /** 進行中：僅保留一行「當前步驟」，不把整段 imageGenFlowLog / 輪詢流水刷進面板 */
+  currentStep?: string;
 };
+
+function formatStage2PollStepLine(
+  status: "queued" | "running" | "succeeded" | "failed",
+  attempt: number,
+  output?: Record<string, unknown>,
+): string {
+  if (status === "queued") return "排队中";
+  const dbg = output?.debug;
+  if (dbg && typeof dbg === "object" && !Array.isArray(dbg)) {
+    const bp = (dbg as Record<string, unknown>).buildPlatformContent;
+    if (bp && typeof bp === "object" && !Array.isArray(bp)) {
+      const sub = (bp as { stage2SubSteps?: { id: string; title: string; status: string }[] }).stage2SubSteps;
+      if (Array.isArray(sub) && sub.length > 0) {
+        const active = sub.find((s) => /running|in_progress|pending|working/i.test(String(s.status || "")));
+        if (active) return `当前：${active.id} ${active.title}`;
+        const last = sub[sub.length - 1];
+        if (last) return `当前：${last.id} ${last.title}（${last.status}）`;
+      }
+    }
+  }
+  if (status === "running") {
+    if (attempt < 12) return "后台生成專屬文案（撰寫與校對）…";
+    if (attempt < 28) return "內容較長，後台仍在處理…";
+    return "已等待較久，後台仍在處理…";
+  }
+  return "处理中…";
+}
+
+function pickActiveStage2SubStepOneLine(contentDebug: Record<string, unknown> | null | undefined): string | null {
+  const bp = contentDebug?.buildPlatformContent as
+    | { stage2SubSteps?: { id: string; title: string; status: string }[] }
+    | undefined;
+  const sub = bp?.stage2SubSteps;
+  if (!Array.isArray(sub) || sub.length === 0) return null;
+  const terminal = /^(done|success|succeeded|complete|completed|failed|error)$/i;
+  const active = sub.find((s) => !terminal.test(String(s.status || "").trim()));
+  if (active) return `${active.id} ${active.title} · ${active.status}`;
+  const last = sub[sub.length - 1];
+  return last ? `${last.id} ${last.title} · ${last.status}` : null;
+}
 
 /** Stage 2 失敗或空載荷時，從 `debug.buildPlatformContent` 摘錄高信號欄位寫入輪詢區（避免只看 toast）。 */
 function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefined): string {
@@ -858,13 +900,9 @@ function buildCompositeImageGenPendingLines(input: {
     `${ts}  [客户端] 翻译引擎：${trLine}`,
     ...(pid.length >= 8
       ? [
-          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s GET /api/jobs/${pid} · 下方【当前步骤】= 服务端流水最后一行`,
-          `${ts}  [提示] 卡在 [GPT-IMAGE-2] 不动：单次尺寸可能接近 300s；失败会换尺寸重试（你看到的「多次 API」多为超时/账单上限/换尺寸，非客户端重复发起合成）`,
+          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s 拉取一次状态 · 仅展示「当前步骤」一行`,
         ]
-      : [
-          `${ts}  [提示] 未带 progressJobId，无法轮询实时步骤；仅能在请求结束后看完整日志`,
-        ]),
-    `${ts}  [说明] 排查标签：[骨架·中文视觉]、[GPT54·英文化]、[Vertex·Flash]、[2×4·步骤…]、[GPT-IMAGE-2]、[2×4·整链]；整链失败默认最多 3 次完整重试（可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫）`,
+      : [`${ts}  [提示] 未带 progressJobId，无法实时轮询步骤`]),
   ];
 }
 
@@ -1268,7 +1306,7 @@ export default function PlatformPage() {
   }, [platformCoverVertexNb2]);
 
   const canConfigureCompositeImageTranslator =
-    user?.role === "admin" || user?.role === "supervisor";
+    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
   const effectiveCompositeImagePromptTranslator = useMemo((): PlatformImagePromptTranslator => {
     if (
@@ -1423,12 +1461,10 @@ export default function PlatformPage() {
       maxWaitMs: 25 * 60_000,
       adaptiveBackoffAfterAttempts: 36,
       maxIntervalMs: 8000,
-      onPoll: ({ attempt, status }) => {
-        const line = `轮询 #${attempt} · status=${status}`;
+      onPoll: ({ attempt, status, output }) => {
+        const stepLine = formatStage2PollStepLine(status, attempt, output);
         setContentJobPollTrace((prev) =>
-          prev && prev.jobId === jobId
-            ? { ...prev, pollCount: attempt, lines: appendPollDebugLine(prev.lines, line) }
-            : prev,
+          prev && prev.jobId === jobId ? { ...prev, pollCount: attempt, currentStep: stepLine } : prev,
         );
         if (status === "queued") {
           setContentLoadingText("任務排隊中，請稍候…");
@@ -1439,24 +1475,42 @@ export default function PlatformPage() {
         }
       },
     });
-    const tPollEnd = new Date().toISOString();
-    setContentJobPollTrace((prev) =>
-      prev && prev.jobId === jobId
-        ? {
-            ...prev,
-            terminalStatus: j.status,
-            lines: appendPollDebugLine(
-              prev.lines,
-              `${tPollEnd} 轮询结束 · status=${j.status}${j.error ? ` · error=${j.error}` : ""}`,
-            ),
-          }
-        : prev,
-    );
     if (j.status === "failed") {
+      const out = j.output;
+      if (out && typeof out === "object" && !Array.isArray(out)) {
+        const d = (out as Record<string, unknown>).debug;
+        if (d && typeof d === "object" && !Array.isArray(d)) {
+          setContentDebug(d as Record<string, unknown>);
+        }
+      }
+      setContentJobPollTrace((prev) =>
+        prev && prev.jobId === jobId
+          ? {
+              ...prev,
+              terminalStatus: j.status,
+              lines: appendPollDebugLine(
+                prev.lines,
+                `${new Date().toISOString()} 轮询结束 · status=failed · error=${j.error || ""}`,
+              ),
+            }
+          : prev,
+      );
       throw new Error(j.error || "專屬文案任務失敗");
     }
     const raw = j.output;
     if (!raw || typeof raw !== "object") {
+      setContentJobPollTrace((prev) =>
+        prev && prev.jobId === jobId
+          ? {
+              ...prev,
+              terminalStatus: j.status,
+              lines: appendPollDebugLine(
+                prev.lines,
+                `${new Date().toISOString()} 任務返回但無法解析 output`,
+              ),
+            }
+          : prev,
+      );
       throw new Error("任務已完成但無有效輸出，請重試");
     }
     const out = raw as Record<string, unknown>;
@@ -1473,32 +1527,34 @@ export default function PlatformPage() {
           stage2TimedOut?: boolean;
         }
       | undefined;
-    const tEnd = new Date().toISOString();
-    let term: string;
-    if (res.platformContent) {
-      term = "succeeded";
-    } else if (dbg?.stage2TimedOut) {
-      term = "timeout";
-    } else if (dbg?.stage2Error) {
-      term = "failed";
-    } else {
-      term = "empty";
-    }
-    setContentJobPollTrace((prev) =>
-      prev && prev.jobId === jobId
-        ? {
-            ...prev,
-            lines: appendPollDebugLine(
-              prev.lines,
-              `${tEnd} 解析輸出完成 · totalMs=${dbg?.totalMs ?? "?"} · terminal=${term}`,
-            ),
-          }
-        : prev,
-    );
     if (dbg?.stage2Error) {
+      setContentDebug(res.debug as Record<string, unknown>);
+      setContentJobPollTrace((prev) =>
+        prev && prev.jobId === jobId
+          ? {
+              ...prev,
+              lines: appendPollDebugLine(
+                prev.lines,
+                `${new Date().toISOString()} stage2Error: ${dbg.stage2Error}`,
+              ),
+            }
+          : prev,
+      );
       throw new Error(dbg.stage2Error);
     }
     if (dbg?.stage2TimedOut) {
+      setContentDebug(res.debug as Record<string, unknown>);
+      setContentJobPollTrace((prev) =>
+        prev && prev.jobId === jobId
+          ? {
+              ...prev,
+              lines: appendPollDebugLine(
+                prev.lines,
+                `${new Date().toISOString()} stage2TimedOut · totalMs=${dbg?.totalMs ?? "?"}`,
+              ),
+            }
+          : prev,
+      );
       throw new Error("專屬文案生成逾時，請稍後再試或縮短背景描述");
     }
     if (res.platformContent) {
@@ -1507,6 +1563,11 @@ export default function PlatformPage() {
       const ml = Array.isArray(pc.monetizationLanes) ? pc.monetizationLanes.length : 0;
       if (bp === 0 && ml === 0) {
         const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
+        const dbgObj =
+          res.debug && typeof res.debug === "object" && !Array.isArray(res.debug)
+            ? (res.debug as Record<string, unknown>)
+            : null;
+        setContentDebug(dbgObj && Object.keys(dbgObj).length > 0 ? dbgObj : null);
         setContentJobPollTrace((prev) =>
           prev && prev.jobId === jobId
             ? {
@@ -1523,10 +1584,18 @@ export default function PlatformPage() {
         toast.error(
           "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
         );
+      } else {
+        setContentJobPollTrace(null);
+        setContentDebug(null);
       }
       setPlatformContent(res.platformContent as any);
     } else {
       const snippet = formatStage2DebugSnippet(res.debug as Record<string, unknown> | undefined);
+      const dbgObj =
+        res.debug && typeof res.debug === "object" && !Array.isArray(res.debug)
+          ? (res.debug as Record<string, unknown>)
+          : null;
+      setContentDebug(dbgObj && Object.keys(dbgObj).length > 0 ? dbgObj : null);
       setContentJobPollTrace((prev) =>
         prev && prev.jobId === jobId
           ? {
@@ -1543,7 +1612,6 @@ export default function PlatformPage() {
       setContentJobError("專屬文案生成失敗：任務完成但未返回有效內容");
       toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
     }
-    setContentDebug((res.debug as Record<string, unknown>) ?? {});
   }, []);
 
   /** 入隊並輪詢專屬文案（扣費發生在後端 enqueue 時）；供主流程鏈式調用與手動重試 */
@@ -1557,9 +1625,8 @@ export default function PlatformPage() {
       setIsContentLoading(true);
       setStage2Failed(false);
       setContentLoadingText("正在提交專屬文案後台任務…");
+      setContentDebug(null);
       try {
-        const tStart = new Date().toISOString();
-        const cost = CREDIT_COSTS.platformStage2Copywriting;
         const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
           context: focusPrompt || undefined,
           windowDays,
@@ -1569,12 +1636,10 @@ export default function PlatformPage() {
         });
         setContentJobPollTrace({
           jobId,
-          label: "Stage 2 · platform_build_content（Fly worker + GET /api/jobs 轮询）",
-          lines: appendPollDebugLine(
-            [],
-            `${tStart} 已入队 enqueuePlatformContentJob → jobId=${jobId} · 扣費 ${cost} 積分（後端入隊時）`,
-          ),
+          label: "Stage 2 · platform_build_content",
+          lines: [],
           pollCount: 0,
+          currentStep: "已入队，等待轮询…",
         });
         await runStage2FromJobId(jobId);
       } catch (e) {
@@ -1583,7 +1648,6 @@ export default function PlatformPage() {
         setStage2Failed(true);
         setContentJobError(msg);
         toast.error(`文案生成失敗: ${msg}`);
-        setContentDebug(null);
         setContentJobPollTrace((prev) =>
           prev
             ? {
@@ -1622,10 +1686,13 @@ export default function PlatformPage() {
     await startStage2ContentGeneration();
   }, [startStage2ContentGeneration]);
 
-  // Stage 1 Mutation: 戰略看板（除 handleAnalyze 外通常不單獨觸發；onSuccess 僅同步 debug）
+  // Stage 1 Mutation: 戰略看板（除 handleAnalyze 外通常不單獨觸發；成功時不保留 debug，僅失敗時保留）
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
     onSuccess: (result) => {
-      setDashboardDebug(result.debug as Record<string, unknown>);
+      const dbg = result.debug as Record<string, unknown> | null | undefined;
+      const hasErr = Boolean(dbg && typeof dbg.error === "string" && String(dbg.error).trim().length > 0);
+      const ok = Boolean(result.platformDashboard) && !hasErr;
+      setDashboardDebug(ok ? null : (dbg ?? null));
     },
     onError: (error) => {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
@@ -1640,6 +1707,89 @@ export default function PlatformPage() {
       toast.error(error.message || "平台追问失败");
     },
   });
+
+  const pipelineDebugShowExtras = useMemo(() => {
+    return (
+      stage2Failed ||
+      Boolean(contentJobError) ||
+      stage2EmptyPayload ||
+      Boolean(getPlatformDashboardMutation.error) ||
+      Boolean(growthSnapshotQuery.error) ||
+      Boolean(askPlatformFollowUpMutation.error) ||
+      (typeof contentDebug?.stage2Error === "string" && Boolean(contentDebug.stage2Error)) ||
+      Boolean(
+        dashboardDebug &&
+          typeof dashboardDebug === "object" &&
+          typeof (dashboardDebug as { error?: unknown }).error === "string" &&
+          (dashboardDebug as { error: string }).error,
+      )
+    );
+  }, [
+    stage2Failed,
+    contentJobError,
+    stage2EmptyPayload,
+    getPlatformDashboardMutation.error,
+    growthSnapshotQuery.error,
+    askPlatformFollowUpMutation.error,
+    contentDebug,
+    dashboardDebug,
+  ]);
+
+  const platformImageGenFlowSnapshotsFailedOnly = useMemo(
+    () =>
+      platformImageGenFlowSnapshots.filter(
+        (s) => s.kind === "batch_topic_frames_failed" || s.kind === "composite_2x4_failed",
+      ),
+    [platformImageGenFlowSnapshots],
+  );
+
+  const flyJobsPollDebugPanel = useMemo(() => {
+    const traces = [contentJobPollTrace, topicImageJobPollTrace].filter(Boolean) as ClientJobPollTrace[];
+    if (traces.length === 0) return null;
+
+    const totalPolls = traces.reduce((sum, t) => sum + t.pollCount, 0);
+    const showFailureLog = traces.some((t) => {
+      if (t.lines.length === 0) return false;
+      if (t.terminalStatus === "failed" || t.terminalStatus === "client_error") return true;
+      if (t.terminalStatus === "succeeded")
+        return t.lines.some((ln) => /无有效|无 output|异常|失败|✗/i.test(ln));
+      return true;
+    });
+
+    const overviewText = traces
+      .map((t) => {
+        const tail = t.terminalStatus ? `终态 ${t.terminalStatus}` : "进行中";
+        return `${t.label} · ${t.pollCount} 次 · ${tail}`;
+      })
+      .join("  ·  ");
+
+    const stepText = traces
+      .map((t) => (t.currentStep ? `${t.label}：${t.currentStep}` : null))
+      .filter(Boolean)
+      .join(" ｜ ");
+
+    return (
+      <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.05)] p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">Fly Jobs · 轮询</div>
+        <p className="mt-2 text-[11px] leading-relaxed text-[#d7d0ef]">
+          合计轮询 <span className="font-semibold text-white tabular-nums">{totalPolls}</span> 次
+          <span className="text-gray-500"> · 多任务累加，同一面板内随 GET 更新</span>
+        </p>
+        <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">{overviewText}</p>
+        {stepText ? (
+          <p className="mt-1.5 break-words text-[10px] leading-relaxed text-gray-300">当前步骤：{stepText}</p>
+        ) : null}
+        {showFailureLog ? (
+          <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
+            {traces
+              .filter((t) => t.lines.length > 0)
+              .map((t) => `── ${t.label} · ${t.jobId} ──\n${t.lines.join("\n")}`)
+              .join("\n\n")}
+          </pre>
+        ) : null}
+      </div>
+    );
+  }, [contentJobPollTrace, topicImageJobPollTrace]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
 
@@ -1670,27 +1820,15 @@ export default function PlatformPage() {
         failedJobId: inp.failedJobId,
         sceneId: inp.sceneId,
         coverHighClickAppeal: inp.coverHighClickAppeal,
-        /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
-        imagePromptTranslator: "gpt54",
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
       });
-      const tEnq = new Date().toISOString();
-      let coverPollLines = appendPollDebugLine(
-        [],
-        `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
-      );
-      if (inp.coverHighClickAppeal) {
-        coverPollLines = appendPollDebugLine(
-          coverPollLines,
-          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
-        );
-      }
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: coverPollLines,
+        lines: [],
         pollCount: 0,
+        currentStep: "已入队…",
       });
       topicImagePollFlowLogCursorRef.current = 0;
       let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
@@ -1699,24 +1837,23 @@ export default function PlatformPage() {
           intervalMs: 2500,
           maxWaitMs: inp.coverHighClickAppeal ? 25 * 60_000 : 18 * 60_000,
           onPoll: ({ attempt, status, output }) => {
-            const line = `轮询 #${attempt} · status=${status} · ${pollLabel}`;
             const flowRaw = output?.imageGenFlowLog;
-            let extraLines: string[] = [];
+            let lastNew = "";
             if (Array.isArray(flowRaw)) {
               const flow = flowRaw as string[];
               const start = topicImagePollFlowLogCursorRef.current;
               if (flow.length > start) {
-                extraLines = flow.slice(start);
                 topicImagePollFlowLogCursorRef.current = flow.length;
+                lastNew = String(flow[flow.length - 1] ?? "");
               }
             }
             setTopicImageJobPollTrace((prev) => {
               if (!prev || prev.jobId !== jobId) return prev;
-              let lines = appendPollDebugLine(prev.lines, line);
-              for (const sl of extraLines) {
-                lines = appendPollDebugLine(lines, sl);
-              }
-              return { ...prev, pollCount: attempt, lines };
+              const step =
+                lastNew ||
+                prev.currentStep ||
+                (status === "queued" ? "排队中" : status === "running" ? "生图中…" : "处理中…");
+              return { ...prev, pollCount: attempt, currentStep: step };
             });
           },
         });
@@ -1733,17 +1870,41 @@ export default function PlatformPage() {
         );
         throw err;
       }
-      const termLine = `${new Date().toISOString()} 终态 status=${j.status}${j.error ? ` · error=${j.error}` : ""} · ${pollLabel}`;
-      setTopicImageJobPollTrace((prev) =>
-        prev && prev.jobId === jobId
-          ? { ...prev, terminalStatus: j.status, lines: appendPollDebugLine(prev.lines, termLine) }
-          : prev,
-      );
       if (j.status === "failed") {
+        const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
+          ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+          : [];
+        setTopicImageJobPollTrace((prev) => {
+          if (!prev || prev.jobId !== jobId) return prev;
+          let lines = prev.lines;
+          for (const row of flow) {
+            lines = appendPollDebugLine(lines, String(row));
+          }
+          return {
+            ...prev,
+            terminalStatus: j.status,
+            lines: appendPollDebugLine(
+              lines,
+              `${new Date().toISOString()} 终态 failed · error=${j.error || ""} · ${pollLabel}`,
+            ),
+          };
+        });
         throw new Error(j.error || "生图任务失败");
       }
       const raw = j.output;
       if (!raw || typeof raw !== "object") {
+        setTopicImageJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: "succeeded",
+                lines: appendPollDebugLine(
+                  prev.lines,
+                  `${new Date().toISOString()} 终态 succeeded 但无 output 对象 · ${pollLabel}`,
+                ),
+              }
+            : prev,
+        );
         return {
           success: false as const,
           imageUrl: null as string | null,
@@ -1802,7 +1963,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [预估步骤] 1. 提取中文视觉骨架 → 2. GPT 5.4 翻译英文 prompt（最多 3 轮，失败再走服务端 Vertex 兜底）→ 3. Prompt 提炼 → 4. GPT-IMAGE-2 主路径 → 5. Nano Banana 2 / Vertex 兜底（如需要）`,
+            `${new Date().toISOString()}  [等待中] 进度见 Debug「Fly Jobs · 轮询」当前步骤`,
           ],
           meta: {
             localOpId,
@@ -2107,9 +2268,11 @@ export default function PlatformPage() {
         : [];
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
-        `${ts}  [客户端] 以下为服务端 imageGenFlowLog 全量（${serverLines.length} 行）· ${serverLines.length === 0 ? "⚠ 响应未带日志字段，请查 TRPC 返回体" : "── 开始 ──"}`,
       ];
-      const mergedLines = serverLines.length > 0 ? [...headerLines, ...serverLines] : headerLines;
+      const mergedLines =
+        serverLines.length > 0
+          ? [...headerLines, `${ts}  [收尾步骤] ${serverLines[serverLines.length - 1]}`]
+          : headerLines;
 
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
@@ -2280,7 +2443,7 @@ export default function PlatformPage() {
             ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
             : [];
           if (serverLines.length > 0) {
-            liveLines.push(...serverLines.slice(-12).map((ln) => `${new Date().toISOString()}  [服务端摘要] ${ln}`));
+            liveLines.push(`${new Date().toISOString()}  [当前步骤] ${serverLines[serverLines.length - 1]}`);
           }
           if (out) {
             successCount += 1;
@@ -2335,12 +2498,9 @@ export default function PlatformPage() {
         const ts = new Date().toISOString();
         const last = log.length > 0 ? String(log[log.length - 1]) : "";
         const lines: string[] = [
-          `${ts}  [实时进度] GET /api/jobs/${ctx.jobId} · status=${j.status} · kind=${ctx.kind} · sceneId=${ctx.sceneId}`,
-          `${ts}  [当前步骤] ${last || "（尚无流水行；稍等或检查 jobs 是否已写入）"}`,
+          `${ts}  [实时进度] status=${j.status} · sceneId=${ctx.sceneId}`,
+          `${ts}  [当前步骤] ${last || "（等待服务端流水）"}`,
         ];
-        if (log.length > 0) {
-          lines.push(`── 服务端 imageGenFlowLog（${log.length} 行）──`, ...log);
-        }
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
             at: ts,
@@ -4139,211 +4299,200 @@ export default function PlatformPage() {
                 <Bot className="h-4 w-4 text-[#49e6ff]" />
                 Debug Flow
               </div>
-              <div className="mt-4 grid gap-4 xl:grid-cols-3">
-                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">前端状态</div>
-                  <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
-                    <div>windowDays: {selectedWindowDays}</div>
-                    <div>focusPrompt: {focusPrompt || "-"}</div>
-                    <div>query.status: {growthSnapshotQuery.status}</div>
-                    <div>query.isFetching: {String(growthSnapshotQuery.isFetching)}</div>
-                    <div>hasSnapshot: {String(Boolean(snapshot))}</div>
-                    <div>hasPlatformDashboard: {String(Boolean(platformDashboard))}</div>
-                    <div>isDashboardLoading: {String(isDashboardLoading)}</div>
+
+              <div className="mt-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">流程摘要</div>
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs leading-6 text-[#d7d0ef]">
+                  <div>
+                    快照 ·{" "}
+                    {growthSnapshotQuery.isFetched
+                      ? `✅ ${snapshotDebug?.baseSource ?? ""}`
+                      : growthSnapshotQuery.isFetching
+                        ? "⏳"
+                        : "⏸"}
+                  </div>
+                  <div>
+                    Stage 1 看板 ·{" "}
+                    {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"}
+                  </div>
+                  <div>
+                    Stage 2 文案 ·{" "}
+                    {isContentLoading
+                      ? "⏳"
+                      : platformContent && !stage2EmptyPayload
+                        ? "✅"
+                        : platformContent && stage2EmptyPayload
+                          ? "⚠️ 空載荷"
+                          : contentJobError || stage2Failed
+                            ? "❌"
+                            : "⏸"}
+                  </div>
+                  <div className="text-[10px] text-gray-500">
+                    QA · {isQaLoading ? "⏳" : qaJobId ? "✅" : "⏸"}{" "}
+                    {qaJobId ? <span className="font-mono text-gray-400">· {qaJobId}</span> : null}
                   </div>
                 </div>
-                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤 · 模型使用明细</div>
-                  <div className="mt-3 space-y-1 text-xs leading-6 text-[#d7d0ef]">
-                    <div className="text-[#8cefff] font-semibold">── Call 1: 快照 ──</div>
-                    <div>1. 快照分析 (getGrowthSnapshot — 同步 tRPC query)</div>
-                    <div>1a. 状态: {growthSnapshotQuery.isFetched ? `✅ 已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "⏳ 进行中" : "⏸ 未开始"}</div>
-                    <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
-                    <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 看板先行 ──</div>
-                    <div>2. 平台优先级看板（getPlatformDashboard）</div>
-                    <div>2a. 状态: <span>{isDashboardLoading ? "⏳ 正在推演戰略看板..." : platformDashboard ? "✅ 已完成" : "⏸ 等待"}</span></div>
-                    <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
-                    <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
-                    <div>3. 專屬文案（enqueuePlatformContentJob · 需登入，入隊時扣 {CREDIT_COSTS.platformStage2Copywriting} 積分 → Fly worker，GET /api/jobs 轮询）</div>
-                    <div>
-                      3a. 状态:{" "}
-                      <span>
-                        {isContentLoading
-                          ? "⏳ 正在生成原创文案..."
-                          : platformContent && !stage2EmptyPayload
-                            ? "✅ 已完成"
-                            : platformContent && stage2EmptyPayload
-                              ? "⚠️ 接口成功但內容為空"
-                            : contentJobError
-                              ? "❌ 解析失败"
-                              : "⏸ 等待 Stage 1"}
-                      </span>
-                    </div>
-                    <div>3b. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
-                    <div>3c. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
-                    <div>
-                      3d. jobId:{" "}
-                      <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span>
-                    </div>
-                    <div>
-                      3e. 流水更新次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
-                      {contentJobPollTrace?.terminalStatus
-                        ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
-                        : ""}
-                      <span className="text-gray-500">
-                        （前段約每 2.5s；第 37 次起間隔拉長至最多 8s；worker 默认最长約 20min）
-                      </span>
-                    </div>
-                    <div>
-                      3f. Stage2 請求輸出上限 max_tokens/maxOutput:{" "}
-                      <span className="font-mono text-[#ffdd44]">
-                        {String(
-                          (contentDebug?.buildPlatformContent as { stage2MaxOutputTokens?: number } | undefined)
-                            ?.stage2MaxOutputTokens ?? "—",
-                        )}
-                      </span>
-                      <span className="text-gray-500">
-                        （`PLATFORM_STAGE2_LLM`=openai 或 vertex/gemini 皆共用 env `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`，與線路標籤無關）
-                      </span>
-                    </div>
-                    <div className="break-words">
-                      3g. GPT‑5 reasoning 診斷（OpenAI 路徑生效）:{" "}
-                      <span className="font-mono text-[10px] text-[#d7d0ef]">
-                        {(() => {
-                          const r = (contentDebug?.buildPlatformContent as { openaiGpt5ReasoningEffort?: unknown } | undefined)
-                            ?.openaiGpt5ReasoningEffort;
-                          return r != null ? JSON.stringify(r) : "—（任務完成後由後端寫入）";
-                        })()}
-                      </span>
-                    </div>
-                    <div className="break-words">
-                      3h. Stage 2 步驟概要{" "}
-                      <span className="text-gray-500">
-                        （OpenAI：單次呼叫推理並輸出 JSON；Vertex：`gemini-3.1-pro-preview` 單階。見 JSON `stage2SubSteps`）
-                      </span>:
-                      <div className="mt-1 space-y-0.5 pl-1 font-mono text-[10px] text-[#d7d0ef]">
-                        {(() => {
-                          const bp = contentDebug?.buildPlatformContent as
-                            | {
-                                stage2SubSteps?: { id: string; title: string; model?: string; status: string }[];
-                              }
-                            | undefined;
-                          const sub = bp?.stage2SubSteps;
-                          if (!Array.isArray(sub) || sub.length === 0) {
-                            return <div>— 完成任務後顯示；若皆無請展開下方 Stage 2 · debug。</div>;
-                          }
-                          return sub.map((s) => (
-                            <div key={s.id}>
-                              <span className="text-[#ffdd44]">{s.id}</span> {s.title}
-                              {s.model ? <span className="text-gray-500"> · model={s.model}</span> : null} · {s.status}
-                            </div>
-                          ));
-                        })()}
-                      </div>
-                    </div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
-                    <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
-                    <div>4a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
-                    <div>4b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
+                {!pipelineDebugShowExtras && isDashboardLoading ? (
+                  <div className="mt-2 text-[11px] leading-relaxed text-[#8cefff]">当前：戰略看板生成中…</div>
+                ) : null}
+                {!pipelineDebugShowExtras && isContentLoading && contentJobPollTrace?.currentStep ? (
+                  <div className="mt-2 text-[11px] leading-relaxed text-gray-300">
+                    当前：{contentJobPollTrace.currentStep}
                   </div>
-                </div>
-                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
-                  <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
-                    {(
-                      [
-                        growthSnapshotQuery.error?.message,
-                        getPlatformDashboardMutation.error?.message,
-                        contentJobError,
-                        typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
-                        typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
-                        stage2EmptyPayload
-                          ? "Stage 2 返回空選題：請查看下方 Stage 2.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join("\n\n") || "-"
-                    )}
-                  </div>
-                </div>
+                ) : null}
               </div>
-              <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                    {JSON.stringify(snapshotDebug || null, null, 2)}
-                  </pre>
-                </div>
-                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                    {JSON.stringify(dashboardDebug || null, null, 2)}
-                  </pre>
-                </div>
-                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4 xl:col-span-2">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">Stage 2 · debug</div>
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                    {JSON.stringify(contentDebug || null, null, 2)}
-                  </pre>
-                </div>
-              </div>
-              <div className="mt-4 rounded-2xl border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.06)] p-4">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">
-                  Fly Jobs · 客户端轮询（GET /api/jobs/:id）
-                </div>
-                <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                  任务状态落在 Neon；前端按间隔拉取终态（前段 2.5s，第 37 次起加倍至最多 8s）。下面为每次入队 jobId、轮询序号与 HTTP 结果摘要。
-                </p>
-                <div className="mt-3 grid gap-4 lg:grid-cols-2">
-                  <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                    <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content + 轮询</div>
-                    <div className="mt-1 space-y-1 text-[10px] text-gray-400">
-                      <div>
-                        jobId:{" "}
-                        <span className="break-all font-mono text-[#d7d0ef]">{contentJobPollTrace?.jobId ?? "—"}</span>
-                      </div>
-                      <div>
-                        流水更新次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
-                        {contentJobPollTrace?.terminalStatus
-                          ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
-                          : ""}
-                      </div>
+
+              {pipelineDebugShowExtras ? (
+                <>
+                  <div className="mt-4 rounded-2xl border border-rose-500/35 bg-[rgba(127,29,29,0.12)] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-rose-200">错误 / 异常摘要</div>
+                    <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#fde8e8]">
+                      {(
+                        [
+                          growthSnapshotQuery.error?.message,
+                          getPlatformDashboardMutation.error?.message,
+                          askPlatformFollowUpMutation.error?.message,
+                          contentJobError,
+                          typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
+                          typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
+                          stage2EmptyPayload
+                            ? "Stage 2 返回空選題：請查看下方 Stage 2.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join("\n\n") || "（无聚合错误文案 — 请结合下方分步与 JSON）"
+                      )}
                     </div>
-                    <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
-                      {(contentJobPollTrace?.lines ?? []).length > 0
-                        ? (contentJobPollTrace?.lines ?? []).join("\n")
-                        : "尚无记录。Stage 1 完成后会入队 platform_build_content 并轮询 GET /api/jobs。"}
-                    </pre>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                    <div className="text-[11px] font-semibold text-[#ff7fd5]">封面单帧 · platform_topic_image（最近一条）</div>
-                    <div className="mt-1 space-y-1 text-[10px] text-gray-400">
-                      <div>来源: {topicImageJobPollTrace?.label ?? "—"}</div>
+
+                  <div className="mt-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">详细分步（异常诊断）</div>
+                    <div className="mt-4 space-y-1 text-xs leading-6 text-[#d7d0ef]">
+                      <div className="text-[#8cefff] font-semibold">── Call 1: 快照 ──</div>
+                      <div>1. 快照分析 (getGrowthSnapshot — 同步 tRPC query)</div>
                       <div>
-                        jobId:{" "}
-                        <span className="break-all font-mono text-[#d7d0ef]">{topicImageJobPollTrace?.jobId ?? "—"}</span>
+                        1a. 状态:{" "}
+                        {growthSnapshotQuery.isFetched
+                          ? `✅ 已返回 (${snapshotDebug?.baseSource})`
+                          : growthSnapshotQuery.isFetching
+                            ? "⏳ 进行中"
+                            : "⏸ 未开始"}
+                      </div>
+                      <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
+                      <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
+                      <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 看板先行 ──</div>
+                      <div>2. 平台优先级看板（getPlatformDashboard）</div>
+                      <div>
+                        2a. 状态:{" "}
+                        <span>
+                          {isDashboardLoading ? "⏳ 正在推演戰略看板..." : platformDashboard ? "✅ 已完成" : "⏸ 等待"}
+                        </span>
+                      </div>
+                      <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
+                      <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
+                      <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
+                      <div>
+                        3. 專屬文案（enqueuePlatformContentJob · 入隊時扣 {CREDIT_COSTS.platformStage2Copywriting} 積分 → Fly worker；轮询见下方面板）
                       </div>
                       <div>
-                        末次轮询序号: {topicImageJobPollTrace != null ? String(topicImageJobPollTrace.pollCount) : "—"}
-                        {topicImageJobPollTrace?.terminalStatus
-                          ? ` · 终态 ${topicImageJobPollTrace.terminalStatus}`
-                          : ""}
+                        3a. 状态:{" "}
+                        <span>
+                          {isContentLoading
+                            ? "⏳ 正在生成原创文案..."
+                            : platformContent && !stage2EmptyPayload
+                              ? "✅ 已完成"
+                              : platformContent && stage2EmptyPayload
+                                ? "⚠️ 接口成功但內容為空"
+                                : contentJobError
+                                  ? "❌ 解析失败"
+                                  : "⏸ 等待 Stage 1"}
+                        </span>
                       </div>
+                      <div>3b. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
+                      <div>3c. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
+                      <div>
+                        3f. Stage2 max_output:{" "}
+                        <span className="font-mono text-[#ffdd44]">
+                          {String(
+                            (contentDebug?.buildPlatformContent as { stage2MaxOutputTokens?: number } | undefined)
+                              ?.stage2MaxOutputTokens ?? "—",
+                          )}
+                        </span>
+                      </div>
+                      <div className="break-words">
+                        3g. GPT‑5 reasoning 診斷:{" "}
+                        <span className="font-mono text-[10px] text-[#d7d0ef]">
+                          {(() => {
+                            const r = (
+                              contentDebug?.buildPlatformContent as { openaiGpt5ReasoningEffort?: unknown } | undefined
+                            )?.openaiGpt5ReasoningEffort;
+                            return r != null ? JSON.stringify(r) : "—";
+                          })()}
+                        </span>
+                      </div>
+                      <div className="break-words">
+                        3h. Stage 2 當前步驟:{" "}
+                        <span className="font-mono text-[10px] text-[#d7d0ef]">
+                          {pickActiveStage2SubStepOneLine(contentDebug ?? undefined) ?? "—"}
+                        </span>
+                      </div>
+                      <details className="mt-2 rounded-lg border border-white/10 bg-black/25 px-2 py-1.5">
+                        <summary className="cursor-pointer select-none text-[10px] text-gray-400">
+                          展开全部 Stage 2 子步（仅排查需要）
+                        </summary>
+                        <div className="mt-2 space-y-0.5 pl-1 font-mono text-[10px] text-[#d7d0ef]">
+                          {(() => {
+                            const bp = contentDebug?.buildPlatformContent as
+                              | {
+                                  stage2SubSteps?: { id: string; title: string; model?: string; status: string }[];
+                                }
+                              | undefined;
+                            const sub = bp?.stage2SubSteps;
+                            if (!Array.isArray(sub) || sub.length === 0) {
+                              return <div>—</div>;
+                            }
+                            return sub.map((s) => (
+                              <div key={s.id}>
+                                <span className="text-[#ffdd44]">{s.id}</span> {s.title}
+                                {s.model ? <span className="text-gray-500"> · model={s.model}</span> : null} · {s.status}
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </details>
+                      <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
+                      <div>4. 纯文本对话分析（支持 fileUri 多模态）</div>
+                      <div>
+                        4a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span>
+                      </div>
+                      <div>4b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                     </div>
-                    <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
-                      「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
-                      与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致。
-                    </div>
-                    <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
-                      {(topicImageJobPollTrace?.lines ?? []).length > 0
-                        ? (topicImageJobPollTrace?.lines ?? []).join("\n")
-                        : "尚无记录。Enqueue 封面任务后写入（手动 / 批量 / 静默补发 / 超高点击率封面）。"}
-                    </pre>
                   </div>
-                </div>
-              </div>
+
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
+                      <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                        {JSON.stringify(snapshotDebug || null, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
+                      <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                        {JSON.stringify(dashboardDebug || null, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">Stage 2 · debug</div>
+                      <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                        {JSON.stringify(contentDebug || null, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
             </div>
           </section>
         ) : null}
@@ -4632,145 +4781,137 @@ export default function PlatformPage() {
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Bot className="h-4 w-4 text-[#49e6ff]" />
-                  Debug Flow
+                  Debug Flow（报告区）
                 </div>
-                <div className="mt-4 grid gap-4 xl:grid-cols-3">
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">前端状态</div>
-                    <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
-                      <div>auth: {supervisorAccess ? "supervisor" : isAuthenticated ? "user" : "guest"}</div>
-                      <div>windowDays: {selectedWindowDays}</div>
-                      <div>focusPrompt: {focusPrompt || "-"}</div>
-                      <div>query.status: {growthSnapshotQuery.status}</div>
-                      <div>query.fetchStatus: {growthSnapshotQuery.fetchStatus}</div>
-                      <div>query.isFetching: {String(growthSnapshotQuery.isFetching)}</div>
-                      <div>ask.isPending: {String(askPlatformFollowUpMutation.isPending)}</div>
-                      <div>hasSnapshot: {String(Boolean(snapshot))}</div>
-                      <div>hasPlatformDashboard: {String(Boolean(platformDashboard))}</div>
+                <div className="mt-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">流程摘要</div>
+                  <div className="mt-3 space-y-1.5 text-xs leading-6 text-[#d7d0ef]">
+                    <div>auth · {supervisorAccess ? "supervisor" : isAuthenticated ? "user" : "guest"}</div>
+                    <div>windowDays · {selectedWindowDays} · focus · {focusPrompt || "—"}</div>
+                    <div>
+                      快照 · {growthSnapshotQuery.isFetched ? "✅" : growthSnapshotQuery.isFetching ? "⏳" : "⏸"} ·
+                      query · {growthSnapshotQuery.status}/{growthSnapshotQuery.fetchStatus}
+                    </div>
+                    <div>
+                      Stage 1 · {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} / Stage 2 ·{" "}
+                      {isContentLoading ? "⏳" : platformContent && !stage2EmptyPayload ? "✅" : platformContent && stage2EmptyPayload ? "⚠️" : "⏸"}
+                    </div>
+                    <div>
+                      追问 · {askPlatformFollowUpMutation.isPending ? "⏳" : askPlatformFollowUpMutation.isSuccess ? "✅" : "⏸"}
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤</div>
-                    <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
-                      <div>1. getGrowthSnapshot 请求: {growthSnapshotQuery.isFetched ? "已返回" : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
-                      <div>2. snapshot 构建: {snapshotDebug?.baseSource ? `已完成 (${snapshotDebug.baseSource})` : "未知"}</div>
-                      <div>3. personalization: {String(snapshotDebug?.personalizedApplied ?? false)}</div>
-                      <div>4. Stage1(dashboard): {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} / Stage2(content): {isContentLoading ? "⏳" : platformContent ? "✅" : "⏸"}</div>
-                      <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))} / hasPlatformContent: {String(Boolean(platformContent))}</div>
-                      <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
-                      <div>
-                        7. Stage2 追踪 id:{" "}
-                        <span className="font-mono text-[#ffdd44]">{contentJobPollTrace?.jobId ?? "—"}</span> · 流水更新{" "}
-                        {contentJobPollTrace != null ? contentJobPollTrace.pollCount : "—"}
+                  {!pipelineDebugShowExtras && isDashboardLoading ? (
+                    <div className="mt-2 text-[11px] text-[#8cefff]">当前：戰略看板生成中…</div>
+                  ) : null}
+                  {!pipelineDebugShowExtras && isContentLoading && contentJobPollTrace?.currentStep ? (
+                    <div className="mt-2 text-[11px] text-gray-300">当前：{contentJobPollTrace.currentStep}</div>
+                  ) : null}
+                </div>
+                {pipelineDebugShowExtras ? (
+                  <>
+                    <div className="mt-4 rounded-2xl border border-rose-500/35 bg-[rgba(127,29,29,0.12)] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-rose-200">错误 / 异常摘要</div>
+                      <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#fde8e8]">
+                        {(
+                          [
+                            growthSnapshotQuery.error?.message,
+                            getPlatformDashboardMutation.error?.message,
+                            askPlatformFollowUpMutation.error?.message,
+                            contentJobError,
+                            typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
+                            typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
+                            stage2EmptyPayload
+                              ? "Stage 2 返回空選題：請查看 Stage 2.debug。"
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join("\n\n") || "（无聚合错误文案 — 请结合 JSON）"
+                        )}
                       </div>
-                      <div>
-                        8. 封面 job:{" "}
-                        <span className="font-mono text-[#ff7fd5]">{topicImageJobPollTrace?.jobId ?? "—"}</span> ·{" "}
-                        {topicImageJobPollTrace?.label ?? "—"}
+                    </div>
+                    <div className="mt-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">详细分步（异常诊断）</div>
+                      <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
+                        <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? "已返回" : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
+                        <div>2. snapshot 构建: {snapshotDebug?.baseSource ? `已完成 (${snapshotDebug.baseSource})` : "未知"}</div>
+                        <div>3. personalization: {String(snapshotDebug?.personalizedApplied ?? false)}</div>
+                        <div>4. Stage1 / Stage2: {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} · {isContentLoading ? "⏳" : platformContent ? "✅" : "⏸"}</div>
+                        <div>5. hasDashboard / hasContent: {String(Boolean(platformDashboard))} / {String(Boolean(platformContent))}</div>
+                        <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
                       </div>
                     </div>
-                  </div>
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
-                    <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
-                      {String(growthSnapshotQuery.error?.message || askPlatformFollowUpMutation.error?.message || "-")}
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
+                        <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                          {JSON.stringify(snapshotDebug || null, null, 2)}
+                        </pre>
+                      </div>
+                      <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
+                        <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                          {JSON.stringify(dashboardDebug || null, null, 2)}
+                        </pre>
+                      </div>
+                      <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">askPlatformFollowUp.debug</div>
+                        <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                          {JSON.stringify(askDebug || null, null, 2)}
+                        </pre>
+                      </div>
                     </div>
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
-                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                      {JSON.stringify(snapshotDebug || null, null, 2)}
-                    </pre>
-                  </div>
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
-                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                      {JSON.stringify(dashboardDebug || null, null, 2)}
-                    </pre>
-                  </div>
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">askPlatformFollowUp.debug</div>
-                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                      {JSON.stringify(askDebug || null, null, 2)}
-                    </pre>
-                  </div>
-                </div>
+                  </>
+                ) : null}
                 <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
-                      分镜单帧 / 封面参考 / 2×4 合成 · 服务端逐步日志（imageGenFlowLog）
+                      出图失败流水（imageGenFlowLog · 仅失败保留）
                     </div>
-                    {platformImageGenFlowSnapshots.length > 0 ? (
+                    {platformImageGenFlowSnapshotsFailedOnly.length > 0 ? (
                       <button
                         type="button"
                         onClick={() => setPlatformImageGenFlowSnapshots([])}
                         className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-gray-400 hover:bg-white/10"
                       >
-                        清空
+                        清空全部快照
                       </button>
                     ) : null}
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    位置：本卡片在 <span className="text-gray-400">askPlatformFollowUp.debug</span>{" "}
-                    三块 JSON <strong className="text-gray-400">正下方</strong>。
-                    成功时追加服务端 <code className="text-[#8cefff]">imageGenFlowLog</code>（含 GPT-IMAGE-2 失败原因、重试与计费提示；<strong className="text-gray-400">超高点击率封面</strong>另含{" "}
-                    <code className="text-[#8cefff]">[Deep Research Pro]</code> 竞品清洗步骤）；<strong className="text-rose-400/90">失败</strong>
-                    时 TRPC 错误正文也会附带最近若干行 <code className="text-[#8cefff]">imageGenFlowLog</code> 摘要（2×4 与空 URL 类错误）。
+                    成功跑通的单帧 / 2×4 不再占用本區；僅在客戶端標記為失敗時顯示。
                   </p>
-                  {platformImageGenFlowSnapshots.length === 0 ? (
+                  {platformImageGenFlowSnapshotsFailedOnly.length === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
-                      尚无记录。请往下翻到选题卡片区跑一次批量参考图或 2×4 合成；若失败，此处也应出现红色失败流水。
+                      目前無失敗流水。若批量或合成報錯，此處會出現紅框記錄。
                     </div>
                   ) : (
                     <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
-                      {platformImageGenFlowSnapshots.map((snap, i) => (
+                      {platformImageGenFlowSnapshotsFailedOnly.map((snap, i) => (
                         <div
-                          key={`${snap.at}-${snap.kind}-${i}`}
-                          className={`rounded-xl border bg-black/40 p-3 ${
-                            snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed"
-                              ? "border-rose-500/40"
-                              : "border-white/10"
-                          }`}
+                          key={`${snap.at}-fail-${snap.kind}-${i}`}
+                          className="rounded-xl border border-rose-500/40 bg-black/40 p-3"
                         >
-                          <div
-                            className={`font-mono text-[10px] ${
-                              snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed"
-                                ? "text-rose-300"
-                                : "text-[#8cefff]"
-                            }`}
-                          >
+                          <div className="font-mono text-[10px] text-rose-300">
                             {snap.at} ·{" "}
-                            {snap.kind === "batch_topic_frames"
-                              ? "批量单帧"
-                              : snap.kind === "batch_composite_2x4"
-                                ? "批量 2×4 / 八格合成（串行）"
-                                : snap.kind === "batch_topic_frames_failed"
-                                ? "批量单帧 · 失败（客户端捕获）"
-                                : snap.kind === "composite_2x4_failed"
-                                  ? "2×4 合成 · 失败（客户端捕获）"
-                                  : "2×4 合成"}
+                            {snap.kind === "batch_topic_frames_failed" ? "批量单帧 · 失败" : "2×4 合成 · 失败"}
                             {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
                           </div>
-                          {snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed" ? (
-                            <div className="mt-2">
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(snap.lines.join("\n"));
-                                    toast.success("已复制本段日志（含 TRPC 详情）");
-                                  } catch {
-                                    toast.error("复制失败，请手动选中下方文本");
-                                  }
-                                }}
-                                className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
-                              >
-                                复制本段报错全文
-                              </button>
-                            </div>
-                          ) : null}
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(snap.lines.join("\n"));
+                                  toast.success("已复制本段日志（含 TRPC 详情）");
+                                } catch {
+                                  toast.error("复制失败，请手动选中下方文本");
+                                }
+                              }}
+                              className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
+                            >
+                              复制本段报错全文
+                            </button>
+                          </div>
                           <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
                             {snap.lines.join("\n")}
                           </pre>
@@ -4779,61 +4920,7 @@ export default function PlatformPage() {
                     </div>
                   )}
                 </div>
-                <div className="mt-4 rounded-2xl border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.06)] p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">
-                    Fly Jobs · 客户端轮询（GET /api/jobs/:id）
-                  </div>
-                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    与上方「快照区」Debug 相同数据源：Stage 2 为 platform_build_content；前段約每 2.5s 拉取，第 37 次起間隔加倍（最多 8s）；封面单帧仍为 job 入队与 GET /api/jobs 轮询。
-                  </p>
-                  <div className="mt-3 grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                      <div className="text-[11px] font-semibold text-[#ffdd44]">Stage 2 文案 · platform_build_content + 轮询</div>
-                      <div className="mt-1 space-y-1 text-[10px] text-gray-400">
-                        <div>
-                          jobId:{" "}
-                          <span className="break-all font-mono text-[#d7d0ef]">{contentJobPollTrace?.jobId ?? "—"}</span>
-                        </div>
-                        <div>
-                          流水更新次数: {contentJobPollTrace != null ? String(contentJobPollTrace.pollCount) : "—"}
-                          {contentJobPollTrace?.terminalStatus
-                            ? ` · 终态 ${contentJobPollTrace.terminalStatus}`
-                            : ""}
-                        </div>
-                      </div>
-                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
-                        {(contentJobPollTrace?.lines ?? []).length > 0
-                          ? (contentJobPollTrace?.lines ?? []).join("\n")
-                          : "尚无记录。完成 Stage 1 后将出现轮询流水。"}
-                      </pre>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-black/35 p-3">
-                      <div className="text-[11px] font-semibold text-[#ff7fd5]">封面单帧 · platform_topic_image（最近一条）</div>
-                      <div className="mt-1 space-y-1 text-[10px] text-gray-400">
-                        <div>来源: {topicImageJobPollTrace?.label ?? "—"}</div>
-                        <div>
-                          jobId:{" "}
-                          <span className="break-all font-mono text-[#d7d0ef]">{topicImageJobPollTrace?.jobId ?? "—"}</span>
-                        </div>
-                        <div>
-                          末次轮询序号: {topicImageJobPollTrace != null ? String(topicImageJobPollTrace.pollCount) : "—"}
-                          {topicImageJobPollTrace?.terminalStatus
-                            ? ` · 终态 ${topicImageJobPollTrace.terminalStatus}`
-                            : ""}
-                        </div>
-                      </div>
-                      <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
-                        「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
-                        与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致。
-                      </div>
-                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#c9c0e6]">
-                        {(topicImageJobPollTrace?.lines ?? []).length > 0
-                          ? (topicImageJobPollTrace?.lines ?? []).join("\n")
-                          : "尚无记录。Enqueue 封面任务后写入（手动 / 批量 / 静默补发 / 超高点击率封面）。"}
-                      </pre>
-                    </div>
-                  </div>
-                </div>
+                {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
               </div>
             ) : null}
 
@@ -5169,97 +5256,84 @@ export default function PlatformPage() {
                       </div>
                     ) : null}
                   </div>
-                  <div className="flex w-full flex-col gap-3 md:ms-auto md:max-w-lg">
-                    <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
-                        {canConfigureCompositeImageTranslator ? (
-                          <>
-                            <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
-                              <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
-                              2×4 合成 · 英文化引擎
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setPlatformImagePromptTranslator("gpt54")}
-                                className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
-                                  platformImagePromptTranslator === "gpt54"
-                                    ? "bg-[#6366f1] text-white shadow-md"
-                                    : "border border-white/15 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white"
-                                }`}
-                              >
-                                GPT 5.4（默认）
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPlatformImagePromptTranslator("vertex_gemini_3_flash_preview")}
-                                className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
-                                  platformImagePromptTranslator === "vertex_gemini_3_flash_preview"
-                                    ? "bg-[#0d9488] text-white shadow-md"
-                                    : "border border-white/15 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white"
-                                }`}
-                              >
-                                Gemini 3 Flash（Vertex）
-                              </button>
-                            </div>
-                            <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                              选题<strong className="text-gray-400">竖版封面单帧</strong>
-                              （一键封面、单卡生成、批量逐张）由{" "}
-                              <strong className="text-gray-300">GPT-IMAGE-2</strong> 生成。仅{" "}
-                              <strong className="text-gray-300">2×4 分镜主表</strong>与
-                              <strong className="text-gray-300">小红书 2×4 八格图文</strong>{" "}
-                              宽幅合成可依此开关选择英文化引擎；选择已保存在本机浏览器。
-                            </p>
-                            <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                              {platformImagePromptTranslator === "gpt54" ? (
-                                <>
-                                  <strong className="text-gray-300">2×4 / 小红书</strong>：默认{" "}
-                                  <strong className="text-gray-300">GPT 5.4</strong>
-                                  英文化（长 prompt 更稳）。OpenAI 多次无效时服务端仍可自动走 Vertex Flash 兜底。
-                                </>
-                              ) : (
-                                <>
-                                  <strong className="text-gray-300">2×4 / 小红书</strong>：英文化直走{" "}
-                                  <strong className="text-[#5eead4]">Vertex · gemini-3-flash-preview</strong>
-                                  ：預設較高 <strong className="text-gray-300">temperature</strong>
-                                  ，英文更有創意與畫面表現力；仍鎖定{" "}
-                                  <strong className="text-gray-300">JSON · prompt 單欄</strong>；服務端預設思考層級{" "}
-                                  <strong className="text-gray-300">HIGH</strong>、輸出 token 預算偏高（可用{" "}
-                                  <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_THINKING_LEVEL</code> 與{" "}
-                                  <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_MAX_TOKENS</code>{" "}
-                                  覆寫）。若 Flash 配額/區域異常請切回 GPT 5.4。
-                                </>
-                              )}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="text-[11px] leading-relaxed text-gray-400">
-                            选题<strong className="text-gray-400">竖版封面单帧</strong>
-                            （一键封面、单卡生成、批量逐张）由 <strong className="text-gray-300">GPT-IMAGE-2</strong>{" "}
-                            生成。<strong className="text-gray-300">2×4 分镜主表</strong>与
-                            <strong className="text-gray-300">小红书 2×4 八格图文</strong>
-                            宽幅合成走平台默认流程。
-                          </p>
-                        )}
+                  {canConfigureCompositeImageTranslator ? (
+                    <div className="flex w-full flex-col gap-3 md:ms-auto md:max-w-lg">
+                      <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
+                        <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
+                          <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                          2×4 合成 · 英文化引擎
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPlatformImagePromptTranslator("gpt54")}
+                            className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                              platformImagePromptTranslator === "gpt54"
+                                ? "bg-[#6366f1] text-white shadow-md"
+                                : "border border-white/15 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white"
+                            }`}
+                          >
+                            GPT 5.4（默认）
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPlatformImagePromptTranslator("vertex_gemini_3_flash_preview")}
+                            className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                              platformImagePromptTranslator === "vertex_gemini_3_flash_preview"
+                                ? "bg-[#0d9488] text-white shadow-md"
+                                : "border border-white/15 bg-black/30 text-gray-400 hover:border-white/25 hover:text-white"
+                            }`}
+                          >
+                            Gemini 3 Flash（Vertex）
+                          </button>
+                        </div>
+                        <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
+                          选题<strong className="text-gray-400">竖版封面单帧</strong>
+                          （一键封面、单卡生成、批量逐张）由{" "}
+                          <strong className="text-gray-300">GPT-IMAGE-2</strong> 生成。仅{" "}
+                          <strong className="text-gray-300">2×4 分镜主表</strong>与
+                          <strong className="text-gray-300">小红书 2×4 八格图文</strong>{" "}
+                          宽幅合成可依此开关选择英文化引擎；选择已保存在本机浏览器。
+                        </p>
+                        <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
+                          {platformImagePromptTranslator === "gpt54" ? (
+                            <>
+                              <strong className="text-gray-300">2×4 / 小红书</strong>：默认{" "}
+                              <strong className="text-gray-300">GPT 5.4</strong>
+                              英文化（长 prompt 更稳）。OpenAI 多次无效时服务端仍可自动走 Vertex Flash 兜底。
+                            </>
+                          ) : (
+                            <>
+                              <strong className="text-gray-300">2×4 / 小红书</strong>：英文化直走{" "}
+                              <strong className="text-[#5eead4]">Vertex · gemini-3-flash-preview</strong>
+                              ：預設較高 <strong className="text-gray-300">temperature</strong>
+                              ，英文更有創意與畫面表現力；仍鎖定{" "}
+                              <strong className="text-gray-300">JSON · prompt 單欄</strong>；服務端預設思考層級{" "}
+                              <strong className="text-gray-300">HIGH</strong>、輸出 token 預算偏高（可用{" "}
+                              <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_THINKING_LEVEL</code> 與{" "}
+                              <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_MAX_TOKENS</code>{" "}
+                              覆寫）。若 Flash 配額/區域異常請切回 GPT 5.4。
+                            </>
+                          )}
+                        </p>
                       </div>
-                      {canConfigureCompositeImageTranslator ? (
-                        <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-amber-400/35 bg-amber-950/30 px-3 py-2.5 text-left text-[11px] leading-snug text-amber-50/95 shadow-sm">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-amber-400/60 accent-amber-400"
-                            checked={platformCoverVertexNb2}
-                            onChange={(e) => setPlatformCoverVertexNb2(e.target.checked)}
-                          />
-                          <span>
-                            <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
-                            ：启用后走 Vertex <strong className="text-amber-100/90">Nano Banana 2</strong>
-                            （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">1024×1536 竖版</code>
-                            、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语彙）；主路径失败再走版式 + NB2，
-                            <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
-                          </span>
-                        </label>
-                      ) : null}
+                      <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-amber-400/35 bg-amber-950/30 px-3 py-2.5 text-left text-[11px] leading-snug text-amber-50/95 shadow-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-amber-400/60 accent-amber-400"
+                          checked={platformCoverVertexNb2}
+                          onChange={(e) => setPlatformCoverVertexNb2(e.target.checked)}
+                        />
+                        <span>
+                          <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
+                          ：启用后走 Vertex <strong className="text-amber-100/90">Nano Banana 2</strong>
+                          （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">1024×1536 竖版</code>
+                          、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语彙）；主路径失败再走版式 + NB2，
+                          <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
+                        </span>
+                      </label>
                     </div>
-                  </div>
+                  ) : null}
 
                 {contentExecutionCards.length > 0 ? (
                   <div
@@ -6025,6 +6099,7 @@ export default function PlatformPage() {
                       );
                     })
                   )}
+                </div>
                 </div>
               </div>
                 </div>
