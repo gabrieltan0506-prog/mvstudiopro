@@ -7,7 +7,6 @@ import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
-import { estimateCoverCtrBand } from "../../shared/platformTitleVariants.js";
 
 /** 與 repository patch 截斷一致，避免單欄位過大 */
 const FLOW_LOG_DB_CAP = 240;
@@ -74,10 +73,6 @@ export type RunPlatformTopicImagePipelineInput = {
   context?: string;
   coverPersonaContext?: string;
   sceneId?: string;
-  /** 與 topicHook 同源的開場鉤子（簡中），供點擊率檔位估計 */
-  appealHook?: string;
-  /** 強化划停與主標衝擊（與「超高點擊率封面」加購一致） */
-  highFeedCtrBoost?: boolean;
   /** @deprecated 封面單幀英文化**固定 GPT 5.4**；保留欄位僅兼容舊 job 入參，會被忽略。 */
   imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
@@ -98,12 +93,6 @@ export type RunPlatformTopicImagePipelineResult = {
   imageGenFlowLog: string[];
   imagePromptStats: ImagePromptStats;
   fallbackUsed: boolean;
-  /** 基於主句+鉤子的規則估計（非實測 CTR） */
-  coverClickEstimate?: {
-    band: "high" | "medium";
-    score: number;
-    labelZh: string;
-  };
 };
 
 export async function runPlatformTopicImagePipeline(
@@ -117,8 +106,7 @@ export async function runPlatformTopicImagePipeline(
   const imagePromptTranslator: PlatformImagePromptTranslator = "gpt54";
   const translatorLogLabel = "GPT 5.4（OpenAI）";
   const isGraphic = input.format === "图文";
-  /** 单帧选题封面：兜底 Typography 統一 GRAPHIC（信息流封面），勿用 STORYBOARD 以免電影分鏡格画风。 */
-  const mode = "GRAPHIC";
+  const mode = isGraphic ? "GRAPHIC" : "STORYBOARD";
   const creationIdOut = input.creationIdOut ?? undefined;
   const database = await db.getDb();
   const { userCreations } = await import("../../drizzle/schema-creations.js");
@@ -140,7 +128,7 @@ export async function runPlatformTopicImagePipeline(
   const ctxStr = String(input.context || "").trim();
   const coverPersona = String(input.coverPersonaContext || "").trim();
   const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
-  let copywriting = [
+  const copywriting = [
     coverPersona ? `【封面身份锚点】\n${coverPersona}` : "",
     ctxStr ? `${input.topicHook}\n${ctxStr}` : input.topicHook,
   ]
@@ -171,40 +159,6 @@ export async function runPlatformTopicImagePipeline(
           : "中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束"
       }`,
     );
-    if (input.highFeedCtrBoost) {
-      topicImageCondenseLog.push(
-        `${new Date().toISOString()}  [超高点击率] 前置：Deep Research Pro（agent=gemini-deep-research-pro-preview-04-2026）竞品清洗 · 本地轮询默认上限约 8 分钟，失败则回退原语境`,
-      );
-    }
-
-    let briefForExtract = briefSource;
-    if (input.highFeedCtrBoost) {
-      try {
-        const { runCoverCompetitorDeepResearchBrief } = await import("./deepResearchService.js");
-        const drBrief = await runCoverCompetitorDeepResearchBrief({
-          topicHook: String(input.topicHook || "").trim(),
-          appealHook: String(input.appealHook || "").trim(),
-          context: ctxStr,
-          format: isGraphic ? "图文" : "短视频",
-          flowLog: topicImageCondenseLog,
-          progressJobId: input.progressJobId ?? null,
-        });
-        if (drBrief && drBrief.trim().length > 0) {
-          briefForExtract = [briefSource, "【Deep Research Pro · 竞品清洗补充】", drBrief.trim()].join("\n\n");
-          copywriting = [
-            coverPersona ? `【封面身份锚点】\n${coverPersona}` : "",
-            [input.topicHook, ctxStr, `【Deep Research Pro · 竞品清洗】\n${drBrief.trim()}`].filter(Boolean).join("\n\n"),
-          ]
-            .filter(Boolean)
-            .join("\n\n");
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        topicImageCondenseLog.push(
-          `${new Date().toISOString()}  [Deep Research Pro] 未捕获异常，已回退原语境：${msg.slice(0, 200)}`,
-        );
-      }
-    }
 
     let promptStats: ImagePromptStats = {
       translatedPromptChars: 0,
@@ -222,10 +176,9 @@ export async function runPlatformTopicImagePipeline(
       try {
         const geminiTask = buildPlatformTopicReferenceGeminiTask({
           topicHook: input.topicHook,
-          context: (await extractChineseVisualBrief(briefForExtract, topicImageCondenseLog)) || briefForExtract.slice(0, 2000),
+          context: (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000),
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
-          highFeedCtrBoost: Boolean(input.highFeedCtrBoost),
         });
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,
@@ -275,7 +228,7 @@ export async function runPlatformTopicImagePipeline(
           console.warn(`[runPlatformTopicImagePipeline] condenseImagePromptIfNeeded flowLog:\n${topicImageCondenseLog.join("\n")}`);
         }
         console.warn(
-          `[runPlatformTopicImagePipeline] ${isGraphic ? "图文封面式" : "短视频单帧封面"} 主路径失败:`,
+          `[runPlatformTopicImagePipeline] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败:`,
           e instanceof Error ? e.message : e,
         );
       }
@@ -365,12 +318,6 @@ export async function runPlatformTopicImagePipeline(
       };
     }
 
-    const appealForCtr = String(input.appealHook || "").trim();
-    const coverClickEstimate = estimateCoverCtrBand(String(input.topicHook || "").trim(), appealForCtr);
-    topicImageCondenseLog.push(
-      `${new Date().toISOString()}  [预估] ${coverClickEstimate.labelZh}（规则分数=${coverClickEstimate.score}，非实测CTR）`,
-    );
-
     topicImageCondenseLog.push(`${new Date().toISOString()}  ✓ 本条结束：已得到 imageUrl`);
     const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
     if (creationIdOut != null && database) {
@@ -386,7 +333,6 @@ export async function runPlatformTopicImagePipeline(
               resolvedFrameStatus: finalStatus,
               imagePromptStats: promptStats,
               fallbackUsed,
-              coverClickEstimate,
             }),
           })
           .where(eq(userCreations.id, creationIdOut));
@@ -404,7 +350,6 @@ export async function runPlatformTopicImagePipeline(
       imageGenFlowLog: topicImageCondenseLog,
       imagePromptStats: promptStats,
       fallbackUsed,
-      coverClickEstimate,
     };
   } finally {
     await flushTopicImageProgress();

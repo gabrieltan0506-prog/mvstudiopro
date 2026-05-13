@@ -98,18 +98,6 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
-
-type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
-
-function parseCoverClickEstimate(raw: unknown): CoverClickEstimate | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const r = raw as Record<string, unknown>;
-  const band = r.band === "high" || r.band === "medium" ? r.band : undefined;
-  const score = typeof r.score === "number" ? r.score : undefined;
-  const labelZh = typeof r.labelZh === "string" ? r.labelZh : undefined;
-  if (!band || score == null || !labelZh) return undefined;
-  return { band, score, labelZh };
-}
 /** ↑ 管理員／監管帳號可見的 2×4 英文化開關偏好；一般帳號合成固定走 gpt54（後端同判）。 */
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
@@ -279,7 +267,7 @@ type ClientJobPollTrace = {
   lines: string[];
   pollCount: number;
   terminalStatus?: string;
-  /** 進行中：最後一行服務端步驟摘要；輪詢時同步將 imageGenFlowLog 增量寫入 lines */
+  /** 進行中：僅保留一行「當前步驟」，不把整段 imageGenFlowLog / 輪詢流水刷進面板 */
   currentStep?: string;
 };
 
@@ -810,23 +798,6 @@ function upsertPlatformImageFlowSnapshot(
   return [next, ...withoutSameOp].slice(0, 8);
 }
 
-function platformImageFlowSnapshotTitle(kind: PlatformImageGenFlowSnapshot["kind"]): string {
-  switch (kind) {
-    case "batch_topic_frames":
-      return "批量单帧 / 封面";
-    case "batch_topic_frames_failed":
-      return "批量单帧 · 失败";
-    case "composite_2x4":
-      return "2×4 分镜 / 八格图文";
-    case "composite_2x4_failed":
-      return "2×4 合成 · 失败";
-    case "batch_composite_2x4":
-      return "批量 2×4 / 八格";
-    default:
-      return kind;
-  }
-}
-
 /** 滾動窗口內只保留「仍在 60s 內」的發起時間戳 */
 function prunePlatformImageRateWindow(times: number[], now: number, windowMs: number): void {
   while (times.length > 0 && times[0]! <= now - windowMs) {
@@ -1094,17 +1065,7 @@ type PlatformSignalsCarouselItem = {
   tone: PlatformSignalsCarouselTone;
   /** 平台卡：引導購買趨勢分析額度 / 積分加值包 */
   purchaseCta?: { href: string; label: string };
-  /** 大卡片左上角顯示的維度名（優先於「平台信号／热点切口／动作建议」自動標題） */
-  facetLabel?: string;
-  /** 底部預覽條左上角小標，未填沿用平台／热点／动作 */
-  thumbToneLabel?: string;
 };
-
-function resultSummaryToneForLabel(label: string): PlatformSignalsCarouselTone {
-  if (label.includes("商业") || label.includes("赛道")) return "topic";
-  if (label.includes("动作") || label.includes("首发")) return "action";
-  return "platform";
-}
 
 function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
   switch (tone) {
@@ -1124,30 +1085,20 @@ function PlatformSignalsCarouselPanel(props: {
   onPickIndex: (i: number) => void;
   subtitle: string;
   eyebrow?: string;
-  /** 無障礙區塊標題 */
-  carouselAriaLabel?: string;
 }) {
-  const {
-    items,
-    activeIndex,
-    onPickIndex,
-    subtitle,
-    eyebrow = "战略信号 · 自动轮播",
-    carouselAriaLabel = "平台与热点信号轮播",
-  } = props;
+  const { items, activeIndex, onPickIndex, subtitle, eyebrow = "战略信号 · 自动轮播" } = props;
   if (!items.length) return null;
   const safeIdx = activeIndex % items.length;
   const active = items[safeIdx] ?? items[0];
   const toneCn =
     active.tone === "platform" ? "平台信号" : active.tone === "topic" ? "热点切口" : "动作建议";
-  const facetDisplay = active.facetLabel ?? toneCn;
 
   return (
     <div
       className={`${shellCardClasses("relative overflow-hidden p-6 md:p-8")}`}
       role="region"
       aria-roledescription="carousel"
-      aria-label={carouselAriaLabel}
+      aria-label="平台与热点信号轮播"
     >
       <div className={`pointer-events-none absolute inset-x-0 top-0 h-[4px] bg-gradient-to-r ${toneGlowFrom(active.tone)}`} />
       <div className="pointer-events-none absolute -right-20 -top-24 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(73,230,255,0.16),transparent_65%)] motion-safe:opacity-75 motion-safe:animate-[platformCarouselGlow_10s_ease-in-out_infinite]" />
@@ -1186,7 +1137,7 @@ function PlatformSignalsCarouselPanel(props: {
         <div className="relative min-h-[clamp(220px,32vw,340px)]">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
-              key={`${facetDisplay}-${safeIdx}-${active.title}`}
+              key={`${toneCn}-${safeIdx}-${active.title}`}
               initial={{ opacity: 0, y: 16, scale: 0.985 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -12, scale: 0.99 }}
@@ -1195,14 +1146,10 @@ function PlatformSignalsCarouselPanel(props: {
             >
               <div
                 className={`text-[12px] font-bold uppercase tracking-[0.26em] ${
-                  active.tone === "platform"
-                    ? "text-[#8cefff]"
-                    : active.tone === "topic"
-                      ? "text-[#ff98d9]"
-                      : "text-[#ffe77a]"
+                  toneCn === "平台信号" ? "text-[#8cefff]" : toneCn === "热点切口" ? "text-[#ff98d9]" : "text-[#ffe77a]"
                 }`}
               >
-                {facetDisplay}
+                {toneCn}
               </div>
               <div className="mt-5 text-[1.65rem] font-black leading-[1.08] tracking-tight text-white md:text-4xl xl:text-[2.35rem]">
                 {active.title}
@@ -1231,7 +1178,7 @@ function PlatformSignalsCarouselPanel(props: {
             const selected = idx === safeIdx;
             return (
               <button
-                key={`${item.title}-${idx}-${item.tone}-${item.thumbToneLabel ?? ""}-${item.facetLabel ?? ""}`}
+                key={`${item.title}-${idx}-${item.tone}`}
                 type="button"
                 onClick={() => onPickIndex(idx)}
                 title={item.title}
@@ -1250,8 +1197,7 @@ function PlatformSignalsCarouselPanel(props: {
                         : "text-[#ffe07a]"
                   }`}
                 >
-                  {item.thumbToneLabel ??
-                    (item.tone === "platform" ? "平台" : item.tone === "topic" ? "热点" : "动作")}
+                  {item.tone === "platform" ? "平台" : item.tone === "topic" ? "热点" : "动作"}
                 </div>
                 <div className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-white">{item.title}</div>
               </button>
@@ -1308,7 +1254,6 @@ export default function PlatformPage() {
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
-  const [resultSummaryCarouselIndex, setResultSummaryCarouselIndex] = useState(0);
   const [platformImagePromptTranslator, setPlatformImagePromptTranslator] = useState<PlatformImagePromptTranslator>(() => {
     if (typeof window === "undefined") return "gpt54";
     try {
@@ -1433,12 +1378,6 @@ export default function PlatformPage() {
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
-  /** Live 輪詢：累加 jobs.output.imageGenFlowLog，避免只顯示最後一行 */
-  const compositeLiveFlowAccumRef = useRef<{
-    jobId: string;
-    baseLines: string[];
-    flowCursor: number;
-  } | null>(null);
   /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
@@ -1460,10 +1399,6 @@ export default function PlatformPage() {
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
-  /** 封面成功返回後：規則估計的點擊率檔位（非實測） */
-  const [platformCoverCtrBySceneId, setPlatformCoverCtrBySceneId] = useState<Record<string, CoverClickEstimate>>(
-    () => ({}),
-  );
   /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
   const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<Set<string>>(() => new Set());
   /** 一键封面：前端异步逐张生成（单张串行） */
@@ -1782,12 +1717,26 @@ export default function PlatformPage() {
     dashboardDebug,
   ]);
 
+  const platformImageGenFlowSnapshotsFailedOnly = useMemo(
+    () =>
+      platformImageGenFlowSnapshots.filter(
+        (s) => s.kind === "batch_topic_frames_failed" || s.kind === "composite_2x4_failed",
+      ),
+    [platformImageGenFlowSnapshots],
+  );
+
   const flyJobsPollDebugPanel = useMemo(() => {
     const traces = [contentJobPollTrace, topicImageJobPollTrace].filter(Boolean) as ClientJobPollTrace[];
     if (traces.length === 0) return null;
 
     const totalPolls = traces.reduce((sum, t) => sum + t.pollCount, 0);
-    const showPollLines = traces.some((t) => t.lines.length > 0);
+    const showFailureLog = traces.some((t) => {
+      if (t.lines.length === 0) return false;
+      if (t.terminalStatus === "failed" || t.terminalStatus === "client_error") return true;
+      if (t.terminalStatus === "succeeded")
+        return t.lines.some((ln) => /无有效|无 output|异常|失败|✗/i.test(ln));
+      return true;
+    });
 
     const overviewText = traces
       .map((t) => {
@@ -1812,12 +1761,8 @@ export default function PlatformPage() {
         {stepText ? (
           <p className="mt-1.5 break-words text-[10px] leading-relaxed text-gray-300">当前步骤：{stepText}</p>
         ) : null}
-        <p className="mt-1.5 text-[10px] leading-relaxed text-gray-500">
-          「超高点击率封面」流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>，与服端{" "}
-          <code className="text-[#8cefff]">imageGenFlowLog</code> 同步。
-        </p>
-        {showPollLines ? (
-          <pre className="mt-3 max-h-[min(85vh,640px)] overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
+        {showFailureLog ? (
+          <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
             {traces
               .filter((t) => t.lines.length > 0)
               .map((t) => `── ${t.label} · ${t.jobId} ──\n${t.lines.join("\n")}`)
@@ -1832,51 +1777,30 @@ export default function PlatformPage() {
 
   const runEnqueueTopicImageAndPoll = useCallback(
     async (inp: {
-      /** @deprecated 忽略；服端僅使用 DB 快照優化後的主句。 */
-      topicHook?: string;
+      topicHook: string;
       format: "短视频" | "图文";
-      /** @deprecated 忽略。 */
       context?: string;
       coverPersonaContext?: string;
       failedJobId?: string;
-      sceneId: string;
+      sceneId?: string;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
       /** 管理員專用：Vertex Nano Banana 2 主生圖（官方 API） */
       coverProEngine?: "nano_banana_2";
-      /** 超高點擊率封面：換主標角度 + 划停向英文化；扣 {@link CREDIT_COSTS.platformTopicFrameHighCtr} 點 */
-      coverHighClickAppeal?: boolean;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
-        topicHook: (inp.topicHook ?? "").slice(0, 500),
-        format: inp.format,
-        context: inp.context,
-        coverPersonaContext: inp.coverPersonaContext,
-        failedJobId: inp.failedJobId,
-        sceneId: inp.sceneId,
-        coverHighClickAppeal: inp.coverHighClickAppeal,
+        ...inp,
         /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
         imagePromptTranslator: "gpt54",
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
       });
-      const tEnq = new Date().toISOString();
-      let coverPollLines = appendPollDebugLine(
-        [],
-        `${tEnq} 已入队 enqueueGenerateTopicImage → jobId=${jobId} · ${pollLabel}，GET /api/jobs 每 2500ms`,
-      );
-      if (inp.coverHighClickAppeal) {
-        coverPollLines = appendPollDebugLine(
-          coverPollLines,
-          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview-04-2026」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
-        );
-      }
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: coverPollLines,
+        lines: [],
         pollCount: 0,
         currentStep: "已入队…",
       });
@@ -1885,28 +1809,25 @@ export default function PlatformPage() {
       try {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
-          maxWaitMs: inp.coverHighClickAppeal ? 25 * 60_000 : 18 * 60_000,
+          maxWaitMs: 18 * 60_000,
           onPoll: ({ attempt, status, output }) => {
             const flowRaw = output?.imageGenFlowLog;
             let lastNew = "";
-            const flow = Array.isArray(flowRaw) ? (flowRaw as string[]) : [];
-            const start = topicImagePollFlowLogCursorRef.current;
-            const newRows = flow.length > start ? flow.slice(start).map((r) => String(r)) : [];
-            if (newRows.length > 0) {
-              topicImagePollFlowLogCursorRef.current = flow.length;
-              lastNew = String(flow[flow.length - 1] ?? "");
+            if (Array.isArray(flowRaw)) {
+              const flow = flowRaw as string[];
+              const start = topicImagePollFlowLogCursorRef.current;
+              if (flow.length > start) {
+                topicImagePollFlowLogCursorRef.current = flow.length;
+                lastNew = String(flow[flow.length - 1] ?? "");
+              }
             }
             setTopicImageJobPollTrace((prev) => {
               if (!prev || prev.jobId !== jobId) return prev;
-              let lines = prev.lines;
-              for (const row of newRows) {
-                lines = appendPollDebugLine(lines, row);
-              }
               const step =
                 lastNew ||
                 prev.currentStep ||
                 (status === "queued" ? "排队中" : status === "running" ? "生图中…" : "处理中…");
-              return { ...prev, pollCount: attempt, currentStep: step, lines };
+              return { ...prev, pollCount: attempt, currentStep: step };
             });
           },
         });
@@ -1964,7 +1885,6 @@ export default function PlatformPage() {
           url: null as string | null,
           creationId: undefined as number | undefined,
           imageGenFlowLog: [] as string[],
-          coverClickEstimate: undefined,
         };
       }
       const o = raw as Record<string, unknown>;
@@ -1975,29 +1895,8 @@ export default function PlatformPage() {
         Boolean(imageUrl) &&
         o.success !== false &&
         !platformCoverImageUrlLooksInvalid(imageUrl);
-      const coverClickEstimate = parseCoverClickEstimate(o.coverClickEstimate);
-      if (success && inp.sceneId && coverClickEstimate) {
-        setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [inp.sceneId]: coverClickEstimate }));
-      }
       if (success) {
-        const flow = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]).map(String) : [];
-        setTopicImageJobPollTrace((prev) => {
-          if (!prev || prev.jobId !== jobId) return prev;
-          let lines = prev.lines;
-          const start = topicImagePollFlowLogCursorRef.current;
-          for (const row of flow.slice(start)) {
-            lines = appendPollDebugLine(lines, row);
-          }
-          topicImagePollFlowLogCursorRef.current = flow.length;
-          return {
-            ...prev,
-            terminalStatus: "succeeded",
-            lines: appendPollDebugLine(
-              lines,
-              `${new Date().toISOString()} 终态 succeeded · ${pollLabel}${imageUrl ? " · imageUrl 已返回" : ""}`,
-            ),
-          };
-        });
+        setTopicImageJobPollTrace(null);
       } else {
         setTopicImageJobPollTrace((prev) =>
           prev && prev.jobId === jobId
@@ -2018,7 +1917,6 @@ export default function PlatformPage() {
         url: imageUrl,
         creationId,
         imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
-        coverClickEstimate,
       };
     },
     [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2],
@@ -2068,11 +1966,16 @@ export default function PlatformPage() {
         const bad = !r.url || !String(r.url).trim() || u.includes("timeout") || u.includes("error");
         const cid = (r as { creationId?: number }).creationId;
         if (!bad || cid == null) continue;
-        if (!r.id?.trim()) continue;
+        const scene = variables.scenes.find((s) => s.id === r.id);
+        if (!scene) continue;
+        const topicHook = String(scene.title || "").trim().slice(0, 500);
+        if (!topicHook) continue;
+        const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
         try {
           const retried = await runEnqueueTopicImageAndPoll({
-            topicHook: "",
+            topicHook,
             format: variables.platformType === "video" ? "短视频" : "图文",
+            context: ctxBody,
             coverPersonaContext: variables.coverPersonaContext,
             failedJobId: String(cid),
             sceneId: r.id,
@@ -2164,7 +2067,7 @@ export default function PlatformPage() {
   );
 
   const runSequentialCoverBatchGeneration = async (
-    scenes: Array<{ id: string }>,
+    scenes: Array<{ id: string; title: string; text: string }>,
     coverPersonaContext: string,
   ) => {
     const localOpId = `batch-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2213,10 +2116,11 @@ export default function PlatformPage() {
           `cover:${scene.id}`,
           () =>
             runEnqueueTopicImageAndPoll({
-              topicHook: "",
+              topicHook: String(scene.title || "").trim().slice(0, 500),
               format: "图文",
-              coverPersonaContext: coverPersonaContext.trim() || undefined,
+              context: String(scene.text || "").trim().slice(0, 8000),
               sceneId: scene.id,
+              coverPersonaContext: coverPersonaContext.trim() || undefined,
               pollDebugLabel: `异步逐张批量 · ${scene.id}`,
             }),
           (waitMs) => {
@@ -2253,12 +2157,6 @@ export default function PlatformPage() {
           setPlatformImageMap((prev) => ({ ...prev, [scene.id]: out }));
           if (result.creationId != null) {
             setSceneJobIds((prev) => ({ ...prev, [scene.id]: String(result.creationId) }));
-          }
-          const ctr = parseCoverClickEstimate(
-            (result as { coverClickEstimate?: unknown }).coverClickEstimate,
-          );
-          if (ctr) {
-            setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [scene.id]: ctr }));
           }
           liveLines.push(`${new Date().toISOString()}  ✓ 单张完成 · sceneId=${scene.id}`);
         } else {
@@ -2308,20 +2206,17 @@ export default function PlatformPage() {
         pid.length >= 8
           ? { jobId: pid, localOpId, sceneId: input.sceneId, kind: input.kind }
           : null;
-      const pendingLines = buildCompositeImageGenPendingLines({
-        kind: input.kind,
-        sceneId: input.sceneId,
-        title: input.title,
-        imagePromptTranslator: input.imagePromptTranslator,
-        progressJobId: pid.length >= 8 ? pid : undefined,
-      });
-      compositeLiveFlowAccumRef.current =
-        pid.length >= 8 ? { jobId: pid, baseLines: [...pendingLines], flowCursor: 0 } : null;
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
           kind: "composite_2x4",
-          lines: pendingLines,
+          lines: buildCompositeImageGenPendingLines({
+            kind: input.kind,
+            sceneId: input.sceneId,
+            title: input.title,
+            imagePromptTranslator: input.imagePromptTranslator,
+            progressJobId: pid.length >= 8 ? pid : undefined,
+          }),
           meta: {
             localOpId,
             apiKind: input.kind,
@@ -2342,7 +2237,10 @@ export default function PlatformPage() {
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
       ];
-      const mergedLines = serverLines.length > 0 ? [...headerLines, ...serverLines.map(String)] : headerLines;
+      const mergedLines =
+        serverLines.length > 0
+          ? [...headerLines, `${ts}  [收尾步骤] ${serverLines[serverLines.length - 1]}`]
+          : headerLines;
 
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
@@ -2410,7 +2308,6 @@ export default function PlatformPage() {
     onSettled: () => {
       setPendingCompositeSheet(null);
       compositeSheetLivePollCtxRef.current = null;
-      compositeLiveFlowAccumRef.current = null;
     },
   });
 
@@ -2565,19 +2462,18 @@ export default function PlatformPage() {
       try {
         const j = await getJob(ctx.jobId);
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
-        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog.map(String) : [];
+        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
         const ts = new Date().toISOString();
-        const acc = compositeLiveFlowAccumRef.current;
-        if (!acc || acc.jobId !== ctx.jobId) return;
-        const newPart = log.slice(acc.flowCursor);
-        if (newPart.length === 0) return;
-        acc.flowCursor = log.length;
-        const merged = [...acc.baseLines, ...newPart];
+        const last = log.length > 0 ? String(log[log.length - 1]) : "";
+        const lines: string[] = [
+          `${ts}  [实时进度] status=${j.status} · sceneId=${ctx.sceneId}`,
+          `${ts}  [当前步骤] ${last || "（等待服务端流水）"}`,
+        ];
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
             at: ts,
             kind: "composite_2x4",
-            lines: merged,
+            lines,
             meta: {
               localOpId: ctx.localOpId,
               apiKind: ctx.kind,
@@ -3099,36 +2995,6 @@ export default function PlatformPage() {
     recommendedPlatforms,
     primaryPlatforms,
   ]);
-
-  const resultSummaryCarouselItems = useMemo((): PlatformSignalsCarouselItem[] => {
-    const visible = resultSummaryCards.filter((card) => !card.isLoadingSkeleton);
-    const tonesFallback: PlatformSignalsCarouselTone[] = ["platform", "topic", "action"];
-    return visible.map((item, idx) => {
-      const tone =
-        item.label === "你会拿到"
-          ? (tonesFallback[idx % tonesFallback.length] as PlatformSignalsCarouselTone)
-          : resultSummaryToneForLabel(item.label);
-      const thumbToneLabel =
-        item.label === "你会拿到"
-          ? tone === "platform"
-            ? "判断"
-            : tone === "topic"
-              ? "切口"
-              : "承接"
-          : item.label;
-      return {
-        title: item.value,
-        summary: item.detail,
-        detail:
-          item.label === "你会拿到"
-            ? "以上为购买前的能力条目说明；开始全案后即会更替为与你的背景与时间窗口对齐的结论简报。"
-            : `条目「${item.label}」由当前优先级看板与窗口样本摘要生成；尚未就绪的条目不再占位展示，生成完成后会自动加入本条轮播。`,
-        tone,
-        facetLabel: item.label === "你会拿到" ? undefined : item.label,
-        thumbToneLabel,
-      };
-    });
-  }, [resultSummaryCards]);
 
   const platformDecisionRows = useMemo(
     () => {
@@ -3766,15 +3632,6 @@ export default function PlatformPage() {
     return () => window.clearInterval(timer);
   }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
-  useEffect(() => {
-    const n = resultSummaryCarouselItems.length;
-    if (n <= 1) return;
-    const timer = window.setInterval(() => {
-      setResultSummaryCarouselIndex((value) => (value + 1) % n);
-    }, 4500);
-    return () => window.clearInterval(timer);
-  }, [resultSummaryCarouselItems.length]);
-
   const handleAnalyze = async () => {
     // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
     if (!isIpProfileReady(ipProfile)) {
@@ -3809,7 +3666,6 @@ export default function PlatformPage() {
     setContentJobPollTrace(null);
     setElapsedTime(0);
     setRotatingCardIndex(0);
-    setResultSummaryCarouselIndex(0);
     setPlatformImageMap({});
     setPlatformStoryboardSheetMap({});
     setPlatformXhsNoteMap({});
@@ -4072,193 +3928,6 @@ export default function PlatformPage() {
             )}
           </div>
         )}
-
-        {snapshot && platformDashboard ? (
-          <div className="mb-6 space-y-4">
-            <div
-              className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
-              role="region"
-              aria-label="全案分析扣費說明"
-            >
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
-                <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
-                  <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
-                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
-                </div>
-                <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                  首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
-                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
-                  並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
-                  。任務失敗、逾時或結果不滿意，
-                  <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
-                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
-                </div>
-              </div>
-            </div>
-
-            <div
-              id={PLATFORM_SECTION_DECISION_INTEL_ID}
-              className="scroll-mt-20 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5"
-            >
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/10">
-                    <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white md:text-lg">个性化战略地图（决策智库视图）</h3>
-                    <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      在<strong className="text-white">全案专属文案已成功写入</strong>后，将本页战略看板与长稿要点<strong className="text-white">收敛成一页可视化报告</strong>
-                      （雷达、执行向建议与阅读用排行条；均为<strong className="text-white">辅助决策的模型推演</strong>，不构成效果承诺）。解锁为
-                      <strong className="text-white"> 加购模块</strong>
-                      ，与全案入队扣点分开计：首次体验{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
-                      扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
-                    </p>
-                  </div>
-                </div>
-                {isAuthenticated ? (
-                  <div className="flex shrink-0 flex-col items-stretch gap-2 md:items-end">
-                    <span className="text-[11px] text-gray-500">
-                      {decisionIntelPricingQuery.data?.priorCompletedCount
-                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 点`
-                        : `尚未解锁 · 首次体验 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 点`}
-                    </span>
-                    {!decisionIntelInputReady ? (
-                      <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
-                        {isContentLoading
-                          ? "专属文案生成中，完成后才可扣点解锁（价格已标示于上）。"
-                          : stage2Failed || contentJobError
-                            ? "专属文案未完成，请重试全案文案后再解锁本模块。"
-                            : stage2EmptyPayload
-                              ? "后台未返回有效选题请重试；完成后再解锁。"
-                              : platformDashboard && !platformContent
-                                ? "请先完成专属文案入队结果，再解锁本报告。"
-                                : "请完成全案专属文案后再解锁。"}
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={
-                        generateDecisionIntelMutation.isPending ||
-                        !decisionIntelPricingQuery.data ||
-                        !decisionIntelInputReady
-                      }
-                      onClick={() => {
-                        const next = decisionIntelPricingQuery.data?.nextCredits;
-                        if (next == null) return;
-                        const latestWd = decisionIntelLatestQuery.data?.windowDays;
-                        if (
-                          latestWd != null &&
-                          latestWd !== selectedWindowDays &&
-                          decisionIntelLatestQuery.data?.report
-                        ) {
-                          const okWin = window.confirm(
-                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
-                          );
-                          if (!okWin) return;
-                        }
-                        if (!supervisorAccess) {
-                          const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于当前「战略看板 + 已写入的专属文案」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
-                          );
-                          if (!ok) return;
-                        }
-                        generateDecisionIntelMutation.mutate({
-                          topic: strategicMapTopic,
-                          contentBlueprint: strategicMapBlueprint,
-                          platformHint: decisionIntelPlatformHint,
-                          windowDays: selectedWindowDays,
-                          dateRange: formatDecisionIntelDateRangeZh(selectedWindowDays),
-                          platformAnalysisEpoch: platformAnalysisEpochRef.current,
-                        });
-                      }}
-                      className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#ff4fb8]/50 bg-[#ff4fb8]/15 px-4 py-2 text-sm font-bold text-[#ffc6e8] transition hover:bg-[#ff4fb8]/25 disabled:opacity-45"
-                    >
-                      {generateDecisionIntelMutation.isPending ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                          解锁中…
-                        </>
-                      ) : unlockedStrategicReport ? (
-                        <>
-                          再次生成（{decisionIntelPricingQuery.data?.nextCredits ?? CREDIT_COSTS.decisionIntelligenceReport}{" "}
-                          點）
-                        </>
-                      ) : (
-                        <>付費解鎖戰略地圖</>
-                      )}
-                    </button>
-                    {unlockedStrategicReport ? (
-                      <button
-                        type="button"
-                        disabled={isExportingStrategicPng}
-                        onClick={() => void handleExportStrategicDashboardPng()}
-                        className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
-                      >
-                        {isExportingStrategicPng ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                            導出中…
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-4 w-4 shrink-0" />
-                            導出報告圖（PNG）
-                          </>
-                        )}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
-                )}
-              </div>
-
-              <div className="platform-report-dashboard-shell relative mt-5 overflow-x-auto overflow-y-visible rounded-xl border border-white/10 bg-black/40">
-                {unlockedStrategicReport ? (
-                  <div className="w-full overflow-x-auto overflow-y-visible">
-                    <div ref={strategicReportDashboardRef} className="inline-block align-top">
-                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <DecisionIntelLockedDemoPreview
-                      footnote={
-                        strategicMapPreviewReport
-                          ? "上為匿名化演示樣張（英文與品牌區已打碼）。解鎖後將依您當前戰略看板與專屬文案生成清晰專屬版並存檔。"
-                          : "上為匿名化演示樣張（英文與品牌區已打碼）。完成專屬文案後即可付費解鎖，獲取基於您數據的完整報告。"
-                      }
-                    />
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
-                      <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
-                        <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
-                        <p className="text-sm font-semibold text-white">
-                          {strategicMapPreviewReport ? "試讀樣張 · 解鎖拿專屬高清版" : "試讀樣張 · 完成文案後可解鎖"}
-                        </p>
-                        <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
-                          {strategicMapPreviewReport ? (
-                            <>
-                              解鎖後版式與演示一致，但數字與建議均來自<strong className="text-[#fde047]">您的全案結果</strong>
-                              ，非示意樣張。
-                            </>
-                          ) : (
-                            <>
-                              請先完成本頁<strong className="text-[#fde047]">專屬文案</strong>
-                              ；解鎖價格已列於上方。
-                            </>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
@@ -4567,18 +4236,28 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        {resultSummaryCarouselItems.length > 0 ? (
-          <section id={PLATFORM_SECTION_TREND_SIGNALS_ID} className="scroll-mt-20 mt-6">
-            <PlatformSignalsCarouselPanel
-              eyebrow="首轮结论简报"
-              carouselAriaLabel="全案结论条目轮播"
-              items={resultSummaryCarouselItems}
-              activeIndex={resultSummaryCarouselIndex}
-              onPickIndex={setResultSummaryCarouselIndex}
-              subtitle="自动轮换当前窗口下的核心结论；生成中的占位条目已隐藏，亦可点下方预览条立即切换。"
-            />
-          </section>
-        ) : null}
+        <section
+          id={PLATFORM_SECTION_TREND_SIGNALS_ID}
+          className="scroll-mt-20 mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+        >
+          {resultSummaryCards.map((item, index) => (
+            <div key={`${item.label}-${index}`} className={shellCardClasses("p-5 flex flex-col justify-center")}>
+              {item.isLoadingSkeleton ? (
+                <div className="flex h-full w-full animate-pulse flex-col justify-center rounded-lg border border-white/5 bg-[rgba(255,255,255,0.02)] p-4 text-center">
+                  <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#49e6ff]/50" />
+                  <div className="text-[13px] font-semibold text-[#8cefff]/70">{item.value}</div>
+                  <div className="mt-1 text-[11px] text-[#c9c0e6]/50">{item.detail}</div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">{item.label}</div>
+                  <div className="mt-3 text-xl font-bold leading-8 text-white">{item.value}</div>
+                  <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
+                </>
+              )}
+            </div>
+          ))}
+        </section>
 
         {/* Debug panel: show as soon as snapshot is available */}
         {snapshot && debugMode ? (
@@ -4756,10 +4435,6 @@ export default function PlatformPage() {
                       </div>
                       <div>4b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                     </div>
-                    <div className="mt-1 text-[10px] leading-relaxed text-gray-500">
-                      「超高点击率封面」时流水含 <code className="text-[#8cefff]">[Deep Research Pro]</code>{" "}
-                      与服端 <code className="text-[#8cefff]">imageGenFlowLog</code> 增量一致；完整行见下方 Fly Jobs 面板。
-                    </div>
                   </div>
 
                   <div className="mt-4 space-y-4">
@@ -4888,29 +4563,32 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            {/* 頁首可見區已外置扣費／決策智庫；克隆 PDF 時仍須納入相同合規與說明（避免 #platform-report 快照缺段） */}
-            <div data-pdf-only className="hidden space-y-4">
-              <div
-                className="rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
-                role="region"
-                aria-label="全案分析扣費說明（PDF 汇总）"
-              >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
-                  <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
-                    <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
-                    <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
-                  </div>
-                  <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                    首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
-                    <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
-                    並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
-                    。任務失敗、逾時或結果不滿意，
-                    <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
-                    <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
-                  </div>
+            <div
+              className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
+              role="region"
+              aria-label="全案分析扣費說明"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
+                  <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
+                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
+                </div>
+                <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
+                  首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
+                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
+                  並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
+                  。任務失敗、逾時或結果不滿意，
+                  <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
+                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
                 </div>
               </div>
-              <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5">
+            </div>
+
+            <div
+              id={PLATFORM_SECTION_DECISION_INTEL_ID}
+              className="scroll-mt-20 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5"
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/10">
                     <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
@@ -4926,16 +4604,147 @@ export default function PlatformPage() {
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
                       扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
-                    <p className="mt-3 text-xs leading-relaxed text-[#9ca3c9]">
-                      {unlockedStrategicReport
-                        ? "在线版含完整雷达与排行可视化；PDF 汇总以文字与关键结论为主，高清图请使用本页「导出报告图（PNG）」。"
-                        : "完成专属文案并解锁后，在线视图将展示完整推演结果；未解锁前请以本页顶部试读示意为准。"}
-                    </p>
                   </div>
                 </div>
+                {isAuthenticated ? (
+                  <div className="flex shrink-0 flex-col items-stretch gap-2 md:items-end">
+                    <span className="text-[11px] text-gray-500">
+                      {decisionIntelPricingQuery.data?.priorCompletedCount
+                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 点`
+                        : `尚未解锁 · 首次体验 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 点`}
+                    </span>
+                    {!decisionIntelInputReady ? (
+                      <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
+                        {isContentLoading
+                          ? "专属文案生成中，完成后才可扣点解锁（价格已标示于上）。"
+                          : stage2Failed || contentJobError
+                            ? "专属文案未完成，请重试全案文案后再解锁本模块。"
+                            : stage2EmptyPayload
+                              ? "后台未返回有效选题请重试；完成后再解锁。"
+                              : platformDashboard && !platformContent
+                                ? "请先完成专属文案入队结果，再解锁本报告。"
+                                : "请完成全案专属文案后再解锁。"}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={
+                        generateDecisionIntelMutation.isPending ||
+                        !decisionIntelPricingQuery.data ||
+                        !decisionIntelInputReady
+                      }
+                      onClick={() => {
+                        const next = decisionIntelPricingQuery.data?.nextCredits;
+                        if (next == null) return;
+                        const latestWd = decisionIntelLatestQuery.data?.windowDays;
+                        if (
+                          latestWd != null &&
+                          latestWd !== selectedWindowDays &&
+                          decisionIntelLatestQuery.data?.report
+                        ) {
+                          const okWin = window.confirm(
+                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
+                          );
+                          if (!okWin) return;
+                        }
+                        if (!supervisorAccess) {
+                          const ok = window.confirm(
+                            `将扣除 ${next} 积分，基于当前「战略看板 + 已写入的专属文案」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                          );
+                          if (!ok) return;
+                        }
+                        generateDecisionIntelMutation.mutate({
+                          topic: strategicMapTopic,
+                          contentBlueprint: strategicMapBlueprint,
+                          platformHint: decisionIntelPlatformHint,
+                          windowDays: selectedWindowDays,
+                          dateRange: formatDecisionIntelDateRangeZh(selectedWindowDays),
+                          platformAnalysisEpoch: platformAnalysisEpochRef.current,
+                        });
+                      }}
+                      className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#ff4fb8]/50 bg-[#ff4fb8]/15 px-4 py-2 text-sm font-bold text-[#ffc6e8] transition hover:bg-[#ff4fb8]/25 disabled:opacity-45"
+                    >
+                      {generateDecisionIntelMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                          解锁中…
+                        </>
+                      ) : unlockedStrategicReport ? (
+                        <>
+                          再次生成（{decisionIntelPricingQuery.data?.nextCredits ?? CREDIT_COSTS.decisionIntelligenceReport}{" "}
+                          點）
+                        </>
+                      ) : (
+                        <>付費解鎖戰略地圖</>
+                      )}
+                    </button>
+                    {unlockedStrategicReport ? (
+                      <button
+                        type="button"
+                        disabled={isExportingStrategicPng}
+                        onClick={() => void handleExportStrategicDashboardPng()}
+                        className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
+                      >
+                        {isExportingStrategicPng ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                            導出中…
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4 shrink-0" />
+                            導出報告圖（PNG）
+                          </>
+                        )}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
+                )}
+              </div>
+
+              <div className="platform-report-dashboard-shell relative mt-5 overflow-x-auto overflow-y-visible rounded-xl border border-white/10 bg-black/40">
+                {unlockedStrategicReport ? (
+                  <div className="w-full overflow-x-auto overflow-y-visible">
+                    <div ref={strategicReportDashboardRef} className="inline-block align-top">
+                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <DecisionIntelLockedDemoPreview
+                      footnote={
+                        strategicMapPreviewReport
+                          ? "上為匿名化演示樣張（英文與品牌區已打碼）。解鎖後將依您當前戰略看板與專屬文案生成清晰專屬版並存檔。"
+                          : "上為匿名化演示樣張（英文與品牌區已打碼）。完成專屬文案後即可付費解鎖，獲取基於您數據的完整報告。"
+                      }
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
+                      <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
+                        <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
+                        <p className="text-sm font-semibold text-white">
+                          {strategicMapPreviewReport ? "試讀樣張 · 解鎖拿專屬高清版" : "試讀樣張 · 完成文案後可解鎖"}
+                        </p>
+                        <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
+                          {strategicMapPreviewReport ? (
+                            <>
+                              解鎖後版式與演示一致，但數字與建議均來自<strong className="text-[#fde047]">您的全案結果</strong>
+                              ，非示意樣張。
+                            </>
+                          ) : (
+                            <>
+                              請先完成本頁<strong className="text-[#fde047]">專屬文案</strong>
+                              ；解鎖價格已列於上方。
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -5021,13 +4830,12 @@ export default function PlatformPage() {
                     </div>
                   </>
                 ) : null}
-                {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
                 <div className="mt-4 rounded-2xl border border-[#10B981]/35 bg-[rgba(16,185,129,0.06)] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#10B981]">
-                      生图服务端流水（批量单帧 · 2×4 分镜 · 八格图文 · 成功与失败均保留）
+                      出图失败流水（imageGenFlowLog · 仅失败保留）
                     </div>
-                    {platformImageGenFlowSnapshots.length > 0 ? (
+                    {platformImageGenFlowSnapshotsFailedOnly.length > 0 ? (
                       <button
                         type="button"
                         onClick={() => setPlatformImageGenFlowSnapshots([])}
@@ -5038,64 +4846,49 @@ export default function PlatformPage() {
                     ) : null}
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    与上方 <span className="text-gray-400">Fly Jobs · 轮询</span> 并列：单帧超高点击率封面的{" "}
-                    <code className="text-[#8cefff]">imageGenFlowLog</code> 详见该面板；本区保留{" "}
-                    <span className="text-gray-400">批量封面</span>、<span className="text-gray-400">2×4 分镜</span>、
-                    <span className="text-gray-400">小红书八格</span>
-                    等 TRPC 返回或轮询累加的<strong className="text-gray-400">完整</strong>服务端步骤（含{" "}
-                    <code className="text-[#8cefff]">[Deep Research Pro]</code> 等与合成管線相关的行）。失败记录红框；成功为绿框。
+                    成功跑通的单帧 / 2×4 不再占用本區；僅在客戶端標記為失敗時顯示。
                   </p>
-                  {platformImageGenFlowSnapshots.length === 0 ? (
+                  {platformImageGenFlowSnapshotsFailedOnly.length === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
-                      暂无快照。发起单帧 / 批量 / 2×4 生成后，此处会保留最近若干条完整流水（最新在上）。
+                      目前無失敗流水。若批量或合成報錯，此處會出現紅框記錄。
                     </div>
                   ) : (
                     <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
-                      {platformImageGenFlowSnapshots.map((snap, i) => {
-                        const failed =
-                          snap.kind === "batch_topic_frames_failed" || snap.kind === "composite_2x4_failed";
-                        return (
-                          <div
-                            key={`${snap.at}-snap-${snap.kind}-${i}`}
-                            className={`rounded-xl border p-3 ${
-                              failed ? "border-rose-500/40 bg-black/40" : "border-emerald-500/30 bg-black/25"
-                            }`}
-                          >
-                            <div
-                              className={`font-mono text-[10px] ${failed ? "text-rose-300" : "text-emerald-200/90"}`}
-                            >
-                              {snap.at} · {platformImageFlowSnapshotTitle(snap.kind)}
-                              {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
-                            </div>
-                            <div className="mt-2">
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(snap.lines.join("\n"));
-                                    toast.success("已复制本段日志全文");
-                                  } catch {
-                                    toast.error("复制失败，请手动选中下方文本");
-                                  }
-                                }}
-                                className={`rounded-lg border px-2 py-1 text-[10px] ${
-                                  failed
-                                    ? "border-rose-400/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
-                                    : "border-emerald-400/35 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15"
-                                }`}
-                              >
-                                复制本段全文
-                              </button>
-                            </div>
-                            <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
-                              {snap.lines.join("\n")}
-                            </pre>
+                      {platformImageGenFlowSnapshotsFailedOnly.map((snap, i) => (
+                        <div
+                          key={`${snap.at}-fail-${snap.kind}-${i}`}
+                          className="rounded-xl border border-rose-500/40 bg-black/40 p-3"
+                        >
+                          <div className="font-mono text-[10px] text-rose-300">
+                            {snap.at} ·{" "}
+                            {snap.kind === "batch_topic_frames_failed" ? "批量单帧 · 失败" : "2×4 合成 · 失败"}
+                            {snap.meta ? ` · ${JSON.stringify(snap.meta)}` : ""}
                           </div>
-                        );
-                      })}
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(snap.lines.join("\n"));
+                                  toast.success("已复制本段日志（含 TRPC 详情）");
+                                } catch {
+                                  toast.error("复制失败，请手动选中下方文本");
+                                }
+                              }}
+                              className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
+                            >
+                              复制本段报错全文
+                            </button>
+                          </div>
+                          <pre className="mt-2 max-h-[min(85vh,920px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[#d7d0ef]">
+                            {snap.lines.join("\n")}
+                          </pre>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
+                {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
               </div>
             ) : null}
 
@@ -5369,7 +5162,17 @@ export default function PlatformPage() {
                               toast.error("请先登录");
                               return;
                             }
-                            const scenes = contentExecutionCards.map((row) => ({ id: row.id }));
+                            const scenes = contentExecutionCards.map((row) => ({
+                              id: row.id,
+                              title: row.title,
+                              text: buildPlatformSceneText({
+                                title: row.title,
+                                hook: row.hook,
+                                copywriting: row.copywriting,
+                                executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
+                                  .executionDetails,
+                              }),
+                            }));
                             const discountNote = supervisorAccess
                               ? ""
                               : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
@@ -5704,8 +5507,9 @@ export default function PlatformPage() {
                           toast.error("请先登录");
                           return;
                         }
-                        if (!String(item.id || "").trim()) {
-                          toast.error("选题缺少 ID，无法生成");
+                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
+                        if (!topicHook) {
+                          toast.error("选题缺少标题或钩子，无法生成");
                           return;
                         }
                         const displayedUrl = (platformImageMap[item.id] || "").trim();
@@ -5729,8 +5533,21 @@ export default function PlatformPage() {
                         setRegeneratingCoverSceneId(item.id);
                         void runThrottledPlatformImageRequest(`single-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
-                            topicHook: "",
+                            topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
+                            context: buildPlatformSceneText({
+                              title: headlineTitle,
+                              hook: item.hook ?? "",
+                              copywriting: item.copywriting ?? "",
+                              executionDetails: (
+                                item as {
+                                  executionDetails?: {
+                                    environmentAndWardrobe?: string;
+                                    lightingAndCamera?: string;
+                                  };
+                                }
+                              ).executionDetails,
+                            }),
                             coverPersonaContext:
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
@@ -5768,8 +5585,9 @@ export default function PlatformPage() {
                           toast.error("请先登录");
                           return;
                         }
-                        if (!String(item.id || "").trim()) {
-                          toast.error("选题缺少 ID，无法生成");
+                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
+                        if (!topicHook) {
+                          toast.error("选题缺少标题或钩子，无法生成");
                           return;
                         }
                         if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
@@ -5787,8 +5605,21 @@ export default function PlatformPage() {
                         setRegeneratingCoverSceneId(item.id);
                         void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
-                            topicHook: "",
+                            topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
+                            context: buildPlatformSceneText({
+                              title: headlineTitle,
+                              hook: item.hook ?? "",
+                              copywriting: item.copywriting ?? "",
+                              executionDetails: (
+                                item as {
+                                  executionDetails?: {
+                                    environmentAndWardrobe?: string;
+                                    lightingAndCamera?: string;
+                                  };
+                                }
+                              ).executionDetails,
+                            }),
                             coverPersonaContext:
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
@@ -5825,64 +5656,10 @@ export default function PlatformPage() {
                             toast.error(err.message || "操作失败");
                           });
                       };
-                      const highCtrCoverCost = CREDIT_COSTS.platformTopicFrameHighCtr;
-                      const handleHighCtrCoverRegenerate = () => {
-                        if (!isAuthenticated) {
-                          toast.error("请先登录");
-                          return;
-                        }
-                        if (!String(item.id || "").trim()) {
-                          toast.error("选题缺少 ID，无法生成");
-                          return;
-                        }
-                        if (!(platformImageMap[item.id] || "").trim()) {
-                          toast.error("请先生成基础封面");
-                          return;
-                        }
-                        if (!supervisorAccess) {
-                          const note = `「超高点击率封面」将先由 Deep Research Pro（gemini-deep-research-pro-preview-04-2026）做竞品清洗，通常数分钟完成（服务端本地等待上限约 8 分钟），再进入生图；并换主标角度、强化划停向视觉。消耗 ${highCtrCoverCost} 积分，是否继续？`;
-                          if (!window.confirm(note)) return;
-                        }
-                        setRegeneratingCoverSceneId(item.id);
-                        void runThrottledPlatformImageRequest(`high-ctr-cover:${item.id}`, () =>
-                          runEnqueueTopicImageAndPoll({
-                            topicHook: "",
-                            format: isGraphicCover ? "图文" : "短视频",
-                            coverPersonaContext:
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
-                            sceneId: item.id,
-                            coverHighClickAppeal: true,
-                            pollDebugLabel: `超高点击率封面 · ${item.id}`,
-                          }),
-                        )
-                          .then((res) => {
-                            const finalUrl =
-                              res.imageUrl ?? (res as { url?: string | null }).url ?? null;
-                            if (res.creationId != null) {
-                              setSceneJobIds((prev) => ({
-                                ...prev,
-                                [item.id]: String(res.creationId),
-                              }));
-                            }
-                            if (res.success && finalUrl) {
-                              setPlatformImageMap((prev) => ({
-                                ...prev,
-                                [item.id]: finalUrl,
-                              }));
-                              toast.success("超高点击率封面已更新");
-                            } else {
-                              toast.error("超高点击率封面生成失败，可稍后重试。");
-                            }
-                            setRegeneratingCoverSceneId(null);
-                          })
-                          .catch((err) => {
-                            setRegeneratingCoverSceneId(null);
-                            toast.error(err.message || "操作失败");
-                          });
-                      };
                       const queueSilentImageLoadRetry = () => {
                         if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
-                        if (!String(item.id || "").trim()) return;
+                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
+                        if (!topicHook) return;
 
                         /**
                          * 服务端免扣补发要求 failedJobId 对应行 status ∈ {failed,timeout}。
@@ -5909,6 +5686,19 @@ export default function PlatformPage() {
                           return;
                         }
 
+                        const ctxBody = buildPlatformSceneText({
+                          title: headlineTitle,
+                          hook: item.hook ?? "",
+                          copywriting: item.copywriting ?? "",
+                          executionDetails: (
+                            item as {
+                              executionDetails?: {
+                                environmentAndWardrobe?: string;
+                                lightingAndCamera?: string;
+                              };
+                            }
+                          ).executionDetails,
+                        });
                         setCoverLoadRetriedIds((prev) => new Set(prev).add(item.id));
                         setPlatformImageMap((prev) => {
                           const next = { ...prev };
@@ -5918,8 +5708,9 @@ export default function PlatformPage() {
                         setCoverSilentRetryIds((prev) => new Set(prev).add(item.id));
                         void runThrottledPlatformImageRequest(`silent-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
-                            topicHook: "",
+                            topicHook,
                             format: isGraphicCover ? "图文" : "短视频",
+                            context: ctxBody,
                             coverPersonaContext:
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: freeRetryJobId,
@@ -6071,40 +5862,7 @@ export default function PlatformPage() {
                                   }}
                                 />
                               </div>
-                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)]">
-                                {platformCoverCtrBySceneId[item.id] ? (
-                                  <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-3 py-2">
-                                    <span
-                                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                                        platformCoverCtrBySceneId[item.id]!.band === "high"
-                                          ? "bg-emerald-500/25 text-emerald-100"
-                                          : "bg-amber-500/20 text-amber-100"
-                                      }`}
-                                    >
-                                      {platformCoverCtrBySceneId[item.id]!.labelZh}
-                                    </span>
-                                    <span className="text-[10px] text-gray-500">规则估计 · 非实测</span>
-                                    <button
-                                      type="button"
-                                      disabled={
-                                        !isAuthenticated ||
-                                        isSequentialCoverBatchGenerating ||
-                                        isSequentialCompositeBatchGenerating ||
-                                        regeneratingCoverSceneId !== null ||
-                                        compositeMutationBusy ||
-                                        isDashboardLoading ||
-                                        isContentLoading
-                                      }
-                                      onClick={handleHighCtrCoverRegenerate}
-                                      className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#fbbf24]/45 bg-[#fbbf24]/12 px-2.5 py-1 text-[11px] font-bold text-[#fde68a] transition hover:bg-[#fbbf24]/22 disabled:opacity-50"
-                                      title={`Deep Research Pro 竞品清洗 · 换主标/划停向强化 · 通常数分钟 · 本地轮询上限约 8 分钟 + 生图 · ${highCtrCoverCost} 积分`}
-                                    >
-                                      <TrendingUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
-                                      生成超高点击率封面 · {highCtrCoverCost}点
-                                    </button>
-                                  </div>
-                                ) : null}
-                                <div className="flex items-center justify-between p-2 px-3">
+                              <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
                                 <div className="min-w-0 flex-1">
                                   <ImageUpscaleBar
                                     imageUrl={currentImageUrl}
@@ -6147,7 +5905,6 @@ export default function PlatformPage() {
                                     </span>
                                   </button>
                                 </div>
-                              </div>
                               </div>
                             </div>
                           ) : (regeneratingCoverSceneId === item.id ||

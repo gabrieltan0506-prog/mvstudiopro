@@ -21,7 +21,8 @@ import {
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
 /**
- * 平台選題生圖：**預設 GCS** + 簽名 URL；唯 **`PLATFORM_IMAGE_STORAGE=fly`**（或對應別名）則 Fly 卷 + flyVolumeMedia。舊環境變數 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME` **不再生效**。
+ * 平台選題生圖：預設 **GCS** + 簽名 URL；設 `PLATFORM_IMAGE_STORAGE=fly` 則 Fly 卷 + flyVolumeMedia。
+ * 兼容 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=1` 強制走 Fly。
  */
 function isFlyPlatformTopicImageStorage(): boolean {
   return resolvePlatformImageStorageDriver() === "fly";
