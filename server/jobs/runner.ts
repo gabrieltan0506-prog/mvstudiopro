@@ -772,6 +772,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
 async function processPlatformJob(
   input: JobEnvelope,
   platformJobId?: string,
+  jobUserId?: string,
 ): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
   try {
@@ -1005,6 +1006,26 @@ async function processPlatformJob(
         abortSignal: undefined,
         stage1Handoff,
       });
+      const uidRaw = jobUserId != null ? Number(jobUserId) : NaN;
+      if (Number.isFinite(uidRaw) && Array.isArray(built.data?.contentBlueprints) && built.data.contentBlueprints.length > 0) {
+        try {
+          const { savePlatformStrategicBlueprintSnapshot } = await import(
+            "../services/platformStrategicBlueprintSnapshots.js",
+          );
+          await savePlatformStrategicBlueprintSnapshot({
+            userId: uidRaw,
+            windowDays,
+            context,
+            requestedPlatforms,
+            contentBlueprints: built.data.contentBlueprints as unknown[],
+          });
+        } catch (e) {
+          console.warn(
+            "[platform_build_content] blueprint snapshot save skipped:",
+            e instanceof Error ? e.message.slice(0, 200) : e,
+          );
+        }
+      }
       const diag = built.diagnostics as Record<string, unknown>;
       const respProv = diag?.responseProvider;
       return {
@@ -1042,18 +1063,54 @@ async function processPlatformJob(
       const meta = params.newJobMetaBase;
       const newJobMetaBase =
         meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
-      const fmt = params.format;
+      let fmt = params.format;
+      const uidNum = jobUserId != null ? Number(jobUserId) : NaN;
+      const sceneIdRaw = typeof params.sceneId === "string" ? params.sceneId.trim() : "";
+      if (!sceneIdRaw) {
+        throw new Error("封面异步任务缺少 sceneId，无法从选题快照加载已优化文案");
+      }
+      if (!Number.isFinite(uidNum)) {
+        throw new Error("封面异步任务用户上下文无效，无法解析选题快照");
+      }
+      const {
+        assertOptimizedCoverInputsFromDb,
+        PlatformCoverInputsError,
+      } = await import("../services/platformStrategicBlueprintSnapshots.js");
+      let topicHook: string;
+      let contextRaw: string;
+      let appealHookOut: string;
+      try {
+        const resolved = await assertOptimizedCoverInputsFromDb({
+          userId: uidNum,
+          sceneId: sceneIdRaw,
+        });
+        topicHook = resolved.topicHook;
+        contextRaw = resolved.context;
+        appealHookOut = resolved.appealHook;
+        fmt = resolved.format;
+      } catch (e) {
+        const msg = e instanceof PlatformCoverInputsError ? e.message : e instanceof Error ? e.message : String(e);
+        throw new Error(msg || "无法从选题快照解析封面文案");
+      }
+      const { buildPlatformCoverHistoryHintFromDb, mergeCoverContextWithDbHint } = await import(
+        "../services/platformCoverHistoryHint.js",
+      );
+      const coverHistoryHint = Number.isFinite(uidNum)
+        ? await buildPlatformCoverHistoryHintFromDb({ userId: uidNum })
+        : "";
+      const enrichedContext = mergeCoverContextWithDbHint(contextRaw, coverHistoryHint);
       const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
       const coverProEngine =
         rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
           ? ("nano_banana_2" as const)
           : undefined;
       const result = await runPlatformTopicImagePipeline({
-        topicHook: String(params.topicHook || ""),
+        topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
-        context: typeof params.context === "string" ? params.context : undefined,
+        context: enrichedContext,
         coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
         sceneId: typeof params.sceneId === "string" ? params.sceneId : undefined,
+        appealHook: appealHookOut,
         imagePromptTranslator: "gpt54",
         creationIdOut,
         isFreeRetry: Boolean(params.isFreeRetry),
@@ -1081,7 +1138,7 @@ async function executeJob(
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
-  if (type === "platform") return processPlatformJob(input, jobId);
+  if (type === "platform") return processPlatformJob(input, jobId, userId);
   if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
   return processAudioJob(input, timeoutMs, userId);
 }

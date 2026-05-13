@@ -259,7 +259,7 @@ export const CREDIT_COSTS = {
   // ─── 平台页·选题单帧参考（一键批量 / 单张重绘 · GPT-IMAGE-2）·扣点 3×──────────────
   platformTopicFrameGraphic: 32, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
   platformTopicFrameVideo: 15,  // 短视频分镜参考条
-
+  /** 平台页：竖版封面 · ~~超高点击率加价~~（已下架，統一走 platformTopicFrameGraphic） */
   // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────────────
   platformStoryboardSheet: 48, // 单条：分镜 2×4（双语编导；生图 GPT-IMAGE-2）
   platformXhsDualNote: 72, // 单条：小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）

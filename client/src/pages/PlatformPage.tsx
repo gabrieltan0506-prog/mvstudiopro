@@ -98,6 +98,18 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
+
+type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
+
+function parseCoverClickEstimate(raw: unknown): CoverClickEstimate | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const band = r.band === "high" || r.band === "medium" ? r.band : undefined;
+  const score = typeof r.score === "number" ? r.score : undefined;
+  const labelZh = typeof r.labelZh === "string" ? r.labelZh : undefined;
+  if (!band || score == null || !labelZh) return undefined;
+  return { band, score, labelZh };
+}
 /** ↑ 管理員／監管帳號可見的 2×4 英文化開關偏好；一般帳號合成固定走 gpt54（後端同判）。 */
 
 /** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
@@ -1399,6 +1411,10 @@ export default function PlatformPage() {
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
+  /** 封面成功返回後：規則估計的點擊率檔位（非實測） */
+  const [platformCoverCtrBySceneId, setPlatformCoverCtrBySceneId] = useState<Record<string, CoverClickEstimate>>(
+    () => ({}),
+  );
   /** 批量后静默补发进行中：用于单卡呼吸骨架（Set 避免并发重复 id） */
   const [coverSilentRetryIds, setCoverSilentRetryIds] = useState<Set<string>>(() => new Set());
   /** 一键封面：前端异步逐张生成（单张串行） */
@@ -1777,12 +1793,14 @@ export default function PlatformPage() {
 
   const runEnqueueTopicImageAndPoll = useCallback(
     async (inp: {
-      topicHook: string;
+      /** @deprecated 忽略；服端僅使用 DB 快照優化後的主句。 */
+      topicHook?: string;
       format: "短视频" | "图文";
+      /** @deprecated 忽略。 */
       context?: string;
       coverPersonaContext?: string;
       failedJobId?: string;
-      sceneId?: string;
+      sceneId: string;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
       /** 管理員專用：Vertex Nano Banana 2 主生圖（官方 API） */
@@ -1791,7 +1809,12 @@ export default function PlatformPage() {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
-        ...inp,
+        topicHook: (inp.topicHook ?? "").slice(0, 500),
+        format: inp.format,
+        context: inp.context,
+        coverPersonaContext: inp.coverPersonaContext,
+        failedJobId: inp.failedJobId,
+        sceneId: inp.sceneId,
         /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
         imagePromptTranslator: "gpt54",
         coverProEngine:
@@ -1885,6 +1908,7 @@ export default function PlatformPage() {
           url: null as string | null,
           creationId: undefined as number | undefined,
           imageGenFlowLog: [] as string[],
+          coverClickEstimate: undefined,
         };
       }
       const o = raw as Record<string, unknown>;
@@ -1895,6 +1919,10 @@ export default function PlatformPage() {
         Boolean(imageUrl) &&
         o.success !== false &&
         !platformCoverImageUrlLooksInvalid(imageUrl);
+      const coverClickEstimate = parseCoverClickEstimate(o.coverClickEstimate);
+      if (success && inp.sceneId && coverClickEstimate) {
+        setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [inp.sceneId]: coverClickEstimate }));
+      }
       if (success) {
         setTopicImageJobPollTrace(null);
       } else {
@@ -1917,6 +1945,7 @@ export default function PlatformPage() {
         url: imageUrl,
         creationId,
         imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
+        coverClickEstimate,
       };
     },
     [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2],
@@ -1966,16 +1995,11 @@ export default function PlatformPage() {
         const bad = !r.url || !String(r.url).trim() || u.includes("timeout") || u.includes("error");
         const cid = (r as { creationId?: number }).creationId;
         if (!bad || cid == null) continue;
-        const scene = variables.scenes.find((s) => s.id === r.id);
-        if (!scene) continue;
-        const topicHook = String(scene.title || "").trim().slice(0, 500);
-        if (!topicHook) continue;
-        const ctxBody = String(scene.text ?? scene.copywriting ?? "").trim().slice(0, 8000);
+        if (!r.id?.trim()) continue;
         try {
           const retried = await runEnqueueTopicImageAndPoll({
-            topicHook,
+            topicHook: "",
             format: variables.platformType === "video" ? "短视频" : "图文",
-            context: ctxBody,
             coverPersonaContext: variables.coverPersonaContext,
             failedJobId: String(cid),
             sceneId: r.id,
@@ -2067,7 +2091,7 @@ export default function PlatformPage() {
   );
 
   const runSequentialCoverBatchGeneration = async (
-    scenes: Array<{ id: string; title: string; text: string }>,
+    scenes: Array<{ id: string }>,
     coverPersonaContext: string,
   ) => {
     const localOpId = `batch-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2116,11 +2140,10 @@ export default function PlatformPage() {
           `cover:${scene.id}`,
           () =>
             runEnqueueTopicImageAndPoll({
-              topicHook: String(scene.title || "").trim().slice(0, 500),
+              topicHook: "",
               format: "图文",
-              context: String(scene.text || "").trim().slice(0, 8000),
-              sceneId: scene.id,
               coverPersonaContext: coverPersonaContext.trim() || undefined,
+              sceneId: scene.id,
               pollDebugLabel: `异步逐张批量 · ${scene.id}`,
             }),
           (waitMs) => {
@@ -2157,6 +2180,12 @@ export default function PlatformPage() {
           setPlatformImageMap((prev) => ({ ...prev, [scene.id]: out }));
           if (result.creationId != null) {
             setSceneJobIds((prev) => ({ ...prev, [scene.id]: String(result.creationId) }));
+          }
+          const ctr = parseCoverClickEstimate(
+            (result as { coverClickEstimate?: unknown }).coverClickEstimate,
+          );
+          if (ctr) {
+            setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [scene.id]: ctr }));
           }
           liveLines.push(`${new Date().toISOString()}  ✓ 单张完成 · sceneId=${scene.id}`);
         } else {
@@ -5162,17 +5191,7 @@ export default function PlatformPage() {
                               toast.error("请先登录");
                               return;
                             }
-                            const scenes = contentExecutionCards.map((row) => ({
-                              id: row.id,
-                              title: row.title,
-                              text: buildPlatformSceneText({
-                                title: row.title,
-                                hook: row.hook,
-                                copywriting: row.copywriting,
-                                executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
-                                  .executionDetails,
-                              }),
-                            }));
+                            const scenes = contentExecutionCards.map((row) => ({ id: row.id }));
                             const discountNote = supervisorAccess
                               ? ""
                               : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
@@ -5507,9 +5526,8 @@ export default function PlatformPage() {
                           toast.error("请先登录");
                           return;
                         }
-                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
-                        if (!topicHook) {
-                          toast.error("选题缺少标题或钩子，无法生成");
+                        if (!String(item.id || "").trim()) {
+                          toast.error("选题缺少 ID，无法生成");
                           return;
                         }
                         const displayedUrl = (platformImageMap[item.id] || "").trim();
@@ -5533,21 +5551,8 @@ export default function PlatformPage() {
                         setRegeneratingCoverSceneId(item.id);
                         void runThrottledPlatformImageRequest(`single-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
-                            topicHook,
+                            topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
-                            context: buildPlatformSceneText({
-                              title: headlineTitle,
-                              hook: item.hook ?? "",
-                              copywriting: item.copywriting ?? "",
-                              executionDetails: (
-                                item as {
-                                  executionDetails?: {
-                                    environmentAndWardrobe?: string;
-                                    lightingAndCamera?: string;
-                                  };
-                                }
-                              ).executionDetails,
-                            }),
                             coverPersonaContext:
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
@@ -5585,9 +5590,8 @@ export default function PlatformPage() {
                           toast.error("请先登录");
                           return;
                         }
-                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
-                        if (!topicHook) {
-                          toast.error("选题缺少标题或钩子，无法生成");
+                        if (!String(item.id || "").trim()) {
+                          toast.error("选题缺少 ID，无法生成");
                           return;
                         }
                         if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
@@ -5605,21 +5609,8 @@ export default function PlatformPage() {
                         setRegeneratingCoverSceneId(item.id);
                         void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
-                            topicHook,
+                            topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
-                            context: buildPlatformSceneText({
-                              title: headlineTitle,
-                              hook: item.hook ?? "",
-                              copywriting: item.copywriting ?? "",
-                              executionDetails: (
-                                item as {
-                                  executionDetails?: {
-                                    environmentAndWardrobe?: string;
-                                    lightingAndCamera?: string;
-                                  };
-                                }
-                              ).executionDetails,
-                            }),
                             coverPersonaContext:
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
@@ -5658,8 +5649,7 @@ export default function PlatformPage() {
                       };
                       const queueSilentImageLoadRetry = () => {
                         if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
-                        const topicHook = String(item.hook || headlineTitle || "").trim().slice(0, 500);
-                        if (!topicHook) return;
+                        if (!String(item.id || "").trim()) return;
 
                         /**
                          * 服务端免扣补发要求 failedJobId 对应行 status ∈ {failed,timeout}。
@@ -5686,19 +5676,6 @@ export default function PlatformPage() {
                           return;
                         }
 
-                        const ctxBody = buildPlatformSceneText({
-                          title: headlineTitle,
-                          hook: item.hook ?? "",
-                          copywriting: item.copywriting ?? "",
-                          executionDetails: (
-                            item as {
-                              executionDetails?: {
-                                environmentAndWardrobe?: string;
-                                lightingAndCamera?: string;
-                              };
-                            }
-                          ).executionDetails,
-                        });
                         setCoverLoadRetriedIds((prev) => new Set(prev).add(item.id));
                         setPlatformImageMap((prev) => {
                           const next = { ...prev };
@@ -5708,9 +5685,8 @@ export default function PlatformPage() {
                         setCoverSilentRetryIds((prev) => new Set(prev).add(item.id));
                         void runThrottledPlatformImageRequest(`silent-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
-                            topicHook,
+                            topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
-                            context: ctxBody,
                             coverPersonaContext:
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: freeRetryJobId,
@@ -5862,7 +5838,22 @@ export default function PlatformPage() {
                                   }}
                                 />
                               </div>
-                              <div className="flex items-center justify-between border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2 px-3">
+                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)]">
+                                {platformCoverCtrBySceneId[item.id] ? (
+                                  <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-3 py-2">
+                                    <span
+                                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                                        platformCoverCtrBySceneId[item.id]!.band === "high"
+                                          ? "bg-emerald-500/25 text-emerald-100"
+                                          : "bg-amber-500/20 text-amber-100"
+                                      }`}
+                                    >
+                                      {platformCoverCtrBySceneId[item.id]!.labelZh}
+                                    </span>
+                                    <span className="text-[10px] text-gray-500">规则估计 · 非实测</span>
+                                  </div>
+                                ) : null}
+                                <div className="flex items-center justify-between p-2 px-3">
                                 <div className="min-w-0 flex-1">
                                   <ImageUpscaleBar
                                     imageUrl={currentImageUrl}
@@ -5905,6 +5896,7 @@ export default function PlatformPage() {
                                     </span>
                                   </button>
                                 </div>
+                              </div>
                               </div>
                             </div>
                           ) : (regeneratingCoverSceneId === item.id ||

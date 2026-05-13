@@ -3765,15 +3765,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     generateTopicImage: protectedProcedure
       .input(
         z.object({
-          topicHook: z.string().min(1).max(500),
+          /** @deprecated 忽略；封面主句僅從已入庫快照經演算法優化後取得。 */
+          topicHook: z.string().max(500).optional().default(""),
           format: z.enum(["短视频", "图文"]).optional(),
+          /** @deprecated 忽略；语境僅從快照優化後取得。 */
           context: z.string().optional(),
           /** 封面／单帧出镜身份：IP 基因 + persona 摘要等，注入 GPT 5.4，避免仅由选题文案猜测人设 */
           coverPersonaContext: z.string().max(4000).optional(),
           /** user_creations.id：须为当前用户、type=platform_topic_frame、status∈{failed,timeout} 且未消费过免费补发 */
           failedJobId: z.string().max(32).optional(),
-          /** 单帧付费重绘成功后写入新 creation 行，便于下次绑定 scene */
-          sceneId: z.string().max(128).optional(),
+          /** 單幀封面必須綁定選題 ID，以便從 DB 快照載入並優化文案 */
+          sceneId: z.string().min(1).max(128),
           /** @deprecated 封面單幀固定 GPT 5.4；此欄位忽略。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** 管理員／監管：單幀主生圖可選 Vertex Nano Banana 2（官方 API）；`nano_banana_pro` 為舊別名。普通帳戶傳入無效 */
@@ -3788,14 +3790,31 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
-        /** 單張豎版封面 / platform_topic_frame：無論選題格式，統一按封面價扣點（與批量 graphic 一致）。 */
-        const cost = CREDIT_COSTS.platformTopicFrameGraphic;
+        const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
 
-        const title = String(input.topicHook || "").trim().slice(0, 80);
         const sid = String(input.sceneId ?? "").trim();
+        const {
+          assertOptimizedCoverInputsFromDb,
+          PlatformCoverInputsError,
+        } = await import("./services/platformStrategicBlueprintSnapshots.js");
+        let resolvedCover;
+        try {
+          resolvedCover = await assertOptimizedCoverInputsFromDb({
+            userId,
+            sceneId: sid,
+          });
+        } catch (e) {
+          if (e instanceof PlatformCoverInputsError) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.message });
+          }
+          throw e;
+        }
+        const finalTopicHook = resolvedCover.topicHook;
+        const finalFormatForPipeline = resolvedCover.format;
+        const title = String(finalTopicHook || "").trim().slice(0, 80);
 
         let creationIdOut: number | undefined;
         let isFreeRetry = false;
@@ -3867,38 +3886,38 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           if (!isAdminUser && !isFreeRetry) {
             const creditsInfo = await getCredits(userId);
-            if (creditsInfo.totalAvailable < cost) {
+            if (creditsInfo.totalAvailable < topicFramePaidCost) {
               await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "PAYMENT_REQUIRED",
-                message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+                message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
               });
             }
             await deductCreditsAmount(
               userId,
-              cost,
+              topicFramePaidCost,
               "platformTopicImages",
-              `平台单帧参考重绘（${cost}点）`,
+              `平台单帧参考重绘（${topicFramePaidCost}点）`,
             );
             await database
               .update(userCreations)
-              .set({ creditsUsed: cost, updatedAt: new Date() })
+              .set({ creditsUsed: topicFramePaidCost, updatedAt: new Date() })
               .where(eq(userCreations.id, creationIdOut));
           }
         } else if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
-          if (creditsInfo.totalAvailable < cost) {
+          if (creditsInfo.totalAvailable < topicFramePaidCost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
           await deductCreditsAmount(
             userId,
-            cost,
+            topicFramePaidCost,
             "platformTopicImages",
-            `平台单帧参考重绘（${cost}点）`,
+            `平台单帧参考重绘（${topicFramePaidCost}点）`,
           );
         }
 
@@ -3928,14 +3947,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           "./services/platformCoverHistoryHint.js",
         );
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
-        const enrichedContext = mergeCoverContextWithDbHint(input.context, coverHistoryHint);
+        const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
         void input.imagePromptTranslator;
         return runPlatformTopicImagePipeline({
-          topicHook: input.topicHook,
-          format: input.format,
+          topicHook: finalTopicHook,
+          format: finalFormatForPipeline,
           context: enrichedContext,
           coverPersonaContext: input.coverPersonaContext,
           sceneId: input.sceneId,
+          appealHook: resolvedCover.appealHook,
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
@@ -3949,12 +3969,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     enqueueGenerateTopicImage: protectedProcedure
       .input(
         z.object({
-          topicHook: z.string().min(1).max(500),
+          /** @deprecated 忽略。 */
+          topicHook: z.string().max(500).optional().default(""),
           format: z.enum(["短视频", "图文"]).optional(),
+          /** @deprecated 忽略。 */
           context: z.string().optional(),
           coverPersonaContext: z.string().max(4000).optional(),
           failedJobId: z.string().max(32).optional(),
-          sceneId: z.string().max(128).optional(),
+          sceneId: z.string().min(1).max(128),
           /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
@@ -3968,14 +3990,31 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
-        /** 與 generateTopicImage 一致：單張豎版封面統一按 platformTopicFrameGraphic 扣點 */
-        const cost = CREDIT_COSTS.platformTopicFrameGraphic;
+        const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
 
-        const title = String(input.topicHook || "").trim().slice(0, 80);
         const sid = String(input.sceneId ?? "").trim();
+        const {
+          assertOptimizedCoverInputsFromDb,
+          PlatformCoverInputsError,
+        } = await import("./services/platformStrategicBlueprintSnapshots.js");
+        let resolvedCover;
+        try {
+          resolvedCover = await assertOptimizedCoverInputsFromDb({
+            userId,
+            sceneId: sid,
+          });
+        } catch (e) {
+          if (e instanceof PlatformCoverInputsError) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.message });
+          }
+          throw e;
+        }
+        const finalTopicHook = resolvedCover.topicHook;
+        const finalFormatForPipeline = resolvedCover.format;
+        const title = String(finalTopicHook || "").trim().slice(0, 80);
 
         let creationIdOut: number | undefined;
         let isFreeRetry = false;
@@ -4042,29 +4081,39 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           if (!isAdminUser && !isFreeRetry) {
             const creditsInfo = await getCredits(userId);
-            if (creditsInfo.totalAvailable < cost) {
+            if (creditsInfo.totalAvailable < topicFramePaidCost) {
               await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "PAYMENT_REQUIRED",
-                message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+                message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
               });
             }
-            await deductCreditsAmount(userId, cost, "platformTopicImages", `平台单帧参考重绘（${cost}点）`);
+            await deductCreditsAmount(
+              userId,
+              topicFramePaidCost,
+              "platformTopicImages",
+              `平台单帧参考重绘（${topicFramePaidCost}点）`,
+            );
             await database
               .update(userCreations)
-              .set({ creditsUsed: cost, updatedAt: new Date() })
+              .set({ creditsUsed: topicFramePaidCost, updatedAt: new Date() })
               .where(eq(userCreations.id, creationIdOut));
           }
         } else if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
-          if (creditsInfo.totalAvailable < cost) {
+          if (creditsInfo.totalAvailable < topicFramePaidCost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，单帧重绘需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCreditsAmount(userId, cost, "platformTopicImages", `平台单帧参考重绘（${cost}点）`);
+          await deductCreditsAmount(
+            userId,
+            topicFramePaidCost,
+            "platformTopicImages",
+            `平台单帧参考重绘（${topicFramePaidCost}点）`,
+          );
         }
 
         const newJobMetaBase: Record<string, unknown> = {
@@ -4092,7 +4141,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           "./services/platformCoverHistoryHint.js",
         );
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
-        const enrichedContext = mergeCoverContextWithDbHint(input.context, coverHistoryHint);
+        const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
 
         const jobId = nanoid(16);
         await createJobRecord({
@@ -4104,11 +4153,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             action: "platform_topic_image",
             params: {
               creationId: creationIdOut ?? null,
-              topicHook: input.topicHook,
-              format: input.format,
+              topicHook: finalTopicHook,
+              format: finalFormatForPipeline,
               context: enrichedContext,
               coverPersonaContext: input.coverPersonaContext,
               sceneId: input.sceneId,
+              appealHook: resolvedCover.appealHook,
               imagePromptTranslator: "gpt54",
               isFreeRetry,
               newJobMetaBase,
@@ -4132,17 +4182,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           scenes: z
             .array(
-              z
-                .object({
-                  id: z.string().min(1),
-                  title: z.string().min(1),
-                  text: z.string().max(8000).optional(),
-                  copywriting: z.string().max(8000).optional(),
-                })
-                .refine(
-                  (s) => String(s.text ?? s.copywriting ?? "").trim().length > 0,
-                  { message: "必須提供 text 或 copywriting" },
-                ),
+              z.object({
+                id: z.string().min(1),
+                /** @deprecated 忽略；主句與正文語境僅從已入庫快照經服端優化讀取。 */
+                title: z.string().max(500).optional(),
+                text: z.string().max(8000).optional(),
+                copywriting: z.string().max(8000).optional(),
+              }),
             )
             .min(1)
             .max(24),
@@ -4159,6 +4205,25 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? CREDIT_COSTS.platformTopicFrameVideo : CREDIT_COSTS.platformTopicFrameGraphic;
         const totalCost = input.scenes.length * costPerImage;
+
+        const {
+          assertOptimizedCoverInputsFromDb,
+          PlatformCoverInputsError,
+        } = await import("./services/platformStrategicBlueprintSnapshots.js");
+        const optimizedByScene = new Map<string, Awaited<ReturnType<typeof assertOptimizedCoverInputsFromDb>>>();
+        for (const s of input.scenes) {
+          try {
+            optimizedByScene.set(s.id, await assertOptimizedCoverInputsFromDb({ userId, sceneId: s.id }));
+          } catch (e) {
+            if (e instanceof PlatformCoverInputsError) {
+              throw new TRPCError({
+                code: "PRECONDITION_FAILED",
+                message: `${e.message}（sceneId=${s.id}）`,
+              });
+            }
+            throw e;
+          }
+        }
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -4182,11 +4247,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
         }
 
-  const {
-    buildPlatformTopicReferenceGeminiTask,
-    callGemini31ProForImagePrompt,
-    extractChineseVisualBrief,
-  } = await import("./services/geminiPlatformCompositeTranslation.js");
+        const {
+          buildPlatformTopicReferenceGeminiTask,
+          callGemini31ProForImagePrompt,
+          extractChineseVisualBrief,
+        } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
           generateImageGpt2WithImagenFallback,
@@ -4211,7 +4276,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 .values({
                   userId,
                   type: PLATFORM_TOPIC_FRAME_TYPE,
-                  title: s.title.slice(0, 255),
+                  title: (optimizedByScene.get(s.id)?.topicHook ?? s.id).slice(0, 255),
                   status: "pending",
                   creditsUsed: 0,
                   metadata: JSON.stringify({
@@ -4232,12 +4297,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const batchCoverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
 
         const results = await mapWithPool(input.scenes, pool, async (s) => {
-          const body = String(s.text ?? s.copywriting ?? "").trim();
-          const briefSource = [batchCoverPersona, batchCoverHistoryHint, String(s.title || "").trim(), body]
-            .filter(Boolean)
-            .join("\n\n");
+          const opt = optimizedByScene.get(s.id)!;
+          const body = opt.context;
+          const briefSource = [batchCoverPersona, batchCoverHistoryHint, body].filter(Boolean).join("\n\n");
           const flowLog: string[] = [];
-          appendImageFlowLog(flowLog, `──────── 选题「${s.title.slice(0, 48)}」· id=${s.id} ────────`);
+          appendImageFlowLog(flowLog, `──────── 选题「${opt.topicHook.slice(0, 48)}」· id=${s.id} ────────`);
+          appendImageFlowLog(
+            flowLog,
+            "[快照] 已从数据库载入本选题并执行主句/语境优化（与客户端展示文案解耦）",
+          );
           appendImageFlowLog(
             flowLog,
             `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → generateGptImage2FromRawEnglishPrompt 9:16`,
@@ -4257,7 +4325,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
-              topicHook: s.title,
+              topicHook: opt.topicHook,
               context: (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000),
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
@@ -4304,7 +4372,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             try {
               fallbackUsed = true;
               url = await generateImageGpt2WithImagenFallback({
-                title: s.title,
+                title: opt.topicHook,
                 copywriting: [batchCoverPersona ? `【封面身份锚点】\n${batchCoverPersona}` : "", body].filter(Boolean).join("\n\n"),
                 mode,
                 isTrial: false,
@@ -4879,6 +4947,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               storeReadMs,
               storeReadTimedOut,
             };
+            if (ctx.user?.id && Array.isArray(platformContent.contentBlueprints) && platformContent.contentBlueprints.length > 0) {
+              const { savePlatformStrategicBlueprintSnapshot } = await import(
+                "./services/platformStrategicBlueprintSnapshots.js",
+              );
+              void savePlatformStrategicBlueprintSnapshot({
+                userId: ctx.user.id,
+                windowDays: Number(input.windowDays),
+                context: input.context,
+                requestedPlatforms,
+                contentBlueprints: platformContent.contentBlueprints as unknown[],
+              });
+            }
           }
         } catch (error) {
           console.error("[platform.getPlatformContent] error:", error);
