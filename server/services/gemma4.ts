@@ -1,7 +1,10 @@
 /**
- * Gemma 4 31B IT — Vertex AI，與 `vertexGemini31ProGlobal` 同樣採用 **@google-cloud/vertexai**。
- * 預設 **global** 端點（`https://aiplatform.googleapis.com/.../locations/global/...`），可依
- * `VERTEX_GEMMA_LOCATION` / `GCP_LOCATION` 覆寫為 `us-central1` 等；不依賴 GEMINI_API_KEY。
+ * Gemma 4 31B IT — Vertex AI · **@google-cloud/vertexai**
+ *
+ * 地域優先級：`VERTEX_GEMMA_LOCATION` → `GCP_LOCATION` → `VERTEX_GEMINI_LOCATION` → 預設 **`global`**
+ * （與 `vertexGemini31ProGlobal` 對齊；需其它區時請設 `VERTEX_GEMMA_LOCATION`）。
+ *
+ * 不依賴 GEMINI_API_KEY。
  */
 import { VertexAI } from "@google-cloud/vertexai";
 
@@ -19,7 +22,6 @@ function resolveProjectId(): string {
   return p;
 }
 
-/** 與 Gemini 3.1 Pro 一致：預設 global；可單獨用 VERTEX_GEMMA_LOCATION 指定。 */
 function resolveVertexGemmaLocation(): string {
   const loc = String(
     process.env.VERTEX_GEMMA_LOCATION || process.env.GCP_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "global",
