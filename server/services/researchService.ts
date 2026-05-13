@@ -1,11 +1,12 @@
 /**
  * 竞品调研双引擎服务
- * Stage 1：**默认 gemini-3-flash-preview** — `generativelanguage.googleapis.com` + **`GEMINI_API_KEY`**
+ * Stage 1：**默认 gemini-3-flash-preview** — **Vertex IAM**（与 TestLab `vertexTranslate` 同闸道：`VERTEX_PROJECT_ID` + SA，不用 `GEMINI_API_KEY`）
  * · 环境变量 **`RESEARCH_STAGE1_MODEL`** 覆盖；设为 **`gemma-4-31b-it`** 时沿用 `callGemma4`（Vertex us-central1×2 → GoogleGenerativeAI×1）
  * Stage 2：**gemini-3.1-pro** — **Vertex AI**（`callGemini3_1_Pro`），不经 GEMINI_API_KEY
  */
 import fs from "fs/promises";
 import path from "path";
+import type { ResearchPipelineDebugStep } from "../../shared/researchPipelineDebugMarker.js";
 import { readTrendStoreForPlatforms } from "../growth/trendStore";
 
 const BACKUP_DIR = "/data/growth/research";
@@ -24,7 +25,8 @@ const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
  * 调用生成模型：
  * - gemini-3.1-pro / gemini-3.1-pro-preview（別名）→ Vertex（callGemini3_1_Pro）
  * - gemma-4-31b-it → `callGemma4`：Vertex **`us-central1`×2**，再 **`@google/generative-ai`×1**（**`GEMINI_API_KEY`** · 同 **`GEMMA_MODEL_ID`**）；失敗抛 `RESEARCH_STAGE1_CAPACITY_MSG`
- * - 其余模型（含预设 **gemini-3-flash-preview**）→ Google AI Studio HTTP（需 `GEMINI_API_KEY`）
+ * - **gemini-3-flash-preview**（Stage 1 默认）→ Vertex IAM REST，与 TestLab `vertexTranslate` 同源（`VERTEX_PROJECT_ID`，非 `GEMINI_API_KEY`）
+ * - 其余非 Gemma、非 3.1-pro 的 model id → Google AI Studio HTTP（`GEMINI_API_KEY`）
  */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
   if (model === "gemini-3.1-pro" || model === "gemini-3.1-pro-preview") {
@@ -57,6 +59,28 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
       console.error(`[researchService] Gemma Stage 1 双通道失败: ${e instanceof Error ? e.message : String(e)}`);
     }
     throw new Error(RESEARCH_STAGE1_CAPACITY_MSG);
+  }
+
+  if (model === "gemini-3-flash-preview") {
+    const { vertexGemini3FlashGenerateContent } = await import("./vertexGemini3FlashText.js");
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await vertexGemini3FlashGenerateContent(prompt, {
+          temperature: 0.4,
+          maxOutputTokens: 8192,
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || e || "");
+        if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
+          console.log(`[researchService] Vertex Flash 429/限流，${5 * (i + 1)}s 后重试…`);
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+        throw e;
+      }
+    }
+    return "";
   }
 
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -169,27 +193,91 @@ ${titleList}
  */
 const MAX_CONTENT_CHARS = 5000;
 
+const MAX_DEBUG_DETAIL = 24_000;
+
+function capDebugText(s: string, max = MAX_DEBUG_DETAIL): string {
+  const t = String(s || "");
+  return t.length <= max ? t : `${t.slice(0, max)}\n…(truncated ${t.length - max} chars)`;
+}
+
+function formatResearchErr(e: unknown): string {
+  if (e instanceof Error) return capDebugText(`${e.name}: ${e.message}\n${e.stack || ""}`);
+  try {
+    return capDebugText(JSON.stringify(e));
+  } catch {
+    return capDebugText(String(e));
+  }
+}
+
+function throwResearchWithDebug(
+  pipelineDebug: ResearchPipelineDebugStep[],
+  message: string,
+): never {
+  const err = new Error(message);
+  (err as Error & { researchPipelineDebug?: ResearchPipelineDebugStep[] }).researchPipelineDebug = pipelineDebug;
+  throw err;
+}
+
+export type ResearchRunResult = {
+  strategy: ResearchStrategy;
+  pipelineDebug: ResearchPipelineDebugStep[];
+};
+
 export async function runResearch(
   userId: string,
   platform: string,
   competitorData: string,
-): Promise<ResearchStrategy> {
-  if (competitorData.length > MAX_CONTENT_CHARS) {
-    throw new Error(`字数超过 ${MAX_CONTENT_CHARS} 字限制（当前 ${competitorData.length} 字），请精简后再试`);
-  }
+): Promise<ResearchRunResult> {
+  const pipelineDebug: ResearchPipelineDebugStep[] = [];
+  const push = (
+    phase: string,
+    status: ResearchPipelineDebugStep["status"],
+    detail?: string,
+    errorDetail?: string,
+  ) => {
+    pipelineDebug.push({
+      at: new Date().toISOString(),
+      phase,
+      status,
+      ...(detail != null && detail !== "" ? { detail } : {}),
+      ...(errorDetail != null && errorDetail !== "" ? { errorDetail: capDebugText(errorDetail) } : {}),
+    });
+  };
+
   const label = PLATFORM_LABEL[platform] || platform;
 
-  // 并行：读取平台实时数据库上下文
+  push("validate_input", "start", `platform=${platform}（${label}）· 输入 ${competitorData.length} 字`);
+  if (competitorData.length > MAX_CONTENT_CHARS) {
+    push(
+      "validate_input",
+      "fail",
+      `超过 ${MAX_CONTENT_CHARS} 字上限`,
+      `当前 ${competitorData.length} 字`,
+    );
+    throwResearchWithDebug(
+      pipelineDebug,
+      `字数超过 ${MAX_CONTENT_CHARS} 字限制（当前 ${competitorData.length} 字），请精简后再试`,
+    );
+  }
+  push("validate_input", "ok", "校验通过");
+
   console.log(`[researchService] 读取 ${label} 平台数据库...`);
+  push("platform_context", "start", "读取趋势库（readTrendStore）…");
   const platformContext = await buildPlatformContext(platform);
   if (platformContext) {
     console.log(`[researchService] 平台背景注入成功，数据长度: ${platformContext.length}`);
+    push("platform_context", "ok", `已注入背景 · ${platformContext.length} 字符`);
+  } else {
+    push("platform_context", "warn", "无可用热点段落（继续执行，提示词中仅含竞品正文）");
   }
 
-  // ── Stage 1：默认 Flash Preview（API Key）；可 RESEARCH_STAGE1_MODEL=gemma-4-31b-it 走 Gemma 双通道 ──
+  // ── Stage 1：默认 Vertex Flash · 可与 RESEARCH_STAGE1_MODEL=gemma-4-31b-it 走 Gemma 双通道 ──
   const stage1Model = resolveResearchStage1Model();
   console.log(`[researchService] Stage 1 启动 (${label}) · model=${stage1Model}`);
-  const stage1Raw = await generate(
+  push("stage1_scan", "start", `调用 ${stage1Model}`);
+  let stage1Raw: string;
+  try {
+    stage1Raw = await generate(
     stage1Model,
     `你是一位顶级内容策略师。请对以下${label}竞品内容进行深度扫描，提炼：
 1. 爆款逻辑拆解（流量钩子、情绪触发点、内容结构）
@@ -201,12 +289,20 @@ ${platformContext}
 竞品数据：${competitorData}
 
 输出格式：JSON，字段：hookLogic, visualStyle, audienceProfile, keywordMatrix, topPatterns`,
-  );
-  console.log(`[researchService] Stage 1 完成，字符数: ${stage1Raw.length}`);
+    );
+    console.log(`[researchService] Stage 1 完成，字符数: ${stage1Raw.length}`);
+    push("stage1_scan", "ok", `完成 · ${stage1Raw.length} 字符`);
+  } catch (e: unknown) {
+    push("stage1_scan", "fail", "Stage 1 模型/API 异常", formatResearchErr(e));
+    throwResearchWithDebug(pipelineDebug, e instanceof Error ? e.message : String(e));
+  }
 
   // ── Stage 2: Gemini 3.1 Pro ─ 差异化战略处方 + 分镜场景（含平台数据） ────
   console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
-  const stage2Raw = await generate(
+  push("stage2_prescription", "start", "Vertex · gemini-3.1-pro");
+  let stage2Raw: string;
+  try {
+    stage2Raw = await generate(
     "gemini-3.1-pro",
     `你是集成了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
 
@@ -244,30 +340,45 @@ ${platformContext}
 - visualPrompt 必须为英文生图提示词
 - 优先使用平台实时高频标签和热词
 - 严格 JSON 格式，不要输出 JSON 之外的任何内容`,
-  );
-  console.log(`[researchService] Stage 2 完成，字符数: ${stage2Raw.length}`);
+    );
+    console.log(`[researchService] Stage 2 完成，字符数: ${stage2Raw.length}`);
+    push("stage2_prescription", "ok", `完成 · ${stage2Raw.length} 字符`);
+  } catch (e: unknown) {
+    push("stage2_prescription", "fail", "Stage 2 模型/API 异常", formatResearchErr(e));
+    throwResearchWithDebug(pipelineDebug, e instanceof Error ? e.message : String(e));
+  }
 
   // 解析 JSON 处方
+  push("parse_strategy_json", "start", "解析 Stage2 输出为 JSON");
   const cleaned = stage2Raw.replace(/```json\n?|\n?```/g, "").trim();
   let strategy: ResearchStrategy;
   try {
     strategy = JSON.parse(cleaned);
-  } catch {
+    push("parse_strategy_json", "ok", "JSON.parse 成功");
+  } catch (parseErr: unknown) {
+    push(
+      "parse_strategy_json",
+      "warn",
+      "非严格 JSON，降级为 raw 字段",
+      formatResearchErr(parseErr),
+    );
     strategy = { raw: stage2Raw };
   }
   strategy.platform = platform;
   strategy.platformLabel = label;
   strategy.generatedAt = new Date().toISOString();
 
-  // ── 写入 Fly 本地持久化（/data/growth/research）─────────────────────
+  push("fly_backup", "start", "Fly 持久化 /data/growth/research …");
   try {
     await fs.mkdir(BACKUP_DIR, { recursive: true });
     const filename = path.join(BACKUP_DIR, `res_${platform}_${Date.now()}_u${userId}.json`);
     await fs.writeFile(filename, JSON.stringify({ userId, platform, stage1Raw, strategy, timestamp: strategy.generatedAt }, null, 2));
     console.log(`[researchService] Fly 原始数据写入: ${filename}`);
-  } catch (e: any) {
-    console.error("[researchService] Fly 存储失败（non-fatal）:", e?.message);
+    push("fly_backup", "ok", path.basename(filename));
+  } catch (e: unknown) {
+    console.error("[researchService] Fly 存储失败（non-fatal）:", e instanceof Error ? e.message : e);
+    push("fly_backup", "warn", "Fly 写入失败（non-fatal）", formatResearchErr(e));
   }
 
-  return strategy;
+  return { strategy, pipelineDebug };
 }

@@ -8759,8 +8759,9 @@ ${input.blockText}`;
         const { withLedgerRefundOnFailure } = await import("./services/paidJobLedger");
         const ledgerJobId = `cr_${Date.now()}_${nanoid(6)}`;
         let strategy: any = null;
+        let pipelineDebug: import("../shared/researchPipelineDebugMarker.js").ResearchPipelineDebugStep[] = [];
         try {
-          strategy = await withLedgerRefundOnFailure(
+          const packed = await withLedgerRefundOnFailure(
             {
               jobId: ledgerJobId,
               taskType: "competitorResearch",
@@ -8772,15 +8773,23 @@ ${input.blockText}`;
             },
             async () => {
               const { runResearch } = await import("./services/researchService.js");
-              const strategy = await runResearch(String(userId), String(input.platform), input.competitorData);
-              return {
-                strategy,
-                pipelineDebug: [] as import("../shared/researchPipelineDebugMarker.js").ResearchPipelineDebugStep[],
-              };
+              return await runResearch(String(userId), String(input.platform), input.competitorData);
             },
           );
+          strategy = packed.strategy;
+          pipelineDebug = packed.pipelineDebug;
         } catch (e: any) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已退还至您的账户" });
+          const dbg = (
+            e as Error & {
+              researchPipelineDebug?: import("../shared/researchPipelineDebugMarker.js").ResearchPipelineDebugStep[];
+            }
+          ).researchPipelineDebug;
+          let msg = e?.message || "分析失败，积分已退还至您的账户";
+          if (Array.isArray(dbg) && dbg.length > 0) {
+            const { RESEARCH_PIPELINE_DEBUG_MARKER } = await import("../shared/researchPipelineDebugMarker.js");
+            msg = `${msg}${RESEARCH_PIPELINE_DEBUG_MARKER}${JSON.stringify(dbg)}`;
+          }
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg });
         }
 
         // Neon 精华快照存储
@@ -8809,7 +8818,12 @@ ${input.blockText}`;
           console.error("[competitorResearch] Neon 快照存储失败（non-fatal）:", e?.message);
         }
 
-        return { ok: true as const, strategy, creditsUsed: deductResult.source === "admin" ? 0 : COST };
+        return {
+          ok: true as const,
+          strategy,
+          creditsUsed: deductResult.source === "admin" ? 0 : COST,
+          pipelineDebug,
+        };
       }),
   }),
 
