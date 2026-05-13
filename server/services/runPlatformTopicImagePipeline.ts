@@ -130,6 +130,9 @@ export async function runPlatformTopicImagePipeline(
     isPlatformCoverAgenticBrainEnabled,
     runAgenticCoverStrategist,
   } = await import("./agenticCoverWorkflow.js");
+  const { isTopicCoverDeepResearchProEnabled, runCoverDeepResearchInteractionsBrief } = await import(
+    "./coverDeepResearchProBrief.js"
+  );
   const {
     buildImagePromptStats,
     generateImageGpt2WithImagenFallback,
@@ -212,6 +215,31 @@ export async function runPlatformTopicImagePipeline(
       } catch (e: unknown) {
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [步骤0] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
+    if (isTopicCoverDeepResearchProEnabled()) {
+      topicImageCondenseLog.push(
+        `${new Date().toISOString()}  [步骤0.5·DR-Pro] PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO 开启 → Deep Research Pro 简报（失败则忽略，主链路照旧）`,
+      );
+      try {
+        const drTask = buildCoverTaskInputFromPipeline({
+          topicHook: input.topicHook,
+          format: input.format,
+          context: ctxStr,
+          coverPersonaContext: coverPersona,
+        });
+        const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, topicImageCondenseLog);
+        if (drBrief?.trim()) {
+          const tag = "【DeepResearch Pro·优化后的简体封面生图提示词】";
+          strategistChinesePrompt = strategistChinesePrompt?.trim()
+            ? `${strategistChinesePrompt.trim()}\n\n${tag}\n${drBrief.trim()}`
+            : `${tag}\n${drBrief.trim()}`;
+        }
+      } catch (e: unknown) {
+        topicImageCondenseLog.push(
+          `${new Date().toISOString()}  [步骤0.5] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }
