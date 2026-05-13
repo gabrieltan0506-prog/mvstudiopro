@@ -1,9 +1,8 @@
 /**
  * 竞品调研双引擎服务
- * Stage 1: **同一 Gemma 模型**（`GEMMA_MODEL_ID` / `VERTEX_GEMMA_MODEL` · 默认 gemma-4-31b-it）
- * · `callGemma4`：Vertex **`us-central1`** 先试 **2** 次，再 **`@google/generative-ai` + `GEMINI_API_KEY`** 第 **3** 路（同 **GEMMA_MODEL_ID**）
- * · 生成：**maxOutputTokens=4096** · **temperature=0.8**
- * Stage 2: gemini-3.1-pro — **Vertex AI**（`callGemini3_1_Pro`），不经 GEMINI_API_KEY
+ * Stage 1：**默认 gemini-3-flash-preview** — `generativelanguage.googleapis.com` + **`GEMINI_API_KEY`**
+ * · 环境变量 **`RESEARCH_STAGE1_MODEL`** 覆盖；设为 **`gemma-4-31b-it`** 时沿用 `callGemma4`（Vertex us-central1×2 → GoogleGenerativeAI×1）
+ * Stage 2：**gemini-3.1-pro** — **Vertex AI**（`callGemini3_1_Pro`），不经 GEMINI_API_KEY
  */
 import fs from "fs/promises";
 import path from "path";
@@ -12,6 +11,12 @@ import { readTrendStoreForPlatforms } from "../growth/trendStore";
 const BACKUP_DIR = "/data/growth/research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Stage 1 模型 ID；未设时默认 Flash Preview，可改为 Gemma。 */
+export function resolveResearchStage1Model(): string {
+  const m = String(process.env.RESEARCH_STAGE1_MODEL || "").trim();
+  return m || "gemini-3-flash-preview";
+}
+
 /** Gemma Stage1 雙通道皆失敗後對使用者展示（同模型 · 不因通道切換換模型）。 */
 const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
 
@@ -19,7 +24,7 @@ const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
  * 调用生成模型：
  * - gemini-3.1-pro / gemini-3.1-pro-preview（別名）→ Vertex（callGemini3_1_Pro）
  * - gemma-4-31b-it → `callGemma4`：Vertex **`us-central1`×2**，再 **`@google/generative-ai`×1**（**`GEMINI_API_KEY`** · 同 **`GEMMA_MODEL_ID`**）；失敗抛 `RESEARCH_STAGE1_CAPACITY_MSG`
- * - 其余模型 → Google AI Studio HTTP（需 GEMINI_API_KEY；当前竞品调研不会走到此分支）
+ * - 其余模型（含预设 **gemini-3-flash-preview**）→ Google AI Studio HTTP（需 `GEMINI_API_KEY`）
  */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
   if (model === "gemini-3.1-pro" || model === "gemini-3.1-pro-preview") {
@@ -181,10 +186,11 @@ export async function runResearch(
     console.log(`[researchService] 平台背景注入成功，数据长度: ${platformContext.length}`);
   }
 
-  // ── Stage 1: Gemma — Vertex us-central1×2 · 同模型 GoogleGenerativeAI fallback×1 ──
-  console.log(`[researchService] Stage 1 Gemma 4 启动 (${label})`);
+  // ── Stage 1：默认 Flash Preview（API Key）；可 RESEARCH_STAGE1_MODEL=gemma-4-31b-it 走 Gemma 双通道 ──
+  const stage1Model = resolveResearchStage1Model();
+  console.log(`[researchService] Stage 1 启动 (${label}) · model=${stage1Model}`);
   const stage1Raw = await generate(
-    "gemma-4-31b-it",
+    stage1Model,
     `你是一位顶级内容策略师。请对以下${label}竞品内容进行深度扫描，提炼：
 1. 爆款逻辑拆解（流量钩子、情绪触发点、内容结构）
 2. 视觉风格特征（色调、排版、封面设计模式）
