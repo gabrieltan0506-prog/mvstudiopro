@@ -353,8 +353,7 @@ async function generate(
 }
 
 /**
- * Deep Research Pro Preview · 顶级商业智库引擎调用器
- * - Interactions agent：見 {@link DEEP_RESEARCH_MODEL}（`gemini-deep-research-pro-preview-04-2026`，含後綴以符合 API）
+ * Deep Research Pro Preview · 顶级商业智库引擎调用器（含 Interactions Agent 標識串，見封面短研 `COVER_DR_AGENT_*` 常數）。
  * - 工具：googleSearch（实时全网检索）+ deepResearch（comprehensive 深度推理）
  * - 推理：thinkingConfig.includeThoughts=true（开启思维链）
  * - 限速：Deep Research 建立 interaction 走 acquireRateGate() — 63s 滑窗内最多 30 次
@@ -370,10 +369,9 @@ interface GroundedResult {
   sources: Array<{ title: string; url: string; snippet?: string }>;
 }
 
-/** 本仓库內超高点击率封面等短研：**Interactions `agent`**（勿再用無後綴的 `gemini-deep-research-pro-preview`，API 會 Unknown agent）。 */
-const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview-04-2026";
-
-const LEGACY_DEEP_RESEARCH_PRO_PREVIEW_AGENT_ID = "gemini-deep-research-pro-preview";
+/** 超高点击率竞品短研：預設**先** `gemini-deep-research-pro-preview`（常被指無 -04 配額問題較輕）；POST 拒絕再試帶後綴版。 */
+const COVER_DR_AGENT_PRO_PREVIEW = "gemini-deep-research-pro-preview";
+const COVER_DR_AGENT_PRO_PREVIEW_04 = "gemini-deep-research-pro-preview-04-2026";
 
 // ─── Interactions API（Deep Research Agent 专用） ─────────────────────────────
 // Deep Research 是 Agent 而非普通模型，必须通过 Interactions API 调用。
@@ -881,12 +879,11 @@ function coverDrOneLineDeepResearchApiError(err: DeepResearchApiError): string {
 }
 
 /**
- * 超高点击率封面：Deep Research Pro（Interactions `agent` 默認 {@link DEEP_RESEARCH_MODEL}），
- * `collaborative_planning: false` 单轮检索+推理，产出短程竞品清洗简报。
+ * 超高点击率封面：Deep Research Pro · `collaborative_planning: false` 单轮检索+推理，产出短程竞品清洗简报。
  *
- * - 默认 `agent={@link DEEP_RESEARCH_MODEL}`；可用 `COVER_DEEP_RESEARCH_AGENT` 覆盖（勿填 Max，见下）。
- * - 若 `COVER_DEEP_RESEARCH_AGENT` 含 `deep-research-max`，强制回退为 {@link DEEP_RESEARCH_MODEL}（避免半小时级任务）。
- * - 若環境仍寫舊字串 `{@link LEGACY_DEEP_RESEARCH_PRO_PREVIEW_AGENT_ID}`，執行前會自動升級為 {@link DEEP_RESEARCH_MODEL}。
+ * - **未設** `COVER_DEEP_RESEARCH_AGENT`：先试 {@link COVER_DR_AGENT_PRO_PREVIEW}，失败后自动试 {@link COVER_DR_AGENT_PRO_PREVIEW_04}。
+ * - **明示** `COVER_DEEP_RESEARCH_AGENT`：**只使用该** agent（不自动换装）。
+ * - 若明示值含 `deep-research-max`，强制改用上述双级 Pro 链（避免长任务）。
  * - 默认本地轮询约 8 分钟（`COVER_DEEP_RESEARCH_POLL_MAX_MS` 可覆盖）
  * - 失败返回 `null`，调用方回退原语境
  * - `COVER_DEEP_RESEARCH_ENABLED=0` 时全跳过
@@ -914,17 +911,18 @@ export async function runCoverCompetitorDeepResearchBrief(params: {
   const rawMax = Number(process.env.COVER_DEEP_RESEARCH_POLL_MAX_MS);
   const maxPollMs =
     Number.isFinite(rawMax) && rawMax >= 120_000 ? rawMax : COVER_DEEP_RESEARCH_POLL_DEFAULT_MS;
-  const coverAgentRaw = String(process.env.COVER_DEEP_RESEARCH_AGENT ?? DEEP_RESEARCH_MODEL).trim();
-  const coverAgent = coverAgentRaw || DEEP_RESEARCH_MODEL;
-  let resolvedCoverAgent = coverAgent;
-  if (resolvedCoverAgent === LEGACY_DEEP_RESEARCH_PRO_PREVIEW_AGENT_ID) {
-    resolvedCoverAgent = DEEP_RESEARCH_MODEL;
-  }
-  if (coverAgent.includes("deep-research-max")) {
+  const explicitCoverAgent = String(process.env.COVER_DEEP_RESEARCH_AGENT ?? "").trim();
+  /** 未设 env：先试无后缀；明示 env：单一路径；deep-research-max：双级 Pro 链 */
+  let agentChain: string[];
+  if (explicitCoverAgent.includes("deep-research-max")) {
     console.warn(
-      "[coverDeepResearch] COVER_DEEP_RESEARCH_AGENT 含 deep-research-max，已回退为封面短研用 Pro agent（gemini-deep-research-pro-preview-04-2026）",
+      "[coverDeepResearch] COVER_DEEP_RESEARCH_AGENT 含 deep-research-max，改用封面短研双级 agent（pro-preview → pro-preview-04-2026）",
     );
-    resolvedCoverAgent = DEEP_RESEARCH_MODEL;
+    agentChain = [COVER_DR_AGENT_PRO_PREVIEW, COVER_DR_AGENT_PRO_PREVIEW_04];
+  } else if (explicitCoverAgent) {
+    agentChain = [explicitCoverAgent];
+  } else {
+    agentChain = [COVER_DR_AGENT_PRO_PREVIEW, COVER_DR_AGENT_PRO_PREVIEW_04];
   }
 
   const topicHook = String(params.topicHook || "").trim().slice(0, 500);
@@ -981,55 +979,70 @@ ${context}
   const release = await acquireRateGate("cover-deep-research-brief");
   let interactionId = "";
   try {
-    params.flowLog.push(
-      `${new Date().toISOString()}  [Deep Research Pro] 【步骤2/发起POST】创建竞品清洗 interaction POST ${INTERACTIONS_BASE} · agent=${resolvedCoverAgent} · 本地轮询上限约 ${Math.round(maxPollMs / 60_000)} 分钟`,
-    );
-    await flushProgressLines();
+    let created = false;
+    for (let ai = 0; ai < agentChain.length; ai++) {
+      const resolvedCoverAgent = agentChain[ai]!;
+      params.flowLog.push(
+        `${new Date().toISOString()}  [Deep Research Pro] 【步骤2/发起POST】创建竞品清洗 interaction POST ${INTERACTIONS_BASE} · agent=${resolvedCoverAgent} · 本地轮询上限约 ${Math.round(maxPollMs / 60_000)} 分钟`,
+      );
+      await flushProgressLines();
 
-    const createRes = await fetch(INTERACTIONS_BASE, {
-      method: "POST",
-      headers: apiHeaders,
-      body: JSON.stringify({
-        agent: resolvedCoverAgent,
-        input: buildInteractionInput(fullInput, undefined),
-        background: true,
-        agent_config: {
-          type: "deep-research",
-          collaborative_planning: false,
-          thinking_summaries: "auto",
-          visualization: "auto",
-        },
-      }),
-    });
-    const rawCreate = await createRes.text();
-    let createJson: Record<string, unknown> = {};
-    try {
-      createJson = JSON.parse(rawCreate) as Record<string, unknown>;
-    } catch {
-      /* ignore */
-    }
-    if (!createRes.ok) {
-      const detail = coverDrSnippetFromParsedJson(createJson, rawCreate);
-      console.warn(`[coverDeepResearch] create HTTP ${createRes.status}: ${rawCreate.slice(0, 500)}`);
+      const createRes = await fetch(INTERACTIONS_BASE, {
+        method: "POST",
+        headers: apiHeaders,
+        body: JSON.stringify({
+          agent: resolvedCoverAgent,
+          input: buildInteractionInput(fullInput, undefined),
+          background: true,
+          agent_config: {
+            type: "deep-research",
+            collaborative_planning: false,
+            thinking_summaries: "auto",
+            visualization: "auto",
+          },
+        }),
+      });
+      const rawCreate = await createRes.text();
+      let createJson: Record<string, unknown> = {};
+      try {
+        createJson = JSON.parse(rawCreate) as Record<string, unknown>;
+      } catch {
+        /* ignore */
+      }
+      if (!createRes.ok) {
+        const detail = coverDrSnippetFromParsedJson(createJson, rawCreate);
+        console.warn(`[coverDeepResearch] create HTTP ${createRes.status}: ${rawCreate.slice(0, 500)}`);
+        params.flowLog.push(
+          `${new Date().toISOString()}  [Deep Research Pro] 【步骤2/发起POST失败】HTTP ${createRes.status} agent=${resolvedCoverAgent} · ${detail}`,
+        );
+        const next = agentChain[ai + 1];
+        if (next) {
+          params.flowLog.push(`${new Date().toISOString()}  [Deep Research Pro] 將改試備用 agent=${next} …`);
+          await flushProgressLines();
+          continue;
+        }
+        params.flowLog.push(`${new Date().toISOString()}  [Deep Research Pro] 已无更多备用 agent · 回退原语境`);
+        await flushProgressLines();
+        return null;
+      }
+      const idRaw = createJson?.id;
+      interactionId = typeof idRaw === "string" ? idRaw : "";
+      if (!interactionId) {
+        const detail = coverDrSnippetFromParsedJson(createJson, rawCreate);
+        params.flowLog.push(
+          `${new Date().toISOString()}  [Deep Research Pro] 【步骤3/解析ID失败】响应无 interactionId · agent=${resolvedCoverAgent} · ${detail} · 回退原语境`,
+        );
+        await flushProgressLines();
+        return null;
+      }
       params.flowLog.push(
-        `${new Date().toISOString()}  [Deep Research Pro] 【步骤2/发起POST失败】HTTP ${createRes.status} agent=${resolvedCoverAgent} · ${detail} · 回退原语境`,
+        `${new Date().toISOString()}  [Deep Research Pro] 【步骤3/已获ID】interactionId=${interactionId} · agent=${resolvedCoverAgent}`,
       );
       await flushProgressLines();
-      return null;
+      created = true;
+      break;
     }
-    const idRaw = createJson?.id;
-    interactionId = typeof idRaw === "string" ? idRaw : "";
-    if (!interactionId) {
-      const detail = coverDrSnippetFromParsedJson(createJson, rawCreate);
-      params.flowLog.push(
-        `${new Date().toISOString()}  [Deep Research Pro] 【步骤3/解析ID失败】响应无 interactionId · ${detail} · 回退原语境`,
-      );
-      await flushProgressLines();
-      return null;
-    }
-    params.flowLog.push(
-      `${new Date().toISOString()}  [Deep Research Pro] 【步骤3/已获ID】interactionId=${interactionId}`,
-    );
+    if (!created) return null;
   } finally {
     release();
   }
@@ -2106,7 +2119,7 @@ export async function runDeepResearchAsync(jobId: string) {
 
     // ═════════════════════════════════════════════════════════════════════════
     // 阶段 A：Deep Research Pro Preview · 全网检索 + 深度推理 + 思维链
-    // Interactions agent：gemini-deep-research-pro-preview-04-2026（超高点击率封面短研）；63s 滑窗 30 次建链限速
+    // 超高点击率封面短研 agent：默认先试 pro-preview，POST 失败再由 runCoverCompetitorDeepResearchBrief 试 -04-2026；63s 滑窗限速同 deep-research pipeline
     // 工具：googleSearch（实时检索）+ deepResearch{complexity: "comprehensive"}（最深推理）
     // 配置：thinkingConfig.includeThoughts=true（开启思维链）
     // ═════════════════════════════════════════════════════════════════════════
