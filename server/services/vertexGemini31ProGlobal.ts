@@ -79,6 +79,52 @@ export type CallGemini31ProOptions = {
   topP?: number;
 };
 
+/** 人類可讀：**模型 ID · 區域**（供日誌 / 異常前缀）。 */
+export function describeVertexGemini31ProRouting(): string {
+  return `${resolveVertexGemini31ProModelId()} · ${resolveVertexGemini31Location()}`;
+}
+
+/**
+ * 平台生圖英文化兜底：**system + user** 分離（與 {@link ../../server/services/geminiPlatformCompositeTranslation.ts} Flash 契约一致：JSON **`prompt`**）。
+ * 依賴 **`GOOGLE_APPLICATION_CREDENTIALS_JSON`**（或其它 ADC），**不經** `GEMINI_API_KEY`。
+ */
+export async function callGemini31ProSystemUserForImagePrompt(
+  systemInstruction: string,
+  userText: string,
+  opts?: CallGemini31ProOptions,
+): Promise<string> {
+  const vertex_ai = getVertexClientForGemini31Pro();
+  const modelName = resolveVertexGemini31ProModelId();
+  const generativeModel = vertex_ai.getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+      temperature: opts?.temperature ?? 0.35,
+      topP: opts?.topP ?? 0.95,
+    },
+  });
+
+  try {
+    const streamingResp = await generativeModel.generateContent({
+      systemInstruction: {
+        role: "system",
+        parts: [{ text: systemInstruction }],
+      },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+    });
+    const response = streamingResp.response;
+    const text = String(response.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+    return text
+      .replace(/```[a-z]*\n?/gi, "")
+      .replace(/```/g, "")
+      .trim();
+  } catch (error: any) {
+    const errorDetail = error?.message || String(error);
+    console.error(`[Vertex AI ${modelName} system/user 調用]:`, errorDetail);
+    throw new Error(`[Vertex 翻译失败] 原因: ${errorDetail}`);
+  }
+}
+
 /** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview @ global），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
   const vertex_ai = getVertexClientForGemini31Pro();

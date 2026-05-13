@@ -3,6 +3,10 @@ import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled } from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
+import {
+  callGemini31ProSystemUserForImagePrompt,
+  describeVertexGemini31ProRouting,
+} from "./vertexGemini31ProGlobal.js";
 
 /** 給 GPT54 翻譯路徑的營運打點（可選）；見 {@link emitPlatformImagePipelineStat} */
 export type Gpt54PlatformImagePromptStatCtx = {
@@ -266,11 +270,85 @@ export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORIT
 export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
   "**選題信息流單張豎封（9:16·單主視覺／抖音·小紅書式封面縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**。",
   "**當 upstream task 屬選題封面（對應本常數所指產品）時必達：** （1）**photoreal editorial / 高端广告静拍級**質感；（2）**motivated lighting**—主光來向可信，寫清 **key / fill / rim** 層次與受控陰影，**禁止**平光貼字、廉價泛光；（3）**rich set dressing**—前景／中景／後景分层，用具象道具／手勢／環境服務 Hook；（4）可选 **语义象形小图标 / badge / pill + 简体中文辅标**（字級次级，**不得**压主標）；（5）**dominant hue + razor accent** 撞色、主標與背板對比強；（6）整体 **conceptually vivid**，缩略图上可见 **好奇心鉤 / visual curiosity**（非標題欺诈）；（7）**禁止** bland stock 臉譜封面、单列画布內多分镜纵条／2×4 宽幅主表。",
-  "**三軌勿偏航：** 不論 **Vertex Gemini 3 Flash** 或 **OpenAI**（`modelName` 常見 **gpt‑5.4**、可覆寫 **gpt‑5.5**），上列身份與版式規格 **須完整遵守、不得因模型不同而弱化**。",
+  "**三軌勿偏航：** 不論 **Vertex Gemini 3 Flash**、**OpenAI**（`modelName` 常見 **gpt‑5.4**、可覆寫 **gpt‑5.5**）、或 GPT 盡後 **Vertex Gemini 3.1 Pro 兜底**，上列身份與版式規格 **須完整遵守、不得因模型不同而弱化**。",
 ].join("\n");
 
 /** @deprecated 與 {@link PLATFORM_IMAGE_TRANSLATOR_BASE_EN} 同文，保留舊名避免外部引用斷裂。 */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN = PLATFORM_IMAGE_TRANSLATOR_BASE_EN;
+
+/**
+ * `@google/genai` **Gemini 3 Flash** 與 **Gemini 3.1 Pro**（{@link vertexGemini31ProGlobal.ts} · Vertex SDK）英文化／兜底 **同源** `systemInstruction`。
+ * 契約：僅輸出 JSON **`{\"prompt\":\"...\"}`**，消費方 **GPT-IMAGE-2**。
+ */
+export function platformImageTranslationVertexJsonSystemInstruction(): string {
+  return [
+    PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
+    "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不得壓過可執行版式。",
+    "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
+    "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
+    PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
+    "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
+    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
+    "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
+  ].join("\n");
+}
+
+/**
+ * GPT 5.4 三轮耗尽后：**Vertex Gemini 3.1 Pro** 单行英文化兜底（同源 JSON **`prompt`** 契約）。
+ */
+async function callVertexGemini31ProTranslationAfterGptTripleFail(
+  translationTask: string,
+  flowLog?: string[],
+): Promise<string> {
+  const task = String(translationTask || "").trim();
+  if (!task) {
+    appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] 上游 task 为空`);
+    throw new Error("Gemini 3.1 Pro 兜底：上游 task 为空");
+  }
+  appendGpt54TranslationDebug(
+    flowLog,
+    `→ Gemini 3.1 Pro（Vertex · ${describeVertexGemini31ProRouting()}）英文化兜底（GPT 三轮后）`,
+  );
+  const systemInstruction = platformImageTranslationVertexJsonSystemInstruction();
+  const userBody = `请返回 JSON：{"prompt":"..."}。\n${task}`;
+  try {
+    const rawFull = await callGemini31ProSystemUserForImagePrompt(systemInstruction, userBody, {
+      maxOutputTokens: 8192,
+      temperature: 0.35,
+      topP: 0.95,
+    });
+    const raw = String(rawFull || "").trim();
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[Vertex·3.1-Pro·兜底] 原始輸出長=${raw.length}${raw ? ` · 頭 120: ${raw.replace(/\s+/g, " ").slice(0, 120)}` : ""}`,
+    );
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(extractJsonString(raw)) as Record<string, unknown>;
+      appendGpt54TranslationDebug(
+        flowLog,
+        `[Vertex·3.1-Pro·兜底] JSON.parse(extractJsonString) → ok · 頂層鍵=${parsed ? Object.keys(parsed).join(",") : ""}`,
+      );
+    } catch (parseErr) {
+      appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] JSON 解析失敗 · ${formatErrForVertexDebug(parseErr)}`);
+    }
+    const fromPrompt = String(parsed?.prompt ?? "").trim();
+    if (fromPrompt) {
+      appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] 採用 prompt 欄位 · 英文長=${fromPrompt.length}`);
+      return fromPrompt;
+    }
+    const stripped = stripGeminiModelOutput(raw);
+    if (stripped && !stripped.startsWith("{")) {
+      appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] 採用 strip 後裸字串 · 長=${stripped.length}`);
+      return stripped;
+    }
+    appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] prompt 空且無法從正文恢復 → 本次失敗`);
+    throw new Error("Gemini 3.1 Pro 兜底：模型未返回有效 prompt（JSON prompt 字段为空且无法恢复）");
+  } catch (e: unknown) {
+    appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] 異常 · ${formatErrForVertexDebug(e)}`);
+    throw e;
+  }
+}
 
 /** 小红书 **多页** 图文笔记：**2×4 八格**；產品上≠視頻分鏡——**不要**用製片/DPP 式「情緒·燈光·景別·機位」欄位來組稿。 */
 export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×4 eight-panel GRAPHIC NOTES** (图文笔记拼圖 / viral note sheet) into **one** English block optimized for **GPT-Image-2** (execution-first layout: grid, gutters, per-cell hierarchy). Chinese script is **reference**—do not sacrifice grid legibility for literary paraphrase. Prefer **comma-separated tags and short noun phrases**; **do not** trim the English prompt too aggressively—when the translator goes longer, eight cells breathe and feel **less crowded**; prefer fidelity and clear per-cell beats over brevity.
@@ -618,17 +696,8 @@ export async function callVertexGeminiFlashTranslation(
     } · task 約 ${task.length} 字`,
   );
 
-  /** Gemini 3 Flash：`systemInstruction` 首段與 {@link callGemini3_1_Pro_AiStudio} 共用 {@link PLATFORM_IMAGE_TRANSLATOR_BASE_EN}，邏輯與 GPT‑5.4 英文化一致。 */
-  const systemInstruction = [
-    PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
-    "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不得壓過可執行版式。",
-    "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
-    "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
-    PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
-    "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
-    "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
-  ].join("\n");
+  /** Gemini 3 Flash：`systemInstruction` 與 GPT 兜底 **Vertex Gemini 3.1 Pro** 同源，見 {@link platformImageTranslationVertexJsonSystemInstruction}。 */
+  const systemInstruction = platformImageTranslationVertexJsonSystemInstruction();
 
   appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
   const ai = new GoogleGenAI({
@@ -751,8 +820,8 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
 }
 
 /**
- * 平台生图英文化：**OpenAI**（預設 gpt‑5.4，`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL`／`OPENAI_GPT54_MODEL` 可覆寫為 **gpt‑5.5**）最多 3 次；與 Stage 2 長文分離。**選題單封**身分見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，與 **Gemini 3 Flash** 同源。
- * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 Vertex Flash；**不再**偽裝可用 prompt：GCP 避險、`skipVertexFallback`、Vertex 兜底失敗等一律 **拋錯**（用戶向 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
+ * 平台生图英文化：**OpenAI**（預設 gpt‑5.4，`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL`／`OPENAI_GPT54_MODEL` 可覆寫為 **gpt‑5.5**）最多 3 次；與 Stage 2 長文分離。**選題單封**身分見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，與 **Gemini 3 Flash** / **GPT 後 Vertex Gemini 3.1 Pro 兜底** 同源（JSON **`prompt`**）。
+ * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 **Vertex Gemini 3.1 Pro**（{@link callGemini31ProSystemUserForImagePrompt}，`systemInstruction` 與 Flash 同源）；**不再**偽裝可用 prompt：GCP 避險、`skipVertexFallback`、Vertex 兜底失敗等一律 **拋錯**（用戶向 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * `skipVertexFallback`：由 {@link callVertexGeminiFlashTranslation} 在 Flash 三輪後呼叫，避免再次打 Vertex。
  * `compositeTranslationStrict`：分鏡/八格英文化；GPT 三輪盡力後不發 Vertex，直接拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}。
  */
@@ -794,7 +863,7 @@ export async function callGemini3_1_Pro_AiStudio(
             PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
             "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
-            "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；選題信息流單封的 **身分與版式規格**必須與 Vertex Gemini 3 Flash 路徑 **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
+            "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；選題信息流單封的 **身分與版式規格**必須與 Vertex（Gemini **3 Flash**）及 GPT 盡後 **Gemini 3.1 Pro 兜底** **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
             PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
             "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
             "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
@@ -945,7 +1014,7 @@ export async function callGemini3_1_Pro_AiStudio(
     flowLog,
     skipVertexFallback
       ? `[GPT54·翻译] 已 3 次仍失败或为空 · skipVertex 模式 · 不发 Vertex`
-      : `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex · 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
+      : `[GPT54·翻译] 已 3 次仍失败或为空 → fallback Vertex Gemini 3.1 Pro（${describeVertexGemini31ProRouting()}）· 最后 GPT: ${formatErrForVertexDebug(lastFailure)}`,
   );
   if (isPlatformWeekendGcpEscape()) {
     appendGpt54TranslationDebug(
@@ -966,28 +1035,30 @@ export async function callGemini3_1_Pro_AiStudio(
       flowLog,
       `[GPT54·翻译] Flash→GPT 兜底仍無可用英文 · ${summary.slice(0, 400)} · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
     );
-    console.error("[平台英文化] Vertex Flash 三輪後 GPT 5.4 三輪仍失败 ·", summary.slice(0, 500));
+    console.error("[平台英文化] Vertex Flash 三輪後 GPT 5.4 仍三輪无效 ·", summary.slice(0, 500));
     throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
   }
   try {
-    return await callVertexGeminiFlashTranslation(prompt, flowLog, undefined);
+    return await callVertexGemini31ProTranslationAfterGptTripleFail(prompt, flowLog);
   } catch (vertexErr: unknown) {
     const vDetail = formatErrForVertexDebug(vertexErr);
-    const vm = resolveVertexFlashTranslationModelName();
-    const vl = resolveVertexFlashTranslationLocation();
-    appendVertexFlashDebug(flowLog, `[Vertex·Flash·fallback] 失敗 · ${vDetail}`);
-    console.error("[平台英文化] OpenAI 三輪後 Vertex 兜底失敗:", vertexErr instanceof Error ? vertexErr.message : vertexErr);
+    const vr = describeVertexGemini31ProRouting();
+    appendGpt54TranslationDebug(flowLog, `[Vertex·3.1-Pro·兜底] 調用失敗 · ${vr} · ${vDetail}`);
+    console.error(
+      "[平台英文化] OpenAI 三輪後 Vertex Gemini 3.1 Pro 兜底失敗:",
+      vertexErr instanceof Error ? vertexErr.message : vertexErr,
+    );
     appendGpt54TranslationDebug(
       flowLog,
-      `[Vertex·Flash·兜底失敗]（${vm}·${vl}）· GPT 摘要: ${summary.slice(0, 400)} · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
+      `[Vertex·3.1-Pro·兜底失敗]（${vr}）· GPT 摘要: ${summary.slice(0, 400)} · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
     );
     throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
   }
 }
 
 /**
- * 平台 **選題單幀**：預設 **GPT 5.4**（`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL` 可為 **gpt‑5.5**）；選 **Vertex 探索** 時先 **Flash**（{@link callVertexGeminiFlashTranslation}，三輪後 **同上 OpenAI 鏈**）。
- * **選題信息流單封**之 **編導身分與規格** 見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，**Flash / GPT‑5.4 / GPT‑5.5（若配置）三軌同源**。
+ * 平台 **選題單幀**：預設 **GPT 5.4**（`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL` 可為 **gpt‑5.5**）；選 **Vertex 探索** 時先 **Flash**（{@link callVertexGeminiFlashTranslation}，三輪後同上 OpenAI 鏈）；**OpenAI 三輪殆盡後**改 **Vertex Gemini 3.1 Pro** 兜底（同源 JSON **`prompt`**，不再回呼 Flash）。
+ * **選題信息流單封**之 **編導身分與規格** 見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，**Flash / GPT‑5.4／5.5 / 3.1 Pro 兜底 三軌同源**。
  * **分鏡主表 / 小紅書八格** 英文化見 {@link translatePlatformCompositeToEnglishPrompt}（預設 Flash→GPT，雙軌失敗拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * 戰略封面 / 章節扉頁仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
@@ -1029,7 +1100,9 @@ export async function callGemini31ProForImagePrompt(
     return out;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    appendVertexFlashDebug(flowLog, `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`);
+    const logLine = `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`;
+    if (translator === "gpt54") appendGpt54TranslationDebug(flowLog, logLine);
+    else appendVertexFlashDebug(flowLog, logLine);
     // 複合錯誤（GPT 三輪無效 + Vertex 404 等）已在 callGemini3_1_Pro_AiStudio 排好順序，勿再冠以「Vertex 翻译崩溃」誤導前綴
     if (message.startsWith("【GPT54 已三輪無效】")) {
       throw new Error(`[平台英文化链失败]\n${message}`);
@@ -1038,14 +1111,18 @@ export async function callGemini31ProForImagePrompt(
       message.includes("[Vertex Flash 英文化·GPT 已盡力]") ||
       message.includes("── Vertex API 詳情 ──") ||
       message.includes("[Vertex 英文化失败]") ||
-      message.includes("[GPT54·崩溃原因·汇总]");
+      message.includes("[GPT54·崩溃原因·汇总]") ||
+      message.includes("Gemini 3.1 Pro 兜底") ||
+      message.includes("[Vertex·3.1-Pro·兜底") ||
+      message.includes("[Vertex 翻译失败]");
     const looksLikeVertexApi =
       /publishers\/google\/models|NOT_FOUND|PERMISSION_DENIED|ResourceExhausted|GoogleGenerativeAIError|Vertex AI|vertexai/i.test(
         message,
       );
+    const pro31Route = describeVertexGemini31ProRouting();
     const displayLabel =
       vertexFallback || (looksLikeVertexApi && translator === "gpt54")
-        ? `Vertex（${vertexModel} · ${vertexLoc}）`
+        ? `Vertex Gemini 3.1 Pro（${pro31Route}）`
         : label;
     throw new Error(`[${displayLabel} 翻译崩溃]: ${message}`);
   }
