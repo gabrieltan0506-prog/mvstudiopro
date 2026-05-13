@@ -257,6 +257,18 @@ export const GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN =
  */
 export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORITY_EN} ${GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN}`;
 
+/**
+ * 選題 **信息流單張 9:16 封面**（圖文 / 短影音）：英文化 **身分與硬要求**。
+ * **三軌同源**：{@link callVertexGeminiFlashTranslation}（Gemini **3 Flash**）
+ * 與 {@link callGemini3_1_Pro_AiStudio} 的 OpenAI **`invokeLLM`(gpt54)** 路徑（實際 `modelName` 由 **`OPENAI_GPT54_MODEL` / `OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL`** 決定——常見 **gpt‑5.4** 或覆寫為 **gpt‑5.5**）須將本段 **全文**嵌入 `system` / `systemInstruction`，不得以模型不同而弱化。
+ * 與 upstream {@link buildPlatformTopicReferenceGeminiTask}、`PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER`（同檔內常量）語義對齊。
+ */
+export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
+  "**選題信息流單張豎封（9:16·單主視覺／抖音·小紅書式封面縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**。",
+  "**當 upstream task 屬選題封面（對應本常數所指產品）時必達：** （1）**photoreal editorial / 高端广告静拍級**質感；（2）**motivated lighting**—主光來向可信，寫清 **key / fill / rim** 層次與受控陰影，**禁止**平光貼字、廉價泛光；（3）**rich set dressing**—前景／中景／後景分层，用具象道具／手勢／環境服務 Hook；（4）可选 **语义象形小图标 / badge / pill + 简体中文辅标**（字級次级，**不得**压主標）；（5）**dominant hue + razor accent** 撞色、主標與背板對比強；（6）整体 **conceptually vivid**，缩略图上可见 **好奇心鉤 / visual curiosity**（非標題欺诈）；（7）**禁止** bland stock 臉譜封面、单列画布內多分镜纵条／2×4 宽幅主表。",
+  "**三軌勿偏航：** 不論 **Vertex Gemini 3 Flash** 或 **OpenAI**（`modelName` 常見 **gpt‑5.4**、可覆寫 **gpt‑5.5**），上列身份與版式規格 **須完整遵守、不得因模型不同而弱化**。",
+].join("\n");
+
 /** @deprecated 與 {@link PLATFORM_IMAGE_TRANSLATOR_BASE_EN} 同文，保留舊名避免外部引用斷裂。 */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN = PLATFORM_IMAGE_TRANSLATOR_BASE_EN;
 
@@ -309,16 +321,21 @@ TAG:STORYBOARD_2X4_SHEET
 5. **版式约束：** 禁止整画布单张满幅顶掉八格、无顶栏、或仅四宫格笔记版——本任务为 **八格主表**；若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，亦偏离产品主表意图；其余景别与光影可充分发挥。
 `.trim();
 
-/** 平台選題 **圖文單幀封面**：9:16 单帧；**以生圖成功與主體忠實為先**，不設譯文字數上限。 */
+/** 平台選題 **單幀封面**（圖文 / 短影音 **video**）：9:16 單張信息流；宽幅 2×4 多分镜主表不在此任務。 */
 const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
-【英文生图输出 / OUTPUT — graphic single-frame only（GPT-IMAGE-2 優先）】
-1. Output **one** English block for GPT-IMAGE-2：**先**用編號或短段写清 **主體場景 / 光與對比 / 上方或一側留白與主標區 / 簡中大字規格**，再補 tags。**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
-2. **版式软边界：** 竖版 9:16、单主视觉；整体读起来像信息流 **单张封面**，而非宽幅多格主表（除非上游任务明确要求多格）。
-3. **高細節還原 + 字色衝擊：** Explicitly stage **high-detail Simplified-Chinese hero type** (stroke weight, tracking, color vs background) and translate **body/context cues** into **photoreal scene elements**—light-motivated, tactile, editorial—not vague mood boards.
-4. **莎劇 × 寫實：** **Optional** after layout is locked: **Shakespearean economy** in English wording; the **image yield** must stay **contemporary editorial photorealism**—believable optics, luxury or gritty texture as the hook demands.
-5. **发挥空间：** 光色、景深、道具与环境大胆服务 Hook + Context；身份块经英文化后要 **art-directed**，有角色感。
-6. **题材软边界：** 优先贴合 Hook + Context + 身份（若有）；不相关的题材不必硬加。
-7. Include masterpiece, 8k; 画内简中主标用英文写清规格（位置、对比、语言）。
+【英文生图输出 / OUTPUT — platform topic **single-frame 9:16 feed cover**（GPT-IMAGE-2 優先）】
+1. Output **one** English block for GPT-IMAGE-2：**先**用編號或短段写清 **主體場景 / 布光與反差 / 主標區 / 簡中大字規格 / 輔標與圖示層**，再補 tags。**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
+2. **版式：** vertical 9:16、**單張**、**單一主視覺**；讀作抖音/小紅書式 **封面缩略图**；**不要**寫成横版 2×4 八格主表、**不要**單圖內多分鏡縱條（那些為下游專用任務）。
+3. **攝影寫實 · 大師級布光（英文須可執行）：** 以 **高端廣告/雜誌編輯靜態** 為標杆—**photoreal editorial still**；寫清 **motivated lighting**（可信主光來向：窗光、柔光箱、輪廓 **rim**、**key–fill** 層次、受控陰影形狀），可提 subtle vignette / gobo 質感，**禁止**一片平光貼字或廉價泛光糊成一片。
+4. **場景佈置與道具：** **rich set dressing**—前景/中景/後景分層；與 Hook+Context 呼應的 **道具、手勢、環境線索** 要具體可拍；避免空背景只堆字。
+5. **高級審美與質感：** **premium editorial** CMF—金屬/玻璃/織物/漆面等材質對比 **believable**；整體節制、像高價位品牌片場靜帧，**禁止**低幼剪貼畫感（除非題材明確要求卡通）。
+6. **主題圖示 + 簡中輔標：** 在主標周邊（下沿、側欄、角標帶）可安排 **與主題語義一致的象形圖示 / badge / pill / 簡潔符號**（適度、不塞滿）+ **可讀简体中文微文案**（短副標、括注、2–8 字級提示均可）。**層級：** 主標 **支配畫面**；圖示與小字 **點題、增資訊密度**，不得壓過主標可讀性。
+7. **視覺衝擊配色：** 明確 **dominant** 色調 + **razor accent**（色楔、色帶、霓虹漸變邊等）制造 **scroll-stop**；主標與背板 **對比足**；避免臟灰混色導致缩略圖糊掉。
+8. **生動創意 × 勾起好奇：** 整體 **conceptually lively**：構圖／道具／隱喻可 **大膽但可信**，一眼能感知 **钩子张力／戏剧性一瞬间／非常規對撞**，讓用戶在滑動信息流時 **想看第二眼、想知道「怎麼了／然後呢」**。英文務必写明 **visual hook + curiosity gap**（≠ 標題欺詐）；**杜绝**泛泛安全牌的「無信息量素材臉」——題材許可時要敢想一步。
+9. **高細節字體：** **Simplified-Chinese hero type**—字重、字距、與背景的 **color separation** 寫死；辅层简中字字號小一級但仍清晰。
+10. **莎劇 × 寫實：** **Optional** English flourish **after** (1–9) locked; image yield stays **contemporary editorial photorealism**.
+11. **题材软边界：** 贴合 Hook + Context + 身份（若有）；離題資訊圖無需硬塞。
+12. Include masterpiece、8k；画内简中主標與辅标用英文写清位置及对比規格。
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -356,7 +373,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
           "若输入宽幅 2×4 **电影分镜主表**剧本：骨架里区分——**全文内容总结**（适合放在整表顶栏的一句汇总）与各格 **分镜主题**（每格一句）及可填入 **景别/运镜/画面内容/台词与音效** 的要点，勿把各格主题误并入「顶栏总结」混写。",
-          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图** 以及 **内文关键场景**（可转译为画面的空间、道具、光线），供下游写出高细节封面而不会只剩抽象形容词。",
+          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并可留下 **適合做小圖示/角標/badge 的具象關鍵詞**（与主题强相关）；供下游写出高细节封面而不会只剩抽象形容词。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
@@ -477,7 +494,7 @@ MANDATORY RULES:
 `.trim();
 }
 
-/** 平台選題單幀：`graphic` / `video` 皆為 **單張竖版 9:16 信息流封面**；宽幅 2×4 分鏡主表見 {@link buildVideoStoryboardGeminiPrompt}，八格筆記見 {@link buildXhsNoteGeminiPrompt}。 */
+/** 平台選題單幀：`graphic` / `video` 皆為 **單張竖版 9:16 信息流封面**，須 **生動創意** 並快速勾起 **好奇心**；並含頂級攝影布光、豐富布景道具、主題圖示與簡中輔標、撞色。宽幅 2×4 見 {@link buildVideoStoryboardGeminiPrompt}，八格見 {@link buildXhsNoteGeminiPrompt}。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
   context: string;
@@ -508,20 +525,20 @@ ${personaRaw}
         ? `
 
 SHORT-VIDEO ULTRA-CTR BOOST（本任务专用）:
-- The **single hero frame** must read as an aggressive feed **scroll-stop** thumbnail: maximal tension, contrast, or curiosity tied to 「${hook}」—**one** shot, not a strip of panels; avoid generic explainer thumbnails.
+- The **single hero frame** must read as an aggressive feed **scroll-stop** thumbnail for 「${hook}」—**one** photoreal editorial still: maximal tension/contrast plus **bold dominant+accent palette** (**razor-accent** wedges OK); **visually lively / creative hook** that sparks **curiosity in one glance**; **no** comic strip panels; icons/microcaptions OK if layered under the headline hierarchy.
 `.trim()
         : `
 
 ULTRA-HIGH CTR COVER BOOST（本任务专用 · 超高点击率向）:
-- Treat this as a **maximum scroll-stop** cover: the hero title zone must land a **sharp curiosity gap or bold contrast** grounded in Context (no false clickbait).
+- Treat this as a **maximum scroll-stop** cover: **vivid staging + creative novelty** landing a **curiosity tap** grounded in Context (no false clickbait); the hero title zone must punch with **bold contrast**.
 - **Push** readability + punch further than a standard premium cover: stronger asymmetry, color wedge, or symbol prop when it serves the hook.
 `.trim();
   return (
     `
 ${personaBlock}${
   isVideo
-    ? "You are a bilingual cover design director for **short-video discovery thumbnails**—single **vertical 9:16** hero frame built for TikTok/Douyin/Reels-style feeds: stop-scroll tension, readable hook type, cinematic photoreal still; **not** a comic strip or multi-panel storyboard column inside one image, **not** a 2×4 landscape master sheet (those are separate downstream tasks)."
-    : "You are a bilingual cover design director for **premium vertical feed covers**—high click appeal and clear visual hierarchy; treat this as **one cover frame** rather than a Little Red Book dual-card note layout unless the upstream task clearly asks for note chrome."
+    ? "You are a bilingual cover design director for **short-video discovery thumbnails**—**one vertical 9:16** hero still in **premium advertising/editorial photography** quality: disciplined **motivated studio lighting**, rich **set dressing + props**, **high-impact palette**, readable **hook-sized Simplified-Chinese** hero type, optional **semantic micro-icons / badges / pills** + **supporting CN microcopy**. The frame must feel **conceptually vivid and creatively charged**—a **thumbnail-scale curiosity hook** users want to tap; avoid bland stock composites. **Forbidden:** multi-panel storyboard gutters in one canvas; **Forbidden:** landscape 2×4 sheet here."
+    : "You are a bilingual cover design director for **premium vertical feed covers**—**one hero frame**, same photographic bar as short-video: master **motivated editorial lighting**, layered props/environment, **bold readable palette**, icons/ancillary CN lines as fits. Aim **lively staging + creative tension**—a clear **why should I tap** cue at thumbnail size—not a safe bland template. Prefer single-cover readability; don't default LR dual-note chrome unless demanded."
 }
 
 ${isVideo
@@ -529,20 +546,25 @@ ${isVideo
   : "Use Simplified Chinese as the main title language, with English allowed as secondary supporting text."}
 
 ${isVideo ? `
-SHORT-VIDEO SINGLE COVER（軟邊界 · 單張 9:16 封面 · 非分鏡條）:
-- **版式：** vertical 9:16、**單張**、**唯一主視覺**；語義 = 短视频信息流 **封面 / 预览图**，可读主标。
-- **氣質：** 把「钩子」的瞬间张力压進**一帧**（动作起势、表情對撞、環境對比皆可），像 **单张 editorial still**，不要切成多宮格縱列或帶 gutters 的剧情分镜条。
-- **禁止：** ≥2 个并排/上下分格、漫画格子、多分镜纵条、显性格线拼图；宽幅 8 格 2×4 主表也不在任务内。
-- **主标：** 大号简中钩子对比足、缩略图可辨；光影走当代写实。**英文 downstream prompt** 用编号条款写清：**单封面**构图、留白、字型规格与场景执行力。
+SHORT-VIDEO SINGLE COVER（軟邊界 · 單張 9:16 封面 · 非分鏡條）
+- **版式：** vertical 9:16、**单张**信息流 **预览图**；**唯一主視覺**。
+- **攝影寫實 + 大师感布光：** 当代 **广告/杂志静拍**：写清 motivated light — **窗光／柔光箱／轮廓逆光 key–fill–rim**、受控阴影；**勿**贴纸平光糊弄。
+- **布景道具：** 「${hook}」+ Context → **具象 set dressing**：前景手部/器物与后景環境都要有 **信息量**，别空布景贴字。
+- **高级感：** 材质、服装、場景档次走 **premium editorial**；体面、耐看。
+- **图标 + 小字：** **主题咬合**的简单 **象形符号／badge／pill** + **简体辅标副句**（字小一号但清晰）；**绝不能**压住大号主钩子。
+- **撞色冲击：** dominant + razor accent／色楔；thumb 級 **scroll-stop**，但别太脏。
+- **生動創意：** 避免「信息流安全牌臉」；畫面須有可讀 **好奇心鉤子**（瞬間對撞、未完動作、異常細節、隱喻），讓人用 **一眼**就想點進去看。
+- **禁止：** ≥2 分格纵条／漫画格子／2×4 宽幅主表 / 单列里套多分镜连续剧。
 - main title based on 「${hook}」
 ` : `
-COVER DESIGN（軟邊界 · 单张竖版封面）:
-- **版式：** vertical 9:16、单张、一个主视觉；读作信息流 **封面**，而不是小红双卡笔记、也不是 2×4 / 八格合成表（除非任务明确要求）。
-- **主标 + 内文場景還原：** 用 **高細節** 英文指令让画内还原：钩子「${hook}」与 Context 中的关键意象——**标题字形、字重与配色**要有 **视觉冲力**（高对比或大胆单色楔入），内文线索转成 **可信的空间、道具与光线**，像杂志片场的 **一帧定镜**。
-- **主标区建议：** 上方约 **35–45%** 留给大号、可读的简中钩子；对比足；避免「只有脚注小字」导致缩略图信息弱——具体构图你自由安排。
-- **发挥：** 光影、色彩、环境、道具可大胆服务「${hook}」与 Context；尽量 **一个** 让人划走的记忆点（色块、轮廓光、符号道具、不对称、环境张力等均可）。英文 prompt **先**写清執行條款（光型、留白區、簡中字規格），**可選** 少量意象詞，不得擠掉版式。
-- **身份：** 若有上方身份参考块，人物气质、着装与场景档次 **自然对齐** 即可；经翻译后在英文里应 **有艺术概括力**，不必模板化。
-- **离奇素材：** 明显脱离钩子与 Context 的无关元素（例如全文不谈吃却画成套食谱信息图）成功率低，**倾向于** 不出现即可；其余不过度列举禁忌，由你权衡。
+COVER DESIGN（軟邊界 · 单张竖版信息流封面）
+- **版式：** vertical 9:16、单张 hero；別串成多分镜条也别画 2×4。
+- **主标 + 场景：** 「${hook}」—**大号简体主标**，配 **大厂静拍級布光** 与 **丰富布景／道具**，像 **一帧可上封面的 editorial still**。
+- **光：** motivated lighting 写死在英文 prompt；key/fill/rim 有据可依。
+- **图标 + 小字：** Context 允许的 **象形 icon / badge** + **辅标简体**（少而准）；层次：**主标题 > 一切辅元素**。
+- **配色：** 高冲击可读；大块面对比拉出主标题。
+- **創意張力：** 構圖有 **新意**／小驚喜，能快速挑起 **好奇**（不是標題騙點）。
+- **身份 / 离奇素材：** 身份自然对齐 Context；離題題材別硬拗。
 - main title based on 「${hook}」
 `}
 
@@ -621,7 +643,7 @@ export async function callVertexGeminiFlashTranslation(
     "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不得壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
-    "**單張豎封**：写清 **畫內簡中大標** 位置、層級、**撞色/對比**；Context 落成 **可拍場景**；身份塊→ **戲劇化出場**，非履歷條列。",
+    PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
     "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
     "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
@@ -748,7 +770,7 @@ export async function callVertexGemini31ProTranslation(prompt: string): Promise<
 }
 
 /**
- * 平台生图英文化：**OpenAI（預設 gpt-5.4，與 Stage 2 長文 gpt-5.5 分離）** 最多 3 次。
+ * 平台生图英文化：**OpenAI**（預設 gpt‑5.4，`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL`／`OPENAI_GPT54_MODEL` 可覆寫為 **gpt‑5.5**）最多 3 次；與 Stage 2 長文分離。**選題單封**身分見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，與 **Gemini 3 Flash** 同源。
  * 三次仍無有效英文 → 非避險且未設 `skipVertexFallback` 時改走 Vertex Flash；**不再**偽裝可用 prompt：GCP 避險、`skipVertexFallback`、Vertex 兜底失敗等一律 **拋錯**（用戶向 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * `skipVertexFallback`：由 {@link callVertexGeminiFlashTranslation} 在 Flash 三輪後呼叫，避免再次打 Vertex。
  * `compositeTranslationStrict`：分鏡/八格英文化；GPT 三輪盡力後不發 Vertex，直接拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}。
@@ -761,7 +783,7 @@ export async function callGemini3_1_Pro_AiStudio(
 ): Promise<string> {
   const skipVertexFallback = Boolean(opts?.skipVertexFallback);
   const compositeTranslationStrict = Boolean(opts?.compositeTranslationStrict);
-  /** 英文化走較廉價預設；勿改 gpt-5.5（多輪重試費用高）。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
+  /** 模型名環境決定：**gpt‑5.4、gpt‑5.5** 等皆走此路—選題信息流單封身份與 **{@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}** 及 Gemini 3 Flash **一致**。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
   const gpt54MaxOut = Math.min(
@@ -791,7 +813,8 @@ export async function callGemini3_1_Pro_AiStudio(
             PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
             "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
             "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
-            "**竖版单封**：**先**锁 **简中标题** 区（位置、字重、色相对撞/金属/霓虹等克制用法）与 **safe band**；再把 Context **落成可拍写实场景**；人设 → **art-directed** 出场，非散文复述。",
+            "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；選題信息流單封的 **身分與版式規格**必須與 Vertex Gemini 3 Flash 路徑 **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
+            PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
             "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
             "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
@@ -982,7 +1005,8 @@ export async function callGemini3_1_Pro_AiStudio(
 }
 
 /**
- * 平台 **選題單幀**：預設 **GPT 5.4**；選 **Vertex 探索** 時先 **Flash**（見 {@link callVertexGeminiFlashTranslation}，三輪後 **GPT 5.4**）。
+ * 平台 **選題單幀**：預設 **GPT 5.4**（`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL` 可為 **gpt‑5.5**）；選 **Vertex 探索** 時先 **Flash**（{@link callVertexGeminiFlashTranslation}，三輪後 **同上 OpenAI 鏈**）。
+ * **選題信息流單封**之 **編導身分與規格** 見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，**Flash / GPT‑5.4 / GPT‑5.5（若配置）三軌同源**。
  * **分鏡主表 / 小紅書八格** 英文化見 {@link translatePlatformCompositeToEnglishPrompt}（預設 Flash→GPT，雙軌失敗拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
  * 戰略封面 / 章節扉頁仍走 `runGemini31ProPreviewText` → Vertex（見 `buildStrategicCoverGeminiTask`）。
  */
