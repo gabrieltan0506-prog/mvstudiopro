@@ -173,7 +173,7 @@ export async function runPlatformTopicImagePipeline(
     );
     if (input.highFeedCtrBoost) {
       topicImageCondenseLog.push(
-        `${new Date().toISOString()}  [超高点击率] 前置：Deep Research Pro（agent=gemini-deep-research-pro-preview-04-2026）竞品清洗 · 本地轮询默认上限约 8 分钟，失败则回退原语境`,
+        `${new Date().toISOString()}  [超高点击率] 前置：Deep Research Pro（agent=gemini-deep-research-pro-preview）竞品清洗 · 本地轮询默认上限约 8 分钟，失败则回退原语境`,
       );
     }
 
