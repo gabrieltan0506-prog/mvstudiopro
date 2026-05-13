@@ -354,7 +354,7 @@ async function generate(
 
 /**
  * Deep Research Pro Preview · 顶级商业智库引擎调用器
- * - 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，严禁降级）
+ * - Interactions agent：見 {@link DEEP_RESEARCH_MODEL}（`gemini-deep-research-pro-preview-04-2026`，含後綴以符合 API）
  * - 工具：googleSearch（实时全网检索）+ deepResearch（comprehensive 深度推理）
  * - 推理：thinkingConfig.includeThoughts=true（开启思维链）
  * - 限速：Deep Research 建立 interaction 走 acquireRateGate() — 63s 滑窗内最多 30 次
@@ -370,8 +370,10 @@ interface GroundedResult {
   sources: Array<{ title: string; url: string; snippet?: string }>;
 }
 
-/** 本仓库内「Deep Research Pro」标识（与战略管线阶段 A 注释一致）：Interactions 请求体里的 `agent` 字段用此字符串。 */
-const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
+/** 本仓库內超高点击率封面等短研：**Interactions `agent`**（勿再用無後綴的 `gemini-deep-research-pro-preview`，API 會 Unknown agent）。 */
+const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview-04-2026";
+
+const LEGACY_DEEP_RESEARCH_PRO_PREVIEW_AGENT_ID = "gemini-deep-research-pro-preview";
 
 // ─── Interactions API（Deep Research Agent 专用） ─────────────────────────────
 // Deep Research 是 Agent 而非普通模型，必须通过 Interactions API 调用。
@@ -843,11 +845,12 @@ ${feedback.trim()}`
 }
 
 /**
- * 超高点击率封面：Deep Research Pro（与本文件 {@link DEEP_RESEARCH_MODEL} 相同，即 Interactions `agent`），
+ * 超高点击率封面：Deep Research Pro（Interactions `agent` 默認 {@link DEEP_RESEARCH_MODEL}），
  * `collaborative_planning: false` 单轮检索+推理，产出短程竞品清洗简报。
  *
  * - 默认 `agent={@link DEEP_RESEARCH_MODEL}`；可用 `COVER_DEEP_RESEARCH_AGENT` 覆盖（勿填 Max，见下）。
  * - 若 `COVER_DEEP_RESEARCH_AGENT` 含 `deep-research-max`，强制回退为 {@link DEEP_RESEARCH_MODEL}（避免半小时级任务）。
+ * - 若環境仍寫舊字串 `{@link LEGACY_DEEP_RESEARCH_PRO_PREVIEW_AGENT_ID}`，執行前會自動升級為 {@link DEEP_RESEARCH_MODEL}。
  * - 默认本地轮询约 8 分钟（`COVER_DEEP_RESEARCH_POLL_MAX_MS` 可覆盖）
  * - 失败返回 `null`，调用方回退原语境
  * - `COVER_DEEP_RESEARCH_ENABLED=0` 时全跳过
@@ -878,9 +881,12 @@ export async function runCoverCompetitorDeepResearchBrief(params: {
   const coverAgentRaw = String(process.env.COVER_DEEP_RESEARCH_AGENT ?? DEEP_RESEARCH_MODEL).trim();
   const coverAgent = coverAgentRaw || DEEP_RESEARCH_MODEL;
   let resolvedCoverAgent = coverAgent;
+  if (resolvedCoverAgent === LEGACY_DEEP_RESEARCH_PRO_PREVIEW_AGENT_ID) {
+    resolvedCoverAgent = DEEP_RESEARCH_MODEL;
+  }
   if (coverAgent.includes("deep-research-max")) {
     console.warn(
-      "[coverDeepResearch] COVER_DEEP_RESEARCH_AGENT 含 deep-research-max，已回退为本仓库 Pro 标识 gemini-deep-research-pro-preview",
+      "[coverDeepResearch] COVER_DEEP_RESEARCH_AGENT 含 deep-research-max，已回退为封面短研用 Pro agent（gemini-deep-research-pro-preview-04-2026）",
     );
     resolvedCoverAgent = DEEP_RESEARCH_MODEL;
   }
@@ -2051,7 +2057,7 @@ export async function runDeepResearchAsync(jobId: string) {
 
     // ═════════════════════════════════════════════════════════════════════════
     // 阶段 A：Deep Research Pro Preview · 全网检索 + 深度推理 + 思维链
-    // 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，63s 滑窗 30 次建链限速）
+    // Interactions agent：gemini-deep-research-pro-preview-04-2026（超高点击率封面短研）；63s 滑窗 30 次建链限速
     // 工具：googleSearch（实时检索）+ deepResearch{complexity: "comprehensive"}（最深推理）
     // 配置：thinkingConfig.includeThoughts=true（开启思维链）
     // ═════════════════════════════════════════════════════════════════════════

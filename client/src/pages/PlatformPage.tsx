@@ -1870,7 +1870,7 @@ export default function PlatformPage() {
       if (inp.coverHighClickAppeal) {
         coverPollLines = appendPollDebugLine(
           coverPollLines,
-          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
+          `${tEnq} [Deep Research Pro] 服务端将先用 Interactions agent「gemini-deep-research-pro-preview-04-2026」做竞品信息流清洗；进度见下方同步的 imageGenFlowLog（含 agent=、轮询秒数、完成/回退原语境）。`,
         );
       }
       setTopicImageJobPollTrace({
@@ -5840,7 +5840,7 @@ export default function PlatformPage() {
                           return;
                         }
                         if (!supervisorAccess) {
-                          const note = `「超高点击率封面」将先由 Deep Research Pro（gemini-deep-research-pro-preview）做竞品清洗，通常数分钟完成（服务端本地等待上限约 8 分钟），再进入生图；并换主标角度、强化划停向视觉。消耗 ${highCtrCoverCost} 积分，是否继续？`;
+                          const note = `「超高点击率封面」将先由 Deep Research Pro（gemini-deep-research-pro-preview-04-2026）做竞品清洗，通常数分钟完成（服务端本地等待上限约 8 分钟），再进入生图；并换主标角度、强化划停向视觉。消耗 ${highCtrCoverCost} 积分，是否继续？`;
                           if (!window.confirm(note)) return;
                         }
                         setRegeneratingCoverSceneId(item.id);
