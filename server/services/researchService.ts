@@ -1,6 +1,6 @@
 /**
  * 竞品调研双引擎服务
- * Stage 1: gemma-4-31b-it — **Vertex AI**（`callGemma4` · us-central1 · 服务账号），**不使用** GEMINI_API_KEY
+ * Stage 1: gemma-4-31b-it — Vertex（`callGemma4` · @google-cloud/vertexai · 默认 global，`VERTEX_GEMMA_LOCATION`）。最多 3 次尝试，失败提示算力紧张；**不向 Gemini fallback**
  * Stage 2: gemini-3.1-pro — **Vertex AI**（`callGemini3_1_Pro`，區域預設 us-central1），**不使用** GEMINI_API_KEY
  */
 import fs from "fs/promises";
@@ -26,10 +26,22 @@ function throwWithResearchPipeline(err: unknown, steps: ResearchPipelineDebugSte
   throw new Error(`${base}${RESEARCH_PIPELINE_DEBUG_MARKER}${JSON.stringify(steps)}`);
 }
 
+/** Gemma Stage 1 用尽三次尝试后对用户的明确提示（不降级其他模型误导）。 */
+const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
+
+function isTransientVertexCapacityError(e: any): boolean {
+  const msg = String(e?.message ?? e ?? "");
+  return /429|RESOURCE_EXHAUSTED|503|529|UNAVAILABLE|DEADLINE_EXCEEDED|overloaded|EAI_|ECONNRESET|ETIMEDOUT/i.test(
+    msg,
+  );
+}
+
+const GEMMA_STAGE1_ATTEMPTS = 3;
+
 /**
  * 调用生成模型：
  * - gemini-3.1-pro / gemini-3.1-pro-preview（別名）→ Vertex（callGemini3_1_Pro）
- * - gemma-4-31b-it → Vertex（callGemma4 · publishers/google/models/gemma-4-31b-it）
+ * - gemma-4-31b-it → Vertex（callGemma4）· 固定 GEMMA_STAGE1_ATTEMPTS 次；瞬时/配额错误退避；失败抛 RESEARCH_STAGE1_CAPACITY_MSG
  * - 其余模型 → Google AI Studio HTTP（需 GEMINI_API_KEY；当前竞品调研不会走到此分支）
  */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
@@ -53,20 +65,31 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
 
   if (model === "gemma-4-31b-it") {
     const { callGemma4 } = await import("./gemma4.js");
-    for (let i = 0; i <= retries; i++) {
+    let lastErr: any;
+    for (let attempt = 0; attempt < GEMMA_STAGE1_ATTEMPTS; attempt++) {
       try {
-        return await callGemma4(prompt);
-      } catch (e: any) {
-        const msg = String(e?.message || e || "");
-        if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
-          console.log(`[researchService] Gemma Vertex 429/限流，${5 * (i + 1)}s 后重试...`);
-          await sleep(5000 * (i + 1));
-          continue;
+        const text = await callGemma4(prompt);
+        if (text.trim()) {
+          console.log(`[researchService] Gemma Stage 1 OK，第 ${attempt + 1}/${GEMMA_STAGE1_ATTEMPTS} 次尝试`);
+          return text;
         }
-        throw e;
+        lastErr = Object.assign(new Error("EMPTY_GEMMA_OUTPUT"), { code: "EMPTY_GEMMA_OUTPUT" });
+      } catch (e: any) {
+        lastErr = e;
+        if (!isTransientVertexCapacityError(e)) {
+          console.error(`[researchService] Gemma Stage 1 不可重试失败: ${e?.message}`);
+          throw e;
+        }
+      }
+      if (attempt < GEMMA_STAGE1_ATTEMPTS - 1) {
+        console.log(
+          `[researchService] Gemma Stage 1 第 ${attempt + 1} 次未成功，${5 * (attempt + 1)}s 后重试 (${GEMMA_STAGE1_ATTEMPTS - attempt - 1} 次剩余)...`,
+        );
+        await sleep(5000 * (attempt + 1));
       }
     }
-    return "";
+    console.warn(`[researchService] Gemma Stage 1 已重试 ${GEMMA_STAGE1_ATTEMPTS} 次仍失败: ${lastErr?.message}`);
+    throw new Error(RESEARCH_STAGE1_CAPACITY_MSG);
   }
 
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -194,7 +217,7 @@ export async function runResearch(
     pipelineDebug,
     "0·环境",
     "ok",
-    "Vertex Stage1=gemma-4-31b-it · fallback/Stage2=gemini-3.1-pro（Vertex）",
+    "Stage1 Vertex Gemma gemma-4-31b-it（global/SDK·最多3次）· Stage2=gemini-3.1-pro（Vertex）；无 Stage1 Gemini 降级",
   );
 
   if (competitorData.length > MAX_CONTENT_CHARS) {
@@ -232,7 +255,7 @@ export async function runResearch(
 
   // ── Stage 1: Gemma 4 31B IT ─ 底层流量特征扫描（含平台真实数据） ──
   console.log(`[researchService] Stage 1 Gemma 4 启动 (${label})`);
-  pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "start", "us-central1");
+  pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "start", "global（VERTEX_GEMMA_LOCATION 可覆写）·最多三次");
   let stage1Raw = "";
   try {
     stage1Raw = await generate(
@@ -250,32 +273,10 @@ ${platformContext}
     );
     console.log(`[researchService] Stage 1 完成，字符数: ${stage1Raw.length}`);
     pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "ok", `输出 ${stage1Raw.length} 字`);
-  } catch (err: any) {
-    const gMsg = String(err?.message || err || "");
+  } catch (err: unknown) {
+    const gMsg = String((err as any)?.message || err || "");
     pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "fail", gMsg.slice(0, 900));
-    // Gemma 4 不可用时，Stage 1 改用 gemini-3.1-pro（与 Stage 2 同档，不再走 flash）
-    console.warn(`[researchService] Gemma 4 失败 (${gMsg})，Stage 1 降级至 gemini-3.1-pro`);
-    pushPipelineStep(pipelineDebug, "3·Stage1 降级 Vertex Gemini 3.1 Pro", "start");
-    try {
-      stage1Raw = await generate(
-        "gemini-3.1-pro",
-        `作为顶级内容策略师，深度分析${label}竞品内容特征，结合以下平台实时热门数据提取流量密码：
-${platformContext}
-
-竞品输入：${competitorData}
-
-输出JSON：{hookLogic,visualStyle,audienceProfile,keywordMatrix,topPatterns}`,
-      );
-      pushPipelineStep(pipelineDebug, "3·Stage1 降级 Vertex Gemini 3.1 Pro", "ok", `输出 ${stage1Raw.length} 字`);
-    } catch (err2: unknown) {
-      pushPipelineStep(
-        pipelineDebug,
-        "3·Stage1 降级 Vertex Gemini 3.1 Pro",
-        "fail",
-        String((err2 as any)?.message || err2 || "").slice(0, 900),
-      );
-      throwWithResearchPipeline(err2, pipelineDebug);
-    }
+    throwWithResearchPipeline(err, pipelineDebug);
   }
 
   // ── Stage 2: Gemini 3.1 Pro ─ 差异化战略处方 + 分镜场景（含平台数据） ────
