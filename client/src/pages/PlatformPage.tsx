@@ -1094,17 +1094,7 @@ type PlatformSignalsCarouselItem = {
   tone: PlatformSignalsCarouselTone;
   /** 平台卡：引導購買趨勢分析額度 / 積分加值包 */
   purchaseCta?: { href: string; label: string };
-  /** 大卡片左上角顯示的維度名（優先於「平台信号／热点切口／动作建议」自動標題） */
-  facetLabel?: string;
-  /** 底部預覽條左上角小標，未填沿用平台／热点／动作 */
-  thumbToneLabel?: string;
 };
-
-function resultSummaryToneForLabel(label: string): PlatformSignalsCarouselTone {
-  if (label.includes("商业") || label.includes("赛道")) return "topic";
-  if (label.includes("动作") || label.includes("首发")) return "action";
-  return "platform";
-}
 
 function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
   switch (tone) {
@@ -1124,30 +1114,20 @@ function PlatformSignalsCarouselPanel(props: {
   onPickIndex: (i: number) => void;
   subtitle: string;
   eyebrow?: string;
-  /** 無障礙區塊標題 */
-  carouselAriaLabel?: string;
 }) {
-  const {
-    items,
-    activeIndex,
-    onPickIndex,
-    subtitle,
-    eyebrow = "战略信号 · 自动轮播",
-    carouselAriaLabel = "平台与热点信号轮播",
-  } = props;
+  const { items, activeIndex, onPickIndex, subtitle, eyebrow = "战略信号 · 自动轮播" } = props;
   if (!items.length) return null;
   const safeIdx = activeIndex % items.length;
   const active = items[safeIdx] ?? items[0];
   const toneCn =
     active.tone === "platform" ? "平台信号" : active.tone === "topic" ? "热点切口" : "动作建议";
-  const facetDisplay = active.facetLabel ?? toneCn;
 
   return (
     <div
       className={`${shellCardClasses("relative overflow-hidden p-6 md:p-8")}`}
       role="region"
       aria-roledescription="carousel"
-      aria-label={carouselAriaLabel}
+      aria-label="平台与热点信号轮播"
     >
       <div className={`pointer-events-none absolute inset-x-0 top-0 h-[4px] bg-gradient-to-r ${toneGlowFrom(active.tone)}`} />
       <div className="pointer-events-none absolute -right-20 -top-24 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(73,230,255,0.16),transparent_65%)] motion-safe:opacity-75 motion-safe:animate-[platformCarouselGlow_10s_ease-in-out_infinite]" />
@@ -1186,7 +1166,7 @@ function PlatformSignalsCarouselPanel(props: {
         <div className="relative min-h-[clamp(220px,32vw,340px)]">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
-              key={`${facetDisplay}-${safeIdx}-${active.title}`}
+              key={`${toneCn}-${safeIdx}-${active.title}`}
               initial={{ opacity: 0, y: 16, scale: 0.985 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -12, scale: 0.99 }}
@@ -1195,14 +1175,10 @@ function PlatformSignalsCarouselPanel(props: {
             >
               <div
                 className={`text-[12px] font-bold uppercase tracking-[0.26em] ${
-                  active.tone === "platform"
-                    ? "text-[#8cefff]"
-                    : active.tone === "topic"
-                      ? "text-[#ff98d9]"
-                      : "text-[#ffe77a]"
+                  toneCn === "平台信号" ? "text-[#8cefff]" : toneCn === "热点切口" ? "text-[#ff98d9]" : "text-[#ffe77a]"
                 }`}
               >
-                {facetDisplay}
+                {toneCn}
               </div>
               <div className="mt-5 text-[1.65rem] font-black leading-[1.08] tracking-tight text-white md:text-4xl xl:text-[2.35rem]">
                 {active.title}
@@ -1231,7 +1207,7 @@ function PlatformSignalsCarouselPanel(props: {
             const selected = idx === safeIdx;
             return (
               <button
-                key={`${item.title}-${idx}-${item.tone}-${item.thumbToneLabel ?? ""}-${item.facetLabel ?? ""}`}
+                key={`${item.title}-${idx}-${item.tone}`}
                 type="button"
                 onClick={() => onPickIndex(idx)}
                 title={item.title}
@@ -1250,8 +1226,7 @@ function PlatformSignalsCarouselPanel(props: {
                         : "text-[#ffe07a]"
                   }`}
                 >
-                  {item.thumbToneLabel ??
-                    (item.tone === "platform" ? "平台" : item.tone === "topic" ? "热点" : "动作")}
+                  {item.tone === "platform" ? "平台" : item.tone === "topic" ? "热点" : "动作"}
                 </div>
                 <div className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-white">{item.title}</div>
               </button>
@@ -1308,7 +1283,6 @@ export default function PlatformPage() {
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
-  const [resultSummaryCarouselIndex, setResultSummaryCarouselIndex] = useState(0);
   const [platformImagePromptTranslator, setPlatformImagePromptTranslator] = useState<PlatformImagePromptTranslator>(() => {
     if (typeof window === "undefined") return "gpt54";
     try {
@@ -3100,36 +3074,6 @@ export default function PlatformPage() {
     primaryPlatforms,
   ]);
 
-  const resultSummaryCarouselItems = useMemo((): PlatformSignalsCarouselItem[] => {
-    const visible = resultSummaryCards.filter((card) => !card.isLoadingSkeleton);
-    const tonesFallback: PlatformSignalsCarouselTone[] = ["platform", "topic", "action"];
-    return visible.map((item, idx) => {
-      const tone =
-        item.label === "你会拿到"
-          ? (tonesFallback[idx % tonesFallback.length] as PlatformSignalsCarouselTone)
-          : resultSummaryToneForLabel(item.label);
-      const thumbToneLabel =
-        item.label === "你会拿到"
-          ? tone === "platform"
-            ? "判断"
-            : tone === "topic"
-              ? "切口"
-              : "承接"
-          : item.label;
-      return {
-        title: item.value,
-        summary: item.detail,
-        detail:
-          item.label === "你会拿到"
-            ? "以上为购买前的能力条目说明；开始全案后即会更替为与你的背景与时间窗口对齐的结论简报。"
-            : `条目「${item.label}」由当前优先级看板与窗口样本摘要生成；尚未就绪的条目不再占位展示，生成完成后会自动加入本条轮播。`,
-        tone,
-        facetLabel: item.label === "你会拿到" ? undefined : item.label,
-        thumbToneLabel,
-      };
-    });
-  }, [resultSummaryCards]);
-
   const platformDecisionRows = useMemo(
     () => {
       if (platformDashboard?.platformMenu.length) {
@@ -3766,15 +3710,6 @@ export default function PlatformPage() {
     return () => window.clearInterval(timer);
   }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
-  useEffect(() => {
-    const n = resultSummaryCarouselItems.length;
-    if (n <= 1) return;
-    const timer = window.setInterval(() => {
-      setResultSummaryCarouselIndex((value) => (value + 1) % n);
-    }, 4500);
-    return () => window.clearInterval(timer);
-  }, [resultSummaryCarouselItems.length]);
-
   const handleAnalyze = async () => {
     // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
     if (!isIpProfileReady(ipProfile)) {
@@ -3809,7 +3744,6 @@ export default function PlatformPage() {
     setContentJobPollTrace(null);
     setElapsedTime(0);
     setRotatingCardIndex(0);
-    setResultSummaryCarouselIndex(0);
     setPlatformImageMap({});
     setPlatformStoryboardSheetMap({});
     setPlatformXhsNoteMap({});
@@ -4072,193 +4006,6 @@ export default function PlatformPage() {
             )}
           </div>
         )}
-
-        {snapshot && platformDashboard ? (
-          <div className="mb-6 space-y-4">
-            <div
-              className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
-              role="region"
-              aria-label="全案分析扣費說明"
-            >
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
-                <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
-                  <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
-                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
-                </div>
-                <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                  首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
-                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
-                  並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
-                  。任務失敗、逾時或結果不滿意，
-                  <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
-                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
-                </div>
-              </div>
-            </div>
-
-            <div
-              id={PLATFORM_SECTION_DECISION_INTEL_ID}
-              className="scroll-mt-20 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5"
-            >
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/10">
-                    <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white md:text-lg">个性化战略地图（决策智库视图）</h3>
-                    <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      在<strong className="text-white">全案专属文案已成功写入</strong>后，将本页战略看板与长稿要点<strong className="text-white">收敛成一页可视化报告</strong>
-                      （雷达、执行向建议与阅读用排行条；均为<strong className="text-white">辅助决策的模型推演</strong>，不构成效果承诺）。解锁为
-                      <strong className="text-white"> 加购模块</strong>
-                      ，与全案入队扣点分开计：首次体验{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
-                      <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
-                      扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
-                    </p>
-                  </div>
-                </div>
-                {isAuthenticated ? (
-                  <div className="flex shrink-0 flex-col items-stretch gap-2 md:items-end">
-                    <span className="text-[11px] text-gray-500">
-                      {decisionIntelPricingQuery.data?.priorCompletedCount
-                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 点`
-                        : `尚未解锁 · 首次体验 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 点`}
-                    </span>
-                    {!decisionIntelInputReady ? (
-                      <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
-                        {isContentLoading
-                          ? "专属文案生成中，完成后才可扣点解锁（价格已标示于上）。"
-                          : stage2Failed || contentJobError
-                            ? "专属文案未完成，请重试全案文案后再解锁本模块。"
-                            : stage2EmptyPayload
-                              ? "后台未返回有效选题请重试；完成后再解锁。"
-                              : platformDashboard && !platformContent
-                                ? "请先完成专属文案入队结果，再解锁本报告。"
-                                : "请完成全案专属文案后再解锁。"}
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={
-                        generateDecisionIntelMutation.isPending ||
-                        !decisionIntelPricingQuery.data ||
-                        !decisionIntelInputReady
-                      }
-                      onClick={() => {
-                        const next = decisionIntelPricingQuery.data?.nextCredits;
-                        if (next == null) return;
-                        const latestWd = decisionIntelLatestQuery.data?.windowDays;
-                        if (
-                          latestWd != null &&
-                          latestWd !== selectedWindowDays &&
-                          decisionIntelLatestQuery.data?.report
-                        ) {
-                          const okWin = window.confirm(
-                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
-                          );
-                          if (!okWin) return;
-                        }
-                        if (!supervisorAccess) {
-                          const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于当前「战略看板 + 已写入的专属文案」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
-                          );
-                          if (!ok) return;
-                        }
-                        generateDecisionIntelMutation.mutate({
-                          topic: strategicMapTopic,
-                          contentBlueprint: strategicMapBlueprint,
-                          platformHint: decisionIntelPlatformHint,
-                          windowDays: selectedWindowDays,
-                          dateRange: formatDecisionIntelDateRangeZh(selectedWindowDays),
-                          platformAnalysisEpoch: platformAnalysisEpochRef.current,
-                        });
-                      }}
-                      className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#ff4fb8]/50 bg-[#ff4fb8]/15 px-4 py-2 text-sm font-bold text-[#ffc6e8] transition hover:bg-[#ff4fb8]/25 disabled:opacity-45"
-                    >
-                      {generateDecisionIntelMutation.isPending ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                          解锁中…
-                        </>
-                      ) : unlockedStrategicReport ? (
-                        <>
-                          再次生成（{decisionIntelPricingQuery.data?.nextCredits ?? CREDIT_COSTS.decisionIntelligenceReport}{" "}
-                          點）
-                        </>
-                      ) : (
-                        <>付費解鎖戰略地圖</>
-                      )}
-                    </button>
-                    {unlockedStrategicReport ? (
-                      <button
-                        type="button"
-                        disabled={isExportingStrategicPng}
-                        onClick={() => void handleExportStrategicDashboardPng()}
-                        className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
-                      >
-                        {isExportingStrategicPng ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                            導出中…
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-4 w-4 shrink-0" />
-                            導出報告圖（PNG）
-                          </>
-                        )}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
-                )}
-              </div>
-
-              <div className="platform-report-dashboard-shell relative mt-5 overflow-x-auto overflow-y-visible rounded-xl border border-white/10 bg-black/40">
-                {unlockedStrategicReport ? (
-                  <div className="w-full overflow-x-auto overflow-y-visible">
-                    <div ref={strategicReportDashboardRef} className="inline-block align-top">
-                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <DecisionIntelLockedDemoPreview
-                      footnote={
-                        strategicMapPreviewReport
-                          ? "上為匿名化演示樣張（英文與品牌區已打碼）。解鎖後將依您當前戰略看板與專屬文案生成清晰專屬版並存檔。"
-                          : "上為匿名化演示樣張（英文與品牌區已打碼）。完成專屬文案後即可付費解鎖，獲取基於您數據的完整報告。"
-                      }
-                    />
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
-                      <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
-                        <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
-                        <p className="text-sm font-semibold text-white">
-                          {strategicMapPreviewReport ? "試讀樣張 · 解鎖拿專屬高清版" : "試讀樣張 · 完成文案後可解鎖"}
-                        </p>
-                        <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
-                          {strategicMapPreviewReport ? (
-                            <>
-                              解鎖後版式與演示一致，但數字與建議均來自<strong className="text-[#fde047]">您的全案結果</strong>
-                              ，非示意樣張。
-                            </>
-                          ) : (
-                            <>
-                              請先完成本頁<strong className="text-[#fde047]">專屬文案</strong>
-                              ；解鎖價格已列於上方。
-                            </>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
@@ -4567,18 +4314,28 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        {resultSummaryCarouselItems.length > 0 ? (
-          <section id={PLATFORM_SECTION_TREND_SIGNALS_ID} className="scroll-mt-20 mt-6">
-            <PlatformSignalsCarouselPanel
-              eyebrow="首轮结论简报"
-              carouselAriaLabel="全案结论条目轮播"
-              items={resultSummaryCarouselItems}
-              activeIndex={resultSummaryCarouselIndex}
-              onPickIndex={setResultSummaryCarouselIndex}
-              subtitle="自动轮换当前窗口下的核心结论；生成中的占位条目已隐藏，亦可点下方预览条立即切换。"
-            />
-          </section>
-        ) : null}
+        <section
+          id={PLATFORM_SECTION_TREND_SIGNALS_ID}
+          className="scroll-mt-20 mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+        >
+          {resultSummaryCards.map((item, index) => (
+            <div key={`${item.label}-${index}`} className={shellCardClasses("p-5 flex flex-col justify-center")}>
+              {item.isLoadingSkeleton ? (
+                <div className="flex h-full w-full animate-pulse flex-col justify-center rounded-lg border border-white/5 bg-[rgba(255,255,255,0.02)] p-4 text-center">
+                  <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#49e6ff]/50" />
+                  <div className="text-[13px] font-semibold text-[#8cefff]/70">{item.value}</div>
+                  <div className="mt-1 text-[11px] text-[#c9c0e6]/50">{item.detail}</div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">{item.label}</div>
+                  <div className="mt-3 text-xl font-bold leading-8 text-white">{item.value}</div>
+                  <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
+                </>
+              )}
+            </div>
+          ))}
+        </section>
 
         {/* Debug panel: show as soon as snapshot is available */}
         {snapshot && debugMode ? (
@@ -4888,29 +4645,32 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            {/* 頁首可見區已外置扣費／決策智庫；克隆 PDF 時仍須納入相同合規與說明（避免 #platform-report 快照缺段） */}
-            <div data-pdf-only className="hidden space-y-4">
-              <div
-                className="rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
-                role="region"
-                aria-label="全案分析扣費說明（PDF 汇总）"
-              >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
-                  <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
-                    <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
-                    <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
-                  </div>
-                  <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                    首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
-                    <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
-                    並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
-                    。任務失敗、逾時或結果不滿意，
-                    <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
-                    <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
-                  </div>
+            <div
+              className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
+              role="region"
+              aria-label="全案分析扣費說明"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
+                  <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
+                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
+                </div>
+                <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
+                  首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
+                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
+                  並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
+                  。任務失敗、逾時或結果不滿意，
+                  <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
+                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
                 </div>
               </div>
-              <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5">
+            </div>
+
+            <div
+              id={PLATFORM_SECTION_DECISION_INTEL_ID}
+              className="scroll-mt-20 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5"
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/10">
                     <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
@@ -4926,16 +4686,147 @@ export default function PlatformPage() {
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
                       扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
-                    <p className="mt-3 text-xs leading-relaxed text-[#9ca3c9]">
-                      {unlockedStrategicReport
-                        ? "在线版含完整雷达与排行可视化；PDF 汇总以文字与关键结论为主，高清图请使用本页「导出报告图（PNG）」。"
-                        : "完成专属文案并解锁后，在线视图将展示完整推演结果；未解锁前请以本页顶部试读示意为准。"}
-                    </p>
                   </div>
                 </div>
+                {isAuthenticated ? (
+                  <div className="flex shrink-0 flex-col items-stretch gap-2 md:items-end">
+                    <span className="text-[11px] text-gray-500">
+                      {decisionIntelPricingQuery.data?.priorCompletedCount
+                        ? `已生成 ${decisionIntelPricingQuery.data.priorCompletedCount} 次 · 下次 ${decisionIntelPricingQuery.data.nextCredits} 点`
+                        : `尚未解锁 · 首次体验 ${CREDIT_COSTS.decisionIntelligenceReportFirst} 点`}
+                    </span>
+                    {!decisionIntelInputReady ? (
+                      <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
+                        {isContentLoading
+                          ? "专属文案生成中，完成后才可扣点解锁（价格已标示于上）。"
+                          : stage2Failed || contentJobError
+                            ? "专属文案未完成，请重试全案文案后再解锁本模块。"
+                            : stage2EmptyPayload
+                              ? "后台未返回有效选题请重试；完成后再解锁。"
+                              : platformDashboard && !platformContent
+                                ? "请先完成专属文案入队结果，再解锁本报告。"
+                                : "请完成全案专属文案后再解锁。"}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={
+                        generateDecisionIntelMutation.isPending ||
+                        !decisionIntelPricingQuery.data ||
+                        !decisionIntelInputReady
+                      }
+                      onClick={() => {
+                        const next = decisionIntelPricingQuery.data?.nextCredits;
+                        if (next == null) return;
+                        const latestWd = decisionIntelLatestQuery.data?.windowDays;
+                        if (
+                          latestWd != null &&
+                          latestWd !== selectedWindowDays &&
+                          decisionIntelLatestQuery.data?.report
+                        ) {
+                          const okWin = window.confirm(
+                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
+                          );
+                          if (!okWin) return;
+                        }
+                        if (!supervisorAccess) {
+                          const ok = window.confirm(
+                            `将扣除 ${next} 积分，基于当前「战略看板 + 已写入的专属文案」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                          );
+                          if (!ok) return;
+                        }
+                        generateDecisionIntelMutation.mutate({
+                          topic: strategicMapTopic,
+                          contentBlueprint: strategicMapBlueprint,
+                          platformHint: decisionIntelPlatformHint,
+                          windowDays: selectedWindowDays,
+                          dateRange: formatDecisionIntelDateRangeZh(selectedWindowDays),
+                          platformAnalysisEpoch: platformAnalysisEpochRef.current,
+                        });
+                      }}
+                      className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#ff4fb8]/50 bg-[#ff4fb8]/15 px-4 py-2 text-sm font-bold text-[#ffc6e8] transition hover:bg-[#ff4fb8]/25 disabled:opacity-45"
+                    >
+                      {generateDecisionIntelMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                          解锁中…
+                        </>
+                      ) : unlockedStrategicReport ? (
+                        <>
+                          再次生成（{decisionIntelPricingQuery.data?.nextCredits ?? CREDIT_COSTS.decisionIntelligenceReport}{" "}
+                          點）
+                        </>
+                      ) : (
+                        <>付費解鎖戰略地圖</>
+                      )}
+                    </button>
+                    {unlockedStrategicReport ? (
+                      <button
+                        type="button"
+                        disabled={isExportingStrategicPng}
+                        onClick={() => void handleExportStrategicDashboardPng()}
+                        className="inline-flex min-h-[2.5rem] items-center justify-center gap-2 rounded-xl border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
+                      >
+                        {isExportingStrategicPng ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                            導出中…
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-4 w-4 shrink-0" />
+                            導出報告圖（PNG）
+                          </>
+                        )}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
+                )}
+              </div>
+
+              <div className="platform-report-dashboard-shell relative mt-5 overflow-x-auto overflow-y-visible rounded-xl border border-white/10 bg-black/40">
+                {unlockedStrategicReport ? (
+                  <div className="w-full overflow-x-auto overflow-y-visible">
+                    <div ref={strategicReportDashboardRef} className="inline-block align-top">
+                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <DecisionIntelLockedDemoPreview
+                      footnote={
+                        strategicMapPreviewReport
+                          ? "上為匿名化演示樣張（英文與品牌區已打碼）。解鎖後將依您當前戰略看板與專屬文案生成清晰專屬版並存檔。"
+                          : "上為匿名化演示樣張（英文與品牌區已打碼）。完成專屬文案後即可付費解鎖，獲取基於您數據的完整報告。"
+                      }
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
+                      <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
+                        <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
+                        <p className="text-sm font-semibold text-white">
+                          {strategicMapPreviewReport ? "試讀樣張 · 解鎖拿專屬高清版" : "試讀樣張 · 完成文案後可解鎖"}
+                        </p>
+                        <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
+                          {strategicMapPreviewReport ? (
+                            <>
+                              解鎖後版式與演示一致，但數字與建議均來自<strong className="text-[#fde047]">您的全案結果</strong>
+                              ，非示意樣張。
+                            </>
+                          ) : (
+                            <>
+                              請先完成本頁<strong className="text-[#fde047]">專屬文案</strong>
+                              ；解鎖價格已列於上方。
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">

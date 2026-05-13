@@ -1,6 +1,6 @@
 /**
- * 默认：Stage2 = OpenAI，**平台图 = GCS**（`PLATFORM_IMAGE_STORAGE` 未设或設為 `gcs`）。
- * 暫時改回 Fly 卷：僅當 **`PLATFORM_IMAGE_STORAGE=fly`**（或 `MV_PLATFORM_IMAGE_STORAGE`，值 `fly`/`volume`/`fly_volume`）。**已廢止**沿用 `PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME`。
+ * 默认：Stage2 = OpenAI，**平台图 = GCS**（`PLATFORM_IMAGE_STORAGE` 未设时）。
+ * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。对照：`PLATFORM_STAGE2_LLM=vertex`；`PLATFORM_IMAGE_STORAGE=gcs`。
  * 换 OpenAI 模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5）。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
@@ -179,7 +179,11 @@ export function resolvePlatformImageStorageDriver(): PlatformImageStorageDriver 
     return "gcs";
   }
 
-  /** 已廢止：不再讀取 PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME——曾導致 production 僅設舊旗標就改走 Fly 卷、簽名讀鏈與下載行為與 GCS 不一致。若確需 Fly 卷，必須明確設 PLATFORM_IMAGE_STORAGE=fly。 */
+  const legacy = String(process.env.PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME || "").trim();
+  if (legacy === "1") return "fly";
+  if (legacy === "0") return "gcs";
+
+  /** 預設 GCS；日後若要暫回 Fly，設 `PLATFORM_IMAGE_STORAGE=fly` 即可，無需刪除 GCS 路徑。 */
   return "gcs";
 }
 
