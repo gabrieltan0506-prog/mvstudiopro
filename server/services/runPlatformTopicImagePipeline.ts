@@ -126,6 +126,11 @@ export async function runPlatformTopicImagePipeline(
     extractChineseVisualBrief,
   } = await import("./geminiPlatformCompositeTranslation.js");
   const {
+    buildCoverTaskInputFromPipeline,
+    isPlatformCoverAgenticBrainEnabled,
+    runAgenticCoverStrategist,
+  } = await import("./agenticCoverWorkflow.js");
+  const {
     buildImagePromptStats,
     generateImageGpt2WithImagenFallback,
     generateGptImage2FromRawEnglishPrompt,
@@ -181,11 +186,51 @@ export async function runPlatformTopicImagePipeline(
     /** 步骤1 成功后写入，供步骤3 NB2 失败后走 GPT-IMAGE-2（同一条英文 prompt） */
     let lastSafePrompt: string | null = null;
 
+    let strategistChinesePrompt: string | null = null;
+    if (isPlatformCoverAgenticBrainEnabled()) {
+      topicImageCondenseLog.push(
+        `${new Date().toISOString()}  [步骤0·企划大脑] PLATFORM_COVER_AGENTIC_BRAIN 开启 → Vertex 中文企划（失败则降级原链路）`,
+      );
+      try {
+        const taskIn = buildCoverTaskInputFromPipeline({
+          topicHook: input.topicHook,
+          format: input.format,
+          context: ctxStr,
+          coverPersonaContext: coverPersona,
+        });
+        const so = await runAgenticCoverStrategist(taskIn, topicImageCondenseLog);
+        if (so?.rawImagePrompt?.trim()) {
+          strategistChinesePrompt = so.rawImagePrompt.trim();
+          if (so.coverHeadline || so.designRationale) {
+            topicImageCondenseLog.push(
+              `${new Date().toISOString()}  [步骤0] headline=${String(so.coverHeadline || "").slice(0, 28)} · rationale=${String(
+                so.designRationale || "",
+              ).slice(0, 96)}`,
+            );
+          }
+        }
+      } catch (e: unknown) {
+        topicImageCondenseLog.push(
+          `${new Date().toISOString()}  [步骤0] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+
     try {
       try {
+        const contextForGemini = strategistChinesePrompt
+          ? [strategistChinesePrompt, ctxStr].filter(Boolean).join("\n\n").slice(0, 6500)
+          : (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000);
+
+        if (strategistChinesePrompt) {
+          topicImageCondenseLog.push(
+            `${new Date().toISOString()}  [语境] 企划大脑中文已注入 context=${contextForGemini.length}字（跳过主干 extractChineseVisualBrief）`,
+          );
+        }
+
         const geminiTask = buildPlatformTopicReferenceGeminiTask({
           topicHook: input.topicHook,
-          context: (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000),
+          context: contextForGemini,
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
         });
