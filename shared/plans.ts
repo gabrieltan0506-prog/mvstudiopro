@@ -254,8 +254,6 @@ export const CREDIT_COSTS = {
   platformRefImage: 36,
   /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2）；单张「生成封面」統一走此價 */
   platformTopicFrameGraphic: 32,
-  /** 平台页：选题单帧 · 竖版封面「超高点击率」再生成（换主标角度 + 英文化强调划停） */
-  platformTopicFrameHighCtr: 30,
   /** 平台页：分镜 2×4 宽幅合成（单条） */
   platformStoryboardSheet: 48,
   /** 平台页：小红书 2×4 八格图文（单条） */

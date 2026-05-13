@@ -6,11 +6,7 @@ import { desc, eq } from "drizzle-orm";
 import * as db from "../db";
 import { platformStrategicBlueprintSnapshots } from "../../drizzle/schema-platform-strategic-blueprints";
 import { buildPlatformSceneTextForCover } from "../../shared/platformSceneTextForCover.js";
-import {
-  buildTitleVariantsFromBlueprint,
-  pickHighCtrAlternateTitle,
-  pickPreferredTitleVariant,
-} from "../../shared/platformTitleVariants.js";
+import { buildTitleVariantsFromBlueprint, pickPreferredTitleVariant } from "../../shared/platformTitleVariants.js";
 
 export type EnrichedBlueprintSnapshot = {
   sceneId: string;
@@ -189,7 +185,6 @@ function blueprintHasSaleableSubstance(hit: EnrichedBlueprintSnapshot): boolean 
 export function optimizeEnrichedBlueprintForCover(
   hit: EnrichedBlueprintSnapshot,
   blueprintIndex: number,
-  options?: { highClickAlternate?: boolean },
 ): OptimizedCoverFromDb {
   if (!blueprintHasSaleableSubstance(hit)) {
     throw new PlatformCoverInputsError(
@@ -201,13 +196,7 @@ export function optimizeEnrichedBlueprintForCover(
   const variants = buildTitleVariantsFromBlueprint(bp, blueprintIndex);
   const hookSeed = String(bp.hook ?? bp.openingHook ?? bp.contentHook ?? "").replace(/\s+/g, " ").trim();
   const baselinePick = pickPreferredTitleVariant(variants, hookSeed);
-  const pickedTitle = (
-    options?.highClickAlternate
-      ? pickHighCtrAlternateTitle(variants, hookSeed, baselinePick.title).title
-      : baselinePick.title
-  )
-    .replace(/\s+/g, " ")
-    .trim();
+  const pickedTitle = baselinePick.title.replace(/\s+/g, " ").trim();
   let title = pickedTitle || hit.title.replace(/\s+/g, " ").trim();
   if (!title) {
     title = firstSentence(hit.copywriting, 88);
@@ -253,8 +242,6 @@ export function optimizeEnrichedBlueprintForCover(
 export async function assertOptimizedCoverInputsFromDb(params: {
   userId: number;
   sceneId: string;
-  /** 使用次佳主標角度 + 管線強調划停，供「超高點擊率封面」扣費生成 */
-  highClickAlternate?: boolean;
 }): Promise<OptimizedCoverFromDb> {
   const database = await db.getDb();
   if (!database) {
@@ -319,7 +306,5 @@ export async function assertOptimizedCoverInputsFromDb(params: {
     );
   }
 
-  return optimizeEnrichedBlueprintForCover(hit, blueprintIndex, {
-    highClickAlternate: Boolean(params.highClickAlternate),
-  });
+  return optimizeEnrichedBlueprintForCover(hit, blueprintIndex);
 }

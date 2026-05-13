@@ -3780,10 +3780,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** 管理員／監管：單幀主生圖可選 Vertex Nano Banana 2（官方 API）；`nano_banana_pro` 為舊別名。普通帳戶傳入無效 */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
-          /**
-           * 超高點擊率封面：換主標角度 + 英文化強調划停；扣 {@link CREDIT_COSTS.platformTopicFrameHighCtr} 點（免費補發不重複扣）。
-           */
-          coverHighClickAppeal: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -3794,16 +3790,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
-        const wantsHighCtr = Boolean(input.coverHighClickAppeal);
-        if (wantsHighCtr && input.failedJobId) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "超高点击率封面需单独付费发起，不能与失败免费补发混用。",
-          });
-        }
-        const topicFramePaidCost = wantsHighCtr
-          ? CREDIT_COSTS.platformTopicFrameHighCtr
-          : CREDIT_COSTS.platformTopicFrameGraphic;
+        const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -3818,7 +3805,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
-            highClickAlternate: wantsHighCtr,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -3852,7 +3838,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 metadata: JSON.stringify({
                   sceneId: sid.length > 0 ? sid : null,
                   source: "generateTopicImage",
-                  coverHighClickAppeal: wantsHighCtr,
                 }),
               })
               .returning({ id: userCreations.id });
@@ -3906,16 +3891,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "PAYMENT_REQUIRED",
-                message: `Credits 不足，单帧${wantsHighCtr ? "·超高点击率封面" : ""}需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+                message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
               });
             }
             await deductCreditsAmount(
               userId,
               topicFramePaidCost,
-              wantsHighCtr ? "platformTopicFrameHighCtr" : "platformTopicImages",
-              wantsHighCtr
-                ? `平台竖版封面·超高点击率（${topicFramePaidCost}点）`
-                : `平台单帧参考重绘（${topicFramePaidCost}点）`,
+              "platformTopicImages",
+              `平台单帧参考重绘（${topicFramePaidCost}点）`,
             );
             await database
               .update(userCreations)
@@ -3927,16 +3910,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (creditsInfo.totalAvailable < topicFramePaidCost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，单帧${wantsHighCtr ? "·超高点击率封面" : ""}需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
           await deductCreditsAmount(
             userId,
             topicFramePaidCost,
-            wantsHighCtr ? "platformTopicFrameHighCtr" : "platformTopicImages",
-            wantsHighCtr
-              ? `平台竖版封面·超高点击率（${topicFramePaidCost}点）`
-              : `平台单帧参考重绘（${topicFramePaidCost}点）`,
+            "platformTopicImages",
+            `平台单帧参考重绘（${topicFramePaidCost}点）`,
           );
         }
 
@@ -3945,7 +3926,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           source: "generateTopicImage",
           isFreeRetry,
           parentFailedJobId: consumedParentId,
-          coverHighClickAppeal: wantsHighCtr,
         };
 
         if (database && creationIdOut != null) {
@@ -3976,7 +3956,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverPersonaContext: input.coverPersonaContext,
           sceneId: input.sceneId,
           appealHook: resolvedCover.appealHook,
-          highFeedCtrBoost: wantsHighCtr,
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
@@ -4001,7 +3980,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
-          coverHighClickAppeal: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4012,16 +3990,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
-        const wantsHighCtr = Boolean(input.coverHighClickAppeal);
-        if (wantsHighCtr && input.failedJobId) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "超高点击率封面需单独付费发起，不能与失败免费补发混用。",
-          });
-        }
-        const topicFramePaidCost = wantsHighCtr
-          ? CREDIT_COSTS.platformTopicFrameHighCtr
-          : CREDIT_COSTS.platformTopicFrameGraphic;
+        const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -4036,7 +4005,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
-            highClickAlternate: wantsHighCtr,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -4065,7 +4033,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 metadata: JSON.stringify({
                   sceneId: sid.length > 0 ? sid : null,
                   source: "generateTopicImage",
-                  coverHighClickAppeal: wantsHighCtr,
                 }),
               })
               .returning({ id: userCreations.id });
@@ -4119,16 +4086,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "PAYMENT_REQUIRED",
-                message: `Credits 不足，单帧${wantsHighCtr ? "·超高点击率封面" : ""}需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+                message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
               });
             }
             await deductCreditsAmount(
               userId,
               topicFramePaidCost,
-              wantsHighCtr ? "platformTopicFrameHighCtr" : "platformTopicImages",
-              wantsHighCtr
-                ? `平台竖版封面·超高点击率（${topicFramePaidCost}点）`
-                : `平台单帧参考重绘（${topicFramePaidCost}点）`,
+              "platformTopicImages",
+              `平台单帧参考重绘（${topicFramePaidCost}点）`,
             );
             await database
               .update(userCreations)
@@ -4140,16 +4105,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (creditsInfo.totalAvailable < topicFramePaidCost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，单帧${wantsHighCtr ? "·超高点击率封面" : ""}需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
           await deductCreditsAmount(
             userId,
             topicFramePaidCost,
-            wantsHighCtr ? "platformTopicFrameHighCtr" : "platformTopicImages",
-            wantsHighCtr
-              ? `平台竖版封面·超高点击率（${topicFramePaidCost}点）`
-              : `平台单帧参考重绘（${topicFramePaidCost}点）`,
+            "platformTopicImages",
+            `平台单帧参考重绘（${topicFramePaidCost}点）`,
           );
         }
 
@@ -4158,7 +4121,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           source: "generateTopicImage",
           isFreeRetry,
           parentFailedJobId: consumedParentId,
-          coverHighClickAppeal: wantsHighCtr,
         };
 
         if (database && creationIdOut != null) {
@@ -4197,7 +4159,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               coverPersonaContext: input.coverPersonaContext,
               sceneId: input.sceneId,
               appealHook: resolvedCover.appealHook,
-              highFeedCtrBoost: wantsHighCtr,
               imagePromptTranslator: "gpt54",
               isFreeRetry,
               newJobMetaBase,

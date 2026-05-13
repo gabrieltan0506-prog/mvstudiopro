@@ -502,13 +502,10 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   variant: "video" | "graphic";
   /** 出镜身份 / IP 基因（中文）；供 GPT 5.4 锁定人設与场景符号，避免仅由单条文案猜测导致漂移 */
   coverPersonaContext?: string;
-  /** 信息流超高点击向强化：英文化时额外强调划停、悬念与主标冲击 */
-  highFeedCtrBoost?: boolean;
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 500);
   const ctx = String(input.context || "").trim().slice(0, SCRIPT_SLICE);
   const personaRaw = String(input.coverPersonaContext || "").trim().slice(0, 2000);
-  const ctrBoost = Boolean(input.highFeedCtrBoost);
   const personaBlock =
     personaRaw.length > 0
       ? `
@@ -518,21 +515,6 @@ ${personaRaw}
 `.trim() + "\n\n"
       : "";
   const isVideo = input.variant === "video";
-  const ctrBoostBlock =
-    !ctrBoost
-      ? ""
-      : isVideo
-        ? `
-
-SHORT-VIDEO ULTRA-CTR BOOST（本任务专用）:
-- The **single hero frame** must read as an aggressive feed **scroll-stop** thumbnail for 「${hook}」—**one** photoreal editorial still: maximal tension/contrast plus **bold dominant+accent palette** (**razor-accent** wedges OK); **visually lively / creative hook** that sparks **curiosity in one glance**; **no** comic strip panels; icons/microcaptions OK if layered under the headline hierarchy.
-`.trim()
-        : `
-
-ULTRA-HIGH CTR COVER BOOST（本任务专用 · 超高点击率向）:
-- Treat this as a **maximum scroll-stop** cover: **vivid staging + creative novelty** landing a **curiosity tap** grounded in Context (no false clickbait); the hero title zone must punch with **bold contrast**.
-- **Push** readability + punch further than a standard premium cover: stronger asymmetry, color wedge, or symbol prop when it serves the hook.
-`.trim();
   return (
     `
 ${personaBlock}${
@@ -570,7 +552,6 @@ COVER DESIGN（軟邊界 · 单张竖版信息流封面）
 
 Context:
 ${ctx}
-${ctrBoostBlock ? `\n${ctrBoostBlock}\n` : ""}
 `.trim() +
     "\n\n" +
     PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER

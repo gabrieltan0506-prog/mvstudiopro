@@ -76,8 +76,6 @@ export type RunPlatformTopicImagePipelineInput = {
   sceneId?: string;
   /** 與 topicHook 同源的開場鉤子（簡中），供點擊率檔位估計 */
   appealHook?: string;
-  /** 強化划停與主標衝擊（與「超高點擊率封面」加購一致） */
-  highFeedCtrBoost?: boolean;
   /** @deprecated 封面單幀英文化**固定 GPT 5.4**；保留欄位僅兼容舊 job 入參，會被忽略。 */
   imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
@@ -190,7 +188,6 @@ export async function runPlatformTopicImagePipeline(
           context: (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000),
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
-          highFeedCtrBoost: Boolean(input.highFeedCtrBoost),
         });
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,

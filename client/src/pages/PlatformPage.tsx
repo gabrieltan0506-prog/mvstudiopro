@@ -1805,8 +1805,6 @@ export default function PlatformPage() {
       pollDebugLabel?: string;
       /** 管理員專用：Vertex Nano Banana 2 主生圖（官方 API） */
       coverProEngine?: "nano_banana_2";
-      /** 超高點擊率封面：換主標角度 + 划停向英文化；扣 {@link CREDIT_COSTS.platformTopicFrameHighCtr} 點 */
-      coverHighClickAppeal?: boolean;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
@@ -1817,7 +1815,6 @@ export default function PlatformPage() {
         coverPersonaContext: inp.coverPersonaContext,
         failedJobId: inp.failedJobId,
         sceneId: inp.sceneId,
-        coverHighClickAppeal: inp.coverHighClickAppeal,
         /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
         imagePromptTranslator: "gpt54",
         coverProEngine:
@@ -5650,61 +5647,6 @@ export default function PlatformPage() {
                             toast.error(err.message || "操作失败");
                           });
                       };
-                      const highCtrCoverCost = CREDIT_COSTS.platformTopicFrameHighCtr;
-                      const handleHighCtrCoverRegenerate = () => {
-                        if (!isAuthenticated) {
-                          toast.error("请先登录");
-                          return;
-                        }
-                        if (!String(item.id || "").trim()) {
-                          toast.error("选题缺少 ID，无法生成");
-                          return;
-                        }
-                        if (!(platformImageMap[item.id] || "").trim()) {
-                          toast.error("请先生成基础封面");
-                          return;
-                        }
-                        if (!supervisorAccess) {
-                          const note = `「超高点击率封面」将换主标角度并强化划停向视觉，消耗 ${highCtrCoverCost} 积分，是否继续？`;
-                          if (!window.confirm(note)) return;
-                        }
-                        setRegeneratingCoverSceneId(item.id);
-                        void runThrottledPlatformImageRequest(`high-ctr-cover:${item.id}`, () =>
-                          runEnqueueTopicImageAndPoll({
-                            topicHook: "",
-                            format: isGraphicCover ? "图文" : "短视频",
-                            coverPersonaContext:
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
-                            sceneId: item.id,
-                            coverHighClickAppeal: true,
-                            pollDebugLabel: `超高点击率封面 · ${item.id}`,
-                          }),
-                        )
-                          .then((res) => {
-                            const finalUrl =
-                              res.imageUrl ?? (res as { url?: string | null }).url ?? null;
-                            if (res.creationId != null) {
-                              setSceneJobIds((prev) => ({
-                                ...prev,
-                                [item.id]: String(res.creationId),
-                              }));
-                            }
-                            if (res.success && finalUrl) {
-                              setPlatformImageMap((prev) => ({
-                                ...prev,
-                                [item.id]: finalUrl,
-                              }));
-                              toast.success("超高点击率封面已更新");
-                            } else {
-                              toast.error("超高点击率封面生成失败，可稍后重试。");
-                            }
-                            setRegeneratingCoverSceneId(null);
-                          })
-                          .catch((err) => {
-                            setRegeneratingCoverSceneId(null);
-                            toast.error(err.message || "操作失败");
-                          });
-                      };
                       const queueSilentImageLoadRetry = () => {
                         if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
                         if (!String(item.id || "").trim()) return;
@@ -5909,24 +5851,6 @@ export default function PlatformPage() {
                                       {platformCoverCtrBySceneId[item.id]!.labelZh}
                                     </span>
                                     <span className="text-[10px] text-gray-500">规则估计 · 非实测</span>
-                                    <button
-                                      type="button"
-                                      disabled={
-                                        !isAuthenticated ||
-                                        isSequentialCoverBatchGenerating ||
-                                        isSequentialCompositeBatchGenerating ||
-                                        regeneratingCoverSceneId !== null ||
-                                        compositeMutationBusy ||
-                                        isDashboardLoading ||
-                                        isContentLoading
-                                      }
-                                      onClick={handleHighCtrCoverRegenerate}
-                                      className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#fbbf24]/45 bg-[#fbbf24]/12 px-2.5 py-1 text-[11px] font-bold text-[#fde68a] transition hover:bg-[#fbbf24]/22 disabled:opacity-50"
-                                      title={`换主标角度 + 划停向极限强化 · ${highCtrCoverCost} 积分`}
-                                    >
-                                      <TrendingUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
-                                      生成超高点击率封面 · {highCtrCoverCost}点
-                                    </button>
                                   </div>
                                 ) : null}
                                 <div className="flex items-center justify-between p-2 px-3">

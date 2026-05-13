@@ -1064,7 +1064,6 @@ async function processPlatformJob(
       const newJobMetaBase =
         meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
       let fmt = params.format;
-      const wantsHighCtr = Boolean(newJobMetaBase.coverHighClickAppeal);
       const uidNum = jobUserId != null ? Number(jobUserId) : NaN;
       const sceneIdRaw = typeof params.sceneId === "string" ? params.sceneId.trim() : "";
       if (!sceneIdRaw) {
@@ -1084,7 +1083,6 @@ async function processPlatformJob(
         const resolved = await assertOptimizedCoverInputsFromDb({
           userId: uidNum,
           sceneId: sceneIdRaw,
-          highClickAlternate: wantsHighCtr,
         });
         topicHook = resolved.topicHook;
         contextRaw = resolved.context;
@@ -1113,7 +1111,6 @@ async function processPlatformJob(
         coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
         sceneId: typeof params.sceneId === "string" ? params.sceneId : undefined,
         appealHook: appealHookOut,
-        highFeedCtrBoost: wantsHighCtr,
         imagePromptTranslator: "gpt54",
         creationIdOut,
         isFreeRetry: Boolean(params.isFreeRetry),
