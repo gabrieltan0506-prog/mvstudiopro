@@ -3348,24 +3348,14 @@ export const appRouter = router({
     }),
 
     /**
-     * 解锁并生成个性化战略地图：
-     * - **决策轨（本地）**：{@link buildSimulatedAdvancedAIReport} 锁数字壳与指标形态；
-     * - **扩写轨（并行）**：双路 Gemini Flash 扩写核心洞察 + 赛马/选题结构（{@link runGeminiFlashPipeline}）；
-     * - **Deep Research 轨**：不在此 mutation 内跑整段战略智库 Deep Research（成本/时延与 150～200 点定价不匹配）；
-     *   竞品式深研已接在「超高点击率封面」管线（{@link runCoverCompetitorDeepResearchBrief}）。
-     * 缓存命中免扣点；Flash 双路皆失败不扣点。
+     * 解锁并生成个性化战略地图：本地数字壳 + 并行 Gemini Flash 扩写；缓存命中免扣点；
+     * 双轨 Flash 皆失败不扣点；成功后才扣点并写入 user_creations。
      */
     generateDecisionIntelligenceReport: protectedProcedure
       .input(
         z.object({
           topic: z.string().max(160).optional(),
-          /** 平台页已生成的战略看板/文案骨架（与 strategicMapContext 会合并） */
           contentBlueprint: z.unknown().optional(),
-          /**
-           * 可选：全景战略图核心快照（Gemini 建议命名）；与 contentBlueprint 合并后进入指纹与 Flash 提示词。
-           * 仅传其一也可，后端会写入统一 blueprint。
-           */
-          strategicMapContext: z.unknown().optional(),
           platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
           dateRange: z.string().max(120).optional(),
           windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
@@ -3408,33 +3398,13 @@ export const appRouter = router({
           `${new Date(now.getTime() - windowDays * 864e5).toLocaleDateString("zh-CN")} — ${now.toLocaleDateString("zh-CN")}`;
         const topic = (input.topic || "").trim() || "个性化战略选题";
         const platformHint = input.platformHint ?? "douyin";
-        const defaultBlueprint = {
-          summary: topic,
-          source: "platform_strategic_map",
-          userId: ctx.user.id,
-        } as Record<string, unknown>;
-        const rawBlueprint = input.contentBlueprint;
-        let contentBlueprint: unknown =
-          rawBlueprint ??
-          defaultBlueprint;
-        if (input.strategicMapContext !== undefined) {
-          if (
-            contentBlueprint &&
-            typeof contentBlueprint === "object" &&
-            !Array.isArray(contentBlueprint)
-          ) {
-            contentBlueprint = {
-              ...(contentBlueprint as Record<string, unknown>),
-              strategicMapContext: input.strategicMapContext,
-            };
-          } else {
-            contentBlueprint = {
-              ...defaultBlueprint,
-              embeddedLegacyBlueprint: rawBlueprint,
-              strategicMapContext: input.strategicMapContext,
-            };
-          }
-        }
+        const contentBlueprint =
+          input.contentBlueprint ??
+          ({
+            summary: topic,
+            source: "platform_strategic_map",
+            userId: ctx.user.id,
+          } as Record<string, unknown>);
 
         const requestHash = hashDecisionIntelligenceRequest({
           topic,

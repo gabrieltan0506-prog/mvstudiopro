@@ -57,27 +57,6 @@ function parseGrowthPercentString(growth: string): number | null {
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-/** 條形區：熱門／正增長；其餘改為上方文字摘要 */
-function splitTrackGrowthForChart(
-  rows: NonNullable<VisualReportData["trackGrowth"]>,
-): { chart: typeof rows; summary: typeof rows } {
-  const growthNum = (t: (typeof rows)[number]) => parseGrowthPercentString(safeTxt(t.growth));
-  const isCold = (t: (typeof rows)[number]) => {
-    const n = growthNum(t);
-    return t.isHot === false || (n != null && n < 0);
-  };
-  let chart = rows.filter((t) => !isCold(t));
-  if (chart.length === 0 && rows.length > 0) {
-    chart = [...rows]
-      .filter((t) => (growthNum(t) ?? 0) > 0)
-      .sort((a, b) => (growthNum(b) ?? 0) - (growthNum(a) ?? 0))
-      .slice(0, 8);
-  }
-  const chartSet = new Set(chart);
-  const summary = rows.filter((t) => !chartSet.has(t));
-  return { chart, summary };
-}
-
 export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
   function VisualReportTemplate({ data }, ref) {
     const isDark = data.theme === "dark";
@@ -206,76 +185,38 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
 
               {/* Track growth */}
-              {(data.trackGrowth?.length || 0) > 0 &&
-                (() => {
-                  const rows = data.trackGrowth || [];
-                  const { chart, summary } = splitTrackGrowthForChart(rows);
-                  const chartNums = chart.map((t) => Math.max(0, parseGrowthPercentString(safeTxt(t.growth)) ?? 0));
-                  const maxN = Math.max(...chartNums, 1);
-                  const formatValueTxt = (gStr: string, parsed: number | null): string => {
-                    if (parsed != null) return parsed >= 0 ? `+${parsed}%` : `${parsed}%`;
-                    const t = gStr.trim();
-                    return /%/.test(t) ? t : `${t}%`;
-                  };
-                  return (
-                    <div style={card()}>
-                      <div style={ct(C[4])}><div style={dot(C[4])} />赛道爆款增长率排行</div>
-                      {summary.length > 0 ? (
-                        <div
-                          style={{
-                            fontSize: "11px",
-                            color: muted,
-                            lineHeight: 1.65,
-                            marginBottom: "12px",
-                            padding: "10px 12px",
-                            borderRadius: "8px",
-                            background: isDark ? "rgba(255,255,255,0.04)" : "rgba(80,40,120,0.06)",
-                            border: `1px solid ${border}`,
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          <span style={{ color: txt, fontWeight: 700 }}>其余赛道（未纳入条形榜）：</span>
-                          {summary.map((t, si) => {
-                            const nm = safeTxt(t.name || t);
-                            const gStr = safeTxt(t.growth || "");
-                            const p = parseGrowthPercentString(gStr);
-                            const pct = formatValueTxt(gStr, p);
-                            return (
-                              <span key={si}>
-                                {si > 0 ? "、" : " "}
-                                {nm}（{pct}）
-                              </span>
-                            );
-                          })}
-                          <span>。以下仅列出当前更值得跟进的增量赛道。</span>
-                        </div>
-                      ) : null}
-                      {chart.map((t, i) => {
-                        const color = C[i % C.length];
-                        const gStr = safeTxt(t.growth || "");
-                        const parsed = parseGrowthPercentString(gStr);
-                        const valueTxt = formatValueTxt(gStr, parsed);
-                        const nForBar = Math.max(0, parsed ?? 0);
-                        const fillPct =
-                          parsed != null && maxN > 0
-                            ? Math.min(100, Math.max(10, Math.round(10 + (nForBar / maxN) * 90)))
-                            : Math.max(12, 100 - i * 14);
-                        return (
-                          <React.Fragment key={`${safeTxt(t.name)}-${i}`}>
-                            {barRow(
-                              safeTxt(t.name || t),
-                              fillPct,
-                              color,
-                              valueTxt,
-                              t.isHot ? "热" : undefined,
-                              t.isHot ? { bg: "#3a0e2a", color: "#ff4fb8" } : undefined,
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
+              {(data.trackGrowth?.length || 0) > 0 && (
+                <div style={card()}>
+                  <div style={ct(C[4])}><div style={dot(C[4])} />赛道爆款增长率排行</div>
+                  {(data.trackGrowth || []).map((t, i) => {
+                    const color = C[i % C.length];
+                    const gStr = safeTxt(t.growth || "");
+                    const parsed = parseGrowthPercentString(gStr);
+                    let fillPct: number;
+                    let valueTxt: string;
+                    const isNeg = parsed != null && parsed < 0;
+                    if (isNeg) {
+                      fillPct = 10;
+                      valueTxt = /%/.test(gStr) ? gStr.trim() : `${parsed}%`;
+                    } else if (parsed != null) {
+                      const clamped = Math.min(100, Math.max(8, parsed));
+                      fillPct = clamped;
+                      valueTxt = `+${clamped}%`;
+                    } else {
+                      fillPct = Math.max(10, 100 - i * 12);
+                      valueTxt = `+${fillPct}%`;
+                    }
+                    return barRow(
+                      safeTxt(t.name || t),
+                      isNeg ? 10 : fillPct,
+                      isNeg ? muted : color,
+                      valueTxt,
+                      t.isHot ? "热" : undefined,
+                      t.isHot ? { bg: "#3a0e2a", color: "#ff4fb8" } : undefined
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Audiences & Biz */}
               {(data.audiencesAndBiz?.length || 0) > 0 && (
