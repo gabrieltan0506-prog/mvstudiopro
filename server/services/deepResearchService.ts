@@ -842,42 +842,6 @@ ${feedback.trim()}`
   }
 }
 
-/** Deep Research Pro 封面短研：寫進 imageGenFlowLog 用的單行摘要（Debug 面板對齊 Google 錯誤欄位） */
-function coverDrSnippetFromParsedJson(parsed: Record<string, unknown>, rawFallback: string): string {
-  const er = parsed?.error;
-  if (er && typeof er === "object") {
-    const o = er as Record<string, unknown>;
-    const code = o.code != null ? String(o.code) : "-";
-    const msg =
-      typeof o.message === "string" ? o.message.replace(/\s+/g, " ").trim().slice(0, 280) : "";
-    if (msg) return `apiCode=${code} apiMsg=${msg}`;
-  }
-  return rawFallback.replace(/\s+/g, " ").slice(0, 280).trim();
-}
-
-function coverDrOneLineDeepResearchApiError(err: DeepResearchApiError): string {
-  const apiMsg =
-    typeof err.apiErrorMessage === "string"
-      ? err.apiErrorMessage.replace(/\s+/g, " ").trim().slice(0, 240)
-      : "";
-  const bits = [
-    `stage=${err.stage}`,
-    err.httpStatus != null ? `http=${err.httpStatus}` : "",
-    err.apiErrorCode ? `apiCode=${err.apiErrorCode}` : "",
-    apiMsg ? `apiMsg=${apiMsg}` : "",
-    err.interactionId ? `interactionId=${String(err.interactionId).slice(0, 64)}` : "",
-  ].filter(Boolean);
-  const line = bits.join(" · ");
-  if (
-    line.replace(/stage=[^·]+/, "").trim().length < 24 &&
-    typeof err.rawBody === "string" &&
-    err.rawBody.length > 0
-  ) {
-    return `${line} body节选=${err.rawBody.replace(/\s+/g, " ").slice(0, 140)}`;
-  }
-  return line || err.message.replace(/\s+/g, " ").slice(0, 300);
-}
-
 /**
  * 超高点击率封面：Deep Research Pro（与本文件 {@link DEEP_RESEARCH_MODEL} 相同，即 Interactions `agent`），
  * `collaborative_planning: false` 单轮检索+推理，产出短程竞品清洗简报。
@@ -976,7 +940,7 @@ ${context}
   let interactionId = "";
   try {
     params.flowLog.push(
-      `${new Date().toISOString()}  [Deep Research Pro] 【步骤2/发起POST】创建竞品清洗 interaction POST ${INTERACTIONS_BASE} · agent=${resolvedCoverAgent} · 本地轮询上限约 ${Math.round(maxPollMs / 60_000)} 分钟`,
+      `${new Date().toISOString()}  [Deep Research Pro] 提交竞品清洗（agent=${resolvedCoverAgent} · 本地轮询上限约 ${Math.round(maxPollMs / 60_000)} 分钟）…`,
     );
     await flushProgressLines();
 
@@ -1003,27 +967,19 @@ ${context}
       /* ignore */
     }
     if (!createRes.ok) {
-      const detail = coverDrSnippetFromParsedJson(createJson, rawCreate);
       console.warn(`[coverDeepResearch] create HTTP ${createRes.status}: ${rawCreate.slice(0, 500)}`);
       params.flowLog.push(
-        `${new Date().toISOString()}  [Deep Research Pro] 【步骤2/发起POST失败】HTTP ${createRes.status} agent=${resolvedCoverAgent} · ${detail} · 回退原语境`,
+        `${new Date().toISOString()}  [Deep Research Pro] 提交失败 HTTP ${createRes.status}，回退原语境`,
       );
-      await flushProgressLines();
       return null;
     }
     const idRaw = createJson?.id;
     interactionId = typeof idRaw === "string" ? idRaw : "";
     if (!interactionId) {
-      const detail = coverDrSnippetFromParsedJson(createJson, rawCreate);
-      params.flowLog.push(
-        `${new Date().toISOString()}  [Deep Research Pro] 【步骤3/解析ID失败】响应无 interactionId · ${detail} · 回退原语境`,
-      );
-      await flushProgressLines();
+      params.flowLog.push(`${new Date().toISOString()}  [Deep Research Pro] 未返回 interactionId，回退原语境`);
       return null;
     }
-    params.flowLog.push(
-      `${new Date().toISOString()}  [Deep Research Pro] 【步骤3/已获ID】interactionId=${interactionId}`,
-    );
+    params.flowLog.push(`${new Date().toISOString()}  [Deep Research Pro] 已创建 interaction=${interactionId}`);
   } finally {
     release();
   }
@@ -1036,7 +992,7 @@ ${context}
       undefined,
       async (elapsedSec, maxSecArg) => {
         params.flowLog.push(
-          `${new Date().toISOString()}  [Deep Research Pro] 【步骤4/轮询中】竞品清洗 in_progress · ${elapsedSec}s / ${maxSecArg}s`,
+          `${new Date().toISOString()}  [Deep Research Pro] 竞品清洗进行中 · ${elapsedSec}s / ${maxSecArg}s`,
         );
         await flushProgressLines();
       },
@@ -1046,25 +1002,20 @@ ${context}
     const minChars = 200;
     if (!text || text.length < minChars) {
       params.flowLog.push(
-        `${new Date().toISOString()}  [Deep Research Pro] 【步骤5/正文不合格】Markdown 正文过短 ${text.length} 字（需≥${minChars}） · 回退原语境`,
+        `${new Date().toISOString()}  [Deep Research Pro] 输出过短（${text.length} 字），回退原语境`,
       );
-      await flushProgressLines();
       return null;
     }
     const sanitized = sanitizeMarkdown(text);
     params.flowLog.push(
-      `${new Date().toISOString()}  [Deep Research Pro] 【步骤5/完成】竞品清洗完成 · ${sanitized.length} 字（已注入后续英文化语境）`,
+      `${new Date().toISOString()}  [Deep Research Pro] 竞品清洗完成 · ${sanitized.length} 字（已注入后续英文化语境）`,
     );
     await flushProgressLines();
     return sanitized;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[coverDeepResearch] brief failed: ${msg}`);
-    const detail =
-      e instanceof DeepResearchApiError ? coverDrOneLineDeepResearchApiError(e) : msg.replace(/\s+/g, " ").slice(0, 380);
-    params.flowLog.push(
-      `${new Date().toISOString()}  [Deep Research Pro] 【步骤4/轮询或Agent失败】${detail} · 回退原语境`,
-    );
+    params.flowLog.push(`${new Date().toISOString()}  [Deep Research Pro] 失败：${msg.slice(0, 220)} · 回退原语境`);
     await flushProgressLines();
     return null;
   }
