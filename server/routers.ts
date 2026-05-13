@@ -8759,9 +8759,8 @@ ${input.blockText}`;
         const { withLedgerRefundOnFailure } = await import("./services/paidJobLedger");
         const ledgerJobId = `cr_${Date.now()}_${nanoid(6)}`;
         let strategy: any = null;
-        let pipelineDebug: import("../shared/researchPipelineDebugMarker.js").ResearchPipelineDebugStep[] = [];
         try {
-          const outcome = await withLedgerRefundOnFailure(
+          strategy = await withLedgerRefundOnFailure(
             {
               jobId: ledgerJobId,
               taskType: "competitorResearch",
@@ -8772,12 +8771,14 @@ ${input.blockText}`;
               metadata: { platform: input.platform },
             },
             async () => {
-              const { runResearch } = await import("./services/researchService");
-              return await runResearch(String(userId), String(input.platform), input.competitorData);
+              const { runResearch } = await import("./services/researchService.js");
+              const strategy = await runResearch(String(userId), String(input.platform), input.competitorData);
+              return {
+                strategy,
+                pipelineDebug: [] as import("../shared/researchPipelineDebugMarker.js").ResearchPipelineDebugStep[],
+              };
             },
           );
-          strategy = outcome.strategy;
-          pipelineDebug = outcome.pipelineDebug;
         } catch (e: any) {
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已退还至您的账户" });
         }
@@ -8808,7 +8809,7 @@ ${input.blockText}`;
           console.error("[competitorResearch] Neon 快照存储失败（non-fatal）:", e?.message);
         }
 
-        return { ok: true as const, strategy, creditsUsed: deductResult.source === "admin" ? 0 : COST, pipelineDebug };
+        return { ok: true as const, strategy, creditsUsed: deductResult.source === "admin" ? 0 : COST };
       }),
   }),
 
