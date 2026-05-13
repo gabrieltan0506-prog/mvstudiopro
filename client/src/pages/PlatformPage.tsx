@@ -283,33 +283,6 @@ type ClientJobPollTrace = {
   currentStep?: string;
 };
 
-function formatStage2PollStepLine(
-  status: "queued" | "running" | "succeeded" | "failed",
-  attempt: number,
-  output?: Record<string, unknown>,
-): string {
-  if (status === "queued") return "排队中";
-  const dbg = output?.debug;
-  if (dbg && typeof dbg === "object" && !Array.isArray(dbg)) {
-    const bp = (dbg as Record<string, unknown>).buildPlatformContent;
-    if (bp && typeof bp === "object" && !Array.isArray(bp)) {
-      const sub = (bp as { stage2SubSteps?: { id: string; title: string; status: string }[] }).stage2SubSteps;
-      if (Array.isArray(sub) && sub.length > 0) {
-        const active = sub.find((s) => /running|in_progress|pending|working/i.test(String(s.status || "")));
-        if (active) return `当前：${active.id} ${active.title}`;
-        const last = sub[sub.length - 1];
-        if (last) return `当前：${last.id} ${last.title}（${last.status}）`;
-      }
-    }
-  }
-  if (status === "running") {
-    if (attempt < 12) return "后台生成專屬文案（撰寫與校對）…";
-    if (attempt < 28) return "內容較長，後台仍在處理…";
-    return "已等待較久，後台仍在處理…";
-  }
-  return "处理中…";
-}
-
 function pickActiveStage2SubStepOneLine(contentDebug: Record<string, unknown> | null | undefined): string | null {
   const bp = contentDebug?.buildPlatformContent as
     | { stage2SubSteps?: { id: string; title: string; status: string }[] }
@@ -898,7 +871,7 @@ function buildCompositeImageGenPendingLines(input: {
     `${ts}  [客户端] 翻译引擎：${trLine}`,
     ...(pid.length >= 8
       ? [
-          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s 拉取一次状态 · 仅展示「当前步骤」一行`,
+          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s 拉取 GET 计数；細節不寫進「Fly Jobs」面板`,
         ]
       : [`${ts}  [提示] 未带 progressJobId，无法实时轮询步骤`]),
   ];
@@ -908,8 +881,8 @@ function buildCompositeImageGenPendingLines(input: {
  * 從輪詢或響應合併後的 snapshot 文案推測進度標籤，減少用戶以為「卡住」。
  * （僅為 UX 輔助；細節仍以下方 Debug imageGenFlowLog 為準）
  */
-function deriveCompositeUxPhaseHint(snapshotLines: readonly string[]): string {
-  const tail = snapshotLines.length ? snapshotLines.slice(-48).join("\n") : "";
+function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServerTail = ""): string {
+  const tail = `${liveServerTail}\n${snapshotLines.length ? snapshotLines.slice(-48).join("\n") : ""}`;
   if (/整链(?:重试|[\s\S]*?\d+\/\d+\s*次失败)/i.test(tail) || /\b第\s*\d+\/\d+\s*次失败/.test(tail)) {
     return "整链重试：重新英文化 + 生图，可能仍需数分钟…";
   }
@@ -1336,8 +1309,8 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
-  /** 輪詢時累加已展示的 jobs.output.imageGenFlowLog 條數，避免重複刷同一批 */
-  const topicImagePollFlowLogCursorRef = useRef(0);
+  /** Debug：2×4 分镜 / 八格图文 合成 job 的輪詢次數（progressJobId） */
+  const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
@@ -1388,8 +1361,11 @@ export default function PlatformPage() {
     jobId: string;
     localOpId: string;
     sceneId: string;
+    title: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
+  /** 與 GET /api/jobs 合成輪詢同步的計數（僅用於 Debug 面板，不刷整條 imageGenFlowLog） */
+  const compositeLivePollAttemptRef = useRef(0);
   /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
@@ -1403,7 +1379,10 @@ export default function PlatformPage() {
       const sid = String(snap.meta?.sceneId ?? "").trim();
       const apiKind = String(snap.meta?.apiKind ?? "").trim();
       if (!sid || !apiKind) continue;
-      map[`${sid}::${apiKind}`] = deriveCompositeUxPhaseHint(snap.lines);
+      map[`${sid}::${apiKind}`] = deriveCompositeUxPhaseHint(
+        snap.lines,
+        String(snap.meta?.liveCompositeFlowTail ?? ""),
+      );
     }
     return map;
   }, [platformImageGenFlowSnapshots]);
@@ -1460,9 +1439,10 @@ export default function PlatformPage() {
       adaptiveBackoffAfterAttempts: 36,
       maxIntervalMs: 8000,
       onPoll: ({ attempt, status, output }) => {
-        const stepLine = formatStage2PollStepLine(status, attempt, output);
         setContentJobPollTrace((prev) =>
-          prev && prev.jobId === jobId ? { ...prev, pollCount: attempt, currentStep: stepLine } : prev,
+          prev && prev.jobId === jobId
+            ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次` }
+            : prev,
         );
         if (status === "queued") {
           setContentLoadingText("任務排隊中，請稍候…");
@@ -1742,7 +1722,9 @@ export default function PlatformPage() {
   );
 
   const flyJobsPollDebugPanel = useMemo(() => {
-    const traces = [contentJobPollTrace, topicImageJobPollTrace].filter(Boolean) as ClientJobPollTrace[];
+    const traces = [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace].filter(
+      Boolean,
+    ) as ClientJobPollTrace[];
     if (traces.length === 0) return null;
 
     const totalPolls = traces.reduce((sum, t) => sum + t.pollCount, 0);
@@ -1761,22 +1743,14 @@ export default function PlatformPage() {
       })
       .join("  ·  ");
 
-    const stepText = traces
-      .map((t) => (t.currentStep ? `${t.label}：${t.currentStep}` : null))
-      .filter(Boolean)
-      .join(" ｜ ");
-
     return (
       <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.05)] p-4">
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">Fly Jobs · 轮询</div>
         <p className="mt-2 text-[11px] leading-relaxed text-[#d7d0ef]">
           合计轮询 <span className="font-semibold text-white tabular-nums">{totalPolls}</span> 次
-          <span className="text-gray-500"> · 多任务累加，同一面板内随 GET 更新</span>
+          <span className="text-gray-500"> · Stage 2 文案／封面／2×4 合成各一行；細節只留在失敗時的展開區</span>
         </p>
         <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">{overviewText}</p>
-        {stepText ? (
-          <p className="mt-1.5 break-words text-[10px] leading-relaxed text-gray-300">当前步骤：{stepText}</p>
-        ) : null}
         {showFailureLog ? (
           <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
             {traces
@@ -1787,7 +1761,7 @@ export default function PlatformPage() {
         ) : null}
       </div>
     );
-  }, [contentJobPollTrace, topicImageJobPollTrace]);
+  }, [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
 
@@ -1827,31 +1801,17 @@ export default function PlatformPage() {
         pollCount: 0,
         currentStep: "已入队…",
       });
-      topicImagePollFlowLogCursorRef.current = 0;
       let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
       try {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
           maxWaitMs: 18 * 60_000,
-          onPoll: ({ attempt, status, output }) => {
-            const flowRaw = output?.imageGenFlowLog;
-            let lastNew = "";
-            if (Array.isArray(flowRaw)) {
-              const flow = flowRaw as string[];
-              const start = topicImagePollFlowLogCursorRef.current;
-              if (flow.length > start) {
-                topicImagePollFlowLogCursorRef.current = flow.length;
-                lastNew = String(flow[flow.length - 1] ?? "");
-              }
-            }
-            setTopicImageJobPollTrace((prev) => {
-              if (!prev || prev.jobId !== jobId) return prev;
-              const step =
-                lastNew ||
-                prev.currentStep ||
-                (status === "queued" ? "排队中" : status === "running" ? "生图中…" : "处理中…");
-              return { ...prev, pollCount: attempt, currentStep: step };
-            });
+          onPoll: ({ attempt }) => {
+            setTopicImageJobPollTrace((prev) =>
+              prev && prev.jobId === jobId
+                ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次` }
+                : prev,
+            );
           },
         });
       } catch (err) {
@@ -2231,10 +2191,30 @@ export default function PlatformPage() {
       setPendingCompositeSheet({ sceneId: input.sceneId, kind: input.kind });
       const localOpId = `composite-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const pid = String(input.progressJobId ?? "").trim();
+      compositeLivePollAttemptRef.current = 0;
       compositeSheetLivePollCtxRef.current =
         pid.length >= 8
-          ? { jobId: pid, localOpId, sceneId: input.sceneId, kind: input.kind }
+          ? {
+              jobId: pid,
+              localOpId,
+              sceneId: input.sceneId,
+              title: input.title ?? "",
+              kind: input.kind,
+            }
           : null;
+      const compositeDbgLabel =
+        input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
+      if (pid.length >= 8) {
+        setCompositeJobPollTrace({
+          jobId: pid,
+          label: compositeDbgLabel,
+          lines: [],
+          pollCount: 0,
+          currentStep: "已入队…",
+        });
+      } else {
+        setCompositeJobPollTrace(null);
+      }
       setPlatformImageGenFlowSnapshots((prev) =>
         upsertPlatformImageFlowSnapshot(prev, {
           at: new Date().toISOString(),
@@ -2337,6 +2317,7 @@ export default function PlatformPage() {
     onSettled: () => {
       setPendingCompositeSheet(null);
       compositeSheetLivePollCtxRef.current = null;
+      setCompositeJobPollTrace(null);
     },
   });
 
@@ -2490,28 +2471,54 @@ export default function PlatformPage() {
       if (cancelled) return;
       try {
         const j = await getJob(ctx.jobId);
+        compositeLivePollAttemptRef.current += 1;
+        const n = compositeLivePollAttemptRef.current;
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
         const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
         const ts = new Date().toISOString();
         const last = log.length > 0 ? String(log[log.length - 1]) : "";
-        const lines: string[] = [
-          `${ts}  [实时进度] status=${j.status} · sceneId=${ctx.sceneId}`,
-          `${ts}  [当前步骤] ${last || "（等待服务端流水）"}`,
-        ];
-        setPlatformImageGenFlowSnapshots((prev) =>
-          upsertPlatformImageFlowSnapshot(prev, {
+
+        setCompositeJobPollTrace((prev) => {
+          if (!prev || prev.jobId !== ctx.jobId) return prev;
+          return { ...prev, pollCount: n, currentStep: `轮询 · ${n} 次` };
+        });
+
+        setPlatformImageGenFlowSnapshots((prev) => {
+          const opId = ctx.localOpId;
+          const existing = prev.find(
+            (p) => String(p.meta?.localOpId || "").trim() === opId && p.kind === "composite_2x4",
+          );
+          const kept =
+            existing?.lines?.filter((ln) => !/\[实时进度\] HTTP \d+ 次 · status=/.test(ln)) ?? [];
+          const baseLines =
+            kept.length > 0
+              ? kept
+              : buildCompositeImageGenPendingLines({
+                  kind: ctx.kind,
+                  sceneId: ctx.sceneId,
+                  title: (ctx.title || "（未命名）").slice(0, 240),
+                  progressJobId: ctx.jobId,
+                });
+          const lines = [...baseLines, `${ts}  [实时进度] HTTP ${n} 次 · status=${j.status}`];
+          const priorMeta =
+            existing?.meta && typeof existing.meta === "object" ? { ...existing.meta } : {};
+          return upsertPlatformImageFlowSnapshot(prev, {
             at: ts,
             kind: "composite_2x4",
             lines,
             meta: {
-              localOpId: ctx.localOpId,
+              ...priorMeta,
+              localOpId: opId,
               apiKind: ctx.kind,
               sceneId: ctx.sceneId,
+              title: ctx.title.slice(0, 80),
               pending: true,
               liveProgressJobId: ctx.jobId,
+              liveCompositeFlowTail: last,
+              serverFlowLogEntries: log.length,
             },
-          }),
-        );
+          });
+        });
       } catch {
         /* 下一拍重试 */
       }
@@ -3709,8 +3716,8 @@ export default function PlatformPage() {
     setCoverSilentRetryIds(() => new Set());
     setBatchGeneratingCoverIds(() => new Set());
     setIsSequentialCoverBatchGenerating(false);
-    topicImagePollFlowLogCursorRef.current = 0;
     setTopicImageJobPollTrace(null);
+    setCompositeJobPollTrace(null);
     coverImageCacheBustTriedRef.current = new Set();
 
     void trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport.invalidate();
