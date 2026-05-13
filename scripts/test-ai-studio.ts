@@ -30,7 +30,7 @@ async function runTest() {
 
   try {
     console.log("⏳ 执行小红书竞品调研（含平台数据库注入）...\n");
-    const result = await runResearch("test-user-001", "xiaohongshu", dummyContent);
+    const { strategy: result } = await runResearch("test-user-001", "xiaohongshu", dummyContent);
 
     console.log("✅ 调研成功！输出字段：", Object.keys(result).join(", "));
     console.log("─".repeat(50));

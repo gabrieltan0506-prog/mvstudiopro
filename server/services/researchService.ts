@@ -5,10 +5,26 @@
  */
 import fs from "fs/promises";
 import path from "path";
+import type { ResearchPipelineDebugStep } from "../../shared/researchPipelineDebugMarker.js";
+import { RESEARCH_PIPELINE_DEBUG_MARKER } from "../../shared/researchPipelineDebugMarker.js";
 import { readTrendStoreForPlatforms } from "../growth/trendStore";
 
 const BACKUP_DIR = "/data/growth/research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function pushPipelineStep(
+  steps: ResearchPipelineDebugStep[],
+  phase: string,
+  status: ResearchPipelineDebugStep["status"],
+  detail?: string,
+) {
+  steps.push({ at: new Date().toISOString(), phase, status, detail });
+}
+
+function throwWithResearchPipeline(err: unknown, steps: ResearchPipelineDebugStep[]): never {
+  const base = err instanceof Error ? err.message : String(err);
+  throw new Error(`${base}${RESEARCH_PIPELINE_DEBUG_MARKER}${JSON.stringify(steps)}`);
+}
 
 /**
  * 调用生成模型：
@@ -163,25 +179,60 @@ ${titleList}
  */
 const MAX_CONTENT_CHARS = 5000;
 
+export type ResearchRunOutcome = {
+  strategy: ResearchStrategy;
+  pipelineDebug: ResearchPipelineDebugStep[];
+};
+
 export async function runResearch(
   userId: string,
   platform: string,
   competitorData: string,
-): Promise<ResearchStrategy> {
+): Promise<ResearchRunOutcome> {
+  const pipelineDebug: ResearchPipelineDebugStep[] = [];
+  pushPipelineStep(
+    pipelineDebug,
+    "0·环境",
+    "ok",
+    "Vertex Stage1=gemma-4-31b-it · fallback/Stage2=gemini-3.1-pro（Vertex）",
+  );
+
   if (competitorData.length > MAX_CONTENT_CHARS) {
-    throw new Error(`字数超过 ${MAX_CONTENT_CHARS} 字限制（当前 ${competitorData.length} 字），请精简后再试`);
+    pushPipelineStep(
+      pipelineDebug,
+      "校验输入长度",
+      "fail",
+      `${competitorData.length} 字 > ${MAX_CONTENT_CHARS}`,
+    );
+    throwWithResearchPipeline(
+      new Error(`字数超过 ${MAX_CONTENT_CHARS} 字限制（当前 ${competitorData.length} 字），请精简后再试`),
+      pipelineDebug,
+    );
   }
   const label = PLATFORM_LABEL[platform] || platform;
 
-  // 并行：读取平台实时数据库上下文
+  pushPipelineStep(pipelineDebug, "1·读取平台热点库", "start", label);
   console.log(`[researchService] 读取 ${label} 平台数据库...`);
-  const platformContext = await buildPlatformContext(platform);
-  if (platformContext) {
-    console.log(`[researchService] 平台背景注入成功，数据长度: ${platformContext.length}`);
+  let platformContext = "";
+  try {
+    platformContext = await buildPlatformContext(platform);
+    pushPipelineStep(
+      pipelineDebug,
+      "1·读取平台热点库",
+      "ok",
+      platformContext ? `注入背景 ${platformContext.length} 字` : "无热点数据（继续）",
+    );
+    if (platformContext) {
+      console.log(`[researchService] 平台背景注入成功，数据长度: ${platformContext.length}`);
+    }
+  } catch (err: unknown) {
+    pushPipelineStep(pipelineDebug, "1·读取平台热点库", "warn", String((err as any)?.message || err).slice(0, 500));
+    platformContext = "";
   }
 
   // ── Stage 1: Gemma 4 31B IT ─ 底层流量特征扫描（含平台真实数据） ──
   console.log(`[researchService] Stage 1 Gemma 4 启动 (${label})`);
+  pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "start", "us-central1");
   let stage1Raw = "";
   try {
     stage1Raw = await generate(
@@ -198,25 +249,43 @@ ${platformContext}
 输出格式：JSON，字段：hookLogic, visualStyle, audienceProfile, keywordMatrix, topPatterns`,
     );
     console.log(`[researchService] Stage 1 完成，字符数: ${stage1Raw.length}`);
+    pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "ok", `输出 ${stage1Raw.length} 字`);
   } catch (err: any) {
+    const gMsg = String(err?.message || err || "");
+    pushPipelineStep(pipelineDebug, "2·Stage1 Vertex Gemma gemma-4-31b-it", "fail", gMsg.slice(0, 900));
     // Gemma 4 不可用时，Stage 1 改用 gemini-3.1-pro（与 Stage 2 同档，不再走 flash）
-    console.warn(`[researchService] Gemma 4 失败 (${err?.message})，Stage 1 降级至 gemini-3.1-pro`);
-    stage1Raw = await generate(
-      "gemini-3.1-pro",
-      `作为顶级内容策略师，深度分析${label}竞品内容特征，结合以下平台实时热门数据提取流量密码：
+    console.warn(`[researchService] Gemma 4 失败 (${gMsg})，Stage 1 降级至 gemini-3.1-pro`);
+    pushPipelineStep(pipelineDebug, "3·Stage1 降级 Vertex Gemini 3.1 Pro", "start");
+    try {
+      stage1Raw = await generate(
+        "gemini-3.1-pro",
+        `作为顶级内容策略师，深度分析${label}竞品内容特征，结合以下平台实时热门数据提取流量密码：
 ${platformContext}
 
 竞品输入：${competitorData}
 
 输出JSON：{hookLogic,visualStyle,audienceProfile,keywordMatrix,topPatterns}`,
-    );
+      );
+      pushPipelineStep(pipelineDebug, "3·Stage1 降级 Vertex Gemini 3.1 Pro", "ok", `输出 ${stage1Raw.length} 字`);
+    } catch (err2: unknown) {
+      pushPipelineStep(
+        pipelineDebug,
+        "3·Stage1 降级 Vertex Gemini 3.1 Pro",
+        "fail",
+        String((err2 as any)?.message || err2 || "").slice(0, 900),
+      );
+      throwWithResearchPipeline(err2, pipelineDebug);
+    }
   }
 
   // ── Stage 2: Gemini 3.1 Pro ─ 差异化战略处方 + 分镜场景（含平台数据） ────
   console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
-  const stage2Raw = await generate(
-    "gemini-3.1-pro",
-    `你是集成了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
+  pushPipelineStep(pipelineDebug, "4·Stage2 Vertex Gemini 3.1 Pro（处方 JSON）", "start");
+  let stage2Raw: string;
+  try {
+    stage2Raw = await generate(
+      "gemini-3.1-pro",
+      `你是集成了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
 
 【竞品扫描报告（Stage 1）】
 ${stage1Raw}
@@ -252,16 +321,29 @@ ${platformContext}
 - visualPrompt 必须为英文生图提示词
 - 优先使用平台实时高频标签和热词
 - 严格 JSON 格式，不要输出 JSON 之外的任何内容`,
-  );
-  console.log(`[researchService] Stage 2 完成，字符数: ${stage2Raw.length}`);
+    );
+    console.log(`[researchService] Stage 2 完成，字符数: ${stage2Raw.length}`);
+    pushPipelineStep(pipelineDebug, "4·Stage2 Vertex Gemini 3.1 Pro（处方 JSON）", "ok", `输出 ${stage2Raw.length} 字`);
+  } catch (err: unknown) {
+    pushPipelineStep(
+      pipelineDebug,
+      "4·Stage2 Vertex Gemini 3.1 Pro（处方 JSON）",
+      "fail",
+      String((err as any)?.message || err || "").slice(0, 900),
+    );
+    throwWithResearchPipeline(err, pipelineDebug);
+  }
 
   // 解析 JSON 处方
+  pushPipelineStep(pipelineDebug, "5·解析 JSON", "start");
   const cleaned = stage2Raw.replace(/```json\n?|\n?```/g, "").trim();
   let strategy: ResearchStrategy;
   try {
     strategy = JSON.parse(cleaned);
+    pushPipelineStep(pipelineDebug, "5·解析 JSON", "ok");
   } catch {
     strategy = { raw: stage2Raw };
+    pushPipelineStep(pipelineDebug, "5·解析 JSON", "warn", "解析失败 · 使用 strategy.raw");
   }
   strategy.platform = platform;
   strategy.platformLabel = label;
@@ -277,5 +359,5 @@ ${platformContext}
     console.error("[researchService] Fly 存储失败（non-fatal）:", e?.message);
   }
 
-  return strategy;
+  return { strategy, pipelineDebug };
 }
