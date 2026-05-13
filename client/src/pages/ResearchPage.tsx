@@ -3,6 +3,8 @@ import { useLocation } from "wouter";
 import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff, Download, FileDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import type { ResearchPipelineDebugStep } from "@shared/researchPipelineDebugMarker";
+import { RESEARCH_PIPELINE_DEBUG_MARKER } from "@shared/researchPipelineDebugMarker";
 import { getMusicClipsFromJobPayload, clipToGeneratedSong, songDownloadUrlCandidates, downloadGeneratedMusicToFile } from "@/lib/growthMusic";
 
 const VIDEO_FIRST_USE_KEY = "mvs-video-first-used";
@@ -139,8 +141,24 @@ export default function ResearchPage() {
       toast.success(`调研完成，消耗 ${data.creditsUsed} 点`);
     },
     onError: (err) => {
-      setRawResponse({ error: err.message, code: err.data?.code });
-      toast.error(err.message || "调研失败，请重试");
+      const full = err.message || "";
+      const i = full.indexOf(RESEARCH_PIPELINE_DEBUG_MARKER);
+      let short = full;
+      let fromErr: ResearchPipelineDebugStep[] | undefined;
+      if (i !== -1) {
+        short = full.slice(0, i).trim();
+        try {
+          fromErr = JSON.parse(full.slice(i + RESEARCH_PIPELINE_DEBUG_MARKER.length)) as ResearchPipelineDebugStep[];
+        } catch {
+          /* ignore */
+        }
+      }
+      setRawResponse({
+        error: short,
+        code: err.data?.code,
+        ...(Array.isArray(fromErr) && fromErr.length ? { pipelineDebug: fromErr } : {}),
+      });
+      toast.error(short || "调研失败，请重试");
     },
   });
 
@@ -508,6 +526,36 @@ export default function ResearchPage() {
                   <Stat label="输入字数" value={`${content.length} / ${MAX_CHARS}`} />
                   <Stat label="输出字段" value={result ? Object.keys(result).join(", ") : "—"} />
                 </div>
+
+                {Array.isArray((rawResponse as { pipelineDebug?: ResearchPipelineDebugStep[] })?.pipelineDebug) &&
+                  (rawResponse as { pipelineDebug: ResearchPipelineDebugStep[] }).pipelineDebug.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <p style={{ fontSize: 11, color: "rgba(239,68,68,0.6)", marginBottom: 10, fontWeight: 700 }}>PIPELINE</p>
+                    <ol style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.75 }}>
+                      {(rawResponse as { pipelineDebug: ResearchPipelineDebugStep[] }).pipelineDebug.map((s, idx) => {
+                        const c =
+                          s.status === "ok"
+                            ? "rgba(74,222,128,0.95)"
+                            : s.status === "fail"
+                              ? "rgba(248,113,113,0.95)"
+                              : s.status === "warn"
+                                ? "rgba(250,204,21,0.95)"
+                                : "rgba(147,197,253,0.95)";
+                        return (
+                          <li key={idx} style={{ marginBottom: 8 }}>
+                            <span style={{ color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>{s.at.slice(11, 19)}</span>{" "}
+                            <span style={{ color: c, fontWeight: 700 }}>[{s.status}]</span> {s.phase}
+                            {s.detail ? (
+                              <div style={{ marginTop: 4, fontSize: 10, color: "rgba(255,255,255,0.45)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                {s.detail}
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                )}
 
                 <p style={{ fontSize: 11, color: "rgba(239,68,68,0.6)", marginBottom: 6, fontWeight: 700 }}>RAW RESPONSE</p>
                 <pre style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 400, overflowY: "auto", margin: 0, lineHeight: 1.6 }}>
