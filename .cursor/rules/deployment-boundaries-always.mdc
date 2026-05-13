@@ -1,0 +1,26 @@
+---
+description: 部署與協作邊界 — 線上生效、Fly 表述、任務閉環（與 docs/DEPLOYMENT_BOUNDARIES.md 一致）
+alwaysApply: true
+---
+
+# 部署與協作邊界（Cursor / Agent 必守）
+
+**完整條文**：[`docs/DEPLOYMENT_BOUNDARIES.md`](../../docs/DEPLOYMENT_BOUNDARIES.md)。以下為執行時速查；使用者約 **每 10 小時**可能對照提醒，**不得當成可忽略**。
+
+## 線上司實
+
+- 使用者要 **線上生效 / 推送部署 / 要能上網址驗證** → 必須做到 **遠端有對應提交（push 分支或依流程合併）**，**不可**只在本地 `checkout`/`reset` 就結束。
+- `git push` 失敗 → **立即回報錯誤與已做嘗試**，不要假裝完成。
+
+## Fly
+
+- **不主動**提 Fly 部署、不預設使用者要去 Fly；**僅在其明文要求** Fly/ worker / `fly.toml` 等時再接。
+
+## 任務閉環
+
+- 指令若含 **push / PR / 合併** → **少一步即未完成**。
+- 不用空泛「邊界」「安全」回避已聲明的交付。
+
+## PR
+
+- 與 [`git-pr-workflow-always.mdc`](./git-pr-workflow-always.mdc) 一致：常規走分支 + PR，非緊急不直推 `main`。
