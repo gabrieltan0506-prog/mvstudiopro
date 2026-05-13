@@ -477,11 +477,11 @@ MANDATORY RULES:
 `.trim();
 }
 
-/** 平台選題單幀：`graphic` / `video` 皆為 **單張竖版 9:16 信息流封面**；宽幅 2×4 分鏡主表見 {@link buildVideoStoryboardGeminiPrompt}，八格筆記見 {@link buildXhsNoteGeminiPrompt}。 */
+/** 平台選題單幀：`graphic`＝单张竖版**封面**（非小红书 2×4 八格筆記）；`video`＝竖版 9:16 多分镜**条**（非横版 2×4 主表；宽幅 2×4 见 {@link buildVideoStoryboardGeminiPrompt} / {@link buildXhsNoteGeminiPrompt}）。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
   context: string;
-  /** `video`：短视频选题 — 仍走單封語義（非多分鏡縱條）；`graphic`：圖文选题單封 */
+  /** `video`：短影音竖版多分镜参考条；`graphic`：仅竖版单张封面 */
   variant: "video" | "graphic";
   /** 出镜身份 / IP 基因（中文）；供 GPT 5.4 锁定人設与场景符号，避免仅由单条文案猜测导致漂移 */
   coverPersonaContext?: string;
@@ -507,8 +507,8 @@ ${personaRaw}
       : isVideo
         ? `
 
-SHORT-VIDEO ULTRA-CTR BOOST（本任务专用）:
-- The **single hero frame** must read as an aggressive feed **scroll-stop** thumbnail: maximal tension, contrast, or curiosity tied to 「${hook}」—**one** shot, not a strip of panels; avoid generic explainer thumbnails.
+VERTICAL ULTRA-CTR BOOST（本任务专用）:
+- Treat the **first panel** as an aggressive feed **scroll-stop** frame: maximal tension, contrast, or curiosity tied to 「${hook}」; avoid generic explainer thumbnails.
 `.trim()
         : `
 
@@ -520,7 +520,7 @@ ULTRA-HIGH CTR COVER BOOST（本任务专用 · 超高点击率向）:
     `
 ${personaBlock}${
   isVideo
-    ? "You are a bilingual cover design director for **short-video discovery thumbnails**—single **vertical 9:16** hero frame built for TikTok/Douyin/Reels-style feeds: stop-scroll tension, readable hook type, cinematic photoreal still; **not** a comic strip or multi-panel storyboard column inside one image, **not** a 2×4 landscape master sheet (those are separate downstream tasks)."
+    ? "You are a bilingual visual prompt director for **vertical 9:16 multi-panel storyboard strips**—clear gutters, shot rhythm, short-form beats; prefer this over a wide **2×4 landscape** master sheet unless the task names that layout."
     : "You are a bilingual cover design director for **premium vertical feed covers**—high click appeal and clear visual hierarchy; treat this as **one cover frame** rather than a Little Red Book dual-card note layout unless the upstream task clearly asks for note chrome."
 }
 
@@ -529,11 +529,10 @@ ${isVideo
   : "Use Simplified Chinese as the main title language, with English allowed as secondary supporting text."}
 
 ${isVideo ? `
-SHORT-VIDEO SINGLE COVER（軟邊界 · 單張 9:16 封面 · 非分鏡條）:
-- **版式：** vertical 9:16、**單張**、**唯一主視覺**；語義 = 短视频信息流 **封面 / 预览图**，可读主标。
-- **氣質：** 把「钩子」的瞬间张力压進**一帧**（动作起势、表情對撞、環境對比皆可），像 **单张 editorial still**，不要切成多宮格縱列或帶 gutters 的剧情分镜条。
-- **禁止：** ≥2 个并排/上下分格、漫画格子、多分镜纵条、显性格线拼图；宽幅 8 格 2×4 主表也不在任务内。
-- **主标：** 大号简中钩子对比足、缩略图可辨；光影走当代写实。**英文 downstream prompt** 用编号条款写清：**单封面**构图、留白、字型规格与场景执行力。
+VERTICAL 9:16 STORYBOARD STRIP（軟邊界 · 偏竖版多分镜条）:
+- 整体：**vertical 9:16**，多分镜条、格与格之间有明确分期；**不要**做成横版 2×4 主表那种宽幅八格。
+- 建议 **≥3** 格、格间留 gutter；节奏像短影音 beat，**优先**多分镜条；若创意上更贴 hook，也可偏「强主标题 + 少格」但保持竖条气质。
+- **首格 / 缩略图友好：** 钩子的简中主标尽量对比强、缩略图仍能读出张力；各格影像可走 **当代写实光影**；英文指令优先 **编號式執行**（場景→光→分格），意象為輔。
 - main title based on 「${hook}」
 ` : `
 COVER DESIGN（軟邊界 · 单张竖版封面）:
@@ -551,7 +550,7 @@ ${ctx}
 ${ctrBoostBlock ? `\n${ctrBoostBlock}\n` : ""}
 `.trim() +
     "\n\n" +
-    PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER
+    (isVideo ? MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT : PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER)
   );
 }
 
