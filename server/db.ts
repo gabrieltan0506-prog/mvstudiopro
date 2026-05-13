@@ -22,33 +22,6 @@ async function ensureUsersEnterpriseTrialPaidColumn(db: NonNullable<Awaited<Retu
   }
 }
 
-/** Stage2 選題快照表：缺失時自動建表（與 drizzle/postgres/0004 對齊）。 */
-async function ensurePlatformStrategicBlueprintSnapshotsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
-  try {
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS "platform_strategic_blueprint_snapshots" (
-        "id"            serial PRIMARY KEY,
-        "userId"        integer NOT NULL,
-        "windowDays"    integer NOT NULL DEFAULT 15,
-        "platformsKey"  text NOT NULL DEFAULT '',
-        "contextSnippet" text NOT NULL DEFAULT '',
-        "blueprintsJson" text NOT NULL,
-        "createdAt"     timestamp NOT NULL DEFAULT now(),
-        "updatedAt"     timestamp NOT NULL DEFAULT now()
-      )
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS "platform_strategic_blueprint_snapshots_user_updated_idx"
-        ON "platform_strategic_blueprint_snapshots" ("userId", "updatedAt" DESC)
-    `);
-  } catch (e) {
-    console.warn(
-      "[Database] ensure platform_strategic_blueprint_snapshots (non-fatal):",
-      e instanceof Error ? e.message.slice(0, 200) : e,
-    );
-  }
-}
-
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -56,7 +29,6 @@ export async function getDb() {
       const sql_conn = neon(process.env.DATABASE_URL);
       _db = drizzle(sql_conn);
       await ensureUsersEnterpriseTrialPaidColumn(_db);
-      await ensurePlatformStrategicBlueprintSnapshotsTable(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

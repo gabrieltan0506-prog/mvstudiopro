@@ -15,7 +15,6 @@
 | `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（已合并） |
 | `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（已合并） |
 | `0003_users_enterprise_trial_paid.sql` | `users` 表加 `enterpriseTrialPaid`（与 `drizzle/schema.ts` 一致） | 未执行会导致查询 users 失败、易被重定向登录 |
-| `0004_platform_strategic_blueprint_snapshots.sql` | Stage2 四條選題 JSON 快照，供封面生圖按 `sceneId` 讀回 | 與 `drizzle/schema-platform-strategic-blueprints.ts` 同步 |
 
 ## 应用流程（生产 Neon）
 
@@ -102,9 +101,9 @@ SELECT column_name, data_type, column_default
 
 兼容性：已有行自动为 `false`，无需 backfill。
 
-### Step 3d — 应用 0004（`platform_strategic_blueprint_snapshots`）
+### Step 3c — 应用 0004（`platform_title_variant_events`）
 
-Stage2 成功後寫入選題快照、單幀封面 worker 按 `userId`+`sceneId` 讀回。部署讀寫代碼前在 Neon 執行 `drizzle/postgres/0004_platform_strategic_blueprint_snapshots.sql`（建議先 `BEGIN` … `ROLLBACK` 演練）。**兼容**：本地 `getDb()` 亦會 `CREATE TABLE IF NOT EXISTS`，生產仍建議手動執行該 SQL 以便審計。
+Stage2 選題卡「兩條標題」的看過 / 選用次數。部署讀寫該表代碼前在 Neon 執行 `drizzle/postgres/0004_platform_title_variant_events.sql`（建議先 `BEGIN` … `ROLLBACK` 演練）。
 
 ---
 

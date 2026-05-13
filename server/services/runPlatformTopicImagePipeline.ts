@@ -7,7 +7,6 @@ import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
-import { estimateCoverCtrBand } from "../../shared/platformTitleVariants.js";
 
 /** 與 repository patch 截斷一致，避免單欄位過大 */
 const FLOW_LOG_DB_CAP = 240;
@@ -74,10 +73,6 @@ export type RunPlatformTopicImagePipelineInput = {
   context?: string;
   coverPersonaContext?: string;
   sceneId?: string;
-  /** 與 topicHook 同源的開場鉤子（簡中），供點擊率檔位估計 */
-  appealHook?: string;
-  /** 強化划停與主標衝擊（與「超高點擊率封面」加購一致） */
-  highFeedCtrBoost?: boolean;
   /** @deprecated 封面單幀英文化**固定 GPT 5.4**；保留欄位僅兼容舊 job 入參，會被忽略。 */
   imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
@@ -98,12 +93,6 @@ export type RunPlatformTopicImagePipelineResult = {
   imageGenFlowLog: string[];
   imagePromptStats: ImagePromptStats;
   fallbackUsed: boolean;
-  /** 基於主句+鉤子的規則估計（非實測 CTR） */
-  coverClickEstimate?: {
-    band: "high" | "medium";
-    score: number;
-    labelZh: string;
-  };
 };
 
 export async function runPlatformTopicImagePipeline(
@@ -190,7 +179,6 @@ export async function runPlatformTopicImagePipeline(
           context: (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000),
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
-          highFeedCtrBoost: Boolean(input.highFeedCtrBoost),
         });
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,
@@ -330,12 +318,6 @@ export async function runPlatformTopicImagePipeline(
       };
     }
 
-    const appealForCtr = String(input.appealHook || "").trim();
-    const coverClickEstimate = estimateCoverCtrBand(String(input.topicHook || "").trim(), appealForCtr);
-    topicImageCondenseLog.push(
-      `${new Date().toISOString()}  [预估] ${coverClickEstimate.labelZh}（规则分数=${coverClickEstimate.score}，非实测CTR）`,
-    );
-
     topicImageCondenseLog.push(`${new Date().toISOString()}  ✓ 本条结束：已得到 imageUrl`);
     const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
     if (creationIdOut != null && database) {
@@ -351,7 +333,6 @@ export async function runPlatformTopicImagePipeline(
               resolvedFrameStatus: finalStatus,
               imagePromptStats: promptStats,
               fallbackUsed,
-              coverClickEstimate,
             }),
           })
           .where(eq(userCreations.id, creationIdOut));
@@ -369,7 +350,6 @@ export async function runPlatformTopicImagePipeline(
       imageGenFlowLog: topicImageCondenseLog,
       imagePromptStats: promptStats,
       fallbackUsed,
-      coverClickEstimate,
     };
   } finally {
     await flushTopicImageProgress();
