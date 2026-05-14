@@ -2,7 +2,7 @@
  * 作品庫 DOM 快照上傳 GCS / pdf-worker 前的輕量優化：
  * - 去掉 HTML 註釋
  * - 壓縮標籤間空白（保護 <pre> / <textarea> 內容）
- * - 將 macOS/Windows 字體棧映射到 Linux pdf-worker 的 Noto CJK，利於 PDF 內嵌字體「子集化」、減少多寫入重字重的體積
+ * - 將 macOS/Windows 字體棧映射到 Linux pdf-worker 的 Noto CJK；pdf-worker 端再以 pyftsubset 動態 WOFF2 子集縮檔
  */
 export function optimizePdfSnapshotHtml(html: string): string {
   let s = html.replace(/<!--([\s\S]*?)-->/g, "");
