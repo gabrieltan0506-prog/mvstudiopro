@@ -4,7 +4,7 @@
  * **封面單幀**：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` 或 `PLATFORM_COVER_DEEP_RESEARCH_PRO`。
  * **2×4 分鏡 / 小紅書八格**：上述任一為真 **或** `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`，即可在對應管線啟用同一套 Interactions Deep Research Pro。
  *
- * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体** 並合入中文語境，再交既有 **GPT‑5.4 → 生圖**。
+ * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体** 並合入中文語境，再交既有 **GPT‑5.4 → 生圖**。任務語義依 {@link DrBriefProduct}：**單幀封面**側重**高點擊+高轉化**；**2×4** 分別對應**電影級分鏡主表**或**小紅書八格圖文筆記**編導增强。
  *
  * - **認證**：`GEMINI_API_KEY`（與 {@link ./deepResearchService.ts} Deep Research Max 同源）
  * - **Agent ID**：優先 `PLATFORM_COVER_DEEP_RESEARCH_AGENT`；預設 **`deep-research-preview-04-2026`**
@@ -125,37 +125,93 @@ function passesCoverBriefTopicCopyAnchor(textRaw: string, task: CoverTaskInput):
   return { ok: true };
 }
 
-/** 與 Deep Research **Agent** 對話專用：開場即寫清任務類型、唯一產出、禁止事項（避免當成閒聊模型或長文研報）。 */
-const COVER_DR_AGENT_ROLE_PREAMBLE = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
-【本回合唯一目標】為「竖版 9:16 信息流封面」寫**一段可直接給下游模型翻译成英文生图 prompt 的简体视觉企划**（構圖/主體/光影/留白/簡中主標層級），不是市場研報、不是逐字講稿、不是分鏡表。
-【輸出語言】正文僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄。
-【聯網邊界】僅用於**同一選題語境**的輕量補強（句式/視覺趨勢）；禁止換題、禁止引入與下列【選題標題】【基礎文案摘錄】無關的爆款案例。
-`.trim();
+/** DR-Pro 步驟 0.5 產品形態（決定寫入 Agent 的任務與產出語義）。 */
+export type DrBriefProduct = "platform_cover" | "composite_storyboard" | "composite_xhs_note";
 
-/** 單條與雙條共用的忠實與篇幅約束（Agent 必逐條遵守）。 */
-const COVER_DR_AGENT_FIDELITY_BLOCK = `
+const DR_AGENT_INVOCATION_COMMON = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
+【輸出語言】正文僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄。
+【聯網邊界】僅用於**同一選題語境**的輕量補強（句式/視覺趨勢）；禁止換題、禁止引入與下列【選題標題】【基礎文案摘錄】無關的爆款案例。`.trim();
+
+const DR_GOAL_PLATFORM_COVER = `【本回合唯一目標】為「竖版 9:16 信息流封面」寫**一段**可給下游翻译成**英文生图 prompt** 的简体视觉企划（構圖/主體/光影/留白/簡中主標層級）。
+【商業目標 · 必須同時顧及】**高點擊率**（thumb-stop：鉤子、反差、主視覺記憶點、可读大標）與**高轉化率意圖**（信任與利益點可感知、畫面線索與素材一致的**單一路徑行動**——收藏/評論關鍵詞/私信/橱窗等，**禁止**只吸睛却看不出下一步）；不是市場研報、不是逐字講稿、不是分鏡表。`.trim();
+
+const DR_GOAL_COMPOSITE_STORYBOARD = `【本回合唯一目標】為即將生成的**橫版 2×4 電影級分鏡主表**（八格寫實電影感静帧帶）寫**一段**简体**編導增强**視覺企劃，給下游壓成英文宽幅生圖 prompt。
+【創作與商業目標】**電影級**画面气质（動機光、空間深度、景别/节奏暗示可含蓄存在）、格間**叙事節拍**（起承轉合、信息投放）；並帶**高點擊/高完播**意图（前三格抓人、中段信息、尾格收束或行動感畫面），避免八格平庸拼湊。`.trim();
+
+const DR_GOAL_COMPOSITE_XHS = `【本回合唯一目標】為即將生成的**小紅書 2×4 八格圖文筆記**拼圖寫**一段**简体**編導增强**視覺企劃，給下游壓成英文宽幅生圖 prompt。
+【創作與商業目標】**圖文筆記**语义（封面格強钩子、內頁格信息節奏與層級）；**高互動/高收藏**與**種草高轉化**（信任証据、利益点、**單一主行動**的視覺暗示與文案一致）；**禁止**寫成視頻分鏡製片欄位堆砌。`.trim();
+
+function rolePreambleForProduct(product: DrBriefProduct): string {
+  const goal =
+    product === "platform_cover"
+      ? DR_GOAL_PLATFORM_COVER
+      : product === "composite_storyboard"
+        ? DR_GOAL_COMPOSITE_STORYBOARD
+        : DR_GOAL_COMPOSITE_XHS;
+  return `${DR_AGENT_INVOCATION_COMMON}\n\n${goal}`;
+}
+
+function buildDrAgentFidelityBlock(product: DrBriefProduct): string {
+  const item6 =
+    product === "platform_cover"
+      ? "须覆盖：**高點擊**鉤子与**高轉化**視覺線索（信任/利益/主行動可讀暗示，與素材一致）／主視覺隱喻／光影與主色調／簡中大標层级；避免英文段落。"
+      : product === "composite_storyboard"
+        ? "须覆盖：**電影級**光影與空間層次、**2×4 八格帶**的叙事節拍（起承轉合）、各格畫面任務可讀（可含蓄景别/節奏暗示），便于下游写成宽幅分鏡主表英文 prompt。"
+        : "须覆盖：**八格圖文筆記**的信息節奏（封面钩+內頁利益/証据/收藏理由）、**種草轉化**埋点（單一主行動與文案一致）、格间层级差異；避免製片式分鏡術語欄；便于下游写成八格英文 prompt。";
+
+  const item7 =
+    product === "platform_cover"
+      ? "短句+可执行畫面描述，能想见**封面**長相，并感知**為何值得點進去行動**。"
+      : product === "composite_storyboard"
+        ? "短句+可执行畫面與節拍描述，能想见**整條電影感 2×4 分鏡帶**如何推進。"
+        : "短句+可执行拼圖版式語義，能想见**整張 2×4 圖文筆記**如何驅動收藏與轉化。";
+
+  return `
 【忠實約束 — 缺一不可】
 1. 全文必須**扣死**给定【選題標題】【基礎文案摘錄】中的具體主體、利益點或矛盾；禁止換成泛化行業雞湯或另一個話題。
 2. 第一段**第一行（或第一句）**：必須用簡体字寫一行「錨定句」，明確復述本條視覺創意服務對象為「選題標題所指內容 + 上文案中的某一具體信息點」（可短句）。
 3. 「聯網」僅可作**同話題语境**的趋势/視覺句法补强；不得引入與標題·文案無關的爆款梗或明星案例。
 4. 禁止捏造與【基礎文案摘錄】相背的具體事實、數據或產品名；没有把握就写視覺層級的概括，不写假數字。
 5. 输出只要**简体中文**連貫正文（無 JSON / 無markdown代碼欄）。
-6. 字数 **280～950 字**；须覆盖：钩子反差／主視覺隱喻與主次关系／光影與主色調／簡中大標建議字形與層級；避免英文段落。
-7. 文风：短句+可执行的畫面描述，让读者能想见**這條視頻/圖文封面**會長什么样。
+6. 字数 **280～950 字**；${item6}
+7. 文风：${item7}
 `.trim();
+}
 
-function buildCoverBriefInteractionInput(task: CoverTaskInput): string {
+function buildProductAssignmentBlock(product: DrBriefProduct): string {
+  if (product === "platform_cover") {
+    return `
+【封面專任 · 請嚴格遵守 · 離題視同失敗】
+【你的擅長】在**給定素材範圍內**優化「選題怎麼說更像封面鉤子」與「文案怎麼壓成可畫進圖的信息」，提煉懸念、反差、利益點與**可轉化信息**；**不改命題換題**，只做表達與結構強化。
+【你的任務】輸出**高點擊率 + 高轉化意圖**兼顧的一段視覺企劃：须能指揮構圖、主體、光影、留白、簡中大標层级，**且**行動/信任線索與【基礎文案摘錄】一致（非空喊）。
+【工作閉環】聯網僅可作同話題參考；最終落在连贯的简体**封面绘制指令**上（非白皮書）。
+`.trim();
+  }
+  if (product === "composite_storyboard") {
+    return `
+【2×4 電影級分鏡主表 · 編導增强 · 離題視同失敗】
+【你的擅長】把劇本/卖点整理成**八格分鏡帶**的可執行視覺：**電影級**布光與鏡頭語感、格間節拍與懸念；**不改命題換題**。
+【你的任務】產出一段简体編導摘要，供下游展開為**橫版 2×4**英文 prompt；強調**高點進/高完播叙事**，每格在語義上可對應敘事功能（不必輸出製片表格或 JSON）。
+【工作閉環】格線/閱讀順序的硬約束由下游模板鎖定；你負責**画面內容與節拍**說清楚。
+`.trim();
+  }
+  return `
+【小紅書 2×4 八格圖文筆記 · 編導增强 · 離題視同失敗】
+【你的擅長】規划**整張拼圖筆記**的視覺節奏：封面格鉤子、內頁格信息層級；**高收藏/高互动**與**種草轉化**並重；**禁止**把八格写成視頻分鏡製片註解。
+【你的任務】產出一段简体編導摘要，供下游展開為**2×4 八格圖文筆記**英文 prompt；語義上區分「封面格」與「內容格」。
+【工作閉環】行動線索與【基礎文案摘錄】一致，單一主行動。
+`.trim();
+}
+
+function buildCoverBriefInteractionInput(task: CoverTaskInput, product: DrBriefProduct): string {
   const tp = task.tenantProfile;
   const titleLine = task.topicTitle.trim().slice(0, 160);
   return `
-${COVER_DR_AGENT_ROLE_PREAMBLE}
+${rolePreambleForProduct(product)}
 
-【封面專任 · 請嚴格遵守 · 離題視同失敗】
-【你的擅長】在**給定素材範圍內**優化「選題怎麼說更像封面鉤子」與「文案怎麼壓成可畫進圖的信息」，提煉懸念、反差、利益點與主視覺焦點；**不改命題換題**，只做表達與結構強化。
-【你的任務】先基於優化結果，**只用簡體中文**輸出一整段可直接交下游翻譯的**高點擊率封面生圖提示詞**（＝視覺企劃段落）：要能指揮構圖、主體、光影、留白、簡中大標层级，不只是口頭點評。
-【工作閉環】聯網僅可作同話題、同語境的高互動參考；最終段落必須體現**經你優化後的選題與文案**，落在一條连贯的简体「封面绘制指令」上（非白皮書）。
+${buildProductAssignmentBlock(product)}
 
-${COVER_DR_AGENT_FIDELITY_BLOCK}
+${buildDrAgentFidelityBlock(product)}
 
 上下文（你的全部依據來源）
 ——
@@ -168,7 +224,7 @@ ${task.baseCopywriting.slice(0, 5800)}
 }
 
 const COVER_DR_AGENT_ROLE_PREAMBLE_DUAL = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；本回合要**一次**處理**兩條**獨立選題（条A / 条B），每條均須遵守下方【忠實約束】；聯網僅作輕量輔證，**不得串題、不得把 A 寫進 B**。
-【本回合唯一目標】輸出**兩段**简体「竖版 9:16 信息流封面」视觉企划（段 A / 段 B），格式必須用指定定界符包裹，供下游**分别**英文化生图；**不是**一份研報、**不是**合併論述。
+【本回合唯一目標】輸出**兩段**简体「竖版 9:16 信息流封面」视觉企划（段 A / 段 B），格式必須用指定定界符包裹，供下游**分别**英文化生图；**每段均追求高點擊率與高轉化意圖**（scroll-stop + 與素材一致的單行動線索）；**不是**一份研報、**不是**合併論述。
 【輸出語言】两段正文均僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄；**定界符之外不得出現任何文字**（禁止前言、摘要、結語、解釋你怎麼做的說明）。
 `.trim();
 
@@ -199,7 +255,7 @@ ${COVER_DR_AGENT_ROLE_PREAMBLE_DUAL}
 【你的擅長】同上：在**各自给定素材範圍內**強化鉤子與可畫進圖的信息密度；**条A 只服务条A 素材、条B 只服务条B 素材**。
 【你的任務】在同一轮回复中产出**两段**简体视觉企划；每一段都须满足【忠實約束】（含首句錨定句、280～950 字、可指挥构图/光影/主标層級）。
 
-${COVER_DR_AGENT_FIDELITY_BLOCK}
+${buildDrAgentFidelityBlock("platform_cover")}
 （说明：以上 7 条对**每一段**定界符内正文分别适用；段 A 只对照下方条A 的标题与文案，段 B 只对照条B。）
 
 【输出格式 · 必须原样使用下列定界符行 · 缺一不可 · 定界符单独成行】
@@ -247,6 +303,11 @@ export type CoverDeepResearchDualBatchResult = {
 export type CoverDrProBriefOptions = {
   /** 日誌括號標籤，預設 `步骤0.5·DR-Pro`；2×4 合成用 `步骤0.5·DR-Pro·2×4` */
   logPrefix?: string;
+  /**
+   * 預設 `platform_cover`（單幀封面）；2×4 管線請傳 `composite_storyboard` 或 `composite_xhs_note`，
+   * 否則 Agent 會误以為只做豎版封面。
+   */
+  drBriefProduct?: DrBriefProduct;
 };
 
 /**
@@ -266,8 +327,14 @@ export async function runCoverDeepResearchDualBatchBrief(
   async function runSingleFallback(reason: string): Promise<CoverDeepResearchDualBatchResult> {
     log(`第2次調用：單條 fallback（因 ${reason}；不重試双条）→ 逐條 DR-Pro（A 然后 B）…`);
     const paired: [string | null, string | null] = [
-      await runCoverDeepResearchInteractionsBrief(tasks[0], flowLog, { logPrefix: `${logBracket}·fb·A` }),
-      await runCoverDeepResearchInteractionsBrief(tasks[1], flowLog, { logPrefix: `${logBracket}·fb·B` }),
+      await runCoverDeepResearchInteractionsBrief(tasks[0], flowLog, {
+        logPrefix: `${logBracket}·fb·A`,
+        drBriefProduct: "platform_cover",
+      }),
+      await runCoverDeepResearchInteractionsBrief(tasks[1], flowLog, {
+        logPrefix: `${logBracket}·fb·B`,
+        drBriefProduct: "platform_cover",
+      }),
     ];
     return { results: paired, mode: "single_fallback" };
   }
@@ -372,9 +439,12 @@ export async function runCoverDeepResearchInteractionsBrief(
   const totalBudgetMs = resolveTimeoutMs();
   const pollIntervalMs = resolvePollMs();
 
-  log(`開始 · agent=${agent} · timeoutMs=${totalBudgetMs} · pollMs=${pollIntervalMs} · sdk=@google/genai`);
+  const product: DrBriefProduct = options?.drBriefProduct ?? "platform_cover";
+  log(
+    `開始 · product=${product} · agent=${agent} · timeoutMs=${totalBudgetMs} · pollMs=${pollIntervalMs} · sdk=@google/genai`,
+  );
 
-  const input = buildCoverBriefInteractionInput(task);
+  const input = buildCoverBriefInteractionInput(task, product);
   const ac = new AbortController();
   const hardStop = setTimeout(() => ac.abort(), totalBudgetMs + 8000);
 

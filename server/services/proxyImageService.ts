@@ -1242,7 +1242,10 @@ export async function generatePlatformCompositeSheetImage(options: {
         context: options.scriptContext,
         coverPersonaContext: options.coverPersonaContext ?? "",
       });
-      const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, L ?? [], { logPrefix: "步骤0.5·DR-Pro·2×4" });
+      const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, L ?? [], {
+        logPrefix: "步骤0.5·DR-Pro·2×4",
+        drBriefProduct: isStoryboard ? "composite_storyboard" : "composite_xhs_note",
+      });
       if (drBrief?.trim()) {
         const tag = "【DeepResearch Pro·2×4 编导增强（简体）】";
         scriptContextForPipeline = `${String(scriptContextForPipeline).trim()}\n\n${tag}\n${drBrief.trim()}`;
