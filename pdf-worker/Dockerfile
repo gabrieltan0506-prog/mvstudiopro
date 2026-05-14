@@ -12,6 +12,7 @@ RUN npm install
 
 COPY tsconfig.json ./
 COPY index.ts ./
+COPY pdfPySubset.ts ./
 
 RUN npm run build
 
@@ -36,6 +37,7 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libgbm1 \
     fonts-noto-cjk \
+    python3-fonttools \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

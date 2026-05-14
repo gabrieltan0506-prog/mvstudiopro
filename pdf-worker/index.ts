@@ -1,6 +1,11 @@
 import express from "express";
 import puppeteer, { type Page } from "puppeteer";
 import { randomBytes } from "node:crypto";
+import {
+  buildSubsetFaceCss,
+  collectPdfSubsetChars,
+  SUBSET_FONT_FAMILY,
+} from "./pdfPySubset";
 
 const app = express();
 // Deep Research Max：静态快照可达数十 MB
@@ -12,7 +17,7 @@ const PORT = process.env.PORT || 8080;
 // ════════════════════════════════════════════════════════════════════════════
 // 2026-05-01 体积优化 + 失败诊断（叠加在 PR #353 / #357 既有调整之上）
 //
-// 企业级默认可跑；輸出僅 Puppeteer page.pdf（Skia），不再經 Ghostscript 二次重寫。
+// 企业级默认可跑：page.pdf（Skia）前以 fonttools pyftsubset 注入 **WOFF2 中文子集**（縮檔且不經 PDF 二次改寫，保留背景色）。
 //   PDF_SCALE_FACTOR             默认 1.35（视口 DPR；略低于 1.5 → page.pdf 光栅更快）
 //   PDF_POST_LAYOUT_WAIT_MS     默认 18_000（图已 decode 后短沉淀；过短易 B，过长浪费墙钟）
 //   PDF_PER_IMAGE_WAIT_MS       默认 20_000（单图 load 兜底）
@@ -20,6 +25,11 @@ const PORT = process.env.PORT || 8080;
 //   PDF_SET_CONTENT_TIMEOUT_MS  默认 1_800_000（30min；把 Cloud Run 余量多留给 page.pdf）
 //   PDF_VIEWPORT_WIDTH           默认 1920（须 ≥ 决策智库 1680 宽，可防横向裁切）
 //   PDF_VIEWPORT_HEIGHT          默认 1600（较高视口利长页纵向排版）
+//   PDF_FONT_SUBSET               默认 true：pyftsubset 動態子集 + @font-face（設 false 跳過）
+//   PDF_PYFTSUBSET_TIMEOUT_MS      默认 120000（2min / 次子集）；0 = 不限時
+//   NOTO_SANS_CJK_REGULAR_TTC     默认 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+//   NOTO_SANS_CJK_BOLD_TTC        默认 …/NotoSansCJK-Bold.ttc
+//   NOTO_SANS_CJK_TTC_FONT_INDEX  默认 2（SC；JP/KR/TC 順序因字型版本而異，可 env 修正）
 //   page.pdf preferCSSPageSize   固定 true：尊重 HTML @page（平台横版 / 作品库直版）
 // ════════════════════════════════════════════════════════════════════════════
 const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.35;
@@ -51,6 +61,31 @@ const PAGE_PDF_TIMEOUT_MS =
 /** 打印前統一為容器內 Noto CJK，減少多字體混嵌。設為 false 可回退舊版視覺。 */
 const UNIFY_CJK_FONT_STACK = process.env.PDF_UNIFY_CJK_FONT_STACK !== "false";
 
+/** 預設 true：用 pyftsubset 依 DOM 文字生成 WOFF2 子集並注入（無 Ghostscript）。 */
+const PDF_FONT_SUBSET = process.env.PDF_FONT_SUBSET !== "false";
+const PYFT_TIMEOUT_PARSED = Number(process.env.PDF_PYFTSUBSET_TIMEOUT_MS);
+const PDF_PYFTSUBSET_TIMEOUT_MS =
+  Number.isFinite(PYFT_TIMEOUT_PARSED) && PYFT_TIMEOUT_PARSED >= 0
+    ? PYFT_TIMEOUT_PARSED
+    : 120_000;
+
+const NOTO_SANS_CJK_REGULAR_TTC =
+  process.env.NOTO_SANS_CJK_REGULAR_TTC ||
+  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+const NOTO_SANS_CJK_BOLD_TTC =
+  process.env.NOTO_SANS_CJK_BOLD_TTC ||
+  "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc";
+const NOTO_SANS_CJK_TTC_FONT_INDEX_RAW = process.env.NOTO_SANS_CJK_TTC_FONT_INDEX;
+const NOTO_SANS_CJK_TTC_FONT_INDEX_PARSED = Number(
+  NOTO_SANS_CJK_TTC_FONT_INDEX_RAW !== undefined && NOTO_SANS_CJK_TTC_FONT_INDEX_RAW !== ""
+    ? NOTO_SANS_CJK_TTC_FONT_INDEX_RAW
+    : "2",
+);
+const NOTO_SANS_CJK_TTC_FONT_INDEX =
+  Number.isFinite(NOTO_SANS_CJK_TTC_FONT_INDEX_PARSED) && NOTO_SANS_CJK_TTC_FONT_INDEX_PARSED >= 0
+    ? Math.floor(NOTO_SANS_CJK_TTC_FONT_INDEX_PARSED)
+    : 2;
+
 console.log(
   `[pdf-worker] startup config: ` +
   `viewport=${PDF_VIEWPORT_WIDTH}x${PDF_VIEWPORT_HEIGHT}, scale=${SCALE_FACTOR}, postLayoutWaitMs=${POST_LAYOUT_WAIT_MS}, perImageWaitMs=${PER_IMAGE_WAIT_MS}, ` +
@@ -58,7 +93,9 @@ console.log(
   `setContentTimeoutMs=${SET_CONTENT_TIMEOUT_MS} ` +
   `pagePdfTimeoutMs=${PAGE_PDF_TIMEOUT_MS === 0 ? "0(disabled)" : PAGE_PDF_TIMEOUT_MS} ` +
   `preferCssPageSize=true ` +
-  `unifyCjkFontStack=${UNIFY_CJK_FONT_STACK}`,
+  `unifyCjkFontStack=${UNIFY_CJK_FONT_STACK} ` +
+  `pdfFontSubset=${PDF_FONT_SUBSET} pyftSubsetTimeoutMs=${PDF_PYFTSUBSET_TIMEOUT_MS === 0 ? "0(disabled)" : PDF_PYFTSUBSET_TIMEOUT_MS} ` +
+  `notoTtcIndex=${NOTO_SANS_CJK_TTC_FONT_INDEX}`,
 );
 
 /** 與 client 端表紙列印規則一致；以 JSON 塞入 evaluate 字串避免 pdf-worker tsconfig 無 DOM lib。 */
@@ -259,6 +296,11 @@ app.get("/health", (_req, res) =>
       setContentTimeoutMs: SET_CONTENT_TIMEOUT_MS,
       pagePdfTimeoutMs: PAGE_PDF_TIMEOUT_MS,
       unifyCjkFontStack: UNIFY_CJK_FONT_STACK,
+      pdfFontSubset: PDF_FONT_SUBSET,
+      pyftSubsetTimeoutMs: PDF_PYFTSUBSET_TIMEOUT_MS,
+      notoSansCjkRegularTtc: NOTO_SANS_CJK_REGULAR_TTC,
+      notoSansCjkBoldTtc: NOTO_SANS_CJK_BOLD_TTC,
+      notoSansCjkTtcFontIndex: NOTO_SANS_CJK_TTC_FONT_INDEX,
     },
   }),
 );
@@ -339,6 +381,46 @@ app.post("/generate-pdf", async (req, res) => {
     await page.evaluate("document.fonts.ready");
     console.log(`[pdf-worker:${reqId}] step2/5 fonts.ready done +${Date.now() - tFonts}ms`);
 
+    let pdfUsesInjectedSubset = false;
+    if (PDF_FONT_SUBSET && UNIFY_CJK_FONT_STACK) {
+      const tSub = Date.now();
+      try {
+        const charsFromDom = await collectPdfSubsetChars(page);
+        const built = await buildSubsetFaceCss({
+          charsFromDom,
+          paths: {
+            regularTtc: NOTO_SANS_CJK_REGULAR_TTC,
+            boldTtc: NOTO_SANS_CJK_BOLD_TTC,
+            fontNumber: NOTO_SANS_CJK_TTC_FONT_INDEX,
+            timeoutMs: PDF_PYFTSUBSET_TIMEOUT_MS,
+          },
+        });
+        if (built.ok) {
+          await page.addStyleTag({ content: built.css });
+          await page.evaluate(
+            `Promise.all([
+              document.fonts.load("16px '${SUBSET_FONT_FAMILY}'"),
+              document.fonts.load("bold 16px '${SUBSET_FONT_FAMILY}'"),
+            ]).catch(function () {})`,
+          );
+          await page.evaluate("document.fonts.ready");
+          pdfUsesInjectedSubset = true;
+          console.log(
+            `[pdf-worker:${reqId}] step2b/5 pyftsubset woff2 injected +${Date.now() - tSub}ms ` +
+            `domUnique=${built.domUnique} mergedUnique=${built.mergedUnique}`,
+          );
+        } else {
+          console.warn(
+            `[pdf-worker:${reqId}] step2b/5 pyftsubset skipped (${built.reason}); using system Noto`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[pdf-worker:${reqId}] step2b/5 pyftsubset failed: ${(err as Error).message}; using system Noto`,
+        );
+      }
+    }
+
     // 等大体积 data: PNG/JPEG 全部 load + decode 完再进 hard wait。
     // 否则 page.pdf() 时 naturalWidth=0 → 封面白屏 / 页数统计失真（用户实测 B 类问题）。
     const tImg = Date.now();
@@ -392,12 +474,14 @@ app.post("/generate-pdf", async (req, res) => {
     });
 
     if (UNIFY_CJK_FONT_STACK) {
+      const printStack = pdfUsesInjectedSubset
+        ? `'${SUBSET_FONT_FAMILY}', "Noto Sans CJK SC", sans-serif`
+        : `"Noto Sans CJK SC", "Noto Serif CJK SC", serif`;
       await page.addStyleTag({
         content: `
           @media print {
             html, body, html body *:not(img):not(video):not(canvas) {
-              font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR",
-                "Noto Serif CJK SC", "Noto Serif CJK JP", serif !important;
+              font-family: ${printStack} !important;
             }
           }
         `,
