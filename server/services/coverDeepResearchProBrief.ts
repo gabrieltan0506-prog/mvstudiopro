@@ -90,6 +90,35 @@ const normCompact = (s: string): string =>
     .replace(/[\s\u3000]+/g, "")
     .trim();
 
+/** 管線注入區塊標題，非使用者正文；若當成「文案錨點」會擷取到「身份锚点」等，DR 成品不會照抄而誤判失敗。 */
+function stripInternalCoverAnchorLabelsForCopyAnchor(raw: string): string {
+  return String(raw || "")
+    .replace(/^【封面身份锚点】[：:]\s*/, "")
+    .replace(/^【封面身份锚点】\s*/, "")
+    .replace(/^【身份锚点】[：:]\s*/, "")
+    .replace(/^【身份锚点】\s*/, "")
+    .trim();
+}
+
+/** 禁止作為「必須出現在 DR 正文」的錨詞（標籤詞／過短套話）。 */
+function isBoilerplateCopyAnchorFrag(frag: string): boolean {
+  const f = normCompact(frag);
+  if (f.length < 4) return true;
+  const deny = new Set([
+    "身份锚点",
+    "封面身份锚点",
+    "身份锚",
+    "锚点",
+    "基础文案",
+    "基礎文案",
+    "文案摘录",
+    "文案摘錄",
+    "选題標題",
+    "选题标题",
+  ]);
+  return deny.has(f) || deny.has(f.slice(0, Math.min(6, f.length)));
+}
+
 /**
  * 捨棄與題/文無可追溯綁定的空泛發揮（聯網趨勢僅可作輔證，主體須來自已給標題與文案）。
  */
@@ -118,12 +147,23 @@ function passesCoverBriefTopicCopyAnchor(textRaw: string, task: CoverTaskInput):
     }
   }
 
-  const baseNorm = normCompact(task.baseCopywriting || "");
+  const baseRaw = stripInternalCoverAnchorLabelsForCopyAnchor(String(task.baseCopywriting || ""));
+  const baseNorm = normCompact(baseRaw);
   if (baseNorm.length >= 24) {
     const head = baseNorm.slice(0, Math.min(baseNorm.length, 48));
-    const m = head.match(/[\u4e00-\u9fff]{4,12}|[A-Za-z0-9]{6,}/);
-    const fragCopy = (m?.[0] ?? head.slice(0, Math.min(head.length, 8))).slice(0, 12);
-    if (fragCopy.length >= 4 && !normText.includes(fragCopy)) {
+    const runs = head.match(/[\u4e00-\u9fff]{4,12}|[A-Za-z0-9]{6,}/g) ?? [];
+    let fragCopy = "";
+    for (const run of runs) {
+      const cand = String(run).slice(0, 12);
+      if (!isBoilerplateCopyAnchorFrag(cand)) {
+        fragCopy = cand;
+        break;
+      }
+    }
+    if (!fragCopy) {
+      fragCopy = (head.slice(0, Math.min(head.length, 8)).match(/[\u4e00-\u9fff]{4,8}/)?.[0] ?? "").slice(0, 12);
+    }
+    if (fragCopy.length >= 4 && !isBoilerplateCopyAnchorFrag(fragCopy) && !normText.includes(fragCopy)) {
       return { ok: false, reason: `未檢測到文案錨點「${fragCopy}…」——須復用上下文具體信息` };
     }
   }
