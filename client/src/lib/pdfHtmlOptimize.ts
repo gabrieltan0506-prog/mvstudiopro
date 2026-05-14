@@ -56,9 +56,16 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 @media print{
 html,body{
 margin:0!important;padding:0!important;height:auto!important;min-height:0!important;overflow:visible!important;
+background:#0b0f19!important;background-color:#0b0f19!important;
 -webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;
 }
-#platform-report{margin:0!important;padding:0!important;max-width:none!important;}
+#platform-report,#platform-report *{
+-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;
+}
+#platform-report{
+margin:0!important;padding:0!important;max-width:none!important;
+background:#0b0f19!important;background-color:#0b0f19!important;
+}
 #platform-report .platform-report-dashboard-shell{
 overflow:visible!important;max-height:none!important;height:auto!important;
 }

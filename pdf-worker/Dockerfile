@@ -21,7 +21,6 @@ FROM node:24-slim
 # Install Chromium and required system libraries
 RUN apt-get update && apt-get install -y \
     chromium \
-    ghostscript \
     libnss3 \
     libxss1 \
     libasound2 \

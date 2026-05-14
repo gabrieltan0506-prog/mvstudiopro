@@ -46,7 +46,7 @@ gcloud builds submit --tag $IMAGE_URL \
   --gcs-log-dir="${BUCKET_NAME}/logs"
 
 echo "🛸 [5/5] 正在發射至 Cloud Run..."
-# Deep Research Max：setContent + 等图 + page.pdf + gs 连续阶段可能 > 33min；拉满 Cloud Run HTTP 上限 3600s。
+# Deep Research Max：setContent + 等图 + page.pdf 连续阶段可能 > 33min；拉满 Cloud Run HTTP 上限 3600s。
 # 须与 pdf-worker/index.ts express server socket、server/routers.ts PDF_PROXY_FETCH_TIMEOUT_MS、fly.toml idle_timeout 一起改。
 gcloud run deploy $SERVICE_NAME \
   --image $IMAGE_URL \
