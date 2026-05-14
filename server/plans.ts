@@ -263,9 +263,9 @@ export const CREDIT_COSTS = {
   // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────────────
   platformStoryboardSheet: 168, // 单条：分镜 2×4（双语编导；生图 GPT-IMAGE-2）
   platformXhsDualNote: 168, // 单条：小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
-  /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 併發兩條生圖） */
+  /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 串行非同步兩階段生圖） */
   platformTopicCoverAndCompositeBundle: 268,
-  /** 平台页：一键 **恰好四条** 选题各一张 2×4 合成 — **合计** 扣费（每条请求均摊 168/4，见 router bulkFourTopicsFlat168） */
+  /** 平台页：批量四条 2×4 时客户端提示用语（router 按单次 generatePlatformCompositeSheet 扣费） */
   platformCompositeBulkFourTopics: 168,
   /** 平台頁增值：個性化戰略地圖／決策智庫報告（首次體驗見 decisionIntelligenceReportFirst） */
   decisionIntelligenceReport: 200,
@@ -301,7 +301,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
     product: "平台数据分析",
     subFeature: "选题套裝（封面 + 2×4 分镜或八格 · 单条）",
     credits: CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
-    note: "一鍵異步 job 併發兩條生圖鏈；單次扣 268 cr（優於 128+168 分開）",
+    note: "一鍵異步 job 串行兩階段生圖（封面→2×4）；單次扣 268 cr（優於 128+168 分開）",
   },
   {
     product: "平台数据分析",

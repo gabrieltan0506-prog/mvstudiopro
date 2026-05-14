@@ -298,7 +298,7 @@ export async function runPlatformTopicImagePipeline(
     try {
       try {
         const { blob: blobForStaging, provenance: stagingProv } = await buildCoverChineseBlobForStaging({
-          strategistCombinedBlock: strategistChinesePrompt,
+          strategistCombinedBlock: strategistChinesePrompt ?? "",
           baseContextZh: ctxStr,
           briefSource,
           extractChineseVisualBrief,

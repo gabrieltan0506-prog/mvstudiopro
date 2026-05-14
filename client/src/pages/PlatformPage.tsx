@@ -2511,9 +2511,8 @@ export default function PlatformPage() {
       }
     },
     onError: (error, variables, ctx) => {
-      const refunded = variables.bulkFourTopicsFlat168
-        ? Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4)
-        : variables.kind === "xiaohongshu_dual_note"
+      const refunded =
+        variables.kind === "xiaohongshu_dual_note"
           ? CREDIT_COSTS.platformXhsDualNote
           : CREDIT_COSTS.platformStoryboardSheet;
       const fullMsg = error instanceof Error ? error.message : String(error);
@@ -2627,10 +2626,6 @@ export default function PlatformPage() {
                 creationRecordId: readOptionalReportBindingCreationId(),
                 imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                 progressJobId: newPlatformCompositeProgressJobId(),
-                bulkFourTopicsFlat168:
-                  cards.length === 4
-                    ? { clientBatchKey: localOpId, slotIndex }
-                    : undefined,
                 ...compositeDrProExtras,
               }),
             (waitMs) => {
