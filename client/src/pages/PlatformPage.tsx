@@ -89,6 +89,7 @@ import {
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PLATFORM_RECENT_UPDATES } from "@/components/HomeChangelog";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
@@ -101,6 +102,8 @@ const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
 /** 管理員／監管：選題封面管线步驟 0.5 Deep Research Pro（Interactions） */
 const PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY = "mvstudiopro.platform.topicCoverDeepResearchPro.v1";
+/** 用戶上傳的定制智庫戰略全景圖（本機 data URL，僅作對位參考） */
+const PLATFORM_STRATEGIC_PANORAMA_LS_KEY = "mvstudiopro.platform.strategicPanorama.v1";
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
 
@@ -1242,6 +1245,39 @@ export default function PlatformPage() {
   const [focusPrompt, setFocusPrompt] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
   const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
+  const strategicPanoramaInputRef = useRef<HTMLInputElement>(null);
+  const [strategicPanoramaDataUrl, setStrategicPanoramaDataUrl] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return localStorage.getItem(PLATFORM_STRATEGIC_PANORAMA_LS_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const onStrategicPanoramaFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f?.type?.startsWith("image/")) {
+      toast.error("请上传图片文件");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result || "");
+      if (url.length > 4_800_000) {
+        toast.error("图片过大，请压缩后重试");
+        return;
+      }
+      setStrategicPanoramaDataUrl(url);
+      try {
+        localStorage.setItem(PLATFORM_STRATEGIC_PANORAMA_LS_KEY, url);
+      } catch {
+        toast.error("本机存储配额不足");
+      }
+      toast.success("已保存战略全景参考图");
+    };
+    reader.readAsDataURL(f);
+    e.target.value = "";
+  }, []);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
@@ -4005,71 +4041,84 @@ export default function PlatformPage() {
                 <TrendingUp className="h-3.5 w-3.5" />
                 平台顾问台
               </div>
-              <div className="mt-4 flex flex-col gap-3">
+              <div className="mt-4 flex flex-col gap-4">
                 <div className="text-sm font-bold uppercase tracking-[0.14em] text-[#8cefff] md:text-base">
-                  本页付费能力 · 一键直达
+                  定制智库战略全景
                 </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <p className="text-sm leading-relaxed text-[#c4b8e8]">
+                  上传您的决策智库可视化长图（如雷达、对比矩阵），作为本平台趋势分析的对照参考。文件仅保存在本机浏览器，可随时清除。
+                </p>
+                <input
+                  ref={strategicPanoramaInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={onStrategicPanoramaFile}
+                />
+                <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => void scrollToPaidPlatformTrends()}
-                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#49e6ff]/45 hover:bg-[rgba(73,230,255,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
+                    onClick={() => strategicPanoramaInputRef.current?.click()}
+                    className="rounded-2xl border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20"
                   >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/15 text-[#8cefff] md:h-14 md:w-14">
-                      <BarChart3 className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">平台趋势分析</span>
-                        <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fef08a]">
-                          {CREDIT_COSTS.platformStage2Copywriting} 积分起
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">全案入队读取窗口样本、热点与平台信号</p>
-                    </div>
+                    上传全景图
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void scrollToPaidDecisionIntel()}
-                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#ff4fb8]/45 hover:bg-[rgba(255,79,184,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
-                  >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-[#0a0a0f] p-1 md:h-14 md:w-14">
-                      <img
-                        src="/brand/mvstudiopro-strategic-intel-logo.png"
-                        alt=""
-                        className="h-full w-full object-contain"
-                        width={112}
-                        height={112}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">个人战略全景</span>
-                        <span className="rounded-full border border-[#f472b6]/45 bg-[rgba(244,114,182,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fbcfe8]">
-                          智库加购
-                        </span>
+                  {strategicPanoramaDataUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStrategicPanoramaDataUrl(null);
+                        try {
+                          localStorage.removeItem(PLATFORM_STRATEGIC_PANORAMA_LS_KEY);
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      className="text-xs font-semibold text-white/40 underline decoration-dotted"
+                    >
+                      清除参考图
+                    </button>
+                  ) : null}
+                  <span className="text-xs text-white/35">
+                    快捷跳转：
+                    <button type="button" className="ml-1 underline" onClick={() => void scrollToPaidPlatformTrends()}>
+                      趋势运行区
+                    </button>
+                    ·
+                    <button type="button" className="underline" onClick={() => void scrollToPaidDecisionIntel()}>
+                      战略全景解锁
+                    </button>
+                    ·
+                    <button type="button" className="underline" onClick={() => void scrollToPaidDeepQa()}>
+                      深度追问
+                    </button>
+                  </span>
+                </div>
+                {strategicPanoramaDataUrl ? (
+                  <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/35">
+                    <img
+                      src={strategicPanoramaDataUrl}
+                      alt="定制战略全景"
+                      className="max-h-[min(420px,48vh)] w-full object-contain"
+                    />
+                  </div>
+                ) : null}
+
+                <div className="mt-2 space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8cefff]/90">近十天功能更新</div>
+                  <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory [scrollbar-width:thin]">
+                    {PLATFORM_RECENT_UPDATES.map((u) => (
+                      <div
+                        key={`${u.date}-${u.text.slice(0, 24)}`}
+                        className="min-w-[240px] shrink-0 snap-start rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-left text-sm text-[#d7d0ef]"
+                      >
+                        <div className="text-[11px] font-bold text-[#49e6ff]">
+                          {u.date} · <span className="text-[#c4b5fd]">{u.tag}</span>
+                        </div>
+                        <p className="mt-1.5 leading-relaxed text-[13px] text-[#e8e2ff]/90">{u.text}</p>
                       </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">专属文案就绪后可解锁一页可视化决策地图</p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void scrollToPaidDeepQa()}
-                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#a78bfa]/50 hover:bg-[rgba(167,139,250,0.14)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
-                  >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#a78bfa]/40 bg-[#a78bfa]/18 text-[#ddd6fe] md:h-14 md:w-14">
-                      <MessageSquareText className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">深度追问</span>
-                        <span className="rounded-full border border-[#c4b5fd]/40 bg-[rgba(196,181,253,0.14)] px-2.5 py-0.5 text-xs font-semibold text-[#e9d5ff]">
-                          按次扣点
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">基于当前窗口数据追问到形式、节奏与承接</p>
-                    </div>
-                  </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <h1 className="mt-5 max-w-5xl text-[40px] font-black leading-[0.92] text-white md:text-[64px] xl:text-[76px]">

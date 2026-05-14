@@ -526,6 +526,59 @@ export default function GodViewPage() {
 
       <div style={{ maxWidth: 860, margin: "0 auto", padding: isMobile ? "24px 16px 60px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
 
+        {/* 竞品调研置顶：与 /research 同源（嵌入 iframe，避免重复维护大段 UI） */}
+        <div
+          style={{
+            marginBottom: isMobile ? 20 : 28,
+            borderRadius: 16,
+            overflow: "hidden",
+            border: "1px solid rgba(168,118,27,0.38)",
+            background: "rgba(255,250,240,0.88)",
+            boxShadow: "0 8px 28px rgba(122,84,16,0.12)",
+          }}
+        >
+          <div
+            style={{
+              padding: "12px 16px",
+              borderBottom: "1px solid rgba(122,84,16,0.12)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 900, color: "#7a5410" }}>四平台竞品调研（60 点/次）</div>
+            <button
+              type="button"
+              onClick={() => navigate("/research")}
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                color: "#a87020",
+                background: "rgba(168,118,27,0.12)",
+                border: "1px solid rgba(168,118,27,0.35)",
+                borderRadius: 10,
+                padding: "6px 12px",
+                cursor: "pointer",
+              }}
+            >
+              独立全屏页 →
+            </button>
+          </div>
+          <iframe
+            title="竞品与对标调研"
+            src="/research?embed=1"
+            style={{
+              width: "100%",
+              height: isMobile ? 640 : 720,
+              border: "none",
+              display: "block",
+              background: "#0e0700",
+            }}
+          />
+        </div>
+
         {/* 页面标题 */}
         <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 36 }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 14 : 18 }}>

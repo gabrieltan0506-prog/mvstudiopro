@@ -8,8 +8,8 @@ const PINNED_CARD = {
   tag: "今日上线",
   title: "竞品与对标分析",
   subtitle: "结合四平台实时数据库 · 双引擎战略处方",
-  desc: "整合小红书、抖音、快手、B站四平台实时热门内容库，双引擎深度扫描竞品流量密码，生成差异化人设定位、执行脚本与30天增长路径，单次20点即可获得降维打击方案。",
-  pills: ["小红书", "抖音", "B站", "快手", "20点/次"],
+  desc: "整合小红书、抖音、快手、B站四平台实时热门内容库，双引擎深度扫描竞品流量密码，生成差异化人设定位、执行脚本与30天增长路径，单次60点即可获得降维打击方案。",
+  pills: ["小红书", "抖音", "B站", "快手", "60点/次"],
   icon: Search,
   accentColor: "#f97316",
   glowColor: "rgba(249,115,22,0.22)",
@@ -206,13 +206,18 @@ function FeatureCard({
   onMouseEnter,
   onMouseLeave,
   compact = false,
+  defaultDetailOpen = false,
 }: {
   card: (typeof CAROUSEL_CARDS)[0] & { href?: string };
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   compact?: boolean;
+  /** 竞品置顶卡等：默认展开说明 */
+  defaultDetailOpen?: boolean;
 }) {
   const Icon = card.icon;
+  const [detailOpen, setDetailOpen] = useState(defaultDetailOpen);
+  const [hovered, setHovered] = useState(false);
   return (
     <div
       style={{
@@ -220,59 +225,87 @@ function FeatureCard({
         background: card.bgGradient,
         border: `1px solid ${card.borderColor}`,
         borderRadius: 20,
-        boxShadow: `0 0 48px ${card.glowColor}, inset 0 0 40px ${card.glowColor.replace(/[\d.]+\)$/, "0.04)")}`,
+        boxShadow: hovered
+          ? `0 18px 56px ${card.glowColor}, inset 0 0 40px ${card.glowColor.replace(/[\d.]+\)$/, "0.04)")}`
+          : `0 0 48px ${card.glowColor}, inset 0 0 40px ${card.glowColor.replace(/[\d.]+\)$/, "0.04)")}`,
         padding: compact ? "24px 28px" : "32px 36px",
         overflow: "hidden",
-        transition: "background 0.5s ease, border-color 0.5s ease, box-shadow 0.5s ease",
+        transition: "background 0.5s ease, border-color 0.5s ease, box-shadow 0.5s ease, transform 0.22s ease",
+        transform: hovered ? "translateY(-6px)" : "translateY(0)",
       }}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      onMouseEnter={() => {
+        setHovered(true);
+        onMouseEnter?.();
+      }}
+      onMouseLeave={() => {
+        setHovered(false);
+        onMouseLeave?.();
+      }}
     >
       {/* 装饰光晕 */}
       <div style={{ position: "absolute", top: -60, right: -60, width: 200, height: 200, background: card.glowColor, borderRadius: "50%", filter: "blur(60px)", pointerEvents: "none" }} />
 
       <div style={{ display: "flex", gap: 24, alignItems: "flex-start", position: "relative" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* 标签行 */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-            {card.isNew && (
-              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.1em", color: "#fff", background: "linear-gradient(90deg,#f97316,#fb923c)", borderRadius: 6, padding: "3px 10px", boxShadow: "0 2px 8px rgba(249,115,22,0.45)", animation: "mvsp-pulse-orange 2s ease-in-out infinite" }}>
-                NEW
-              </span>
-            )}
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", color: card.accentColor, background: card.glowColor, border: `1px solid ${card.borderColor}`, borderRadius: 99, padding: "3px 10px" }}>
-              {card.tag}
-            </span>
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{card.date}</span>
-          </div>
-
-          <h3 style={{ fontSize: compact ? 20 : 26, fontWeight: 900, color: "#fff", margin: "0 0 4px", lineHeight: 1.25, textShadow: card.isNew ? `0 0 24px ${card.accentColor}55` : "none" }}>
-            {card.title}
-          </h3>
-          <p style={{ fontSize: 13, color: card.accentColor, margin: "0 0 12px", fontWeight: 600 }}>{card.subtitle}</p>
-          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.75, margin: "0 0 16px", maxWidth: 520 }}>{card.desc}</p>
-
-          {/* Pills */}
-          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-            {card.pills.map((pill: string, i: number) => {
-              const isFlash = (card as any).flashPills && i < 3;
-              return (
-                <span key={i} style={{ fontSize: 12, color: isFlash ? "#fff" : card.accentColor, background: isFlash ? `linear-gradient(90deg,${card.accentColor}cc,${card.accentColor}88)` : card.glowColor, border: `1px solid ${isFlash ? card.accentColor : card.borderColor}`, borderRadius: 99, padding: "4px 12px", fontWeight: 700, boxShadow: isFlash ? `0 0 10px ${card.accentColor}66` : "none", animation: isFlash ? `mvsp-flash-pill 1.6s ease-in-out ${i * 0.25}s infinite` : "none" }}>
-                  {pill}
+          <button
+            type="button"
+            onClick={() => setDetailOpen((v) => !v)}
+            style={{
+              display: "block",
+              width: "100%",
+              background: "none",
+              border: "none",
+              padding: 0,
+              margin: 0,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            {/* 标签行 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              {card.isNew && (
+                <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.1em", color: "#fff", background: "linear-gradient(90deg,#f97316,#fb923c)", borderRadius: 6, padding: "3px 10px", boxShadow: "0 2px 8px rgba(249,115,22,0.45)", animation: "mvsp-pulse-orange 2s ease-in-out infinite" }}>
+                  NEW
                 </span>
-              );
-            })}
-          </div>
+              )}
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", color: card.accentColor, background: card.glowColor, border: `1px solid ${card.borderColor}`, borderRadius: 99, padding: "3px 10px" }}>
+                {card.tag}
+              </span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>{card.date}</span>
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{detailOpen ? "▲ 收起说明" : "▼ 展开说明"}</span>
+            </div>
 
-          {/* 跳转按钮 */}
-          {(card as any).href && (
-            <a href={(card as any).href} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 16, fontSize: 13, fontWeight: 700, color: card.accentColor, background: card.glowColor, border: `1px solid ${card.borderColor}`, borderRadius: 10, padding: "8px 18px", textDecoration: "none", transition: "opacity 0.2s" }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-            >
-              立即体验 →
-            </a>
-          )}
+            <h3 style={{ fontSize: compact ? 20 : 26, fontWeight: 900, color: "#fff", margin: "0 0 4px", lineHeight: 1.25, textShadow: card.isNew ? `0 0 24px ${card.accentColor}55` : "none" }}>
+              {card.title}
+            </h3>
+            <p style={{ fontSize: 13, color: card.accentColor, margin: "0 0 12px", fontWeight: 600 }}>{card.subtitle}</p>
+          </button>
+          {detailOpen ? (
+            <>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.75, margin: "0 0 16px", maxWidth: 520 }}>{card.desc}</p>
+
+              {/* Pills */}
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                {card.pills.map((pill: string, i: number) => {
+                  const isFlash = (card as any).flashPills && i < 3;
+                  return (
+                    <span key={i} style={{ fontSize: 12, color: isFlash ? "#fff" : card.accentColor, background: isFlash ? `linear-gradient(90deg,${card.accentColor}cc,${card.accentColor}88)` : card.glowColor, border: `1px solid ${isFlash ? card.accentColor : card.borderColor}`, borderRadius: 99, padding: "4px 12px", fontWeight: 700, boxShadow: isFlash ? `0 0 10px ${card.accentColor}66` : "none", animation: isFlash ? `mvsp-flash-pill 1.6s ease-in-out ${i * 0.25}s infinite` : "none" }}>
+                      {pill}
+                    </span>
+                  );
+                })}
+              </div>
+
+              {(card as any).href && (
+                <a href={(card as any).href} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 16, fontSize: 13, fontWeight: 700, color: card.accentColor, background: card.glowColor, border: `1px solid ${card.borderColor}`, borderRadius: 10, padding: "8px 18px", textDecoration: "none", transition: "opacity 0.2s" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
+                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                >
+                  立即体验 →
+                </a>
+              )}
+            </>
+          ) : null}
         </div>
 
         {/* 右侧图标 */}
@@ -313,11 +346,16 @@ export default function HomeFeatureCarousel() {
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>最新上线与核心亮点</span>
         </div>
 
+        {/* ── 固定卡片：竞品与对标分析（优先于上帝视角） ── */}
+        <div style={{ marginBottom: 16 }}>
+          <FeatureCard card={PINNED_CARD as any} />
+        </div>
+
         {/* ── 固定卡片：AI 上帝视角（黑金 VIP） ── */}
         <a href="/god-view" style={{ display: "block", textDecoration: "none", marginBottom: 16 }}>
-          <div style={{ position: "relative", overflow: "hidden", borderRadius: 20, background: "linear-gradient(135deg, #0e0800 0%, #1a1000 50%, #0a0600 100%)", border: "1px solid rgba(180,130,0,0.45)", boxShadow: "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)", padding: "28px 28px 24px", cursor: "pointer", transition: "border-color 0.3s, box-shadow 0.3s" }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(245,200,80,0.75)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 0 60px rgba(200,160,0,0.28), inset 0 0 60px rgba(200,160,0,0.06)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(180,130,0,0.45)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)"; }}
+          <div style={{ position: "relative", overflow: "hidden", borderRadius: 20, background: "linear-gradient(135deg, #0e0800 0%, #1a1000 50%, #0a0600 100%)", border: "1px solid rgba(180,130,0,0.45)", boxShadow: "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)", padding: "28px 28px 24px", cursor: "pointer", transition: "border-color 0.3s, box-shadow 0.3s, transform 0.22s ease" }}
+            onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(245,200,80,0.75)"; el.style.boxShadow = "0 0 60px rgba(200,160,0,0.28), inset 0 0 60px rgba(200,160,0,0.06)"; el.style.transform = "translateY(-5px)"; }}
+            onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(180,130,0,0.45)"; el.style.boxShadow = "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)"; el.style.transform = "none"; }}
           >
             {/* 背景光晕 */}
             <div style={{ position: "absolute", top: -60, right: -60, width: 220, height: 220, borderRadius: "50%", background: "radial-gradient(circle, rgba(200,160,0,0.18) 0%, transparent 70%)", filter: "blur(30px)", pointerEvents: "none" }} />
@@ -351,9 +389,6 @@ export default function HomeFeatureCarousel() {
             </div>
           </div>
         </a>
-
-        {/* ── 固定卡片：竞品与对标分析 ── */}
-        <FeatureCard card={PINNED_CARD as any} />
 
         {/* 间距分割线 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0 16px" }}>

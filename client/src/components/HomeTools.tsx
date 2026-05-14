@@ -10,10 +10,38 @@ type ToolCard = {
 };
 
 const cards: ToolCard[] = [
-  { zh: "IP 战略指挥室", en: "IP Strategy Hub", desc: "丢掉低效的头脑风暴。上传竞品或灵感碎片，AI 瞬间为您输出万字商业战略、精准爆款选题库与导演级机位分镜。", price: "公测功能", pro: true, href: "/creator-growth-camp" },
-  { zh: "爆款解构引擎", en: "Viral Remix Engine", desc: "万物皆可爆改。一键输入对标爆款，精准拆解其底层爆火逻辑，为您重塑生成极具个人 IP 风格的独家二创落地脚本。", price: "公测功能", pro: true, href: "/creator-growth-camp/premium-remix" },
-  { zh: "全网流量雷达", en: "Trend Radar", desc: "告别盲目自嗨。实时捕捉小红书、抖音等主流平台最新流量风向，并为您量身定制快速起号、发布计划与精准流量承接策略。", price: "公测功能", pro: true, href: "/creator-growth-camp/platform" },
-  { zh: "影视级全自动产线", en: "Auto-Pilot Workflow", desc: "将繁琐步骤降维打击。可视化无缝串联脚本生成、分镜规划、配乐合成与语音输出。点击执行，喝杯咖啡坐等成片。", price: "公测功能", pro: true, href: "/workflow-nodes" },
+  {
+    zh: "成长营 · 二创中心",
+    en: "Growth Camp + REMIX",
+    desc: "创作者成长营与二创中心合并入口：既可做商业级增长分析（GROWTH），也可走爆款解构与分镜级二创（REMIX）。",
+    price: "公测功能",
+    pro: true,
+    href: "/creator-growth-camp",
+  },
+  {
+    zh: "竞品分析调研",
+    en: "Competitor Research",
+    desc: "四平台双引擎竞品扫描，输出人设卡位、脚本、视觉与 30 天增长路径。",
+    price: "60 点/次",
+    pro: true,
+    href: "/research",
+  },
+  {
+    zh: "AI 上帝视角",
+    en: "Strategic Think Tank",
+    desc: "旗舰级深度研报：半月刊、半年订阅与私人订制，含数据表与四平台对比矩阵。",
+    price: "800 点起",
+    pro: true,
+    href: "/god-view",
+  },
+  {
+    zh: "全网流量雷达",
+    en: "Trend Radar",
+    desc: "实时捕捉小红书、抖音、快手、B 站等主流平台流量风向，AI 续问与趋势导出。",
+    price: "公测功能",
+    pro: true,
+    href: "/creator-growth-camp/platform",
+  },
 ];
 
 export default function HomeTools() {
@@ -42,17 +70,26 @@ export default function HomeTools() {
                 pro
                   ? "radial-gradient(circle at top left, rgba(255,138,61,0.3), transparent 35%), linear-gradient(135deg, rgba(17,33,58,0.96), rgba(12,18,32,0.96))"
                   : idx === 0
-                  ? "linear-gradient(135deg, rgba(91,33,182,0.35), rgba(255,79,179,0.18))"
-                  : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))",
+                    ? "linear-gradient(135deg, rgba(91,33,182,0.35), rgba(255,79,179,0.18))"
+                    : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))",
               border:
                 pro
                   ? "1px solid rgba(255,179,127,0.34)"
                   : idx === 0
-                  ? "1px solid rgba(255,138,91,0.36)"
-                  : "1px solid rgba(255,255,255,0.08)",
+                    ? "1px solid rgba(255,138,91,0.36)"
+                    : "1px solid rgba(255,255,255,0.08)",
               boxShadow: pro ? "0 18px 42px rgba(255,138,61,0.12)" : "none",
               position: "relative",
               textDecoration: "none",
+              transition: "transform 0.2s ease, box-shadow 0.2s ease",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-4px)";
+              (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 22px 48px rgba(0,0,0,0.35)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.transform = "none";
+              (e.currentTarget as HTMLAnchorElement).style.boxShadow = pro ? "0 18px 42px rgba(255,138,61,0.12)" : "none";
             }}
           >
             {pro ? (

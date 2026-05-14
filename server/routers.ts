@@ -5606,6 +5606,66 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const report = JSON.parse(response.choices[0].message.content as string);
         return { success: true, report };
       }),
+
+    /** 首页智能向导：和善、专业地介绍站内付费能力（Gemini 3.1 Pro · Vertex global） */
+    homeProductGuide: protectedProcedure
+      .input(z.object({ message: z.string().min(1).max(4000) }))
+      .mutation(async ({ input, ctx }) => {
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("首页智能向导");
+
+        const COST = 2;
+        let deduct: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deduct = await deductCreditsAmount(ctx.user.id, COST, "aiAssistEditor", "首页智能向导·产品咨询");
+          if (!deduct.success) throw new Error(`积分不足，需要 ${COST} 点`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分不足" });
+        }
+
+        const { registerActiveJob, refundCreditsOnFailure, unregisterActiveJob } = await import(
+          "./services/paidJobLedger",
+        );
+        const jobId = `hpg_${Date.now()}_${nanoid(6)}`;
+        await registerActiveJob({
+          jobId,
+          taskType: "aiAssistEditor",
+          userId: ctx.user.id,
+          creditsBilled: deduct.source === "admin" ? 0 : COST,
+          action: "首页智能向导",
+          externalApiCostHint: "Vertex gemini-3.1-pro-preview",
+          metadata: { kind: "homeProductGuide" },
+        }).catch(() => {});
+
+        const system = `你是 MV Studio Pro 站内智能向导。用户可能不了解产品。
+请用温暖、耐心、专业的简体中文回答，避免生硬推销；若涉及付费，诚实说明「大约需要多少积分/适合谁」，并给出 1～2 个最相关的站内路径（如 /platform、/god-view、/research、/creator-growth-camp/premium-remix）。
+回答控制在 400 字以内，分条陈述，不要编造不存在的功能。若问题与产品无关，礼貌引导回创作与增长相关主题。`;
+
+        try {
+          const { callGemini3_1_Pro } = await import("./services/vertexGemini31ProGlobal.js");
+          const reply = (
+            await callGemini3_1_Pro(`${system}\n\n用户问题：\n${input.message}`, {
+              maxOutputTokens: 2048,
+              temperature: 0.65,
+            })
+          ).trim();
+          if (!reply) {
+            await refundCreditsOnFailure(jobId, "aiAssistEditor", "external_api_error", "empty").catch(() => {});
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "AI 未返回内容" });
+          }
+          await unregisterActiveJob(jobId, "aiAssistEditor", "settled").catch(() => {});
+          return { reply, creditsCost: COST };
+        } catch (e: any) {
+          await refundCreditsOnFailure(jobId, "aiAssistEditor", "task_failed", String(e?.message ?? "")).catch(
+            () => {},
+          );
+          if (e instanceof TRPCError) throw e;
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: e?.message || "智能向导调用失败",
+          });
+        }
+      }),
   }),
 
   // Virtual Idol Generation
@@ -8754,7 +8814,7 @@ ${input.blockText}`;
         await assertMaintenanceOff("竞品调研");
 
         const userId = ctx.user.id;
-        const COST = 20;
+        const COST = 60;
         const PLATFORM_LABEL: Record<string, string> = {
           douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", bilibili: "B站"
         };
@@ -8763,7 +8823,7 @@ ${input.blockText}`;
         // 1. 扣费
         let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
         try {
-          deductResult = await deductCreditsAmount(userId, COST, "competitorResearch", `${label}竞品调研（20点）`);
+          deductResult = await deductCreditsAmount(userId, COST, "competitorResearch", `${label}竞品调研（60点）`);
         } catch (e: any) {
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
         }

@@ -3,8 +3,6 @@ import { useLocation } from "wouter";
 import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff, Download, FileDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import type { ResearchPipelineDebugStep } from "@shared/researchPipelineDebugMarker";
-import { RESEARCH_PIPELINE_DEBUG_MARKER } from "@shared/researchPipelineDebugMarker";
 import { getMusicClipsFromJobPayload, clipToGeneratedSong, songDownloadUrlCandidates, downloadGeneratedMusicToFile } from "@/lib/growthMusic";
 
 const VIDEO_FIRST_USE_KEY = "mvs-video-first-used";
@@ -34,6 +32,9 @@ const MAX_CHARS = 5000;
 
 export default function ResearchPage() {
   const [, navigate] = useLocation();
+  const [isEmbed] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("embed") === "1",
+  );
   const [platform, setPlatform] = useState<Platform>("xiaohongshu");
   const [content, setContent] = useState("");
   const [showGuide, setShowGuide] = useState(false);
@@ -141,24 +142,8 @@ export default function ResearchPage() {
       toast.success(`调研完成，消耗 ${data.creditsUsed} 点`);
     },
     onError: (err) => {
-      const full = err.message || "";
-      const i = full.indexOf(RESEARCH_PIPELINE_DEBUG_MARKER);
-      let short = full;
-      let fromErr: ResearchPipelineDebugStep[] | undefined;
-      if (i !== -1) {
-        short = full.slice(0, i).trim();
-        try {
-          fromErr = JSON.parse(full.slice(i + RESEARCH_PIPELINE_DEBUG_MARKER.length)) as ResearchPipelineDebugStep[];
-        } catch {
-          /* ignore */
-        }
-      }
-      setRawResponse({
-        error: short,
-        code: err.data?.code,
-        ...(Array.isArray(fromErr) && fromErr.length ? { pipelineDebug: fromErr } : {}),
-      });
-      toast.error(short || "调研失败，请重试");
+      setRawResponse({ error: err.message, code: err.data?.code });
+      toast.error(err.message || "调研失败，请重试");
     },
   });
 
@@ -239,7 +224,7 @@ export default function ResearchPage() {
       toast.error("字数超过 5000 字限制，请精简后再试");
       return;
     }
-    if (!window.confirm(`执行「${PLATFORMS.find((p) => p.value === platform)?.label}」深度调研将扣除 20 点，确定继续？`)) return;
+    if (!window.confirm(`执行「${PLATFORMS.find((p) => p.value === platform)?.label}」深度调研将扣除 60 点，确定继续？`)) return;
     mutation.mutate({ platform, competitorData: content });
   };
 
@@ -249,14 +234,15 @@ export default function ResearchPage() {
 
   return (
     <div style={{
-      minHeight: "100dvh",
+      minHeight: isEmbed ? "auto" : "100dvh",
       fontFamily: "'Inter', sans-serif",
-      // 琥珀暗金底：极深棕黑 + 暗琥珀渐变
-      background: "linear-gradient(145deg, #0E0700 0%, #160B00 25%, #1E1000 50%, #160900 75%, #0C0600 100%)",
+      // 琥珀暗金底：极深棕黑 + 暗琥珀渐变（嵌入模式透明以便融入上帝视角页）
+      background: isEmbed ? "#0E0700" : "linear-gradient(145deg, #0E0700 0%, #160B00 25%, #1E1000 50%, #160900 75%, #0C0600 100%)",
       position: "relative",
       overflow: "hidden",
     }}>
       {/* ── 流光琥珀浮动光晕 ── */}
+      {isEmbed ? null : (
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
         {/* 主光弧 — 左上，亮琥珀金 */}
         <div style={{ position: "absolute", top: "-10%", left: "-8%", width: 700, height: 700, borderRadius: "50%", background: "radial-gradient(circle, rgba(200,120,0,0.22) 0%, rgba(160,80,0,0.10) 40%, transparent 70%)", filter: "blur(55px)", animation: "cappuccino-float-a 14s ease-in-out infinite" }} />
@@ -271,17 +257,19 @@ export default function ResearchPage() {
         {/* 流光线条效果：对角线亮带 */}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, transparent 20%, rgba(200,120,5,0.04) 40%, rgba(230,150,10,0.07) 50%, rgba(200,120,5,0.04) 60%, transparent 80%)", animation: "cappuccino-float-c 30s linear infinite" }} />
       </div>
+      )}
 
       {/* ── 生成中：流光强化动画 ── */}
       {isGenerating && (
-        <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 1 }}>
+        <div style={{ position: isEmbed ? "absolute" : "fixed", inset: 0, pointerEvents: "none", zIndex: 1 }}>
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(120deg, transparent 0%, rgba(220,140,10,0.09) 30%, rgba(255,180,30,0.12) 50%, rgba(210,130,0,0.09) 70%, transparent 100%)", animation: "morandi-flow 2.8s ease-in-out infinite", backgroundSize: "200% 200%" }} />
           <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 160px rgba(180,100,0,0.18)", animation: "morandi-breathe 2.2s ease-in-out infinite" }} />
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, rgba(200,120,5,0.5), rgba(255,180,30,1.0), rgba(200,120,5,0.5), transparent)", animation: "morandi-slide 1.8s ease-in-out infinite" }} />
         </div>
       )}
 
-      {/* 顶部导航 */}
+      {/* 顶部导航（嵌入模式隐藏，由宿主页提供导航） */}
+      {!isEmbed ? (
       <div style={{ borderBottom: "1px solid rgba(200,120,5,0.20)", background: "rgba(10,6,0,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
         <button onClick={() => navigate("/")} style={{ color: "rgba(255,255,255,0.45)", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
           <ChevronLeft size={16} />首页
@@ -289,11 +277,18 @@ export default function ResearchPage() {
         <span style={{ color: "rgba(255,255,255,0.15)" }}>/</span>
         <span style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: 600 }}>竞品与对标分析</span>
         <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#f97316", background: "rgba(249,115,22,0.12)", border: "1px solid rgba(249,115,22,0.3)", borderRadius: 99, padding: "3px 10px" }}>
-          20点/次
+          60点/次
         </span>
       </div>
+      ) : (
+        <div style={{ padding: "12px 4px 4px", display: "flex", justifyContent: "flex-end" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#b45309", background: "rgba(251,191,36,0.15)", border: "1px solid rgba(180,83,9,0.35)", borderRadius: 99, padding: "3px 10px" }}>
+            竞品调研 · 60点/次
+          </span>
+        </div>
+      )}
 
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: isEmbed ? "16px 12px 32px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
         {/* 页面标题 */}
         <div style={{ marginBottom: 32 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
@@ -322,7 +317,7 @@ export default function ResearchPage() {
         {showGuide && (
           <div style={{ marginBottom: 24, padding: "20px 20px", background: "rgba(249,115,22,0.04)", border: "1px solid rgba(249,115,22,0.15)", borderRadius: 12, fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.8 }}>
             <p style={{ color: "#fb923c", fontWeight: 700, marginBottom: 8 }}>📘 操作流程</p>
-            <p>① 选择平台 → ② 粘贴竞品文案/标题/逐字稿（5000字以内）→ ③ 点击执行（扣除20点）→ ④ 等待约30秒获取处方</p>
+            <p>① 选择平台 → ② 粘贴竞品文案/标题/逐字稿（5000字以内）→ ③ 点击执行（扣除60点）→ ④ 等待约30秒获取处方</p>
             <p style={{ marginTop: 8, color: "#fb923c", fontWeight: 700 }}>💡 专家语录</p>
             <p style={{ fontStyle: "italic" }}>「不要用你的体力，去挑战对手的数据力。」</p>
           </div>
@@ -399,7 +394,7 @@ export default function ResearchPage() {
             >
               {mutation.isPending
                 ? <><Loader2 size={15} className="animate-spin" />双引擎化验中…</>
-                : <><Rocket size={15} />执行深度调研（20点）</>}
+                : <><Rocket size={15} />执行深度调研（60点）</>}
             </button>
           </div>
         </div>
@@ -526,36 +521,6 @@ export default function ResearchPage() {
                   <Stat label="输入字数" value={`${content.length} / ${MAX_CHARS}`} />
                   <Stat label="输出字段" value={result ? Object.keys(result).join(", ") : "—"} />
                 </div>
-
-                {Array.isArray((rawResponse as { pipelineDebug?: ResearchPipelineDebugStep[] })?.pipelineDebug) &&
-                  (rawResponse as { pipelineDebug: ResearchPipelineDebugStep[] }).pipelineDebug.length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <p style={{ fontSize: 11, color: "rgba(239,68,68,0.6)", marginBottom: 10, fontWeight: 700 }}>PIPELINE</p>
-                    <ol style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: "rgba(255,255,255,0.7)", lineHeight: 1.75 }}>
-                      {(rawResponse as { pipelineDebug: ResearchPipelineDebugStep[] }).pipelineDebug.map((s, idx) => {
-                        const c =
-                          s.status === "ok"
-                            ? "rgba(74,222,128,0.95)"
-                            : s.status === "fail"
-                              ? "rgba(248,113,113,0.95)"
-                              : s.status === "warn"
-                                ? "rgba(250,204,21,0.95)"
-                                : "rgba(147,197,253,0.95)";
-                        return (
-                          <li key={idx} style={{ marginBottom: 8 }}>
-                            <span style={{ color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>{s.at.slice(11, 19)}</span>{" "}
-                            <span style={{ color: c, fontWeight: 700 }}>[{s.status}]</span> {s.phase}
-                            {s.detail ? (
-                              <div style={{ marginTop: 4, fontSize: 10, color: "rgba(255,255,255,0.45)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                {s.detail}
-                              </div>
-                            ) : null}
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  </div>
-                )}
 
                 <p style={{ fontSize: 11, color: "rgba(239,68,68,0.6)", marginBottom: 6, fontWeight: 700 }}>RAW RESPONSE</p>
                 <pre style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 400, overflowY: "auto", margin: 0, lineHeight: 1.6 }}>

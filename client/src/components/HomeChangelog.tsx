@@ -26,6 +26,9 @@ const UPDATES = [
   { date: "04/24", tag: "优化",   text: "分析报告展示升级，核心洞察更突出，视觉更清晰" },
 ];
 
+/** 平台页等功能区：取近 10 条更新轮播 */
+export const PLATFORM_RECENT_UPDATES = UPDATES.slice(0, 10);
+
 // ─── 杀手级功能模块 ───────────────────────────────────────────────────
 const MODULES = [
   {
