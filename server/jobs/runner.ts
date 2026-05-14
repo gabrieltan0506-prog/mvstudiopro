@@ -1104,6 +1104,8 @@ async function processPlatformJob(
         rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
           ? ("nano_banana_2" as const)
           : undefined;
+      const rawDrPro = (params as { enableTopicCoverDeepResearchPro?: unknown }).enableTopicCoverDeepResearchPro;
+      const enableTopicCoverDeepResearchPro = rawDrPro === true;
       const result = await runPlatformTopicImagePipeline({
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1117,6 +1119,7 @@ async function processPlatformJob(
         newJobMetaBase,
         progressJobId: platformJobId,
         coverProEngine,
+        enableTopicCoverDeepResearchPro,
       });
       return { provider: "vertex", output: result };
     }

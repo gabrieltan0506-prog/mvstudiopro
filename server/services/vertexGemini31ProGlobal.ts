@@ -1,76 +1,52 @@
 /**
- * Vertex 前半段文案 / 低成本路徑：**區域**（預設 `global`，與專案在 Console 開通一致；可依 `VERTEX_GEMINI_LOCATION` / `GCP_LOCATION` 覆寫為 `us-central1` 等）+ **gemini-3.1-pro-preview**。
- * 可依 `VERTEX_GEMINI_31_PRO_MODEL` 覆寫模型 ID。
- * Vercel / Fly 無實體憑證檔路徑時，須從 **GOOGLE_APPLICATION_CREDENTIALS_JSON** 注入並修復 **private_key** 換行轉義。
+ * Vertex 文本：**IAM REST `generateContent`**（與 TestLab **`op=geminiScript`**、`vertexTranslate`、{@link ./vertexGemini3FlashText.ts} 同源）。
+ * 使用 **`VERTEX_PROJECT_ID`（或 `GOOGLE_CLOUD_PROJECT` / `GCP_PROJECT_ID`）** + **`getVertexAccessToken`**，**不依賴** `@google-cloud/vertexai` SDK（避免 SDK 對非 JSON 回應解析出 `Unexpected token '<'`）。
  *
- * 【雙軌】平台生圖「英文化」對照測試可走 {@link ../services/geminiPlatformCompositeTranslation.ts} 的 **@google/genai** 路徑（`responseMimeType: application/json`）；本檔為 **@google-cloud/vertexai** 備用。
+ * - 區域：預設 **`VERTEX_GEMINI_LOCATION` → `global`**（與 `api/google.ts` geminiScript 一致；可再用 `GCP_LOCATION` 兜底）
+ * - 模型：預設 **`gemini-3.1-pro-preview`**；`VERTEX_GEMINI_31_PRO_MODEL` 或 **`VERTEX_GEMINI_MODEL`** 可覆寫
  */
-import { VertexAI } from "@google-cloud/vertexai";
+import { baseUrlForVertex, fetchVertexJson, getVertexAuthHeaders } from "./vertexMedia.js";
 
-/** Vertex 文字生成模型（預設 gemini-3.1-pro-preview；可依 VERTEX_GEMINI_31_PRO_MODEL 覆寫）。 */
-function resolveVertexGemini31ProModelId(): string {
-  return (
-    String(process.env.VERTEX_GEMINI_31_PRO_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview"
-  );
+function sp(v: unknown): string {
+  if (v == null) return "";
+  if (Array.isArray(v)) return String(v[0] ?? "");
+  return String(v);
 }
 
-function resolveProjectId(): string {
+type VertexGenRaw = { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+
+function extractTextFromGenerateContent(raw: unknown): string {
+  const c0 = (raw as VertexGenRaw)?.candidates?.[0];
+  const parts = Array.isArray(c0?.content?.parts) ? c0.content.parts : [];
+  return parts.map((p) => sp(p?.text)).join("").trim();
+}
+
+/** 與 Flash 文本、`geminiScript` 看齊的 project 解析順序 */
+function resolveVertexTextProjectId(): string {
   const p = String(
-    process.env.GCP_PROJECT_ID || process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || "",
+    process.env.VERTEX_PROJECT_ID ||
+      process.env.GOOGLE_CLOUD_PROJECT ||
+      process.env.GCP_PROJECT_ID ||
+      "",
   ).trim();
   if (!p) {
-    throw new Error("missing_GCP_PROJECT_ID_or_VERTEX_PROJECT_ID");
+    throw new Error("missing_VERTEX_PROJECT_ID_or_GOOGLE_CLOUD_PROJECT");
   }
   return p;
 }
 
-/** Gemini 3.1 Pro 文本：預設 **global**（與當前專案/預覽模型常見開通一致）；亦可設 `us-central1` 等。 */
-function resolveVertexGemini31Location(): string {
-  const loc = String(
-    process.env.GCP_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "global",
+/** Vertex 文字生成模型（geminiScript 同源：`VERTEX_GEMINI_MODEL`） */
+function resolveVertexGemini31ProModelId(): string {
+  const m = String(
+    process.env.VERTEX_GEMINI_31_PRO_MODEL || process.env.VERTEX_GEMINI_MODEL || "gemini-3.1-pro-preview",
   ).trim();
+  return m || "gemini-3.1-pro-preview";
+}
+
+/** 與 `api/google.ts` geminiScript：`VERTEX_GEMINI_LOCATION` 優先，其次 `GCP_LOCATION`，預設 global */
+function resolveVertexGemini31Location(): string {
+  const loc = String(process.env.VERTEX_GEMINI_LOCATION || process.env.GCP_LOCATION || "global").trim();
   return loc || "global";
-}
-
-/** 與 Vercel JSON 環變相容：解析失敗回 `{}`，私鑰 `\\n` → 真換行。 */
-function parseCredentialsFromVercelJsonEnv(): Record<string, unknown> {
-  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-  let credentials: Record<string, unknown> = {};
-
-  try {
-    if (raw && raw !== "{}") {
-      credentials = JSON.parse(raw) as Record<string, unknown>;
-      const pk = credentials.private_key;
-      if (typeof pk === "string") {
-        credentials.private_key = pk.replace(/\\n/g, "\n");
-      }
-    } else {
-      console.warn("[Vertex 警告]: GOOGLE_APPLICATION_CREDENTIALS_JSON 为空");
-    }
-  } catch (error) {
-    console.error("[Vertex 授权异常] 解析 JSON 凭证失败:", error);
-  }
-
-  return credentials;
-}
-
-let vertexSingleton: VertexAI | null = null;
-let vertexSingletonLocation: string | null = null;
-
-function getVertexClientForGemini31Pro(): VertexAI {
-  const location = resolveVertexGemini31Location();
-  if (!vertexSingleton || vertexSingletonLocation !== location) {
-    const credentials = parseCredentialsFromVercelJsonEnv();
-    vertexSingleton = new VertexAI({
-      project: resolveProjectId(),
-      location,
-      googleAuthOptions: {
-        credentials,
-      },
-    });
-    vertexSingletonLocation = location;
-  }
-  return vertexSingleton;
 }
 
 export type CallGemini31ProOptions = {
@@ -84,76 +60,86 @@ export function describeVertexGemini31ProRouting(): string {
   return `${resolveVertexGemini31ProModelId()} · ${resolveVertexGemini31Location()}`;
 }
 
+async function vertexGemini31ProRestGenerateContent(body: Record<string, unknown>): Promise<string> {
+  const projectId = resolveVertexTextProjectId();
+  const modelName = resolveVertexGemini31ProModelId();
+  const location = resolveVertexGemini31Location();
+  const base = baseUrlForVertex(location);
+  const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelName}:generateContent`;
+  const headers = await getVertexAuthHeaders();
+  const r = await fetchVertexJson(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!r.ok) {
+    const errSnippet =
+      r.json != null ? JSON.stringify(r.json).slice(0, 1600) : (r.rawText || "").slice(0, 1600);
+    console.error(`[Vertex AI ${modelName} HTTP ${r.status}]:`, errSnippet);
+    throw new Error(`[Vertex 翻译失败] 原因: ${modelName} (${location}) HTTP ${r.status}: ${errSnippet}`);
+  }
+
+  const text = extractTextFromGenerateContent(r.json);
+  if (!text) {
+    const hint =
+      typeof r.json === "object" && r.json !== null
+        ? JSON.stringify(r.json).slice(0, 800)
+        : (r.rawText || "").slice(0, 800);
+    throw new Error(`[Vertex 翻译失败] 原因: ${modelName} (${location}) 无文本产出: ${hint}`);
+  }
+
+  return text
+    .replace(/```[a-z]*\n?/gi, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
 /**
- * 平台生圖英文化兜底：**system + user** 分離（與 {@link ../../server/services/geminiPlatformCompositeTranslation.ts} Flash 契约一致：JSON **`prompt`**）。
- * 依賴 **`GOOGLE_APPLICATION_CREDENTIALS_JSON`**（或其它 ADC），**不經** `GEMINI_API_KEY`。
+ * 平台生圖英文化兜底：**system + user** 分離（與 {@link ./geminiPlatformCompositeTranslation.ts} Flash 契约一致：JSON **`prompt`**）。
+ * 依賴 **Vertex IAM**（與 **`op=geminiScript`** 相同閘道），**不經** `GEMINI_API_KEY`。
  */
 export async function callGemini31ProSystemUserForImagePrompt(
   systemInstruction: string,
   userText: string,
   opts?: CallGemini31ProOptions,
 ): Promise<string> {
-  const vertex_ai = getVertexClientForGemini31Pro();
   const modelName = resolveVertexGemini31ProModelId();
-  const generativeModel = vertex_ai.getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      maxOutputTokens: opts?.maxOutputTokens ?? 8192,
-      temperature: opts?.temperature ?? 0.35,
-      topP: opts?.topP ?? 0.95,
-    },
-  });
-
   try {
-    const streamingResp = await generativeModel.generateContent({
+    return await vertexGemini31ProRestGenerateContent({
       systemInstruction: {
-        role: "system",
         parts: [{ text: systemInstruction }],
       },
       contents: [{ role: "user", parts: [{ text: userText }] }],
+      generationConfig: {
+        maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+        temperature: opts?.temperature ?? 0.35,
+        topP: opts?.topP ?? 0.95,
+      },
     });
-    const response = streamingResp.response;
-    const text = String(response.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-    return text
-      .replace(/```[a-z]*\n?/gi, "")
-      .replace(/```/g, "")
-      .trim();
-  } catch (error: any) {
-    const errorDetail = error?.message || String(error);
+  } catch (error: unknown) {
+    const errorDetail = error instanceof Error ? error.message : String(error);
     console.error(`[Vertex AI ${modelName} system/user 調用]:`, errorDetail);
-    throw new Error(`[Vertex 翻译失败] 原因: ${errorDetail}`);
+    throw error instanceof Error ? error : new Error(errorDetail);
   }
 }
 
-/** Vertex AI（區域節點）驅動 Gemini 文本（預設 gemini-3.1-pro-preview @ global），不依賴 GEMINI_API_KEY；預設輸出上限 8192。 */
+/** Vertex **`gemini-3.1-pro-preview`**（或環境覆寫）純 user 文本；與 **`op=geminiScript`** 同 REST 路徑。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
-  const vertex_ai = getVertexClientForGemini31Pro();
   const modelName = resolveVertexGemini31ProModelId();
-  const generativeModel = vertex_ai.getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      maxOutputTokens: opts?.maxOutputTokens ?? 8192,
-      temperature: opts?.temperature ?? 0.4,
-      topP: opts?.topP ?? 0.8,
-    },
-  });
-
-  const request = {
-    contents: [{ role: "user" as const, parts: [{ text: prompt }] }],
-  };
-
   try {
-    const streamingResp = await generativeModel.generateContent(request);
-    const response = streamingResp.response;
-    const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    return text
-      .replace(/```[a-z]*\n?/gi, "")
-      .replace(/```/g, "")
-      .trim();
-  } catch (error: any) {
-    const errorDetail = error?.message || String(error);
+    return await vertexGemini31ProRestGenerateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+        temperature: opts?.temperature ?? 0.4,
+        topP: opts?.topP ?? 0.8,
+      },
+    });
+  } catch (error: unknown) {
+    const errorDetail = error instanceof Error ? error.message : String(error);
     console.error(`[Vertex AI ${modelName} 崩潰]:`, errorDetail);
-    throw new Error(`[Vertex 翻译失败] 原因: ${errorDetail}`);
+    throw error instanceof Error ? error : new Error(errorDetail);
   }
 }

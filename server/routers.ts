@@ -3780,6 +3780,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** 管理員／監管：單幀主生圖可選 Vertex Nano Banana 2（官方 API）；`nano_banana_pro` 為舊別名。普通帳戶傳入無效 */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
+          /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
+          enableTopicCoverDeepResearchPro: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -3790,6 +3792,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
+        const enableTopicCoverDeepResearchProAdmin =
+          isAdminUser && input.enableTopicCoverDeepResearchPro === true;
         const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
@@ -3960,6 +3964,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           isFreeRetry,
           newJobMetaBase,
           coverProEngine,
+          enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
         });
       }),
 
@@ -3980,6 +3985,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
+          /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
+          enableTopicCoverDeepResearchPro: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -3990,6 +3997,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
+        const enableTopicCoverDeepResearchProAdmin =
+          isAdminUser && input.enableTopicCoverDeepResearchPro === true;
         const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
@@ -4163,6 +4172,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               isFreeRetry,
               newJobMetaBase,
               coverProEngine,
+              enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
             },
           },
         });

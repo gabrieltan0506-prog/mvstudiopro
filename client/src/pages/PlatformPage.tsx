@@ -98,6 +98,8 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
+/** 管理員／監管：選題封面管线步驟 0.5 Deep Research Pro（Interactions） */
+const PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY = "mvstudiopro.platform.topicCoverDeepResearchPro.v1";
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
 
@@ -1276,6 +1278,25 @@ export default function PlatformPage() {
     }
   }, [platformCoverVertexNb2]);
 
+  const [platformTopicCoverDeepResearchPro, setPlatformTopicCoverDeepResearchPro] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY,
+        platformTopicCoverDeepResearchPro ? "1" : "0",
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [platformTopicCoverDeepResearchPro]);
+
   const canConfigureCompositeImageTranslator =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
@@ -1793,6 +1814,9 @@ export default function PlatformPage() {
         imagePromptTranslator: "gpt54",
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
+        ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+          ? { enableTopicCoverDeepResearchPro: true }
+          : {}),
       });
       setTopicImageJobPollTrace({
         jobId,
@@ -1908,7 +1932,7 @@ export default function PlatformPage() {
         coverClickEstimate,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformTopicCoverDeepResearchPro],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -5334,6 +5358,20 @@ export default function PlatformPage() {
                           （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">1024×1536 竖版</code>
                           、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语彙）；主路径失败再走版式 + NB2，
                           <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
+                        </span>
+                      </label>
+                      <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-violet-400/35 bg-violet-950/30 px-3 py-2.5 text-left text-[11px] leading-snug text-violet-50/95 shadow-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-violet-400/60 accent-violet-400"
+                          checked={platformTopicCoverDeepResearchPro}
+                          onChange={(e) => setPlatformTopicCoverDeepResearchPro(e.target.checked)}
+                        />
+                        <span>
+                          <span className="font-bold text-violet-200">监管专用 · 封面步骤 0.5 Deep Research Pro</span>
+                          ：勾选后竖版<strong className="text-violet-100/90">选题封面管线</strong>在生图前多跑一轮
+                          Deep Research（Interactions）；偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
+                          会采纳该开关，其余仍只靠环境变量总闸。
                         </span>
                       </label>
                     </div>

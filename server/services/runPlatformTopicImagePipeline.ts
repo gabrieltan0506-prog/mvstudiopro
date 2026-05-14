@@ -85,6 +85,10 @@ export type RunPlatformTopicImagePipelineInput = {
   progressJobId?: string | null;
   /** 管理員專用：單幀主生圖改為 Vertex Nano Banana 2（9:16 · 官方 API；與主路徑共用光影語彙）。`nano_banana_pro` 為舊別名，行為相同。 */
   coverProEngine?: "nano_banana_2" | "nano_banana_pro";
+  /**
+   * 管理員於 Platform 頁開啟並經 tRPC/job 為 true；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：任一為真即跑步驟 0.5。
+   */
+  enableTopicCoverDeepResearchPro?: boolean;
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -130,9 +134,10 @@ export async function runPlatformTopicImagePipeline(
     isPlatformCoverAgenticBrainEnabled,
     runAgenticCoverStrategist,
   } = await import("./agenticCoverWorkflow.js");
-  const { isTopicCoverDeepResearchProEnabled, runCoverDeepResearchInteractionsBrief } = await import(
-    "./coverDeepResearchProBrief.js"
-  );
+  const {
+    isTopicCoverDeepResearchProEnabled,
+    runCoverDeepResearchInteractionsBrief,
+  } = await import("./coverDeepResearchProBrief.js");
   const {
     buildImagePromptStats,
     generateImageGpt2WithImagenFallback,
@@ -219,9 +224,12 @@ export async function runPlatformTopicImagePipeline(
       }
     }
 
-    if (isTopicCoverDeepResearchProEnabled()) {
+    const drFromAdminRequest = Boolean(input.enableTopicCoverDeepResearchPro);
+    const drFromEnv = isTopicCoverDeepResearchProEnabled();
+    const runCoverDrPro = drFromAdminRequest || drFromEnv;
+    if (runCoverDrPro) {
       topicImageCondenseLog.push(
-        `${new Date().toISOString()}  [步骤0.5·DR-Pro] PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO 开启 → Deep Research Pro 简报（失败则忽略，主链路照旧）`,
+        `${new Date().toISOString()}  [步骤0.5·DR-Pro] 管理员入参=${drFromAdminRequest ? "开启" : "关闭"} · 环境全局=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro 简报（失败则忽略，主链路照旧）`,
       );
       try {
         const drTask = buildCoverTaskInputFromPipeline({
