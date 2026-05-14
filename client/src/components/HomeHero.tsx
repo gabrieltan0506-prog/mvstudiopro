@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { Mic } from "lucide-react";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
 import { useAuth } from "../_core/hooks/useAuth";
+import HomeWeatherClock from "./HomeWeatherClock";
+import HomeProductGuide from "./HomeProductGuide";
 
 const slides = [
   {
@@ -233,6 +235,8 @@ export default function HomeHero() {
             }}
           >
             <div>
+              <HomeWeatherClock />
+              <div style={{ height: 12 }} />
               <div
                 style={{
                   display: "inline-flex",
@@ -317,56 +321,7 @@ export default function HomeHero() {
                 深度融合顶级 AI 逻辑分析与影院级视频生成能力。为您提供赛道级数据分析、爆款脚本无损拆解与全自动影音生成。告别低效产能，用 AI 掌控流量密码。
               </div>
 
-              <div style={{ display: "grid", gap: 14, marginTop: 22 }}>
-                {[
-                  { label: "IP 战略指挥室", desc: "上传竞品或灵感碎片，AI 输出万字商业战略与导演级分镜", href: "/creator-growth-camp" },
-                  { label: "爆款解构引擎", desc: "一键拆解对标爆款底层逻辑，重塑个人 IP 风格二创脚本", href: "/creator-growth-camp/premium-remix" },
-                  { label: "全网流量雷达", desc: "实时捕捉主流平台流量风向，量身定制起号与发布策略", href: "/creator-growth-camp/platform" },
-                  { label: "影视级全自动产线", desc: "可视化串联脚本生成、分镜规划、配乐合成，一键坐等成片", href: "/workflow-nodes" },
-                ].map((item) => (
-                  <a
-                    key={item.label}
-                    href={item.href}
-                    style={{
-                      padding: "20px 22px",
-                      borderRadius: 18,
-                      background: "rgba(255,255,255,0.06)",
-                      border: "1px solid rgba(255,255,255,0.10)",
-                      color: "rgba(255,255,255,0.9)",
-                      textDecoration: "none",
-                      display: "block",
-                      boxShadow: "0 8px 28px rgba(0,0,0,0.2)",
-                      transition: "transform 0.18s, border-color 0.18s, background 0.18s",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-2px)";
-                      (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,138,91,0.35)";
-                      (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,138,91,0.08)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLAnchorElement).style.transform = "none";
-                      (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(255,255,255,0.10)";
-                      (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.06)";
-                    }}
-                  >
-                    <span style={{ fontWeight: 900, color: "white", fontSize: 18, display: "block", lineHeight: 1.35 }}>
-                      {item.label}
-                    </span>
-                    <span
-                      style={{
-                        display: "block",
-                        marginTop: 8,
-                        color: "rgba(255,255,255,0.58)",
-                        fontSize: 15,
-                        lineHeight: 1.65,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {item.desc}
-                    </span>
-                  </a>
-                ))}
-              </div>
+              <HomeProductGuide />
 
               <div
                 style={{
@@ -435,47 +390,47 @@ export default function HomeHero() {
         {[
           {
             href: "/creator-growth-camp",
-            badge: "核心功能",
+            badge: "成长营 · 二创",
             badgeColor: "rgba(251,146,60,0.9)",
-            title: "创作者成长营",
-            desc: "上传视频或图文，即时生成商业战略、爆款选题与导演级分镜；商业成长（GROWTH）与二次创作（REMIX）双模式。",
-            gradient: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(239,68,68,0.10))",
-            border: "rgba(251,146,60,0.30)",
+            title: "创作者成长营 + 二创中心",
+            desc: "增长诊断与 REMIX 二创同一入口：先进成长营，再按需跳转二创完成脚本与分镜。",
+            gradient: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(139,92,246,0.12))",
+            border: "rgba(251,146,60,0.32)",
             arrow: "rgba(251,146,60,1)",
-            cta: "开始分析 →",
+            cta: "进入成长营 →",
           },
           {
-            href: "/creator-growth-camp/premium-remix",
-            badge: "二创 / REMIX",
-            badgeColor: "rgba(244,114,182,0.95)",
-            title: "二创中心",
-            desc: "二次创作中心：上传或引用图、文、视频等参考，完成结构拆解、选题策划与分镜级执行指引。",
-            gradient: "linear-gradient(135deg, rgba(244,114,182,0.22), rgba(251,146,60,0.12))",
-            border: "rgba(244,114,182,0.45)",
-            arrow: "rgba(244,114,182,1)",
-            cta: "进入二创中心 →",
+            href: "/research",
+            badge: "竞品调研",
+            badgeColor: "rgba(249,115,22,0.95)",
+            title: "竞品与对标分析",
+            desc: "四平台双引擎深潜，输出人设、脚本、视觉与 30 天增长路径（60 点/次）。",
+            gradient: "linear-gradient(135deg, rgba(249,115,22,0.20), rgba(234,88,12,0.10))",
+            border: "rgba(249,115,22,0.38)",
+            arrow: "rgba(253,186,116,1)",
+            cta: "开始调研 →",
+          },
+          {
+            href: "/god-view",
+            badge: "战略智库",
+            badgeColor: "rgba(245,200,80,0.95)",
+            title: "AI 上帝视角",
+            desc: "全景行业战报：半月刊、订阅与私人订制，附数据表与四平台对比矩阵。",
+            gradient: "linear-gradient(135deg, rgba(245,200,80,0.16), rgba(120,80,20,0.14))",
+            border: "rgba(212,175,55,0.42)",
+            arrow: "rgba(253,224,138,1)",
+            cta: "前往智库 →",
           },
           {
             href: "/creator-growth-camp/platform",
             badge: "平台洞察",
             badgeColor: "rgba(96,165,250,0.9)",
-            title: "平台趋势分析",
-            desc: "小红书、抖音、B站、快手平台数据洞察，含 7 天发布计划与流量承接建议。",
+            title: "全网流量雷达",
+            desc: "小红书、抖音、B站、快手数据窗口与趋势承接，可导出长图。",
             gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
             border: "rgba(96,165,250,0.30)",
             arrow: "rgba(96,165,250,1)",
             cta: "查看趋势 →",
-          },
-          {
-            href: "/workflow-nodes",
-            badge: "创作工作流",
-            badgeColor: "rgba(167,139,250,0.9)",
-            title: "节点式工作流",
-            desc: "可视化节点画布，串接分镜生成、AI 视频、BGM 与发布动作，一键执行完整创作流程。",
-            gradient: "linear-gradient(135deg, rgba(167,139,250,0.18), rgba(236,72,153,0.10))",
-            border: "rgba(167,139,250,0.30)",
-            arrow: "rgba(167,139,250,1)",
-            cta: "进入工作流 →",
           },
         ].map((card) => (
           <a

@@ -1,63 +1,78 @@
 import React from "react";
 
-/** 强化「二创中心」入口可见性（独立一条，避免被大图轮播挤到视野外） */
+/** 成长营与二创中心合并入口（单行主卡 + 双 CTA） */
 export default function HomeRemixStrip() {
   return (
     <section style={{ maxWidth: 1240, margin: "0 auto", padding: "16px 20px 0" }}>
-      <a
-        href="/creator-growth-camp/premium-remix"
+      <div
         style={{
           display: "flex",
           flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
+          alignItems: "stretch",
           gap: 12,
-          padding: "16px 22px",
+          padding: "18px 22px",
           borderRadius: 18,
-          textDecoration: "none",
-          color: "white",
           background:
-            "linear-gradient(120deg, rgba(244,114,182,0.22), rgba(251,146,60,0.14), rgba(139,92,246,0.12))",
-          border: "1px solid rgba(244,114,182,0.45)",
-          boxShadow: "0 12px 40px rgba(244,114,182,0.12)",
+            "linear-gradient(120deg, rgba(139,92,246,0.20), rgba(244,114,182,0.16), rgba(251,146,60,0.12))",
+          border: "1px solid rgba(167,139,250,0.45)",
+          boxShadow: "0 12px 40px rgba(139,92,246,0.12)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
-          <span
+        <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span
+              style={{
+                padding: "6px 12px",
+                borderRadius: 12,
+                background: "rgba(0,0,0,0.28)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                fontWeight: 900,
+                fontSize: 13,
+                color: "#e9d5ff",
+              }}
+            >
+              成长营 · 二创
+            </span>
+            <span style={{ fontWeight: 900, fontSize: 16, color: "white" }}>一条入口，两种打法</span>
+          </div>
+          <p style={{ marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.72)", lineHeight: 1.6 }}>
+            左侧进成长营做结构化增长诊断；右侧直达二创中心完成 remix 级脚本与分镜落地。
+          </p>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <a
+            href="/creator-growth-camp"
             style={{
-              flexShrink: 0,
-              padding: "8px 12px",
+              padding: "12px 18px",
               borderRadius: 12,
-              background: "rgba(0,0,0,0.25)",
-              border: "1px solid rgba(255,255,255,0.12)",
+              background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
+              color: "white",
               fontWeight: 900,
-              fontSize: 15,
-              color: "#fda4af",
+              fontSize: 14,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
             }}
           >
-            二创中心
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.2 }}>二次创作中心 · REMIX</div>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.72)", marginTop: 4, lineHeight: 1.5 }}>
-              图、文、视频素材皆可：结构拆解、选题与分镜级执行指引
-            </div>
-          </div>
+            进入成长营 →
+          </a>
+          <a
+            href="/creator-growth-camp/premium-remix"
+            style={{
+              padding: "12px 18px",
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.10)",
+              border: "1px solid rgba(255,255,255,0.2)",
+              color: "white",
+              fontWeight: 900,
+              fontSize: 14,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            二创中心 REMIX →
+          </a>
         </div>
-        <span
-          style={{
-            flexShrink: 0,
-            padding: "10px 18px",
-            borderRadius: 12,
-            background: "rgba(255,255,255,0.12)",
-            border: "1px solid rgba(255,255,255,0.2)",
-            fontWeight: 900,
-            fontSize: 14,
-          }}
-        >
-          进入二创中心 →
-        </span>
-      </a>
+      </div>
     </section>
   );
 }

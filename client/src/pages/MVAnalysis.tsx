@@ -70,6 +70,7 @@ import {
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import VideoParserWidget from "@/components/VideoParserWidget";
+import WorkAmbientPanel from "@/components/WorkAmbientPanel";
 
 type AnalysisResult = {
   mode?: "GROWTH" | "REMIX";
@@ -3004,6 +3005,7 @@ export default function MVAnalysisPage() {
   return (
     <div className="min-h-dvh bg-[#08111f] text-[#f7f4ef]">
       <div className="mx-auto max-w-[1760px] px-4 py-8">
+        <WorkAmbientPanel />
         <UsageQuotaBanner
           featureType="analysis"
           currentCount={usageStatsQuery.data?.features.analysis.currentCount ?? 0}
@@ -3083,7 +3085,7 @@ export default function MVAnalysisPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-[#c4b5fd]">🔍 竞品分析调研</h2>
-                <p className="mt-0.5 text-xs text-white/40">双引擎深度扫描 × 战略处方生成 · 单次扣除 20 点</p>
+                <p className="mt-0.5 text-xs text-white/40">双引擎深度扫描 × 战略处方生成 · 单次扣除 60 点</p>
               </div>
               <button
                 type="button"
@@ -3099,7 +3101,7 @@ export default function MVAnalysisPage() {
                 <p className="mb-2 font-semibold text-[#c4b5fd]">📘 多平台双引擎调研指南</p>
                 <p className="mb-1"><span className="text-white/90">第一步：</span>选择战场 — 切换平台，AI 自动适配对应算法模型</p>
                 <p className="mb-1"><span className="text-white/90">第二步：</span>输入情报 — 粘贴竞品链接、爆款标题或对手账号描述</p>
-                <p className="mb-1"><span className="text-white/90">第三步：</span>点击「执行深度调研」，扣除 20 点，等待约 30-40 秒</p>
+                <p className="mb-1"><span className="text-white/90">第三步：</span>点击「执行深度调研」，扣除 60 点，等待约 30-40 秒</p>
                 <p className="mb-3"><span className="text-white/90">第四步：</span>获取完整处方 — 流量钩子拆解、差异化人设、执行脚本</p>
                 <blockquote className="border-l-2 border-[#a78bfa]/40 pl-3 italic text-white/50">「不要用你的体力，去挑战对手的数据力。」</blockquote>
               </div>
@@ -3134,13 +3136,13 @@ export default function MVAnalysisPage() {
                 type="button"
                 disabled={researchMutation.isPending || !researchInput.trim()}
                 onClick={() => {
-                  if (!window.confirm(`执行「${({douyin:"抖音",kuaishou:"快手",xiaohongshu:"小红书",bilibili:"B站"})[researchPlatform]}」深度调研将扣除 20 点，确定继续？`)) return;
+                  if (!window.confirm(`执行「${({douyin:"抖音",kuaishou:"快手",xiaohongshu:"小红书",bilibili:"B站"})[researchPlatform]}」深度调研将扣除 60 点，确定继续？`)) return;
                   setResearchResult(null);
                   researchMutation.mutate({ platform: researchPlatform, competitorData: researchInput });
                 }}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] px-5 py-2.5 text-sm font-bold text-white shadow-lg transition hover:brightness-110 disabled:opacity-50"
               >
-                {researchMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" />分析中（约 30-40 秒）…</> : <><Rocket className="h-4 w-4" />执行深度调研（20点）</>}
+                {researchMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" />分析中（约 30-40 秒）…</> : <><Rocket className="h-4 w-4" />执行深度调研（60点）</>}
               </button>
               {researchResult && (
                 <button type="button" onClick={() => setResearchResult(null)} className="text-xs text-white/30 hover:text-white/60">清除结果</button>
