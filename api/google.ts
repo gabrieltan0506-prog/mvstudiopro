@@ -343,7 +343,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const r = await fetchJson(url,{
         method:"POST",
         headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
-        body: JSON.stringify({ contents:[{role:"user",parts:[{text:prompt}]}] })
+        body: JSON.stringify({
+          contents:[{role:"user",parts:[{text:prompt}]}],
+          generationConfig:{ maxOutputTokens:8192, temperature:0.9 },
+        })
       });
 
       const raw = r.json ?? r.rawText;
