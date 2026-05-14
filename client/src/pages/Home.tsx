@@ -3,7 +3,6 @@ import HomeNavbar from "../components/HomeNavbar";
 import HomeNoticeBar from "../components/HomeNoticeBar";
 import HomeHero from "../components/HomeHero";
 import HomeRemixStrip from "../components/HomeRemixStrip";
-import HomeTools from "../components/HomeTools";
 import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
 import { HomeEnterpriseAgentCard } from "../components/HomeEnterpriseAgentCard";
@@ -12,7 +11,6 @@ import HomeFeedback from "../components/HomeFeedback";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
-import HomeChangelog from "../components/HomeChangelog";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
 import SampleReportDownload from "../components/SampleReportDownload";
 
@@ -42,12 +40,8 @@ export default function HomePage() {
       {/* 核心功能介绍 + 更新日志（试读完看平台能做什么） */}
       <HomeFeatureCarousel />
 
-      <HomeChangelog />
-
       {/* 工具与作品（沉浸式浏览） */}
       <HomeRemixStrip />
-
-      <HomeTools />
 
       <HomeShowcase />
 

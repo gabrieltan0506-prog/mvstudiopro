@@ -1,24 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown, BookOpen, Star, FileDown, Zap, Briefcase } from "lucide-react";
+import {
+  Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles,
+  Search, Crown, BookOpen, Star, FileDown, Zap, Briefcase, Clock,
+} from "lucide-react";
+import { useIsMobile } from "@/hooks/useMobile";
+import { HOME_CHANGELOG_UPDATES, HOME_UPDATE_TAG_COLORS } from "./HomeChangelog";
 
-// ─── 固定置顶卡片（竞品分析，永久显示） ───────────────────────────────
-const PINNED_CARD = {
-  isNew: true,
-  date: "2026/04/27",
-  tag: "今日上线",
-  title: "竞品与对标分析",
-  subtitle: "结合四平台实时数据库 · 双引擎战略处方",
-  desc: "整合小红书、抖音、快手、B站四平台实时热门内容库，双引擎深度扫描竞品流量密码，生成差异化人设定位、执行脚本与30天增长路径，单次60点即可获得降维打击方案。",
-  pills: ["小红书", "抖音", "B站", "快手", "60点/次"],
-  icon: Search,
-  accentColor: "#f97316",
-  glowColor: "rgba(249,115,22,0.22)",
-  borderColor: "rgba(249,115,22,0.40)",
-  bgGradient: "linear-gradient(135deg, rgba(249,115,22,0.12) 0%, rgba(249,115,22,0.04) 100%)",
-  href: "/research",
-};
-
-// ─── 轮播功能动态（不含固定卡片） ───────────────────────────────────
+// ─── 轮播功能动态 ───────────────────────────────────────────────────
 const CAROUSEL_CARDS = [
   {
     isNew: true,
@@ -159,8 +147,8 @@ const CAROUSEL_CARDS = [
     tag: "功能亮点",
     title: "IP 战略指挥室",
     subtitle: "10 秒拆解爆款 DNA",
-    desc: "上传任意竞品视频，AI 输出万字商业战略 + 爆款选题库 + 导演级分镜。成长型 / 二创双模式，PDF 报告一键下载。",
-    pills: ["双模式分析", "商业拆解", "PDF 导出"],
+    desc: "上传竞品或灵感碎片，AI 输出万字商业战略、精准选题库与导演级分镜；二创侧可逆向对标爆款逻辑，生成个人 IP 风格落地脚本。成长 / 二创双模式，PDF 一键下载。",
+    pills: ["战略 + 二创一体", "商业拆解", "PDF 导出"],
     icon: TrendingUp,
     accentColor: "#a78bfa",
     glowColor: "rgba(167,139,250,0.20)",
@@ -174,7 +162,7 @@ const CAROUSEL_CARDS = [
     tag: "功能亮点",
     title: "全网流量趋势雷达",
     subtitle: "实时捕捉爆款热浪",
-    desc: "15/30 天数据窗口追踪小红书、抖音等主流平台最新流量风向，AI 对话分析，量身定制起号计划，趋势长图一键导出。",
+    desc: "告别盲目自嗨。15/30 天窗口捕捉小红书、抖音、快手、B 站流量风向，AI 续问与趋势长图导出，支撑起号、发布与承接策略。",
     pills: ["多平台追踪", "AI 续问", "趋势导出"],
     icon: BarChart2,
     accentColor: "#38bdf8",
@@ -189,7 +177,7 @@ const CAROUSEL_CARDS = [
     tag: "功能亮点",
     title: "影视级全自动产线",
     subtitle: "从想法到成片全自动",
-    desc: "可视化节点串联脚本生成、分镜规划、配乐合成、语音合成，点击执行坐等成片。拖拽式节点编排，语音输入提示词。",
+    desc: "将繁琐步骤降维：可视化节点串联脚本、分镜、配乐与语音输出，支持语音输入提示词；点击执行，坐等高清成片。",
     pills: ["节点编排", "语音输入", "高清成片"],
     icon: Clapperboard,
     accentColor: "#34d399",
@@ -199,6 +187,118 @@ const CAROUSEL_CARDS = [
     href: "/workflow-nodes",
   },
 ];
+
+const WORKFLOW_LINKS: { href: string; label: string }[] = [
+  { href: "/creator-growth-camp", label: "成长营 · 二创" },
+  { href: "/research", label: "竞品调研 · 60 点" },
+  { href: "/creator-growth-camp/platform", label: "流量雷达" },
+  { href: "/workflow-nodes", label: "节点产线" },
+  { href: "/creator-growth-camp/premium-remix", label: "爆款解构" },
+];
+
+function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: isMobile ? "column" : "row",
+        alignItems: "stretch",
+        borderRadius: 20,
+        overflow: "hidden",
+        border: "1px solid rgba(200,140,60,0.42)",
+        boxShadow: "0 0 48px rgba(200,160,0,0.14)",
+        marginBottom: 16,
+      }}
+    >
+      <a
+        href="/god-view"
+        style={{
+          flex: 1,
+          textDecoration: "none",
+          color: "inherit",
+          display: "block",
+          background: "linear-gradient(135deg, #0e0800 0%, #1a1000 50%, #0a0600 100%)",
+          padding: "26px 26px 24px",
+          borderRight: isMobile ? "none" : "1px solid rgba(255,255,255,0.08)",
+          borderBottom: isMobile ? "1px solid rgba(255,255,255,0.08)" : "none",
+          position: "relative",
+          transition: "filter 0.2s",
+        }}
+      >
+        <div style={{ position: "absolute", top: -50, right: -50, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle, rgba(200,160,0,0.16) 0%, transparent 70%)", filter: "blur(28px)", pointerEvents: "none" }} />
+        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "flex-start", gap: 14 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 14, background: "linear-gradient(135deg,#c8a000,#7a5c00)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 22px rgba(200,160,0,0.38)", flexShrink: 0 }}>
+            <Crown size={22} color="#fff" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 900, color: "#0a0600", background: "linear-gradient(90deg,#f5c842,#c8a000)", borderRadius: 99, padding: "3px 10px", letterSpacing: "0.06em" }}>VIP · 算力巅峰</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(167,139,250,0.95)", background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 99, padding: "2px 8px" }}>800 点起</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(52,211,153,0.95)", background: "rgba(52,211,153,0.10)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 99, padding: "2px 8px" }}>私订 3000</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(245,200,80,0.85)", background: "rgba(245,200,80,0.08)", border: "1px solid rgba(245,200,80,0.2)", borderRadius: 99, padding: "2px 8px" }}>首购九折</span>
+            </div>
+            <h3 style={{ fontSize: isMobile ? 19 : 21, fontWeight: 900, background: "linear-gradient(90deg,#f5c842,#ffd878,#c8a000)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: "0 0 8px", letterSpacing: "-0.01em" }}>
+              AI 上帝视角战略智库
+            </h3>
+            <p style={{ color: "rgba(245,218,150,0.62)", fontSize: 13, lineHeight: 1.7, margin: "0 0 12px" }}>
+              半月刊 · 半年订阅 · 尊享私订：真实数据表与四平台对比矩阵。进入上帝视角页可<strong style={{ color: "#fb923c" }}>同屏使用内嵌竞品调研</strong>，一站完成战略 + 对标。
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {["宏观趋势", "变现拆解", "数据图表", "私域路径"].map((t) => (
+                <span key={t} style={{ fontSize: 10, fontWeight: 700, color: "rgba(245,200,80,0.72)", background: "rgba(180,130,0,0.12)", border: "1px solid rgba(180,130,0,0.26)", borderRadius: 99, padding: "3px 10px" }}>{t}</span>
+              ))}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "rgba(255,255,255,0.38)", fontStyle: "italic" }}>异步 ≈15–20 分钟</span>
+            </div>
+            <div style={{ marginTop: 14, fontSize: 13, fontWeight: 800, color: "#f5c842" }}>进入智库 →</div>
+          </div>
+        </div>
+      </a>
+
+      <div
+        style={{
+          flex: 1,
+          background: "linear-gradient(135deg, rgba(249,115,22,0.14) 0%, rgba(249,115,22,0.04) 100%)",
+          padding: "26px 26px 24px",
+          position: "relative",
+        }}
+      >
+        <div style={{ position: "absolute", top: -40, right: -30, width: 180, height: 180, borderRadius: "50%", background: "rgba(249,115,22,0.12)", filter: "blur(50px)", pointerEvents: "none" }} />
+        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "flex-start", gap: 14 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 14, background: "linear-gradient(135deg,#fb923c,#ea580c)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 22px rgba(249,115,22,0.35)", flexShrink: 0 }}>
+            <Search size={22} color="#fff" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.08em", color: "#fff", background: "linear-gradient(90deg,#f97316,#fb923c)", borderRadius: 6, padding: "3px 10px", boxShadow: "0 2px 8px rgba(249,115,22,0.45)" }}>NEW</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#fb923c", background: "rgba(249,115,22,0.15)", border: "1px solid rgba(249,115,22,0.35)", borderRadius: 99, padding: "2px 10px" }}>今日上线</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>2026/04/27</span>
+            </div>
+            <h3 style={{ fontSize: isMobile ? 19 : 21, fontWeight: 900, color: "#fff", margin: "0 0 6px", lineHeight: 1.25 }}>
+              竞品与对标分析
+            </h3>
+            <p style={{ fontSize: 13, color: "#fb923c", margin: "0 0 10px", fontWeight: 600 }}>四平台实时库 · 双引擎战略处方 · 已汇入上帝视角</p>
+            <p style={{ color: "rgba(255,255,255,0.58)", fontSize: 13, lineHeight: 1.65, margin: "0 0 12px" }}>
+              小红书 / 抖音 / 快手 / B 站双引擎扫描，输出人设卡位、脚本与 30 天增长路径，单次 <strong style={{ color: "#fb923c" }}>60 点</strong>。
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {["小红书", "抖音", "B 站", "快手", "60 点/次"].map((p) => (
+                <span key={p} style={{ fontSize: 11, fontWeight: 700, color: "#fb923c", background: "rgba(249,115,22,0.12)", border: "1px solid rgba(249,115,22,0.32)", borderRadius: 99, padding: "3px 10px" }}>{p}</span>
+              ))}
+            </div>
+            <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
+              <a href="/god-view" style={{ fontSize: 13, fontWeight: 800, color: "#fb923c", textDecoration: "none" }}>
+                进入上帝视角（含调研）→
+              </a>
+              <a href="/research" style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)", textDecoration: "underline" }}>
+                仅打开调研全屏页
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── 通用卡片渲染 ────────────────────────────────────────────────────
 function FeatureCard({
@@ -212,7 +312,6 @@ function FeatureCard({
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   compact?: boolean;
-  /** 竞品置顶卡等：默认展开说明 */
   defaultDetailOpen?: boolean;
 }) {
   const Icon = card.icon;
@@ -242,7 +341,6 @@ function FeatureCard({
         onMouseLeave?.();
       }}
     >
-      {/* 装饰光晕 */}
       <div style={{ position: "absolute", top: -60, right: -60, width: 200, height: 200, background: card.glowColor, borderRadius: "50%", filter: "blur(60px)", pointerEvents: "none" }} />
 
       <div style={{ display: "flex", gap: 24, alignItems: "flex-start", position: "relative" }}>
@@ -261,7 +359,6 @@ function FeatureCard({
               textAlign: "left",
             }}
           >
-            {/* 标签行 */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
               {card.isNew && (
                 <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.1em", color: "#fff", background: "linear-gradient(90deg,#f97316,#fb923c)", borderRadius: 6, padding: "3px 10px", boxShadow: "0 2px 8px rgba(249,115,22,0.45)", animation: "mvsp-pulse-orange 2s ease-in-out infinite" }}>
@@ -284,10 +381,9 @@ function FeatureCard({
             <>
               <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.75, margin: "0 0 16px", maxWidth: 520 }}>{card.desc}</p>
 
-              {/* Pills */}
               <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
                 {card.pills.map((pill: string, i: number) => {
-                  const isFlash = (card as any).flashPills && i < 3;
+                  const isFlash = (card as { flashPills?: boolean }).flashPills && i < 3;
                   return (
                     <span key={i} style={{ fontSize: 12, color: isFlash ? "#fff" : card.accentColor, background: isFlash ? `linear-gradient(90deg,${card.accentColor}cc,${card.accentColor}88)` : card.glowColor, border: `1px solid ${isFlash ? card.accentColor : card.borderColor}`, borderRadius: 99, padding: "4px 12px", fontWeight: 700, boxShadow: isFlash ? `0 0 10px ${card.accentColor}66` : "none", animation: isFlash ? `mvsp-flash-pill 1.6s ease-in-out ${i * 0.25}s infinite` : "none" }}>
                       {pill}
@@ -296,10 +392,10 @@ function FeatureCard({
                 })}
               </div>
 
-              {(card as any).href && (
-                <a href={(card as any).href} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 16, fontSize: 13, fontWeight: 700, color: card.accentColor, background: card.glowColor, border: `1px solid ${card.borderColor}`, borderRadius: 10, padding: "8px 18px", textDecoration: "none", transition: "opacity 0.2s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
-                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+              {"href" in card && card.href && (
+                <a href={card.href} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 16, fontSize: 13, fontWeight: 700, color: card.accentColor, background: card.glowColor, border: `1px solid ${card.borderColor}`, borderRadius: 10, padding: "8px 18px", textDecoration: "none", transition: "opacity 0.2s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.75"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                 >
                   立即体验 →
                 </a>
@@ -308,7 +404,6 @@ function FeatureCard({
           ) : null}
         </div>
 
-        {/* 右侧图标 */}
         <div style={{ flexShrink: 0, width: compact ? 72 : 96, height: compact ? 72 : 96, borderRadius: 20, background: `linear-gradient(135deg,${card.glowColor.replace(/[\d.]+\)$/, "0.3)")},${card.glowColor.replace(/[\d.]+\)$/, "0.08)")})`, border: `1px solid ${card.borderColor}`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 8px 32px ${card.glowColor}` }}>
           <Icon size={compact ? 32 : 42} color={card.accentColor} />
         </div>
@@ -319,6 +414,7 @@ function FeatureCard({
 
 // ─── 主组件 ──────────────────────────────────────────────────────────
 export default function HomeFeatureCarousel() {
+  const isMobile = useIsMobile();
   const [current, setCurrent] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const total = CAROUSEL_CARDS.length;
@@ -333,102 +429,130 @@ export default function HomeFeatureCarousel() {
   }, [next, isPaused]);
 
   const card = CAROUSEL_CARDS[current];
+  const tickerItems = [...HOME_CHANGELOG_UPDATES, ...HOME_CHANGELOG_UPDATES];
 
   return (
     <section style={{ width: "100%", padding: "0 0 48px" }}>
       <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 24px" }}>
-
-        {/* 区块标题 */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: "#fb923c", background: "rgba(251,146,60,0.12)", border: "1px solid rgba(251,146,60,0.3)", borderRadius: 99, padding: "3px 12px", textTransform: "uppercase" }}>
-            新功能动态
+            旗舰入口
           </span>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>最新上线与核心亮点</span>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>战略智库与竞品调研 · 桌面端横排浏览</span>
         </div>
 
-        {/* ── 固定卡片：竞品与对标分析（优先于上帝视角） ── */}
-        <div style={{ marginBottom: 16 }}>
-          <FeatureCard card={PINNED_CARD as any} />
+        <MergedGodResearchCard isMobile={isMobile} />
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            flexWrap: "wrap",
+            alignItems: isMobile ? "stretch" : "center",
+            gap: isMobile ? 10 : 12,
+            marginBottom: 22,
+            padding: "14px 18px",
+            borderRadius: 16,
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.08)",
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", marginRight: isMobile ? 0 : 4 }}>创作工作流</span>
+          {WORKFLOW_LINKS.map(({ href, label }) => (
+            <a
+              key={href}
+              href={href}
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: "#a78bfa",
+                textDecoration: "none",
+                padding: "6px 12px",
+                borderRadius: 99,
+                border: "1px solid rgba(167,139,250,0.25)",
+                background: "rgba(167,139,250,0.06)",
+                transition: "background 0.2s",
+              }}
+            >
+              {label}
+            </a>
+          ))}
         </div>
 
-        {/* ── 固定卡片：AI 上帝视角（黑金 VIP） ── */}
-        <a href="/god-view" style={{ display: "block", textDecoration: "none", marginBottom: 16 }}>
-          <div style={{ position: "relative", overflow: "hidden", borderRadius: 20, background: "linear-gradient(135deg, #0e0800 0%, #1a1000 50%, #0a0600 100%)", border: "1px solid rgba(180,130,0,0.45)", boxShadow: "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)", padding: "28px 28px 24px", cursor: "pointer", transition: "border-color 0.3s, box-shadow 0.3s, transform 0.22s ease" }}
-            onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(245,200,80,0.75)"; el.style.boxShadow = "0 0 60px rgba(200,160,0,0.28), inset 0 0 60px rgba(200,160,0,0.06)"; el.style.transform = "translateY(-5px)"; }}
-            onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(180,130,0,0.45)"; el.style.boxShadow = "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)"; el.style.transform = "none"; }}
-          >
-            {/* 背景光晕 */}
-            <div style={{ position: "absolute", top: -60, right: -60, width: 220, height: 220, borderRadius: "50%", background: "radial-gradient(circle, rgba(200,160,0,0.18) 0%, transparent 70%)", filter: "blur(30px)", pointerEvents: "none" }} />
-            <div style={{ position: "absolute", bottom: -40, left: "30%", width: 160, height: 160, borderRadius: "50%", background: "radial-gradient(circle, rgba(160,100,0,0.12) 0%, transparent 70%)", filter: "blur(40px)", pointerEvents: "none" }} />
-            <div style={{ position: "relative", zIndex: 1 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-                <div style={{ width: 48, height: 48, borderRadius: 14, background: "linear-gradient(135deg,#c8a000,#7a5c00)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 24px rgba(200,160,0,0.4)", flexShrink: 0 }}>
-                  <Crown size={24} color="#fff" />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 10, fontWeight: 900, color: "#0a0600", background: "linear-gradient(90deg,#f5c842,#c8a000)", borderRadius: 99, padding: "3px 10px", letterSpacing: "0.08em", textTransform: "uppercase" }}>👑 VIP 专享 · 算力巅峰</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(167,139,250,0.9)", background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 99, padding: "2px 8px" }}>半月刊 800点起</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(52,211,153,0.9)", background: "rgba(52,211,153,0.10)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 99, padding: "2px 8px" }}>私人订制 3000点</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(245,200,80,0.8)", background: "rgba(245,200,80,0.08)", border: "1px solid rgba(245,200,80,0.2)", borderRadius: 99, padding: "2px 8px" }}>首购九折</span>
-                  </div>
-                  <h3 style={{ fontSize: 22, fontWeight: 900, background: "linear-gradient(90deg,#f5c842,#ffd878,#c8a000)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: "0 0 8px", letterSpacing: "-0.01em" }}>
-                    AI 上帝视角战略智库
-                  </h3>
-                  <p style={{ color: "rgba(245,218,150,0.65)", fontSize: 13, lineHeight: 1.75, margin: "0 0 14px", maxWidth: 680 }}>
-                    停止在信息泥潭中盲目试错。三档产品覆盖所有需求：<strong style={{ color: "#a78bfa" }}>战略半月刊</strong>追踪最新赛道趋势，<strong style={{ color: "#34d399" }}>半年订阅</strong>享持续战略陪伴，<strong style={{ color: "#f97316" }}>尊享季度私人订制</strong>与历史数据深度对比实现「二次进化」。全系报告强制含真实数据表格与四平台对比矩陣。
-                  </p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    {["宏观趋势前瞻", "竞品变现拆解", "数据图表佐证", "私域留存路径"].map((t) => (
-                      <span key={t} style={{ fontSize: 11, fontWeight: 700, color: "rgba(245,200,80,0.7)", background: "rgba(180,130,0,0.12)", border: "1px solid rgba(180,130,0,0.28)", borderRadius: 99, padding: "3px 10px" }}>{t}</span>
-                    ))}
-                    <span style={{ marginLeft: "auto", fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>异步推演 · 约 15-20 分钟</span>
-                  </div>
-                </div>
-              </div>
+        <div style={{
+          border: "1px solid rgba(139,92,246,0.35)",
+          borderRadius: 20,
+          background: "rgba(139,92,246,0.04)",
+          boxShadow: "0 0 40px rgba(139,92,246,0.08), inset 0 0 60px rgba(139,92,246,0.03)",
+          overflow: "hidden",
+        }}>
+          <div style={{ padding: "22px 24px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Clock size={18} color="#a78bfa" />
+              <span style={{ fontSize: 17, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>更新日志 & 功能动态</span>
+            </div>
+            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>持续迭代中</span>
+          </div>
+
+          <div style={{
+            overflow: "hidden",
+            background: "rgba(255,255,255,0.025)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            padding: "12px 0",
+          }}>
+            <div className="mvsp-home-ticker-track" style={{ display: "flex", whiteSpace: "nowrap", gap: 0 }}>
+              {tickerItems.map((item, i) => {
+                const tc = HOME_UPDATE_TAG_COLORS[item.tag] ?? HOME_UPDATE_TAG_COLORS["新功能"];
+                return (
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "0 32px" }}>
+                    <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums" }}>{item.date}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", background: tc.bg, color: tc.text, borderRadius: 4, padding: "2px 7px" }}>{item.tag}</span>
+                    <span style={{ fontSize: 15, color: "rgba(255,255,255,0.7)" }}>{item.text}</span>
+                    <span style={{ color: "rgba(255,255,255,0.12)", fontSize: 20, marginLeft: 8 }}>·</span>
+                  </span>
+                );
+              })}
             </div>
           </div>
-        </a>
 
-        {/* 间距分割线 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0 16px" }}>
-          <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", letterSpacing: "0.1em", textTransform: "uppercase" }}>功能动态</span>
-          <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
-        </div>
-
-        {/* ── 功能轮播区 ── */}
-        <div style={{ position: "relative" }}>
-          <FeatureCard
-            card={card}
-            onMouseEnter={() => setIsPaused(true)}
-            onMouseLeave={() => setIsPaused(false)}
-            compact
-          />
-
-          {/* 左右箭头 */}
-          {[{ dir: "left", fn: prev, Icon: ChevronLeft }, { dir: "right", fn: next, Icon: ChevronRight }].map(({ dir, fn, Icon: Ico }) => (
-            <button
-              key={dir}
-              onClick={fn}
-              style={{ position: "absolute", [dir]: 14, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(255,255,255,0.5)", transition: "background 0.2s,color 0.2s" }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.12)"; e.currentTarget.style.color = "#fff"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "rgba(255,255,255,0.5)"; }}
-            >
-              <Ico size={15} />
-            </button>
-          ))}
-        </div>
-
-        {/* 点状分页 */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14 }}>
-          {CAROUSEL_CARDS.map((c, i) => (
-            <button key={i} onClick={() => setCurrent(i)} style={{ border: "none", cursor: "pointer", padding: 0, width: i === current ? 24 : 7, height: 7, borderRadius: 99, background: i === current ? c.accentColor : "rgba(255,255,255,0.15)", boxShadow: i === current ? `0 0 8px ${c.accentColor}88` : "none", transition: "all 0.3s ease" }} />
-          ))}
+          <div style={{ padding: "20px 24px 24px", position: "relative" }}>
+            <FeatureCard
+              card={card}
+              onMouseEnter={() => setIsPaused(true)}
+              onMouseLeave={() => setIsPaused(false)}
+              compact
+            />
+            {[{ dir: "left" as const, fn: prev, Icon: ChevronLeft }, { dir: "right" as const, fn: next, Icon: ChevronRight }].map(({ dir, fn, Icon: Ico }) => (
+              <button
+                key={dir}
+                type="button"
+                onClick={fn}
+                style={{ position: "absolute", [dir]: 14, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "rgba(255,255,255,0.5)", transition: "background 0.2s,color 0.2s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.12)"; e.currentTarget.style.color = "#fff"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "rgba(255,255,255,0.5)"; }}
+              >
+                <Ico size={15} />
+              </button>
+            ))}
+            <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14 }}>
+              {CAROUSEL_CARDS.map((c, i) => (
+                <button key={i} type="button" onClick={() => setCurrent(i)} style={{ border: "none", cursor: "pointer", padding: 0, width: i === current ? 24 : 7, height: 7, borderRadius: 99, background: i === current ? c.accentColor : "rgba(255,255,255,0.15)", boxShadow: i === current ? `0 0 8px ${c.accentColor}88` : "none", transition: "all 0.3s ease" }} />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
       <style>{`
+        @keyframes mvsp-home-ticker {
+          from { transform: translateX(0); }
+          to   { transform: translateX(-50%); }
+        }
+        .mvsp-home-ticker-track {
+          animation: mvsp-home-ticker 40s linear infinite;
+        }
+        .mvsp-home-ticker-track:hover { animation-play-state: paused; }
         @keyframes mvsp-pulse-orange {
           0%,100% { box-shadow: 0 2px 8px rgba(249,115,22,0.45); }
           50% { box-shadow: 0 2px 16px rgba(249,115,22,0.75); }
