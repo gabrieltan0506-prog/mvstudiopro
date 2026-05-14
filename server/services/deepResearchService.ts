@@ -381,15 +381,20 @@ const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
 // ─── Interactions API（Deep Research Agent，@google/genai SDK） ───────────────
 // generateContent 不可用；见 {@link ./googleDeepResearchInteractions.ts}
 const POLL_INTERVAL_MS = 10_000; // 10 秒轮询
-/** 執行階段硬上限（計畫審核通過後）：與 Deep Research Max 作業節奏對齊為 60 分鐘 */
-const MAX_POLL_MS = 60 * 60 * 1000;
-/**
- * Plan 阶段（collaborative_planning: true）轮询超时上限 = 90 分钟（5400 秒）。
- * 与 MAX_POLL_MS 看齐：Google deep-research-max-preview-04-2026 的 plan 阶段
- * 实测 10–30 分钟，极端复杂课题（多市场 + 多语种 + 法规交叉）可达 60-80 分钟。
- * 90 分钟硬上限覆盖最坏情况，超过即真卡死，自动退积分。
- */
-const PLAN_MAX_MS = 90 * 60 * 1000;
+
+/** Max 執行階段輪詢上限：預設 90 分鐘；`DEEP_RESEARCH_MAX_EXECUTE_POLL_MS` 可覆寫（≥60000） */
+function resolveMaxExecutePollMs(): number {
+  const raw = Number(process.env.DEEP_RESEARCH_MAX_EXECUTE_POLL_MS);
+  if (Number.isFinite(raw) && raw >= 60_000) return raw;
+  return 90 * 60 * 1000;
+}
+
+/** Max 計畫階段輪詢上限：預設 90 分鐘；`DEEP_RESEARCH_MAX_PLAN_POLL_MS` 可覆寫（≥60000） */
+function resolveMaxPlanPollMs(): number {
+  const raw = Number(process.env.DEEP_RESEARCH_MAX_PLAN_POLL_MS);
+  if (Number.isFinite(raw) && raw >= 60_000) return raw;
+  return 90 * 60 * 1000;
+}
 
 const SYSTEM_INSTRUCTION_BASE =
   "[系统背景设定] 当前时间为 2026 年。你是国际顶尖商学院战略顾问 + 国内外主流媒体平台资深运营专家 + 顶级 IP 操盘手 + 行业数据分析师组成的高端商业智库 Agent。" +
@@ -483,7 +488,8 @@ function buildInteractionInput(
  * 把系统指令以「全局指令 + 用户课题」结构拼进 input，等价于过去的 system_instruction 行为。
  */
 function composePromptWithSystemInstruction(userPrompt: string): string {
-  return `【全局系统指令 · 必须遵守】
+  return `【Agent 任務總覽】本請求調用的是 **Deep Research Max**（長時 Agent，非單輪 chat）。請在遵守下方【全局系统指令】前提下，對【用户课题】完成**可引用、可排版**的深度研究，輸出**完整简体中文 Markdown 報告正文**（含規定章節）；禁止僅輸出大綱、禁止一句話搪塞、禁止大量未完成占位。
+【全局系统指令 · 必须遵守】
 ${DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION}
 
 ---
@@ -668,8 +674,9 @@ async function requestResearchPlan(
   if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
 
   const apiHeaders: Record<string, string> = {};
-  // 使用顶部常量 PLAN_MAX_MS，匹配 deep-research-max 实际计划耗时。
-  const outputs = await pollInteraction(interactionId, apiHeaders, PLAN_MAX_MS, undefined, onProgress);
+  const planMaxMs = resolveMaxPlanPollMs();
+  // Deep Research Max 計畫階段輪詢（預設 90min，見 resolveMaxPlanPollMs）
+  const outputs = await pollInteraction(interactionId, apiHeaders, planMaxMs, undefined, onProgress);
   const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
   const planText = String(textOut?.text || "").trim();
   if (!planText || planText.length < 50) {
@@ -688,7 +695,7 @@ async function requestResearchPlan(
  * 阶段 1：审批计划并启动正式深潛执行
  * - 用 previous_interaction_id 续接计划阶段
  * - collaborative_planning: false → Agent 立即执行
- * - AbortController 60 分钟硬超时
+ * - AbortController 與執行輪詢上限一致（預設 90 分鐘，見 resolveMaxExecutePollMs）
  * @returns 最终接地数据 + 嵌入的 Agent 生成图表 markdown
  */
 async function executeApprovedResearch(
@@ -738,11 +745,11 @@ ${feedback.trim()}`
   if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
 
   const apiHeaders: Record<string, string> = {};
-  // MAX_POLL_MS 硬上限（與 @google/genai 輪詢一致，預設 60 分鐘）
+  const executeMaxMs = resolveMaxExecutePollMs();
   const abortController = new AbortController();
-  const hardTimeout = setTimeout(() => abortController.abort(), MAX_POLL_MS);
+  const hardTimeout = setTimeout(() => abortController.abort(), executeMaxMs);
   try {
-    const outputs = await pollInteraction(interactionId, apiHeaders, MAX_POLL_MS, abortController.signal, onProgress);
+    const outputs = await pollInteraction(interactionId, apiHeaders, executeMaxMs, abortController.signal, onProgress);
     const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
     const text = String(textOut?.text || "").trim();
     if (!text || text.length < 400) {

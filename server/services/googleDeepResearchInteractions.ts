@@ -271,12 +271,13 @@ export async function runDeepResearchProTask(
   }
 }
 
-/** Max · 60 分鐘上限 · 10s 間隔（360 次） */
+/** Max · 90 分鐘上限 · 10s 間隔（可由 DEEP_RESEARCH_MAX_STANDALONE_TIMEOUT_MS 覆寫，≥60000） */
 export async function runDeepResearchMaxTask(
   prompt: string,
   options?: RunStandaloneDrTaskOptions,
 ): Promise<string | null> {
-  const MAX_MS = 60 * 60 * 1000;
+  const raw = Number(process.env.DEEP_RESEARCH_MAX_STANDALONE_TIMEOUT_MS);
+  const MAX_MS = Number.isFinite(raw) && raw >= 60_000 ? raw : 90 * 60 * 1000;
   const POLL_MS = 10_000;
 
   try {

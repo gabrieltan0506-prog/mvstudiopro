@@ -3873,6 +3873,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** 可選第二條選題 sceneId（同用戶快照）；DR-Pro 雙條並行，皆失敗則單題 + GPT 5.4 */
+          drProSecondarySceneId: z.string().min(1).max(128).optional(),
           /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
           supervisorToken: z.string().max(512).optional(),
         }),
@@ -4047,6 +4049,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
         void input.imagePromptTranslator;
+        let drProSecondaryCoverInputs: { topicHook: string; context: string } | undefined;
+        const sid2 = String(input.drProSecondarySceneId ?? "").trim();
+        if (sid2 && sid2 !== sid) {
+          const { resolveOptionalDrProSecondaryCoverFromScene } = await import("./services/coverDeepResearchProBrief.js");
+          drProSecondaryCoverInputs = await resolveOptionalDrProSecondaryCoverFromScene({
+            userId,
+            secondarySceneId: sid2,
+          });
+        }
         return runPlatformTopicImagePipeline({
           topicHook: finalTopicHook,
           format: finalFormatForPipeline,
@@ -4059,6 +4070,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           newJobMetaBase,
           coverProEngine,
           enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
+          drProSecondaryCoverInputs,
         });
       }),
 
@@ -4081,6 +4093,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** 可選：第二條選題 sceneId（同用戶快照）· DR-Pro 雙條並行 */
+          drProSecondarySceneId: z.string().min(1).max(128).optional(),
           /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
           supervisorToken: z.string().max(512).optional(),
         }),
@@ -4250,36 +4264,70 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
 
         const jobId = nanoid(16);
-        await createJobRecord({
-          id: jobId,
-          userId: String(userId),
-          type: "platform",
-          provider: "vertex",
-          input: {
-            action: "platform_topic_image",
-            params: {
-              creationId: creationIdOut ?? null,
-              topicHook: finalTopicHook,
-              format: finalFormatForPipeline,
-              context: enrichedContext,
-              coverPersonaContext: input.coverPersonaContext,
-              sceneId: input.sceneId,
-              appealHook: resolvedCover.appealHook,
-              imagePromptTranslator: "gpt54",
-              isFreeRetry,
-              newJobMetaBase,
-              coverProEngine,
-              enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
+        const sid2Enqueue = String(input.drProSecondarySceneId ?? "").trim();
+        if (sid2Enqueue && sid2Enqueue !== sid) {
+          const { resolveOptionalDrProSecondaryCoverFromScene } = await import("./services/coverDeepResearchProBrief.js");
+          const secRowEnqueue = await resolveOptionalDrProSecondaryCoverFromScene({
+            userId,
+            secondarySceneId: sid2Enqueue,
+          });
+          if (secRowEnqueue) {
+            const { insertDrProSecondaryStaging } = await import("./services/drProSecondaryStaging.js");
+            try {
+              await insertDrProSecondaryStaging({
+                jobId,
+                userId,
+                primarySceneId: sid,
+                secondarySceneId: sid2Enqueue,
+                secondaryTopicHook: secRowEnqueue.topicHook,
+                secondaryContext: secRowEnqueue.context,
+              });
+            } catch (e) {
+              console.warn("[mvAnalysis.enqueueGenerateTopicImage] DR secondary staging insert failed:", e);
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "副选题暂存失败，请稍后重试",
+              });
+            }
+          }
+        }
+        try {
+          await createJobRecord({
+            id: jobId,
+            userId: String(userId),
+            type: "platform",
+            provider: "vertex",
+            input: {
+              action: "platform_topic_image",
+              params: {
+                creationId: creationIdOut ?? null,
+                topicHook: finalTopicHook,
+                format: finalFormatForPipeline,
+                context: enrichedContext,
+                coverPersonaContext: input.coverPersonaContext,
+                sceneId: input.sceneId,
+                appealHook: resolvedCover.appealHook,
+                imagePromptTranslator: "gpt54",
+                isFreeRetry,
+                newJobMetaBase,
+                coverProEngine,
+                enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
+                drProSecondarySceneId: input.drProSecondarySceneId,
+              },
             },
-          },
-        });
+          });
+        } catch (e) {
+          const { deleteDrProSecondaryStagingByJobId } = await import("./services/drProSecondaryStaging.js");
+          await deleteDrProSecondaryStagingByJobId(jobId);
+          throw e;
+        }
 
         return { jobId, creationId: creationIdOut ?? null, status: "queued" as const };
       }),
 
     /**
      * 同一選題：**豎版封面 + 2×4 分鏡或八格** 一次扣 {@link CREDIT_COSTS.platformTopicCoverAndCompositeBundle}；
-     * 異步 worker 內 **併發** `runPlatformTopicImagePipeline` 與 `generatePlatformCompositeSheetImage`（2×4 側強制跳過 DR-Pro，避免與封面鏈重複貴價 Interactions）。
+     * 異步 worker 內 **封面與 2×4 並行**（`Promise.allSettled`）：封面鏈 GPT 5.4 英文化；2×4 預設 Vertex Flash 英文化（可改 gpt54）。2×4 側強制跳過 DR-Pro，避免與封面鏈重複貴價 Interactions。
      */
     enqueueTopicCoverAndCompositeBundle: protectedProcedure
       .input(
@@ -4725,8 +4773,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     /**
      * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底。
-     * 单条：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
-     * 一键 **四条** 套裝：合计 `platformCompositeBulkFourTopics`（168）點，四次 API 各扣 42；传 `bulkFourTopicsFlat168`。
+     * 单条：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr（批量多只好多筆各自扣；無「四條打包價」）。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
@@ -4743,16 +4790,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
           creationRecordId: z.number().int().positive().optional(),
-          /**
-           * 一鍵四條選題批量：每次請求均摊 168/4 點（合計 168）。
-           * 僅在客戶端確有連續 4 次同批次時傳入；slotIndex 須為 0..3。
-           */
-          bulkFourTopicsFlat168: z
-            .object({
-              clientBatchKey: z.string().min(8).max(96),
-              slotIndex: z.number().int().min(0).max(3),
-            })
-            .optional(),
           /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
           supervisorToken: z.string().max(512).optional(),
           /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
@@ -4833,10 +4870,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         appendImageFlowLog(
           imageGenFlowLog,
-          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)}` +
-            (bulkFour
-              ? ` · 四条套裝均摊 ${bulkFour.slotIndex + 1}/4 · 本笔 ${cost} 点（套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics}）`
-              : ""),
+          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
         );
         const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
         appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);

@@ -3573,6 +3573,18 @@ export default function PlatformPage() {
     [platformTopicCount],
   );
 
+  /** 批量「仅 2×4」主按钮：区分四条套裝合计价 vs 单条/多条按体裁累加，避免与单条 168 混淆 */
+  const bulkCompositePrimaryButtonLabel = useMemo(() => {
+    const cost = platformBulkCompositeCost;
+    if (platformTopicCount === 4 && cost === CREDIT_COSTS.platformCompositeBulkFourTopics) {
+      return `仅 2×4 / 八格 · 四条套裝合计 ${cost} 积分`;
+    }
+    if (platformTopicCount === 1) {
+      return `仅 2×4 / 八格 · 单条 ${cost} 积分`;
+    }
+    return `仅 2×4 / 八格 · ${platformTopicCount} 条合计 ${cost} 积分`;
+  }, [platformTopicCount, platformBulkCompositeCost]);
+
   /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
   const platformBulkCompositeBreakdown = useMemo(() => {
     let videoLike = 0;
@@ -5693,7 +5705,7 @@ export default function PlatformPage() {
                           )}
                           {isSequentialCompositeBatchGenerating
                             ? "正在生成 2×4 分镜…"
-                            : `仅 2×4 / 八格 · ${platformBulkCompositeCost} 积分`}
+                            : bulkCompositePrimaryButtonLabel}
                         </button>
                         <Dialog open={coverDecisionTrialReadOpen} onOpenChange={setCoverDecisionTrialReadOpen}>
                           <DialogContent className="max-h-[92vh] max-w-[min(1720px,calc(100vw-1rem))] w-full gap-0 overflow-y-auto overflow-x-auto border border-white/12 bg-[#05080f] p-3 sm:max-w-[min(1720px,calc(100vw-1rem))]">
@@ -6486,8 +6498,10 @@ export default function PlatformPage() {
                               GPT-IMAGE-2
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 推荐一键套裝 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点 · 仅合成：视频 {CREDIT_COSTS.platformStoryboardSheet} 点 · 图文/小红书{" "}
-                              {CREDIT_COSTS.platformXhsDualNote} 点
+                              · 推荐一键套裝 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点（竖版封面{" "}
+                              {CREDIT_COSTS.platformTopicFrameGraphic} 点 + 本条 2×4 {compositeCost} 点，分開约{" "}
+                              {CREDIT_COSTS.platformTopicFrameGraphic + compositeCost} 点）· 本条仅 2×4：{compositeCost}{" "}
+                              点（{isGraphicFormat ? "图文/小红书八格" : "短视频分镜"}）
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-2">

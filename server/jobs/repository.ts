@@ -1,6 +1,8 @@
 import { and, asc, eq, notInArray } from "drizzle-orm";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
+import { deleteDrProSecondaryStagingByJobId } from "../services/drProSecondaryStaging.js";
 
 export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -228,13 +230,27 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   }
 }
 
+/** 僅在「可能寫入過 DR 副選題暫存」的 platform job 終態時刪除 Neon 行；套裝須整 job（封面+2×4）跑完後才 markJobSucceeded，故不會在僅封面完成時刪。 */
+async function maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(jobId: string): Promise<void> {
+  const job = await getJobById(jobId);
+  if (!job || job.type !== "platform") return;
+  const action = getPlatformJobAction(job.input);
+  if (action !== "platform_topic_image" && action !== "platform_topic_cover_composite_bundle") return;
+  await deleteDrProSecondaryStagingByJobId(jobId);
+}
+
 export async function markJobSucceeded(id: string, output: unknown, provider?: string): Promise<void> {
   const db = await getDb();
   if (!db) return;
 
+  const cleaned =
+    output != null && typeof output === "object" && !Array.isArray(output)
+      ? omitChineseStagingFromJobOutput(output as Record<string, unknown>)
+      : output;
+
   const setValues: Record<string, unknown> = {
     status: "succeeded",
-    output: output as any,
+    output: cleaned as any,
     error: null,
     updatedAt: new Date(),
   };
@@ -245,6 +261,7 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
   } catch (error) {
     console.error("[JobsRepo] markJobSucceeded failed:", error);
   }
+  await maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(id);
 }
 
 export async function markJobFailed(id: string, error: string): Promise<void> {
@@ -252,13 +269,19 @@ export async function markJobFailed(id: string, error: string): Promise<void> {
   if (!db) return;
 
   try {
+    const job = await getJobById(id);
+    let nextOut = job?.output;
+    if (nextOut != null && typeof nextOut === "object" && !Array.isArray(nextOut)) {
+      nextOut = omitChineseStagingFromJobOutput(nextOut as Record<string, unknown>) as Job["output"];
+    }
     await db
       .update(jobs)
-      .set({ status: "failed", error, updatedAt: new Date() })
+      .set({ status: "failed", error, output: nextOut as any, updatedAt: new Date() })
       .where(eq(jobs.id, id));
   } catch (dbError) {
     console.error("[JobsRepo] markJobFailed failed:", dbError);
   }
+  await maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(id);
 }
 
 /** platform_topic_image 等長任務：running 時把部分 output 寫入 DB，供 GET /api/jobs 輪詢看到即時步驟 */

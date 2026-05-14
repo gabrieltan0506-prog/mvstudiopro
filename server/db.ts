@@ -49,6 +49,28 @@ async function ensurePlatformStrategicBlueprintSnapshotsTable(db: NonNullable<Aw
   }
 }
 
+/** DR-Pro 雙條副選題暫存：缺失時自動建表（與 drizzle/postgres/0005 對齊）。 */
+async function ensurePlatformDrSecondaryStagingTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "platform_dr_secondary_staging" (
+        "jobId"               varchar(64) PRIMARY KEY,
+        "userId"              integer NOT NULL,
+        "primarySceneId"      text NOT NULL,
+        "secondarySceneId"    text NOT NULL,
+        "secondaryTopicHook"  text NOT NULL,
+        "secondaryContext"    text NOT NULL,
+        "createdAt"           timestamp NOT NULL DEFAULT now()
+      )
+    `);
+  } catch (e) {
+    console.warn(
+      "[Database] ensure platform_dr_secondary_staging (non-fatal):",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -57,6 +79,7 @@ export async function getDb() {
       _db = drizzle(sql_conn);
       await ensureUsersEnterpriseTrialPaidColumn(_db);
       await ensurePlatformStrategicBlueprintSnapshotsTable(_db);
+      await ensurePlatformDrSecondaryStagingTable(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
