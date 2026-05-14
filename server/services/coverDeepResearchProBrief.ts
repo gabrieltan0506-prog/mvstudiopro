@@ -9,7 +9,7 @@
  * - **認證**：`GEMINI_API_KEY`（與 {@link ./deepResearchService.ts} Deep Research Max 同源）
  * - **Agent ID**：優先 `PLATFORM_COVER_DEEP_RESEARCH_AGENT`；預設 **`deep-research-preview-04-2026`**
  *   （平台顧問 Pro；若 Google 調整請用環境變數覆寫）。
- * - **SDK**：`@google/genai` `interactions.create` + 有上限輪詢（見 {@link ./googleDeepResearchInteractions.ts}）。
+ * - **傳輸**：建立任務 **REST** `fetch`（UTF‑8 中文 `input`）；輪詢 **\@google/genai** \`interactions.get\`（見 {@link ./googleDeepResearchInteractions.ts}）。
  * - **時限**：`PLATFORM_COVER_DEEP_RESEARCH_PRO_TIMEOUT_MS`（預設 180000）
  * - **輪詢**：`PLATFORM_COVER_DR_POLL_INTERVAL_MS`（預設 6000；勿低於 Google 側節奏避免 429）
  * - **實驗 · 雙條合併**：{@link runCoverDeepResearchDualBatchBrief}（**第 1 次**僅試一次双条 Interaction；**失敗則第 2 次**固定改兩次單條，不重試双条）。
@@ -125,15 +125,15 @@ function passesCoverBriefTopicCopyAnchor(textRaw: string, task: CoverTaskInput):
   return { ok: true };
 }
 
-function buildCoverBriefInteractionInput(task: CoverTaskInput): string {
-  const tp = task.tenantProfile;
-  const titleLine = task.topicTitle.trim().slice(0, 160);
-  return `
-【封面專任 · 請嚴格遵守 · 離題視同失敗】
-【你的擅長】在**給定素材範圍內**優化「選題怎麼說更像封面鉤子」與「文案怎麼壓成可畫進圖的信息」，提煉懸念、反差、利益點與主視覺焦點；**不改命題換題**，只做表達與結構強化。
-【你的任務】先基於優化結果，**只用簡體中文**輸出一整段可直接交下游翻譯的**高點擊率封面生圖提示詞**（＝視覺企劃段落）：要能指揮構圖、主體、光影、留白、簡中大標层级，不只是口頭點評。
-【工作閉環】聯網僅可作同話題、同語境的高互動參考；最終段落必須體現**經你優化後的選題與文案**，落在一條连贯的简体「封面绘制指令」上（非白皮書）。
+/** 與 Deep Research **Agent** 對話專用：開場即寫清任務類型、唯一產出、禁止事項（避免當成閒聊模型或長文研報）。 */
+const COVER_DR_AGENT_ROLE_PREAMBLE = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
+【本回合唯一目標】為「竖版 9:16 信息流封面」寫**一段可直接給下游模型翻译成英文生图 prompt 的简体视觉企划**（構圖/主體/光影/留白/簡中主標層級），不是市場研報、不是逐字講稿、不是分鏡表。
+【輸出語言】正文僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄。
+【聯網邊界】僅用於**同一選題語境**的輕量補強（句式/視覺趨勢）；禁止換題、禁止引入與下列【選題標題】【基礎文案摘錄】無關的爆款案例。
+`.trim();
 
+/** 單條與雙條共用的忠實與篇幅約束（Agent 必逐條遵守）。 */
+const COVER_DR_AGENT_FIDELITY_BLOCK = `
 【忠實約束 — 缺一不可】
 1. 全文必須**扣死**给定【選題標題】【基礎文案摘錄】中的具體主體、利益點或矛盾；禁止換成泛化行業雞湯或另一個話題。
 2. 第一段**第一行（或第一句）**：必須用簡体字寫一行「錨定句」，明確復述本條視覺創意服務對象為「選題標題所指內容 + 上文案中的某一具體信息點」（可短句）。
@@ -142,6 +142,20 @@ function buildCoverBriefInteractionInput(task: CoverTaskInput): string {
 5. 输出只要**简体中文**連貫正文（無 JSON / 無markdown代碼欄）。
 6. 字数 **280～950 字**；须覆盖：钩子反差／主視覺隱喻與主次关系／光影與主色調／簡中大標建議字形與層級；避免英文段落。
 7. 文风：短句+可执行的畫面描述，让读者能想见**這條視頻/圖文封面**會長什么样。
+`.trim();
+
+function buildCoverBriefInteractionInput(task: CoverTaskInput): string {
+  const tp = task.tenantProfile;
+  const titleLine = task.topicTitle.trim().slice(0, 160);
+  return `
+${COVER_DR_AGENT_ROLE_PREAMBLE}
+
+【封面專任 · 請嚴格遵守 · 離題視同失敗】
+【你的擅長】在**給定素材範圍內**優化「選題怎麼說更像封面鉤子」與「文案怎麼壓成可畫進圖的信息」，提煉懸念、反差、利益點與主視覺焦點；**不改命題換題**，只做表達與結構強化。
+【你的任務】先基於優化結果，**只用簡體中文**輸出一整段可直接交下游翻譯的**高點擊率封面生圖提示詞**（＝視覺企劃段落）：要能指揮構圖、主體、光影、留白、簡中大標层级，不只是口頭點評。
+【工作閉環】聯網僅可作同話題、同語境的高互動參考；最終段落必須體現**經你優化後的選題與文案**，落在一條连贯的简体「封面绘制指令」上（非白皮書）。
+
+${COVER_DR_AGENT_FIDELITY_BLOCK}
 
 上下文（你的全部依據來源）
 ——
@@ -152,6 +166,11 @@ function buildCoverBriefInteractionInput(task: CoverTaskInput): string {
 ${task.baseCopywriting.slice(0, 5800)}
 `.trim();
 }
+
+const COVER_DR_AGENT_ROLE_PREAMBLE_DUAL = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；本回合要**一次**處理**兩條**獨立選題（条A / 条B），每條均須遵守下方【忠實約束】；聯網僅作輕量輔證，**不得串題、不得把 A 寫進 B**。
+【本回合唯一目標】輸出**兩段**简体「竖版 9:16 信息流封面」视觉企划（段 A / 段 B），格式必須用指定定界符包裹，供下游**分别**英文化生图；**不是**一份研報、**不是**合併論述。
+【輸出語言】两段正文均僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄；**定界符之外不得出現任何文字**（禁止前言、摘要、結語、解釋你怎麼做的說明）。
+`.trim();
 
 /** 双条一次调用：定界符须原样出现在模型输出中，供解析。 */
 const DR_BATCH_1_OPEN = "<<<DR_BATCH_1>>>";
@@ -174,15 +193,22 @@ ${task.baseCopywriting.slice(0, 5200)}
   };
 
   return `
+${COVER_DR_AGENT_ROLE_PREAMBLE_DUAL}
+
 【双条并列 · 单次回复 · 严禁混淆两条选题】
-你是资深封面视觉策略编辑。下面有**两条完全独立的**选题（条A / 条B）。你必须**在同一轮回复中**依次产出两条**简体**「高点击率竖版封面生图指令」（每条规则与单条任务一致：首句錨定句、280～950 字、只简体、可指挥构图光影主标层级、禁止换题发挥）。
+【你的擅長】同上：在**各自给定素材範圍內**強化鉤子與可畫進圖的信息密度；**条A 只服务条A 素材、条B 只服务条B 素材**。
+【你的任務】在同一轮回复中产出**两段**简体视觉企划；每一段都须满足【忠實約束】（含首句錨定句、280～950 字、可指挥构图/光影/主标層級）。
+
+${COVER_DR_AGENT_FIDELITY_BLOCK}
+（说明：以上 7 条对**每一段**定界符内正文分别适用；段 A 只对照下方条A 的标题与文案，段 B 只对照条B。）
 
 【输出格式 · 必须原样使用下列定界符行 · 缺一不可 · 定界符单独成行】
+仅输出下列结构；**第一個字符必须是「<」**（即第一行即 ${DR_BATCH_1_OPEN}），**最後一個字符必须是「>」**（即最后一行即 ${DR_BATCH_2_CLOSE} 的末行）。
 ${DR_BATCH_1_OPEN}
-（条A 正文 only：一段连续简体，无 JSON）
+（条A 正文 only：一段连续简体，280～950 字，禁止出現「条B」字樣或 B 的标题）
 ${DR_BATCH_1_CLOSE}
 ${DR_BATCH_2_OPEN}
-（条B 正文 only：一段连续简体，无 JSON）
+（条B 正文 only：一段连续简体，280～950 字，禁止出現「条A」字樣或 A 的标题）
 ${DR_BATCH_2_CLOSE}
 
 【条A 素材】

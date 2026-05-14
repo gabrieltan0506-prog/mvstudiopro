@@ -483,7 +483,8 @@ function buildInteractionInput(
  * 把系统指令以「全局指令 + 用户课题」结构拼进 input，等价于过去的 system_instruction 行为。
  */
 function composePromptWithSystemInstruction(userPrompt: string): string {
-  return `【全局系统指令 · 必须遵守】
+  return `【Agent 任務總覽】本請求調用的是 **Deep Research Max**（長時 Agent，非單輪 chat）。請在遵守下方【全局系统指令】前提下，對【用户课题】完成**可引用、可排版**的深度研究，輸出**完整简体中文 Markdown 報告正文**（含規定章節）；禁止僅輸出大綱、禁止一句話搪塞、禁止大量未完成占位。
+【全局系统指令 · 必须遵守】
 ${DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION}
 
 ---
