@@ -24,6 +24,12 @@ import {
 } from "./geminiPlatformCompositeTranslation.js";
 import { generateDeepResearchSceneIllustration, generateGptImage2FromRawEnglishPrompt } from "./proxyImageService";
 import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
+import {
+  createDeepResearchInteraction,
+  getGoogleGenAI,
+  interactionToLegacyOutputs,
+  DEEP_RESEARCH_MAX_AGENT_ID,
+} from "./googleDeepResearchInteractions.js";
 
 // Storage root for job state. Default = Fly persistent volume. Override via env var
 // for local tests / CI smoke tests.
@@ -372,14 +378,11 @@ interface GroundedResult {
 
 const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
 
-// ─── Interactions API（Deep Research Agent 专用） ─────────────────────────────
-// Deep Research 是 Agent 而非普通模型，必须通过 Interactions API 调用。
-// generateContent 会直接返回 400，不可使用。
-const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/interactions";
-// Max 版：~160 次搜索 / ~900k token，比标准版更深度全面
-const DEEP_RESEARCH_AGENT_NAME = "deep-research-max-preview-04-2026";
-const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
-const MAX_POLL_MS = 90 * 60 * 1000; // 90 分钟（已与 90 分钟上限对齐）
+// ─── Interactions API（Deep Research Agent，@google/genai SDK） ───────────────
+// generateContent 不可用；见 {@link ./googleDeepResearchInteractions.ts}
+const POLL_INTERVAL_MS = 10_000; // 10 秒轮询
+/** 執行階段硬上限（計畫審核通過後）：與 Deep Research Max 作業節奏對齊為 60 分鐘 */
+const MAX_POLL_MS = 60 * 60 * 1000;
 /**
  * Plan 阶段（collaborative_planning: true）轮询超时上限 = 90 分钟（5400 秒）。
  * 与 MAX_POLL_MS 看齐：Google deep-research-max-preview-04-2026 的 plan 阶段
@@ -563,11 +566,12 @@ class DeepResearchApiError extends Error {
  */
 async function pollInteraction(
   interactionId: string,
-  apiHeaders: Record<string, string>,
+  _apiHeaders: Record<string, string>,
   maxMs: number,
   abortSignal?: AbortSignal,
   onProgress?: (elapsedSec: number, maxSec: number) => Promise<void> | void,
 ): Promise<any[]> {
+  const ai = getGoogleGenAI();
   const pollStart = Date.now();
   const maxSec = Math.round(maxMs / 1000);
   while (Date.now() - pollStart < maxMs) {
@@ -578,32 +582,16 @@ async function pollInteraction(
     const elapsed = Math.round((Date.now() - pollStart) / 1000);
     let pollJson: any = {};
     try {
-      const pollRes = await fetch(`${INTERACTIONS_BASE}/${interactionId}`, {
-        headers: apiHeaders,
-        signal: abortSignal,
-      });
-      const rawPoll = await pollRes.text();
-      try { pollJson = JSON.parse(rawPoll); } catch { /* ignore */ }
-      if (!pollRes.ok) {
-        console.error(`[deepResearch] ❌ poll HTTP ${pollRes.status} elapsed=${elapsed}s：${rawPoll.slice(0, 1000)}`);
-        throw new DeepResearchApiError({
-          message: `Deep Research 轮询失败（HTTP ${pollRes.status}: ${pollJson?.error?.message ?? rawPoll.slice(0, 200)}），积分将退回。`,
-          stage: "poll",
-          httpStatus: pollRes.status,
-          rawBody: rawPoll,
-          interactionId,
-          apiErrorCode: pollJson?.error?.code,
-          apiErrorMessage: pollJson?.error?.message,
-        });
-      }
+      pollJson = (await ai.interactions.get(interactionId)) as unknown as Record<string, unknown>;
     } catch (fetchErr: any) {
       if (fetchErr?.name === "AbortError") throw fetchErr;
-      console.warn(`[deepResearch] ⚠️ poll fetch 异常 elapsed=${elapsed}s：${fetchErr?.message}`);
+      console.warn(`[deepResearch] ⚠️ poll interactions.get 异常 elapsed=${elapsed}s：${fetchErr?.message}`);
       continue;
     }
-    const status = pollJson?.status ?? "unknown";
+    const statusH = pollJson?.status ?? "unknown";
+    const status = typeof statusH === "string" ? statusH : String(statusH);
     console.log(`[deepResearch] 🔍 PID=${process.pid} interactionId=${interactionId} status=${status} elapsed=${elapsed}s`);
-    if (status === "failed") {
+    if (status === "failed" || status === "cancelled") {
       const errMsg = pollJson?.error?.message || JSON.stringify(pollJson?.error || {}).slice(0, 300);
       throw new DeepResearchApiError({
         message: `Deep Research Agent 失败（${errMsg}），积分将退回。`,
@@ -615,7 +603,7 @@ async function pollInteraction(
       });
     }
     if (status === "completed") {
-      return (pollJson?.outputs || []) as any[];
+      return interactionToLegacyOutputs(pollJson) as any[];
     }
     // status === "in_progress" → 通知调用层刷新真实进度
     if (onProgress) {
@@ -651,53 +639,24 @@ async function requestResearchPlan(
 ): Promise<{ planText: string; planInteractionId: string }> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-  const apiHeaders = {
-    "Content-Type": "application/json",
-    "x-goog-api-key": apiKey,
-    "X-Goog-Api-Client": "genai-node/deep-research",
-  };
 
   const release = await acquireRateGate("deep-research-plan");
   let interactionId: string;
   try {
     console.log(`[deepResearch] 📋 PID=${process.pid} 请求计划 promptLen=${prompt.length} files=${files?.length ?? 0}`);
-    const createRes = await fetch(INTERACTIONS_BASE, {
-      method: "POST",
-      headers: apiHeaders,
-      body: JSON.stringify({
-        agent: DEEP_RESEARCH_AGENT_NAME,
-        // 系统指令必须拼进 input（agent 不接受 system_instruction 字段）
+    try {
+      const created = await createDeepResearchInteraction({
+        agentId: DEEP_RESEARCH_MAX_AGENT_ID,
         input: buildInteractionInput(composePromptWithSystemInstruction(prompt), files),
-        background: true,
-        agent_config: {
-          type: "deep-research",
-          collaborative_planning: true, // ← 关键：先出计划
-          thinking_summaries: "auto",
-          visualization: "auto",
-        },
-      }),
-    });
-    const rawCreate = await createRes.text();
-    let createJson: any = {};
-    try { createJson = JSON.parse(rawCreate); } catch { /* ignore */ }
-    if (!createRes.ok) {
-      console.error(`[deepResearch] ❌ plan create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
-      const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
-      throw new DeepResearchApiError({
-        message: `Deep Research 计划提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`,
-        stage: "plan-create",
-        httpStatus: createRes.status,
-        rawBody: rawCreate,
-        apiErrorCode: createJson?.error?.code,
-        apiErrorMessage: createJson?.error?.message,
+        collaborativePlanning: true,
       });
-    }
-    interactionId = createJson?.id;
-    if (!interactionId) {
+      interactionId = created.id;
+    } catch (createErr: unknown) {
+      const rawCreate = createErr instanceof Error ? createErr.message : String(createErr);
+      console.error(`[deepResearch] ❌ plan create SDK 异常：${rawCreate.slice(0, 2000)}`);
       throw new DeepResearchApiError({
-        message: "Deep Research 计划阶段未返回 interactionId",
+        message: `Deep Research 计划提交失败（${rawCreate.slice(0, 500)}），积分将退回。`,
         stage: "plan-create",
-        httpStatus: createRes.status,
         rawBody: rawCreate,
       });
     }
@@ -708,7 +667,8 @@ async function requestResearchPlan(
 
   if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
 
-  // 使用顶部常量 PLAN_MAX_MS（60 分钟），匹配 deep-research-max 实际计划耗时。
+  const apiHeaders: Record<string, string> = {};
+  // 使用顶部常量 PLAN_MAX_MS，匹配 deep-research-max 实际计划耗时。
   const outputs = await pollInteraction(interactionId, apiHeaders, PLAN_MAX_MS, undefined, onProgress);
   const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
   const planText = String(textOut?.text || "").trim();
@@ -740,11 +700,6 @@ async function executeApprovedResearch(
 ): Promise<GroundedResult> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-  const apiHeaders = {
-    "Content-Type": "application/json",
-    "x-goog-api-key": apiKey,
-    "X-Goog-Api-Client": "genai-node/deep-research",
-  };
 
   const finalCommand = overrideInput?.trim()
     ? overrideInput.trim()
@@ -757,44 +712,20 @@ ${feedback.trim()}`
   let interactionId: string;
   try {
     console.log(`[deepResearch] 🚀 PID=${process.pid} 执行批准的研究 previous=${planInteractionId} feedbackLen=${feedback?.length ?? 0}`);
-    const createRes = await fetch(INTERACTIONS_BASE, {
-      method: "POST",
-      headers: apiHeaders,
-      body: JSON.stringify({
-        agent: DEEP_RESEARCH_AGENT_NAME,
+    try {
+      const created = await createDeepResearchInteraction({
+        agentId: DEEP_RESEARCH_MAX_AGENT_ID,
         input: finalCommand,
-        previous_interaction_id: planInteractionId,
-        background: true,
-        agent_config: {
-          type: "deep-research",
-          collaborative_planning: false, // ← 关键：跳过计划，直接执行
-          thinking_summaries: "auto",
-          visualization: "auto",
-        },
-      }),
-    });
-    const rawCreate = await createRes.text();
-    let createJson: any = {};
-    try { createJson = JSON.parse(rawCreate); } catch { /* ignore */ }
-    if (!createRes.ok) {
-      console.error(`[deepResearch] ❌ execute create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
-      const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
-      throw new DeepResearchApiError({
-        message: `Deep Research 执行提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`,
-        stage: "execute-create",
-        httpStatus: createRes.status,
-        rawBody: rawCreate,
-        interactionId: planInteractionId,
-        apiErrorCode: createJson?.error?.code,
-        apiErrorMessage: createJson?.error?.message,
+        collaborativePlanning: false,
+        previousInteractionId: planInteractionId,
       });
-    }
-    interactionId = createJson?.id;
-    if (!interactionId) {
+      interactionId = created.id;
+    } catch (createErr: unknown) {
+      const rawCreate = createErr instanceof Error ? createErr.message : String(createErr);
+      console.error(`[deepResearch] ❌ execute create SDK 异常：${rawCreate.slice(0, 2000)}`);
       throw new DeepResearchApiError({
-        message: "Deep Research 执行阶段未返回 interactionId",
+        message: `Deep Research 执行提交失败（${rawCreate.slice(0, 500)}），积分将退回。`,
         stage: "execute-create",
-        httpStatus: createRes.status,
         rawBody: rawCreate,
         interactionId: planInteractionId,
       });
@@ -806,7 +737,8 @@ ${feedback.trim()}`
 
   if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
 
-  // 1 小时硬超时（AbortController 自动 abort）
+  const apiHeaders: Record<string, string> = {};
+  // MAX_POLL_MS 硬上限（與 @google/genai 輪詢一致，預設 60 分鐘）
   const abortController = new AbortController();
   const hardTimeout = setTimeout(() => abortController.abort(), MAX_POLL_MS);
   try {

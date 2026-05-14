@@ -7,17 +7,23 @@
  * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体** 並合入中文語境，再交既有 **GPT‑5.4 → 生圖**。
  *
  * - **認證**：`GEMINI_API_KEY`（與 {@link ./deepResearchService.ts} Deep Research Max 同源）
- * - **Agent ID**：優先 `PLATFORM_COVER_DEEP_RESEARCH_AGENT`；預設 **`deep-research-pro-preview`**
- *   （無日期後綴；若 Google 調整請用環境變數覆寫）。
+ * - **Agent ID**：優先 `PLATFORM_COVER_DEEP_RESEARCH_AGENT`；預設 **`deep-research-preview-04-2026`**
+ *   （平台顧問 Pro；若 Google 調整請用環境變數覆寫）。
+ * - **SDK**：`@google/genai` `interactions.create` + 有上限輪詢（見 {@link ./googleDeepResearchInteractions.ts}）。
  * - **時限**：`PLATFORM_COVER_DEEP_RESEARCH_PRO_TIMEOUT_MS`（預設 180000）
  * - **輪詢**：`PLATFORM_COVER_DR_POLL_INTERVAL_MS`（預設 6000；勿低於 Google 側節奏避免 429）
+ * - **實驗 · 雙條合併**：{@link runCoverDeepResearchDualBatchBrief}（**第 1 次**僅試一次双条 Interaction；**失敗則第 2 次**固定改兩次單條，不重試双条）。
  */
 import type { CoverTaskInput } from "./agenticCoverWorkflow.js";
+import {
+  createDeepResearchInteraction,
+  extractDeepResearchTextAndImages,
+  pollInteractionUntilDone,
+  requireGeminiApiKey,
+} from "./googleDeepResearchInteractions.js";
 
-const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/interactions";
-
-/** 無日期後綴；可用 `PLATFORM_COVER_DEEP_RESEARCH_AGENT` 覆寫。 */
-const DEFAULT_COVER_DR_AGENT = "deep-research-pro-preview";
+/** 與平台頁 Pro 一致；可用 `PLATFORM_COVER_DEEP_RESEARCH_AGENT` 覆寫。 */
+const DEFAULT_COVER_DR_AGENT = "deep-research-preview-04-2026";
 
 function envFlagEnabled(name: string): boolean {
   const v = String(process.env[name] || "").trim().toLowerCase();
@@ -38,10 +44,6 @@ export function isTopicCoverDeepResearchProEnabled(): boolean {
  */
 export function isCompositeSheetDeepResearchProEnabled(): boolean {
   return envFlagEnabled("PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO") || isTopicCoverDeepResearchProEnabled();
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 function resolveCoverDrAgent(): string {
@@ -151,77 +153,174 @@ ${task.baseCopywriting.slice(0, 5800)}
 `.trim();
 }
 
-type PollOutputs = unknown[];
+/** 双条一次调用：定界符须原样出现在模型输出中，供解析。 */
+const DR_BATCH_1_OPEN = "<<<DR_BATCH_1>>>";
+const DR_BATCH_1_CLOSE = "<<<END_DR_BATCH_1>>>";
+const DR_BATCH_2_OPEN = "<<<DR_BATCH_2>>>";
+const DR_BATCH_2_CLOSE = "<<<END_DR_BATCH_2>>>";
 
-async function pollUntilComplete(opts: {
-  interactionId: string;
-  headers: Record<string, string>;
-  deadlineMs: number;
-  pollIntervalMs: number;
-  signal?: AbortSignal;
-  onPoll?: (elapsedSec: number) => void;
-}): Promise<PollOutputs> {
-  const pollStart = Date.now();
-  let lastElapsed = -1;
+function buildDualCoverBriefInteractionInput(a: CoverTaskInput, b: CoverTaskInput): string {
+  const block = (label: string, task: CoverTaskInput) => {
+    const tp = task.tenantProfile;
+    const titleLine = task.topicTitle.trim().slice(0, 160);
+    return `
+${label}
+【創作者 IP】行業：${tp.industry}；優勢：${tp.advantage}；視覺主軸：${tp.flagship}
+【載體】${task.format}
+【選題標題】${titleLine}
+【基礎文案摘錄】
+${task.baseCopywriting.slice(0, 5200)}
+`.trim();
+  };
 
-  while (Date.now() - pollStart < opts.deadlineMs) {
-    if (opts.signal?.aborted) {
-      throw new Error(`cover_dr_pro：已中止 interactionId=${opts.interactionId}`);
-    }
+  return `
+【双条并列 · 单次回复 · 严禁混淆两条选题】
+你是资深封面视觉策略编辑。下面有**两条完全独立的**选题（条A / 条B）。你必须**在同一轮回复中**依次产出两条**简体**「高点击率竖版封面生图指令」（每条规则与单条任务一致：首句錨定句、280～950 字、只简体、可指挥构图光影主标层级、禁止换题发挥）。
 
-    await sleep(opts.pollIntervalMs);
+【输出格式 · 必须原样使用下列定界符行 · 缺一不可 · 定界符单独成行】
+${DR_BATCH_1_OPEN}
+（条A 正文 only：一段连续简体，无 JSON）
+${DR_BATCH_1_CLOSE}
+${DR_BATCH_2_OPEN}
+（条B 正文 only：一段连续简体，无 JSON）
+${DR_BATCH_2_CLOSE}
 
-    let pollJson: Record<string, unknown> = {};
-    let rawPoll = "";
-    const elapsed = Math.round((Date.now() - pollStart) / 1000);
-    if (elapsed !== lastElapsed && opts.onPoll) {
-      lastElapsed = elapsed;
-      await Promise.resolve(opts.onPoll(elapsed)).catch(() => {});
-    }
+【条A 素材】
+${block("—— 条A ——", a)}
 
-    const pollRes = await fetch(`${INTERACTIONS_BASE}/${opts.interactionId}`, {
-      method: "GET",
-      headers: opts.headers,
-      signal: opts.signal,
-    }).catch(() => null as Response | null);
-    rawPoll = (await pollRes?.text?.()) || "";
-    try {
-      pollJson = JSON.parse(rawPoll || "{}") as Record<string, unknown>;
-    } catch {
-      pollJson = {};
-    }
-
-    if (!pollRes?.ok) {
-      const msg = String(pollJson?.error && typeof pollJson.error === "object" ? JSON.stringify((pollJson as any).error) : "").slice(
-        0,
-        380,
-      );
-      throw new Error(
-        `cover_dr_pro：poll HTTP ${pollRes?.status ?? "?"} · ${msg || rawPoll.slice(0, 320)}`,
-      );
-    }
-
-    const status = String(pollJson?.status ?? "");
-
-    if (status === "failed") {
-      const errObj = (pollJson?.error ?? {}) as { message?: string };
-      throw new Error(
-        `cover_dr_pro：Agent 失敗 interactionId=${opts.interactionId} · ${errObj?.message || JSON.stringify(pollJson.error || {}).slice(0, 400)}`,
-      );
-    }
-
-    if (status === "completed") {
-      return (pollJson?.outputs ?? []) as PollOutputs;
-    }
-  }
-
-  throw new Error(`cover_dr_pro：輪詢超时（>${Math.round(resolveTimeoutMs() / 1000)}s）interactionId=${opts.interactionId}`);
+【条B 素材】
+${block("—— 条B ——", b)}
+`.trim();
 }
+
+function parseDualCoverBriefBatches(raw: string): { b1: string; b2: string } | null {
+  const t = String(raw || "").replace(/\r\n/g, "\n");
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re1 = new RegExp(`${esc(DR_BATCH_1_OPEN)}\\s*([\\s\\S]*?)\\s*${esc(DR_BATCH_1_CLOSE)}`, "m");
+  const re2 = new RegExp(`${esc(DR_BATCH_2_OPEN)}\\s*([\\s\\S]*?)\\s*${esc(DR_BATCH_2_CLOSE)}`, "m");
+  const m1 = re1.exec(t);
+  const m2 = re2.exec(t);
+  if (!m1?.[1] || !m2?.[1]) return null;
+  const b1 = m1[1].trim();
+  const b2 = m2[1].trim();
+  if (b1.length < 40 || b2.length < 40) return null;
+  return { b1, b2 };
+}
+
+/** 双条 DR-Pro 轮询上限：不低于单条预算，且至多为单条 2 倍（封顶 10 分钟）。 */
+function resolveDualAttemptTimeoutMs(): number {
+  const s = resolveTimeoutMs();
+  return Math.min(600_000, Math.max(s, s * 2));
+}
+
+export type CoverDeepResearchDualBatchResult = {
+  results: [string | null, string | null];
+  mode: "dual_one_call" | "single_fallback";
+};
 
 export type CoverDrProBriefOptions = {
   /** 日誌括號標籤，預設 `步骤0.5·DR-Pro`；2×4 合成用 `步骤0.5·DR-Pro·2×4` */
   logPrefix?: string;
 };
+
+/**
+ * **实验/压测**：两条选题 **只尝试一次** Deep Research Pro 合并调用；**第 1 次**失败（创建/轮询/解析/锚定）
+ * 则 **第 2 次**固定改走两次 {@link runCoverDeepResearchInteractionsBrief}（单条），**不再重试双条**。
+ */
+export async function runCoverDeepResearchDualBatchBrief(
+  tasks: [CoverTaskInput, CoverTaskInput],
+  flowLog: string[],
+  options?: CoverDrProBriefOptions,
+): Promise<CoverDeepResearchDualBatchResult> {
+  const logBracket = String(options?.logPrefix ?? "步骤0.5·DR-Pro·双条").trim() || "步骤0.5·DR-Pro·双条";
+  const log = (s: string) => {
+    flowLog.push(`${new Date().toISOString()}  [${logBracket}] ${s}`);
+  };
+
+  async function runSingleFallback(reason: string): Promise<CoverDeepResearchDualBatchResult> {
+    log(`第2次調用：單條 fallback（因 ${reason}；不重試双条）→ 逐條 DR-Pro（A 然后 B）…`);
+    const paired: [string | null, string | null] = [
+      await runCoverDeepResearchInteractionsBrief(tasks[0], flowLog, { logPrefix: `${logBracket}·fb·A` }),
+      await runCoverDeepResearchInteractionsBrief(tasks[1], flowLog, { logPrefix: `${logBracket}·fb·B` }),
+    ];
+    return { results: paired, mode: "single_fallback" };
+  }
+
+  try {
+    requireGeminiApiKey();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log(`第1次跳過双条：${msg.slice(0, 520)}`);
+    return runSingleFallback("GEMINI_API_KEY 不可用");
+  }
+
+  const agent = resolveCoverDrAgent();
+  const dualBudgetMs = resolveDualAttemptTimeoutMs();
+  const pollIntervalMs = resolvePollMs();
+  log(
+    `第1次調用：双条合併（僅此一次；失敗則第2次改單條）· agent=${agent} · dualTimeoutMs=${dualBudgetMs} · pollMs=${pollIntervalMs}`,
+  );
+
+  const ac = new AbortController();
+  const hardStop = setTimeout(() => ac.abort(), dualBudgetMs + 12_000);
+
+  try {
+    let interactionId: string;
+    try {
+      const created = await createDeepResearchInteraction({
+        agentId: agent,
+        input: buildDualCoverBriefInteractionInput(tasks[0], tasks[1]),
+        collaborativePlanning: false,
+      });
+      interactionId = created.id;
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      log(`第1次双条 create 失敗 · ${errMsg.slice(0, 520)}`);
+      return runSingleFallback("双条 create 失敗");
+    }
+
+    log(`双条 interaction=${interactionId} · 進入輪詢…`);
+
+    const row = await pollInteractionUntilDone(interactionId, {
+      maxMs: dualBudgetMs,
+      pollIntervalMs,
+      abortSignal: ac.signal,
+      logLabel: "cover_dr_pro_dual",
+      onTick: async (elapsed) => {
+        log(`双条 polling · elapsed=${elapsed}s`);
+      },
+    });
+
+    const { text: extracted } = extractDeepResearchTextAndImages(row);
+    const parsed = parseDualCoverBriefBatches(String(extracted ?? ""));
+    if (!parsed) {
+      log("第1次双条：定界符解析失敗或正文過短");
+      return runSingleFallback("定界符解析失敗或正文過短");
+    }
+    const c1 = clipBrief(parsed.b1, 5200);
+    const c2 = clipBrief(parsed.b2, 5200);
+    const a1 = passesCoverBriefTopicCopyAnchor(c1, tasks[0]);
+    const a2 = passesCoverBriefTopicCopyAnchor(c2, tasks[1]);
+    if (!a1.ok || !a2.ok) {
+      log(`第1次双条：錨定未過 · A:${a1.reason ?? "ok"} · B:${a2.reason ?? "ok"}`);
+      return runSingleFallback("錨定校验未過");
+    }
+
+    log(`第1次双条成功 · lenA=${c1.length} · lenB=${c2.length}`);
+    return { results: [c1, c2], mode: "dual_one_call" };
+  } catch (e: unknown) {
+    const msg =
+      e instanceof DOMException && e.name === "AbortError"
+        ? "AbortError · 達本地上限"
+        : e instanceof Error
+          ? e.message
+          : String(e);
+    log(`第1次双条異常 · ${msg.slice(0, 720)}`);
+    return runSingleFallback("轮询或运行異常");
+  } finally {
+    clearTimeout(hardStop);
+  }
+}
 
 /**
  * 同步等待一次 Interactions Deep Research agent，適合封面 / 2×4 管線調試視窗；
@@ -247,72 +346,41 @@ export async function runCoverDeepResearchInteractionsBrief(
   const totalBudgetMs = resolveTimeoutMs();
   const pollIntervalMs = resolvePollMs();
 
-  log(`開始 · agent=${agent} · timeoutMs=${totalBudgetMs} · pollMs=${pollIntervalMs}`);
-
-  const apiHeaders = {
-    "Content-Type": "application/json",
-    "x-goog-api-key": apiKey,
-    "X-Goog-Api-Client": "genai-node/cover-dr-pro-brief",
-  };
+  log(`開始 · agent=${agent} · timeoutMs=${totalBudgetMs} · pollMs=${pollIntervalMs} · sdk=@google/genai`);
 
   const input = buildCoverBriefInteractionInput(task);
   const ac = new AbortController();
   const hardStop = setTimeout(() => ac.abort(), totalBudgetMs + 8000);
 
   try {
-    const createRes = await fetch(INTERACTIONS_BASE, {
-      method: "POST",
-      headers: apiHeaders,
-      body: JSON.stringify({
-        agent,
-        input,
-        background: true,
-        agent_config: {
-          type: "deep-research",
-          collaborative_planning: false,
-          thinking_summaries: "auto",
-          visualization: "auto",
-        },
-      }),
-      signal: ac.signal,
-    });
-
-    const rawCreate = await createRes.text();
-    let createJson: { id?: string; error?: { message?: string; code?: string } } = {};
+    let interactionId: string;
     try {
-      createJson = JSON.parse(rawCreate) as typeof createJson;
-    } catch {
-      /* ignore */
-    }
-
-    if (!createRes.ok) {
-      const errMsg =
-        createJson?.error?.message ?? createJson?.error?.code ?? rawCreate.slice(0, 800);
-      log(`create HTTP ${createRes.status} · ${String(errMsg).slice(0, 520)}`);
-      return null;
-    }
-
-    const interactionId = createJson?.id;
-    if (!interactionId) {
-      log(`create 未返回 interactionId · body=${rawCreate.slice(0, 400)}`);
+      const created = await createDeepResearchInteraction({
+        agentId: agent,
+        input,
+        collaborativePlanning: false,
+      });
+      interactionId = created.id;
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      log(`create 失敗 · ${errMsg.slice(0, 520)}`);
       return null;
     }
 
     log(`interaction=${interactionId} · 進入輪詢…`);
 
-    const outputs = await pollUntilComplete({
-      interactionId,
-      headers: apiHeaders,
-      deadlineMs: totalBudgetMs,
+    const row = await pollInteractionUntilDone(interactionId, {
+      maxMs: totalBudgetMs,
       pollIntervalMs,
-      signal: ac.signal,
-      onPoll: async (elapsed) => {
+      abortSignal: ac.signal,
+      logLabel: "cover_dr_pro",
+      onTick: async (elapsed) => {
         log(`polling · elapsed=${elapsed}s · status=in_progress`);
       },
     });
 
-    const textPart = [...outputs].reverse().find((o: any) => !o?.type || o?.type === "text") as any;
-    const text = clipBrief(String(textPart?.text ?? ""), 5200);
+    const { text: extracted } = extractDeepResearchTextAndImages(row);
+    const text = clipBrief(String(extracted ?? ""), 5200);
 
     if (!text || text.length < 40) {
       log(`正文過短 (${text?.length ?? 0} 字)，忽略`);
