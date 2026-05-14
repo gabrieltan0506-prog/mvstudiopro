@@ -35,8 +35,8 @@ importers:
         specifier: ^1.12.0
         version: 1.12.0
       '@google/genai':
-        specifier: ^1.42.0
-        version: 1.42.0
+        specifier: ^2.2.0
+        version: 2.2.0
       '@google/generative-ai':
         specifier: 0.24.1
         version: 0.24.1
@@ -1208,8 +1208,8 @@ packages:
     resolution: {integrity: sha512-XMJIk7GIeavFLP5A3YEUlowKa5Y5PZRrnnuTJcqR0k+lFKkv7+IWpdRp+Xbqb8xNDrvQaE2hP2RYPUylyD5EdA==}
     engines: {node: '>=18.0.0'}
 
-  '@google/genai@1.42.0':
-    resolution: {integrity: sha512-+3nlMTcrQufbQ8IumGkOphxD5Pd5kKyJOzLcnY0/1IuE8upJk5aLmoexZ2BJhBp1zAjRJMEB4a2CJwKI9e2EYw==}
+  '@google/genai@1.50.1':
+    resolution: {integrity: sha512-YbkX7H9+1Pt8wOt7DDREy8XSoiL6fRDzZQRyaVBarFf8MR3zHGqVdvM4cLbDXqPhxqvegZShgfxb8kw9C7YhAQ==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -1217,8 +1217,8 @@ packages:
       '@modelcontextprotocol/sdk':
         optional: true
 
-  '@google/genai@1.50.1':
-    resolution: {integrity: sha512-YbkX7H9+1Pt8wOt7DDREy8XSoiL6fRDzZQRyaVBarFf8MR3zHGqVdvM4cLbDXqPhxqvegZShgfxb8kw9C7YhAQ==}
+  '@google/genai@2.2.0':
+    resolution: {integrity: sha512-RA3cuaKLldWTrpxhNm2nAe0Oez/UEuoH11jFjPzbYL7TSP83lMk+ic7pQKZ4ekJdZfnIdgxWl1DwJoUwxmvWGQ==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -7877,7 +7877,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@google/genai@1.42.0':
+  '@google/genai@1.50.1':
     dependencies:
       google-auth-library: 10.5.0
       p-retry: 4.6.2
@@ -7888,7 +7888,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@google/genai@1.50.1':
+  '@google/genai@2.2.0':
     dependencies:
       google-auth-library: 10.5.0
       p-retry: 4.6.2
