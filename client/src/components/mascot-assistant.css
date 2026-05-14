@@ -1,0 +1,57 @@
+/* MascotAssistant：浮動／說話態；尊重系統減少動態 */
+@keyframes mascot-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes mascot-talk {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-4px) scale(1.04);
+  }
+}
+
+.mascot-assistant-float {
+  animation: mascot-float 3s ease-in-out infinite;
+}
+
+.mascot-assistant-talk {
+  animation: mascot-talk 0.55s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-assistant-float,
+  .mascot-assistant-talk {
+    animation: none;
+  }
+}
+
+/* 對話框：輕 Apple 風過場 */
+@keyframes mascot-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mascot-assistant-bubble-animate {
+  animation: mascot-bubble-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-assistant-bubble-animate {
+    animation: none;
+  }
+}

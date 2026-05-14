@@ -1,0 +1,114 @@
+/* WorkAmbientPanel：時段×天氣 底圖動效（尊重 prefers-reduced-motion） */
+
+@keyframes ambient-cloud-drift {
+  0% {
+    transform: translateX(-8%) translateY(0);
+  }
+  50% {
+    transform: translateX(8%) translateY(-3%);
+  }
+  100% {
+    transform: translateX(-8%) translateY(0);
+  }
+}
+
+@keyframes ambient-sun-pulse {
+  0%,
+  100% {
+    opacity: 0.88;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes ambient-sun-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ambient-rain {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 24px 320px;
+  }
+}
+
+@keyframes ambient-lightning {
+  0%,
+  94%,
+  100% {
+    opacity: 0;
+  }
+  94.6%,
+  95% {
+    opacity: 0.75;
+  }
+  95.2% {
+    opacity: 0.1;
+  }
+  95.5% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes ambient-snow {
+  from {
+    background-position: 0 0, 40px 60px;
+  }
+  to {
+    background-position: 120px 360px, 160px 420px;
+  }
+}
+
+@keyframes ambient-star-twinkle {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-motion-ok * {
+    animation: none !important;
+  }
+}
+
+.ambient-motion-ok .ambient-cloud-layer {
+  animation: ambient-cloud-drift 28s ease-in-out infinite;
+}
+
+.ambient-motion-ok .ambient-sun-disk {
+  animation: ambient-sun-pulse 5s ease-in-out infinite;
+}
+
+.ambient-motion-ok .ambient-sun-ray {
+  animation: ambient-sun-rotate 48s linear infinite;
+}
+
+.ambient-motion-ok .ambient-rain-layer {
+  animation: ambient-rain 0.55s linear infinite;
+}
+
+.ambient-motion-ok .ambient-lightning-flash {
+  animation: ambient-lightning 8s steps(1, end) infinite;
+}
+
+.ambient-motion-ok .ambient-snow-layer {
+  animation: ambient-snow 14s linear infinite;
+}
+
+.ambient-motion-ok .ambient-star-field {
+  animation: ambient-star-twinkle 5.5s ease-in-out infinite;
+}

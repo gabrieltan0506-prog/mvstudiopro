@@ -2196,8 +2196,41 @@ export const appRouter = router({
       }),
   }),
 
-  /** 時間 / 天氣 / 新聞 / 路況（混合式聚合，免登入；請適度節流） */
+  /** 時間 / 天氣 / 路況 / 即時新聞（免登入；新聞約 30 分鐘、天氣路況約 10 分鐘節流） */
   ambient: router({
+    /** 天氣 + 路況 + 時間（建議前端 10 分鐘 refetch） */
+    dashboardLive: publicProcedure
+      .input(
+        z.object({
+          timeZone: z.string().min(1).max(64).optional(),
+          weatherCity: z.string().min(1).max(120).optional(),
+          lat: z.number().gte(-90).lte(90).optional(),
+          lon: z.number().gte(-180).lte(180).optional(),
+          trafficLocation: z.string().min(1).max(200).optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const { executeDashboardLive } = await import("./services/hybridDashboardEngine.js");
+        return executeDashboardLive({
+          timeZone: input.timeZone,
+          weatherCity: input.weatherCity,
+          lat: input.lat,
+          lon: input.lon,
+          trafficLocation: input.trafficLocation,
+        });
+      }),
+    /** 即時新聞：Gemini 為主（建議前端 30 分鐘 refetch）；可傳瀏覽器定位以差異化周邊 2 條 */
+    dashboardNews: publicProcedure
+      .input(
+        z.object({
+          lat: z.number().gte(-90).lte(90).optional(),
+          lon: z.number().gte(-180).lte(180).optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const { executeDashboardNews } = await import("./services/hybridDashboardEngine.js");
+        return executeDashboardNews(input);
+      }),
     hybridDashboard: publicProcedure
       .input(
         z.object({
@@ -2217,6 +2250,40 @@ export const appRouter = router({
           lon: input.lon,
           trafficLocation: input.trafficLocation,
         });
+      }),
+    /** 全站吉祥物：情緒關懷短語（Gemini；免登入；請控制字數） */
+    mascotCareMessage: publicProcedure
+      .input(
+        z.object({
+          userNote: z.string().max(800).optional(),
+          currentTime: z.string().max(160).optional(),
+          pagePath: z.string().max(200).optional(),
+          weather: z
+            .object({
+              condition: z.string().max(80),
+              temperature: z.string().max(40),
+              humidity: z.string().max(40),
+            })
+            .optional(),
+          trafficSummary: z.string().max(2000).optional(),
+          trafficAreas: z.array(z.string().max(120)).max(10).optional(),
+          newsLines: z.array(z.string().max(320)).max(12).optional(),
+          changeHints: z.array(z.string().max(200)).max(6).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { generateMascotCareMessage } = await import("./services/mascotCareMessage.js");
+        const message = await generateMascotCareMessage({
+          userNote: input.userNote,
+          currentTime: input.currentTime,
+          pagePath: input.pagePath,
+          weather: input.weather,
+          trafficSummary: input.trafficSummary,
+          trafficAreas: input.trafficAreas,
+          newsLines: input.newsLines,
+          changeHints: input.changeHints,
+        });
+        return { message };
       }),
   }),
 
