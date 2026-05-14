@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="cloud mascot">
+  <defs>
+    <linearGradient id="c" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bae6fd"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="64" cy="72" rx="52" ry="36" fill="url(#c)" stroke="#38bdf8" stroke-width="2"/>
+  <circle cx="38" cy="58" r="22" fill="url(#c)" stroke="#38bdf8" stroke-width="2"/>
+  <circle cx="78" cy="52" r="26" fill="url(#c)" stroke="#38bdf8" stroke-width="2"/>
+  <circle cx="90" cy="44" r="14" fill="#e0f2fe" stroke="#38bdf8" stroke-width="1.5"/>
+  <ellipse cx="56" cy="78" rx="6" ry="4" fill="#1e3a8a" opacity=".85"/>
+  <ellipse cx="72" cy="78" rx="6" ry="4" fill="#1e3a8a" opacity=".85"/>
+  <path d="M58 86 Q64 92 70 86" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round"/>
+</svg>

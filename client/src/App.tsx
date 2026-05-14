@@ -4,7 +4,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { GlobalMascotAssistant } from "./components/GlobalMascotAssistant";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
@@ -116,7 +115,6 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
-          <GlobalMascotAssistant />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

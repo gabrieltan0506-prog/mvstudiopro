@@ -59,6 +59,17 @@ export default function AdminPanel() {
       { enabled: isAdminOrSupervisor, refetchInterval: 14000 },
     );
 
+  const [mascotCareNote, setMascotCareNote] = useState("");
+  const [mascotCareResult, setMascotCareResult] = useState("");
+
+  const mascotCareMutation = trpc.ambient.mascotCareMessage.useMutation({
+    onSuccess: (data) => {
+      setMascotCareResult(data.message);
+      toast.success("已生成關懷短語");
+    },
+    onError: (err) => toast.error(err.message || "生成失敗"),
+  });
+
   const reapNeonJobsMutation = trpc.admin.reapStaleNeonJobs.useMutation({
     onSuccess: (data) => {
       toast.success(
@@ -482,6 +493,46 @@ export default function AdminPanel() {
                 ) : null}
               </CardContent>
             </Card>
+
+            {isAdminOnly ? (
+              <Card className="bg-card/50 border-violet-500/20 border">
+                <CardHeader>
+                  <CardTitle className="text-lg">吉祥物情緒關懷（後台試打）</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p className="text-xs text-muted-foreground">
+                    僅已登入 Admin / Supervisor 可調用；前台使用者界面已移除。可用於校對 Gemini 語氣與長度。
+                  </p>
+                  <textarea
+                    rows={3}
+                    value={mascotCareNote}
+                    onChange={(e) => setMascotCareNote(e.target.value)}
+                    placeholder="可選：備註或模擬用戶狀態…"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1"
+                    disabled={mascotCareMutation.isPending}
+                    onClick={() =>
+                      mascotCareMutation.mutate({
+                        userNote: mascotCareNote.trim() || undefined,
+                        pagePath: "/admin",
+                      })
+                    }
+                  >
+                    {mascotCareMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    生成關懷短語
+                  </Button>
+                  {mascotCareResult ? (
+                    <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border/50 bg-background/60 p-3 text-[13px] leading-relaxed text-foreground">
+                      {mascotCareResult}
+                    </pre>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Card className="bg-card/50 border-border/50">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">

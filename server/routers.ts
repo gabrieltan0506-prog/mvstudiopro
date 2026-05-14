@@ -2251,8 +2251,8 @@ export const appRouter = router({
           trafficLocation: input.trafficLocation,
         });
       }),
-    /** 全站吉祥物：情緒關懷短語（Gemini；免登入；請控制字數） */
-    mascotCareMessage: publicProcedure
+    /** 吉祥物情緒關懷短語（Gemini）：僅 Admin / Supervisor 可調用，前台不提供入口 */
+    mascotCareMessage: adminProcedure
       .input(
         z.object({
           userNote: z.string().max(800).optional(),

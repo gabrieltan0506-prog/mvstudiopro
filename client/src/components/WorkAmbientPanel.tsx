@@ -9,6 +9,7 @@ import {
   type AmbientWeatherKind,
 } from "@/lib/ambientSceneBackgrounds";
 import "./work-ambient-scene.css";
+import { GlobalMascotAssistant } from "@/components/GlobalMascotAssistant";
 
 type Wx = { temp: number; code: number; label: string; lat: number; lon: number };
 
@@ -292,7 +293,7 @@ export default function WorkAmbientPanel() {
   return (
     <>
       <div className="mb-6 space-y-4 text-white">
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
         <AmbientMediaCard
           urls={ambientUrls}
           activeIndex={bgIdx}
@@ -312,6 +313,10 @@ export default function WorkAmbientPanel() {
             </p>
           </div>
         </AmbientMediaCard>
+
+        <div className="relative flex min-h-[200px] items-center justify-center py-4 lg:min-h-[260px] lg:py-0">
+          <GlobalMascotAssistant variant="embedded" />
+        </div>
 
         <AmbientMediaCard
           urls={ambientUrls}

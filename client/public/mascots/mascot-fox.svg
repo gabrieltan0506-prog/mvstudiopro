@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="fox mascot">
+  <defs>
+    <linearGradient id="f" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fdba74"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 28 L48 64 L24 88 L56 76 L64 100 L72 76 L104 88 L80 64 L96 28 L64 48 Z" fill="url(#f)" stroke="#c2410c" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="52" cy="64" r="5" fill="#431407"/>
+  <circle cx="76" cy="64" r="5" fill="#431407"/>
+  <ellipse cx="64" cy="76" rx="5" ry="3" fill="#431407" opacity=".45"/>
+  <path d="M58 82 h12" stroke="#431407" stroke-width="2" stroke-linecap="round"/>
+</svg>
