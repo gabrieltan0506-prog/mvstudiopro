@@ -30,6 +30,7 @@ import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
+import { resolveWatermark } from "../services/tier-provider-routing.js";
 import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
 import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
@@ -62,7 +63,7 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
   audio: 8 * 60_000,
   video: 30_000,
-  // platform：預設 12 min；platform_build_content / platform_topic_image 由 resolveJobTimeoutMs 加長
+  // platform：預設 12 min；platform_build_content / platform_topic_image / 套裝由 resolveJobTimeoutMs 加長
   platform: 12 * 60_000,
   /** 与 Cloud Run pdf-worker + 跨云回传对齐；独占队列不阻塞别的任务 */
   pdf_export: 55 * 60_000,
@@ -631,6 +632,11 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         if (Number.isFinite(raw) && raw >= 60_000) return raw;
         return 15 * 60_000;
       }
+      if (input.action === "platform_topic_cover_composite_bundle") {
+        const raw = Number(process.env.PLATFORM_TOPIC_COVER_COMPOSITE_BUNDLE_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 120_000) return raw;
+        return 28 * 60_000;
+      }
     } catch {
       /* fall through */
     }
@@ -1122,6 +1128,195 @@ async function processPlatformJob(
         enableTopicCoverDeepResearchPro,
       });
       return { provider: "vertex", output: result };
+    }
+
+    if (input.action === "platform_topic_cover_composite_bundle") {
+      const { runPlatformTopicImagePipeline } = await import("../services/runPlatformTopicImagePipeline.js");
+      const { generatePlatformCompositeSheetImage } = await import("../services/proxyImageService.js");
+
+      const bundleCreditsCharged = Math.max(0, Math.floor(Number(params.bundleCreditsCharged) || 0));
+      const uidNum = jobUserId != null ? Number(jobUserId) : NaN;
+      const sceneIdRaw = typeof params.sceneId === "string" ? params.sceneId.trim() : "";
+      if (!sceneIdRaw || !Number.isFinite(uidNum)) {
+        throw new Error("套裝任務缺少 sceneId 或有效 userId");
+      }
+
+      const creationRaw = params.creationId;
+      const creationNum =
+        typeof creationRaw === "number"
+          ? creationRaw
+          : creationRaw != null && String(creationRaw).trim() !== ""
+            ? Number(creationRaw)
+            : NaN;
+      const creationIdOut = Number.isFinite(creationNum) ? creationNum : null;
+      const meta = params.newJobMetaBase;
+      const newJobMetaBase =
+        meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
+
+      let fmt = params.format;
+      const {
+        assertOptimizedCoverInputsFromDb,
+        PlatformCoverInputsError,
+      } = await import("../services/platformStrategicBlueprintSnapshots.js");
+      let topicHook: string;
+      let contextRaw: string;
+      let appealHookOut: string;
+      try {
+        const resolved = await assertOptimizedCoverInputsFromDb({
+          userId: uidNum,
+          sceneId: sceneIdRaw,
+        });
+        topicHook = resolved.topicHook;
+        contextRaw = resolved.context;
+        appealHookOut = resolved.appealHook;
+        fmt = resolved.format;
+      } catch (e) {
+        const msg = e instanceof PlatformCoverInputsError ? e.message : e instanceof Error ? e.message : String(e);
+        throw new Error(msg || "无法从选题快照解析封面文案");
+      }
+      const { buildPlatformCoverHistoryHintFromDb, mergeCoverContextWithDbHint } = await import(
+        "../services/platformCoverHistoryHint.js",
+      );
+      const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId: uidNum });
+      const enrichedContext = mergeCoverContextWithDbHint(contextRaw, coverHistoryHint);
+
+      const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
+      const coverProEngine =
+        rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
+          ? ("nano_banana_2" as const)
+          : undefined;
+      const rawDrPro = (params as { enableTopicCoverDeepResearchPro?: unknown }).enableTopicCoverDeepResearchPro;
+      const enableTopicCoverDeepResearchPro = rawDrPro === true;
+
+      const compositeKind = params.compositeKind;
+      if (
+        compositeKind !== "storyboard_sheet_portrait" &&
+        compositeKind !== "storyboard_sheet_landscape" &&
+        compositeKind !== "xiaohongshu_dual_note"
+      ) {
+        throw new Error(`套裝 compositeKind 无效：${String(compositeKind)}`);
+      }
+      const compositeTitle = String(params.compositeTitle ?? "").trim();
+      const compositeScriptContext = String(params.compositeScriptContext ?? "").trim();
+      const compositeExecutionDetails =
+        typeof params.compositeExecutionDetails === "string" ? params.compositeExecutionDetails.trim() : undefined;
+      const imagePromptTranslator =
+        params.compositeImagePromptTranslator === "gpt54" ||
+        params.compositeImagePromptTranslator === "vertex_gemini_3_flash_preview"
+          ? params.compositeImagePromptTranslator
+          : "vertex_gemini_3_flash_preview";
+
+      const rawCompDr = (params as { enableCompositeDeepResearchPro?: unknown }).enableCompositeDeepResearchPro;
+      const enableCompositeDeepResearchProAdmin = rawCompDr === true;
+
+      const creationRecordIdRaw = (params as { creationRecordId?: unknown }).creationRecordId;
+      const creationRecordId =
+        typeof creationRecordIdRaw === "number" && Number.isFinite(creationRecordIdRaw) && creationRecordIdRaw > 0
+          ? Math.floor(creationRecordIdRaw)
+          : undefined;
+
+      const isTrial = await resolveWatermark(uidNum, false);
+      const compositeFlowLog: string[] = [];
+
+      const [settledCover, settledSheet] = await Promise.allSettled([
+        runPlatformTopicImagePipeline({
+          topicHook,
+          format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
+          context: enrichedContext,
+          coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
+          sceneId: sceneIdRaw,
+          appealHook: appealHookOut,
+          imagePromptTranslator: "gpt54",
+          creationIdOut,
+          isFreeRetry: Boolean(params.isFreeRetry),
+          newJobMetaBase,
+          progressJobId: platformJobId,
+          coverProEngine,
+          enableTopicCoverDeepResearchPro,
+        }),
+        generatePlatformCompositeSheetImage({
+          kind: compositeKind,
+          title: compositeTitle,
+          scriptContext: compositeScriptContext,
+          isTrial,
+          executionDetails: compositeExecutionDetails,
+          imagePromptTranslator,
+          flowLog: compositeFlowLog,
+          enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
+          forceSkipCompositeDeepResearchPro: true,
+          coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
+        }),
+      ]);
+
+      const coverResult = settledCover.status === "fulfilled" ? settledCover.value : null;
+      const sheetUrl = settledSheet.status === "fulfilled" ? settledSheet.value : null;
+      const coverErr = settledCover.status === "rejected" ? settledCover.reason : null;
+      const sheetErr = settledSheet.status === "rejected" ? settledSheet.reason : null;
+
+      const coverUrl = String(coverResult?.imageUrl ?? coverResult?.url ?? "").trim();
+      const sheetOk = String(sheetUrl ?? "").trim();
+
+      if (!coverUrl || !sheetOk) {
+        if (bundleCreditsCharged > 0 && Number.isFinite(uidNum)) {
+          const { refundCredits } = await import("../credits.js");
+          await refundCredits(
+            uidNum,
+            bundleCreditsCharged,
+            "platform_topic_cover_composite_bundle 套裝失败退还",
+          ).catch((e) => console.error("[platform_topic_cover_composite_bundle] refund failed:", e));
+        }
+        const parts = [
+          coverErr instanceof Error ? coverErr.message : coverErr != null ? String(coverErr) : !coverUrl ? "封面无有效 URL" : "",
+          sheetErr instanceof Error ? sheetErr.message : sheetErr != null ? String(sheetErr) : !sheetOk ? "2×4/八格无有效 URL" : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        throw new Error(`套裝生图失败：${parts || "未知原因"}`);
+      }
+
+      try {
+        const { persistStoryboardSheetExportAfterGeneration } = await import(
+          "../services/storyboardSheetExportPersistence.js"
+        );
+        await persistStoryboardSheetExportAfterGeneration({
+          userId: uidNum,
+          creationRecordId,
+          jobId: platformJobId,
+          sceneId: sceneIdRaw,
+          payload: {
+            imageUrl: sheetOk,
+            scriptContextForPanels: compositeScriptContext,
+            executionDetails: compositeExecutionDetails,
+            reportTitle: compositeTitle,
+            kind: compositeKind,
+            sceneId: sceneIdRaw,
+            updatedAt: new Date().toISOString(),
+          },
+        });
+      } catch (pe) {
+        console.warn("[platform_topic_cover_composite_bundle] persistStoryboardSheetExport skipped:", pe);
+      }
+
+      const coverLog = Array.isArray(coverResult?.imageGenFlowLog) ? coverResult!.imageGenFlowLog! : [];
+      const mergedLog = [
+        `${new Date().toISOString()} [套裝] 併發完成 · sceneId=${sceneIdRaw} · compositeKind=${compositeKind}`,
+        ...coverLog,
+        ...compositeFlowLog,
+      ];
+
+      return {
+        provider: "vertex",
+        output: {
+          ...coverResult,
+          success: true,
+          imageUrl: coverUrl,
+          url: coverUrl,
+          compositeImageUrl: sheetOk,
+          compositeKind,
+          imageGenFlowLog: mergedLog,
+          bundleCreditsCharged,
+        },
+      };
     }
 
     throw new Error(`不支持的平台任务动作：${input.action}`);
