@@ -41,10 +41,8 @@ export function registerOAuthRoutes(app: Express) {
         expiresInMs: ONE_YEAR_MS,
       });
 
-      const sessionId = sessionToken;
-      res.setHeader("Set-Cookie", [
-        `app_session_id=${sessionId}; Path=/; HttpOnly; Secure; SameSite=None; Domain=.mvstudiopro.com`,
-      ]);
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
       res.redirect(302, "/");
     } catch (error) {

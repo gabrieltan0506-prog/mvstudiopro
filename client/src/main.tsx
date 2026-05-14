@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { trpcBaseUrlToOrigin, withFlyHealthGate } from "@/lib/flyHealthGate";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, httpLink, splitLink, TRPCClientError } from "@trpc/client";
@@ -175,10 +176,13 @@ const trpcClient = trpc.createClient({
           url: mvAnalysisLongTrpcUrl!,
           transformer: superjson,
           fetch(input, init) {
-            return globalThis.fetch(input, {
-              ...(init ?? {}),
-              credentials: "omit",
-            });
+            const flyOrigin = trpcBaseUrlToOrigin(mvAnalysisLongTrpcUrl!);
+            return withFlyHealthGate(flyOrigin, () =>
+              globalThis.fetch(input, {
+                ...(init ?? {}),
+                credentials: "omit",
+              }),
+            );
           },
         }),
         false: httpBatchLink({

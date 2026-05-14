@@ -49,7 +49,15 @@ function isAllowedCorsOrigin(origin: string) {
       return true;
     }
 
-    return hostname.endsWith(".vercel.app");
+    if (hostname.endsWith(".vercel.app")) {
+      return true;
+    }
+
+    if (hostname.endsWith(".fly.dev")) {
+      return true;
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -366,7 +374,13 @@ async function startServer() {
   });
 
   // Keep Fly health checks on a cheap route that never falls through to SPA static handling.
-  app.get("/api/health", (_req, res) => {
+  // Also allow browser CORS preflight from www / Vercel / fly.dev so the client can gate Fly-direct tRPC.
+  app.options("/api/health", (req, res) => {
+    applyApiCors(req, res);
+    return res.status(204).end();
+  });
+  app.get("/api/health", (req, res) => {
+    applyApiCors(req, res);
     res.status(200).type("text/plain").send("ok");
   });
 
