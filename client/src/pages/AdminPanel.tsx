@@ -5,13 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { SUPERVISOR_TRPC_TOKEN_SESSION_KEY } from "@/lib/supervisorTrpcToken";
 import { toast } from "sonner";
 import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2, Copy, KeyRound, RefreshCw, Eraser } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
-const SUPERVISOR_REAP_TOKEN_KEY = "mvs-supervisor-reap-token";
 
 function checkSupervisorUrl(): boolean {
   if (typeof window === "undefined") return false;
@@ -135,7 +135,7 @@ export default function AdminPanel() {
 
   useEffect(() => {
     try {
-      const v = sessionStorage.getItem(SUPERVISOR_REAP_TOKEN_KEY);
+      const v = sessionStorage.getItem(SUPERVISOR_TRPC_TOKEN_SESSION_KEY);
       if (v) setSupervisorReapToken(v);
     } catch {
       /* ignore */
@@ -460,7 +460,7 @@ export default function AdminPanel() {
                         const v = e.target.value;
                         setSupervisorReapToken(v);
                         try {
-                          sessionStorage.setItem(SUPERVISOR_REAP_TOKEN_KEY, v);
+                          sessionStorage.setItem(SUPERVISOR_TRPC_TOKEN_SESSION_KEY, v);
                         } catch {
                           /* ignore */
                         }
