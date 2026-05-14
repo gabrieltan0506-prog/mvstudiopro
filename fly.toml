@@ -7,6 +7,9 @@ app = 'mvstudiopro'
 primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器实际所在地（亚洲用户低延迟）
 
 [build]
+  # 與 Dockerfile ARG CACHEBUST 對齊：Fly 映像若仍編譯舊 TS，遞增此字串後再部署。
+  [build.args]
+    CACHEBUST = "2026-05-15-docker-copy-invalidate-1"
 
 [env]
   GROWTH_STORE_DIR = '/data/growth'
