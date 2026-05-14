@@ -1,84 +1,102 @@
 /**
  * 環境底圖輪播：Unsplash License（https://unsplash.com/license）可免費使用，建議保留攝影師頁鏈接作致謝。
- * 依「時段 × 天氣」挑選風景／天空類照片，供 WorkAmbientPanel 輪播。
+ * 圖片放在同源 `public/ambient/{photoId}.jpg`，由根目錄 `pnpm run ambient:fetch-images` 一次性拉取，運行時不再請求外網。
  */
 
 export type AmbientTimeSegment = "dawn" | "day" | "dusk" | "lateNight";
 export type AmbientWeatherKind = "clear" | "cloudy" | "rain" | "thunder" | "snow" | "fog";
 
-/** w=1920 固定寬度減少布局抖動；fit=crop 便于卡片 cover */
-function u(path: string): string {
-  return `https://images.unsplash.com/${path}?auto=format&fit=crop&w=1920&q=82`;
+/** `photoId` 形如 `photo-1469474968028-56623f02e42e`，對應 `client/public/ambient/{photoId}.jpg` */
+function localAmbient(photoId: string): string {
+  return `/ambient/${photoId}.jpg`;
 }
 
 /** 各時段 + 天氣對應 2～4 張輪播 */
 const BACKGROUNDS: Record<string, readonly string[]> = {
   "dawn-clear": [
-    u("photo-1470252649378-f06924637f27"),
-    u("photo-1500382017468-9049fed747ef"),
-    u("photo-1472214103451-9374bd1c798e"),
+    localAmbient("photo-1469474968028-56623f02e42e"),
+    localAmbient("photo-1500382017468-9049fed747ef"),
+    localAmbient("photo-1472214103451-9374bd1c798e"),
   ],
   "dawn-cloudy": [
-    u("photo-1495616811223-4d98c7a376c0"),
-    u("photo-1534081163281-759092828d76"),
-    u("photo-1464822759023-fed622ff2c3b"),
+    localAmbient("photo-1501594907352-04cda38ebc29"),
+    localAmbient("photo-1519681393784-d120267933ba"),
+    localAmbient("photo-1464822759023-fed622ff2c3b"),
   ],
-  "dawn-rain": [u("photo-1527482797697-8795b05a13fe"), u("photo-1515694346930-2443052bab3c")],
-  "dawn-thunder": [u("photo-1446776811953-b23d57bd21ae"), u("photo-1527482937786-660b73044c35")],
-  "dawn-snow": [u("photo-1483921020237-2ff51e8e4b22"), u("photo-1491002052544-bbf384cdf947")],
-  "dawn-fog": [u("photo-1470071459604-3b5ec3a7fe05"), u("photo-1472214103451-9374bd1c798e")],
+  "dawn-rain": [localAmbient("photo-1527482797697-8795b05a13fe"), localAmbient("photo-1433086966358-54859d0ed716")],
+  "dawn-thunder": [localAmbient("photo-1507525428034-b723cf961d3e"), localAmbient("photo-1464822759023-fed622ff2c3b")],
+  "dawn-snow": [localAmbient("photo-1483921020237-2ff51e8e4b22"), localAmbient("photo-1527482797697-8795b05a13fe")],
+  "dawn-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1472214103451-9374bd1c798e")],
 
   "day-clear": [
-    u("photo-1506905925346-21bda4d32df4"),
-    u("photo-1472214103451-9374bd1c798e"),
-    u("photo-1464822759023-fed622ff2c3b"),
+    localAmbient("photo-1506905925346-21bda4d32df4"),
+    localAmbient("photo-1472214103451-9374bd1c798e"),
+    localAmbient("photo-1464822759023-fed622ff2c3b"),
   ],
   "day-cloudy": [
-    u("photo-1534081163281-759092828d76"),
-    u("photo-1495616811223-4d98c7a376c0"),
-    u("photo-1517483000871-1dbf64a6e1b6"),
+    localAmbient("photo-1519681393784-d120267933ba"),
+    localAmbient("photo-1501594907352-04cda38ebc29"),
+    localAmbient("photo-1472214103451-9374bd1c798e"),
   ],
-  "day-rain": [u("photo-1515694346930-2443052bab3c"), u("photo-1527482797697-8795b05a13fe")],
-  "day-thunder": [u("photo-1527482937786-660b73044c35"), u("photo-1446776811953-b23d57bd21ae")],
-  "day-snow": [u("photo-1491002052544-bbf384cdf947"), u("photo-1483921020237-2ff51e8e4b22")],
-  "day-fog": [u("photo-1470071459604-3b5ec3a7fe05"), u("photo-1495616811223-4d98c7a376c0")],
+  "day-rain": [localAmbient("photo-1433086966358-54859d0ed716"), localAmbient("photo-1527482797697-8795b05a13fe")],
+  "day-thunder": [localAmbient("photo-1464822759023-fed622ff2c3b"), localAmbient("photo-1507525428034-b723cf961d3e")],
+  "day-snow": [localAmbient("photo-1527482797697-8795b05a13fe"), localAmbient("photo-1483921020237-2ff51e8e4b22")],
+  "day-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1501594907352-04cda38ebc29")],
 
   "dusk-clear": [
-    u("photo-1518834347036-8028062b6f4e"),
-    u("photo-1495616811223-4d98c7a376c0"),
-    u("photo-1507600617569-84c2a6666a88"),
+    localAmbient("photo-1500382017468-9049fed747ef"),
+    localAmbient("photo-1501594907352-04cda38ebc29"),
+    localAmbient("photo-1483921020237-2ff51e8e4b22"),
   ],
   "dusk-cloudy": [
-    u("photo-1507608616759-54f48f0af692"),
-    u("photo-1495616811223-4d98c7a376c0"),
-    u("photo-1518834347036-8028062b6f4e"),
+    localAmbient("photo-1470071459604-3b5ec3a7fe05"),
+    localAmbient("photo-1501594907352-04cda38ebc29"),
+    localAmbient("photo-1500382017468-9049fed747ef"),
   ],
-  "dusk-rain": [u("photo-1507608616759-54f48f0af692"), u("photo-1527482797697-8795b05a13fe")],
-  "dusk-thunder": [u("photo-1446776811953-b23d57bd21ae"), u("photo-1527482937786-660b73044c35")],
-  "dusk-snow": [u("photo-1483921020237-2ff51e8e4b22"), u("photo-1491002052544-bbf384cdf947")],
-  "dusk-fog": [u("photo-1470071459604-3b5ec3a7fe05"), u("photo-1507608616759-54f48f0af692")],
+  "dusk-rain": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1527482797697-8795b05a13fe")],
+  "dusk-thunder": [localAmbient("photo-1507525428034-b723cf961d3e"), localAmbient("photo-1464822759023-fed622ff2c3b")],
+  "dusk-snow": [localAmbient("photo-1483921020237-2ff51e8e4b22"), localAmbient("photo-1527482797697-8795b05a13fe")],
+  "dusk-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1470071459604-3b5ec3a7fe05")],
 
   "lateNight-clear": [
-    u("photo-1419242902214-272b3f66ee7b"),
-    u("photo-1517483000871-1dbf64a6e1b6"),
-    u("photo-1446776811953-b23d57bd21ae"),
+    localAmbient("photo-1506905925346-21bda4d32df4"),
+    localAmbient("photo-1472214103451-9374bd1c798e"),
+    localAmbient("photo-1507525428034-b723cf961d3e"),
   ],
   "lateNight-cloudy": [
-    u("photo-1517483000871-1dbf64a6e1b6"),
-    u("photo-1495616811223-4d98c7a376c0"),
-    u("photo-1419242902214-272b3f66ee7b"),
+    localAmbient("photo-1472214103451-9374bd1c798e"),
+    localAmbient("photo-1501594907352-04cda38ebc29"),
+    localAmbient("photo-1506905925346-21bda4d32df4"),
   ],
-  "lateNight-rain": [u("photo-1527482797697-8795b05a13fe"), u("photo-1517483000871-1dbf64a6e1b6")],
-  "lateNight-thunder": [u("photo-1527482937786-660b73044c35"), u("photo-1446776811953-b23d57bd21ae")],
-  "lateNight-snow": [u("photo-1483921020237-2ff51e8e4b22"), u("photo-1419242902214-272b3f66ee7b")],
-  "lateNight-fog": [u("photo-1470071459604-3b5ec3a7fe05"), u("photo-1517483000871-1dbf64a6e1b6")],
+  "lateNight-rain": [localAmbient("photo-1527482797697-8795b05a13fe"), localAmbient("photo-1472214103451-9374bd1c798e")],
+  "lateNight-thunder": [localAmbient("photo-1464822759023-fed622ff2c3b"), localAmbient("photo-1507525428034-b723cf961d3e")],
+  "lateNight-snow": [localAmbient("photo-1483921020237-2ff51e8e4b22"), localAmbient("photo-1506905925346-21bda4d32df4")],
+  "lateNight-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1472214103451-9374bd1c798e")],
 };
 
 const DEFAULT_FALLBACK = [
-  u("photo-1472214103451-9374bd1c798e"),
-  u("photo-1534081163281-759092828d76"),
-  u("photo-1419242902214-272b3f66ee7b"),
+  localAmbient("photo-1472214103451-9374bd1c798e"),
+  localAmbient("photo-1519681393784-d120267933ba"),
+  localAmbient("photo-1506905925346-21bda4d32df4"),
 ];
+
+/** 取指定 IANA 時區在該瞬間的小時（0–23），供底圖「時段」與時鐘顯示時區對齊 */
+export function getHourInTimeZone(d: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "numeric",
+      hour12: false,
+    }).formatToParts(d);
+    const hour = parts.find((p) => p.type === "hour")?.value;
+    const h = hour != null ? parseInt(hour, 10) : NaN;
+    const norm = h === 24 ? 0 : h;
+    if (Number.isFinite(norm) && norm >= 0 && norm <= 23) return norm;
+  } catch {
+    /* fall through */
+  }
+  return d.getHours();
+}
 
 /** 凌晨 0–5 · 白天 6–16 · 傍晚 17–19 · 深夜 20–23 */
 export function getAmbientTimeSegment(hour: number): AmbientTimeSegment {

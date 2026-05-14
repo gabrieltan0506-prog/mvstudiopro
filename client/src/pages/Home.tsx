@@ -14,6 +14,8 @@ import HomeInviteApply from "../components/HomeInviteApply";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
 import SampleReportDownload from "../components/SampleReportDownload";
 import WorkAmbientPanel from "../components/WorkAmbientPanel";
+import { AmbientSceneProvider } from "../components/AmbientSceneProvider";
+import HomeAmbientBackdrop from "../components/HomeAmbientBackdrop";
 
 // 以下 section 在正式版开放前暂时隐藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -22,20 +24,24 @@ import WorkAmbientPanel from "../components/WorkAmbientPanel";
 
 export default function HomePage() {
   return (
-    <div
-      style={{
-        minHeight: "100dvh",
-        background:
-          "radial-gradient(circle at top center, rgba(255,79,179,0.12), transparent 18%), radial-gradient(circle at 0% 0%, rgba(139,92,246,0.18), transparent 24%), radial-gradient(circle at 100% 40%, rgba(59,130,246,0.10), transparent 20%), linear-gradient(180deg,#0a0814 0%, #0a0d1f 40%, #090915 100%)",
-      }}
-    >
+    <AmbientSceneProvider>
+      <div className="relative" style={{ minHeight: "100dvh" }}>
+        <HomeAmbientBackdrop />
+        <div
+          className="relative z-[1]"
+          style={{
+            minHeight: "100dvh",
+            background:
+              "radial-gradient(circle at top center, rgba(255,79,179,0.12), transparent 18%), radial-gradient(circle at 0% 0%, rgba(139,92,246,0.18), transparent 24%), radial-gradient(circle at 100% 40%, rgba(59,130,246,0.10), transparent 20%), linear-gradient(180deg,#0a0814 0%, #0a0d1f 40%, #090915 100%)",
+          }}
+        >
       <HomeNavbar />
 
       <HomeNoticeBar />
 
       <HomeHero />
 
-      {/* 與成長營相同：時段×天氣輪播底圖、路況（Gemini）、國內/國際新聞（無需進入成長營） */}
+      {/* 全頁底圖與下列卡片区共用 Context：時段（顯示時區）× 天氣輪播 Unsplash；路況（Gemini）、國內/國際新聞 */}
       <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
         <WorkAmbientPanel />
       </div>
@@ -77,6 +83,8 @@ export default function HomePage() {
       {/* <HomePlans /> */}
 
       <div style={{ height: 60 }} />
-    </div>
+        </div>
+      </div>
+    </AmbientSceneProvider>
   );
 }

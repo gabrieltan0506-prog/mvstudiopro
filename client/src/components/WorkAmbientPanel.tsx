@@ -1,28 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
 import { trpc } from "@/lib/trpc";
 import {
-  deriveAmbientWeatherKind,
-  getAmbientImageUrls,
-  getAmbientTimeSegment,
   segmentLabelZh,
   type AmbientTimeSegment,
   type AmbientWeatherKind,
 } from "@/lib/ambientSceneBackgrounds";
 import "./work-ambient-scene.css";
 import { GlobalMascotAssistant } from "@/components/GlobalMascotAssistant";
-
-type Wx = { temp: number; code: number; label: string; lat: number; lon: number };
-
-function codeLabel(code: number): string {
-  if (code === 0) return "晴";
-  if ([1, 2, 3].includes(code)) return "多云";
-  if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return "雨";
-  if ([71, 73, 75].includes(code)) return "雪";
-  if ([95, 96, 99].includes(code)) return "雷雨";
-  return "阴";
-}
-
-const CAROUSEL_MS = 9000;
+import { useAmbientScene } from "@/components/AmbientSceneProvider";
 
 function AmbientMediaCard({
   urls,
@@ -33,7 +18,7 @@ function AmbientMediaCard({
   label,
   children,
 }: {
-  urls: string[];
+  urls: readonly string[];
   activeIndex: number;
   timeSegment: AmbientTimeSegment;
   weatherKind: AmbientWeatherKind;
@@ -143,76 +128,21 @@ function AmbientMediaCard({
  * 工作页（成长营）环境概览：天氣／路況約 10 分鐘、新聞約 30 分鐘；時間與天氣為獨立大图卡片並共用時段×天氣主題輪播底圖（Unsplash）+ CSS 動效。
  */
 export default function WorkAmbientPanel() {
-  const [now, setNow] = useState(() => new Date());
-  const [wxLocal, setWxLocal] = useState<Wx | null>(null);
-  const [geoErr, setGeoErr] = useState<string | null>(null);
-  const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
-  /** 定位請求已結束（成功、拒絕或超時）後再拉天氣／路況，避免先用「未指定區域」快取一輪概括路況 */
-  const [geoAttemptDone, setGeoAttemptDone] = useState(false);
-  const [motionOk, setMotionOk] = useState(true);
-  const browserTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
+  const {
+    now,
+    wxLocal,
+    geo,
+    geoErr,
+    geoAttemptDone,
+    timeSegment,
+    weatherKind,
+    ambientUrls,
+    bgIdx,
+    motionOk,
+    browserTimeZone,
+  } = useAmbientScene();
 
-  const timeSegment = useMemo(() => getAmbientTimeSegment(now.getHours()), [now]);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const apply = () => setMotionOk(!mq.matches);
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, []);
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-          if (!navigator.geolocation) {
-            reject(new Error("浏览器未提供定位"));
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: false,
-            timeout: 15_000,
-            maximumAge: 120_000,
-          });
-        });
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        if (!cancelled) setGeo({ lat, lon });
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=Asia%2FShanghai`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`天气接口 ${res.status}`);
-        const j = await res.json();
-        if (cancelled) return;
-        setWxLocal({
-          lat,
-          lon,
-          temp: Math.round(Number(j?.current?.temperature_2m) * 10) / 10,
-          code: Number(j?.current?.weather_code ?? 0),
-          label: codeLabel(Number(j?.current?.weather_code ?? 0)),
-        });
-        setGeoErr(null);
-      } catch (e: any) {
-        if (!cancelled) {
-          setWxLocal(null);
-          setGeoErr(e?.message || "定位或天气不可用");
-        }
-      } finally {
-        if (!cancelled) setGeoAttemptDone(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const live = trpc.ambient.dashboardLive.useQuery(
+  const dash = trpc.ambient.dashboardLive.useQuery(
     {
       timeZone: browserTimeZone,
       lat: geo?.lat,
@@ -226,6 +156,7 @@ export default function WorkAmbientPanel() {
     },
   );
 
+  const serverWx = dash.data?.weather;
   const newsQ = trpc.ambient.dashboardNews.useQuery(
     { lat: geo?.lat, lon: geo?.lon },
     {
@@ -239,33 +170,6 @@ export default function WorkAmbientPanel() {
   const internationalNews = newsQ.data?.international ?? [];
   const localTierNews = domesticNews.filter((n) => n.tier === "local");
   const nationalDomesticNews = domesticNews.filter((n) => n.tier === "national");
-
-  const dash = live;
-
-  const serverWx = dash.data?.weather;
-  const showServerWx = serverWx && serverWx.source !== "unavailable";
-
-  const weatherKind: AmbientWeatherKind = useMemo(() => {
-    if (wxLocal) return deriveAmbientWeatherKind(wxLocal.label, wxLocal.code);
-    if (showServerWx && serverWx) return deriveAmbientWeatherKind(serverWx.condition, null);
-    return "cloudy";
-  }, [wxLocal, showServerWx, serverWx]);
-
-  const ambientUrls = useMemo(
-    () => getAmbientImageUrls(timeSegment, weatherKind),
-    [timeSegment, weatherKind],
-  );
-
-  const [bgIdx, setBgIdx] = useState(0);
-  useEffect(() => {
-    setBgIdx(0);
-  }, [ambientUrls]);
-
-  useEffect(() => {
-    if (ambientUrls.length <= 1) return;
-    const t = setInterval(() => setBgIdx((i) => (i + 1) % ambientUrls.length), CAROUSEL_MS);
-    return () => clearInterval(t);
-  }, [ambientUrls]);
 
   const timeHHmm = now.toLocaleTimeString("zh-CN", {
     timeZone: browserTimeZone,
@@ -327,7 +231,7 @@ export default function WorkAmbientPanel() {
           label="天氣實況（底圖約 9s 輪播 · 資料約 10 分鐘更新）"
         >
           <div className="mt-4">
-            {showServerWx ? (
+            {serverWx && serverWx.source !== "unavailable" ? (
               <>
                 <div className="text-5xl font-black tabular-nums drop-shadow-md md:text-6xl">
                   {serverWx.temperature}

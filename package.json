@@ -22,6 +22,7 @@
     "growth:fetch-status": "node scripts/fetch-growth-status.mjs",
     "growth:verify-monotonic": "node scripts/verify-growth-monotonic.mjs",
     "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
+    "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
     "push:github": "bash scripts/gh-git-push.sh"
   },
   "dependencies": {
@@ -31,7 +32,7 @@
     "@google-cloud/speech": "^7.3.0",
     "@google-cloud/storage": "^7.19.0",
     "@google-cloud/vertexai": "^1.12.0",
-    "@google/genai": "^2.2.0",
+    "@google/genai": "^1.42.0",
     "@google/generative-ai": "0.24.1",
     "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^1.1.0",
