@@ -2,12 +2,13 @@
  * 竞品调研双引擎服务
  * Stage 1：**默认 gemini-3-flash-preview** — **Vertex IAM**（与 TestLab `vertexTranslate` 同闸道：`VERTEX_PROJECT_ID` + SA，不用 `GEMINI_API_KEY`）
  * · 环境变量 **`RESEARCH_STAGE1_MODEL`** 覆盖；设为 **`gemma-4-31b-it`** 时沿用 `callGemma4`（Vertex us-central1×2 → GoogleGenerativeAI×1）
- * Stage 2：**gemini-3.1-pro** — **Vertex AI**（`callGemini3_1_Pro`），不经 GEMINI_API_KEY
+ * Stage 2：**gemini-3.1-pro(-preview)** — **Vertex IAM REST**（`callGemini3_1_Pro`，與 TestLab **`op=geminiScript`** / `vertexGemini3FlashText` 同源閘道），不经 GEMINI_API_KEY
  */
 import fs from "fs/promises";
 import path from "path";
 import type { ResearchPipelineDebugStep } from "../../shared/researchPipelineDebugMarker.js";
 import { readTrendStoreForPlatforms } from "../growth/trendStore";
+import { describeVertexGemini31ProRouting } from "./vertexGemini31ProGlobal.js";
 
 const BACKUP_DIR = "/data/growth/research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -23,7 +24,7 @@ const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
 
 /**
  * 调用生成模型：
- * - gemini-3.1-pro / gemini-3.1-pro-preview（別名）→ Vertex（callGemini3_1_Pro）
+ * - gemini-3.1-pro / gemini-3.1-pro-preview（別名）→ Vertex IAM REST（callGemini3_1_Pro，與 geminiScript 同 URL）
  * - gemma-4-31b-it → `callGemma4`：Vertex **`us-central1`×2**，再 **`@google/generative-ai`×1**（**`GEMINI_API_KEY`** · 同 **`GEMMA_MODEL_ID`**）；失敗抛 `RESEARCH_STAGE1_CAPACITY_MSG`
  * - **gemini-3-flash-preview**（Stage 1 默认）→ Vertex IAM REST，与 TestLab `vertexTranslate` 同源（`VERTEX_PROJECT_ID`，非 `GEMINI_API_KEY`）
  * - 其余非 Gemma、非 3.1-pro 的 model id → Google AI Studio HTTP（`GEMINI_API_KEY`）
@@ -299,7 +300,7 @@ ${platformContext}
 
   // ── Stage 2: Gemini 3.1 Pro ─ 差异化战略处方 + 分镜场景（含平台数据） ────
   console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
-  push("stage2_prescription", "start", "Vertex · gemini-3.1-pro");
+  push("stage2_prescription", "start", `Vertex IAM REST · ${describeVertexGemini31ProRouting()}`);
   let stage2Raw: string;
   try {
     stage2Raw = await generate(
