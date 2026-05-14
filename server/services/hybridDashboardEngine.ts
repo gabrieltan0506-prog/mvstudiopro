@@ -170,7 +170,7 @@ async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashb
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
   const model =
-    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || "gemini-2.0-flash").trim() || "gemini-2.0-flash";
+    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
   const { GoogleGenAI } = await import("@google/genai");
   const ai = new GoogleGenAI({ apiKey });
 
@@ -185,8 +185,8 @@ async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashb
   const baseCfg: GenCfg = {
     systemInstruction,
     responseMimeType: "application/json",
-    temperature: 0.15,
-    maxOutputTokens: 1024,
+    temperature: 0.3,
+    maxOutputTokens: 4096,
   };
 
   let text = "";
