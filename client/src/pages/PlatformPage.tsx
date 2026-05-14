@@ -69,6 +69,7 @@ import {
   Lock,
   MessageSquareText,
   Mic,
+  Package,
   Palette,
   PenLine,
   PlayCircle,
@@ -768,6 +769,7 @@ type PlatformImageGenFlowSnapshot = {
   kind:
     | "batch_topic_frames"
     | "batch_composite_2x4"
+    | "batch_cover_composite_bundle"
     | "composite_2x4"
     | "batch_topic_frames_failed"
     | "composite_2x4_failed";
@@ -1431,6 +1433,11 @@ export default function PlatformPage() {
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
   /** 一键 2×4 / 八格图文：串行逐张合成（与单卡共用一个 mutation，批量期间抑制逐张 toast） */
   const [isSequentialCompositeBatchGenerating, setIsSequentialCompositeBatchGenerating] = useState(false);
+  /** 选题套裝：竖版封面 + 2×4/八格 · 客户端逐选题串行（每题 worker 内双链并发） */
+  const [isSequentialCoverCompositeBundleBatchGenerating, setIsSequentialCoverCompositeBundleBatchGenerating] =
+    useState(false);
+  /** 单卡套裝进行中（避免与批量/单帧/单合成并行） */
+  const [coverCompositeBundleSceneId, setCoverCompositeBundleSceneId] = useState<string | null>(null);
   const compositeBatchSilentUiRef = useRef(false);
   /** 封面生成区旁：决策智库对外试读样张（演示数据 + 脱敏） */
   const [coverDecisionTrialReadOpen, setCoverDecisionTrialReadOpen] = useState(false);
@@ -1794,6 +1801,186 @@ export default function PlatformPage() {
   }, [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
+  const enqueueTopicCoverAndCompositeBundleMutation =
+    trpc.mvAnalysis.enqueueTopicCoverAndCompositeBundle.useMutation();
+
+  const runEnqueueTopicCoverCompositeBundleAndPoll = useCallback(
+    async (inp: {
+      sceneId: string;
+      coverPersonaContext?: string;
+      headlineTitle: string;
+      compositeKind:
+        | "storyboard_sheet_portrait"
+        | "storyboard_sheet_landscape"
+        | "xiaohongshu_dual_note";
+      scriptContext: string;
+      executionDetails: string;
+      pollDebugLabel?: string;
+    }) => {
+      const pollLabel =
+        inp.pollDebugLabel ??
+        (inp.sceneId ? `套裝 · ${inp.sceneId}` : "套裝 · platform_topic_cover_composite_bundle");
+      const supervisorToken = getSupervisorTrpcToken();
+      const { jobId } = await enqueueTopicCoverAndCompositeBundleMutation.mutateAsync({
+        sceneId: inp.sceneId,
+        coverPersonaContext: inp.coverPersonaContext,
+        compositeTitle: inp.headlineTitle,
+        compositeScriptContext: inp.scriptContext,
+        compositeKind: inp.compositeKind,
+        compositeExecutionDetails: inp.executionDetails,
+        imagePromptTranslator: effectiveCompositeImagePromptTranslator,
+        creationRecordId: readOptionalReportBindingCreationId(),
+        coverProEngine:
+          canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
+        ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+          ? { enableTopicCoverDeepResearchPro: true }
+          : {}),
+        ...(supervisorToken ? { supervisorToken } : {}),
+      });
+      setTopicCoverPipelineFlowLogDebug([]);
+      setTopicImageJobPollTrace({
+        jobId,
+        label: pollLabel,
+        lines: [],
+        pollCount: 0,
+        currentStep: "套裝已入队…",
+      });
+      let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
+      try {
+        j = await pollJobUntilTerminal(jobId, {
+          intervalMs: 2500,
+          maxWaitMs: 28 * 60_000,
+          onPoll: ({ attempt, output }) => {
+            const out = output as { imageGenFlowLog?: string[] } | undefined;
+            const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
+            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
+            setTopicImageJobPollTrace((prev) =>
+              prev && prev.jobId === jobId
+                ? { ...prev, pollCount: attempt, currentStep: `套裝轮询 · ${attempt} 次` }
+                : prev,
+            );
+          },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setTopicImageJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: prev.terminalStatus ?? "client_error",
+                lines: appendPollDebugLine(prev.lines, `${new Date().toISOString()} 客户端异常: ${msg}`),
+              }
+            : prev,
+        );
+        throw err;
+      }
+      if (j.status === "failed") {
+        const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
+          ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+          : [];
+        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
+        setTopicImageJobPollTrace((prev) => {
+          if (!prev || prev.jobId !== jobId) return prev;
+          let lines = prev.lines;
+          for (const row of flow) {
+            lines = appendPollDebugLine(lines, String(row));
+          }
+          return {
+            ...prev,
+            terminalStatus: j.status,
+            lines: appendPollDebugLine(
+              lines,
+              `${new Date().toISOString()} 终态 failed · error=${j.error || ""} · ${pollLabel}`,
+            ),
+          };
+        });
+        throw new Error(j.error || "套裝生图任务失败");
+      }
+      const raw = j.output;
+      if (!raw || typeof raw !== "object") {
+        setTopicImageJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: "succeeded",
+                lines: appendPollDebugLine(
+                  prev.lines,
+                  `${new Date().toISOString()} 终态 succeeded 但无 output 对象 · ${pollLabel}`,
+                ),
+              }
+            : prev,
+        );
+        return {
+          success: false as const,
+          imageUrl: null as string | null,
+          url: null as string | null,
+          creationId: undefined as number | undefined,
+          imageGenFlowLog: [] as string[],
+          coverClickEstimate: undefined,
+          compositeImageUrl: null as string | null,
+          compositeKind: null as
+            | "storyboard_sheet_portrait"
+            | "storyboard_sheet_landscape"
+            | "xiaohongshu_dual_note"
+            | null,
+        };
+      }
+      const o = raw as Record<string, unknown>;
+      const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
+      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
+      const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
+      const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
+      const compositeImageUrl = String(o.compositeImageUrl ?? "").trim() || null;
+      const ckRaw = o.compositeKind;
+      const compositeKindParsed =
+        ckRaw === "storyboard_sheet_portrait" ||
+        ckRaw === "storyboard_sheet_landscape" ||
+        ckRaw === "xiaohongshu_dual_note"
+          ? ckRaw
+          : null;
+      const coverOk =
+        Boolean(imageUrl) && o.success !== false && !platformCoverImageUrlLooksInvalid(imageUrl);
+      const compositeOk = Boolean(compositeImageUrl) && compositeKindParsed != null;
+      const success = coverOk && compositeOk;
+      const coverClickEstimate = parseCoverClickEstimate(o.coverClickEstimate);
+      if (success && inp.sceneId && coverClickEstimate) {
+        setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [inp.sceneId]: coverClickEstimate }));
+      }
+      if (success) {
+        setTopicImageJobPollTrace(null);
+      } else {
+        setTopicImageJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: "succeeded",
+                lines: appendPollDebugLine(
+                  prev.lines,
+                  `${new Date().toISOString()} 终态 succeeded 但套裝输出不完整 · ${pollLabel}`,
+                ),
+              }
+            : prev,
+        );
+      }
+      return {
+        success: success as boolean,
+        imageUrl,
+        url: imageUrl,
+        creationId,
+        imageGenFlowLog: finalFlowLog,
+        coverClickEstimate,
+        compositeImageUrl,
+        compositeKind: compositeKindParsed,
+      };
+    },
+    [
+      enqueueTopicCoverAndCompositeBundleMutation,
+      effectiveCompositeImagePromptTranslator,
+      canConfigureCompositeImageTranslator,
+      platformCoverVertexNb2,
+      platformTopicCoverDeepResearchPro,
+    ],
+  );
 
   const runEnqueueTopicImageAndPoll = useCallback(
     async (inp: {
@@ -3381,6 +3568,10 @@ export default function PlatformPage() {
     }
     return sum;
   }, [contentExecutionCards]);
+  const platformBulkCoverCompositeBundleCost = useMemo(
+    () => platformTopicCount * CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
+    [platformTopicCount],
+  );
 
   /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
   const platformBulkCompositeBreakdown = useMemo(() => {
@@ -3410,6 +3601,165 @@ export default function PlatformPage() {
     void runSequentialCompositeBatchGeneration();
   }
 
+  async function runSequentialCoverCompositeBundleBatchGeneration() {
+    const cards = contentExecutionCards;
+    const localOpId = `batch-cover-composite-bundle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setIsSequentialCoverCompositeBundleBatchGenerating(true);
+    setPlatformImageGenFlowSnapshots((prev) =>
+      upsertPlatformImageFlowSnapshot(prev, {
+        at: new Date().toISOString(),
+        kind: "batch_cover_composite_bundle",
+        lines: [
+          `${new Date().toISOString()}  [客户端] 选题套裝已发起 · topicCount=${cards.length} · 每条 ${CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 积分 · worker 内封面与 2×4 并发`,
+          `${new Date().toISOString()}  [等待中] 客户端逐题串行 · 单题常需约 3～5 分钟`,
+        ],
+        meta: {
+          localOpId,
+          platformType: "cover_composite_bundle",
+          topicCount: cards.length,
+          concurrency: 1,
+          pending: true,
+        },
+      }),
+    );
+    let successCount = 0;
+    const liveLines: string[] = [];
+    try {
+      for (const item of cards) {
+        const headlineTitle = item.title;
+        const isGraphicFormat = item.format === "图文" || item.format === "小红书";
+        const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+        liveLines.push(
+          `${new Date().toISOString()}  [客户端] 开始套裝 · sceneId=${item.id} · compositeKind=${compositeKind}`,
+        );
+        setPlatformImageGenFlowSnapshots((prev) =>
+          upsertPlatformImageFlowSnapshot(prev, {
+            at: new Date().toISOString(),
+            kind: "batch_cover_composite_bundle",
+            lines: [
+              ...liveLines,
+              `${new Date().toISOString()}  [等待中] ${item.id}`,
+            ],
+            meta: {
+              localOpId,
+              platformType: "cover_composite_bundle",
+              topicCount: cards.length,
+              concurrency: 1,
+              currentSceneId: item.id,
+              successCount,
+              pending: true,
+            },
+          }),
+        );
+        try {
+          const res = await runThrottledPlatformImageRequest(
+            `cover-composite-bundle:${item.id}`,
+            () =>
+              runEnqueueTopicCoverCompositeBundleAndPoll({
+                sceneId: item.id,
+                coverPersonaContext: coverPersona || undefined,
+                headlineTitle,
+                compositeKind,
+                scriptContext: buildPlatformSheetScriptContext(item as any),
+                executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                pollDebugLabel: `套裝批量 · ${item.id}`,
+              }),
+            (waitMs) => {
+              liveLines.push(
+                `${new Date().toISOString()}  [客户端] 节流等待 ${Math.ceil(waitMs / 1000)} 秒 · 滚动 ${PLATFORM_IMAGE_RATE_WINDOW_MS / 1000}s 内已排满 ${PLATFORM_IMAGE_MAX_STARTS_PER_60S} 次发起 · sceneId=${item.id}`,
+              );
+              setPlatformImageGenFlowSnapshots((prev) =>
+                upsertPlatformImageFlowSnapshot(prev, {
+                  at: new Date().toISOString(),
+                  kind: "batch_cover_composite_bundle",
+                  lines: [...liveLines],
+                  meta: {
+                    localOpId,
+                    platformType: "cover_composite_bundle",
+                    topicCount: cards.length,
+                    concurrency: 1,
+                    currentSceneId: item.id,
+                    successCount,
+                    pending: true,
+                  },
+                }),
+              );
+            },
+          );
+          const coverOut = String(res.imageUrl ?? "").trim();
+          const compUrl = String(res.compositeImageUrl ?? "").trim();
+          const flowTail = Array.isArray(res.imageGenFlowLog) ? res.imageGenFlowLog : [];
+          if (flowTail.length > 0) {
+            liveLines.push(`${new Date().toISOString()}  [当前步骤] ${flowTail[flowTail.length - 1]}`);
+          }
+          if (res.success && coverOut && compUrl && res.compositeKind) {
+            successCount += 1;
+            setPlatformImageMap((prev) => ({ ...prev, [item.id]: coverOut }));
+            if (res.creationId != null) {
+              setSceneJobIds((prev) => ({ ...prev, [item.id]: String(res.creationId) }));
+            }
+            const ctr = parseCoverClickEstimate(res.coverClickEstimate);
+            if (ctr) {
+              setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [item.id]: ctr }));
+            }
+            if (
+              res.compositeKind === "storyboard_sheet_portrait" ||
+              res.compositeKind === "storyboard_sheet_landscape"
+            ) {
+              setPlatformStoryboardSheetMap((p) => ({ ...p, [item.id]: compUrl }));
+            } else if (res.compositeKind === "xiaohongshu_dual_note") {
+              setPlatformXhsNoteMap((p) => ({ ...p, [item.id]: compUrl }));
+            }
+            liveLines.push(`${new Date().toISOString()}  ✓ 套裝完成 · sceneId=${item.id}`);
+          } else {
+            liveLines.push(`${new Date().toISOString()}  ✗ 套裝输出不完整 · sceneId=${item.id}`);
+          }
+        } catch (err) {
+          liveLines.push(
+            `${new Date().toISOString()}  ✗ 套裝异常 · sceneId=${item.id} · ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    } finally {
+      setIsSequentialCoverCompositeBundleBatchGenerating(false);
+      setPlatformImageGenFlowSnapshots((prev) =>
+        upsertPlatformImageFlowSnapshot(prev, {
+          at: new Date().toISOString(),
+          kind: "batch_cover_composite_bundle",
+          lines: [
+            ...liveLines,
+            `${new Date().toISOString()}  [客户端] 选题套裝批量结束 · success=${successCount}/${cards.length}`,
+          ],
+          meta: {
+            localOpId,
+            platformType: "cover_composite_bundle",
+            topicCount: cards.length,
+            concurrency: 1,
+            successCount,
+            pending: false,
+          },
+        }),
+      );
+      toast.success(
+        `已为 ${successCount}/${cards.length} 个选题完成套裝（封面 + 2×4／八格 · 合计约 ${platformBulkCoverCompositeBundleCost} 积分）`,
+      );
+    }
+  }
+
+  function onBulkCoverCompositeBundleOneClick() {
+    if (!isAuthenticated) {
+      toast.error("请先登录");
+      return;
+    }
+    const per = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
+    const note = supervisorAccess
+      ? ""
+      : `将为 ${platformTopicCount} 个选题各生成竖版封面与 2×4 分镜或八格图文。每条套裝 ${per} 积分，合计 ${platformBulkCoverCompositeBundleCost} 积分；客户端逐题串行，单题后台内双链并发，常需约 3～5 分钟。是否继续？`;
+    if (!supervisorAccess && !window.confirm(note)) return;
+    void runSequentialCoverCompositeBundleBatchGeneration();
+  }
+
   const coverGenWaitCarouselItems = useMemo((): CoverGenWaitCarouselItem[] => {
     return contentExecutionCards.slice(0, 4).map((c) => {
       const hook = (c.hook || "").replace(/\s+/g, " ").trim();
@@ -3435,11 +3785,15 @@ export default function PlatformPage() {
     () =>
       regeneratingCoverSceneId !== null ||
       isSequentialCoverBatchGenerating ||
+      isSequentialCoverCompositeBundleBatchGenerating ||
+      coverCompositeBundleSceneId !== null ||
       batchGeneratingCoverIds.size > 0 ||
       coverSilentRetryIds.size > 0,
     [
       regeneratingCoverSceneId,
       isSequentialCoverBatchGenerating,
+      isSequentialCoverCompositeBundleBatchGenerating,
+      coverCompositeBundleSceneId,
       batchGeneratingCoverIds,
       coverSilentRetryIds,
     ],
@@ -5221,25 +5575,25 @@ export default function PlatformPage() {
                         视频图文分镜表
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">
-                        一键封面在下方选题卡。此处可一键依次为全部选题生成 2×4 分镜或八格图文。
+                        <strong className="text-gray-400">推荐</strong>：一键套裝为每条选题并发生成{" "}
+                        <strong className="text-gray-300">竖版封面 + 2×4 分镜或八格</strong>
+                        ，单条 <strong className="text-gray-300">{CREDIT_COSTS.platformTopicCoverAndCompositeBundle}</strong>{" "}
+                        积分（优享低于 {CREDIT_COSTS.platformTopicFrameGraphic}+{CREDIT_COSTS.platformStoryboardSheet} 分开买）。
+                        亦可只买封面或只买 2×4。批量合成四条 2×4 的 <strong className="text-gray-300">168</strong> 积分套裝仍仅适用于「仅分镜/八格」路径。
                         {platformTopicCount === 4 ? (
                           <>
-                            当前为 <strong className="text-gray-300">4 条选题套裝</strong>：一键合计{" "}
-                            <strong className="text-gray-300">{CREDIT_COSTS.platformCompositeBulkFourTopics}</strong>{" "}
-                            积分（4 次请求均摊）。单条点「原生 2×4」仍为短视频向 {CREDIT_COSTS.platformStoryboardSheet}{" "}
-                            点 / 图文小红书 {CREDIT_COSTS.platformXhsDualNote} 点。
+                            {" "}
+                            当前 4 条选题仅分镜一键合计 <strong className="text-gray-300">{CREDIT_COSTS.platformCompositeBulkFourTopics}</strong>{" "}
+                            积分。
                           </>
-                        ) : (
+                        ) : platformTopicCount > 0 ? (
                           <>
-                            单条：短视频向 {CREDIT_COSTS.platformStoryboardSheet} 积分/条 · 图文/小红书{" "}
-                            {CREDIT_COSTS.platformXhsDualNote} 积分/条。当前 {platformTopicCount} 条合计约{" "}
-                            {platformBulkCompositeCost} 积分
-                            {platformTopicCount > 0
-                              ? `（短视频向 ${platformBulkCompositeBreakdown.videoLike} 条 + 图文/小红书 ${platformBulkCompositeBreakdown.graphicLike} 条）`
-                              : ""}
-                            。
+                            {" "}
+                            仅分镜合计约 <strong className="text-gray-300">{platformBulkCompositeCost}</strong> 积分
+                            （短视频向 {platformBulkCompositeBreakdown.videoLike} 条 + 图文/小红书 {platformBulkCompositeBreakdown.graphicLike}{" "}
+                            条）。
                           </>
-                        )}
+                        ) : null}
                       </p>
                     </div>
                     {platformTopicCount > 0 ? (
@@ -5257,7 +5611,34 @@ export default function PlatformPage() {
                           disabled={
                             isSequentialCoverBatchGenerating ||
                             isSequentialCompositeBatchGenerating ||
+                            isSequentialCoverCompositeBundleBatchGenerating ||
                             generatePlatformCompositeSheetMutation.isPending ||
+                            coverCompositeBundleSceneId !== null ||
+                            isDashboardLoading ||
+                            isContentLoading ||
+                            !isAuthenticated ||
+                            platformTopicCount === 0
+                          }
+                          onClick={onBulkCoverCompositeBundleOneClick}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
+                        >
+                          {isSequentialCoverCompositeBundleBatchGenerating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Package className="h-4 w-4" />
+                          )}
+                          {isSequentialCoverCompositeBundleBatchGenerating
+                            ? "正在套裝生成（封面+2×4）…"
+                            : `一键套裝（封面+2×4）· ${platformBulkCoverCompositeBundleCost} 积分`}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            isSequentialCoverBatchGenerating ||
+                            isSequentialCompositeBatchGenerating ||
+                            isSequentialCoverCompositeBundleBatchGenerating ||
+                            generatePlatformCompositeSheetMutation.isPending ||
+                            coverCompositeBundleSceneId !== null ||
                             isDashboardLoading ||
                             isContentLoading ||
                             !isAuthenticated ||
@@ -5271,14 +5652,14 @@ export default function PlatformPage() {
                             const scenes = contentExecutionCards.map((row) => ({ id: row.id }));
                             const discountNote = supervisorAccess
                               ? ""
-                              : `将为您一次性生成 ${platformTopicCount} 个选题的图文封面，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
+                              : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面单帧，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
                             if (!supervisorAccess && !window.confirm(discountNote)) return;
                             void runSequentialCoverBatchGeneration(
                               scenes,
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
                             );
                           }}
-                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border-2 border-[#ff4fb8]/55 bg-[#ff4fb8]/10 px-8 py-2.5 text-sm font-bold text-[#ff9fe0] shadow-md transition hover:bg-[#ff4fb8]/18 hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
                         >
                           {isSequentialCoverBatchGenerating ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -5286,15 +5667,17 @@ export default function PlatformPage() {
                             <Sparkles className="h-4 w-4" />
                           )}
                           {isSequentialCoverBatchGenerating
-                            ? "正在生成图文封面单帧…"
-                            : `一键生成封面 (共消耗 ${platformBulkGraphicCost} 积分)`}
+                            ? "正在生成封面单帧…"
+                            : `仅封面 · ${platformBulkGraphicCost} 积分`}
                         </button>
                         <button
                           type="button"
                           disabled={
                             isSequentialCoverBatchGenerating ||
                             isSequentialCompositeBatchGenerating ||
+                            isSequentialCoverCompositeBundleBatchGenerating ||
                             generatePlatformCompositeSheetMutation.isPending ||
+                            coverCompositeBundleSceneId !== null ||
                             isDashboardLoading ||
                             isContentLoading ||
                             !isAuthenticated ||
@@ -5310,7 +5693,7 @@ export default function PlatformPage() {
                           )}
                           {isSequentialCompositeBatchGenerating
                             ? "正在生成 2×4 分镜…"
-                            : `一键生成分镜与八格图文 · ${platformBulkCompositeCost} 积分`}
+                            : `仅 2×4 / 八格 · ${platformBulkCompositeCost} 积分`}
                         </button>
                         <Dialog open={coverDecisionTrialReadOpen} onOpenChange={setCoverDecisionTrialReadOpen}>
                           <DialogContent className="max-h-[92vh] max-w-[min(1720px,calc(100vw-1rem))] w-full gap-0 overflow-y-auto overflow-x-auto border border-white/12 bg-[#05080f] p-3 sm:max-w-[min(1720px,calc(100vw-1rem))]">
@@ -5569,7 +5952,8 @@ export default function PlatformPage() {
                     已启用<strong className="text-white">选题与封面一体化优化</strong>
                     ：后台会为每条方案<strong className="text-white">择优主标题</strong>
                     并与出图主句对齐（正文与分镜不改编），竖版封面强调
-                    <strong className="text-white">信息流缩略图可读</strong>。您只需一键生成封面即可。
+                    <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套裝（
+                    {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点/题）或于下方卡片分步购买。
                   </div>
                 ) : null}
 
@@ -5612,6 +5996,8 @@ export default function PlatformPage() {
                       const compositePhaseHint =
                         compositePendingUxHints[`${item.id}::${compositeKind}`] ??
                         "英文 prompt → GPT-IMAGE-2 · 合计常需 3～5 分钟，请勿中途刷新";
+                      const bundleCost = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
+                      const isThisBundleLoading = coverCompositeBundleSceneId === item.id;
                       const currentImageUrl = platformImageMap[item.id] || "";
                       const isBlackImageOrTimeout =
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
@@ -5819,6 +6205,68 @@ export default function PlatformPage() {
                             });
                           });
                       };
+                      const handleCoverCompositeBundleFooter = () => {
+                        if (!isAuthenticated) {
+                          toast.error("请先登录");
+                          return;
+                        }
+                        if (!String(item.id || "").trim()) {
+                          toast.error("选题缺少 ID，无法生成");
+                          return;
+                        }
+                        if (
+                          !supervisorAccess &&
+                          !window.confirm(
+                            `将消耗 ${bundleCost} 积分，为本选题并发生成竖版封面与${compositeLabel}（套裝价低于分開购买）。是否继续？`,
+                          )
+                        )
+                          return;
+                        setCoverCompositeBundleSceneId(item.id);
+                        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                        void runThrottledPlatformImageRequest(`single-bundle:${item.id}`, () =>
+                          runEnqueueTopicCoverCompositeBundleAndPoll({
+                            sceneId: item.id,
+                            coverPersonaContext: coverPersona || undefined,
+                            headlineTitle,
+                            compositeKind,
+                            scriptContext: buildPlatformSheetScriptContext(item as any),
+                            executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                            pollDebugLabel: `套裝单卡 · ${item.id}`,
+                          }),
+                        )
+                          .then((res) => {
+                            if (res.creationId != null) {
+                              setSceneJobIds((prev) => ({
+                                ...prev,
+                                [item.id]: String(res.creationId),
+                              }));
+                            }
+                            if (res.success && res.imageUrl) {
+                              setPlatformImageMap((prev) => ({
+                                ...prev,
+                                [item.id]: res.imageUrl!,
+                              }));
+                            }
+                            const compUrl = res.compositeImageUrl?.trim();
+                            if (compUrl && res.compositeKind) {
+                              if (
+                                res.compositeKind === "storyboard_sheet_portrait" ||
+                                res.compositeKind === "storyboard_sheet_landscape"
+                              ) {
+                                setPlatformStoryboardSheetMap((p) => ({ ...p, [item.id]: compUrl }));
+                              } else if (res.compositeKind === "xiaohongshu_dual_note") {
+                                setPlatformXhsNoteMap((p) => ({ ...p, [item.id]: compUrl }));
+                              }
+                            }
+                            if (res.success && res.imageUrl && res.compositeImageUrl) {
+                              toast.success(`套裝已完成：封面 + ${compositeLabel}`);
+                            } else {
+                              toast.error("套裝未完成，请重试或使用「仅封面 / 仅 2×4」分步生成。");
+                            }
+                          })
+                          .catch((err) => toast.error(err.message || "操作失败"))
+                          .finally(() => setCoverCompositeBundleSceneId(null));
+                      };
                       return (
                       <div
                         key={item.id}
@@ -5973,6 +6421,8 @@ export default function PlatformPage() {
                                       !isAuthenticated ||
                                       isSequentialCoverBatchGenerating ||
                                       isSequentialCompositeBatchGenerating ||
+                                      isSequentialCoverCompositeBundleBatchGenerating ||
+                                      coverCompositeBundleSceneId !== null ||
                                       regeneratingCoverSceneId !== null ||
                                       compositeMutationBusy ||
                                       isDashboardLoading ||
@@ -6002,6 +6452,7 @@ export default function PlatformPage() {
                               </div>
                             </div>
                           ) : (regeneratingCoverSceneId === item.id ||
+                              coverCompositeBundleSceneId === item.id ||
                               isSequentialCoverBatchGenerating ||
                               batchGeneratingCoverIds.has(item.id) ||
                               coverSilentRetryIds.has(item.id)) &&
@@ -6009,7 +6460,15 @@ export default function PlatformPage() {
                             <div className="flex w-full aspect-[9/16] flex-col items-center justify-center gap-3 rounded-xl border border-white/5 bg-[#0a0a0a]/60 animate-pulse">
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
-                                {regeneratingCoverSceneId === item.id ? "单帧重新绘制中..." : coverSilentRetryIds.has(item.id) ? "检测到异常，正在自动重试补救..." : batchGeneratingCoverIds.has(item.id) ? "异步逐张生成中..." : "高定视觉绘制中..."}
+                                {coverCompositeBundleSceneId === item.id
+                                  ? "套裝绘制中（封面+2×4 并发）…"
+                                  : regeneratingCoverSceneId === item.id
+                                    ? "单帧重新绘制中..."
+                                    : coverSilentRetryIds.has(item.id)
+                                      ? "检测到异常，正在自动重试补救..."
+                                      : batchGeneratingCoverIds.has(item.id)
+                                        ? "异步逐张生成中..."
+                                        : "高定视觉绘制中..."}
                               </span>
                             </div>
                           ) : null}
@@ -6027,7 +6486,7 @@ export default function PlatformPage() {
                               GPT-IMAGE-2
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 依选题自动匹配 · 视频 {CREDIT_COSTS.platformStoryboardSheet} 点 · 图文/小红书{" "}
+                              · 推荐一键套裝 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点 · 仅合成：视频 {CREDIT_COSTS.platformStoryboardSheet} 点 · 图文/小红书{" "}
                               {CREDIT_COSTS.platformXhsDualNote} 点
                             </span>
                           </div>
@@ -6038,6 +6497,40 @@ export default function PlatformPage() {
                                 !isAuthenticated ||
                                 compositeMutationBusy ||
                                 isSequentialCompositeBatchGenerating ||
+                                isSequentialCoverCompositeBundleBatchGenerating ||
+                                coverCompositeBundleSceneId !== null ||
+                                isSequentialCoverBatchGenerating ||
+                                regeneratingCoverSceneId !== null ||
+                                batchGeneratingCoverIds.has(item.id) ||
+                                coverSilentRetryIds.has(item.id) ||
+                                isDashboardLoading ||
+                                isContentLoading
+                              }
+                              onClick={handleCoverCompositeBundleFooter}
+                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-3 py-2 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50 ${
+                                compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""
+                              } ${isThisBundleLoading ? "cursor-wait ring-2 ring-[#c4b5fd]/55 [&:disabled]:opacity-95" : ""}`}
+                            >
+                              {isThisBundleLoading ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                                  套裝生成中…
+                                </span>
+                              ) : (
+                                <>
+                                  <Package className="h-3.5 w-3.5 shrink-0" />
+                                  {`一键套裝 · ${bundleCost} 点`}
+                                </>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                !isAuthenticated ||
+                                compositeMutationBusy ||
+                                isSequentialCompositeBatchGenerating ||
+                                isSequentialCoverCompositeBundleBatchGenerating ||
+                                coverCompositeBundleSceneId !== null ||
                                 isDashboardLoading ||
                                 isContentLoading
                               }
@@ -6101,6 +6594,8 @@ export default function PlatformPage() {
                                 compositeMutationBusy ||
                                 isSequentialCoverBatchGenerating ||
                                 isSequentialCompositeBatchGenerating ||
+                                isSequentialCoverCompositeBundleBatchGenerating ||
+                                coverCompositeBundleSceneId !== null ||
                                 regeneratingCoverSceneId !== null ||
                                 batchGeneratingCoverIds.has(item.id) ||
                                 coverSilentRetryIds.has(item.id) ||
@@ -6125,7 +6620,7 @@ export default function PlatformPage() {
                               ) : (
                                 <>
                                   <Image className="h-3.5 w-3.5 shrink-0 opacity-95" aria-hidden />
-                                  {`生成单张封面 · ${singleCoverFooterPointsLabel}`}
+                                  {`仅封面 · ${singleCoverFooterPointsLabel}`}
                                 </>
                               )}
                             </button>

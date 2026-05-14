@@ -1178,6 +1178,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   flowLog?: string[];
   /** 管理員：與選題封面同源，在中文骨架 / 英文化前插入 Deep Research Pro（Interactions） */
   enableCompositeDeepResearchPro?: boolean;
+  /** 套裝路徑：強制關閉 2×4 側 DR-Pro（與封面鏈併發時避免同題重複貴價 Interactions） */
+  forceSkipCompositeDeepResearchPro?: boolean;
   /** IP / 身份錨點，供 DR Pro tenant 與選題錨定 */
   coverPersonaContext?: string;
 }): Promise<string | null> {
@@ -1228,7 +1230,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   const { buildCoverTaskInputFromPipeline } = await import("./agenticCoverWorkflow.js");
   const drFromEnv = isCompositeSheetDeepResearchProEnabled();
-  const runCompositeDrPro = drFromAdmin || drFromEnv;
+  const runCompositeDrPro =
+    !options.forceSkipCompositeDeepResearchPro && (drFromAdmin || drFromEnv);
 
   if (runCompositeDrPro) {
     appendImageFlowLog(
