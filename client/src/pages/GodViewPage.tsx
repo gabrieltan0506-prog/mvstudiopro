@@ -524,136 +524,144 @@ export default function GodViewPage() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: isMobile ? "24px 16px 60px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
+      <div style={{ maxWidth: isMobile ? 900 : 1150, margin: "0 auto", padding: isMobile ? "24px 16px 60px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
 
-        {/* 竞品调研置顶：与 /research 同源（嵌入 iframe，避免重复维护大段 UI） */}
         <div
           style={{
-            marginBottom: isMobile ? 20 : 28,
-            borderRadius: 16,
-            overflow: "hidden",
-            border: "1px solid rgba(168,118,27,0.38)",
-            background: "rgba(255,250,240,0.88)",
-            boxShadow: "0 8px 28px rgba(122,84,16,0.12)",
+            display: "flex",
+            flexDirection: isMobile ? "column" : "row",
+            gap: isMobile ? 20 : 28,
+            alignItems: "stretch",
+            marginBottom: isMobile ? 24 : 32,
           }}
         >
-          <div
-            style={{
-              padding: "12px 16px",
-              borderBottom: "1px solid rgba(122,84,16,0.12)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 900, color: "#7a5410" }}>四平台竞品调研（60 点/次）</div>
-            <button
-              type="button"
-              onClick={() => navigate("/research")}
+          <div style={{ flex: isMobile ? "none" : "0 0 40%", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ textAlign: isMobile ? "center" : "left", marginBottom: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 14 : 18, justifyContent: isMobile ? "center" : "flex-start" }}>
+                <div style={{ width: isMobile ? 44 : 56, height: isMobile ? 44 : 56, borderRadius: isMobile ? 13 : 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)", flexShrink: 0 }}>
+                  <Crown size={isMobile ? 22 : 28} color="#fff7df" />
+                </div>
+                <div style={{ textAlign: "left" }}>
+                  <h1 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
+                    AI 上帝视角
+                  </h1>
+                  <p style={{ color: "rgba(122,84,16,0.85)", fontSize: isMobile ? 12 : 13, margin: "4px 0 0", letterSpacing: isMobile ? "0.04em" : "0.08em", fontWeight: 700 }}>
+                    全景行业战报 · 旗舰级商业智库
+                  </p>
+                </div>
+              </div>
+              <p style={{ color: "rgba(61,44,20,0.78)", fontSize: isMobile ? 14 : 14, maxWidth: isMobile ? "100%" : "100%", margin: "0 0 16px", lineHeight: 1.85, fontWeight: 500 }}>
+                停止在信息泥潭中盲目试错。派遣专属智能研究集群，独占极限算力，全网深度检索与逻辑推演，
+                为您交付降维打击的<strong style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 70%, rgba(216,162,58,0.30) 70%)", padding: "0 3px" }}>全景行业战报</strong>。
+                穿透赛道迷雾，锁定商业胜率。
+              </p>
+              <div style={{ display: "flex", justifyContent: isMobile ? "center" : "flex-start", gap: isMobile ? 6 : 10, marginTop: isMobile ? 10 : 0, flexWrap: "wrap" }}>
+                {["宏观趋势前瞻", "竞品变现拆解", "私域留存策略", "30天行动清单"].map((t) => (
+                  <span key={t} style={{ fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: isMobile ? "4px 10px" : "5px 12px" }}>{t}</span>
+                ))}
+              </div>
+
+              {currentProduct.requiresIpProfile && <button
+                type="button"
+                onClick={() => setShowIpModal(true)}
+                style={{
+                  display: "block",
+                  margin: "18px 0 0",
+                  width: "100%",
+                  padding: "14px 20px",
+                  borderRadius: 16,
+                  border: isIpProfileReady(ipProfile)
+                    ? "1px solid rgba(99,102,241,0.45)"
+                    : "1px solid rgba(252,211,77,0.55)",
+                  background: isIpProfileReady(ipProfile)
+                    ? "linear-gradient(135deg,rgba(79,70,229,0.10),rgba(99,102,241,0.05))"
+                    : "rgba(252,211,77,0.10)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "filter 200ms",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(1.06)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(1)"; }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: isMobile ? 12 : 10, fontWeight: 800, letterSpacing: isMobile ? "0.10em" : "0.22em", color: "#4F46E5", marginBottom: 4 }}>
+                      {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
+                    </div>
+                    {isIpProfileReady(ipProfile) ? (
+                      <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: isMobile ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis", wordBreak: isMobile ? "break-word" : "normal" }}>
+                        <span style={{ color: "#4F46E5", fontWeight: 700 }}>{ipProfile.industry}</span>
+                        <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
+                        <span style={{ color: "#3d2c14" }}>{ipProfile.advantage}</span>
+                        <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
+                        <span style={{ color: "#a8761b", fontWeight: 700 }}>{ipProfile.flagship}</span>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14" }}>
+                        点此校准护城河 / 高客单锚点 → 推演会在 80% 篇幅锁定你的转化路径
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
+                  </div>
+                </div>
+              </button>}
+            </div>
+          </div>
+
+          <div style={{ flex: isMobile ? "none" : "1", minWidth: 0 }}>
+            <div
               style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color: "#a87020",
-                background: "rgba(168,118,27,0.12)",
-                border: "1px solid rgba(168,118,27,0.35)",
-                borderRadius: 10,
-                padding: "6px 12px",
-                cursor: "pointer",
+                borderRadius: 16,
+                overflow: "hidden",
+                border: "1px solid rgba(168,118,27,0.38)",
+                background: "rgba(255,250,240,0.88)",
+                boxShadow: "0 8px 28px rgba(122,84,16,0.12)",
               }}
             >
-              独立全屏页 →
-            </button>
-          </div>
-          <iframe
-            title="竞品与对标调研"
-            src="/research?embed=1"
-            style={{
-              width: "100%",
-              height: isMobile ? 640 : 720,
-              border: "none",
-              display: "block",
-              background: "#0e0700",
-            }}
-          />
-        </div>
-
-        {/* 页面标题 */}
-        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 36 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 14 : 18 }}>
-            <div style={{ width: isMobile ? 44 : 56, height: isMobile ? 44 : 56, borderRadius: isMobile ? 13 : 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)", flexShrink: 0 }}>
-              <Crown size={isMobile ? 22 : 28} color="#fff7df" />
-            </div>
-            <div style={{ textAlign: "left" }}>
-              <h1 style={{ fontSize: isMobile ? 22 : 30, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
-                AI 上帝视角
-              </h1>
-              <p style={{ color: "rgba(122,84,16,0.85)", fontSize: isMobile ? 12 : 13, margin: "4px 0 0", letterSpacing: isMobile ? "0.04em" : "0.10em", fontWeight: 700 }}>
-                全景行业战报 · 旗舰级商业智库
-              </p>
-            </div>
-          </div>
-          <p style={{ color: "rgba(61,44,20,0.78)", fontSize: isMobile ? 14 : 15, maxWidth: isMobile ? "100%" : 640, margin: "0 auto", lineHeight: 1.85, fontWeight: 500 }}>
-            停止在信息泥潭中盲目试错。派遣专属智能研究集群，独占极限算力，全网深度检索与逻辑推演，
-            为您交付降维打击的<strong style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 70%, rgba(216,162,58,0.30) 70%)", padding: "0 3px" }}>全景行业战报</strong>。
-            穿透赛道迷雾，锁定商业胜率。
-          </p>
-          <div style={{ display: "flex", justifyContent: "center", gap: isMobile ? 6 : 10, marginTop: isMobile ? 14 : 20, flexWrap: "wrap" }}>
-            {["宏观趋势前瞻", "竞品变现拆解", "私域留存策略", "30天行动清单"].map((t) => (
-              <span key={t} style={{ fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: isMobile ? "4px 10px" : "5px 14px" }}>{t}</span>
-            ))}
-          </div>
-
-          {/* 企业 IP 基因入口 — 仅当选中"企业高客单旗舰款"才显示
-              主理人买半月刊/订阅/私订时不需要它，UI 也不出现 */}
-          {currentProduct.requiresIpProfile && <button
-            type="button"
-            onClick={() => setShowIpModal(true)}
-            style={{
-              display: "block",
-              margin: "20px auto 0",
-              maxWidth: 720,
-              width: "100%",
-              padding: "14px 20px",
-              borderRadius: 16,
-              border: isIpProfileReady(ipProfile)
-                ? "1px solid rgba(99,102,241,0.45)"
-                : "1px solid rgba(252,211,77,0.55)",
-              background: isIpProfileReady(ipProfile)
-                ? "linear-gradient(135deg,rgba(79,70,229,0.10),rgba(99,102,241,0.05))"
-                : "rgba(252,211,77,0.10)",
-              cursor: "pointer",
-              textAlign: "left",
-              transition: "filter 200ms",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(1.06)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(1)"; }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: isMobile ? 12 : 10, fontWeight: 800, letterSpacing: isMobile ? "0.10em" : "0.22em", color: "#4F46E5", marginBottom: 4 }}>
-                  {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
-                </div>
-                {isIpProfileReady(ipProfile) ? (
-                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: isMobile ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis", wordBreak: isMobile ? "break-word" : "normal" }}>
-                    <span style={{ color: "#4F46E5", fontWeight: 700 }}>{ipProfile.industry}</span>
-                    <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
-                    <span style={{ color: "#3d2c14" }}>{ipProfile.advantage}</span>
-                    <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
-                    <span style={{ color: "#a8761b", fontWeight: 700 }}>{ipProfile.flagship}</span>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14" }}>
-                    点此校准护城河 / 高客单锚点 → 推演会在 80% 篇幅锁定你的转化路径
-                  </div>
-                )}
+              <div
+                style={{
+                  padding: "12px 16px",
+                  borderBottom: "1px solid rgba(122,84,16,0.12)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 900, color: "#7a5410" }}>四平台竞品调研（60 点/次）</div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/research")}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: "#a87020",
+                    background: "rgba(168,118,27,0.12)",
+                    border: "1px solid rgba(168,118,27,0.35)",
+                    borderRadius: 10,
+                    padding: "6px 12px",
+                    cursor: "pointer",
+                  }}
+                >
+                  独立全屏页 →
+                </button>
               </div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap", flexShrink: 0 }}>
-                {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
-              </div>
+              <iframe
+                title="竞品与对标调研"
+                src="/research?embed=1"
+                style={{
+                  width: "100%",
+                  height: isMobile ? 640 : 680,
+                  border: "none",
+                  display: "block",
+                  background: "#0e0700",
+                }}
+              />
             </div>
-          </button>}
+          </div>
         </div>
 
         {/* 战略作品快照库 · 醒目入口卡 */}

@@ -88,6 +88,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
+import PlatformTopicCoverDrProGpt54DebugPanel from "@/components/PlatformTopicCoverDrProGpt54DebugPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PLATFORM_RECENT_UPDATES } from "@/components/HomeChangelog";
 
@@ -1372,6 +1373,8 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
+  /** Debug：選題封面管線 `imageGenFlowLog`（輪詢中與完成後保留，對照 DR-Pro → GPT 5.4） */
+  const [topicCoverPipelineFlowLogDebug, setTopicCoverPipelineFlowLogDebug] = useState<string[]>([]);
   /** Debug：2×4 分镜 / 八格图文 合成 job 的輪詢次數（progressJobId） */
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
@@ -1862,6 +1865,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
       });
+      setTopicCoverPipelineFlowLogDebug([]);
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -1874,7 +1878,10 @@ export default function PlatformPage() {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
           maxWaitMs: 18 * 60_000,
-          onPoll: ({ attempt }) => {
+          onPoll: ({ attempt, output }) => {
+            const out = output as { imageGenFlowLog?: string[] } | undefined;
+            const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
+            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
             setTopicImageJobPollTrace((prev) =>
               prev && prev.jobId === jobId
                 ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次` }
@@ -1899,6 +1906,7 @@ export default function PlatformPage() {
         const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
           ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
           : [];
+        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
         setTopicImageJobPollTrace((prev) => {
           if (!prev || prev.jobId !== jobId) return prev;
           let lines = prev.lines;
@@ -1940,6 +1948,8 @@ export default function PlatformPage() {
         };
       }
       const o = raw as Record<string, unknown>;
+      const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
+      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
       /** job output 若僅缺 success（序列化/進度合併），有 URL 也應寫入 platformImageMap */
@@ -1972,7 +1982,7 @@ export default function PlatformPage() {
         imageUrl,
         url: imageUrl,
         creationId,
-        imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
+        imageGenFlowLog: finalFlowLog,
         coverClickEstimate,
       };
     },
@@ -2424,6 +2434,15 @@ export default function PlatformPage() {
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+        const supervisorTok = getSupervisorTrpcToken();
+        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+        const compositeDrProExtras = {
+          ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+            ? { enableTopicCoverDeepResearchPro: true as const }
+            : {}),
+          ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+          ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+        };
         liveLines.push(`${new Date().toISOString()}  [客户端] 开始合成 · sceneId=${item.id} · kind=${compositeKind}`);
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
@@ -2461,6 +2480,7 @@ export default function PlatformPage() {
                   cards.length === 4
                     ? { clientBatchKey: localOpId, slotIndex }
                     : undefined,
+                ...compositeDrProExtras,
               }),
             (waitMs) => {
               liveLines.push(
@@ -4578,6 +4598,15 @@ export default function PlatformPage() {
               ) : null}
 
               {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
+              {debugMode && (topicCoverPipelineFlowLogDebug.length > 0 || topicImageJobPollTrace) ? (
+                <div className="mt-4">
+                  <PlatformTopicCoverDrProGpt54DebugPanel
+                    lines={topicCoverPipelineFlowLogDebug}
+                    pollLabel={topicImageJobPollTrace?.label}
+                    jobRunning={Boolean(topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus)}
+                  />
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -5006,6 +5035,15 @@ export default function PlatformPage() {
                   )}
                 </div>
                 {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
+              {debugMode && (topicCoverPipelineFlowLogDebug.length > 0 || topicImageJobPollTrace) ? (
+                <div className="mt-4">
+                  <PlatformTopicCoverDrProGpt54DebugPanel
+                    lines={topicCoverPipelineFlowLogDebug}
+                    pollLabel={topicImageJobPollTrace?.label}
+                    jobRunning={Boolean(topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus)}
+                  />
+                </div>
+              ) : null}
               </div>
             ) : null}
 
@@ -5425,10 +5463,11 @@ export default function PlatformPage() {
                           onChange={(e) => setPlatformTopicCoverDeepResearchPro(e.target.checked)}
                         />
                         <span>
-                          <span className="font-bold text-violet-200">监管专用 · 封面步骤 0.5 Deep Research Pro</span>
-                          ：勾选后竖版<strong className="text-violet-100/90">选题封面管线</strong>在生图前多跑一轮
+                          <span className="font-bold text-violet-200">监管专用 · 封面 / 2×4 步骤 0.5 Deep Research Pro</span>
+                          ：勾选后<strong className="text-violet-100/90">选题封面、分镜 2×4、小红书八格</strong>在英文化前多跑一轮
                           Deep Research（Interactions）；偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
-                          会采纳该开关，其余仍只靠环境变量总闸。
+                          会采纳该开关，其余仍只靠环境变量总闸（含{" "}
+                          <code className="rounded bg-black/30 px-1 text-[10px]">PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO</code>）。
                         </span>
                       </label>
                     </div>
@@ -5456,6 +5495,15 @@ export default function PlatformPage() {
                           const queueSilentCompositeRetry = () => {
                             if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
                             const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+                            const supervisorTok = getSupervisorTrpcToken();
+                            const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                            const compositeDrProExtras = {
+                              ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+                                ? { enableTopicCoverDeepResearchPro: true as const }
+                                : {}),
+                              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                              ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+                            };
                             setCompositeLoadRetriedKeys((prev) => new Set(prev).add(compositeRetryKey));
                             if (isXhs) {
                               setPlatformXhsNoteMap((prev) => {
@@ -5479,6 +5527,7 @@ export default function PlatformPage() {
                               creationRecordId: readOptionalReportBindingCreationId(),
                               imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                               progressJobId: newPlatformCompositeProgressJobId(),
+                              ...compositeDrProExtras,
                             });
                           };
                           return (
@@ -6050,6 +6099,15 @@ export default function PlatformPage() {
                                   ? ""
                                   : `将消耗 ${compositeCost} 积分，主路径 GPT-IMAGE-2，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
+                                const supervisorTok = getSupervisorTrpcToken();
+                                const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                                const compositeDrProExtras = {
+                                  ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+                                    ? { enableTopicCoverDeepResearchPro: true as const }
+                                    : {}),
+                                  ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                                  ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+                                };
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
@@ -6060,6 +6118,7 @@ export default function PlatformPage() {
                                     creationRecordId: readOptionalReportBindingCreationId(),
                                     imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                                     progressJobId: newPlatformCompositeProgressJobId(),
+                                    ...compositeDrProExtras,
                                   }),
                                 ).catch(() => {});
                               }}

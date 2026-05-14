@@ -2196,6 +2196,30 @@ export const appRouter = router({
       }),
   }),
 
+  /** 時間 / 天氣 / 新聞 / 路況（混合式聚合，免登入；請適度節流） */
+  ambient: router({
+    hybridDashboard: publicProcedure
+      .input(
+        z.object({
+          timeZone: z.string().min(1).max(64).optional(),
+          weatherCity: z.string().min(1).max(120).optional(),
+          lat: z.number().gte(-90).lte(90).optional(),
+          lon: z.number().gte(-180).lte(180).optional(),
+          trafficLocation: z.string().min(1).max(200).optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const { executeHybridDashboardPipeline } = await import("./services/hybridDashboardEngine.js");
+        return executeHybridDashboardPipeline({
+          timeZone: input.timeZone,
+          weatherCity: input.weatherCity,
+          lat: input.lat,
+          lon: input.lon,
+          trafficLocation: input.trafficLocation,
+        });
+      }),
+  }),
+
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
     analyzeFrame: publicProcedure
@@ -4471,11 +4495,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               slotIndex: z.number().int().min(0).max(3),
             })
             .optional(),
+          /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
+          supervisorToken: z.string().max(512).optional(),
+          /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
+          enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** IP / 身份锚点，供 DR Pro 与翻译链 */
+          coverPersonaContext: z.string().max(8000).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const enableCompositeDeepResearchProAdmin =
+          supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
           input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
         const bulkFour = input.bulkFourTopicsFlat168;
@@ -4559,6 +4592,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             executionDetails: input.executionDetails,
             imagePromptTranslator: imagePromptTranslatorForComposite,
             flowLog: imageGenFlowLog,
+            enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
+            coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
           });
         } catch (error: any) {
           detachLiveProgress?.();

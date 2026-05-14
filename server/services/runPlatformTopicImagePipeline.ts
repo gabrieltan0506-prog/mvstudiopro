@@ -252,6 +252,17 @@ export async function runPlatformTopicImagePipeline(
       }
     }
 
+    const phaseOrderTs = new Date().toISOString();
+    if (runCoverDrPro) {
+      topicImageCondenseLog.push(
+        `${phaseOrderTs}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/GPT 5.4 英文化（步骤1 及以下）`,
+      );
+    } else {
+      topicImageCondenseLog.push(
+        `${phaseOrderTs}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/GPT 5.4 英文化`,
+      );
+    }
+
     try {
       try {
         const contextForGemini = strategistChinesePrompt

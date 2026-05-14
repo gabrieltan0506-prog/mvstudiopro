@@ -1,9 +1,5 @@
 import express from "express";
 import puppeteer, { type Page } from "puppeteer";
-import { spawn } from "node:child_process";
-import { writeFile, readFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 const app = express();
@@ -16,17 +12,12 @@ const PORT = process.env.PORT || 8080;
 // ════════════════════════════════════════════════════════════════════════════
 // 2026-05-01 体积优化 + 失败诊断（叠加在 PR #353 / #357 既有调整之上）
 //
-// 企业级默认可跑 + 适度压体积/墙钟（品质仍近原样）；一律可用 env 拉回高质量慢速档。
-//   PDF_SCALE_FACTOR             默认 1.35（视口 DPR；略低于 1.5 → step5 page.pdf 光栅更快）
+// 企业级默认可跑；輸出僅 Puppeteer page.pdf（Skia），不再經 Ghostscript 二次重寫。
+//   PDF_SCALE_FACTOR             默认 1.35（视口 DPR；略低于 1.5 → page.pdf 光栅更快）
 //   PDF_POST_LAYOUT_WAIT_MS     默认 18_000（图已 decode 后短沉淀；过短易 B，过长浪费墙钟）
 //   PDF_PER_IMAGE_WAIT_MS       默认 20_000（单图 load 兜底）
-//   PDF_GHOSTSCRIPT_COMPRESS     默认 true
-//   PDF_GS_LEVEL                 默认 ebook
-//   PDF_GS_COLOR_DPI / GRAY_DPI  默认 132（原 150；肉眼难辨、gs 更快更小）
-//   PDF_GS_MONO_DPI             默认 240（原 300）
-//   PDF_GS_TIMEOUT_MS            默认 180_000
 //   PDF_SET_CONTENT_WAIT_UNTIL   默认 load
-//   PDF_SET_CONTENT_TIMEOUT_MS  默认 1_800_000（30min；把 Cloud Run 余量多留给 step5）
+//   PDF_SET_CONTENT_TIMEOUT_MS  默认 1_800_000（30min；把 Cloud Run 余量多留给 page.pdf）
 //   PDF_VIEWPORT_WIDTH           默认 1920（须 ≥ 决策智库 1680 宽，可防横向裁切）
 //   PDF_VIEWPORT_HEIGHT          默认 1600（较高视口利长页纵向排版）
 //   page.pdf preferCSSPageSize   固定 true：尊重 HTML @page（平台横版 / 作品库直版）
@@ -34,14 +25,6 @@ const PORT = process.env.PORT || 8080;
 const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.35;
 const POST_LAYOUT_WAIT_MS = Number(process.env.PDF_POST_LAYOUT_WAIT_MS) || 18_000;
 const PER_IMAGE_WAIT_MS = Number(process.env.PDF_PER_IMAGE_WAIT_MS) || 20_000;
-const ENABLE_GS_COMPRESS = process.env.PDF_GHOSTSCRIPT_COMPRESS !== "false";
-const GS_LEVEL = (process.env.PDF_GS_LEVEL || "ebook") as
-  | "screen" | "ebook" | "printer" | "prepress";
-const GS_TIMEOUT_MS = Number(process.env.PDF_GS_TIMEOUT_MS) || 180_000;
-const GS_COLOR_DPI = Number(process.env.PDF_GS_COLOR_DPI) || 132;
-const GS_GRAY_DPI = Number(process.env.PDF_GS_GRAY_DPI) || 132;
-const GS_MONO_DPI = Number(process.env.PDF_GS_MONO_DPI) || 240;
-
 const ALLOWED_WAIT = new Set(["load", "domcontentloaded", "networkidle0", "networkidle2"]);
 const SET_CONTENT_WAIT_RAW = (process.env.PDF_SET_CONTENT_WAIT_UNTIL || "load").toLowerCase();
 const SET_CONTENT_WAIT_UNTIL = ALLOWED_WAIT.has(SET_CONTENT_WAIT_RAW)
@@ -65,7 +48,7 @@ const PAGE_PDF_TIMEOUT_MS =
     ? PAGE_PDF_TIMEOUT_PARSED
     : 0;
 
-/** 打印前統一為容器內 Noto CJK，減少多字體混嵌、利於 Ghostscript subset。設為 false 可回退舊版視覺。 */
+/** 打印前統一為容器內 Noto CJK，減少多字體混嵌。設為 false 可回退舊版視覺。 */
 const UNIFY_CJK_FONT_STACK = process.env.PDF_UNIFY_CJK_FONT_STACK !== "false";
 
 console.log(
@@ -75,72 +58,8 @@ console.log(
   `setContentTimeoutMs=${SET_CONTENT_TIMEOUT_MS} ` +
   `pagePdfTimeoutMs=${PAGE_PDF_TIMEOUT_MS === 0 ? "0(disabled)" : PAGE_PDF_TIMEOUT_MS} ` +
   `preferCssPageSize=true ` +
-  `unifyCjkFontStack=${UNIFY_CJK_FONT_STACK} ` +
-  `gs=${ENABLE_GS_COMPRESS ? GS_LEVEL : "off"} dpi=color/${GS_COLOR_DPI} gray/${GS_GRAY_DPI} mono/${GS_MONO_DPI} ` +
-  `gsTimeout=${GS_TIMEOUT_MS}ms`,
+  `unifyCjkFontStack=${UNIFY_CJK_FONT_STACK}`,
 );
-
-async function compressPdfWithGhostscript(
-  input: Buffer,
-  level: typeof GS_LEVEL = "ebook",
-  timeoutMs = GS_TIMEOUT_MS,
-  colorDpi = GS_COLOR_DPI,
-  grayDpi = GS_GRAY_DPI,
-  monoDpi = GS_MONO_DPI,
-): Promise<Buffer> {
-  const stamp = `${Date.now()}-${randomBytes(4).toString("hex")}`;
-  const inPath = join(tmpdir(), `pdf-in-${stamp}.pdf`);
-  const outPath = join(tmpdir(), `pdf-out-${stamp}.pdf`);
-
-  try {
-    await writeFile(inPath, input);
-
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn("gs", [
-        "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.4",
-        `-dPDFSETTINGS=/${level}`,
-        "-dNOPAUSE",
-        "-dQUIET",
-        "-dBATCH",
-        "-dDetectDuplicateImages=true",
-        "-dColorImageDownsampleType=/Bicubic",
-        `-dColorImageResolution=${colorDpi}`,
-        "-dGrayImageDownsampleType=/Bicubic",
-        `-dGrayImageResolution=${grayDpi}`,
-        "-dMonoImageDownsampleType=/Bicubic",
-        `-dMonoImageResolution=${monoDpi}`,
-        "-dEmbedAllFonts=true",
-        "-dSubsetFonts=true",
-        "-dCompressFonts=true",
-        `-sOutputFile=${outPath}`,
-        inPath,
-      ]);
-
-      const timer = setTimeout(() => {
-        proc.kill("SIGKILL");
-        reject(new Error(`gs compress timeout ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      proc.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-      proc.on("exit", (code) => {
-        clearTimeout(timer);
-        if (code === 0) resolve();
-        else reject(new Error(`gs exit ${code}`));
-      });
-    });
-
-    return Buffer.from(await readFile(outPath));
-  } finally {
-    await Promise.all([
-      unlink(inPath).catch(() => {}),
-      unlink(outPath).catch(() => {}),
-    ]);
-  }
-}
 
 /** 與 client 端表紙列印規則一致；以 JSON 塞入 evaluate 字串避免 pdf-worker tsconfig 無 DOM lib。 */
 const MYREPORTS_SNAPSHOT_PRINT_CSS = `
@@ -339,9 +258,6 @@ app.get("/health", (_req, res) =>
       setContentWaitUntil: SET_CONTENT_WAIT_UNTIL,
       setContentTimeoutMs: SET_CONTENT_TIMEOUT_MS,
       pagePdfTimeoutMs: PAGE_PDF_TIMEOUT_MS,
-      gsCompress: ENABLE_GS_COMPRESS ? GS_LEVEL : "off",
-      gsDpi: { color: GS_COLOR_DPI, gray: GS_GRAY_DPI, mono: GS_MONO_DPI },
-      gsTimeoutMs: GS_TIMEOUT_MS,
       unifyCjkFontStack: UNIFY_CJK_FONT_STACK,
     },
   }),
@@ -363,7 +279,7 @@ app.post("/generate-pdf", async (req, res) => {
 
   // ════════════════════════════════════════════════════════════════════════
   // 细粒度耗时打点 — 下次再 timeout 立刻看出卡在哪一步
-  // 通过对比每段 elapsed 时间精确定位 setContent / fonts.ready / pdf / gs
+  // 通过对比每段 elapsed 时间精确定位 setContent / fonts.ready / page.pdf
   // ════════════════════════════════════════════════════════════════════════
   const reqId = randomBytes(4).toString("hex");
   const t0 = Date.now();
@@ -406,27 +322,27 @@ app.post("/generate-pdf", async (req, res) => {
     //   load 之后仍执行 document.fonts.ready、全图 load+decode、以及固定 hard wait，可覆盖 B 类（缺封面/白页）。
     const tSc = Date.now();
     console.log(
-      `[pdf-worker:${reqId}] step1/6 setContent start (waitUntil=${SET_CONTENT_WAIT_UNTIL}, ` +
+      `[pdf-worker:${reqId}] step1/5 setContent start (waitUntil=${SET_CONTENT_WAIT_UNTIL}, ` +
       `timeoutMs=${SET_CONTENT_TIMEOUT_MS})`,
     );
     await page.setContent(html, {
       waitUntil: SET_CONTENT_WAIT_UNTIL,
       timeout: SET_CONTENT_TIMEOUT_MS,
     });
-    console.log(`[pdf-worker:${reqId}] step1/6 setContent done +${Date.now() - tSc}ms`);
+    console.log(`[pdf-worker:${reqId}] step1/5 setContent done +${Date.now() - tSc}ms`);
 
     // 等所有自定义字体加载完毕 — 避免 PDF 里出现字体 fallback / 方块字
     // 用字符串 page.evaluate 避免 pdf-worker tsconfig 没 lib.dom 的编译错
     // 注意：page.evaluate 字符串形式会自动 await 表达式如果是 Promise
     const tFonts = Date.now();
-    console.log(`[pdf-worker:${reqId}] step2/6 fonts.ready start`);
+    console.log(`[pdf-worker:${reqId}] step2/5 fonts.ready start`);
     await page.evaluate("document.fonts.ready");
-    console.log(`[pdf-worker:${reqId}] step2/6 fonts.ready done +${Date.now() - tFonts}ms`);
+    console.log(`[pdf-worker:${reqId}] step2/5 fonts.ready done +${Date.now() - tFonts}ms`);
 
     // 等大体积 data: PNG/JPEG 全部 load + decode 完再进 hard wait。
     // 否则 page.pdf() 时 naturalWidth=0 → 封面白屏 / 页数统计失真（用户实测 B 类问题）。
     const tImg = Date.now();
-    console.log(`[pdf-worker:${reqId}] step3/6 images load+decode start`);
+    console.log(`[pdf-worker:${reqId}] step3/5 images load+decode start`);
     await page.evaluate(
       `Promise.all(Array.from(document.images).map(function (img) {
       return new Promise(function (resolve) {
@@ -444,13 +360,13 @@ app.post("/generate-pdf", async (req, res) => {
       }));
     })`,
     );
-    console.log(`[pdf-worker:${reqId}] step3/6 images load+decode +${Date.now() - tImg}ms`);
+    console.log(`[pdf-worker:${reqId}] step3/5 images load+decode +${Date.now() - tImg}ms`);
 
     const tHard0 = Date.now();
-    console.log(`[pdf-worker:${reqId}] step4/6 layout settle wait ${POST_LAYOUT_WAIT_MS}ms start`);
+    console.log(`[pdf-worker:${reqId}] step4/5 layout settle wait ${POST_LAYOUT_WAIT_MS}ms start`);
     await new Promise((r) => setTimeout(r, POST_LAYOUT_WAIT_MS));
     console.log(
-      `[pdf-worker:${reqId}] step4/6 layout settle done +${Date.now() - tHard0}ms (since step1 +${Date.now() - tSc}ms)`,
+      `[pdf-worker:${reqId}] step4/5 layout settle done +${Date.now() - tHard0}ms (since step1 +${Date.now() - tSc}ms)`,
     );
 
     await page.emulateMediaType("print");
@@ -495,7 +411,7 @@ app.post("/generate-pdf", async (req, res) => {
     const pdfTimeout = PAGE_PDF_TIMEOUT_MS;
     const tPdf = Date.now();
     console.log(
-      `[pdf-worker:${reqId}] step5/6 page.pdf start ` +
+      `[pdf-worker:${reqId}] step5/5 page.pdf start ` +
       `(通常最耗时；timeoutMs=${pdfTimeout === 0 ? "disabled" : pdfTimeout})`,
     );
     // preferCSSPageSize=true：尊重快照 HTML 內 @page（平台決策智庫為 A4 landscape；作品庫為 portrait），
@@ -509,33 +425,9 @@ app.post("/generate-pdf", async (req, res) => {
       }),
     );
     const pdfMb = (rawPdfBuffer.length / 1024 / 1024).toFixed(2);
-    console.log(`[pdf-worker:${reqId}] step5/6 page.pdf done +${Date.now() - tPdf}ms size=${pdfMb}MB`);
+    console.log(`[pdf-worker:${reqId}] step5/5 page.pdf done +${Date.now() - tPdf}ms size=${pdfMb}MB`);
 
-    let pdfBuffer: Buffer = rawPdfBuffer;
-    if (ENABLE_GS_COMPRESS) {
-      const tGs = Date.now();
-      console.log(`[pdf-worker:${reqId}] step6/6 ghostscript start`);
-      try {
-        const compressed = await compressPdfWithGhostscript(rawPdfBuffer, GS_LEVEL);
-        const ratio = compressed.length / rawPdfBuffer.length;
-        if (ratio < 0.95) {
-          pdfBuffer = compressed;
-          const compressedMb = (compressed.length / 1024 / 1024).toFixed(2);
-          console.log(
-            `[pdf-worker:${reqId}] gs ${pdfMb}MB → ${compressedMb}MB ` +
-            `(${(ratio * 100).toFixed(0)}%, +${Date.now() - tGs}ms)`,
-          );
-        } else {
-          console.log(
-            `[pdf-worker:${reqId}] gs 收益 < 5% (${(ratio * 100).toFixed(0)}%)，回退原 PDF`,
-          );
-        }
-      } catch (err) {
-        console.warn(
-          `[pdf-worker:${reqId}] gs 压缩失败，回退原 PDF: ${(err as Error).message}`,
-        );
-      }
-    }
+    const pdfBuffer = rawPdfBuffer;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Length", String(pdfBuffer.length));

@@ -272,7 +272,7 @@ function buildFalGptImage2RequestBody(prompt: string, openAiSize: string) {
 
 /** 拼在寬幅 2×4 合成英文 prompt 末尾：頂部簡中主標 + 幾何鎖定 + **每格底部簡中訊息分格表**（與 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
 const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled; thin grid OK; table body must be 简体中文. FORBIDDEN: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels.";
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled; thin grid OK; table body must be 简体中文. FORBIDDEN: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels. SOFT PREFERENCE (when compatible with clarity): harmonize lower table bands with overall color/lighting—paper-tint, soft panel, low-contrast separation—rather than routinely using harsh full-black bars with pure-white copy for technical fields.";
 
 /** 小紅書八格：幾何與分鏡同為 2×4；畫風偏資訊圖 / 筆記感，每格強簡中（與 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} 一致）。 */
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
@@ -1176,6 +1176,10 @@ export async function generatePlatformCompositeSheetImage(options: {
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
+  /** 管理員：與選題封面同源，在中文骨架 / 英文化前插入 Deep Research Pro（Interactions） */
+  enableCompositeDeepResearchPro?: boolean;
+  /** IP / 身份錨點，供 DR Pro tenant 與選題錨定 */
+  coverPersonaContext?: string;
 }): Promise<string | null> {
   const L = options.flowLog;
   const k = options.kind;
@@ -1216,6 +1220,55 @@ export async function generatePlatformCompositeSheetImage(options: {
     `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试；環境變數未設時預設 3，與英文化/GPT-IMAGE-2 單段預設次數一致）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **英文化子链**（生存模式下为 GPT 5.4；否则见步骤1）与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
+  const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
+  let scriptContextForPipeline = options.scriptContext;
+  const drFromAdmin = Boolean(options.enableCompositeDeepResearchPro);
+  const { isCompositeSheetDeepResearchProEnabled, runCoverDeepResearchInteractionsBrief } = await import(
+    "./coverDeepResearchProBrief.js",
+  );
+  const { buildCoverTaskInputFromPipeline } = await import("./agenticCoverWorkflow.js");
+  const drFromEnv = isCompositeSheetDeepResearchProEnabled();
+  const runCompositeDrPro = drFromAdmin || drFromEnv;
+
+  if (runCompositeDrPro) {
+    appendImageFlowLog(
+      L,
+      `${new Date().toISOString()}  [步骤0.5·DR-Pro·2×4] 管理员入参=${drFromAdmin ? "开启" : "关闭"} · 环境=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro（注入分镜/八格中文语境；失败则忽略）`,
+    );
+    try {
+      const drTask = buildCoverTaskInputFromPipeline({
+        topicHook: options.title,
+        format: formatForDr,
+        context: options.scriptContext,
+        coverPersonaContext: options.coverPersonaContext ?? "",
+      });
+      const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, L ?? [], { logPrefix: "步骤0.5·DR-Pro·2×4" });
+      if (drBrief?.trim()) {
+        const tag = "【DeepResearch Pro·2×4 编导增强（简体）】";
+        scriptContextForPipeline = `${String(scriptContextForPipeline).trim()}\n\n${tag}\n${drBrief.trim()}`;
+      }
+    } catch (e: unknown) {
+      appendImageFlowLog(
+        L,
+        `${new Date().toISOString()}  [步骤0.5·DR-Pro·2×4] 异常（忽略）: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+  const phaseOrderTs = new Date().toISOString();
+  if (runCompositeDrPro) {
+    appendImageFlowLog(
+      L,
+      `${phaseOrderTs}  [管线·阶段顺序·2×4] A/Deep Research Pro 段已结束 → B/中文骨架 extractChineseVisualBrief 与英文化`,
+    );
+  } else {
+    appendImageFlowLog(
+      L,
+      `${phaseOrderTs}  [管线·阶段顺序·2×4] 未启用 A/Deep Research Pro → 直接 B/中文骨架与英文化`,
+    );
+  }
+
   let lastFailure: unknown = null;
 
   for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
@@ -1239,7 +1292,7 @@ export async function generatePlatformCompositeSheetImage(options: {
 
       const englishCore = await translatePlatformCompositeToEnglishPrompt({
         kind: k,
-        scriptContext: options.scriptContext,
+        scriptContext: scriptContextForPipeline,
         translator: options.imagePromptTranslator,
         flowLog: L,
         compositeSheetAttempt: attempt,

@@ -397,6 +397,7 @@ TAG:STORYBOARD_2X4_SHEET
 3. **栅格：** 顶栏之下 **整整 8 格**，**2 行 × 4 列**，刚性格线与格间直 gutter、顺扫 row1 左→右再 row2；masterpiece、8k，每格主画面为写实电影感分镜静帧。
 4. **每一格自上而下：** (A) **格内顶：** **分镜主题描述**（仅本格一句醒目简中主题）；(B) **格内中：** 该分镜主画面（上区约 **70–75%**，除表格外纯影像）；(C) **格内底 ~25–30%：** 简中**四栏参考表**，表头固定为 **景别**、**运镜**、**画面内容**、**台词与音效**，四柱均有正文；可细网格；表内须为**简体中文**。**Do not** leave panels wholly wordless in the table band.
 5. **版式约束：** 禁止整画布单张满幅顶掉八格、无顶栏、或仅四宫格笔记版——本任务为 **八格主表**；若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，亦偏离产品主表意图；其余景别与光影可充分发挥。
+6. **审美偏好（软提示，非强制）：** 整表**可倾向**统一的高级 editorial / 片场物料气质；底部说明区（**景别／运镜／画面内容／台词与音效** 等）**宜**与主静帧色调相衔接——例如浅衬、纸感、半透明分隔、柔和反差——**尽量避免习惯性做成**整段刺眼的「纯黑底 + 高亮白字」字幕条来堆技术说明（**除非**题材刻意要走极简信息图）。若与构图或可读冲突，以可读与整体协调为先。
 `.trim();
 
 /** 平台選題 **單幀封面**（圖文 / 短影音 **video**）：9:16 單張信息流；宽幅 2×4 多分镜主表不在此任務。 */
@@ -498,6 +499,8 @@ You turn the Chinese script into **one English image prompt** for **GPT-Image-2*
 1) **格内上方栏：** **分镜主题描述**（本分镜的主题概述）—one bold, legible **简体中文** line for **this shot only** (e.g. 宫门夜雪 / 对峙之刻).
 2) **格内中间：** the **cinematic storyboard still** for that beat (high detail).
 3) **格内下方栏：** a **compact Simplified Chinese table** with **exactly these four fields**, matching the reference layout: **景别**、**运镜**、**画面内容**、**台词与音效**—all four filled from the script per panel; table body **简体中文** (not English-only).
+
+**Soft aesthetic preference (optional guidance):** treat the whole sheet as one cohesive premium storyboard—the lower table bands may **lean toward** paper tint, soft frosted bands, or gentle separation that **harmonize** with each still’s palette, rather than **defaulting to** stark full-black strips with pure-white type for lighting / camera callouts (unless the script clearly wants that look). This is **not** a hard rule when readability or story clarity disagrees.
 
 [cinematic continuity]: dramatic film stills, 8k, intricate lighting, cohesive luxury palette (you may cite cold/warm contrast, wuxia, medical authority, etc. when the script fits).
 
@@ -866,6 +869,7 @@ export async function callGemini3_1_Pro_AiStudio(
             "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；選題信息流單封的 **身分與版式規格**必須與 Vertex（Gemini **3 Flash**）及 GPT 盡後 **Gemini 3.1 Pro 兜底** **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
             PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
             "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
+            "**分镜主表审美（软提示，非硬性）：** 可在英文中**顺带**写清整表气质统一；底部四栏说明区**宜**与画面融合（浅衬、纸感、柔和分隔等），**减少**习惯性「纯黑底 + 刺目白字」的技术说明条的观感——**若**与可读或剧情冲突则不必坚持。",
             "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
             "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
             "**莎剧式文采**仅在版面与光学已写死后可少量点缀。",
