@@ -47,7 +47,7 @@ export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverP
 
   for (const raw of lines) {
     const s = String(raw);
-    if (/\[管线·阶段顺序\]/.test(s)) {
+    if (/\[管线·阶段顺序\]|\[管线·阶段顺序·2×4\]/.test(s)) {
       phaseOrderLine = s;
       otherLines.push(s);
       continue;

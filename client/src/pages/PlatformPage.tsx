@@ -2434,6 +2434,15 @@ export default function PlatformPage() {
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+        const supervisorTok = getSupervisorTrpcToken();
+        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+        const compositeDrProExtras = {
+          ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+            ? { enableTopicCoverDeepResearchPro: true as const }
+            : {}),
+          ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+          ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+        };
         liveLines.push(`${new Date().toISOString()}  [客户端] 开始合成 · sceneId=${item.id} · kind=${compositeKind}`);
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
@@ -2471,6 +2480,7 @@ export default function PlatformPage() {
                   cards.length === 4
                     ? { clientBatchKey: localOpId, slotIndex }
                     : undefined,
+                ...compositeDrProExtras,
               }),
             (waitMs) => {
               liveLines.push(
@@ -5453,10 +5463,11 @@ export default function PlatformPage() {
                           onChange={(e) => setPlatformTopicCoverDeepResearchPro(e.target.checked)}
                         />
                         <span>
-                          <span className="font-bold text-violet-200">监管专用 · 封面步骤 0.5 Deep Research Pro</span>
-                          ：勾选后竖版<strong className="text-violet-100/90">选题封面管线</strong>在生图前多跑一轮
+                          <span className="font-bold text-violet-200">监管专用 · 封面 / 2×4 步骤 0.5 Deep Research Pro</span>
+                          ：勾选后<strong className="text-violet-100/90">选题封面、分镜 2×4、小红书八格</strong>在英文化前多跑一轮
                           Deep Research（Interactions）；偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
-                          会采纳该开关，其余仍只靠环境变量总闸。
+                          会采纳该开关，其余仍只靠环境变量总闸（含{" "}
+                          <code className="rounded bg-black/30 px-1 text-[10px]">PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO</code>）。
                         </span>
                       </label>
                     </div>
@@ -5484,6 +5495,15 @@ export default function PlatformPage() {
                           const queueSilentCompositeRetry = () => {
                             if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
                             const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+                            const supervisorTok = getSupervisorTrpcToken();
+                            const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                            const compositeDrProExtras = {
+                              ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+                                ? { enableTopicCoverDeepResearchPro: true as const }
+                                : {}),
+                              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                              ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+                            };
                             setCompositeLoadRetriedKeys((prev) => new Set(prev).add(compositeRetryKey));
                             if (isXhs) {
                               setPlatformXhsNoteMap((prev) => {
@@ -5507,6 +5527,7 @@ export default function PlatformPage() {
                               creationRecordId: readOptionalReportBindingCreationId(),
                               imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                               progressJobId: newPlatformCompositeProgressJobId(),
+                              ...compositeDrProExtras,
                             });
                           };
                           return (
@@ -6078,6 +6099,15 @@ export default function PlatformPage() {
                                   ? ""
                                   : `将消耗 ${compositeCost} 积分，主路径 GPT-IMAGE-2，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
+                                const supervisorTok = getSupervisorTrpcToken();
+                                const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                                const compositeDrProExtras = {
+                                  ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+                                    ? { enableTopicCoverDeepResearchPro: true as const }
+                                    : {}),
+                                  ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                                  ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+                                };
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
@@ -6088,6 +6118,7 @@ export default function PlatformPage() {
                                     creationRecordId: readOptionalReportBindingCreationId(),
                                     imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                                     progressJobId: newPlatformCompositeProgressJobId(),
+                                    ...compositeDrProExtras,
                                   }),
                                 ).catch(() => {});
                               }}

@@ -4495,11 +4495,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               slotIndex: z.number().int().min(0).max(3),
             })
             .optional(),
+          /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
+          supervisorToken: z.string().max(512).optional(),
+          /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
+          enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** IP / 身份锚点，供 DR Pro 与翻译链 */
+          coverPersonaContext: z.string().max(8000).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const enableCompositeDeepResearchProAdmin =
+          supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
           input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
         const bulkFour = input.bulkFourTopicsFlat168;
@@ -4583,6 +4592,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             executionDetails: input.executionDetails,
             imagePromptTranslator: imagePromptTranslatorForComposite,
             flowLog: imageGenFlowLog,
+            enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
+            coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
           });
         } catch (error: any) {
           detachLiveProgress?.();

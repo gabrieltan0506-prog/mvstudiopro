@@ -52,7 +52,7 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
     <div className="rounded-2xl border border-violet-500/30 bg-[rgba(103,32,183,0.08)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-200">
-          選題封面 · DR-Pro → GPT 5.4 除錯
+          選題封面 / 2×4 合成 · DR-Pro → GPT 5.4 除錯
         </div>
         {pollLabel ? (
           <div className="max-w-[60%] truncate text-[10px] text-violet-200/70" title={pollLabel}>
@@ -62,10 +62,11 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
       </div>
 
       <p className="mt-2 text-[11px] leading-relaxed text-[#d7d0ef]">
-        對照服務端 <code className="text-[#cda0ff]">imageGenFlowLog</code>：先檢查{" "}
-        <strong className="text-white/90">A / 步驟 0.5</strong> 是否真跑 Interactions Deep Research，再在{" "}
-        <strong className="text-white/90">B / GPT 5.4</strong> 查看{" "}
-        <code className="text-[#cda0ff]">[GPT54·…]</code>、<code className="text-[#cda0ff]">[步骤1]</code> 等行。
+        單幀與寬幅合成共用 <code className="text-[#cda0ff]">imageGenFlowLog</code>
+        ：A 為步驟 0.5（<code className="text-[#cda0ff]">DR-Pro</code> 或{" "}
+        <code className="text-[#cda0ff]">DR-Pro·2×4</code>
+        ）；B 為 <code className="text-[#cda0ff]">GPT54·…</code> /{" "}
+        <code className="text-[#cda0ff]">[步骤1]</code> 等。
       </p>
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -88,7 +89,8 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
         </div>
       ) : (
         <div className="mt-3 text-[10px] text-gray-500">
-          （尚未收到 <code className="text-gray-400">[管线·阶段顺序]</code> 行——若後端未部署最新 worker，請以{" "}
+          （尚未收到 <code className="text-gray-400">[管线·阶段顺序]</code> /{" "}
+          <code className="text-gray-400">[管线·阶段顺序·2×4]</code> 行——若後端未部署最新 worker，請以{" "}
           <code className="text-gray-400">步骤0.5·DR-Pro</code> / <code className="text-gray-400">GPT54·</code>{" "}
           前綴自行對照）
         </div>

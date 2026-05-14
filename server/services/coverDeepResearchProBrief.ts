@@ -1,11 +1,10 @@
 /**
- * 選題封面管線 · **步驟 0.5**（可選）
+ * 選題視覺管線 · **步驟 0.5**（可選）
  *
- * **選題封面專用開關**（便於對照有無 DR Pro：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO`）；亦可沿用相容名
- * `PLATFORM_COVER_DEEP_RESEARCH_PRO`（任一為 `1|true|yes` 即啟用）。
- * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体**
- * （擅長優化選題與文案 → 以優化後內容寫**高點閱簡體中文封面提示詞**）合併進 {@link ./runPlatformTopicImagePipeline.ts} 的 `strategistChinesePrompt` /
- * Gemini 語境，再交由既有 **GPT‑5.4 → 生圖**。**分鏡 / 八格筆記** 日後可加獨立 env，與此開關分離。
+ * **封面單幀**：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` 或 `PLATFORM_COVER_DEEP_RESEARCH_PRO`。
+ * **2×4 分鏡 / 小紅書八格**：上述任一為真 **或** `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`，即可在對應管線啟用同一套 Interactions Deep Research Pro。
+ *
+ * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体** 並合入中文語境，再交既有 **GPT‑5.4 → 生圖**。
  *
  * - **認證**：`GEMINI_API_KEY`（與 {@link ./deepResearchService.ts} Deep Research Max 同源）
  * - **Agent ID**：優先 `PLATFORM_COVER_DEEP_RESEARCH_AGENT`；預設 **`deep-research-pro-preview`**
@@ -34,9 +33,11 @@ export function isTopicCoverDeepResearchProEnabled(): boolean {
   );
 }
 
-/** @deprecated 请优先使用 {@link isTopicCoverDeepResearchProEnabled}（语义更清晰） */
-export function isPlatformCoverDeepResearchProEnabled(): boolean {
-  return isTopicCoverDeepResearchProEnabled();
+/**
+ * **2×4 分鏡 / 小紅書八格**：與封面共用 topic env，或單獨設 `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`。
+ */
+export function isCompositeSheetDeepResearchProEnabled(): boolean {
+  return envFlagEnabled("PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO") || isTopicCoverDeepResearchProEnabled();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -217,16 +218,23 @@ async function pollUntilComplete(opts: {
   throw new Error(`cover_dr_pro：輪詢超时（>${Math.round(resolveTimeoutMs() / 1000)}s）interactionId=${opts.interactionId}`);
 }
 
+export type CoverDrProBriefOptions = {
+  /** 日誌括號標籤，預設 `步骤0.5·DR-Pro`；2×4 合成用 `步骤0.5·DR-Pro·2×4` */
+  logPrefix?: string;
+};
+
 /**
- * 同步等待一次 Interactions Deep Research agent，適合封面管線調試視窗；
+ * 同步等待一次 Interactions Deep Research agent，適合封面 / 2×4 管線調試視窗；
  * **失敗不拋到外層**（由調用處包住），此處仍可 throw 後由外层 catch。
  */
 export async function runCoverDeepResearchInteractionsBrief(
   task: CoverTaskInput,
   flowLog: string[],
+  options?: CoverDrProBriefOptions,
 ): Promise<string | null> {
+  const logBracket = String(options?.logPrefix ?? "步骤0.5·DR-Pro").trim() || "步骤0.5·DR-Pro";
   const log = (s: string) => {
-    flowLog.push(`${new Date().toISOString()}  [步骤0.5·DR-Pro] ${s}`);
+    flowLog.push(`${new Date().toISOString()}  [${logBracket}] ${s}`);
   };
 
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
