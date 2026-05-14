@@ -28,6 +28,11 @@ RUN apt-get update \
 
 RUN npm install -g pnpm@10.4.1
 
+# Fly remote builders 可能長期命中舊的 COPY 快取（建置上下文未變更 checksum 時仍用舊原始碼）。
+# 透過 fly.toml [build.args].CACHEBUST 手動遞增，可強制重新 COPY 與後續 RUN。
+ARG CACHEBUST=0
+RUN test -n "${CACHEBUST:-}" && echo "CACHEBUST=${CACHEBUST}"
+
 COPY . .
 
 # 跳过 postinstall 脚本（youtube-dl-exec 不再自行下载二进制）
