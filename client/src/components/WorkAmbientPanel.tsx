@@ -28,6 +28,7 @@ export default function WorkAmbientPanel() {
   const [wxLocal, setWxLocal] = useState<Wx | null>(null);
   const [geoErr, setGeoErr] = useState<string | null>(null);
   const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
+  const browserTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
 
   const pod = useMemo(() => partOfDay(now.getHours()), [now]);
 
@@ -81,7 +82,7 @@ export default function WorkAmbientPanel() {
 
   const dash = trpc.ambient.hybridDashboard.useQuery(
     {
-      timeZone: "Asia/Taipei",
+      timeZone: browserTimeZone,
       lat: geo?.lat,
       lon: geo?.lon,
     },
@@ -112,7 +113,15 @@ export default function WorkAmbientPanel() {
         <div>
           <div className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">工作环境概览</div>
           <div className="mt-2 text-2xl font-black tracking-tight">
-            {dash.data?.currentTime || now.toLocaleString("zh-CN", { timeZone: "Asia/Taipei", weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            {dash.data?.currentTime ||
+              now.toLocaleString("zh-CN", {
+                timeZone: browserTimeZone,
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
           </div>
           {showServerWx ? (
             <div className="mt-3 text-sm text-white/80">

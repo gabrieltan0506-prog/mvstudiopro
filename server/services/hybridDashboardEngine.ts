@@ -47,12 +47,33 @@ function openMeteoCodeLabel(code: number): string {
   return "阴";
 }
 
-async function fetchOpenWeather(city: string): Promise<HybridDashboardData["weather"]> {
+async function fetchOpenWeatherByCity(city: string): Promise<HybridDashboardData["weather"]> {
   const apiKey = String(process.env.OPENWEATHER_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_OPENWEATHER_API_KEY");
   const url =
     `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}` +
     `&appid=${apiKey}&units=metric&lang=zh_cn`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+  if (!res.ok) throw new Error(`openweather_${res.status}`);
+  const data = (await res.json()) as {
+    weather?: { description?: string }[];
+    main?: { temp?: number; humidity?: number };
+  };
+  return {
+    condition: data.weather?.[0]?.description || "未知",
+    temperature: `${Math.round(Number(data.main?.temp ?? 0))}°C`,
+    humidity: `${data.main?.humidity ?? "—"}%`,
+    source: "openweather",
+  };
+}
+
+/** OpenWeather 依 GPS 座標（與瀏覽器定位一致，不寫死城市） */
+async function fetchOpenWeatherByLatLon(lat: number, lon: number): Promise<HybridDashboardData["weather"]> {
+  const apiKey = String(process.env.OPENWEATHER_API_KEY || "").trim();
+  if (!apiKey) throw new Error("missing_OPENWEATHER_API_KEY");
+  const url =
+    `https://api.openweathermap.org/data/2.5/weather?lat=${encodeURIComponent(String(lat))}` +
+    `&lon=${encodeURIComponent(String(lon))}&appid=${apiKey}&units=metric&lang=zh_cn`;
   const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
   if (!res.ok) throw new Error(`openweather_${res.status}`);
   const data = (await res.json()) as {
@@ -190,9 +211,12 @@ async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashb
 }
 
 export type HybridDashboardOpts = {
-  /** IANA，例 Asia/Taipei */
+  /**
+   * IANA 時區（應由前端傳 `Intl.DateTimeFormat().resolvedOptions().timeZone`，與使用者「當地」一致）。
+   * 未傳時可用環境變數 DASHBOARD_TIMEZONE；再無則以 UTC 顯示。
+   */
   timeZone?: string;
-  /** OpenWeather `q=`，例 Taipei,TW */
+  /** 可選：OpenWeather `q=`（未定位時後台手動指定城市才需要；不再預設任何城市） */
   weatherCity?: string;
   lat?: number;
   lon?: number;
@@ -203,32 +227,39 @@ export type HybridDashboardOpts = {
 export async function executeHybridDashboardPipeline(opts: HybridDashboardOpts = {}): Promise<HybridDashboardData> {
   const timeZone =
     opts.timeZone?.trim() ||
-    String(process.env.DASHBOARD_TIMEZONE || "Asia/Taipei").trim() ||
-    "Asia/Taipei";
+    String(process.env.DASHBOARD_TIMEZONE || "").trim() ||
+    "UTC";
 
-  const defaultCity =
-    opts.weatherCity?.trim() ||
-    String(process.env.DASHBOARD_WEATHER_CITY || "Taipei,TW").trim() ||
-    "Taipei,TW";
+  const weatherCityOverride =
+    opts.weatherCity?.trim() || String(process.env.DASHBOARD_WEATHER_CITY || "").trim();
 
   const lat = opts.lat;
   const lon = opts.lon;
+  const hasCoords = lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon);
+  const hasOwm = !!String(process.env.OPENWEATHER_API_KEY || "").trim();
 
   const trafficLabel =
     opts.trafficLocation?.trim() ||
-    (lat != null && lon != null ? `座標 ${lat.toFixed(2)}, ${lon.toFixed(2)} 鄰近道路` : "台灣北部都會區（一般性路況）");
+    (hasCoords ? `座標 ${lat!.toFixed(2)}, ${lon!.toFixed(2)} 鄰近道路` : "未指定區域（路況為概括參考）");
 
   const [weatherResult, newsResult, trafficResult] = await Promise.allSettled([
     (async () => {
-      if (String(process.env.OPENWEATHER_API_KEY || "").trim()) {
+      if (hasOwm && hasCoords) {
         try {
-          return await fetchOpenWeather(defaultCity);
+          return await fetchOpenWeatherByLatLon(lat!, lon!);
         } catch (e) {
-          console.warn("[hybridDashboard] OpenWeather 失敗:", (e as Error)?.message);
+          console.warn("[hybridDashboard] OpenWeather(lat,lon) 失敗:", (e as Error)?.message);
         }
       }
-      if (lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon)) {
-        return await fetchOpenMeteo(lat, lon);
+      if (hasOwm && weatherCityOverride) {
+        try {
+          return await fetchOpenWeatherByCity(weatherCityOverride);
+        } catch (e) {
+          console.warn("[hybridDashboard] OpenWeather(q) 失敗:", (e as Error)?.message);
+        }
+      }
+      if (hasCoords) {
+        return await fetchOpenMeteo(lat!, lon!);
       }
       throw new Error("no_weather_source");
     })(),
