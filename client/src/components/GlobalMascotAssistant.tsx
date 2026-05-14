@@ -413,7 +413,7 @@ export function GlobalMascotAssistant() {
 
   return (
     <div
-      className="pointer-events-none fixed bottom-6 right-4 z-[120] flex w-[min(100vw-1.25rem,22rem)] flex-col items-end sm:bottom-8 sm:right-8"
+      className="pointer-events-none fixed bottom-6 right-4 z-[10050] flex w-[min(100vw-1.25rem,22rem)] flex-col items-end sm:bottom-8 sm:right-8"
       aria-live="polite"
     >
       {panelOpen ? (
