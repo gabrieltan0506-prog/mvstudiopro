@@ -71,6 +71,7 @@ import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import VideoParserWidget from "@/components/VideoParserWidget";
 import WorkAmbientPanel from "@/components/WorkAmbientPanel";
+import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
 
 type AnalysisResult = {
   mode?: "GROWTH" | "REMIX";
@@ -3003,6 +3004,7 @@ export default function MVAnalysisPage() {
   if (!isAuthenticated && !supervisorAccess) return null;
 
   return (
+    <AmbientSceneProvider>
     <div className="min-h-dvh bg-[#08111f] text-[#f7f4ef]">
       <div className="mx-auto max-w-[1760px] px-4 py-8">
         <WorkAmbientPanel />
@@ -4941,5 +4943,6 @@ export default function MVAnalysisPage() {
         planName={quotaModalInfo.planName}
       />
     </div>
+    </AmbientSceneProvider>
   );
 }
