@@ -901,7 +901,7 @@ function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServer
   if (/\[2×4·步骤2|\[步骤2\]/.test(tail)) {
     return "准备生图（像素锁已定）…";
   }
-  if (/步骤1b|PROMPT_CONDENSE|\[Prompt 提炼\]/.test(tail)) {
+  if (/PROMPT_CONDENSE|\[Prompt 提炼\]/.test(tail)) {
     return "精炼英文 prompt …";
   }
   if (/GPT54·英文化|骨架·中文视觉|extractChineseVisualBrief|\[GPT54·翻译\]/.test(tail)) {

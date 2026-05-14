@@ -8,7 +8,7 @@ export type PlatformTopicCoverDrProGpt54DebugPanelProps = {
 };
 
 /**
- * Platform 選題封面：專用 Debug——對照 **Deep Research Pro（Interactions）** 與 **GPT 5.4 英文化** 的先后與細節。
+ * Platform 選題封面 / 2×4：**DR-Pro（0.5）→ 英文化 → 生圖** 全鏈路除錯。
  * 依賴 `imageGenFlowLog` 與服務端 `[管线·阶段顺序]` 分界行。
  */
 export default function PlatformTopicCoverDrProGpt54DebugPanel({
@@ -16,7 +16,7 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
   pollLabel,
   jobRunning,
 }: PlatformTopicCoverDrProGpt54DebugPanelProps) {
-  const { drProLines, gpt54AndTranslationLines, otherLines, hints } = useMemo(
+  const { drProLines, gpt54AndTranslationLines, imageGenLines, otherLines, hints } = useMemo(
     () => partitionTopicCoverPipelineFlowLog(lines),
     [lines],
   );
@@ -48,11 +48,19 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
     return { text: "GPT 5.4：尚無翻譯層日誌", tone: "text-gray-500" as const };
   }, [hints, jobRunning]);
 
+  const imgBadge = useMemo(() => {
+    if (hints.imageGenSuccess) return { text: "生圖：已取得 URL", tone: "text-emerald-300" as const };
+    if (hints.imageGenLayerActivity && jobRunning) return { text: "生圖：進行中（GPT-IMAGE-2 / NB2 / fal）", tone: "text-amber-200" as const };
+    if (hints.imageGenLayerActivity) return { text: "生圖：已有子日誌", tone: "text-sky-300" as const };
+    if (hints.step1TranslationDone && jobRunning) return { text: "生圖：等待步驟2 寫入…", tone: "text-gray-400" as const };
+    return { text: "生圖：尚無日誌", tone: "text-gray-500" as const };
+  }, [hints, jobRunning]);
+
   return (
     <div className="rounded-2xl border border-violet-500/30 bg-[rgba(103,32,183,0.08)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-200">
-          選題封面 / 2×4 合成 · DR-Pro → GPT 5.4 除錯
+          選題封面 / 2×4 合成 · 全鏈路除錯
         </div>
         {pollLabel ? (
           <div className="max-w-[60%] truncate text-[10px] text-violet-200/70" title={pollLabel}>
@@ -62,11 +70,10 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
       </div>
 
       <p className="mt-2 text-[11px] leading-relaxed text-[#d7d0ef]">
-        單幀與寬幅合成共用 <code className="text-[#cda0ff]">imageGenFlowLog</code>
-        ：A 為步驟 0.5（<code className="text-[#cda0ff]">DR-Pro</code> 或{" "}
-        <code className="text-[#cda0ff]">DR-Pro·2×4</code>
-        ）；B 為 <code className="text-[#cda0ff]">GPT54·…</code> /{" "}
-        <code className="text-[#cda0ff]">[步骤1]</code> 等。
+        共用 <code className="text-[#cda0ff]">imageGenFlowLog</code>
+        ：<strong className="text-violet-200/90">A</strong> 步驟 0.5（DR-Pro）· <strong className="text-cyan-200/90">B</strong>{" "}
+        英文化（GPT 5.4 / Flash）· <strong className="text-amber-200/90">C</strong> 生圖（GPT-IMAGE-2、NB2、fal、兜底）。C
+        欄位可避免「翻譯完以為卡住」——實際仍在繪圖。
       </p>
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -75,6 +82,9 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
         </span>
         <span className={`rounded-lg border border-white/10 px-2 py-1 text-[11px] font-bold ${gptBadge.tone}`}>
           {gptBadge.text}
+        </span>
+        <span className={`rounded-lg border border-white/10 px-2 py-1 text-[11px] font-bold ${imgBadge.tone}`}>
+          {imgBadge.text}
         </span>
         {jobRunning ? (
           <span className="rounded-lg border border-amber-400/35 bg-amber-500/10 px-2 py-1 text-[11px] font-bold text-amber-100">
@@ -90,13 +100,11 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
       ) : (
         <div className="mt-3 text-[10px] text-gray-500">
           （尚未收到 <code className="text-gray-400">[管线·阶段顺序]</code> /{" "}
-          <code className="text-gray-400">[管线·阶段顺序·2×4]</code> 行——若後端未部署最新 worker，請以{" "}
-          <code className="text-gray-400">步骤0.5·DR-Pro</code> / <code className="text-gray-400">GPT54·</code>{" "}
-          前綴自行對照）
+          <code className="text-gray-400">[管线·阶段顺序·2×4]</code> 行——若後端未部署最新 worker，請以 A/B/C 區塊對照）
         </div>
       )}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
         <div className="min-h-[120px] rounded-xl border border-violet-400/20 bg-black/25 p-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-violet-300/90">
             A — Deep Research Pro（0.5）
@@ -107,7 +115,7 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
         </div>
         <div className="min-h-[120px] rounded-xl border border-cyan-500/20 bg-black/25 p-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-200/90">
-            B — GPT 5.4 英文化（含 Flash/骨架輔助）
+            B — 英文化（GPT 5.4 / Flash · 含步骤1 / 1b）
           </div>
           <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-[#d7f5ff]">
             {gpt54AndTranslationLines.length
@@ -115,12 +123,22 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
               : "（尚無翻譯層——通常 A 結束後才進入；或任務仍在 DR-Pro 輪詢）"}
           </pre>
         </div>
+        <div className="min-h-[120px] rounded-xl border border-amber-500/25 bg-black/25 p-3">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-200/90">
+            C — 生圖（GPT-IMAGE-2 / NB2 / fal / 兜底）
+          </div>
+          <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-[#fff3dc]">
+            {imageGenLines.length
+              ? imageGenLines.join("\n")
+              : "（尚無生圖子日誌——若 B 已完成仍空，多為進度尚未 flush；稍待或展開「其餘」）"}
+          </pre>
+        </div>
       </div>
 
       {otherLines.length > 0 ? (
         <details className="mt-3">
           <summary className="cursor-pointer select-none text-[10px] text-gray-500 hover:text-gray-400">
-            其餘管線日誌（企劃大腦、生圖步驟等）· {otherLines.length} 行
+            其餘（企劃大腦、說明行、staging 等）· {otherLines.length} 行
           </summary>
           <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-2 font-mono text-[10px] leading-5 text-gray-400">
             {otherLines.join("\n")}
