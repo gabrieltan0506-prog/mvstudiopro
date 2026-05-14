@@ -88,6 +88,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
+import PlatformTopicCoverDrProGpt54DebugPanel from "@/components/PlatformTopicCoverDrProGpt54DebugPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PLATFORM_RECENT_UPDATES } from "@/components/HomeChangelog";
 
@@ -1372,6 +1373,8 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
+  /** Debug：選題封面管線 `imageGenFlowLog`（輪詢中與完成後保留，對照 DR-Pro → GPT 5.4） */
+  const [topicCoverPipelineFlowLogDebug, setTopicCoverPipelineFlowLogDebug] = useState<string[]>([]);
   /** Debug：2×4 分镜 / 八格图文 合成 job 的輪詢次數（progressJobId） */
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
@@ -1862,6 +1865,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
       });
+      setTopicCoverPipelineFlowLogDebug([]);
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -1874,7 +1878,10 @@ export default function PlatformPage() {
         j = await pollJobUntilTerminal(jobId, {
           intervalMs: 2500,
           maxWaitMs: 18 * 60_000,
-          onPoll: ({ attempt }) => {
+          onPoll: ({ attempt, output }) => {
+            const out = output as { imageGenFlowLog?: string[] } | undefined;
+            const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
+            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
             setTopicImageJobPollTrace((prev) =>
               prev && prev.jobId === jobId
                 ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次` }
@@ -1899,6 +1906,7 @@ export default function PlatformPage() {
         const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
           ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
           : [];
+        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
         setTopicImageJobPollTrace((prev) => {
           if (!prev || prev.jobId !== jobId) return prev;
           let lines = prev.lines;
@@ -1940,6 +1948,8 @@ export default function PlatformPage() {
         };
       }
       const o = raw as Record<string, unknown>;
+      const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
+      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
       /** job output 若僅缺 success（序列化/進度合併），有 URL 也應寫入 platformImageMap */
@@ -1972,7 +1982,7 @@ export default function PlatformPage() {
         imageUrl,
         url: imageUrl,
         creationId,
-        imageGenFlowLog: Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [],
+        imageGenFlowLog: finalFlowLog,
         coverClickEstimate,
       };
     },
@@ -4578,6 +4588,15 @@ export default function PlatformPage() {
               ) : null}
 
               {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
+              {debugMode && (topicCoverPipelineFlowLogDebug.length > 0 || topicImageJobPollTrace) ? (
+                <div className="mt-4">
+                  <PlatformTopicCoverDrProGpt54DebugPanel
+                    lines={topicCoverPipelineFlowLogDebug}
+                    pollLabel={topicImageJobPollTrace?.label}
+                    jobRunning={Boolean(topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus)}
+                  />
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -5006,6 +5025,15 @@ export default function PlatformPage() {
                   )}
                 </div>
                 {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
+              {debugMode && (topicCoverPipelineFlowLogDebug.length > 0 || topicImageJobPollTrace) ? (
+                <div className="mt-4">
+                  <PlatformTopicCoverDrProGpt54DebugPanel
+                    lines={topicCoverPipelineFlowLogDebug}
+                    pollLabel={topicImageJobPollTrace?.label}
+                    jobRunning={Boolean(topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus)}
+                  />
+                </div>
+              ) : null}
               </div>
             ) : null}
 
