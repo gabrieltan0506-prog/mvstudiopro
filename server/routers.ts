@@ -4806,11 +4806,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
           input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
-        const bulkFour = input.bulkFourTopicsFlat168;
-        const bulkSlotCost = Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4);
-        const cost = bulkFour
-          ? bulkSlotCost
-          : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
+        const cost =
+          input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? CREDIT_COSTS.platformStoryboardSheet
             : CREDIT_COSTS.platformXhsDualNote;
 
@@ -4826,11 +4823,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             userId,
             cost,
             "platformCompositeSheet",
-            bulkFour
-              ? `2×4 四条套裝均摊 (${bulkFour.slotIndex + 1}/4 · ${cost} 点)· ${input.kind} · ${input.title.slice(0, 40)}`
-              : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-                ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
-                : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`,
+            input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
+              ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
+              : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`,
           );
         }
 

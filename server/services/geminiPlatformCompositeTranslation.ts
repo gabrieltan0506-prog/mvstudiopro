@@ -7,10 +7,19 @@ import {
   callGemini31ProSystemUserForImagePrompt,
   describeVertexGemini31ProRouting,
 } from "./vertexGemini31ProGlobal.js";
+import {
+  logSheetChineseStagingBeforeTranslate,
+  persistSheetChineseStagingToRunningJob,
+} from "./platformImageChineseStaging.js";
 
 /** 給 GPT54 翻譯路徑的營運打點（可選）；見 {@link emitPlatformImagePipelineStat} */
 export type Gpt54PlatformImagePromptStatCtx = {
-  pipeline: "topic_cover" | "composite_sheet" | "prompt_condense" | "other";
+  pipeline:
+    | "topic_cover"
+    | "composite_sheet"
+    | "prompt_condense"
+    | "topic_cover_composite_bundle"
+    | "other";
   compositeSheetAttempt?: number;
   compositeSheetMaxAttempts?: number;
   sheetKind?: PlatformCompositeSheetKindForStat;
@@ -1061,6 +1070,156 @@ export async function callGemini3_1_Pro_AiStudio(
 }
 
 /**
+ * **套裝 job**：同一選題下 **一次** OpenAI JSON 產出 **豎版封面** + **2×4 橫幅** 兩條英文生圖 prompt。
+ * 語義是「一組圖、兩張輸出」，**禁止**把兩則無關選題合併；與已移除的「雙條 DR-Pro」不同。
+ * 僅走 GPT 5.4（與封面單幀路徑一致）；失敗由調用方改 **串行**兩次英文化。
+ */
+export async function translateBundleCoverAndCompositeEnglishPair(options: {
+  coverTranslationTask: string;
+  compositeTranslationTask: string;
+  flowLog?: string[];
+}): Promise<{ coverEn: string; compositeEn: string }> {
+  const flowLog = options.flowLog;
+  const coverChars = String(options.coverTranslationTask || "").length;
+  const compChars = String(options.compositeTranslationTask || "").length;
+  appendGpt54TranslationDebug(
+    flowLog,
+    `[套裝·併翻] 單次 GPT 5.4 · PART_A 封面≈${coverChars} 字 · PART_B 2×4≈${compChars} 字 · JSON {cover_prompt, composite_prompt}`,
+  );
+
+  const modelName =
+    process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
+  const gpt54MaxOut = Math.min(
+    65_536,
+    Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 16_384),
+  );
+
+  const userBody = `同一選題、兩個生圖交付物（不要當成兩則無關選題）。
+
+=== PART_A — 9:16 豎版封面（GPT-IMAGE-2 單主視覺）===
+${options.coverTranslationTask}
+
+=== PART_B — 16:9 橫幅 2×4 格主表或八格筆記（GPT-IMAGE-2）===
+${options.compositeTranslationTask}
+
+请只返回合法 JSON 对象，且必须同时包含非空字符串：
+{"cover_prompt":"…","composite_prompt":"…"}`;
+
+  const statCtx: Gpt54PlatformImagePromptStatCtx = { pipeline: "topic_cover_composite_bundle" };
+
+  const runAttempt = async (
+    attempt: number,
+  ): Promise<{ coverEn: string; compositeEn: string } | null> => {
+    const a = `第${attempt}/3轮·套裝併翻`;
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · invokeLLM · modelName=${modelName} · max_tokens=${gpt54MaxOut} · json cover_prompt+composite_prompt`,
+    );
+    const primaryResponse = await invokeLLM({
+      provider: "openai",
+      model: "gpt54",
+      modelName,
+      response_format: { type: "json_object" },
+      max_tokens: gpt54MaxOut,
+      messages: [
+        {
+          role: "system",
+          content: [
+            PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
+            "你是双语视觉编导：上游 **PART_A + PART_B** 描述 **同一套** 內容企劃的兩個像素交付物（豎封面 + 橫幅整表），**不是**兩個獨立選題。",
+            "把 PART_A 收成 **cover_prompt**：只服務 **9:16** 單幀封面；規格與 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN** 一致（與單封英文化同源）。",
+            "把 PART_B 收成 **composite_prompt**：只服務 **16:9** **2×4** 整表；格線/頂欄內容總結/分鏡表格欄位等規格與既有 **分鏡主表 / 小紅書八格** 英文化一致（可執行、英文為主、簡中字由英文指令約束）。",
+            "**禁止**把兩個不同話題硬湊成一組；若上游混了兩題，仍以 PART 標籤為準各自忠实執行，但正常輸入應為同一選題。",
+            "须含 masterpiece 与 8k（按需写入两条之一或两条）。",
+            "**仅**返回 JSON：{\"cover_prompt\":\"...\",\"composite_prompt\":\"...\"}；不要 markdown、不要解释。",
+            PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
+            "**PART_B · 2×4 分镜主表**（若 B 為分镜表）：composite_prompt 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**；**每格**：分镜主题 → 静帧 → 底部简中四列表（景别、运镜、画面内容、台词与音效）。",
+            "**PART_B · 小红书八格**：composite_prompt 须保持 **2 行×4 列** 八格可读节奏，逗號短語優先。",
+          ].join("\n"),
+        },
+        { role: "user", content: userBody },
+      ],
+    });
+
+    const choice0 = primaryResponse.choices?.[0];
+    const finishReason = choice0?.finish_reason ?? null;
+    const usage = primaryResponse.usage;
+    const contentRaw = choice0?.message?.content;
+    const rawBody = assistantMessageContentToPlainText(
+      contentRaw as string | Array<{ type?: string; text?: string }> | undefined,
+    );
+    const raw = rawBody.trim();
+
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · finish_reason=${finishReason ?? "n/a"} · content.len=${raw.length}`,
+    );
+
+    let parsed: Record<string, unknown> | null = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(extractJsonString(raw)) as Record<string, unknown>;
+      } catch (e) {
+        appendGpt54TranslationDebug(flowLog, `${a} · JSON.parse 失败 · ${formatErrForVertexDebug(e)}`);
+        parsed = null;
+      }
+    }
+
+    const coverEn = String(parsed?.cover_prompt ?? "").trim();
+    const compositeEn = String(parsed?.composite_prompt ?? "").trim();
+
+    const completionTok = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+    const promptTok = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+    emitPlatformImagePipelineStat({
+      event: "gpt54_platform_image_translate",
+      pipeline: statCtx.pipeline,
+      sheetKind: null,
+      compositeSheetAttempt: null,
+      compositeSheetMaxAttempts: null,
+      gpt54RoundOf3: attempt,
+      modelName,
+      finishReason: finishReason ?? null,
+      maxTokensConfigured: gpt54MaxOut,
+      promptCharsUpstream: coverChars + compChars,
+      promptTokens: promptTok,
+      completionTokens: completionTok,
+      tokenPressureApprox:
+        completionTok != null && gpt54MaxOut > 0 ? Math.round((completionTok / gpt54MaxOut) * 1000) / 1000 : null,
+      hasValidEnglishPrompt: coverEn.length > 0 && compositeEn.length > 0,
+      rawContentChars: raw.length,
+    });
+
+    if (!coverEn || !compositeEn) {
+      appendGpt54TranslationDebug(
+        flowLog,
+        `${a} · 无效：cover_prompt=${coverEn.length} · composite_prompt=${compositeEn.length}`,
+      );
+      return null;
+    }
+    appendGpt54TranslationDebug(
+      flowLog,
+      `${a} · 成功 · cover≈${coverEn.length} · composite≈${compositeEn.length}`,
+    );
+    return { coverEn, compositeEn };
+  };
+
+  for (let i = 0; i < 3; i++) {
+    if (i === 1) {
+      appendGpt54TranslationDebug(flowLog, "[套裝·併翻] 第 1 次无效，等待 3000ms…");
+      await new Promise((r) => setTimeout(r, 3000));
+    } else if (i === 2) {
+      appendGpt54TranslationDebug(flowLog, "[套裝·併翻] 第 2 次仍无效，等待 6000ms…");
+      await new Promise((r) => setTimeout(r, 6000));
+    }
+    const pair = await runAttempt(i + 1);
+    if (pair) return pair;
+  }
+
+  appendGpt54TranslationDebug(flowLog, "[套裝·併翻] 已 3 次仍無雙欄有效英文 · 請改串行");
+  throw new Error("套裝併翻失败：GPT 5.4 未同时返回有效 cover_prompt 与 composite_prompt");
+}
+
+/**
  * 平台 **選題單幀**：預設 **GPT 5.4**（`OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL` 可為 **gpt‑5.5**）；選 **Vertex 探索** 時先 **Flash**（{@link callVertexGeminiFlashTranslation}，三輪後同上 OpenAI 鏈）；**OpenAI 三輪殆盡後**改 **Vertex Gemini 3.1 Pro** 兜底（同源 JSON **`prompt`**，不再回呼 Flash）。
  * **選題信息流單封**之 **編導身分與規格** 見 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}，**Flash / GPT‑5.4／5.5 / 3.1 Pro 兜底 三軌同源**。
  * **分鏡主表 / 小紅書八格** 英文化見 {@link translatePlatformCompositeToEnglishPrompt}（預設 Flash→GPT，雙軌失敗拋 {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}）。
@@ -1144,6 +1303,10 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   /** 供 {@link emitPlatformImagePipelineStat}：整鏈第幾次、上限（對應 2×4 日誌「第 k/N 次尝试」） */
   compositeSheetAttempt?: number;
   compositeSheetMaxAttempts?: number;
+  /**
+   * 異步 platform job id：英文化前把中文編導 task 暫存進 Neon `jobs.output.chineseStaging`（結案時會剝除）。
+   */
+  neonProgressJobId?: string | null;
 }): Promise<string> {
   const flowLog = options.flowLog;
   const compositeStatCtx: Gpt54PlatformImagePromptStatCtx | undefined =
@@ -1183,6 +1346,18 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
     : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
   appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
+
+  logSheetChineseStagingBeforeTranslate(
+    flowLog,
+    options.kind,
+    String(options.scriptContext || "").length,
+    task.length,
+  );
+  await persistSheetChineseStagingToRunningJob(options.neonProgressJobId ?? null, {
+    compositeKind: options.kind,
+    compositeTaskZh: task,
+    scriptContextChars: String(options.scriptContext || "").length,
+  });
 
   if (isPlatformWeekendSurvivalModeEnabled()) {
     appendVertexFlashDebug(
