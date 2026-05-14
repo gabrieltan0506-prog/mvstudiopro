@@ -13,6 +13,7 @@ import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
+import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -1225,6 +1226,11 @@ function PlatformIpDimensionGuide() {
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
+
+  useEffect(() => {
+    captureSupervisorTokenFromUrl();
+  }, []);
+
   const { isAuthenticated, loading, user } = useAuth({
     autoFetch: true,
     redirectOnUnauthenticated: !supervisorAccess,
@@ -1803,6 +1809,7 @@ export default function PlatformPage() {
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
+      const supervisorToken = getSupervisorTrpcToken();
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
         topicHook: (inp.topicHook ?? "").slice(0, 500),
         format: inp.format,
@@ -1817,6 +1824,7 @@ export default function PlatformPage() {
         ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
+        ...(supervisorToken ? { supervisorToken } : {}),
       });
       setTopicImageJobPollTrace({
         jobId,

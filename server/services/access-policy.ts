@@ -10,6 +10,19 @@ export function isValidSupervisorSecret(token: string | null | undefined): boole
   return !!SUPERVISOR_SECRET && !!token && token === SUPERVISOR_SECRET;
 }
 
+/**
+ * 平台選題封面等高階管線開關：DB 角色為 admin/supervisor，或請求攜帶與 env `SUPERVISOR_SECRET` 一致的 token。
+ * 積分／免扣費仍應僅依角色等既有邏輯，不得以 token 繞過。
+ */
+export function resolvePlatformSupervisorOpsAllowed(
+  user: { role?: string | null },
+  supervisorToken: string | null | undefined,
+): boolean {
+  if (user.role === "admin" || user.role === "supervisor") return true;
+  const t = typeof supervisorToken === "string" ? supervisorToken.trim() : "";
+  return isValidSupervisorSecret(t || null);
+}
+
 function normalizeEmail(email: string | null | undefined): string {
   return (email ?? "").trim().toLowerCase();
 }

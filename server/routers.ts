@@ -26,7 +26,7 @@ import { paymentRouter } from "./routers/payment";
 import { emailAuthRouter } from "./routers/emailAuth";
 import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
-import { isValidSupervisorSecret } from "./services/access-policy";
+import { isValidSupervisorSecret, resolvePlatformSupervisorOpsAllowed } from "./services/access-policy";
 import { buildIndustryGrowthHintMap, repairTrackGrowthRows } from "./services/visualReportTrackGrowth";
 import { feedbackRouter } from "./routers/feedback";
 import { inviteApplyRouter } from "./routers/inviteApply";
@@ -3782,18 +3782,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
+          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
         const coverProEngine =
-          isAdminUser &&
+          supervisorOpsAllowed &&
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
         const enableTopicCoverDeepResearchProAdmin =
-          isAdminUser && input.enableTopicCoverDeepResearchPro === true;
+          supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
@@ -3987,18 +3990,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
+          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
         const coverProEngine =
-          isAdminUser &&
+          supervisorOpsAllowed &&
           (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
             ? ("nano_banana_2" as const)
             : undefined;
         const enableTopicCoverDeepResearchProAdmin =
-          isAdminUser && input.enableTopicCoverDeepResearchPro === true;
+          supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
