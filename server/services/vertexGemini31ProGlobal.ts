@@ -114,7 +114,7 @@ export async function callGemini31ProSystemUserForImagePrompt(
       contents: [{ role: "user", parts: [{ text: userText }] }],
       generationConfig: {
         maxOutputTokens: opts?.maxOutputTokens ?? 8192,
-        temperature: opts?.temperature ?? 0.35,
+        temperature: opts?.temperature ?? 0.9,
         topP: opts?.topP ?? 0.95,
       },
     });
@@ -133,7 +133,7 @@ export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOp
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: opts?.maxOutputTokens ?? 8192,
-        temperature: opts?.temperature ?? 0.4,
+        temperature: opts?.temperature ?? 0.9,
         topP: opts?.topP ?? 0.8,
       },
     });

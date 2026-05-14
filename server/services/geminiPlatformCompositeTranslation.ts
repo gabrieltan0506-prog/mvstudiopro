@@ -314,7 +314,7 @@ async function callVertexGemini31ProTranslationAfterGptTripleFail(
   try {
     const rawFull = await callGemini31ProSystemUserForImagePrompt(systemInstruction, userBody, {
       maxOutputTokens: 8192,
-      temperature: 0.35,
+      temperature: 0.9,
       topP: 0.95,
     });
     const raw = String(rawFull || "").trim();

@@ -8719,7 +8719,7 @@ ${input.blockText}`;
         // 调用 Gemini 3.1 Pro Preview · Vertex global（与平台编导同一管線，无需 GEMINI_API_KEY）
         try {
           const { callGemini3_1_Pro } = await import("./services/vertexGemini31ProGlobal.js");
-          const text = (await callGemini3_1_Pro(finalPrompt, { maxOutputTokens: 8192, temperature: 0.55 })).trim();
+          const text = (await callGemini3_1_Pro(finalPrompt, { maxOutputTokens: 8192, temperature: 0.9 })).trim();
           if (!text) {
             await refundCreditsOnFailure(aiAssistJobId, "aiAssistEditor", "external_api_error", "empty response").catch(() => {});
             throw new Error("AI 未返回内容");

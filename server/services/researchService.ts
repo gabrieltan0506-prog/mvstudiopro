@@ -1,8 +1,9 @@
 /**
  * 竞品调研双引擎服务
  * Stage 1：**默认 gemini-3-flash-preview** — **Vertex IAM**（与 TestLab `vertexTranslate` 同闸道：`VERTEX_PROJECT_ID` + SA，不用 `GEMINI_API_KEY`）
- * · 环境变量 **`RESEARCH_STAGE1_MODEL`** 覆盖；设为 **`gemma-4-31b-it`** 时沿用 `callGemma4`（Vertex us-central1×2 → GoogleGenerativeAI×1）
- * Stage 2：**gemini-3.1-pro-preview**（Vertex 上與 `geminiScript` 一致的真實模型 ID；不帶 `-preview` 的 `gemini-3.1-pro` 在 **aiplatform** 上常 **404**）— **Vertex IAM REST**（`callGemini3_1_Pro`），不经 GEMINI_API_KEY
+ * · 可选 **`RESEARCH_STAGE1_MODEL`** 覆盖为其它走 **Generativelanguage** 的模型 id；**`gemma-4-31b-it` 已从竞品调研移除**，若環境變數仍為該值將告警並強制回退為 Flash
+ * Stage 2：固定 **`RESEARCH_STAGE2_MODEL`（`gemini-3.1-pro-preview`）** — **Vertex IAM REST**，不经 GEMINI_API_KEY。  
+ * · **`gemini-3.1-pro`**（無 `-preview`）永不**走 Generativelanguage Consumer**，於 {@link generate} 末尾顯式拒絕（歷史上亦未使用該路由）。
  */
 import fs from "fs/promises";
 import path from "path";
@@ -13,58 +14,29 @@ import { describeVertexGemini31ProRouting } from "./vertexGemini31ProGlobal.js";
 const BACKUP_DIR = "/data/growth/research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Stage 1 模型 ID；未设时默认 Flash Preview，可改为 Gemma。 */
+/** Stage 1 模型 ID；默認 `gemini-3-flash-preview`（Vertex）。`gemma-4-31b-it` 已不再支援，見實作內告警與回退。 */
 export function resolveResearchStage1Model(): string {
   const m = String(process.env.RESEARCH_STAGE1_MODEL || "").trim();
-  return m || "gemini-3-flash-preview";
+  if (!m) return "gemini-3-flash-preview";
+  if (m === "gemma-4-31b-it") {
+    console.warn(
+      "[researchService] RESEARCH_STAGE1_MODEL=gemma-4-31b-it 已废弃；竞品调研 Stage 1 强制使用 gemini-3-flash-preview（Vertex）",
+    );
+    return "gemini-3-flash-preview";
+  }
+  return m;
 }
-
-/** Gemma Stage1 雙通道皆失敗後對使用者展示（同模型 · 不因通道切換換模型）。 */
-const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
 
 /** Stage 2：Vertex 文本節點使用的官方預覽版模型 ID（與 `api/google.ts` geminiScript、`VERTEX_GEMINI_MODEL` 預設一致）。 */
 const RESEARCH_STAGE2_MODEL = "gemini-3.1-pro-preview" as const;
 
 /**
- * 调用生成模型：
- * - **gemini-3.1-pro-preview**（推薦）與 **gemini-3.1-pro**（僅路由別名，REST 實際模型仍由 `VERTEX_GEMINI_31_PRO_MODEL` / `VERTEX_GEMINI_MODEL` 決定，預設 **`gemini-3.1-pro-preview`**）→ Vertex IAM REST
- * - gemma-4-31b-it → `callGemma4`：Vertex **`us-central1`×2**，再 **`@google/generative-ai`×1**（**`GEMINI_API_KEY`** · 同 **`GEMMA_MODEL_ID`**）；失敗抛 `RESEARCH_STAGE1_CAPACITY_MSG`
- * - **gemini-3-flash-preview**（Stage 1 默认）→ Vertex IAM REST，与 TestLab `vertexTranslate` 同源（`VERTEX_PROJECT_ID`，非 `GEMINI_API_KEY`）
- * - 其余非 Gemma、非 3.1-pro 的 model id → Google AI Studio HTTP（`GEMINI_API_KEY`）
+ * 调用生成模型（本檔內僅 Stage1/Stage2 調用；**順序依 Stage1 常用路徑排在前面**，與 Stage 編號無必然對應）：
+ * - **`gemini-3-flash-preview`**（`RESEARCH_STAGE1_MODEL` 默認或曾設 `gemma-4-31b-it` 時回退至此）→ Vertex IAM（`vertexGemini3FlashText`）
+ * - **`RESEARCH_STAGE2_MODEL`（`gemini-3.1-pro-preview`）** → Vertex（`callGemini3_1_Pro`）；**僅由 Stage 2 傳入**
+ * - 其余 model id → Generativelanguage（**禁止** `gemini-3.1-pro` / 誤配 preview 走此路；見下方擋牆）
  */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
-  if (model === "gemini-3.1-pro" || model === "gemini-3.1-pro-preview") {
-    const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
-    for (let i = 0; i <= retries; i++) {
-      try {
-        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 8192, temperature: 0.9 });
-      } catch (e: any) {
-        const msg = String(e?.message || e || "");
-        if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
-          console.log(`[researchService] Vertex 429/限流，${5 * (i + 1)}s 后重试...`);
-          await sleep(5000 * (i + 1));
-          continue;
-        }
-        throw e;
-      }
-    }
-    return "";
-  }
-
-  if (model === "gemma-4-31b-it") {
-    const { callGemma4 } = await import("./gemma4.js");
-    try {
-      const text = await callGemma4(prompt);
-      if (text.trim()) {
-        console.log(`[researchService] Gemma Stage 1 OK（Vertex us-central1×2 → GoogleGenerativeAI×1 · callGemma4）`);
-        return text;
-      }
-    } catch (e: unknown) {
-      console.error(`[researchService] Gemma Stage 1 双通道失败: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    throw new Error(RESEARCH_STAGE1_CAPACITY_MSG);
-  }
-
   if (model === "gemini-3-flash-preview") {
     const { vertexGemini3FlashGenerateContent } = await import("./vertexGemini3FlashText.js");
     for (let i = 0; i <= retries; i++) {
@@ -85,6 +57,31 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
       }
     }
     return "";
+  }
+
+  if (model === RESEARCH_STAGE2_MODEL) {
+    const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 8192, temperature: 0.9 });
+      } catch (e: any) {
+        const msg = String(e?.message || e || "");
+        if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
+          console.log(`[researchService] Vertex 429/限流，${5 * (i + 1)}s 后重试...`);
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+        throw e;
+      }
+    }
+    return "";
+  }
+
+  /** `gemini-3.1-pro` 從不應落到 Consumer API；若 `RESEARCH_STAGE1_MODEL` 誤設會在這裡擋下。 */
+  if (model === "gemini-3.1-pro") {
+    throw new Error(
+      "researchService: gemini-3.1-pro 不支持 Generativelanguage；请使用 gemini-3.1-pro-preview 并通过 Vertex（RESEARCH_STAGE2_MODEL / VERTEX_GEMINI_*）。",
+    );
   }
 
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -275,7 +272,7 @@ export async function runResearch(
     push("platform_context", "warn", "无可用热点段落（继续执行，提示词中仅含竞品正文）");
   }
 
-  // ── Stage 1：默认 Vertex Flash · 可与 RESEARCH_STAGE1_MODEL=gemma-4-31b-it 走 Gemma 双通道 ──
+  // ── Stage 1：默认 Vertex Flash（`gemma-4-31b-it` 已從本流程移除，見 resolveResearchStage1Model） ──
   const stage1Model = resolveResearchStage1Model();
   console.log(`[researchService] Stage 1 启动 (${label}) · model=${stage1Model}`);
   push("stage1_scan", "start", `调用 ${stage1Model}`);
