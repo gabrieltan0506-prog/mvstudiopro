@@ -13,6 +13,7 @@ import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
 import SampleReportDownload from "../components/SampleReportDownload";
+import WorkAmbientPanel from "../components/WorkAmbientPanel";
 
 // 以下 section 在正式版开放前暂时隐藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -33,6 +34,11 @@ export default function HomePage() {
       <HomeNoticeBar />
 
       <HomeHero />
+
+      {/* 與成長營相同：時段×天氣輪播底圖、路況（Gemini）、國內/國際新聞（無需進入成長營） */}
+      <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
+        <WorkAmbientPanel />
+      </div>
 
       {/* 试读样本 · 紧贴 Hero 正下方（黄金视觉位，让访客一滚屏就能下载） */}
       <SampleReportDownload />

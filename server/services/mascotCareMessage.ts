@@ -21,7 +21,7 @@ function safeParseCareJson(raw: string): string {
 }
 
 /**
- * 吉祥物「情绪关怀」短文案：仅走 Fly 上 tRPC（ambient.mascotCareMessage），不增加 Vercel api/*.ts 函数。
+ * 吉祥物「情绪关怀」短文案：tRPC ambient.mascotCareMessage（僅 Admin/Supervisor），不增加 Vercel api/*.ts 函数。
  * 单次 LLM、JSON 输出；无 KEY 时回退本地模板。
  */
 export async function generateMascotCareMessage(input: MascotCareMessageInput): Promise<string> {

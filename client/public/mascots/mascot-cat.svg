@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="cat mascot">
+  <defs>
+    <linearGradient id="k" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a5f3fc"/>
+      <stop offset="100%" stop-color="#64748b"/>
+    </linearGradient>
+  </defs>
+  <path d="M40 38 L32 12 L52 32 Z" fill="url(#k)" stroke="#0e7490" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M88 38 L96 12 L76 32 Z" fill="url(#k)" stroke="#0e7490" stroke-width="2" stroke-linejoin="round"/>
+  <ellipse cx="64" cy="72" rx="38" ry="34" fill="url(#k)" stroke="#0e7490" stroke-width="2"/>
+  <ellipse cx="52" cy="66" rx="6" ry="8" fill="#164e63"/>
+  <ellipse cx="76" cy="66" rx="6" ry="8" fill="#164e63"/>
+  <path d="M56 84 Q64 90 72 84" fill="none" stroke="#164e63" stroke-width="2" stroke-linecap="round"/>
+  <path d="M48 58 L56 52 M80 58 L72 52" stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity=".6"/>
+</svg>

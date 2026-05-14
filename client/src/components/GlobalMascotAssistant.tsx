@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Loader2, Shuffle } from "lucide-react";
-import { useLocation } from "wouter";
+import { ChevronDown, Shuffle } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import "./mascot-assistant.css";
@@ -17,21 +16,21 @@ export const MASCOT_OPTIONS = [
   {
     id: "cloud",
     label: "雲朵播報員",
-    src: "/mascots/mascot-cloud.png",
+    src: "/mascots/mascot-cloud.svg",
     fallbackEmoji: "☁️",
     gradient: "from-sky-300/90 to-indigo-400/90",
   },
   {
     id: "fox",
     label: "智庫狐",
-    src: "/mascots/mascot-fox.png",
+    src: "/mascots/mascot-fox.svg",
     fallbackEmoji: "🦊",
     gradient: "from-orange-300/90 to-amber-600/90",
   },
   {
     id: "cat",
     label: "數碼貓",
-    src: "/mascots/mascot-cat.png",
+    src: "/mascots/mascot-cat.svg",
     fallbackEmoji: "🐱",
     gradient: "from-cyan-300/90 to-slate-500/90",
   },
@@ -107,11 +106,15 @@ function buildFullNewsSpeech(data: NewsQueryData): string {
   return s;
 }
 
+export type GlobalMascotAssistantProps = {
+  /** embedded：嵌在環境儀表（時間／天氣）一列中間；floating 已棄用，請改用 embedded */
+  variant?: "embedded" | "floating";
+};
+
 /**
- * 全站浮層吉祥物：文本朗讀、儀表板／新聞播報、資料變化提醒、LLM 情緒關懷。
+ * 吉祥物：文本朗讀、儀表板／新聞播報、資料變化提醒。（情緒關懷生成僅後台 Admin）
  */
-export function GlobalMascotAssistant() {
-  const [locationPath] = useLocation();
+export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssistantProps) {
   const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
   const [geoAttemptDone, setGeoAttemptDone] = useState(false);
   const browserTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
@@ -212,8 +215,6 @@ export function GlobalMascotAssistant() {
       refetchOnWindowFocus: false,
     },
   );
-
-  const careMut = trpc.ambient.mascotCareMessage.useMutation();
 
   const dashboardData: MascotDashboardData | null = live.data
     ? {
@@ -384,40 +385,22 @@ export function GlobalMascotAssistant() {
     speakAndShow(buildFullNewsSpeech(newsQ.data as NewsQueryData));
   }, [newsQ.data, newsQ.isLoading, speakAndShow]);
 
-  const onAiCare = useCallback(async () => {
-    if (!dashboardData) {
-      toast.message("請先等天氣與路況載入完成，再試一次");
-      return;
-    }
-    try {
-      const message = await careMut.mutateAsync({
-        userNote: userInput.trim() || undefined,
-        currentTime: dashboardData.currentTime,
-        pagePath: locationPath || "/",
-        weather: dashboardData.weather,
-        trafficSummary: dashboardData.traffic.summary,
-        trafficAreas: dashboardData.traffic.congestedAreas,
-        newsLines: newsQ.data?.news?.slice(0, 10).map((n) => `${n.headline}（${n.source}）`),
-      });
-      speakAndShow(message.message);
-    } catch {
-      toast.error("關懷語生成失敗，請稍後再試");
-      speakAndShow("剛才有點網路小狀況，不妨深呼吸一下，我們等等再試。");
-    }
-  }, [careMut, dashboardData, locationPath, newsQ.data?.news, speakAndShow, userInput]);
-
   const shuffleMascot = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setMascotId((prev) => pickRandomMascotId(prev));
   }, []);
 
+  const isEmbedded = variant === "embedded";
+  const rootClass = isEmbedded
+    ? "pointer-events-none relative z-20 flex w-full max-w-[18rem] flex-col items-center"
+    : "pointer-events-none fixed bottom-6 right-4 z-[10050] flex w-[min(100vw-1.25rem,22rem)] flex-col items-end sm:bottom-8 sm:right-8";
+
   return (
-    <div
-      className="pointer-events-none fixed bottom-6 right-4 z-[120] flex w-[min(100vw-1.25rem,22rem)] flex-col items-end sm:bottom-8 sm:right-8"
-      aria-live="polite"
-    >
+    <div className={rootClass} aria-live="polite">
       {panelOpen ? (
-        <div className="pointer-events-auto mb-3 w-full space-y-3 rounded-2xl border border-white/20 bg-slate-950/88 p-3 shadow-2xl backdrop-blur-xl">
+        <div
+          className={`pointer-events-auto mb-3 w-full space-y-3 rounded-2xl border border-white/20 bg-slate-950/88 p-3 shadow-2xl backdrop-blur-xl ${isEmbedded ? "max-w-[min(100%,20rem)]" : ""}`}
+        >
           <div
             className={`relative rounded-[1.2rem] border border-white/20 bg-white/92 px-3.5 py-3 shadow-lg backdrop-blur-xl ${isTalking ? "ring-2 ring-cyan-400/40" : ""}`}
           >
@@ -439,7 +422,7 @@ export function GlobalMascotAssistant() {
           <textarea
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
-            placeholder="輸入想讓吉祥物朗讀的文字，或給 AI 關懷的備註…"
+            placeholder="輸入想讓吉祥物朗讀的文字…"
             rows={3}
             className="w-full resize-none rounded-xl border border-white/15 bg-black/35 px-3 py-2 text-[13px] leading-snug text-white placeholder:text-white/35 focus:border-cyan-400/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/30"
           />
@@ -465,15 +448,6 @@ export function GlobalMascotAssistant() {
               className="rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
             >
               即時新聞
-            </button>
-            <button
-              type="button"
-              onClick={() => void onAiCare()}
-              disabled={careMut.isPending}
-              className="inline-flex items-center gap-1 rounded-lg border border-violet-400/40 bg-violet-500/25 px-2.5 py-1.5 text-[12px] font-semibold text-violet-100 transition enabled:hover:bg-violet-500/35 disabled:opacity-45"
-            >
-              {careMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              AI 關懷
             </button>
           </div>
 
@@ -502,7 +476,7 @@ export function GlobalMascotAssistant() {
         <button
           type="button"
           onClick={shuffleMascot}
-          className="absolute -left-1 -top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/30 bg-slate-900/80 text-white shadow-lg backdrop-blur-md transition hover:scale-105 hover:bg-slate-800"
+          className={`absolute -top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/30 bg-slate-900/80 text-white shadow-lg backdrop-blur-md transition hover:scale-105 hover:bg-slate-800 ${isEmbedded ? "left-1/2 -translate-x-1/2" : "-left-1"}`}
           aria-label="隨機更換吉祥物"
           title={`隨機更換（目前：${mascot.label}）`}
         >
