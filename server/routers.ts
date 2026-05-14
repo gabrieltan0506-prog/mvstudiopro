@@ -4277,6 +4277,197 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return { jobId, creationId: creationIdOut ?? null, status: "queued" as const };
       }),
 
+    /**
+     * 同一選題：**豎版封面 + 2×4 分鏡或八格** 一次扣 {@link CREDIT_COSTS.platformTopicCoverAndCompositeBundle}；
+     * 異步 worker 內 **併發** `runPlatformTopicImagePipeline` 與 `generatePlatformCompositeSheetImage`（2×4 側強制跳過 DR-Pro，避免與封面鏈重複貴價 Interactions）。
+     */
+    enqueueTopicCoverAndCompositeBundle: protectedProcedure
+      .input(
+        z.object({
+          coverPersonaContext: z.string().max(4000).optional(),
+          sceneId: z.string().min(1).max(128),
+          coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
+          enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          supervisorToken: z.string().max(512).optional(),
+          compositeTitle: z.string().min(1).max(220),
+          compositeScriptContext: z.string().min(1).max(12000),
+          compositeKind: z.enum([
+            "storyboard_sheet_portrait",
+            "storyboard_sheet_landscape",
+            "xiaohongshu_dual_note",
+          ]),
+          compositeExecutionDetails: z.string().max(4000).optional(),
+          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          creationRecordId: z.number().int().positive().optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const coverProEngine =
+          supervisorOpsAllowed &&
+          (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
+            ? ("nano_banana_2" as const)
+            : undefined;
+        const enableTopicCoverDeepResearchProAdmin =
+          supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
+
+        const bundleCost = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
+        const database = await db.getDb();
+        const { userCreations } = await import("../drizzle/schema-creations");
+
+        const sid = String(input.sceneId ?? "").trim();
+        const {
+          assertOptimizedCoverInputsFromDb,
+          PlatformCoverInputsError,
+        } = await import("./services/platformStrategicBlueprintSnapshots.js");
+        let resolvedCover;
+        try {
+          resolvedCover = await assertOptimizedCoverInputsFromDb({
+            userId,
+            sceneId: sid,
+          });
+        } catch (e) {
+          if (e instanceof PlatformCoverInputsError) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.message });
+          }
+          throw e;
+        }
+        const finalTopicHook = resolvedCover.topicHook;
+        const finalFormatForPipeline = resolvedCover.format;
+        const title = String(finalTopicHook || "").trim().slice(0, 80);
+
+        let creationIdOut: number | undefined;
+        if (database) {
+          try {
+            const [newRow] = await database
+              .insert(userCreations)
+              .values({
+                userId,
+                type: PLATFORM_TOPIC_FRAME_TYPE,
+                title: title.slice(0, 255),
+                status: "pending",
+                creditsUsed: 0,
+                metadata: JSON.stringify({
+                  sceneId: sid.length > 0 ? sid : null,
+                  source: "enqueueTopicCoverAndCompositeBundle",
+                  compositeKind: input.compositeKind,
+                }),
+              })
+              .returning({ id: userCreations.id });
+            creationIdOut = newRow?.id;
+          } catch (e) {
+            console.warn("[mvAnalysis.enqueueTopicCoverAndCompositeBundle] insert pending failed:", e);
+          }
+          if (creationIdOut == null) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "创建套裝任务失败，请稍后重试",
+            });
+          }
+
+          if (!isAdminUser) {
+            const creditsInfo = await getCredits(userId);
+            if (creditsInfo.totalAvailable < bundleCost) {
+              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+              creationIdOut = undefined;
+              throw new TRPCError({
+                code: "PAYMENT_REQUIRED",
+                message: `Credits 不足，封面+分鏡套裝需要 ${bundleCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              });
+            }
+            await deductCreditsAmount(
+              userId,
+              bundleCost,
+              "platformTopicCoverAndCompositeBundle",
+              `平台选题套裝·封面+2×4（${bundleCost}点）`,
+            );
+            await database
+              .update(userCreations)
+              .set({ creditsUsed: bundleCost, updatedAt: new Date() })
+              .where(eq(userCreations.id, creationIdOut));
+          }
+        } else if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < bundleCost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，封面+分鏡套裝需要 ${bundleCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            bundleCost,
+            "platformTopicCoverAndCompositeBundle",
+            `平台选题套裝·封面+2×4（${bundleCost}点）`,
+          );
+        }
+
+        const newJobMetaBase: Record<string, unknown> = {
+          sceneId: sid.length > 0 ? sid : null,
+          source: "enqueueTopicCoverAndCompositeBundle",
+          compositeKind: input.compositeKind,
+        };
+
+        if (database && creationIdOut != null) {
+          try {
+            await database
+              .update(userCreations)
+              .set({
+                metadata: JSON.stringify(newJobMetaBase),
+                updatedAt: new Date(),
+              })
+              .where(eq(userCreations.id, creationIdOut));
+          } catch (e) {
+            console.warn("[mvAnalysis.enqueueTopicCoverAndCompositeBundle] metadata enrich failed:", e);
+          }
+        }
+
+        const { buildPlatformCoverHistoryHintFromDb, mergeCoverContextWithDbHint } = await import(
+          "./services/platformCoverHistoryHint.js",
+        );
+        const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
+        const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
+
+        let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
+          input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
+
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(userId),
+          type: "platform",
+          provider: "vertex",
+          input: {
+            action: "platform_topic_cover_composite_bundle",
+            params: {
+              bundleCreditsCharged: isAdminUser ? 0 : bundleCost,
+              creationId: creationIdOut ?? null,
+              topicHook: finalTopicHook,
+              format: finalFormatForPipeline,
+              context: enrichedContext,
+              coverPersonaContext: input.coverPersonaContext,
+              sceneId: input.sceneId,
+              appealHook: resolvedCover.appealHook,
+              imagePromptTranslator: "gpt54",
+              newJobMetaBase,
+              coverProEngine,
+              enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
+              compositeTitle: input.compositeTitle,
+              compositeScriptContext: input.compositeScriptContext,
+              compositeKind: input.compositeKind,
+              compositeExecutionDetails: input.compositeExecutionDetails,
+              compositeImagePromptTranslator: imagePromptTranslatorForComposite,
+              creationRecordId: input.creationRecordId,
+              enableCompositeDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
+            },
+          },
+        });
+
+        return { jobId, creationId: creationIdOut ?? null, status: "queued" as const };
+      }),
+
     /** 平台页：一键批量单帧——短视频分镜 {@link CREDIT_COSTS.platformTopicFrameVideo} 点/张，图文封面 {@link CREDIT_COSTS.platformTopicFrameGraphic} 点/张；主路径英文化 → GPT-IMAGE-2，失败则版式兜底。 */
     generateAllPlatformTopicImages: protectedProcedure
       .input(
