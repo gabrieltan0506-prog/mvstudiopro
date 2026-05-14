@@ -2196,6 +2196,30 @@ export const appRouter = router({
       }),
   }),
 
+  /** 時間 / 天氣 / 新聞 / 路況（混合式聚合，免登入；請適度節流） */
+  ambient: router({
+    hybridDashboard: publicProcedure
+      .input(
+        z.object({
+          timeZone: z.string().min(1).max(64).optional(),
+          weatherCity: z.string().min(1).max(120).optional(),
+          lat: z.number().gte(-90).lte(90).optional(),
+          lon: z.number().gte(-180).lte(180).optional(),
+          trafficLocation: z.string().min(1).max(200).optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const { executeHybridDashboardPipeline } = await import("./services/hybridDashboardEngine.js");
+        return executeHybridDashboardPipeline({
+          timeZone: input.timeZone,
+          weatherCity: input.weatherCity,
+          lat: input.lat,
+          lon: input.lon,
+          trafficLocation: input.trafficLocation,
+        });
+      }),
+  }),
+
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
     analyzeFrame: publicProcedure

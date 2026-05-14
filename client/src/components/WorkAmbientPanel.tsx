@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { trpc } from "@/lib/trpc";
 
 type Wx = { temp: number; code: number; label: string; lat: number; lon: number };
 
@@ -18,31 +19,15 @@ function partOfDay(hour: number): "morning" | "afternoon" | "evening" | "night" 
   return "night";
 }
 
-/** 演示用国内 / 国际简讯（接入通讯社或新闻 API 后可替换）。 */
-const DEMO_CN = [
-  "国常会部署深入实施「两重」建设，支持稳投资扩内需",
-  "多部委就平台经济常态化监管发布年度工作要点",
-  "主要城市二手房成交环比回升，市场信心逐步修复",
-  "人工智能算力基础设施专项规划公开征求意见",
-  "夏粮主产区收购进度快于常年，农情总体稳定",
-];
-
-const DEMO_INTL = [
-  "Global central banks signal data‑dependent stance on rates",
-  "Major cloud providers expand regional AI accelerator capacity",
-  "Energy markets weigh summer demand outlook against inventory builds",
-  "Cross‑border e‑commerce platforms update seller compliance toolkit",
-  "Space agencies outline next‑gen low‑orbit broadband milestones",
-];
-
 /**
- * 工作页（成长营）环境概览：天气、时间、演示级新闻与路况占位。
- * 路况/精细地址需合规地图服务密钥，此处仅提供架构与占位。
+ * 工作页（成长营）环境概览：混合式聚合（服务端）：时间、天气（OpenWeather 或 Open‑Meteo）、
+ * Google News TW RSS、路況（Gemini + 可選 googleSearch）。
  */
 export default function WorkAmbientPanel() {
   const [now, setNow] = useState(() => new Date());
-  const [wx, setWx] = useState<Wx | null>(null);
+  const [wxLocal, setWxLocal] = useState<Wx | null>(null);
   const [geoErr, setGeoErr] = useState<string | null>(null);
+  const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
 
   const pod = useMemo(() => partOfDay(now.getHours()), [now]);
 
@@ -68,12 +53,13 @@ export default function WorkAmbientPanel() {
         });
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
+        if (!cancelled) setGeo({ lat, lon });
         const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=Asia%2FShanghai`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`天气接口 ${res.status}`);
         const j = await res.json();
         if (cancelled) return;
-        setWx({
+        setWxLocal({
           lat,
           lon,
           temp: Math.round(Number(j?.current?.temperature_2m) * 10) / 10,
@@ -83,7 +69,7 @@ export default function WorkAmbientPanel() {
         setGeoErr(null);
       } catch (e: any) {
         if (!cancelled) {
-          setWx(null);
+          setWxLocal(null);
           setGeoErr(e?.message || "定位或天气不可用");
         }
       }
@@ -93,14 +79,29 @@ export default function WorkAmbientPanel() {
     };
   }, []);
 
+  const dash = trpc.ambient.hybridDashboard.useQuery(
+    {
+      timeZone: "Asia/Taipei",
+      lat: geo?.lat,
+      lon: geo?.lon,
+    },
+    {
+      staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+    },
+  );
+
   const bg =
-    wx?.label.includes("雨")
+    wxLocal?.label.includes("雨")
       ? "linear-gradient(135deg,rgba(30,58,138,0.35),rgba(15,23,42,0.92))"
       : pod === "evening"
         ? "linear-gradient(135deg,rgba(180,83,9,0.25),rgba(30,27,75,0.9))"
         : pod === "night"
           ? "linear-gradient(135deg,rgba(49,46,129,0.35),rgba(15,23,42,0.95))"
           : "linear-gradient(135deg,rgba(14,165,233,0.18),rgba(15,23,42,0.92))";
+
+  const serverWx = dash.data?.weather;
+  const showServerWx = serverWx && serverWx.source !== "unavailable";
 
   return (
     <div
@@ -111,53 +112,64 @@ export default function WorkAmbientPanel() {
         <div>
           <div className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">工作环境概览</div>
           <div className="mt-2 text-2xl font-black tracking-tight">
-            {now.toLocaleString("zh-CN", {
-              timeZone: "Asia/Shanghai",
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            {dash.data?.currentTime || now.toLocaleString("zh-CN", { timeZone: "Asia/Taipei", weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}
           </div>
-          {wx ? (
+          {showServerWx ? (
             <div className="mt-3 text-sm text-white/80">
-              当前天气：<span className="font-bold text-sky-200">{wx.label}</span> ·{" "}
-              <span className="tabular-nums">{wx.temp}°C</span>
+              天氣（{serverWx.source === "openweather" ? "OpenWeather" : "Open‑Meteo"}）：{" "}
+              <span className="font-bold text-sky-200">{serverWx.condition}</span> ·{" "}
+              <span className="tabular-nums">{serverWx.temperature}</span>
+              <span className="ml-2 text-white/55">濕度 {serverWx.humidity}</span>
+            </div>
+          ) : wxLocal ? (
+            <div className="mt-3 text-sm text-white/80">
+              定位天氣（Open‑Meteo）：<span className="font-bold text-sky-200">{wxLocal.label}</span> ·{" "}
+              <span className="tabular-nums">{wxLocal.temp}°C</span>
               <span className="ml-2 text-white/45 text-xs">
-                （{wx.lat.toFixed(2)}°, {wx.lon.toFixed(2)}°）
+                （{wxLocal.lat.toFixed(2)}°, {wxLocal.lon.toFixed(2)}°）
               </span>
             </div>
           ) : (
-            <div className="mt-3 text-sm text-white/55">{geoErr || "正在获取定位天气…"}</div>
+            <div className="mt-3 text-sm text-white/55">{geoErr || dash.isLoading ? "正在聚合環境資料…" : "天氣暫不可用"}</div>
           )}
-          <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4 text-xs leading-relaxed text-white/60">
-            <div className="font-bold text-amber-200/90">路况示意（占位）</div>
-            <p className="mt-2">
-              真实拥堵热力需接入高德 / Mapbox 等地图服务并配置密钥。当前展示版式供产品联调用；上线前请替换为签名的路况瓦片或
-              Directions API。
-            </p>
-            <div className="mt-3 grid h-28 place-items-center rounded-xl border border-dashed border-white/20 text-white/35">
-              地图轮播区 · 待密钥
-            </div>
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4 text-xs leading-relaxed text-white/75">
+            <div className="font-bold text-amber-200/90">即時路況（Gemini）</div>
+            {dash.isLoading ? (
+              <p className="mt-2 text-white/50">載入中…</p>
+            ) : dash.data?.traffic ? (
+              <>
+                <p className="mt-2">{dash.data.traffic.summary}</p>
+                {dash.data.traffic.congestedAreas.length > 0 ? (
+                  <ul className="mt-2 list-inside list-disc space-y-1 text-white/65">
+                    {dash.data.traffic.congestedAreas.map((a) => (
+                      <li key={a}>{a}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <p className="mt-2 text-white/50">暫無資料</p>
+            )}
+            {dash.isError ? <p className="mt-2 text-rose-300/90">路況載入失敗，請稍後重試</p> : null}
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-300/90">国内简讯（演示）</div>
-            <ul className="mt-2 space-y-2 text-[13px] leading-snug text-white/78">
-              {DEMO_CN.map((t) => (
-                <li key={t}>· {t}</li>
-              ))}
-            </ul>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-sky-300/90">国际简讯（演示）</div>
-            <ul className="mt-2 space-y-2 text-[13px] leading-snug text-white/78">
-              {DEMO_INTL.map((t) => (
-                <li key={t}>· {t}</li>
-              ))}
-            </ul>
+        <div className="grid gap-3 sm:grid-cols-1">
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-4 sm:col-span-1">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-300/90">台灣頭條（Google News RSS）</div>
+            {dash.isLoading ? (
+              <p className="mt-2 text-[13px] text-white/50">載入中…</p>
+            ) : dash.data?.news?.length ? (
+              <ul className="mt-2 space-y-2 text-[13px] leading-snug text-white/78">
+                {dash.data.news.map((n) => (
+                  <li key={`${n.source}-${n.headline.slice(0, 24)}`}>
+                    · <span className="text-white/85">{n.headline}</span>
+                    <span className="block pl-2 text-[11px] text-white/45">{n.source}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[13px] text-white/50">暫無新聞條目</p>
+            )}
           </div>
         </div>
       </div>
