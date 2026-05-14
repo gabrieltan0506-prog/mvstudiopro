@@ -4603,7 +4603,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           generateImageGpt2WithImagenFallback,
           generateGptImage2FromRawEnglishPrompt,
           appendImageFlowLog,
-          condenseImagePromptIfNeeded,
         } = await import("./services/proxyImageService.js");
         const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
@@ -4683,17 +4682,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               pipelineStatCtx: { pipeline: "topic_cover" },
             });
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-            appendImageFlowLog(flowLog, "[步骤1b] Prompt 智能提炼（如需）…");
             const trimmedEn = String(englishPrompt || "").trim();
             if (!trimmedEn) {
               appendImageFlowLog(flowLog, `${new Date().toISOString()}  [步骤1] 翻译结果为空，不注入模版英文`);
               throw new Error("英文 prompt 为空");
             }
-        const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, {
-          translator: imagePromptTranslator,
-          flowLog,
-        });
-            promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
+            appendImageFlowLog(
+              flowLog,
+              `[步骤1b] 已跳过「智能提炼」· 英文化原文直接进 GPT-IMAGE-2（chars=${trimmedEn.length}）`,
+            );
+            const safePrompt = trimmedEn;
+            promptStats = buildImagePromptStats(englishPrompt || "", safePrompt);
             appendImageFlowLog(
               flowLog,
               `[统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,

@@ -153,7 +153,6 @@ export async function runPlatformTopicImagePipeline(
     buildImagePromptStats,
     generateImageGpt2WithImagenFallback,
     generateGptImage2FromRawEnglishPrompt,
-    condenseImagePromptIfNeeded,
     generatePlatformTopicCoverNanoBanana2FromEnglishPrompt,
     generatePlatformTopicTypographyNanoBanana2Only,
   } = await import("./proxyImageService.js");
@@ -331,18 +330,17 @@ export async function runPlatformTopicImagePipeline(
           pipelineStatCtx: { pipeline: "topic_cover" },
         });
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-        topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1b] Prompt 智能提炼（如需）…`);
         const trimmedEn = String(englishPrompt || "").trim();
         if (!trimmedEn) {
           topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 翻译结果为空（不注入模版英文）`);
           throw new Error("英文 prompt 为空");
         }
-        const safePrompt = await condenseImagePromptIfNeeded(trimmedEn, {
-          translator: imagePromptTranslator,
-          flowLog: topicImageCondenseLog,
-        });
-        lastSafePrompt = String(safePrompt || "").trim() || null;
-        promptStats = buildImagePromptStats(englishPrompt || "", safePrompt || "");
+        topicImageCondenseLog.push(
+          `${new Date().toISOString()}  [步骤1b] 已跳过「智能提炼」· 英文化原文直接进 GPT-IMAGE-2 / NB2（chars=${trimmedEn.length}）`,
+        );
+        const safePrompt = trimmedEn;
+        lastSafePrompt = safePrompt;
+        promptStats = buildImagePromptStats(englishPrompt || "", safePrompt);
         topicImageCondenseLog.push(
           `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
         );
@@ -367,7 +365,7 @@ export async function runPlatformTopicImagePipeline(
         const msg = e instanceof Error ? e.message : String(e);
         topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1/2] 主路径异常: ${msg}`);
         if (topicImageCondenseLog.length > 0) {
-          console.warn(`[runPlatformTopicImagePipeline] condenseImagePromptIfNeeded flowLog:\n${topicImageCondenseLog.join("\n")}`);
+          console.warn(`[runPlatformTopicImagePipeline] topic image flowLog:\n${topicImageCondenseLog.join("\n")}`);
         }
         console.warn(
           `[runPlatformTopicImagePipeline] ${isGraphic ? "图文封面式" : "短视频分镜单帧"} 主路径失败:`,
