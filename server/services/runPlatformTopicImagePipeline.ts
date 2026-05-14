@@ -7,6 +7,12 @@ import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
   type PlatformImagePromptTranslator,
 } from "./geminiPlatformCompositeTranslation.js";
+import {
+  appendStagingCoverToFlowLog,
+  buildCoverChineseBlobForStaging,
+  finalizeCoverChineseStagingForTranslation,
+  persistCoverChineseStagingToRunningJob,
+} from "./platformImageChineseStaging.js";
 import { estimateCoverCtrBand } from "../../shared/platformTitleVariants.js";
 
 /** 與 repository patch 截斷一致，避免單欄位過大 */
@@ -89,6 +95,11 @@ export type RunPlatformTopicImagePipelineInput = {
    * 管理員於 Platform 頁開啟並經 tRPC/job 為 true；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：任一為真即跑步驟 0.5。
    */
   enableTopicCoverDeepResearchPro?: boolean;
+  /**
+   * 可選第二條選題（由 job `drProSecondarySceneId` 等服端填入）：啟用 DR-Pro 時跑 **雙條** Interaction（內部並行 + 失敗條可再試）；
+   * **僅當兩條均**產出有效簡報時才注入主條 DR；**任一條失敗/逾時**則**整段不注入** DR，改由主選題快照語境 + GPT 5.4（不採單條殘報）。
+   */
+  drProSecondaryCoverInputs?: { topicHook: string; context?: string };
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -136,7 +147,7 @@ export async function runPlatformTopicImagePipeline(
   } = await import("./agenticCoverWorkflow.js");
   const {
     isTopicCoverDeepResearchProEnabled,
-    runCoverDeepResearchInteractionsBrief,
+    runCoverDeepResearchBriefPreferDual,
   } = await import("./coverDeepResearchProBrief.js");
   const {
     buildImagePromptStats,
@@ -238,7 +249,28 @@ export async function runPlatformTopicImagePipeline(
           context: ctxStr,
           coverPersonaContext: coverPersona,
         });
-        const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, topicImageCondenseLog);
+        const secIn = input.drProSecondaryCoverInputs;
+        const primaryHookNorm = String(input.topicHook || "").trim();
+        const secondaryHookNorm = String(secIn?.topicHook || "").trim();
+        const drTaskSecondary =
+          secIn && secondaryHookNorm && secondaryHookNorm !== primaryHookNorm
+            ? buildCoverTaskInputFromPipeline({
+                topicHook: secIn.topicHook,
+                format: input.format,
+                context: String(secIn.context || "").trim(),
+                coverPersonaContext: coverPersona,
+              })
+            : null;
+        if (secIn && !drTaskSecondary && secondaryHookNorm) {
+          topicImageCondenseLog.push(
+            `${new Date().toISOString()}  [步骤0.5·DR-Pro] 副選題與主選題相同，略過雙條並行 · 僅單條 Interaction`,
+          );
+        }
+        const drBrief = await runCoverDeepResearchBriefPreferDual(
+          drTask,
+          drTaskSecondary,
+          topicImageCondenseLog,
+        );
         if (drBrief?.trim()) {
           const tag = "【DeepResearch Pro·优化后的简体封面生图提示词】";
           strategistChinesePrompt = strategistChinesePrompt?.trim()
@@ -265,19 +297,28 @@ export async function runPlatformTopicImagePipeline(
 
     try {
       try {
-        const contextForGemini = strategistChinesePrompt
-          ? [strategistChinesePrompt, ctxStr].filter(Boolean).join("\n\n").slice(0, 6500)
-          : (await extractChineseVisualBrief(briefSource, topicImageCondenseLog)) || briefSource.slice(0, 2000);
+        const { blob: blobForStaging, provenance: stagingProv } = await buildCoverChineseBlobForStaging({
+          strategistCombinedBlock: strategistChinesePrompt,
+          baseContextZh: ctxStr,
+          briefSource,
+          extractChineseVisualBrief,
+          flowLog: topicImageCondenseLog,
+          maxChars: 6500,
+        });
 
-        if (strategistChinesePrompt) {
-          topicImageCondenseLog.push(
-            `${new Date().toISOString()}  [语境] 企划大脑中文已注入 context=${contextForGemini.length}字（跳过主干 extractChineseVisualBrief）`,
-          );
-        }
+        const staging = finalizeCoverChineseStagingForTranslation({
+          topicHookZh: String(input.topicHook || "").trim() || title,
+          optimizedChineseBlob: blobForStaging,
+          provenance: stagingProv,
+          maxBlobChars: 6500,
+        });
+        appendStagingCoverToFlowLog(topicImageCondenseLog, staging);
+
+        void persistCoverChineseStagingToRunningJob(input.progressJobId ?? null, staging);
 
         const geminiTask = buildPlatformTopicReferenceGeminiTask({
-          topicHook: input.topicHook,
-          context: contextForGemini,
+          topicHook: staging.topicHookZh,
+          context: staging.optimizedChineseBlob,
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
         });
@@ -363,6 +404,12 @@ export async function runPlatformTopicImagePipeline(
           } else {
             topicImageCondenseLog.push(
               `${new Date().toISOString()}  [步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）`,
+            );
+            const primaryHook = String(input.topicHook || "").trim().slice(0, 72);
+            topicImageCondenseLog.push(
+              `${new Date().toISOString()}  [步骤3·契約] 版式兜底仅为**本选题**一张竖版 9:16（非整页 2×4 宽幅）；语境锚点=主选题${
+                primaryHook ? `「${primaryHook}${primaryHook.length >= 72 ? "…" : ""}」` : "（无标题）"
+              }；副选题 DR-Pro 不会并入版式 copywriting`,
             );
             imageUrl = await generateImageGpt2WithImagenFallback({
               title: title || "Content",

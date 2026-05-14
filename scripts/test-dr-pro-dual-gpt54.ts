@@ -1,6 +1,6 @@
 /**
- * 測試：Deep Research Pro **兩條**標題+文案一次 Interaction → 定界符拆兩批 → 各調一趟 **GPT‑5.4** 英文化。
- * 双条失敗（超時、解析、錨定）時會自動 **單條 fallback**（各跑一次 DR-Pro）。
+ * 測試：Deep Research Pro **兩條**各一次（或失敗條再試）→ 定界後各調一趟 **GPT‑5.4** 英文化（腳本內獨立演示）。
+ * 線上封面管線若有副選題，則 {@link runCoverDeepResearchBriefPreferDual} 要求**兩條簡報皆有效**才注入 DR，否則整段不啟用 DR。
  *
  * 運行（專案根目錄）:
  *   pnpm exec tsx scripts/test-dr-pro-dual-gpt54.ts
@@ -60,7 +60,7 @@ async function main() {
   }
 
   const flowLog: string[] = [];
-  console.log("── DR-Pro 双条（必要时单条 fallback）──\n");
+  console.log("── DR-Pro 双条 batch（腳本仍逐條試 GPT‑5.4；線上 PreferDual 須雙條皆成功才注 DR）──\n");
 
   const { results, mode } = await runCoverDeepResearchDualBatchBrief([taskA, taskB], flowLog, {
     logPrefix: "測試·DR-Pro·双条",

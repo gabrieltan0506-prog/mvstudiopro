@@ -1162,6 +1162,13 @@ export type PlatformCompositeSheetKind =
   | "storyboard_sheet_landscape"
   | "xiaohongshu_dual_note";
 
+/** 2×4 整链墙钟硬上限（默认 10min，与 platform_topic_image 一致）；`PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS` 可覆寫，至少 60000ms */
+function resolvePlatformCompositeSheetTotalTimeoutMs(): number {
+  const raw = Number(process.env.PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 60_000) return raw;
+  return 10 * 60_000;
+}
+
 /**
  * 平台页宽幅合成：**同一條** 英文生图 prompt（双语编导 → 可选提炼 → 像素锁）先走 **fal `openai/gpt-image-2`**（16:9）；
  * 失败则 **OhMyGPT** `gpt-image-2`（尺寸白名单序列）；再败走 **Vertex** Nano Banana 2，传入 **完全相同** 的 prompt。
@@ -1182,7 +1189,26 @@ export async function generatePlatformCompositeSheetImage(options: {
   forceSkipCompositeDeepResearchPro?: boolean;
   /** IP / 身份錨點，供 DR Pro tenant 與選題錨定 */
   coverPersonaContext?: string;
+  /**
+   * 異步 platform job：寫入 Neon `jobs.output.chineseStaging`（2×4 編導中文 task），結案時剝除。
+   */
+  progressJobId?: string | null;
 }): Promise<string | null> {
+  const totalMs = resolvePlatformCompositeSheetTotalTimeoutMs();
+  appendImageFlowLog(
+    options.flowLog,
+    `[2×4·时限] 整链硬上限 ${Math.round(totalMs / 60000)} 分钟（PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS 可覆寫，≥60000ms）`,
+  );
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(
+        new Error(`2×4 分镜/八格合成超时（${Math.round(totalMs / 60000)} 分钟硬上限，已终止）`),
+      );
+    }, totalMs);
+  });
+
+  const execute = async (): Promise<string | null> => {
   const L = options.flowLog;
   const k = options.kind;
   const isStoryboard = k === "storyboard_sheet_portrait" || k === "storyboard_sheet_landscape";
@@ -1245,7 +1271,10 @@ export async function generatePlatformCompositeSheetImage(options: {
         context: options.scriptContext,
         coverPersonaContext: options.coverPersonaContext ?? "",
       });
-      const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, L ?? [], { logPrefix: "步骤0.5·DR-Pro·2×4" });
+      const drBrief = await runCoverDeepResearchInteractionsBrief(drTask, L ?? [], {
+        logPrefix: "步骤0.5·DR-Pro·2×4",
+        drBriefProduct: isStoryboard ? "composite_storyboard" : "composite_xhs_note",
+      });
       if (drBrief?.trim()) {
         const tag = "【DeepResearch Pro·2×4 编导增强（简体）】";
         scriptContextForPipeline = `${String(scriptContextForPipeline).trim()}\n\n${tag}\n${drBrief.trim()}`;
@@ -1300,6 +1329,7 @@ export async function generatePlatformCompositeSheetImage(options: {
         flowLog: L,
         compositeSheetAttempt: attempt,
         compositeSheetMaxAttempts: compositeMaxAttempts,
+        neonProgressJobId: options.progressJobId,
       });
 
       if (!String(englishCore || "").trim()) {
@@ -1464,6 +1494,13 @@ export async function generatePlatformCompositeSheetImage(options: {
     lastFailure instanceof Error ? lastFailure.message : lastFailure != null ? String(lastFailure) : "unknown";
   flowLog.push(`[2×4·整链] 已达 ${compositeMaxAttempts} 次仍失败 · ${finalMsg.slice(0, 400)}`);
   throw new Error(`[2×4 宽幅合成·${compositeMaxAttempts} 次尝试均失败]\n最后原因: ${finalMsg}\n执行日志:\n${flowLog.join("\n")}`);
+  };
+
+  try {
+    return await Promise.race([execute(), timeoutPromise]);
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  }
 }
 
 /**

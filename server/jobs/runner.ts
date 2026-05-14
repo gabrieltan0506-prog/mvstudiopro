@@ -63,7 +63,7 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
   audio: 8 * 60_000,
   video: 30_000,
-  // platform：預設 12 min；platform_build_content / platform_topic_image / 套裝由 resolveJobTimeoutMs 加長
+  // platform：預設 12 min；platform_topic_image 預設 10 min；platform_build_content / 套裝由 resolveJobTimeoutMs 加長
   platform: 12 * 60_000,
   /** 与 Cloud Run pdf-worker + 跨云回传对齐；独占队列不阻塞别的任务 */
   pdf_export: 55 * 60_000,
@@ -630,7 +630,7 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       if (input.action === "platform_topic_image") {
         const raw = Number(process.env.PLATFORM_TOPIC_IMAGE_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 60_000) return raw;
-        return 15 * 60_000;
+        return 10 * 60_000;
       }
       if (input.action === "platform_topic_cover_composite_bundle") {
         const raw = Number(process.env.PLATFORM_TOPIC_COVER_COMPOSITE_BUNDLE_JOB_TIMEOUT_MS);
@@ -1112,6 +1112,26 @@ async function processPlatformJob(
           : undefined;
       const rawDrPro = (params as { enableTopicCoverDeepResearchPro?: unknown }).enableTopicCoverDeepResearchPro;
       const enableTopicCoverDeepResearchPro = rawDrPro === true;
+      const rawDrSec = (params as { drProSecondarySceneId?: unknown }).drProSecondarySceneId;
+      const drProSecondarySceneId = typeof rawDrSec === "string" ? rawDrSec.trim() : "";
+      let drProSecondaryCoverInputs: { topicHook: string; context: string } | undefined;
+      if (platformJobId) {
+        const { getDrProSecondaryStagingByJobId } = await import("../services/drProSecondaryStaging.js");
+        const frozen = await getDrProSecondaryStagingByJobId(platformJobId);
+        if (frozen && (frozen.topicHook.trim() || frozen.context.trim())) {
+          drProSecondaryCoverInputs = {
+            topicHook: frozen.topicHook.trim(),
+            context: frozen.context.trim(),
+          };
+        }
+      }
+      if (!drProSecondaryCoverInputs && drProSecondarySceneId && drProSecondarySceneId !== sceneIdRaw) {
+        const { resolveOptionalDrProSecondaryCoverFromScene } = await import("../services/coverDeepResearchProBrief.js");
+        drProSecondaryCoverInputs = await resolveOptionalDrProSecondaryCoverFromScene({
+          userId: uidNum,
+          secondarySceneId: drProSecondarySceneId,
+        });
+      }
       const result = await runPlatformTopicImagePipeline({
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1126,6 +1146,7 @@ async function processPlatformJob(
         progressJobId: platformJobId,
         coverProEngine,
         enableTopicCoverDeepResearchPro,
+        drProSecondaryCoverInputs,
       });
       return { provider: "vertex", output: result };
     }
@@ -1187,6 +1208,26 @@ async function processPlatformJob(
           : undefined;
       const rawDrPro = (params as { enableTopicCoverDeepResearchPro?: unknown }).enableTopicCoverDeepResearchPro;
       const enableTopicCoverDeepResearchPro = rawDrPro === true;
+      const rawDrSec = (params as { drProSecondarySceneId?: unknown }).drProSecondarySceneId;
+      const drProSecondarySceneId = typeof rawDrSec === "string" ? rawDrSec.trim() : "";
+      let drProSecondaryCoverInputs: { topicHook: string; context: string } | undefined;
+      if (platformJobId) {
+        const { getDrProSecondaryStagingByJobId } = await import("../services/drProSecondaryStaging.js");
+        const frozen = await getDrProSecondaryStagingByJobId(platformJobId);
+        if (frozen && (frozen.topicHook.trim() || frozen.context.trim())) {
+          drProSecondaryCoverInputs = {
+            topicHook: frozen.topicHook.trim(),
+            context: frozen.context.trim(),
+          };
+        }
+      }
+      if (!drProSecondaryCoverInputs && drProSecondarySceneId && drProSecondarySceneId !== sceneIdRaw) {
+        const { resolveOptionalDrProSecondaryCoverFromScene } = await import("../services/coverDeepResearchProBrief.js");
+        drProSecondaryCoverInputs = await resolveOptionalDrProSecondaryCoverFromScene({
+          userId: uidNum,
+          secondarySceneId: drProSecondarySceneId,
+        });
+      }
 
       const compositeKind = params.compositeKind;
       if (
@@ -1218,7 +1259,15 @@ async function processPlatformJob(
       const isTrial = await resolveWatermark(uidNum, false);
       const compositeFlowLog: string[] = [];
 
-      const [settledCover, settledSheet] = await Promise.allSettled([
+      // 套裝：封面（GPT 5.4 英文化 → 9:16）與 2×4（預設 Vertex Flash 英文化 → 16:9）**並行**。
+      // 各自內部仍為「翻譯完成再送 GPT-IMAGE-2」；總牆鐘約 max(兩路)，而非兩段相加。
+      // 舊注：曾串行以避免兩路同時塞滿載翻譯；現分轨譯者不同（5.4 vs Flash），可並行。
+      let coverResult: Awaited<ReturnType<typeof runPlatformTopicImagePipeline>> | null = null;
+      let coverErr: unknown = null;
+      let sheetUrl: string | null = null;
+      let sheetErr: unknown = null;
+
+      const [coverSettled, sheetSettled] = await Promise.allSettled([
         runPlatformTopicImagePipeline({
           topicHook,
           format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1233,6 +1282,7 @@ async function processPlatformJob(
           progressJobId: platformJobId,
           coverProEngine,
           enableTopicCoverDeepResearchPro,
+          drProSecondaryCoverInputs,
         }),
         generatePlatformCompositeSheetImage({
           kind: compositeKind,
@@ -1245,17 +1295,26 @@ async function processPlatformJob(
           enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
           forceSkipCompositeDeepResearchPro: true,
           coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
+          progressJobId: platformJobId,
         }),
       ]);
 
-      const coverResult = settledCover.status === "fulfilled" ? settledCover.value : null;
-      const sheetUrl = settledSheet.status === "fulfilled" ? settledSheet.value : null;
-      const coverErr = settledCover.status === "rejected" ? settledCover.reason : null;
-      const sheetErr = settledSheet.status === "rejected" ? settledSheet.reason : null;
+      if (coverSettled.status === "fulfilled") {
+        coverResult = coverSettled.value;
+      } else {
+        coverErr = coverSettled.reason;
+      }
+      if (sheetSettled.status === "fulfilled") {
+        sheetUrl = sheetSettled.value;
+      } else {
+        sheetErr = sheetSettled.reason;
+      }
 
       const coverUrl = String(coverResult?.imageUrl ?? coverResult?.url ?? "").trim();
       const sheetOk = String(sheetUrl ?? "").trim();
 
+      // Neon DR 副選題暫存：僅在整個 executeJob return 後由 markJobSucceeded/markJobFailed 刪除；
+      // 套裝須等下方封面與 2×4 均 settle（含失敗）才進入終態，不在單路完成時刪 staging。
       if (!coverUrl || !sheetOk) {
         if (bundleCreditsCharged > 0 && Number.isFinite(uidNum)) {
           const { refundCredits } = await import("../credits.js");
@@ -1299,7 +1358,7 @@ async function processPlatformJob(
 
       const coverLog = Array.isArray(coverResult?.imageGenFlowLog) ? coverResult!.imageGenFlowLog! : [];
       const mergedLog = [
-        `${new Date().toISOString()} [套裝] 併發完成 · sceneId=${sceneIdRaw} · compositeKind=${compositeKind}`,
+        `${new Date().toISOString()} [套裝] 封面與 2×4 並行完成 · sceneId=${sceneIdRaw} · compositeKind=${compositeKind} · 封面英文化=GPT5.4 · 2×4英文化=${imagePromptTranslator}`,
         ...coverLog,
         ...compositeFlowLog,
       ];

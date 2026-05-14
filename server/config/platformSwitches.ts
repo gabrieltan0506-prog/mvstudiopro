@@ -200,3 +200,12 @@ export function getPlatformStage2OpenaiModel(): string {
 export function getPlatformImageStorage(): PlatformImageStorageDriver {
   return resolvePlatformImageStorageDriver();
 }
+
+/**
+ * **實驗：** 套裝「封面+2×4」是否允許 **2×4 側**跑步驟 0.5 Deep Research Pro（不再強制 `forceSkipCompositeDeepResearchPro`）。
+ * 預設關；測試時設 `PLATFORM_BUNDLE_COMPOSITE_DR_PRO=1`（或 `true`/`yes`/`on`），並在監管端勾選套裝專用 DR。
+ */
+export function isPlatformBundleCompositeDrProEnabled(): boolean {
+  const v = norm(process.env.PLATFORM_BUNDLE_COMPOSITE_DR_PRO);
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
