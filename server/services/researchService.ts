@@ -2,7 +2,7 @@
  * 竞品调研双引擎服务
  * Stage 1：**默认 gemini-3-flash-preview** — **Vertex IAM**（与 TestLab `vertexTranslate` 同闸道：`VERTEX_PROJECT_ID` + SA，不用 `GEMINI_API_KEY`）
  * · 环境变量 **`RESEARCH_STAGE1_MODEL`** 覆盖；设为 **`gemma-4-31b-it`** 时沿用 `callGemma4`（Vertex us-central1×2 → GoogleGenerativeAI×1）
- * Stage 2：**gemini-3.1-pro(-preview)** — **Vertex IAM REST**（`callGemini3_1_Pro`，與 TestLab **`op=geminiScript`** / `vertexGemini3FlashText` 同源閘道），不经 GEMINI_API_KEY
+ * Stage 2：**gemini-3.1-pro-preview**（Vertex 上與 `geminiScript` 一致的真實模型 ID；不帶 `-preview` 的 `gemini-3.1-pro` 在 **aiplatform** 上常 **404**）— **Vertex IAM REST**（`callGemini3_1_Pro`），不经 GEMINI_API_KEY
  */
 import fs from "fs/promises";
 import path from "path";
@@ -22,9 +22,12 @@ export function resolveResearchStage1Model(): string {
 /** Gemma Stage1 雙通道皆失敗後對使用者展示（同模型 · 不因通道切換換模型）。 */
 const RESEARCH_STAGE1_CAPACITY_MSG = "当前算力紧张，请稍后再试。";
 
+/** Stage 2：Vertex 文本節點使用的官方預覽版模型 ID（與 `api/google.ts` geminiScript、`VERTEX_GEMINI_MODEL` 預設一致）。 */
+const RESEARCH_STAGE2_MODEL = "gemini-3.1-pro-preview" as const;
+
 /**
  * 调用生成模型：
- * - gemini-3.1-pro / gemini-3.1-pro-preview（別名）→ Vertex IAM REST（callGemini3_1_Pro，與 geminiScript 同 URL）
+ * - **gemini-3.1-pro-preview**（推薦）與 **gemini-3.1-pro**（僅路由別名，REST 實際模型仍由 `VERTEX_GEMINI_31_PRO_MODEL` / `VERTEX_GEMINI_MODEL` 決定，預設 **`gemini-3.1-pro-preview`**）→ Vertex IAM REST
  * - gemma-4-31b-it → `callGemma4`：Vertex **`us-central1`×2**，再 **`@google/generative-ai`×1**（**`GEMINI_API_KEY`** · 同 **`GEMMA_MODEL_ID`**）；失敗抛 `RESEARCH_STAGE1_CAPACITY_MSG`
  * - **gemini-3-flash-preview**（Stage 1 默认）→ Vertex IAM REST，与 TestLab `vertexTranslate` 同源（`VERTEX_PROJECT_ID`，非 `GEMINI_API_KEY`）
  * - 其余非 Gemma、非 3.1-pro 的 model id → Google AI Studio HTTP（`GEMINI_API_KEY`）
@@ -34,7 +37,7 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
     const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
     for (let i = 0; i <= retries; i++) {
       try {
-        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 8192, temperature: 0.4 });
+        return await callGemini3_1_Pro(prompt, { maxOutputTokens: 8192, temperature: 0.9 });
       } catch (e: any) {
         const msg = String(e?.message || e || "");
         if ((msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && i < retries) {
@@ -298,13 +301,13 @@ ${platformContext}
     throwResearchWithDebug(pipelineDebug, e instanceof Error ? e.message : String(e));
   }
 
-  // ── Stage 2: Gemini 3.1 Pro ─ 差异化战略处方 + 分镜场景（含平台数据） ────
-  console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
+  // ── Stage 2: Gemini 3.1 Pro Preview（Vertex aiplatform 實際 model id） ────
+  console.log(`[researchService] Stage 2 Gemini 3.1 Pro Preview 启动`);
   push("stage2_prescription", "start", `Vertex IAM REST · ${describeVertexGemini31ProRouting()}`);
   let stage2Raw: string;
   try {
     stage2Raw = await generate(
-    "gemini-3.1-pro",
+    RESEARCH_STAGE2_MODEL,
     `你是集成了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
 
 【竞品扫描报告（Stage 1）】
