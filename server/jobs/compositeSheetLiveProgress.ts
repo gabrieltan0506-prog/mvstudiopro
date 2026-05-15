@@ -19,7 +19,7 @@ export function attachCompositeSheetFlowLogLiveSync(flowLog: string[], jobId: st
         imageGenFlowLog: [...flowLog],
         compositeSheetProgress: true,
       });
-    }, 400);
+    }, 120);
   };
 
   flowLog.push = (...items: string[]) => {

@@ -43,7 +43,8 @@ function lineMatchesGpt54Layer(s: string): boolean {
   return (
     /\[GPT54|GPT54·|\[步骤1\]|\[步骤1b\]|Vertex·Flash|骨架·中文视觉|extractChineseVisualBrief|\[语境\]|调用 GPT 5\.4|GPT 5\.4（OpenAI）|\[\s*统计\s*\]\s*translated=/.test(
       s,
-    )
+    ) ||
+    /\[2×4·步骤1|2×4·步骤1b|translatePlatformComposite|\[GPT54·英文化\]|\[套裝·併翻\]/.test(s)
   );
 }
 
@@ -54,7 +55,7 @@ function lineMatchesImageGenLayer(s: string): boolean {
     /\[步骤3/.test(s) ||
     /\[GPT-IMAGE-2\]|FAL·GPT-IMAGE-2|OhMyGPT|像素锁|生图|生圖/.test(s) ||
     /Nano Banana|\bNB2\b|Vertex Nano|nbpImage|platform_topic_reference/.test(s) ||
-    /\[2×4·步骤[0-9]|宽?幅.*GPT-IMAGE|2×4.*提炼完成/.test(s)
+    /\[2×4·步骤(2|2b|3)\b|宽?幅.*GPT-IMAGE|2×4.*提炼完成/.test(s)
   );
 }
 
@@ -100,7 +101,8 @@ export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverP
         /create HTTP|正文過短|捨棄：與當前選題/.test(joinedDr) ||
         /\[步骤0\.5\] 异常/.test(joinedDr)),
     gpt54LayerActivity: gpt54AndTranslationLines.length > 0,
-    step1TranslationDone: /\[步骤1\] 完成 · 英文 prompt/.test(gpt54AndTranslationLines.join("\n")),
+    step1TranslationDone:
+      /\[步骤1\] 完成 · 英文 prompt|\[2×4·步骤1·完成\]/.test(gpt54AndTranslationLines.join("\n")),
     imageGenLayerActivity: imageGenLines.length > 0,
     imageGenSuccess: /✓ 本条结束：已得到 imageUrl|尺寸 \d+x\d+ 成功|\[GPT-IMAGE-2\].*成功/.test(joinedImg),
   };

@@ -27,7 +27,11 @@ import { emailAuthRouter } from "./routers/emailAuth";
 import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
 import { isValidSupervisorSecret, resolvePlatformSupervisorOpsAllowed } from "./services/access-policy";
-import { buildIndustryGrowthHintMap, repairTrackGrowthRows } from "./services/visualReportTrackGrowth";
+import {
+  buildIndustryGrowthHintMap,
+  reconcilePlatformHotTopicsWithGlobalTrackGrowth,
+  repairTrackGrowthRows,
+} from "./services/visualReportTrackGrowth";
 import { feedbackRouter } from "./routers/feedback";
 import { inviteApplyRouter } from "./routers/inviteApply";
 import { staticPayRouter } from "./routers/staticPay";
@@ -3684,7 +3688,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
 1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : ""}
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
-3. hotTopics：**【强制数量：5-8个】** 具体细分赛道名称（如"城市日常 vlog"），附带简短内容说明。
+3. hotTopics：**【强制数量：5-8个】** 具体细分赛道名称（如"城市日常 vlog"），附带简短内容说明。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
@@ -3802,6 +3806,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             windowDays: input.windowDays,
             platformCount: input.platforms.length,
           });
+          const repairedTrackGrowth = repairTrackGrowthRows(
+            Array.isArray(parsed.trackGrowth)
+              ? parsed.trackGrowth.map((t: any) => ({
+                  name: safeStr(t?.name || t),
+                  growth: safeStr(t?.growth || ""),
+                  isHot: Boolean(t?.isHot),
+                }))
+              : [],
+            industryGrowthHintMap,
+          );
           return {
             success: true,
             report: {
@@ -3810,16 +3824,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               insightSummary: Array.isArray(parsed.insightSummary)
                 ? parsed.insightSummary.map(normalizeInsightItem)
                 : [],
-              trackGrowth: repairTrackGrowthRows(
-                Array.isArray(parsed.trackGrowth)
-                  ? parsed.trackGrowth.map((t: any) => ({
-                      name: safeStr(t?.name || t),
-                      growth: safeStr(t?.growth || ""),
-                      isHot: Boolean(t?.isHot),
-                    }))
-                  : [],
-                industryGrowthHintMap,
-              ),
+              trackGrowth: repairedTrackGrowth,
               audiencesAndBiz: Array.isArray(parsed.audiencesAndBiz)
                 ? parsed.audiencesAndBiz.map((a: any) => ({ audience: safeStr(a?.audience || a), bizDirection: safeStr(a?.bizDirection || "") }))
                 : [],
@@ -3834,7 +3839,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                     platform: safeStr(p?.platform || ""),
                     trafficBoosters: Array.isArray(p?.trafficBoosters) ? p.trafficBoosters.map(safeStr) : [],
                     cashRewards: Array.isArray(p?.cashRewards) ? p.cashRewards.map(safeStr) : [],
-                    hotTopics: Array.isArray(p?.hotTopics) ? p.hotTopics.map(safeStr) : [],
+                    hotTopics: reconcilePlatformHotTopicsWithGlobalTrackGrowth(
+                      Array.isArray(p?.hotTopics) ? p.hotTopics.map(safeStr) : [],
+                      repairedTrackGrowth,
+                    ),
                   }))
                 : [],
             },
