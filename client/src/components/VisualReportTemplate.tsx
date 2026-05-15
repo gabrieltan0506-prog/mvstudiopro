@@ -45,10 +45,11 @@ function safeTxt(item: any): string {
   return String(item);
 }
 
-/** 解析「+72%」「增长1.5倍」「-3%」等为整数（用于条宽，增长M倍视为 +M×100）；失败返回 null */
+/** 解析「+72%」「增长1.5倍」「高热」「-3%」等为整数（用于条宽）；「高热」按 101 视为满条 */
 function parseGrowthPercentString(growth: string): number | null {
   const s = String(growth || "").trim();
   if (!s) return null;
+  if (s === "高热") return 101;
   const times = s.replace(/\s/g, "").match(/^增长(\d+(?:\.\d+)?)倍$/);
   if (times) {
     const mult = Number(times[1]);
@@ -192,28 +193,37 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               {/* Track growth */}
               {(data.trackGrowth?.length || 0) > 0 && (
                 <div style={card()}>
-                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道 · 样本热度与环比</div>
+                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道 · 样本热度增速</div>
                   {(data.trackGrowth || []).map((t, i) => {
                     const color = C[i % C.length];
                     const gStr = safeTxt(t.growth || "");
+                    const isHighHeat = gStr === "高热";
                     const parsed = parseGrowthPercentString(gStr);
                     let fillPct: number;
                     let valueTxt: string;
                     const isNeg = parsed != null && parsed < 0;
-                    if (isNeg) {
+                    if (isHighHeat) {
+                      fillPct = 100;
+                      valueTxt = "高热";
+                    } else if (isNeg) {
                       fillPct = 10;
                       valueTxt = /%/.test(gStr) ? gStr.trim() : `${parsed}%`;
                     } else if (parsed != null) {
                       const v = Math.round(parsed);
-                      const compactG = gStr.replace(/\s/g, "");
-                      const isTimesForm = /^增长\d+(\.\d+)?倍$/.test(compactG);
-                      valueTxt = isTimesForm ? gStr.trim() : `+${v}%`;
-                      fillPct = v <= 100 ? Math.max(8, v) : 100;
+                      if (v > 100) {
+                        fillPct = 100;
+                        valueTxt = "高热";
+                      } else {
+                        const compactG = gStr.replace(/\s/g, "");
+                        const isTimesForm = /^增长\d+(\.\d+)?倍$/.test(compactG);
+                        valueTxt = isTimesForm ? gStr.trim() : `+${v}%`;
+                        fillPct = Math.max(8, v);
+                      }
                     } else {
                       fillPct = 8;
                       valueTxt = gStr.trim() || "无匹配样本";
                     }
-                    const barColor = isNeg ? muted : parsed != null ? color : muted;
+                    const barColor = isNeg ? muted : parsed != null || isHighHeat ? color : muted;
                     return barRow(
                       safeTxt(t.name || t),
                       isNeg ? 10 : fillPct,

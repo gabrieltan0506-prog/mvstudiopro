@@ -3,11 +3,11 @@
  *
  * **Vertex 預設（可分模省成本）**
  * - **路況**：`gemini-3-flash-preview`（低延遲＋搜尋；可 `GEMINI_DASHBOARD_VERTEX_TRAFFIC_MODEL` 覆寫）
- * - **新聞**：`gemini-2.5-flash`（可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 覆寫）
+ * - **新聞**：`gemini-3-flash-preview`（與路況對齊，避免 2.5 在部分區域 grounding 回空；可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 覆寫）
  * - 共用兜底：`GEMINI_DASHBOARD_VERTEX_MODEL`（僅在對應專用 env 未設時代入該路）
  * - `GEMINI_DASHBOARD_USE_VERTEX=0` → 強制 Consumer **GEMINI_API_KEY**
  *
- * **Consumer 降級**：`GEMINI_DASHBOARD_TRAFFIC_MODEL`（預設 gemini-2.5-flash）、`GEMINI_DASHBOARD_NEWS_MODEL`（預設 gemini-2.5-flash，與 Vertex 新聞對齊）。
+ * **Consumer 降級**：`GEMINI_DASHBOARD_TRAFFIC_MODEL`、`GEMINI_DASHBOARD_NEWS_MODEL`（預設皆 gemini-2.5-flash；Vertex 成功時仍以上方 3 Flash Preview 為主）。
  * 兩路並行時搜尋呼叫經 **序列化鎖**。
  */
 
@@ -57,11 +57,12 @@ export interface HybridDashboardData {
 const LIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 const NEWS_CACHE_TTL_MS = 30 * 60 * 1000;
 
-/** Vertex：路況預設 3 Flash Preview；新聞預設 2.5 Flash。Consumer 降級見下。 */
+/** Vertex：路況預設 3 Flash Preview；新聞與路況對齊同款，避免部分區域／專案未開 2.5 Flash 時「路況正常、新聞整包報錯」 */
 const DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL = "gemini-3-flash-preview";
-const DEFAULT_VERTEX_DASHBOARD_NEWS_MODEL = "gemini-2.5-flash";
+/** 見 {@link DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL}；可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 單獨覆寫 */
+const DEFAULT_VERTEX_DASHBOARD_NEWS_MODEL = "gemini-3-flash-preview";
 
-/** Consumer API（AI Studio）降級；新聞預設與 Vertex 新聞同為 2.5-flash。 */
+/** Consumer API（AI Studio）降級；模型可獨立於 Vertex（預設 2.5-flash）。 */
 const DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL = "gemini-2.5-flash";
 const DEFAULT_GEMINI_DASHBOARD_NEWS_MODEL = "gemini-2.5-flash";
 
@@ -354,25 +355,46 @@ function parseGoogleNewsRssXmlToItems(
   return newsList;
 }
 
+const RSS_FETCH_HEADERS: Record<string, string> = {
+  /** Google News RSS 對無 User-Agent 的機房 IP 常回 403；偽瀏覽器可提高可用性。 */
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+};
+
 async function fetchGoogleNewsRssFeed(
   url: string,
   maxItems: number,
   tier: AmbientNewsTier,
 ): Promise<AmbientNewsItem[]> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: RSS_FETCH_HEADERS });
   if (!res.ok) throw new Error(`google_news_${res.status}`);
   const xmlText = await res.text();
   return parseGoogleNewsRssXmlToItems(xmlText, maxItems, tier);
 }
 
-/** 降級：國內提要 CN + 國際提要 US（無法做省級本地切分） */
+/** 降級：國內提要 CN + 國際提要 US（無法做省級本地切分）；單路失敗不拖垮整包 */
 async function fetchAmbientNewsRssFallbackBundle(): Promise<AmbientNewsBundle> {
   const cnUrl = "https://news.google.com/rss/headlines?hl=zh-CN&gl=CN&ceid=CN:zh-Hans";
   const intlUrl = "https://news.google.com/rss/headlines?hl=en-US&gl=US&ceid=US:en";
-  const [domestic, international] = await Promise.all([
+  const [cnRes, intlRes] = await Promise.allSettled([
     fetchGoogleNewsRssFeed(cnUrl, 5, "national"),
     fetchGoogleNewsRssFeed(intlUrl, 5, "international"),
   ]);
+  const domestic = cnRes.status === "fulfilled" ? cnRes.value : [];
+  const international = intlRes.status === "fulfilled" ? intlRes.value : [];
+  if (cnRes.status === "rejected") {
+    console.warn("[dashboardNews] RSS 國內提要失敗:", (cnRes.reason as Error)?.message ?? cnRes.reason);
+  }
+  if (intlRes.status === "rejected") {
+    console.warn("[dashboardNews] RSS 國際提要失敗:", (intlRes.reason as Error)?.message ?? intlRes.reason);
+  }
+  if (domestic.length === 0 && international.length === 0) {
+    const r1 = cnRes.status === "rejected" ? cnRes.reason : null;
+    const r2 = intlRes.status === "rejected" ? intlRes.reason : null;
+    const firstErr = r1 ?? r2 ?? new Error("rss_empty");
+    throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
+  }
   return { domestic, international };
 }
 
@@ -451,14 +473,30 @@ function trafficSearchLabelFromCoords(lat: number, lon: number): string | null {
   return `中國大陸（緯度 ${lat.toFixed(2)}°、經度 ${lon.toFixed(2)}°）附近主幹道`;
 }
 
+/** 快取版本後綴：後端修復空新聞後舊條目不應佔 30 分鐘。 */
+const NEWS_CACHE_KEY_REV = "v3";
+
 function newsBundleCacheKey(lat?: number, lon?: number): string {
-  if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return "no-geo";
-  return `${lat.toFixed(2)}_${lon.toFixed(2)}`;
+  if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return `no-geo_${NEWS_CACHE_KEY_REV}`;
+  return `${lat.toFixed(2)}_${lon.toFixed(2)}_${NEWS_CACHE_KEY_REV}`;
+}
+
+/** 從模型輸出中剝離 ```json 圍欄或前後雜訊，再取最外層 `{...}`。 */
+function extractJsonObjectForNews(raw: string): string {
+  let t = String(raw || "").trim();
+  const fence = /^```(?:json)?\s*([\s\S]*?)```/m;
+  const m = t.match(fence);
+  if (m?.[1]) t = m[1].trim();
+  const i = t.indexOf("{");
+  const j = t.lastIndexOf("}");
+  if (i >= 0 && j > i) return t.slice(i, j + 1);
+  return t;
 }
 
 function safeParseAmbientNewsBundle(raw: string): AmbientNewsBundle {
   try {
-    const o = JSON.parse(raw.trim()) as {
+    const payload = extractJsonObjectForNews(raw);
+    const o = JSON.parse(payload) as {
       domestic?: { headline?: string; source?: string; tier?: string }[];
       international?: { headline?: string; source?: string; tier?: string }[];
     };
@@ -482,10 +520,20 @@ function safeParseAmbientNewsBundle(raw: string): AmbientNewsBundle {
   }
 }
 
+const PLACEHOLDER_HEADLINE = "（暂无可核验来源）";
+
+function newsBundleHasRealItems(bundle: AmbientNewsBundle): boolean {
+  const all = [...bundle.domestic, ...bundle.international];
+  return all.some((x) => {
+    const h = String(x?.headline ?? "").trim();
+    return h.length > 0 && h !== PLACEHOLDER_HEADLINE;
+  });
+}
+
 function padNewsBundle(bundle: AmbientNewsBundle): AmbientNewsBundle {
   const fill = (arr: AmbientNewsItem[], n: number, tier: AmbientNewsTier): AmbientNewsItem[] => {
     const o = [...arr];
-    while (o.length < n) o.push({ headline: "（暂无可核验来源）", source: "—", tier });
+    while (o.length < n) o.push({ headline: PLACEHOLDER_HEADLINE, source: "—", tier });
     return o.slice(0, n);
   };
   return {
@@ -687,6 +735,19 @@ export async function executeDashboardNews(opts: DashboardNewsOpts = {}): Promis
     } catch (e2) {
       console.warn("[dashboardNews] RSS 失敗:", (e2 as Error)?.message);
       bundle = { domestic: [], international: [] };
+    }
+  }
+
+  if (!newsBundleHasRealItems(bundle)) {
+    try {
+      console.warn("[dashboardNews] Gemini／首次結果無有效新聞條目，改試 Google News RSS");
+      const rssTry = await fetchAmbientNewsRssFallbackBundle();
+      if (newsBundleHasRealItems(rssTry)) {
+        bundle = rssTry;
+        fromGemini = false;
+      }
+    } catch (e3) {
+      console.warn("[dashboardNews] RSS 補位失敗:", (e3 as Error)?.message);
     }
   }
 
