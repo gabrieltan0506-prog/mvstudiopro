@@ -210,6 +210,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   const newsQ = trpc.ambient.dashboardNews.useQuery(
     { lat: geo?.lat, lon: geo?.lon },
     {
+      enabled: geoAttemptDone,
       staleTime: 30 * 60_000,
       refetchInterval: 30 * 60_000,
       refetchOnWindowFocus: false,

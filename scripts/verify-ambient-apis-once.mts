@@ -66,11 +66,7 @@ async function main() {
   }
 
   const model =
-    String(
-      process.env.GEMINI_DASHBOARD_NEWS_MODEL ||
-        process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL ||
-        "gemini-2.5-flash",
-    ).trim() || "gemini-2.5-flash";
+    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
 
   try {
     const { GoogleGenAI } = await import("@google/genai");
