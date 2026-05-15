@@ -1,7 +1,8 @@
 /**
- * Visual report「赛道热度」：有前窗對照時為**樣本環比**（不設 999% 類人為上限；>+100% 展示「增长X倍」）；無前窗為**近窗相對熱度**（對中位桶；另有極端防禦上限）。
+ * Visual report「赛道热度」：有前窗對照時為樣本增速（>+100% 僅顯示「高热」）；前窗為 0 時用排序刻度 +12%～+98%，避免假峰值。
  */
 
+import { getShanghaiVisualReportWindows } from "../growth/time.js";
 import { normalizeStringList } from "../growth/trendNormalize";
 import type { TrendItem } from "../growth/trendCollector";
 import { inferTrendTrackBucketForVisualReport } from "../growth/trendGrowthScoring";
@@ -15,37 +16,29 @@ function itemTimeMs(item: any): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** 与 generateVisualReport 一致：无时间戳的样本归在近窗（避免全部被丢弃） */
+/** 与 generateVisualReport 一致：时间窗为 Asia/Shanghai（UTC+8）日界；无有效时间戳的样本不参与对照（避免归因错误） */
 function collectIndustryWindowCounts(
   items: any[],
-  windowDays: number,
+  bounds: {
+    currentStart: number;
+    currentEndExclusive: number;
+    priorStart: number;
+    priorEndExclusive: number;
+  },
 ): { current: Map<string, number>; prior: Map<string, number> } {
-  const wdMs = windowDays * 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  const currentStart = now - wdMs;
-  const priorStart = now - 2 * wdMs;
-  const priorEnd = currentStart;
-
   const current = new Map<string, number>();
   const prior = new Map<string, number>();
 
   for (const item of items) {
     const ms = itemTimeMs(item);
-    let useCurrent = true;
+    if (ms == null) continue;
 
-    if (ms != null) {
-      if (ms >= currentStart) {
-        useCurrent = true;
-      } else if (ms >= priorStart && ms < priorEnd) {
-        useCurrent = false;
-      } else {
-        continue;
-      }
-    }
+    let target: Map<string, number> | null = null;
+    if (ms >= bounds.currentStart && ms < bounds.currentEndExclusive) target = current;
+    else if (ms >= bounds.priorStart && ms < bounds.priorEndExclusive) target = prior;
+    else continue;
 
     const keys = collectItemLabelKeys(item);
-
-    const target = useCurrent ? current : prior;
     for (const k of keys) {
       target.set(k, (target.get(k) || 0) + 1);
     }
@@ -53,6 +46,12 @@ function collectIndustryWindowCounts(
 
   return { current, prior };
 }
+
+/** 樣本推算增速 >100% 時的唯一展示文案（不出具體百分比或倍數） */
+export const TRACK_GROWTH_HIGH_HEAT_LABEL = "高热";
+
+/** 解析排序用：將「高热」視為略高於 +100%，僅供 filter / sort */
+const HIGH_HEAT_SORT_VALUE = 101;
 
 /** 垃圾桶占位：不在此做標題/評論斷詞，避免「熱詞碎片」混入賽道 Y 軸 */
 const PLACEHOLDER_BUCKET = "其他/综合";
@@ -99,54 +98,33 @@ function collectItemLabelKeys(item: any): string[] {
   return [PLACEHOLDER_BUCKET];
 }
 
-/** 相对热度（对中位桶）上限：避免除极小中位数时出现天文数字 */
-const HEAT_PCT_CAP = 1_000_000;
-
-function medianPositive(counts: number[]): number {
-  const sorted = counts.filter((n) => n > 0).sort((a, b) => a - b);
-  if (sorted.length === 0) return 1;
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
-}
-
 function formatGrowthPct(pct: number): string {
   const rounded = Math.round(pct);
   if (rounded < 0) return `${rounded}%`;
   if (rounded === 0) return "+0%";
-  if (rounded <= 100) return `+${rounded}%`;
-  const mult = rounded / 100;
-  const multStr = Number.isInteger(mult)
-    ? String(mult)
-    : (Math.round(mult * 100) / 100).toString().replace(/\.?0+$/, "");
-  return `增长${multStr}倍`;
-}
-
-/** 前窗无样本：近窗条数 / 窗口内**中位桶**×100%（可 >100%，源自真实分桶；有上限） */
-function formatWindowHeatVsMedianPct(c: number, medianC: number): string {
-  const denom = Math.max(1, Math.round(Number(medianC) || 0));
-  const num = Math.max(0, Math.round(Number(c) || 0));
-  const heat = Math.round((100 * num) / denom);
-  const clamped = Math.max(0, Math.min(HEAT_PCT_CAP, heat));
-  return formatGrowthPct(clamped);
+  if (rounded > 100) return TRACK_GROWTH_HIGH_HEAT_LABEL;
+  return `+${rounded}%`;
 }
 
 /**
- * 由抓取样本推算展示用百分比：
- * - 前窗 p>0：**环比** (c-p)/p×100（仅下限 -99%，**不封顶**；>+100% 展示为「增长X倍」）
- * - 前窗 p=0：**近窗相对热度**，相对本期各桶条数的**中位数**（可 >100%）
+ * 由抓取样本推算展示用文案：
+ * - 前窗 p>0：增速 (c-p)/p×100；**>100% 只显示「高热」**
+ * - 前窗 p=0：多条时用 +12%～+98% 递减刻度；单条用 c/maxC 映射到约 +10%～+98%（与旧版一致）
  */
 export function buildIndustryGrowthHintMap(
   store: { collections?: Partial<Record<string, { items?: any[] }>> },
   platforms: string[],
   windowDays: number,
+  anchorMs?: number,
 ): Map<string, string> {
+  const bounds = getShanghaiVisualReportWindows(windowDays, anchorMs ?? Date.now());
   const mergedCurrent = new Map<string, number>();
   const mergedPrior = new Map<string, number>();
 
   for (const platform of platforms) {
     const col = store.collections?.[platform];
     const items: any[] = col?.items || [];
-    const { current, prior } = collectIndustryWindowCounts(items, windowDays);
+    const { current, prior } = collectIndustryWindowCounts(items, bounds);
     for (const [k, v] of Array.from(current.entries())) mergedCurrent.set(k, (mergedCurrent.get(k) || 0) + v);
     for (const [k, v] of Array.from(prior.entries())) mergedPrior.set(k, (mergedPrior.get(k) || 0) + v);
   }
@@ -165,7 +143,7 @@ export function buildIndustryGrowthHintMap(
     rows.push({ label, c, p });
   }
 
-  const medianC = medianPositive(rows.map((r) => r.c));
+  const maxC = Math.max(...rows.map((r) => r.c), 0);
 
   const hintMap = new Map<string, string>();
 
@@ -178,8 +156,19 @@ export function buildIndustryGrowthHintMap(
 
   const zeroPrior = rows.filter((r) => r.p <= 0 && r.c > 0);
   zeroPrior.sort((a, b) => b.c - a.c || a.label.localeCompare(b.label, "zh-Hans-CN"));
-  for (const { label, c } of zeroPrior) {
-    hintMap.set(label, formatWindowHeatVsMedianPct(c, medianC));
+
+  if (zeroPrior.length === 1) {
+    const { label, c } = zeroPrior[0];
+    let pct = maxC > 0 ? Math.round(10 + 88 * (c / maxC)) : 88;
+    pct = Math.max(-99, Math.min(400, pct));
+    hintMap.set(label, formatGrowthPct(pct));
+  } else if (zeroPrior.length > 1) {
+    const m = zeroPrior.length;
+    for (let i = 0; i < m; i++) {
+      const pct = Math.round(12 + 86 * ((m - 1 - i) / Math.max(m - 1, 1)));
+      const clamped = Math.max(-99, Math.min(400, pct));
+      hintMap.set(zeroPrior[i].label, formatGrowthPct(clamped));
+    }
   }
 
   return hintMap;
@@ -226,13 +215,14 @@ function bestHintForTrackName(name: string, hintMap: Map<string, string>): strin
   return bestVal;
 }
 
-/** 是否为可展示的短统计（环比或近窗相对热度百分比；禁止 N/A、漏数据说明等） */
+/** 是否为可展示的短统计（+N%、高热、旧版倍数字符串；禁止 N/A、漏数据说明等） */
 export function isValidGrowthString(g: string): boolean {
   const s = g.trim();
   if (!s) return false;
   if (/^n\/?a\b/i.test(s)) return false;
   if (/漏掉|缺失|无法计算|暂无|不明|未知|对比.*前\s*\d+|本[^\n]{0,6}数据/i.test(s)) return false;
 
+  if (s === TRACK_GROWTH_HIGH_HEAT_LABEL) return true;
   const compact = s.replace(/\s/g, "");
   if (/^增长\d+(\.\d+)?倍$/.test(compact)) return true;
   return /^[+-]?\d+(\.\d+)?%?$/.test(compact);
@@ -249,9 +239,10 @@ export function normalizeGrowthDisplay(g: string): string {
   return rounded >= 0 ? `+${rounded}%` : `${rounded}%`;
 }
 
-/** 解析趨勢排行中的百分比為帶符號整數（無效則 null） */
+/** 解析趨勢排行中的百分比為帶符號整數（無效則 null）；"高热" 固定為 101 供排序 */
 export function parseGrowthPercentToSignedInt(g: string): number | null {
   const raw = String(g || "").trim();
+  if (raw === TRACK_GROWTH_HIGH_HEAT_LABEL) return HIGH_HEAT_SORT_VALUE;
   const times = raw.replace(/\s/g, "").match(/^增长(\d+(?:\.\d+)?)倍$/);
   if (times) {
     const mult = Number(times[1]);
@@ -354,15 +345,25 @@ export function reconcilePlatformHotTopicsWithGlobalTrackGrowth(
 }
 
 /**
- * 仅以趋势库样本统计表对齐 growth：**环比**或**近窗相对热度（+N%）**。不匹配则「无匹配样本」，不采信模型自造数值。
+ * 報表展示用：>+100% 一律收斂為「高热」（兼容舊緩存「增长X倍」）。
+ * repairTrackGrowthRows 仅以趋势库样本统计表对齐；此函数再统一展示口径。
  */
+export function finalizeTrackGrowthDisplayString(growth: string): string {
+  const s = String(growth || "").trim();
+  if (!s || s === TRACK_GROWTH_NO_MATCH_LABEL) return s;
+  if (s === TRACK_GROWTH_HIGH_HEAT_LABEL) return s;
+  const n = parseGrowthPercentToSignedInt(s);
+  if (n == null) return s;
+  if (n > 100) return TRACK_GROWTH_HIGH_HEAT_LABEL;
+  return formatGrowthPct(n);
+}
+
 export function repairTrackGrowthRows(rows: TrackGrowthRow[], hintMap: Map<string, string>): TrackGrowthRow[] {
   return rows.map((row) => {
     const name = String(row.name || "").trim();
     const fromHint = name ? bestHintForTrackName(name, hintMap) : null;
-    if (fromHint) {
-      return { ...row, growth: fromHint };
-    }
-    return { ...row, growth: TRACK_GROWTH_NO_MATCH_LABEL };
+    const growth =
+      fromHint != null ? finalizeTrackGrowthDisplayString(fromHint) : TRACK_GROWTH_NO_MATCH_LABEL;
+    return { ...row, growth };
   });
 }

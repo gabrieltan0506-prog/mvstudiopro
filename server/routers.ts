@@ -130,7 +130,7 @@ import {
   growthTitleExecutionSchema,
 } from "@shared/growth";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
-import { nowShanghaiIso } from "./growth/time";
+import { formatShanghaiDateZh, getShanghaiVisualReportWindows, nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
@@ -3705,12 +3705,12 @@ export const appRouter = router({
         };
         const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");
 
-        // Build date anchor — always report on the PAST, never the future
-        const nowDate = new Date();
-        const todayStr = nowDate.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+        // Build date anchor — Asia/Shanghai（UTC+8）日曆對齊；與賽道樣本對照窗一致
+        const anchorMs = Date.now();
         const wd = Number(input.windowDays);
-        const pastDate = new Date(nowDate.getTime() - wd * 24 * 60 * 60 * 1000);
-        const pastStr = pastDate.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+        const shBounds = getShanghaiVisualReportWindows(wd, anchorMs);
+        const todayStr = formatShanghaiDateZh(anchorMs);
+        const pastStr = formatShanghaiDateZh(shBounds.currentStart);
 
         // Read store data for selected platforms (best-effort, 15s cap)
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
@@ -3723,12 +3723,12 @@ export const appRouter = router({
         const platformEvidence = input.platforms.map((platform) => {
           const col = (store.collections as any)?.[platform];
           const items: any[] = col?.items || [];
-          const windowCutoff = Date.now() - wd * 24 * 60 * 60 * 1000;
+          const windowCutoff = shBounds.currentStart;
           const windowItems = items.filter((item: any) => {
             const ts = item?.collectedAt || item?.publishedAt || item?.date || null;
             if (!ts) return true;
             const ms = new Date(String(ts)).getTime();
-            return Number.isFinite(ms) && ms >= windowCutoff;
+            return Number.isFinite(ms) && ms >= windowCutoff && ms < shBounds.currentEndExclusive;
           });
           const evidenceItems = windowItems.length > 0 ? windowItems : items.slice(0, 30);
           const hotTitles = evidenceItems.slice(0, 15).map((i: any) => i.title || i.keyword || "").filter(Boolean);
@@ -3746,7 +3746,7 @@ export const appRouter = router({
           };
         });
 
-        const industryGrowthHintMap = buildIndustryGrowthHintMap(store, input.platforms as string[], wd);
+        const industryGrowthHintMap = buildIndustryGrowthHintMap(store, input.platforms as string[], wd, anchorMs);
         const industryGrowthHintsObj = Object.fromEntries(
           Array.from(industryGrowthHintMap.entries()).sort(([a], [b]) => a.localeCompare(b, "zh-Hans-CN")),
         );
@@ -3754,11 +3754,11 @@ export const appRouter = router({
         // Fully dynamic prompt — windowDays drives all time references, no hardcoded day counts
         const totalDays = wd * 2;
         const currentDateStr = todayStr; // ISO-style date already computed above
-        const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于发现平台算法逻辑与赛道流量趋势。今天是 ${currentDateStr}。
+        const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于发现平台算法逻辑与赛道流量趋势。今天是 ${currentDateStr}（时间一律按 Asia/Shanghai 北京时间 UTC+8）。
 
 【关键时间约束 — 绝对禁止预测未来！】
-本报告分析的时间段是：${pastStr} 至 ${todayStr}（过去 ${wd} 天）。
-你将对比「近 ${wd} 天」与「前 ${wd} 天」（共 ${totalDays} 天数据）来识别赛道加速或减速信号。
+本报告分析的时间段是：${pastStr} 至 ${todayStr}（过去 ${wd} 个连续上海日，含今天；与前一同长度上海日窗口对照）。
+你将对比「近 ${wd} 天」与「前 ${wd} 天」（共 ${totalDays} 天数据，均为上海日历连续日）来识别赛道加速或减速信号。
 绝对禁止使用"将会"、"预计"等预测性语言。所有描述必须是已发生的历史事实。
 
 【真实数据矩阵】
@@ -3768,7 +3768,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 【赛道口径 — 须与历史分类对齐】
 下方「行业样本推断」JSON 的每个 **key** 来自趋势样本入库时的 **正式分类**（industryLabels / contentLabels；缺省时为与增长评分一致的规则化大类兜底），**不是**从标题或评论里切出来的热词碎片。trackGrowth[].name **必须**优先 **逐字**使用该 JSON 的某一 key；若要「主赛道 · 子切口」式合并，**建议**两段均取自该 JSON 的不同 key。**不建议**使用与表中 key 无语义包含/对应关系的碎词、纯地名或账号梗充当整条赛道名。
 
-【行业样本推断（近 ${wd} 天 vs 前 ${wd} 天）：**有前窗对照**为真实环比（可任意高，>+100% 展示「增长X倍」）；**无前窗对照**为近窗相对热度（对中位桶，有防御性上限）。热门赛道列表不得含负向样本桶。trackGrowth.growth 必须与下表一致；禁止 N/A 与长句】
+【行业样本推断（近 ${wd} 天 vs 前 ${wd} 天，Asia/Shanghai 连续日对照）：**有前窗对照**用样本量推算增速，表中 **至 +100% 写「+N%」**；**若推算超过 +100% 则该 key 对应文案必须为「高热」**，禁止写百分比或「增长X倍」。**无前窗对照**用排序刻度 +12%～+98%（见下表数值）。热门赛道列表不得含负向样本桶。trackGrowth.growth 必须与下表一致；禁止 N/A 与长句】
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
@@ -3782,7 +3782,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
   - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
   - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
-- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表一致：环比可任意高，>+100% 用「增长X倍」与表一致；无前窗时为相对**中位桶**热度（表内可能为 +N% 或「增长X倍」）。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
+- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
