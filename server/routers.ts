@@ -4672,9 +4672,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           let promptStats = {
             translatedPromptChars: 0,
             translatedPromptWords: 0,
-            condensedPromptChars: 0,
-            condensedPromptWords: 0,
-            condenseTriggered: false,
           };
           try {
             const geminiTask = buildPlatformTopicReferenceGeminiTask({
@@ -4697,13 +4694,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1b] 已跳过「智能提炼」· 英文化原文直接进 GPT-IMAGE-2（chars=${trimmedEn.length}）`,
+              `[步骤1b] 无智能提炼 · 英文化原文直接进 GPT-IMAGE-2（chars=${trimmedEn.length}）`,
             );
             const safePrompt = trimmedEn;
-            promptStats = buildImagePromptStats(englishPrompt || "", safePrompt);
+            promptStats = buildImagePromptStats(safePrompt);
             appendImageFlowLog(
               flowLog,
-              `[统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
+              `[统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
             );
             appendImageFlowLog(flowLog, "[步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…");
             url = await generateGptImage2FromRawEnglishPrompt({

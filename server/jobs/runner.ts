@@ -1293,7 +1293,6 @@ async function processPlatformJob(
           imagePromptTranslator,
           flowLog: compositeFlowLog,
           enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
-          forceSkipCompositeDeepResearchPro: true,
           coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
           progressJobId: platformJobId,
         }),
