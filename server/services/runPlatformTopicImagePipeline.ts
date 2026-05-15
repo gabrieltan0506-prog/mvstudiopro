@@ -6,6 +6,7 @@ import * as db from "../db";
 import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
   type PlatformImagePromptTranslator,
+  type PlatformTopicBatchSceneDiversity,
 } from "./geminiPlatformCompositeTranslation.js";
 import {
   appendStagingCoverToFlowLog,
@@ -99,6 +100,10 @@ export type RunPlatformTopicImagePipelineInput = {
    * **僅當兩條均**產出有效簡報時才注入主條 DR；**任一條失敗/逾時**則**整段不注入** DR，改由主選題快照語境 + GPT 5.4（不採單條殘報）。
    */
   drProSecondaryCoverInputs?: { topicHook: string; context?: string };
+  /**
+   * 批量同窗（如一鍵多選題）：**不同選題，建議採用不同場景**；傳 `slotIndex`/`slotTotal` 則注入對應軟提示（例：四個選題→四個不同場景）。
+   */
+  batchSceneDiversity?: PlatformTopicBatchSceneDiversity;
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -313,6 +318,7 @@ export async function runPlatformTopicImagePipeline(
           context: staging.optimizedChineseBlob,
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
+          batchSceneDiversity: input.batchSceneDiversity,
         });
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,

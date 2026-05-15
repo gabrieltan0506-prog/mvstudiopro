@@ -29,6 +29,7 @@ import { betaCodeRouter } from "./routers/betaCode";
 import { isValidSupervisorSecret, resolvePlatformSupervisorOpsAllowed } from "./services/access-policy";
 import {
   buildIndustryGrowthHintMap,
+  filterTrackGrowthHotOnly,
   reconcilePlatformHotTopicsWithGlobalTrackGrowth,
   repairTrackGrowthRows,
 } from "./services/visualReportTrackGrowth";
@@ -3682,7 +3683,7 @@ export const appRouter = router({
 以下是从数据库提取的各平台真实近 ${wd} 天数据快照，你必须从中提取洞察，不可凭空捏造：
 ${JSON.stringify(platformEvidence, null, 2)}
 
-【行业样本环比（近 ${wd} 天 vs 前 ${wd} 天，按采集样本 industryLabels 条数；有前窗对照用真实环比，无样本前窗则按当窗条数排序生成递减刻度；trackGrowth.growth 须与此表同向，且仅为 +12%、-5% 这类纯短格式，禁止 N/A 与长句）】
+【行业样本推断（近 ${wd} 天 vs 前 ${wd} 天）：**有前窗对照**为真实环比（可任意高，>+100% 展示「增长X倍」）；**无前窗对照**为近窗相对热度（对中位桶，有防御性上限）。热门赛道列表不得含负向样本桶。trackGrowth.growth 必须与下表一致；禁止 N/A 与长句】
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
@@ -3696,7 +3697,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
   - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
   - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
-- trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天爆款赛道增长排行；name 为具体细分赛道；growth 必须为 **纯短格式**（如 +18%、-3%），与上表 industrySampleGrowth 相近标签一致或同向，**且各条数值有别**，禁止全部为同一百分比（如全员 +125%）。**严禁**输出 N/A、严禁输出括号长句解释。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
+- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表一致：环比可任意高，>+100% 用「增长X倍」与表一致；无前窗时为相对**中位桶**热度（表内可能为 +N% 或「增长X倍」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
@@ -3704,8 +3705,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
-        /** 预设 OpenAI GPT‑5.4；若要对照旧 Gemini 链路：`VISUAL_REPORT_ENGINE=gemini` */
-        const visualReportEngineRaw = String(process.env.VISUAL_REPORT_ENGINE ?? "openai").trim().toLowerCase();
+        /** 預設 Gemini 2.5 Pro；需改回 OpenAI GPT‑5.4 時設 `VISUAL_REPORT_ENGINE=openai` */
+        const visualReportEngineRaw = String(process.env.VISUAL_REPORT_ENGINE ?? "gemini").trim().toLowerCase();
         const visualReportUsesGemini25Pro =
           visualReportEngineRaw === "gemini" ||
           visualReportEngineRaw === "gemini25" ||
@@ -3816,6 +3817,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : [],
             industryGrowthHintMap,
           );
+          const displayTrackGrowth = filterTrackGrowthHotOnly(repairedTrackGrowth);
           return {
             success: true,
             report: {
@@ -3824,7 +3826,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               insightSummary: Array.isArray(parsed.insightSummary)
                 ? parsed.insightSummary.map(normalizeInsightItem)
                 : [],
-              trackGrowth: repairedTrackGrowth,
+              trackGrowth: displayTrackGrowth,
               audiencesAndBiz: Array.isArray(parsed.audiencesAndBiz)
                 ? parsed.audiencesAndBiz.map((a: any) => ({ audience: safeStr(a?.audience || a), bizDirection: safeStr(a?.bizDirection || "") }))
                 : [],
@@ -3842,6 +3844,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                     hotTopics: reconcilePlatformHotTopicsWithGlobalTrackGrowth(
                       Array.isArray(p?.hotTopics) ? p.hotTopics.map(safeStr) : [],
                       repairedTrackGrowth,
+                      industryGrowthHintMap,
                     ),
                   }))
                 : [],
@@ -4649,7 +4652,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { buildPlatformCoverHistoryHintFromDb } = await import("./services/platformCoverHistoryHint.js");
         const batchCoverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
 
-        const results = await mapWithPool(input.scenes, pool, async (s) => {
+        const results = await mapWithPool(input.scenes, pool, async (s, idx) => {
           const opt = optimizedByScene.get(s.id)!;
           const body = opt.context;
           const briefSource = [batchCoverPersona, batchCoverHistoryHint, body].filter(Boolean).join("\n\n");
@@ -4679,6 +4682,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               context: (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000),
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
+              batchSceneDiversity:
+                input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
             });
             appendImageFlowLog(flowLog, `[步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`);
             const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {

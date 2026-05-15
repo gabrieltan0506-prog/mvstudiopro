@@ -65,7 +65,7 @@ export async function buildPlatformCoverHistoryHintFromDb(params: {
 
     const parts: string[] = [];
     parts.push(
-      `【历史竖版封面】此账号已有 ${good.length} 条成功出图。以下为近期主标题语感（供构图与字级，勿照抄全文）：`,
+      `【历史竖版封面】此账号已有 ${good.length} 条成功出图。以下为近期主标题语感（供构图与字级，不建議照抄全文）：`,
     );
     if (titles.length) {
       parts.push(titles.map((t) => (t.length > 40 ? `「${t.slice(0, 40)}…」` : `「${t}」`)).join(" "));

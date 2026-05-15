@@ -1,7 +1,8 @@
 /**
- * Visual report「赛道爆款增长率」：用 trend store 的 industryLabels 做近窗 vs 前一窗样本量环比；
- * 修补 LLM 输出的 N/A / 说明性文字，并避免「前窗为 0 时」多条行业同时顶到同一假峰值（旧版常见全为 +125%）。
+ * Visual report「赛道热度」：有前窗對照時為**樣本環比**（不設 999% 類人為上限；>+100% 展示「增长X倍」）；無前窗為**近窗相對熱度**（對中位桶；另有極端防禦上限）。
  */
+
+import { normalizeStringList } from "../growth/trendNormalize";
 
 export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean };
 
@@ -40,11 +41,7 @@ function collectIndustryWindowCounts(
       }
     }
 
-    const labels =
-      Array.isArray(item?.industryLabels) && item.industryLabels.length > 0
-        ? item.industryLabels.map((x: unknown) => String(x).trim()).filter(Boolean)
-        : [];
-    const keys = labels.length > 0 ? labels : ["其他/综合"];
+    const keys = collectItemLabelKeys(item);
 
     const target = useCurrent ? current : prior;
     for (const k of keys) {
@@ -55,18 +52,88 @@ function collectIndustryWindowCounts(
   return { current, prior };
 }
 
-function formatGrowthPct(pct: number): string {
-  const rounded = Math.round(pct);
-  if (rounded > 0) return `+${rounded}%`;
-  if (rounded < 0) return `${rounded}%`;
-  return "+0%";
+/** 標題/評論粗斷詞，供與賽道名子串匹配（不調 LLM） */
+function splitRoughPhrases(raw: string, maxParts: number): string[] {
+  const s = String(raw || "").trim();
+  if (s.length < 2) return [];
+  const parts = s
+    .split(/[/／·•、，,\|｜#＃\s\n\r\t。！？；：""''「」【】]+/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2 && x.length <= 40);
+  return parts.slice(0, Math.max(0, maxParts));
 }
 
 /**
- * 由样本条数推算行业「增长率」展示值：
- * - 前窗 p>0：真实样本环比 (c-p)/p*100
- * - 前窗 p=0 且当窗 c>0（多条）：按 **当窗样本条数 c** 降序（tie 按 label），映射为 **递减** 的 +12%～+98% 刻度，避免旧版「45+min(80,c*4)」在 c≥20 时全员 +125%
- * - 仅一条且 p=0：用 c/maxC 映射到 ~10%～98%（maxC 为全表最大当窗条数）
+ * 單條趨勢樣本對統計桶的貢獻：行業標籤為主，並補齊標籤/標題/評論高頻語義，避免僅依 industryLabels 對不上賣點賽道名。
+ */
+function collectItemLabelKeys(item: any): string[] {
+  const out: string[] = [];
+
+  for (const x of normalizeStringList(item?.industryLabels)) out.push(x);
+  for (const x of normalizeStringList(item?.contentLabels)) out.push(x);
+  for (const x of normalizeStringList(item?.ageLabels)) out.push(x);
+  for (const x of normalizeStringList(item?.tags)) out.push(x);
+
+  const title = String(item?.title ?? item?.keyword ?? "").trim();
+  for (const p of splitRoughPhrases(title, 10)) out.push(p);
+
+  const samples = Array.isArray(item?.commentSamples) ? item.commentSamples : [];
+  const sorted = [...samples].sort((a, b) => (Number(b?.likeCount) || 0) - (Number(a?.likeCount) || 0));
+  for (const c of sorted.slice(0, 4)) {
+    const txt = String(c?.text ?? "").trim().slice(0, 160);
+    for (const p of splitRoughPhrases(txt, 6)) out.push(p);
+  }
+
+  const seen = new Set<string>();
+  const dedup: string[] = [];
+  for (const k of out) {
+    const t = String(k || "").trim();
+    if (!t) continue;
+    const sig = t.replace(/\s+/g, "").toLowerCase();
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    dedup.push(t);
+  }
+
+  if (dedup.length === 0) return ["其他/综合"];
+  return dedup;
+}
+
+/** 相对热度（对中位桶）上限：避免除极小中位数时出现天文数字 */
+const HEAT_PCT_CAP = 1_000_000;
+
+function medianPositive(counts: number[]): number {
+  const sorted = counts.filter((n) => n > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return 1;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
+}
+
+function formatGrowthPct(pct: number): string {
+  const rounded = Math.round(pct);
+  if (rounded < 0) return `${rounded}%`;
+  if (rounded === 0) return "+0%";
+  if (rounded <= 100) return `+${rounded}%`;
+  const mult = rounded / 100;
+  const multStr = Number.isInteger(mult)
+    ? String(mult)
+    : (Math.round(mult * 100) / 100).toString().replace(/\.?0+$/, "");
+  return `增长${multStr}倍`;
+}
+
+/** 前窗无样本：近窗条数 / 窗口内**中位桶**×100%（可 >100%，源自真实分桶；有上限） */
+function formatWindowHeatVsMedianPct(c: number, medianC: number): string {
+  const denom = Math.max(1, Math.round(Number(medianC) || 0));
+  const num = Math.max(0, Math.round(Number(c) || 0));
+  const heat = Math.round((100 * num) / denom);
+  const clamped = Math.max(0, Math.min(HEAT_PCT_CAP, heat));
+  return formatGrowthPct(clamped);
+}
+
+/**
+ * 由抓取样本推算展示用百分比：
+ * - 前窗 p>0：**环比** (c-p)/p×100（仅下限 -99%，**不封顶**；>+100% 展示为「增长X倍」）
+ * - 前窗 p=0：**近窗相对热度**，相对本期各桶条数的**中位数**（可 >100%）
  */
 export function buildIndustryGrowthHintMap(
   store: { collections?: Partial<Record<string, { items?: any[] }>> },
@@ -98,37 +165,28 @@ export function buildIndustryGrowthHintMap(
     rows.push({ label, c, p });
   }
 
-  const maxC = Math.max(...rows.map((r) => r.c), 0);
+  const medianC = medianPositive(rows.map((r) => r.c));
 
   const hintMap = new Map<string, string>();
 
   for (const { label, c, p } of rows) {
     if (p <= 0) continue;
     let pct = Math.round(((c - p) / p) * 100);
-    pct = Math.max(-99, Math.min(400, pct));
+    pct = Math.max(-99, pct);
     hintMap.set(label, formatGrowthPct(pct));
   }
 
   const zeroPrior = rows.filter((r) => r.p <= 0 && r.c > 0);
   zeroPrior.sort((a, b) => b.c - a.c || a.label.localeCompare(b.label, "zh-Hans-CN"));
-
-  if (zeroPrior.length === 1) {
-    const { label, c } = zeroPrior[0];
-    let pct =
-      maxC > 0 ? Math.round(10 + 88 * (c / maxC)) : 88;
-    pct = Math.max(-99, Math.min(400, pct));
-    hintMap.set(label, formatGrowthPct(pct));
-  } else if (zeroPrior.length > 1) {
-    const m = zeroPrior.length;
-    for (let i = 0; i < m; i++) {
-      const pct = Math.round(12 + 86 * ((m - 1 - i) / Math.max(m - 1, 1)));
-      const clamped = Math.max(-99, Math.min(400, pct));
-      hintMap.set(zeroPrior[i].label, formatGrowthPct(clamped));
-    }
+  for (const { label, c } of zeroPrior) {
+    hintMap.set(label, formatWindowHeatVsMedianPct(c, medianC));
   }
 
   return hintMap;
 }
+
+/** 賽道名無法對應到趨勢樣本 industryLabels 時的展示文案（非百分比，不編造數字） */
+export const TRACK_GROWTH_NO_MATCH_LABEL = "无匹配样本";
 
 function normCompact(s: string): string {
   return s.replace(/\s+/g, "").toLowerCase();
@@ -168,7 +226,7 @@ function bestHintForTrackName(name: string, hintMap: Map<string, string>): strin
   return bestVal;
 }
 
-/** 是否为「可展示的」短增长率（禁止 N/A、漏数据说明等） */
+/** 是否为可展示的短统计（环比或近窗相对热度百分比；禁止 N/A、漏数据说明等） */
 export function isValidGrowthString(g: string): boolean {
   const s = g.trim();
   if (!s) return false;
@@ -176,6 +234,7 @@ export function isValidGrowthString(g: string): boolean {
   if (/漏掉|缺失|无法计算|暂无|不明|未知|对比.*前\s*\d+|本[^\n]{0,6}数据/i.test(s)) return false;
 
   const compact = s.replace(/\s/g, "");
+  if (/^增长\d+(\.\d+)?倍$/.test(compact)) return true;
   return /^[+-]?\d+(\.\d+)?%?$/.test(compact);
 }
 
@@ -192,7 +251,13 @@ export function normalizeGrowthDisplay(g: string): string {
 
 /** 解析趨勢排行中的百分比為帶符號整數（無效則 null） */
 export function parseGrowthPercentToSignedInt(g: string): number | null {
-  const s = normalizeGrowthDisplay(String(g || "").trim());
+  const raw = String(g || "").trim();
+  const times = raw.replace(/\s/g, "").match(/^增长(\d+(?:\.\d+)?)倍$/);
+  if (times) {
+    const mult = Number(times[1]);
+    if (Number.isFinite(mult)) return Math.round(mult * 100);
+  }
+  const s = normalizeGrowthDisplay(raw);
   const compact = s.replace(/\s/g, "").replace(/%$/g, "");
   const m = compact.match(/^([+-]?)(\d+)$/);
   if (!m) return null;
@@ -216,25 +281,49 @@ function trackLabelOverlapsNegative(a: string, negCompact: string): boolean {
   return false;
 }
 
+function passesHotTopicSampleHint(name: string, hintMap?: Map<string, string>): boolean {
+  if (!hintMap || hintMap.size === 0) return true;
+  const hintVal = bestHintForTrackName(name.trim(), hintMap);
+  if (!hintVal) return true;
+  const g = parseGrowthPercentToSignedInt(hintVal);
+  return g == null || g >= 0;
+}
+
 /**
- * 各平台「熱門賽道」不得與**全局** trackGrowth 中已標示為**負增長**的賽道語義重合（常見於快手樣本與 LLM 幻覺同時把萎縮賽道當熱點）。
+ * 全局「熱門賽道」展示：僅保留樣本統計為非負增長/熱度的列（剔除負增長與無匹配）。
+ */
+export function filterTrackGrowthHotOnly(rows: TrackGrowthRow[]): TrackGrowthRow[] {
+  return rows
+    .map((row) => ({
+      row,
+      g: parseGrowthPercentToSignedInt(String(row.growth || "").trim()),
+    }))
+    .filter((x) => x.g != null && x.g >= 0)
+    .sort((a, b) => (b.g ?? 0) - (a.g ?? 0))
+    .map((x) => x.row);
+}
+
+/**
+ * 各平台「熱門賽道」不得與**全局** trackGrowth 中已標示為**負增長**的賽道語義重合；
+ * 若提供 hintMap，另按樣本統計剔除名稱命中的**負向**桶。
  * 若過濾後條目過少，從全局正增長排行補齊。
  */
 export function reconcilePlatformHotTopicsWithGlobalTrackGrowth(
   hotTopicsRaw: string[],
   globalTrackGrowth: TrackGrowthRow[],
+  hintMap?: Map<string, string>,
 ): string[] {
+  const base = hotTopicsRaw
+    .map((raw) => String(raw || "").trim())
+    .filter((t) => t.length > 0 && passesHotTopicSampleHint(t, hintMap));
+
   const negatives = globalTrackGrowth
     .map((r) => ({ name: String(r.name || "").trim(), growth: parseGrowthPercentToSignedInt(String(r.growth || "")) }))
     .filter((r) => r.name && r.growth != null && r.growth < 0);
-  if (negatives.length === 0) return hotTopicsRaw.filter(Boolean);
+  if (negatives.length === 0) return base.slice(0, 12);
 
   const negCompacts = negatives.map((r) => normCompact(r.name)).filter((s) => s.length >= 2);
-  const filtered = hotTopicsRaw.filter((raw) => {
-    const t = String(raw || "").trim();
-    if (!t) return false;
-    return !negCompacts.some((nc) => trackLabelOverlapsNegative(t, nc));
-  });
+  const filtered = base.filter((t) => !negCompacts.some((nc) => trackLabelOverlapsNegative(t, nc)));
 
   if (filtered.length >= 3) return filtered.slice(0, 12);
 
@@ -251,7 +340,7 @@ export function reconcilePlatformHotTopicsWithGlobalTrackGrowth(
     merged.push(p.name);
     seen.add(nc);
   }
-  for (const h of hotTopicsRaw) {
+  for (const h of base) {
     if (merged.length >= 8) break;
     const t = String(h || "").trim();
     if (!t) continue;
@@ -264,43 +353,16 @@ export function reconcilePlatformHotTopicsWithGlobalTrackGrowth(
   return merged.slice(0, 12);
 }
 
-function rankFallbackGrowth(index: number, total: number): string {
-  const denom = Math.max(total - 1, 1);
-  const pct = Math.round(Math.max(24, Math.min(96, 88 - (index * 64) / denom)));
-  return `+${pct}%`;
-}
-
+/**
+ * 仅以趋势库样本统计表对齐 growth：**环比**或**近窗相对热度（+N%）**。不匹配则「无匹配样本」，不采信模型自造数值。
+ */
 export function repairTrackGrowthRows(rows: TrackGrowthRow[], hintMap: Map<string, string>): TrackGrowthRow[] {
-  const n = rows.length;
-  const firstPass = rows.map((row, i) => {
-    const raw = String(row.growth || "").trim();
-    if (isValidGrowthString(raw)) {
-      return { ...row, growth: normalizeGrowthDisplay(raw) };
-    }
-    const fromHint = bestHintForTrackName(String(row.name || ""), hintMap);
+  return rows.map((row) => {
+    const name = String(row.name || "").trim();
+    const fromHint = name ? bestHintForTrackName(name, hintMap) : null;
     if (fromHint) {
       return { ...row, growth: fromHint };
     }
-    return { ...row, growth: rankFallbackGrowth(i, n) };
+    return { ...row, growth: TRACK_GROWTH_NO_MATCH_LABEL };
   });
-
-  if (n <= 1) return firstPass;
-
-  const growths = firstPass.map((r) => r.growth);
-  const allSame = growths.every((g) => g === growths[0]);
-
-  if (!allSame) return firstPass;
-
-  let second = firstPass.map((row, i) => {
-    const fromHint = bestHintForTrackName(String(row.name || ""), hintMap);
-    if (fromHint) {
-      return { ...row, growth: fromHint };
-    }
-    return { ...row, growth: rankFallbackGrowth(i, n) };
-  });
-
-  const g2 = second.map((r) => r.growth);
-  if (new Set(g2).size === g2.length) return second;
-
-  return second.map((row, i) => ({ ...row, growth: rankFallbackGrowth(i, n) }));
 }

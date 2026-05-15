@@ -39,7 +39,7 @@ function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): vo
   flowLog.push(`${platformFlowLogTimestamp()}  [Vertex·Flash] ${line}`);
 }
 
-/** OpenAI GPT 5.4 英文化專用，與 imageGenFlowLog 同源（勿與 Vertex 混淆）。 */
+/** OpenAI GPT 5.4 英文化專用，與 imageGenFlowLog 同源（不建議與 Vertex 混淆）。 */
 function appendGpt54TranslationDebug(flowLog: string[] | undefined, line: string): void {
   if (!flowLog) return;
   flowLog.push(`${platformFlowLogTimestamp()}  [GPT54·英文化] ${line}`);
@@ -294,9 +294,9 @@ export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORIT
  * 選題 **信息流單張 9:16 封面**：歷史上曾嵌入總 system；現僅用於 **composite** 全量規則。單封改走 {@link GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN} + 輕量 JSON 語句。
  */
 export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
-  "**選題信息流單張豎封（9:16·單主視覺／抖音·小紅書式封面縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**。",
-  "**當 upstream task 屬選題封面（對應本常數所指產品）時必達：** （1）**photoreal editorial / 高端广告静拍級**質感；（2）**motivated lighting**—主光來向可信，寫清 **key / fill / rim** 層次與受控陰影，**禁止**平光貼字、廉價泛光；（3）**rich set dressing**—前景／中景／後景分层，用具象道具／手勢／環境服務 Hook；（4）可选 **语义象形小图标 / badge / pill + 简体中文辅标**（字級次级，**不得**压主標）；（5）**dominant hue + razor accent** 撞色、主標與背板對比強；（6）整体 **conceptually vivid**，缩略图上可见 **好奇心鉤 / visual curiosity**（非標題欺诈）；（7）**禁止** bland stock 臉譜封面、单列画布內多分镜纵条／2×4 宽幅主表。",
-  "**三軌勿偏航：** 不論 **Vertex Gemini 3 Flash**、**OpenAI**（`modelName` 常見 **gpt‑5.4**、可覆寫 **gpt‑5.5**）、或 GPT 盡後 **Vertex Gemini 3 Flash Preview 兜底**，上列身份與版式規格 **須完整遵守、不得因模型不同而弱化**。",
+  "**選題信息流單張豎封（9:16·單主視覺／信息流縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**；**格數、橫豎、單封 vs 網格以任務原文為準，不建議擅自改軌。**",
+  "**豎封軟邊界（圖標層必達；其餘可為題材讓路）：** （1）**質感**：傾向 **photoreal editorial / 廣告静拍** 向，光型盡量可信（可寫 key / fill / rim），**宜避免**習慣性平光貼字、糊成一片的泛光；（2）**場景（多元化·與文案一致）**：**建議**封面場景與正文語境**同步多元化**；**室內與戶外**遇題材均可作**參考場景**，**不建議**長期默認、過度單一集中在書房、書桌、滿牆書架、閱讀角、**或**咖啡廳**固定為伏案讀書**的單一套路，或**典型客廳、沙發電視牆等「居家日記」式內景**。可優先採用與 Hook 相稱的場域（**戶外／半戶外**：**旅遊景點**、街景、交通、自然、天臺、體育場、市集、活動外場等；**室內／生活與公共空間**：**商場**、**超市**、**咖啡廳**（日常消費／社交場景，**非**僅限讀書佈景）、**博物館**、展覽館、醫院診間、實驗室、展廳、工地／廠房、健身房、演播／舞台後台、公共大廳、棚拍色片／抽象置景、微縮置景等—**僅為示例，包括但不限於**，**並非只有書房或客廳**）。前景／中景／後景可分层，用具象道具、手勢、環境**呼應** Hook；**僅當**正文**明確**以讀書、書房、圖書或**明確**以特定居家客廳叙事為核心時再主導該類場景；（3）**圖標編輯層（必達·豎封不得省略）**：畫內**必須**有 **2～4 個** 與 Hook、主題與正文關鍵訊息**強語義對齊**的**極簡線稿小圖標**（可有表現力與動勢，**生動**呼應內容，忌千篇一律的通用符號堆砌）；各配 **短簡中輔標**（約 4–8 字），可橫向輕帶、左下／中下浮動簇或與中景主體形成**視覺呼應**；**從屬**主標、**不得**遮擋主標與安全宣讀區、**不得**做成密集成步驟教程或整版資訊圖；（4）**版式與衝擊力**：整體**排版美觀**（主從、留白、層級、對齊），主標與背板 **對比強**，光影／色面在縮略圖尺度須具 **高吸引力與視覺衝擊力**（以可執行光色構圖達成，非標題詐騙）；（5）**敘事鉤**：縮略圖尺度**宜**能看出視覺或敘事鉤子；（6）**版式習慣**：**宜避免**過度模板化 bland stock 臉譜占滿、豎畫布硬塞多分鏡縱條、或把豎封寫成 **2×4 寬幅主表**—**除非**任務明確要網格或筆記版。",
+  "**三軌一致性：** **Vertex Gemini 3 Flash**、**OpenAI**（`modelName` 常見 **gpt‑5.4**、可 **gpt‑5.5**）、**Gemini 3 Flash Preview 兜底** 共用上列**意圖**；輸出措辭可不同，但**不建議**擅自把明確的單封任務收成多分鏡整表、或把明確的網格任務收成單張滿幅（以任務標籤為准）。",
 ].join("\n");
 
 /**
@@ -312,20 +312,21 @@ export function platformImageTranslationVertexJsonSystemInstruction(
       GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
       "你是頂級中英雙語編導，也是頂級視覺提示詞導演；英文聲口須與上段莎士比亞式編導身份一致（可長可短，以忠實還原為準）。",
       "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
-      "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面時避免寫成多格分鏡，除非任務明確要求。",
-      "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
+      "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不建議使用 markdown、不建議附加解釋。",
+      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**選題豎封**：英文 `prompt` **必須**寫明 GPT-IMAGE-2 繪製 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標、**不得整張僅大字而無圖標層**。",
+      "若上游封面/科普正文未出現食物，**可不必**以廚房、食譜表、食材格為主場景。",
+      "**場景多元化：** 英文 prompt 須與文案場景**同步多元化**；**室內、戶外**皆可作參考，**不建議**無正文依據時過度集中在書房、書桌、書架牆、閱讀角、咖啡廳**僅讀書套路**或**典型客廳、沙發電視牆**；優先寫出與 Hook／題材匹配的**具體場所**（**例如包括但不限於**：旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、公共／工業／醫療室內、棚拍抽象景等）。",
     ].join("\n");
   }
   return [
     PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
-    "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不得壓過可執行版式。",
+    "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不建議壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
     PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
-    "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不要 markdown、不要解釋。",
-    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面則偏單一主視覺，避免寫成多格分鏡，除非任務明確要求。",
-    "若上游封面/科普正文未出現食物，不必畫食譜、廚房、食材表。",
+    "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不建議使用 markdown、不建議附加解釋。",
+    "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多格分鏡，除非任務明確要求。",
+    "若上游封面/科普正文未出現食物，**可不必**以廚房、食譜表、食材格為主場景。",
   ].join("\n");
 }
 
@@ -356,7 +357,7 @@ async function callVertexGeminiFlashTranslationAfterGptTripleFail(
   });
 }
 
-/** 小红书 **多页** 图文笔记：**2×4 八格**；產品上≠視頻分鏡——**不要**用製片/DPP 式「情緒·燈光·景別·機位」欄位來組稿。 */
+/** 小红书 **多页** 图文笔记：**2×4 八格**；產品上≠視頻分鏡——**不建議**用製片/DPP 式「情緒·燈光·景別·機位」欄位來組稿。 */
 export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×4 eight-panel GRAPHIC NOTES** (图文笔记拼圖 / viral note sheet) into **one** English block optimized for **GPT-Image-2** (execution-first layout: grid, gutters, per-cell hierarchy). Chinese script is **reference**—do not sacrifice grid legibility for literary paraphrase. Prefer **comma-separated tags and short noun phrases**; **do not** trim the English prompt too aggressively—when the translator goes longer, eight cells breathe and feel **less crowded**; prefer fidelity and clear per-cell beats over brevity.
 
 LAYOUT: strict **2 rows × 4 columns**, **eight** equal cells, row-major (top L→R, then bottom L→R). **Not** a lone hero, **not** 2×2-only.
@@ -399,10 +400,10 @@ TAG:STORYBOARD_2X4_SHEET
 
 【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape · GPT-Image-2 優先）】
 1. Output **one** English block **for GPT-Image-2 execution**；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious；必要時用編號句寫清頂欄比例、格線、gutter。**No character limit**—use enough English to lock all eight beats and the table schema。中文劇本僅作參考。
-2. **全表顶栏（仅此一处「上方主题」）：** 画布最上 **~8–12%** 为**通栏横条**，主信息为 **内容总结**（全片/全案梗概或本段剧情提要）；可并排或次行出现「· 分镜脚本」等定式后缀。**勿**将各格的分镜标题写进顶栏。**Do not** place the first row of panels flush against the top edge.
+2. **全表顶栏（仅此一处「上方主题」）：** 画布最上 **~8–12%** 为**通栏横条**，主信息为 **内容总结**（全片/全案梗概或本段剧情提要）；可并排或次行出现「· 分镜脚本」等定式后缀。**不建議**将各格的分镜标题写进顶栏。**Do not** place the first row of panels flush against the top edge.
 3. **栅格：** 顶栏之下 **整整 8 格**，**2 行 × 4 列**，刚性格线与格间直 gutter、顺扫 row1 左→右再 row2；masterpiece、8k，每格主画面为写实电影感分镜静帧。
 4. **每一格自上而下：** (A) **格内顶：** **分镜主题描述**（仅本格一句醒目简中主题）；(B) **格内中：** 该分镜主画面（上区约 **70–75%**，除表格外纯影像）；(C) **格内底 ~25–30%：** 简中**四栏参考表**，表头固定为 **景别**、**运镜**、**画面内容**、**台词与音效**，四柱均有正文；可细网格；表内须为**简体中文**。**Do not** leave panels wholly wordless in the table band.
-5. **版式约束：** 禁止整画布单张满幅顶掉八格、无顶栏、或仅四宫格笔记版——本任务为 **八格主表**；若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，亦偏离产品主表意图；其余景别与光影可充分发挥。
+5. **版式约束：** 不建議整画布单张满幅顶掉八格、无顶栏、或仅四宫格笔记版——本任务为 **八格主表**；若丢失「顶栏内容总结」、或八格被收成单张满幅/少格，亦偏离产品主表意图；其余景别与光影可充分发挥。
 6. **审美偏好（软提示，非强制）：** 整表**可倾向**统一的高级 editorial / 片场物料气质；底部说明区（**景别／运镜／画面内容／台词与音效** 等）**宜**与主静帧色调相衔接——例如浅衬、纸感、半透明分隔、柔和反差——**尽量避免习惯性做成**整段刺眼的「纯黑底 + 高亮白字」字幕条来堆技术说明（**除非**题材刻意要走极简信息图）。若与构图或可读冲突，以可读与整体协调为先。
 `.trim();
 
@@ -410,11 +411,12 @@ TAG:STORYBOARD_2X4_SHEET
 const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【英文生图输出 / OUTPUT — platform topic **single-frame 9:16 feed cover**】
 1. Output **one** English block for GPT-IMAGE-2.**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
-2. LAYOUT: **9:16 portrait**, single full-bleed hero, one dominant subject—avoid looking like 16:9 landscape or a multi-panel sheet unless the task explicitly asks.
-3. Prefer a **single** strong cover beat; avoid storyboard grids, 2×4 strips, numbered panels when this task is one cover image.
-4. SUBJECT: align with Hook + Context; skip unrelated generic stock tropes.
-5. Optional: **theme-aligned** micro line-icons, badges, pills, or short **Simplified-Chinese** supporting lines—always subordinate to the hero headline.
-6. Include masterpiece, 8k; state Simplified-Chinese headline / on-image copy needs when the brief requires 简中.
+2. LAYOUT: **prefer 9:16 portrait**, single full-bleed hero, one dominant subject—**lean away from** accidental 16:9 or multi-panel reads **unless** the task explicitly asks.
+3. **Composition habit:** a **single** strong cover beat usually fits this product better than storyboard grids, 2×4 strips, or numbered panels—**unless** the brief specifies panels.
+4. SUBJECT & SET: align Hook + Context (**cover staging should diversify with the copy**); **reduce** unrelated generic stock tropes. **Staging diversity:** **indoor and outdoor** are both acceptable references—avoid **over-focusing** on study / office-library clichés **or** repetitive **living-room / sofa–TV** interiors unless the Context demands them; prioritize **specific** environments that **sell the hook** (urban exterior, transit, landscape, clinic/lab/industrial interior, arena, market, studio color-field set, diorama, etc.).
+5. **MANDATORY editorial icon layer:** **2–4** **minimal line-art micro-icons** (thin but **expressive** stroke) that **specifically echo** the hook, theme, and concrete beats from the Context—not generic clip-art. Each icon pairs with a **short Simplified-Chinese** 辅标 (~4–8 chars). Arrange as **compact horizontal band** or **floating cluster** (lower-third or mid-left), **subordinate** yet **clearly legible** at thumbnail scale; optional **thin rule** / frosted strip. **Do not** omit this layer; **do not** let icons collide with or overpower the hero headline; **do not** turn the canvas into a dense step-by-step tutorial sheet.
+6. **Layout & impact:** specify **polished composition** (hierarchy, breathing room, alignment) plus **bold feed-stopping contrast** (motivated light, dominant hue + razor accent, depth) for **high visual attraction and punch**— honest staging, not clickbait typography tricks.
+7. Include masterpiece, 8k; state Simplified-Chinese headline / on-image copy needs when the brief requires 简中.
 `.trim();
 
 export function stripGeminiModelOutput(raw: string): string {
@@ -451,11 +453,12 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "你是一位像莎士比亚剧场里锤炼台词那样锤炼画面的双语视觉编导：精通语言的节奏与意象，读中文时像读诗一样抓住「最省字、最有画面」的那几笔。",
           "只做一步：从输入里抽出中文「视觉骨架」，不做英文翻译。",
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
-          "若输入宽幅 2×4 **电影分镜主表**剧本：骨架里区分——**全文内容总结**（适合放在整表顶栏的一句汇总）与各格 **分镜主题**（每格一句）及可填入 **景别/运镜/画面内容/台词与音效** 的要点，勿把各格主题误并入「顶栏总结」混写。",
-          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并可留下 **適合做小圖示/角標/badge 的具象關鍵詞**（与主题强相关）；供下游写出高细节封面而不会只剩抽象形容词。",
-          "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），勿砍光。",
+          "若输入宽幅 2×4 **电影分镜主表**剧本：骨架里区分——**全文内容总结**（适合放在整表顶栏的一句汇总）与各格 **分镜主题**（每格一句）及可填入 **景别/运镜/画面内容/台词与音效** 的要点，不建議把各格主题误并入「顶栏总结」混写。",
+          "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并**务必**留下 **2～4 个可入画的具象图标题材**（与 Hook、正文关键词**一一对应**，供下游**必出**线稿小图标+简中辅标，忌泛泛符号）。",
+          "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），不建議删光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
-          "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 勿为空。",
+          "場景提煉：**建議**封面與文案場景多元化；**室內、戶外**皆可入骨架。**不建議**無依據時把畫面過窄在書房、書桌、滿架書本或**反覆客廳、沙發區**；可保留與題材吻合的**具體場所詞**（**例如包括但不限於**旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、工業／醫療／公共室內等）。",
+          "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 不建議留空。",
         ].join("\n"),
       },
       {
@@ -575,12 +578,53 @@ MANDATORY RULES:
 `.trim();
 }
 
+/**
+ * 同一批次多條選題各自出豎封時：**不同選題，建議採用不同場景**；例如 batch 為四時即**四個選題、四個不同場景**。
+ * 見 {@link buildPlatformTopicBatchSceneSoftHintBlock}、{@link buildPlatformTopicReferenceGeminiTask}`batchSceneDiversity`。
+ */
+export type PlatformTopicBatchSceneDiversity = {
+  /** 批次內 0-based 序號（第 1 條 → 0） */
+  slotIndex: number;
+  /** 批次總條數；&lt; 2 時不注入軟提示 */
+  slotTotal: number;
+};
+
+const BATCH_SCENE_AXIS_HINTS_ZH: readonly string[] = [
+  "旅遊景點、戶外自然、城市街景與交通節點（**戶外／半戶外**軸）",
+  "商場、超市、市集與零售空間（**消費／市集**軸）",
+  "博物館、展覽館、文化展廳與展陳空間（**文博**軸）",
+  "咖啡廳、輕餐社交、交通樞紐大廳、車站／機場公共區、酒店大堂等（**公共社交／交通**軸）",
+];
+
+/**
+ * 插入 Gemini 參考任務：**不同選題，建議採用不同場景**；批次內第 k 條附一條**示例軸**供落地（第五條起對四取模）。
+ * `slotTotal &lt; 2` 時回傳空字串。
+ */
+export function buildPlatformTopicBatchSceneSoftHintBlock(h: PlatformTopicBatchSceneDiversity): string {
+  const total = Math.floor(Number(h.slotTotal));
+  const idx = Math.floor(Number(h.slotIndex));
+  if (!Number.isFinite(total) || total < 2) return "";
+  const safeIdx = Number.isFinite(idx) && idx >= 0 ? idx : 0;
+  const axis = BATCH_SCENE_AXIS_HINTS_ZH[safeIdx % BATCH_SCENE_AXIS_HINTS_ZH.length];
+  const k = safeIdx + 1;
+  const fourTopicsLine =
+    total === 4
+      ? "**目前為四個選題，即四個不同場景（四張封面各一景）；勿四張同源套路。**"
+      : `**本批共 ${total} 條選題，建議 ${total} 張封面各採可區分的場景，勿多張雷同佈景。**`;
+  return (
+    `【同一批次·場景軟性建議與要求】**原則**：**不同選題，建議採用不同場景**，與正文語境對齊並**互相錯開**書房／書桌／反覆客廳等單調套路。${fourTopicsLine}` +
+    `本條為批次中 **第 ${k} / ${total} 條**。**建議**主場景可優先參考「${axis}」作為與他條區隔的起手方向；生活場所舉例**包括但不限於**旅遊景點、商場、超市、咖啡廳、博物館等，實際仍須服務本條 Hook／正文。**硬性讓位**：若正文**明確**指定場所，**以正文為準**。`
+  );
+}
+
 /** 平台選題單幀：`graphic`＝图文竖封；`video`＝短影音 **單張** 9:16 封面（非横版 2×4）。宽幅 2×4 见 {@link buildVideoStoryboardGeminiPrompt} / {@link buildXhsNoteGeminiPrompt}。 */
 export function buildPlatformTopicReferenceGeminiTask(input: {
   topicHook: string;
   context: string;
   variant: "video" | "graphic";
   coverPersonaContext?: string;
+  /** 批量多選題：傳入則注入「不同選題，建議採用不同場景」軟提示（如四個選題→四個不同場景） */
+  batchSceneDiversity?: PlatformTopicBatchSceneDiversity;
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 500);
   const ctx = String(input.context || "").trim().slice(0, SCRIPT_SLICE);
@@ -588,40 +632,35 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   const personaBlock =
     personaRaw.length > 0
       ? `
-【单帧出镜 · 身份锚定】（英文 tags 须体现可视觉化身份与场景档次；须服务 **情绪、文化语境与人文关怀**，可用隐喻与具象符号，但避免空泛堆砌；封面单帧适用）
+【单帧出镜 · 身份锚定】（英文 tags 须体现可视觉化身份与场景档次；**場景可多元**，**室內與戶外**皆可，不默認書房書桌或反覆客廳；须服务 **情绪、文化语境与人文关怀**，可用隐喻与具象符号，但避免空泛堆砌；封面单帧适用）
 ${personaRaw}
 
 `.trim() + "\n\n"
       : "";
+  const batchSceneBlock = input.batchSceneDiversity
+    ? buildPlatformTopicBatchSceneSoftHintBlock(input.batchSceneDiversity)
+    : "";
   const isVideo = input.variant === "video";
   const coverDesignOnly = `
-COVER DESIGN ONLY:
-- **9:16 portrait mandatory** — never 16:9 landscape, never square 1:1 as the outer frame; one tall vertical cover only.
-- vertical 9:16
-- single-image cover
-- single dominant hero subject
-- premium editorial portrait or scene
-- strong focal point
-- not multi-panel storyboard
-- not dual-card layout
-- not Xiaohongshu note
-- not checklist
-- not bullet list
-- not account UI
-- not comment bar
-- The image must behave like a high-click cover, not an image-text note.
-- **Thumbnail-first layout:** reserve the **upper ~35–45%** as a safe zone for **large, ultra-legible Simplified-Chinese** hero type summarizing the hook; **strong luminance contrast** (light-on-deep or inverse); one dominant subject; avoid tiny caption-only compositions that die at feed thumbnail size.
-- FORBIDDEN LAYOUTS (even if trendy): storyboard grids, 2×4 panels, eight-panel montage, numbered scene strips, comic gutters, film contact-sheet layout, "救赎/逆袭" generic businessman arcs unrelated to the medical hook.
-- ANTI-HALLUCINATION: The scene MUST match the themes of the hook 「${hook}」and Context (e.g. medicine, doctor persona, study, books, journal props, landscape art, wellness). If an identity anchor block appears above, the on-camera subject, wardrobe, props, and environment tier MUST align with it. Unless the hook or Context clearly names food, cooking, recipes, ingredients, or specific dishes, DO NOT show: kitchens, recipe infographics, ingredient grids, cooking steps, noodle bowls, restaurant plating, or dual-column recipe lesson layouts.
-- Optional **theme icons / badges / pills** and short **Simplified-Chinese** secondary lines—always visually subordinate to the hero headline.
-- main title based on 「${hook}」
+COVER DESIGN — **soft boundaries** (if the brief explicitly specifies aspect, panels, or tropes, **follow the brief**), **except the icon layer below is NON-OPTIONAL for feed covers**:
+- **Aspect & frame:** **prefer** **9:16 portrait**, one tall hero; **lean away from** slipping into 16:9 or 1:1 **unless** the task asks.
+- **Hero:** one dominant subject and a clear focal story usually read better on feeds than a busy sheet.
+- **Set diversity (anti-cliché):** **Cover and copy** in Context should **stay in sync**—stage **diversified** environments. **Do not** over-use study / home office / library wall / reading nook / café study OR **default living-room / sofa–TV wall** when the Context does not require it. **Indoor and outdoor** are both valid references—**rotate** between them as fits the hook (streets, transit, nature, rooftops, clinics, labs, factories, venues, gyms, public halls, bold studio sets, etc.)—only lean book- or living-room–heavy when the brief clearly says so.
+- **Layout habits:** multi-panel storyboard, dual-card note, or Xiaohongshu **image–text note** grammar is easy to over-default—**use only if** the brief asks. Avoid letting the **dominant** read be a dense step checklist or app **comment wall**; keep the hero title primary.
+- **MANDATORY — icon editorial band:** Always direct **2–4** **minimal line-art** icons + **short Simplified-Chinese** 辅标. Each icon must **vividly match** concrete ideas, metaphors, or props from the hook 「${hook}」**and** the Context—not decorative clutter. Cluster as a **compact band** or **floating group** (e.g. lower-third / mid-left), **subordinate** to the hero headline but **readable at thumbnail scale**; **do not** omit; **do not** let icons overpower the headline.
+- **Visual impact:** Push for **beautiful layout** (balance, alignment, negative space) and **high feed-stopping contrast**—motivated light, bold hue vs accent, cinematic depth—so the cover feels **premium and magnetic** without misleading clickbait.
+- **Chrome:** account UI and comment bars often distract—**prefer** a clean editorial frame **unless** the concept needs them.
+- **Thumbnail legibility:** the **upper ~35–45%** is often a good band for **large, legible Simplified-Chinese** hook type with comfortable contrast; all-caption-minimal layouts can disappear small—**prefer** more air when unsure.
+- **Trend defaults:** storyboard grids, 2×4, eight-up montage, numbered strips, comic gutters, film contact-sheet motifs, or generic **救赎/逆袭** business arcs—**prefer to avoid** them **unless** the hook or brief genuinely calls for them.
+- **Grounding:** stay close to the hook 「${hook}」, Context, and any identity anchor—wardrobe, props, and environment in the same tier. If food/cooking is **not** named in hook or Context, **prefer not** to **lead** with kitchens, recipe charts, ingredient grids, cooking steps, noodle bowls, restaurant plating, or lesson-style recipe columns—**unless** you have a clear narrative reason.
+- Main title based on 「${hook}」
 `.trim();
   return (
     `
-${personaBlock}${
+${personaBlock}${batchSceneBlock ? `${batchSceneBlock}\n\n` : ""}${
   isVideo
-    ? "You are a bilingual cover design director for **vertical 9:16 single-frame** short-video **feed thumbnails**—one tall hero cover with emotional and humanistic staging; not a landscape 2×4 master sheet."
-    : "You are a bilingual cover design director who specializes in premium single-image vertical covers with strong click appeal and high-end visual impact (this task is cover-only, not Xiaohongshu dual-card image-text notes)."
+    ? "You are a bilingual cover design director for **vertical 9:16 single-frame** short-video **feed covers**—one tall hero with emotional, humanistic staging; **prefer** not mixing in landscape **2×4 master-sheet** grammar **unless** the task asks."
+    : "You are a bilingual cover design director for **single-image vertical covers** with editorial clarity (this task is **cover-first**; **prefer** not defaulting to Xiaohongshu **dual-card note** grammar **unless** the brief asks)."
 }
 
 ${isVideo
@@ -865,10 +904,12 @@ export async function callGemini3_1_Pro_AiStudio(
           GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
           "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
           "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
-          "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求。",
+          "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不建議擅自改格数或把单封面写成多格，除非任务明确要求。",
           "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
-          "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
-          "若上游是封面/科普而正文未出现食物，就不必画食谱、厨房、食材表。",
+          "**選題豎封必達：** 英文 prompt **必須**寫明畫內 **2～4 個** 線稿小圖標 + 各 **短簡中輔標**，圖標須**生動對齊** Hook 與正文要點；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；**不得**僅有大字或略去圖標層。",
+          "**場景：** **建議**封面與文案場景多元化；**室內、戶外**皆可作參考。**不建議**無正文依據時過度集中在書房、書桌、書架牆或**典型客廳、沙發電視牆**；英文須寫出與 Hook 匹配的**具體場所或置景**（街景自然、公共／醫療／工業室內、棚拍色片等）。",
+          "请返回合法 JSON：{\"prompt\":\"...\"}；不建議附加解釋、不建議使用 markdown。",
+          "若上游是封面/科普而正文未出现食物，**可不必**以廚房、食譜表、食材格為主場景。",
         ].join("\n")
       : [
           PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
@@ -876,12 +917,12 @@ export async function callGemini3_1_Pro_AiStudio(
           "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
           "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；**宽幅網格／分鏡**之身分與版式規格必須與 Vertex（Gemini **3 Flash**）及 GPT 盡後 **Gemini 3 Flash Preview 兜底** **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
           PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
-          "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不要**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
+          "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不建議**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
           "**分镜主表审美（软提示，非硬性）：** 可在英文中**顺带**写清整表气质统一；底部四栏说明区**宜**与画面融合（浅衬、纸感、柔和分隔等），**减少**习惯性「纯黑底 + 刺目白字」的技术说明条的观感——**若**与可读或剧情冲突则不必坚持。",
-          "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不要擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
+          "版式轨道（2×2、2×4、9:16 单封面等）须与上游一致，不建議擅自改格数或把单封面写成多格，除非任务明确要求；若有更生动的等价表达且不改变格数/竖横意图，可自行发挥。",
           "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
           "**莎剧式文采**仅在版面与光学已写死后可少量点缀。",
-          "请返回合法 JSON：{\"prompt\":\"...\"}；不要解释、不要 markdown。",
+          "请返回合法 JSON：{\"prompt\":\"...\"}；不建議附加解釋、不建議使用 markdown。",
         ].join("\n");
 
   const runGpt54 = async (
@@ -1089,7 +1130,7 @@ export async function callGemini3_1_Pro_AiStudio(
 
 /**
  * **套裝 job**：同一選題下 **一次** OpenAI JSON 產出 **豎版封面** + **2×4 橫幅** 兩條英文生圖 prompt。
- * 語義是「一組圖、兩張輸出」，**禁止**把兩則無關選題合併；與已移除的「雙條 DR-Pro」不同。
+ * 語義是「一組圖、兩張輸出」，**不建議**把兩則無關選題合併；與已移除的「雙條 DR-Pro」不同。
  * 僅走 GPT 5.4（與封面單幀路徑一致）；失敗由調用方改 **串行**兩次英文化。
  */
 export async function translateBundleCoverAndCompositeEnglishPair(options: {
@@ -1112,7 +1153,7 @@ export async function translateBundleCoverAndCompositeEnglishPair(options: {
     Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 16_384),
   );
 
-  const userBody = `同一選題、兩個生圖交付物（不要當成兩則無關選題）。
+  const userBody = `同一選題、兩個生圖交付物（不建議當成兩則無關選題）。
 
 === PART_A — 9:16 豎版封面（GPT-IMAGE-2 單主視覺）===
 ${options.coverTranslationTask}
@@ -1146,11 +1187,11 @@ ${options.compositeTranslationTask}
             PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
             GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
             "你是双语视觉编导：上游 **PART_A + PART_B** 描述 **同一套** 內容企劃的兩個像素交付物（豎封面 + 橫幅整表），**不是**兩個獨立選題。",
-            "把 PART_A 收成 **cover_prompt**：只服務 **9:16** 單幀封面；口吻與 **選題單封** 一致——優先忠實還原 brief、tags／名詞組、篇幅不限，可融入情緒與文化／人文語境；**勿**把 PART_B 的 **2×4 網格硬性 checklist** 或分鏡表條款硬套進單封。",
+            "把 PART_A 收成 **cover_prompt**：只服務 **9:16** 單幀封面；口吻與 **選題單封** 一致——優先忠實還原 brief、tags／名詞組、篇幅不限，可融入情緒與文化／人文語境；**不建議**把 PART_B 的 **2×4 網格硬性 checklist** 或分鏡表條款硬套進單封。",
             "把 PART_B 收成 **composite_prompt**：只服務 **16:9** **2×4** 整表；格線/頂欄/分鏡表格欄位等規格與既有 **分鏡主表 / 小紅書八格** 英文化一致（可執行、英文為主、簡中字由英文指令約束）。",
-            "**禁止**把兩個不同話題硬湊成一組；若上游混了兩題，仍以 PART 標籤為準各自忠实執行，但正常輸入應為同一選題。",
+            "**儘量避免**把兩個不同話題硬湊成一組；若上游混了兩題，仍以 PART 標籤為準各自忠实執行，但正常輸入應為同一選題。",
             "须含 masterpiece 与 8k（按需写入两条之一或两条）。",
-            "**仅**返回 JSON：{\"cover_prompt\":\"...\",\"composite_prompt\":\"...\"}；不要 markdown、不要解释。",
+            "**仅**返回 JSON：{\"cover_prompt\":\"...\",\"composite_prompt\":\"...\"}；不建議使用 markdown、不建議附加解釋。",
             PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
             "**PART_B · 2×4 分镜主表**（若 B 為分镜表）：composite_prompt 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**；**每格**：分镜主题 → 静帧 → 底部简中四列表（景别、运镜、画面内容、台词与音效）。",
             "**PART_B · 小红书八格**：composite_prompt 须保持 **2 行×4 列** 八格可读节奏，逗號短語優先。",
@@ -1285,7 +1326,7 @@ export async function callGemini31ProForImagePrompt(
     const logLine = `callGemini31ProForImagePrompt 抛出 · ${label} · ${formatErrForVertexDebug(error)}`;
     if (translator === "gpt54") appendGpt54TranslationDebug(flowLog, logLine);
     else appendVertexFlashDebug(flowLog, logLine);
-    // 複合錯誤（GPT 三輪無效 + Vertex 404 等）已在 callGemini3_1_Pro_AiStudio 排好順序，勿再冠以「Vertex 翻译崩溃」誤導前綴
+    // 複合錯誤（GPT 三輪無效 + Vertex 404 等）已在 callGemini3_1_Pro_AiStudio 排好順序，不建議再冠以「Vertex 翻译崩溃」誤導前綴
     if (message.startsWith("【GPT54 已三輪無效】")) {
       throw new Error(`[平台英文化链失败]\n${message}`);
     }

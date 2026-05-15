@@ -1132,6 +1132,12 @@ async function processPlatformJob(
           secondarySceneId: drProSecondarySceneId,
         });
       }
+      const rawBatchIdx = (params as { batchSceneSlotIndex?: unknown }).batchSceneSlotIndex;
+      const rawBatchTot = (params as { batchSceneSlotTotal?: unknown }).batchSceneSlotTotal;
+      const batchSceneDiversity =
+        typeof rawBatchIdx === "number" && typeof rawBatchTot === "number" && rawBatchTot >= 2
+          ? { slotIndex: Math.max(0, Math.floor(rawBatchIdx)), slotTotal: Math.floor(rawBatchTot) }
+          : undefined;
       const result = await runPlatformTopicImagePipeline({
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1147,6 +1153,7 @@ async function processPlatformJob(
         coverProEngine,
         enableTopicCoverDeepResearchPro,
         drProSecondaryCoverInputs,
+        batchSceneDiversity,
       });
       return { provider: "vertex", output: result };
     }
@@ -1267,6 +1274,13 @@ async function processPlatformJob(
       let sheetUrl: string | null = null;
       let sheetErr: unknown = null;
 
+      const rawBatchIdxB = (params as { batchSceneSlotIndex?: unknown }).batchSceneSlotIndex;
+      const rawBatchTotB = (params as { batchSceneSlotTotal?: unknown }).batchSceneSlotTotal;
+      const batchSceneDiversityBundle =
+        typeof rawBatchIdxB === "number" && typeof rawBatchTotB === "number" && rawBatchTotB >= 2
+          ? { slotIndex: Math.max(0, Math.floor(rawBatchIdxB)), slotTotal: Math.floor(rawBatchTotB) }
+          : undefined;
+
       const [coverSettled, sheetSettled] = await Promise.allSettled([
         runPlatformTopicImagePipeline({
           topicHook,
@@ -1283,6 +1297,7 @@ async function processPlatformJob(
           coverProEngine,
           enableTopicCoverDeepResearchPro,
           drProSecondaryCoverInputs,
+          batchSceneDiversity: batchSceneDiversityBundle,
         }),
         generatePlatformCompositeSheetImage({
           kind: compositeKind,

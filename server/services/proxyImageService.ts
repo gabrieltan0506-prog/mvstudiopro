@@ -131,11 +131,11 @@ function buildFalGptImage2RequestBody(prompt: string, openAiSize: string) {
 
 /** 拼在寬幅 2×4 合成英文 prompt 末尾：頂部簡中主標 + 幾何鎖定 + **每格底部簡中訊息分格表**（與 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
 const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled; thin grid OK; table body must be 简体中文. FORBIDDEN: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels. SOFT PREFERENCE (when compatible with clarity): harmonize lower table bands with overall color/lighting—paper-tint, soft panel, low-contrast separation—rather than routinely using harsh full-black bars with pure-white copy for technical fields.";
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled; thin grid OK; table body must be 简体中文. NOT RECOMMENDED: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels. SOFT PREFERENCE (when compatible with clarity): harmonize lower table bands with overall color/lighting—paper-tint, soft panel, low-contrast separation—rather than routinely using harsh full-black bars with pure-white copy for technical fields.";
 
 /** 小紅書八格：幾何與分鏡同為 2×4；畫風偏資訊圖 / 筆記感，每格強簡中（與 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} 一致）。 */
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. FORBIDDEN: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells.";
+  "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. NOT RECOMMENDED: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells.";
 
 /** 单次 GPT-IMAGE-2（fal / OhMyGPT）fetch 超时；封面/分镜/图文笔记共用。默认 6 分钟；`GPT_IMAGE_FETCH_TIMEOUT_MS` 可缩短，上限 6 分钟。 */
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
@@ -355,7 +355,7 @@ TASK: Cinematic 2×4 grid storyboard contact sheet — one single wide landscape
 COMPOSITION (NON-NEGOTIABLE):
 - TOP BAND FIRST (~8–12% height): **内容总结** — full-width **Simplified Chinese** strip for the **whole-sheet thematic summary** (episode / arc synopsis), **not** per-shot titles. You may append 「· 分镜脚本」or use this anchor line if it fits the summary: **${displayTitle}**. Clear divider before the grid. **Do not** put individual 分镜主题描述 in this band.
 - BELOW: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. Each panel **top → bottom**: (1) one bold **分镜主题描述** line in 简体中文 for that shot only; (2) cinematic still; (3) lower ~25–30% = **Simplified Chinese** table with **four fields**: **景别**、**运镜**、**画面内容**、**台词与音效** — all four with content; thin grid OK. Table body must be 简体中文.
-- FORBIDDEN: missing top summary strip; eight panels flush to top edge; English-only tables; empty panels; fewer than eight cells.
+- NOT RECOMMENDED: missing top summary strip; eight panels flush to top edge; English-only tables; empty panels; fewer than eight cells.
 
 MOOD / TITLE ANCHOR (content summary may echo): ${displayTitle}
 
@@ -399,7 +399,7 @@ TASK: Create a strict **2×2 four-quadrant** layout for Xiaohongshu (Little Red 
 🛑 GEOMETRIC LAYOUT RULES (FATAL IF IGNORED):
 1. You MUST partition the canvas into EXACTLY **four equal rectangles** in a **2 rows × 2 columns** grid: **top-left**, **top-right**, **bottom-left**, **bottom-right**. One continuous **horizontal midline** and one continuous **vertical midline** must span the full width and full height, forming a clean **cross gutter** (four cells of equal area, ~25% each).
 2. Visual reading order like a carousel: **TL → TR → BL → BR**. Each quadrant is a distinct "note page" beat (new focal, prop, or lighting) while staying cohesive with the content — not four duplicate stock shots.
-3. HARD FORBIDDEN: a **50/50 left-right two-panel** split only; **left third solid text band + right two thirds single hero photo** (magazine cover split — NOT a 2×2 grid); a **single horizontal row of four** thin strips; one dominant full-bleed panel with tiny side tiles; messy scrapbook collage without a clear 2×2 structure.
+3. NOT RECOMMENDED — avoid: a **50/50 left-right two-panel** split only; **left third solid text band + right two thirds single hero photo** (magazine cover split — NOT a 2×2 grid); a **single horizontal row of four** thin strips; one dominant full-bleed panel with tiny side tiles; messy scrapbook collage without a clear 2×2 structure.
 
 ${NO_TEXT_ON_IMAGE_BLOCK}
 
@@ -1351,7 +1351,7 @@ export async function generatePlatformCompositeSheetImage(options: {
 /**
  * 旗艦生圖引擎：**fal** `openai/gpt-image-2` → OhMyGPT `gpt-image-2` → Vertex **Nano Banana 2** 兜底。
  *
- * @description 截斷與水印只在 `buildTypographyImagePrompt` 內執行一次，禁止在本函數重複 `sliceHeading`，
+ * @description 截斷與水印只在 `buildTypographyImagePrompt` 內執行一次，不建議在本函數重複 `sliceHeading`，
  *   以免已帶省略號的標題被二次截斷。
  * @param options.title 畫面主標題來源（將強制截斷至 {@link PROXY_IMAGE_HEADING_MAX_CHARS} 字）
  * @param options.copywriting 畫面上下文 / 靈感（將強制截斷至 {@link PROXY_IMAGE_CONTEXT_MAX_CHARS} 字，不得整段渲染上圖）
