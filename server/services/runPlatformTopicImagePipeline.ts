@@ -90,7 +90,8 @@ export type RunPlatformTopicImagePipelineInput = {
   /** 管理員專用：單幀主生圖改為 Vertex Nano Banana 2（9:16 · 官方 API；與主路徑共用光影語彙）。`nano_banana_pro` 為舊別名，行為相同。 */
   coverProEngine?: "nano_banana_2" | "nano_banana_pro";
   /**
-   * @deprecated 封面管線已不再執行 DR-Pro（僅 2×4／八格可開）；保留欄位僅兼容舊 job 入參，**忽略**。
+   * 管理員於 Platform 頁開啟並經 tRPC/job 為 true 時；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：
+   * 任一為真即跑步驟 0.5 Interactions DR-Pro（失敗則忽略，主鏈路照舊）。
    */
   enableTopicCoverDeepResearchPro?: boolean;
   /**
@@ -143,6 +144,10 @@ export async function runPlatformTopicImagePipeline(
     isPlatformCoverAgenticBrainEnabled,
     runAgenticCoverStrategist,
   } = await import("./agenticCoverWorkflow.js");
+  const {
+    isTopicCoverDeepResearchProEnabled,
+    runCoverDeepResearchBriefPreferDual,
+  } = await import("./coverDeepResearchProBrief.js");
   const {
     buildImagePromptStats,
     generateImageGpt2WithImagenFallback,
@@ -225,15 +230,62 @@ export async function runPlatformTopicImagePipeline(
       }
     }
 
-    const drIgnored = Boolean(input.enableTopicCoverDeepResearchPro);
-    void input.drProSecondaryCoverInputs;
-    void drIgnored;
+    const drFromAdminRequest = Boolean(input.enableTopicCoverDeepResearchPro);
+    const drFromEnv = isTopicCoverDeepResearchProEnabled();
+    const runCoverDrPro = drFromAdminRequest || drFromEnv;
+    if (runCoverDrPro) {
+      topicImageCondenseLog.push(
+        `${platformFlowLogTimestamp()}  [步骤0.5·DR-Pro] 管理员入参=${drFromAdminRequest ? "开启" : "关闭"} · 环境全局=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro 简报（失败则忽略，主链路照旧）`,
+      );
+      try {
+        const drTask = buildCoverTaskInputFromPipeline({
+          topicHook: input.topicHook,
+          format: input.format,
+          context: ctxStr,
+          coverPersonaContext: coverPersona,
+        });
+        const secIn = input.drProSecondaryCoverInputs;
+        const primaryHookNorm = String(input.topicHook || "").trim();
+        const secondaryHookNorm = String(secIn?.topicHook || "").trim();
+        const drTaskSecondary =
+          secIn && secondaryHookNorm && secondaryHookNorm !== primaryHookNorm
+            ? buildCoverTaskInputFromPipeline({
+                topicHook: secIn.topicHook,
+                format: input.format,
+                context: String(secIn.context || "").trim(),
+                coverPersonaContext: coverPersona,
+              })
+            : null;
+        if (secIn && !drTaskSecondary && secondaryHookNorm) {
+          topicImageCondenseLog.push(
+            `${platformFlowLogTimestamp()}  [步骤0.5·DR-Pro] 副選題與主選題相同，略過雙條並行 · 僅單條 Interaction`,
+          );
+        }
+        const drBrief = await runCoverDeepResearchBriefPreferDual(drTask, drTaskSecondary, topicImageCondenseLog, {
+          drBriefProduct: "platform_cover",
+        });
+        if (drBrief?.trim()) {
+          const tag = "【DeepResearch Pro·优化后的简体封面生图提示词】";
+          strategistChinesePrompt = strategistChinesePrompt?.trim()
+            ? `${strategistChinesePrompt.trim()}\n\n${tag}\n${drBrief.trim()}`
+            : `${tag}\n${drBrief.trim()}`;
+        }
+      } catch (e: unknown) {
+        topicImageCondenseLog.push(
+          `${platformFlowLogTimestamp()}  [步骤0.5] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
 
-    topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [管线·阶段顺序] 選題單幀封面不跑 Deep Research Pro（DR 僅用於 2×4／八格 pipeline）→ 直接 B/GPT 5.4 英文化（步驟1 及以下）${
-        drIgnored ? " · 入參曾帶 enableTopicCoverDeepResearchPro（舊意圖為封面 DR，已忽略）" : ""
-      }`,
-    );
+    if (runCoverDrPro) {
+      topicImageCondenseLog.push(
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/GPT 5.4 英文化（步骤1 及以下）`,
+      );
+    } else {
+      topicImageCondenseLog.push(
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/GPT 5.4 英文化`,
+      );
+    }
 
     try {
       try {

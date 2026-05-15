@@ -1,9 +1,9 @@
 /**
  * 選題視覺管線 · **步驟 0.5**（可選）
  *
- * **2×4 分鏡 / 小紅書八格**：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **或** `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`（見 {@link isCompositeSheetDeepResearchProEnabled}）可在對應管線啟用 Interactions Deep Research Pro。
+ * **選題單幀封面**：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` 或 `PLATFORM_COVER_DEEP_RESEARCH_PRO` 為真，或管理員入參 `enableTopicCoverDeepResearchPro`，即可能在英文化前插入步驟 0.5（見 {@link isTopicCoverDeepResearchProEnabled}）。
  *
- * **選題單幀封面**管線**已不再**插入本步驟（避免 DR 錨定不穩與封面增益有限）；上列 env 僅透過 {@link isCompositeSheetDeepResearchProEnabled} 影響**寬幅合成**。
+ * **2×4 分鏡 / 小紅書八格**：上述 topic env **或** `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`（見 {@link isCompositeSheetDeepResearchProEnabled}）可在寬幅合成管線啟用同一套 Interactions Deep Research Pro。
  *
  * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体** 並合入中文語境，再交既有 **GPT‑5.4 → 生圖**。任務語義依 {@link DrBriefProduct}：**單幀封面**側重**高點擊+高轉化**；**2×4** 分別對應**電影級分鏡主表**或**小紅書八格圖文筆記**編導增强。
  *
@@ -242,7 +242,7 @@ export async function runCoverDeepResearchDualBatchBrief(
 
 /**
  * 有第二則選題（雙條 DR-Pro）時：先 {@link runCoverDeepResearchDualBatchBrief}；**僅當兩條均**取得有效簡報時才注入 **主條 A** 的 DR 正文供下階英文化。
- * **任一條失敗、逾時或錨定校驗不通過** → 視為雙條 DR-Pro **未達成**，回傳 **null**（整段不注入 DR，不採用「只剩一條有效也勉強用」）。下階僅主選題快照語境 + GPT 5.4。
+ * **任一條失敗或逾時** → 視為雙條 DR-Pro **未達成**，回傳 **null**（整段不注入 DR，不採用「只剩一條有效也勉強用」）。下階僅主選題快照語境 + GPT 5.4。
  * 僅單題時：等同單次 {@link runCoverDeepResearchInteractionsBrief}。
  */
 export async function runCoverDeepResearchBriefPreferDual(
@@ -267,7 +267,7 @@ export async function runCoverDeepResearchBriefPreferDual(
     return a;
   }
   note(
-    "雙條 DR-Pro：兩條未**同時**取得有效簡報（含逾時/解析或錨定失敗）· **不啟用 DR** · 下階僅主選題語境 + GPT 5.4（不採用單條殘報）",
+    "雙條 DR-Pro：兩條未**同時**取得有效簡報（含逾時或解析失敗）· **不啟用 DR** · 下階僅主選題語境 + GPT 5.4（不採用單條殘報）",
   );
   return null;
 }

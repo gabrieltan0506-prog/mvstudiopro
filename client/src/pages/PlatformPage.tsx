@@ -101,7 +101,7 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
-/** 管理員／監管：2×4／八格管線步驟 0.5 Deep Research Pro（封面單幀已不跑 DR；此開關仍用於寬幅與套裝之 composite 側） */
+/** 管理員／監管：步驟 0.5 Deep Research Pro——**選題豎版封面**、**2×4／八格**在英文化前可插入（服端另受 env 總閘影響） */
 const PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY = "mvstudiopro.platform.topicCoverDeepResearchPro.v1";
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
@@ -5876,9 +5876,9 @@ export default function PlatformPage() {
                           onChange={(e) => setPlatformTopicCoverDeepResearchPro(e.target.checked)}
                         />
                         <span>
-                          <span className="font-bold text-violet-200">监管专用 · 2×4／八格 步骤 0.5 Deep Research Pro</span>
-                          ：勾选后<strong className="text-violet-100/90">分镜 2×4、小红书八格</strong>在英文化前多跑一轮
-                          Deep Research（Interactions）；**选题竖版封面不再跑此段**。偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
+                          <span className="font-bold text-violet-200">监管专用 · 封面 / 2×4 步骤 0.5 Deep Research Pro</span>
+                          ：勾选后<strong className="text-violet-100/90">选题竖版封面、分镜 2×4、小红书八格</strong>在英文化前可多跑一轮
+                          Deep Research（Interactions）。偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
                           会采纳该开关，其余仍只靠环境变量总闸（含{" "}
                           <code className="rounded bg-black/30 px-1 text-[10px]">PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO</code>）。
                         </span>
