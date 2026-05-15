@@ -281,3 +281,11 @@ export function selectByGrowthPotential(
 
   return { selected, debug };
 }
+
+/**
+ * 視覺報告「賽道熱度」統計桶的**兜底歸類**：與本檔 {@link forceCategorize} 規則一致，
+ * 僅在樣本缺少可用 industryLabels 時啟用，避免把標題/評論碎詞當成賽道分類。
+ */
+export function inferTrendTrackBucketForVisualReport(item: TrendItem): string {
+  return forceCategorize(item);
+}

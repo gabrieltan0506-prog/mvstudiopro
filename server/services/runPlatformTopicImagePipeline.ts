@@ -104,6 +104,10 @@ export type RunPlatformTopicImagePipelineInput = {
    * 批量同窗（如一鍵多選題）：**不同選題，建議採用不同場景**；傳 `slotIndex`/`slotTotal` 則注入對應軟提示（例：四個選題→四個不同場景）。
    */
   batchSceneDiversity?: PlatformTopicBatchSceneDiversity;
+  /**
+   * 可選：與當前快照 **platformsKey** 對齊的 trendStore **高互動樣本**簡中摘要（服端注入；非帳號實測 CTR）。
+   */
+  trendEngagementVisualBrief?: string;
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -161,7 +165,9 @@ export async function runPlatformTopicImagePipeline(
     generatePlatformTopicTypographyNanoBanana2Only,
   } = await import("./proxyImageService.js");
 
-  const ctxStr = String(input.context || "").trim();
+  const trendBrief = String(input.trendEngagementVisualBrief || "").trim();
+  const userContext = String(input.context || "").trim();
+  const ctxStr = [trendBrief, userContext].filter(Boolean).join("\n\n");
   const coverPersona = String(input.coverPersonaContext || "").trim();
   const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
   const copywriting = [
@@ -195,6 +201,12 @@ export async function runPlatformTopicImagePipeline(
           : "中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束"
       }`,
     );
+
+    if (trendBrief) {
+      topicImageCondenseLog.push(
+        `${platformFlowLogTimestamp()}  [语境增强] 已注入 trendStore 高互动样本摘要（${trendBrief.length} 字，对齐缩略图钩子；非实测 CTR）`,
+      );
+    }
 
     let promptStats: ImagePromptStats = {
       translatedPromptChars: 0,

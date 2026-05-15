@@ -52,8 +52,10 @@ import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
-import { collectTrendPlatforms } from "./growth/trendCollector";
+import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
+import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1039,6 +1041,64 @@ export async function buildPlatformContent(params: {
     const ms = new Date(String(ts)).getTime();
     return Number.isFinite(ms) ? ms : null;
   };
+  /** 無可靠发布时间、增长潜力筛空时：用评论/转发/赞 粗排，供 Stage2 对齐「高互动」结构 */
+  const engagementProxyScore = (item: any): number => {
+    const c = Number(item?.comments ?? 0) || 0;
+    const s = Number(item?.shares ?? 0) || 0;
+    const l = Number(item?.likes ?? 0) || 0;
+    return c * 4 + s * 6 + l * 0.3;
+  };
+  const pickHighEngagementSamplesForStage2 = (
+    evidenceItems: any[],
+    decisionWindowDays: number,
+  ): {
+    samples: Array<{
+      title: string;
+      category: string;
+      growthPercentileBand: number | null;
+      isBreakout: boolean;
+      tags: string[];
+      source: "growthPotential" | "engagementProxyFallback";
+    }>;
+    growthDebugKept: number;
+  } => {
+    const heated = filterTrendItemsWithEngagementFloor(evidenceItems as TrendItem[]);
+    if (heated.length === 0) {
+      return { samples: [], growthDebugKept: 0 };
+    }
+    const { selected, debug } = selectByGrowthPotential(heated, {
+      topN: 10,
+      windowDays: decisionWindowDays,
+    });
+    if (selected.length > 0) {
+      return {
+        samples: selected.map((s) => ({
+          title: String(s.item.title || "").trim().slice(0, 200),
+          category: s.category,
+          growthPercentileBand: s.growthPercentile,
+          isBreakout: s.isBreakout,
+          tags: (s.item.tags || []).slice(0, 5).map((t) => String(t)),
+          source: "growthPotential" as const,
+        })),
+        growthDebugKept: debug.kept,
+      };
+    }
+    const fallback = [...heated]
+      .filter((it) => String(it?.title || "").trim())
+      .sort((a, b) => engagementProxyScore(b) - engagementProxyScore(a))
+      .slice(0, 10);
+    return {
+      samples: fallback.map((it) => ({
+        title: String(it.title || "").trim().slice(0, 200),
+        category: String(it.bucket || "（采集桶未标）").slice(0, 64),
+        growthPercentileBand: null,
+        isBreakout: false,
+        tags: (it.tags || []).slice(0, 5).map((t: unknown) => String(t)),
+        source: "engagementProxyFallback" as const,
+      })),
+      growthDebugKept: 0,
+    };
+  };
   const dynamicDecisionChain = params.requestedPlatforms.map((platform) => {
     const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
     const items: any[] = collection?.items || [];
@@ -1051,11 +1111,25 @@ export async function buildPlatformContent(params: {
     });
     const evidenceItems = filteredItems.length > 0 ? filteredItems : items;
     const bucketCounts = getCollectionBucketCounts(evidenceItems);
+    const { samples: highEngagementSamples, growthDebugKept } = pickHighEngagementSamplesForStage2(
+      evidenceItems,
+      decisionWindowDays,
+    );
+    const titleFromSamples = highEngagementSamples.map((h) => h.title).filter(Boolean);
+    const recentTitles =
+      titleFromSamples.length > 0
+        ? titleFromSamples.slice(0, 8)
+        : evidenceItems.slice(0, 8).map((item) => item?.title).filter(Boolean);
     return {
       platform,
       decisionWindowDays,
       itemCount: evidenceItems.length,
-      recentTitles: evidenceItems.slice(0, 8).map((item) => item?.title).filter(Boolean),
+      /** 供模型显式对齐：采集样本经增长潜力/互动 proxy 排序，非用户账号实测 CTR */
+      trendSampleEngagementNote:
+        "highEngagementSamples 来自 trendStore 抓取样本在本窗口内的「评论/转发加权互动 × 时效 × 同账号爆发」排序（与企业/投流样本已尽量剔除）。请对齐其钩子与节奏偏好；禁止字面抄袭标题。非真实点击率。",
+      growthPotentialRankedCount: growthDebugKept,
+      highEngagementSamples: highEngagementSamples.slice(0, 8),
+      recentTitles,
       topBuckets: Object.entries(bucketCounts)
         .sort((left, right) => right[1] - left[1])
         .slice(0, 6)
@@ -1073,6 +1147,9 @@ export async function buildPlatformContent(params: {
           windowDays: params.windowDays,
           platformMenu: params.platformMenu,
           dynamicDecisionChain,
+          /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
+          trendEngagementAlignmentPolicy:
+            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在人设约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，禁止照抄标题或正文。",
           snapshotData: {
             titleExecutions: params.snapshot.titleExecutions || [],
             monetizationStrategies: params.snapshot.monetizationStrategies || [],
@@ -1111,7 +1188,12 @@ export async function buildPlatformContent(params: {
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
 【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 4 条。
-【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期点击与节奏，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
+【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
+【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
+(1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——适配该用户 IP，而非泛化稿；
+(2) 优先借鉴切口、句式节奏与信息密度，**禁止**字面抄袭 sample 标题或洗稿；
+(3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
+(4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
 请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
 
@@ -3683,13 +3765,16 @@ export const appRouter = router({
 以下是从数据库提取的各平台真实近 ${wd} 天数据快照，你必须从中提取洞察，不可凭空捏造：
 ${JSON.stringify(platformEvidence, null, 2)}
 
+【赛道口径 — 须与历史分类对齐】
+下方「行业样本推断」JSON 的每个 **key** 来自趋势样本入库时的 **正式分类**（industryLabels / contentLabels；缺省时为与增长评分一致的规则化大类兜底），**不是**从标题或评论里切出来的热词碎片。trackGrowth[].name **必须**优先 **逐字**使用该 JSON 的某一 key；若要「主赛道 · 子切口」式合并，**建议**两段均取自该 JSON 的不同 key。**不建议**使用与表中 key 无语义包含/对应关系的碎词、纯地名或账号梗充当整条赛道名。
+
 【行业样本推断（近 ${wd} 天 vs 前 ${wd} 天）：**有前窗对照**为真实环比（可任意高，>+100% 展示「增长X倍」）；**无前窗对照**为近窗相对热度（对中位桶，有防御性上限）。热门赛道列表不得含负向样本桶。trackGrowth.growth 必须与下表一致；禁止 N/A 与长句】
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
 1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : ""}
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
-3. hotTopics：**【强制数量：5-8个】** 具体细分赛道名称（如"城市日常 vlog"），附带简短内容说明。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
+3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
@@ -3697,7 +3782,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
   - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
   - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
-- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表一致：环比可任意高，>+100% 用「增长X倍」与表一致；无前窗时为相对**中位桶**热度（表内可能为 +N% 或「增长X倍」）。勿编造。**严禁** N/A、括号长句。
+- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表一致：环比可任意高，>+100% 用「增长X倍」与表一致；无前窗时为相对**中位桶**热度（表内可能为 +N% 或「增长X倍」）。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
@@ -3705,15 +3790,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
-        /** 預設 Gemini 2.5 Pro；需改回 OpenAI GPT‑5.4 時設 `VISUAL_REPORT_ENGINE=openai` */
+        /** Consumer Gemini 預設 `gemini-3-flash-preview`（可 `VISUAL_REPORT_GEMINI_MODEL` 覆寫）；改 OpenAI 時設 `VISUAL_REPORT_ENGINE=openai` */
+        const visualReportGeminiModel =
+          String(process.env.VISUAL_REPORT_GEMINI_MODEL ?? "").trim() || "gemini-3-flash-preview";
         const visualReportEngineRaw = String(process.env.VISUAL_REPORT_ENGINE ?? "gemini").trim().toLowerCase();
-        const visualReportUsesGemini25Pro =
+        const visualReportUsesGeminiConsumer =
           visualReportEngineRaw === "gemini" ||
           visualReportEngineRaw === "gemini25" ||
           visualReportEngineRaw === "gemini_25" ||
           visualReportEngineRaw === "gemini_2_5" ||
           visualReportEngineRaw === "gemini_2_5_pro" ||
-          visualReportEngineRaw === "gemini-2.5-pro";
+          visualReportEngineRaw === "gemini-2.5-pro" ||
+          visualReportEngineRaw === "gemini3flash" ||
+          visualReportEngineRaw === "gemini_3_flash" ||
+          visualReportEngineRaw === "gemini-3-flash-preview";
         const llmStartedAtMs = Date.now();
         try {
           const userPayload = JSON.stringify({
@@ -3725,11 +3815,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             industrySampleGrowth: industryGrowthHintsObj,
           });
 
-          const response = visualReportUsesGemini25Pro
+          const response = visualReportUsesGeminiConsumer
             ? await invokeLLM({
                 model: "pro",
                 provider: "gemini",
-                modelName: "gemini-2.5-pro",
+                modelName: visualReportGeminiModel,
+                response_format: { type: "json_object" },
+                max_tokens: Math.min(
+                  16_384,
+                  Math.max(2048, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 8192),
+                ),
                 messages: [
                   { role: "system", content: systemPrompt },
                   { role: "user", content: userPayload },
@@ -3798,7 +3893,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendRuntimeMetric("visual.report", {
             ok: true,
             engineEnv: visualReportEngineRaw || "openai(default)",
-            provider: visualReportUsesGemini25Pro ? "gemini_2_5_pro" : "openai_json",
+            provider: visualReportUsesGeminiConsumer ? `gemini_consumer:${visualReportGeminiModel}` : "openai_json",
             durationMs: Date.now() - llmStartedAtMs,
             upstreamModel: String(response?.model ?? "").trim() || null,
             finishReason: choice0?.finish_reason ?? null,
@@ -3854,7 +3949,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendRuntimeMetric("visual.report", {
             ok: false,
             engineEnv: visualReportEngineRaw || "openai(default)",
-            provider: visualReportUsesGemini25Pro ? "gemini_2_5_pro" : "openai_json",
+            provider: visualReportUsesGeminiConsumer ? `gemini_consumer:${visualReportGeminiModel}` : "openai_json",
             durationMs: Date.now() - llmStartedAtMs,
             message: error instanceof Error ? error.message.slice(0, 800) : String(error).slice(0, 800),
             windowDays: input.windowDays,
@@ -4059,6 +4154,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         );
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
+        const preferFlyLiveTrend = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
+        const { loadMergedTrendEngagementVisualBriefForUserSnapshot } = await import(
+          "./services/trendEngagementVisualBrief.js",
+        );
+        const trendEngagementVisualBrief = await loadMergedTrendEngagementVisualBriefForUserSnapshot({
+          platformsKeyCsv: resolvedCover.snapshotPlatformsKey ?? "",
+          preferFlyLive: preferFlyLiveTrend,
+        });
         void input.imagePromptTranslator;
         let drProSecondaryCoverInputs: { topicHook: string; context: string } | undefined;
         const sid2 = String(input.drProSecondarySceneId ?? "").trim();
@@ -4082,6 +4185,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverProEngine,
           enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
           drProSecondaryCoverInputs,
+          trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
         });
       }),
 

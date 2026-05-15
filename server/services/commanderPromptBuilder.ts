@@ -272,6 +272,9 @@ ${scenarioPayloadStr || "（无）"}
 【私有数据集 · 抖音/小红书/B 站/快手 最新爆款（来自 trendStore，非外部公开数据）】
 ${args.briefingMeta ? `（${args.briefingMeta}）\n` : ""}${args.platformBriefing}
 
+【样本使用方式 · 高互动对齐（非账号真实CTR）】
+以下列表已在采集窗口内按「评论/转发加权互动、时效衰减、同账号爆发信号」排序并剔除大部分企业/投流样本。请让您的选题、标题钩子、论证与分镜节奏主动对齐这些高互动样本的「好奇结构 / 信息密度 / 情绪节拍」，但必须结合指挥官档案与痛点做差异化，禁止字面抄袭标题或洗稿正文。
+
 【战略检索任务（请用你的检索工具执行）】
 ${deriveSearchTask(profile, args.painPoint)}
 
