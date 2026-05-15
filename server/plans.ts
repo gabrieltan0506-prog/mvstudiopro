@@ -257,12 +257,12 @@ export const CREDIT_COSTS = {
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 
   // ─── 平台页·选题单帧参考（一键批量 / 单张重绘 · GPT-IMAGE-2）·扣点 3×──────────────
-  platformTopicFrameGraphic: 128, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
+  platformTopicFrameGraphic: 48, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
   platformTopicFrameVideo: 15,  // 短视频分镜参考条
   /** 平台页：竖版封面 · ~~超高点击率加价~~（已下架，統一走 platformTopicFrameGraphic） */
   // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────────────
-  platformStoryboardSheet: 168, // 单条：分镜 2×4（双语编导；生图 GPT-IMAGE-2）
-  platformXhsDualNote: 168, // 单条：小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
+  platformStoryboardSheet: 60, // 单条：分镜 2×4（双语编导；生图 GPT-IMAGE-2）
+  platformXhsDualNote: 72, // 单条：小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
   /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 串行非同步兩階段生圖） */
   platformTopicCoverAndCompositeBundle: 268,
   /** 平台页：批量四条 2×4 时客户端提示用语（router 按单次 generatePlatformCompositeSheet 扣费） */
@@ -295,13 +295,13 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
-  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 128 cr，生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 48 cr，生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图 GPT-IMAGE-2" },
   {
     product: "平台数据分析",
     subFeature: "选题套裝（封面 + 2×4 分镜或八格 · 单条）",
     credits: CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
-    note: "一鍵異步 job 串行兩階段生圖（封面→2×4）；單次扣 268 cr（優於 128+168 分開）",
+    note: "一鍵異步 job 串行兩階段生圖（封面→2×4）；單次扣 268 cr",
   },
   {
     product: "平台数据分析",

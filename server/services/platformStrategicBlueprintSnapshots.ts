@@ -36,6 +36,8 @@ export type OptimizedCoverFromDb = {
   format: "短视频" | "图文";
   /** 與 topicHook 搭配的開場鉤子（簡中），供點擊意圖估計。 */
   appealHook: string;
+  /** 快照入庫時的 platformsKey（逗號分隔平台 id），供封面管線拉 trendStore 高互動摘要。 */
+  snapshotPlatformsKey?: string;
 };
 
 function readBlueprintTitle(raw: Record<string, unknown>): string {
@@ -252,11 +254,12 @@ export async function assertOptimizedCoverInputsFromDb(params: {
     throw new PlatformCoverInputsError("缺少选题 ID（sceneId），无法从云端快照恢复文案。");
   }
 
-  let rows: { blueprintsJson: string | null }[];
+  let rows: { blueprintsJson: string | null; platformsKey: string | null }[];
   try {
     rows = await database
       .select({
         blueprintsJson: platformStrategicBlueprintSnapshots.blueprintsJson,
+        platformsKey: platformStrategicBlueprintSnapshots.platformsKey,
       })
       .from(platformStrategicBlueprintSnapshots)
       .where(eq(platformStrategicBlueprintSnapshots.userId, params.userId))
@@ -306,5 +309,10 @@ export async function assertOptimizedCoverInputsFromDb(params: {
     );
   }
 
-  return optimizeEnrichedBlueprintForCover(hit, blueprintIndex);
+  const snapshotPlatformsKey = String(rows[0]?.platformsKey || "").trim();
+
+  return {
+    ...optimizeEnrichedBlueprintForCover(hit, blueprintIndex),
+    snapshotPlatformsKey: snapshotPlatformsKey || undefined,
+  };
 }

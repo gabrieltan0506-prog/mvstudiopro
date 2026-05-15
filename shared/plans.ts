@@ -253,14 +253,13 @@ export const CREDIT_COSTS = {
   // ─── 平台趋势·参考图 / 生图（与 server/plans 一致 · 扣点 3× 慎用完）────────────
   platformRefImage: 36,
   /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2）；单张「生成封面」統一走此價 */
-  platformTopicFrameGraphic: 128,
+  platformTopicFrameGraphic: 48,
   /** 平台页：分镜 2×4 宽幅合成（单条） */
-  platformStoryboardSheet: 168,
+  platformStoryboardSheet: 60,
   /** 平台页：小红书 2×4 八格图文（单条） */
-  platformXhsDualNote: 168,
+  platformXhsDualNote: 72,
   /**
    * 平台页：**同一選題**一鍵「豎版封面 + 2×4 分鏡或八格圖文」套裝（異步 job 內 **串行非同步** 兩階段生圖 · 單次扣費）
-   * 定價低於 128+168（優惠組合）。
    */
   platformTopicCoverAndCompositeBundle: 268,
   /** 平台页：批量四条 2×4 时客户端提示用语（单次扣费见 platformStoryboardSheet / platformXhsDualNote） */

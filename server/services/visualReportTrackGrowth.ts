@@ -3,6 +3,8 @@
  */
 
 import { normalizeStringList } from "../growth/trendNormalize";
+import type { TrendItem } from "../growth/trendCollector";
+import { inferTrendTrackBucketForVisualReport } from "../growth/trendGrowthScoring";
 
 export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean };
 
@@ -52,36 +54,27 @@ function collectIndustryWindowCounts(
   return { current, prior };
 }
 
-/** 標題/評論粗斷詞，供與賽道名子串匹配（不調 LLM） */
-function splitRoughPhrases(raw: string, maxParts: number): string[] {
-  const s = String(raw || "").trim();
-  if (s.length < 2) return [];
-  const parts = s
-    .split(/[/／·•、，,\|｜#＃\s\n\r\t。！？；：""''「」【】]+/)
-    .map((x) => x.trim())
-    .filter((x) => x.length >= 2 && x.length <= 40);
-  return parts.slice(0, Math.max(0, maxParts));
+/** 垃圾桶占位：不在此做標題/評論斷詞，避免「熱詞碎片」混入賽道 Y 軸 */
+const PLACEHOLDER_BUCKET = "其他/综合";
+
+function isWeakTaxonomyLabel(s: string): boolean {
+  return /待(判定|定)|未分类|^通用$|^其他$|^其他[／/]综合$/.test(String(s || "").trim());
 }
 
 /**
- * 單條趨勢樣本對統計桶的貢獻：行業標籤為主，並補齊標籤/標題/評論高頻語義，避免僅依 industryLabels 對不上賣點賽道名。
+ * 單條樣本對統計桶的貢獻：**僅**使用入庫時已寫好的行業/內容分類（與 {@link trendTaxonomy} 一致）；
+ * 若皆無，再退回到與增長評分共用的 {@link inferTrendTrackBucketForVisualReport}（規則化大類，仍非標題碎詞）。
  */
 function collectItemLabelKeys(item: any): string[] {
   const out: string[] = [];
 
-  for (const x of normalizeStringList(item?.industryLabels)) out.push(x);
-  for (const x of normalizeStringList(item?.contentLabels)) out.push(x);
-  for (const x of normalizeStringList(item?.ageLabels)) out.push(x);
-  for (const x of normalizeStringList(item?.tags)) out.push(x);
-
-  const title = String(item?.title ?? item?.keyword ?? "").trim();
-  for (const p of splitRoughPhrases(title, 10)) out.push(p);
-
-  const samples = Array.isArray(item?.commentSamples) ? item.commentSamples : [];
-  const sorted = [...samples].sort((a, b) => (Number(b?.likeCount) || 0) - (Number(a?.likeCount) || 0));
-  for (const c of sorted.slice(0, 4)) {
-    const txt = String(c?.text ?? "").trim().slice(0, 160);
-    for (const p of splitRoughPhrases(txt, 6)) out.push(p);
+  for (const x of normalizeStringList(item?.industryLabels)) {
+    const t = String(x || "").trim();
+    if (t && !isWeakTaxonomyLabel(t)) out.push(t);
+  }
+  for (const x of normalizeStringList(item?.contentLabels)) {
+    const t = String(x || "").trim();
+    if (t && !isWeakTaxonomyLabel(t)) out.push(t);
   }
 
   const seen = new Set<string>();
@@ -95,8 +88,15 @@ function collectItemLabelKeys(item: any): string[] {
     dedup.push(t);
   }
 
-  if (dedup.length === 0) return ["其他/综合"];
-  return dedup;
+  if (dedup.length > 0) return dedup;
+
+  try {
+    const inferred = inferTrendTrackBucketForVisualReport(item as TrendItem).trim();
+    if (inferred && !isWeakTaxonomyLabel(inferred)) return [inferred];
+  } catch {
+    /* ignore */
+  }
+  return [PLACEHOLDER_BUCKET];
 }
 
 /** 相对热度（对中位桶）上限：避免除极小中位数时出现天文数字 */

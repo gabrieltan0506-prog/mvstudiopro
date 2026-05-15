@@ -293,11 +293,20 @@ export const GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN =
 export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORITY_EN} ${GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN}`;
 
 /**
+ * 選題豎封：**強烈建議**依題材生成**多變、生動**且可執行的場景（寫入送往 GPT-IMAGE-2 的英文 prompt）。
+ * 與 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}、{@link buildPlatformTopicReferenceGeminiTask} 同步引用，避免各題同套一個書房模板。
+ */
+export const PLATFORM_COVER_SCENE_VERSATILITY_EN = `It is **highly and strongly recommended** to generate **versatile, vivid, topic-faithful** scenes for **cover-art / feed-cover** design: **concretely** stage each prompt with distinct environments across topics—rotate indoor vs outdoor, urban vs nature, clinical/lab vs marketplace vs transit, studio color-fields vs real locations—so **different Hooks feel like different worlds**; still keep premium editorial lighting and one clear hero focal beat unless the brief locks a specific set.`;
+
+
+/**
  * 選題 **信息流單張 9:16 封面**：歷史上曾嵌入總 system；現僅用於 **composite** 全量規則。單封改走 {@link GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN} + 輕量 JSON 語句。
  */
 export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
   "**選題信息流單張豎封（9:16·單主視覺／信息流縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**；**格數、橫豎、單封 vs 網格以任務原文為準，不建議擅自改軌。**",
-  "**豎封軟邊界（圖標層必達；其餘可為題材讓路）：** （1）**質感**：傾向 **photoreal editorial / 廣告静拍** 向，光型盡量可信（可寫 key / fill / rim），**宜避免**習慣性平光貼字、糊成一片的泛光；（2）**場景（多元化·與文案一致）**：**建議**封面場景與正文語境**同步多元化**；**室內與戶外**遇題材均可作**參考場景**，**不建議**長期默認、過度單一集中在書房、書桌、滿牆書架、閱讀角、**或**咖啡廳**固定為伏案讀書**的單一套路，或**典型客廳、沙發電視牆等「居家日記」式內景**。可優先採用與 Hook 相稱的場域（**戶外／半戶外**：**旅遊景點**、街景、交通、自然、天臺、體育場、市集、活動外場等；**室內／生活與公共空間**：**商場**、**超市**、**咖啡廳**（日常消費／社交場景，**非**僅限讀書佈景）、**博物館**、展覽館、醫院診間、實驗室、展廳、工地／廠房、健身房、演播／舞台後台、公共大廳、棚拍色片／抽象置景、微縮置景等—**僅為示例，包括但不限於**，**並非只有書房或客廳**）。前景／中景／後景可分层，用具象道具、手勢、環境**呼應** Hook；**僅當**正文**明確**以讀書、書房、圖書或**明確**以特定居家客廳叙事為核心時再主導該類場景；（3）**圖標編輯層（必達·豎封不得省略）**：畫內**必須**有 **2～4 個** 與 Hook、主題與正文關鍵訊息**強語義對齊**的**極簡線稿小圖標**（可有表現力與動勢，**生動**呼應內容，忌千篇一律的通用符號堆砌）；各配 **短簡中輔標**（約 4–8 字），可橫向輕帶、左下／中下浮動簇或與中景主體形成**視覺呼應**；**從屬**主標、**不得**遮擋主標與安全宣讀區、**不得**做成密集成步驟教程或整版資訊圖；（4）**版式與衝擊力**：整體**排版美觀**（主從、留白、層級、對齊），主標與背板 **對比強**，光影／色面在縮略圖尺度須具 **高吸引力與視覺衝擊力**（以可執行光色構圖達成，非標題詐騙）；（5）**敘事鉤**：縮略圖尺度**宜**能看出視覺或敘事鉤子；（6）**版式習慣**：**宜避免**過度模板化 bland stock 臉譜占滿、豎畫布硬塞多分鏡縱條、或把豎封寫成 **2×4 寬幅主表**—**除非**任務明確要網格或筆記版。",
+  "**豎封軟邊界（圖標層仍為必達；其餘以軟約束為主，可為題材讓歩）：** **【第一優先·軟性目標】premium cover design：** 整體**優先**收斂為 **premium editorial／高端信息流封面** 質感—可信光影層次（可寫 key / fill / rim）、乾淨主從與留白、低飽和主色配**極少**亮色點綴；小圖標**優先**與主場景同一套光色語言，**彷彿浮在**實景之上，線條可略帶細金／鉑灰描邊與輕體積感。**不建議**為圖標習慣性加實色圓形、大方塊、藥丸形底板，或整塊不透明白卡／高飽和霓虹襯底（若正文**明確**要走 App／促銷貼紙風，再從寬）。**（1）** **質感**：傾向 **photoreal editorial / 廣告静拍** 向，光型盡量可信（可寫 key / fill / rim），**宜避免**習慣性平光貼字、糊成一片的泛光；**（2）** **場景（多元化·與文案一致·跨主題宜多變生動）**：**建議**封面場景與正文語境**同步多元化**；**室內與戶外**遇題材均可作**參考場景**，**不建議**長期默認、過度單一集中在書房、書桌、滿牆書架、閱讀角、**或**咖啡廳**固定為伏案讀書**的單一套路，或**典型客廳、沙發電視牆等「居家日記」式內景**。可優先採用與 Hook 相稱的場域（**戶外／半戶外**：**旅遊景點**、街景、交通、自然、天臺、體育場、市集、活動外場等；**室內／生活與公共空間**：**商場**、**超市**、**咖啡廳**（日常消費／社交場景，**非**僅限讀書佈景）、**博物館**、展覽館、醫院診間、實驗室、展廳、工地／廠房、健身房、演播／舞台後台、公共大廳、棚拍色片／抽象置景、微縮置景等—**僅為示例，包括但不限於**，**並非只有書房或客廳**）。**跨主題、批次選題時，強烈建議**英文 `prompt` 寫明**多變、生動、題材忠實**的具體場景，使不同題目讀起來像不同世界—語義對齊（英文須體現）「" +
+    PLATFORM_COVER_SCENE_VERSATILITY_EN +
+    "」。前景／中景／後景可分层，用具象道具、手勢、環境**呼應** Hook；**僅當**正文**明確**以讀書、書房、圖書或**明確**以特定居家客廳叙事為核心時再主導該類場景；**（3）** **圖標編輯層（必達·豎封須保留）**：畫內**必須**有 **2～4 個** 與 Hook、主題與正文關鍵訊息**強語義對齊**的**極簡線稿小圖標**（可有表現力與動勢，**生動**呼應內容，忌千篇一律的通用符號堆砌）；各配 **短簡中輔標**（約 4–8 字），可橫向輕帶、左下／中下浮動簇或與中景主體形成**視覺呼應**；**從屬**主標，**不建議**遮擋主標與安全宣讀區，**不建議**做成密集成步驟教程或整版資訊圖；**（4）** **版式與衝擊力**：整體**排版美觀**（主從、留白、層級、對齊），主標與背板 **對比強**，光影／色面在縮略圖尺度須具 **高吸引力與視覺衝擊力**（以可執行光色構圖達成，非標題詐騙）；（5）**敘事鉤**：縮略圖尺度**宜**能看出視覺或敘事鉤子；（6）**版式習慣**：**宜避免**過度模板化 bland stock 臉譜占滿、豎畫布硬塞多分鏡縱條、或把豎封寫成 **2×4 寬幅主表**—**除非**任務明確要網格或筆記版。",
   "**三軌一致性：** **Vertex Gemini 3 Flash**、**OpenAI**（`modelName` 常見 **gpt‑5.4**、可 **gpt‑5.5**）、**Gemini 3 Flash Preview 兜底** 共用上列**意圖**；輸出措辭可不同，但**不建議**擅自把明確的單封任務收成多分鏡整表、或把明確的網格任務收成單張滿幅（以任務標籤為准）。",
 ].join("\n");
 
@@ -315,9 +324,10 @@ export function platformImageTranslationVertexJsonSystemInstruction(
       "你是頂級中英雙語編導，也是頂級視覺提示詞導演；英文聲口須與上段莎士比亞式編導身份一致（可長可短，以忠實還原為準）。",
       "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
       "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不建議使用 markdown、不建議附加解釋。",
-      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**選題豎封**：英文 `prompt` **必須**寫明 GPT-IMAGE-2 繪製 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標、**不得整張僅大字而無圖標層**。",
+      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**【第一優先·軟性】premium cover design：** 英文 `prompt` **優先**寫出 **premium editorial feed cover** 氣質—受控留白、可信光型、低飽和主色 + 極少亮色點綴；圖標**優先**融入同一光照、**彷彿浮在**實景上，**不建議**默認為每枚圖標加實色圓／方塊／藥丸襯底（除非任務明確要 UI／貼紙促銷感）。**選題豎封（圖標層仍必達）**：英文 `prompt` **必須**寫明 GPT-IMAGE-2 繪製 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標，**不建議**整張僅大字而**略去**圖標層。",
       "若上游封面/科普正文未出現食物，**可不必**以廚房、食譜表、食材格為主場景。",
       "**場景多元化：** 英文 prompt 須與文案場景**同步多元化**；**室內、戶外**皆可作參考，**不建議**無正文依據時過度集中在書房、書桌、書架牆、閱讀角、咖啡廳**僅讀書套路**或**典型客廳、沙發電視牆**；優先寫出與 Hook／題材匹配的**具體場所**（**例如包括但不限於**：旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、公共／工業／醫療室內、棚拍抽象景等）。",
+      PLATFORM_COVER_SCENE_VERSATILITY_EN,
     ].join("\n");
   }
   return [
@@ -416,7 +426,9 @@ const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 2. LAYOUT: **prefer 9:16 portrait**, single full-bleed hero, one dominant subject—**lean away from** accidental 16:9 or multi-panel reads **unless** the task explicitly asks.
 3. **Composition habit:** a **single** strong cover beat usually fits this product better than storyboard grids, 2×4 strips, or numbered panels—**unless** the brief specifies panels.
 4. SUBJECT & SET: align Hook + Context (**cover staging should diversify with the copy**); **reduce** unrelated generic stock tropes. **Staging diversity:** **indoor and outdoor** are both acceptable references—avoid **over-focusing** on study / office-library clichés **or** repetitive **living-room / sofa–TV** interiors unless the Context demands them; prioritize **specific** environments that **sell the hook** (urban exterior, transit, landscape, clinic/lab/industrial interior, arena, market, studio color-field set, diorama, etc.).
-5. **MANDATORY editorial icon layer:** **2–4** **minimal line-art micro-icons** (thin but **expressive** stroke) that **specifically echo** the hook, theme, and concrete beats from the Context—not generic clip-art. Each icon pairs with a **short Simplified-Chinese** 辅标 (~4–8 chars). Arrange as **compact horizontal band** or **floating cluster** (lower-third or mid-left), **subordinate** yet **clearly legible** at thumbnail scale; optional **thin rule** / frosted strip. **Do not** omit this layer; **do not** let icons collide with or overpower the hero headline; **do not** turn the canvas into a dense step-by-step tutorial sheet.
+4.45 **Versatile, vivid scenes (highly + strongly recommended):** ${PLATFORM_COVER_SCENE_VERSATILITY_EN}
+4.5 **First priority (soft) — premium cover design:** **Prefer** a **premium editorial / luxury-feed** read: cohesive motivated lighting, disciplined hierarchy and negative space, a **restrained** palette with **one** crisp accent; micro-icons should feel **lit by the same scene** as the hero—not pasted stickers. **Not recommended:** defaulting to heavy solid circular/square/pill **badges** behind every glyph, opaque white “card” slabs, or loud neon fill blocks—**unless** the brief explicitly asks for UI / promo-sticker grammar.
+5. **Editorial icon layer (required on feed covers):** **Strongly prioritize** **2–4** refined **line-art micro-icons** (thin yet **expressive**) that **specifically echo** the hook, theme, and concrete beats from the Context—not generic clip-art. Each icon pairs with a **short Simplified-Chinese** 辅标 (~4–8 chars). Arrange as **compact horizontal band** or **floating cluster** (lower-third or mid-left), **subordinate** yet **clearly legible** at thumbnail scale; optional **thin rule** / frosted strip. **Not recommended:** omitting this layer; **not recommended:** letting icons collide with or **visually overpower** the hero headline; **not recommended:** turning the canvas into a dense step-by-step tutorial sheet.
 6. **Layout & impact:** specify **polished composition** (hierarchy, breathing room, alignment) plus **bold feed-stopping contrast** (motivated light, dominant hue + razor accent, depth) for **high visual attraction and punch**— honest staging, not clickbait typography tricks.
 7. Include masterpiece, 8k; state Simplified-Chinese headline / on-image copy needs when the brief requires 简中.
 `.trim();
@@ -459,7 +471,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并**务必**留下 **2～4 个可入画的具象图标题材**（与 Hook、正文关键词**一一对应**，供下游**必出**线稿小图标+简中辅标，忌泛泛符号）。",
           "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），不建議删光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
-          "場景提煉：**建議**封面與文案場景多元化；**室內、戶外**皆可入骨架。**不建議**無依據時把畫面過窄在書房、書桌、滿架書本或**反覆客廳、沙發區**；可保留與題材吻合的**具體場所詞**（**例如包括但不限於**旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、工業／醫療／公共室內等）。",
+          "場景提煉：**建議**封面與文案場景多元化；**室內、戶外**皆可入骨架。**不建議**無依據時把畫面過窄在書房、書桌、滿架書本或**反覆客廳、沙發區**；可保留與題材吻合的**具體場所詞**（**例如包括但不限於**旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、工業／醫療／公共室內等）。**多選題／跨題材時**宜在骨架中留出**可區分、多變、生動**的場景錨點，避免每題都落成同一書房或客廳詞條。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 不建議留空。",
         ].join("\n"),
       },
@@ -644,12 +656,14 @@ ${personaRaw}
     : "";
   const isVideo = input.variant === "video";
   const coverDesignOnly = `
-COVER DESIGN — **soft boundaries** (if the brief explicitly specifies aspect, panels, or tropes, **follow the brief**), **except the icon layer below is NON-OPTIONAL for feed covers**:
+COVER DESIGN — **soft boundaries first** (if the brief explicitly specifies aspect, panels, or tropes, **follow the brief**). **Deliverable:** the **icon editorial band** below is still **required** on feed covers.
+- **1st priority (soft) — premium cover design:** **Prefer** **premium editorial feed-cover** quality: motivated light, calm hierarchy, restrained palette + a single sharp accent; icons should read as **integrated into the same lighting** as the hero. **Not recommended:** chunky solid icon badges, opaque sticker-backs, or neon slabs behind every glyph unless the brief clearly wants promo / UI styling.
 - **Aspect & frame:** **prefer** **9:16 portrait**, one tall hero; **lean away from** slipping into 16:9 or 1:1 **unless** the task asks.
 - **Hero:** one dominant subject and a clear focal story usually read better on feeds than a busy sheet.
-- **Set diversity (anti-cliché):** **Cover and copy** in Context should **stay in sync**—stage **diversified** environments. **Do not** over-use study / home office / library wall / reading nook / café study OR **default living-room / sofa–TV wall** when the Context does not require it. **Indoor and outdoor** are both valid references—**rotate** between them as fits the hook (streets, transit, nature, rooftops, clinics, labs, factories, venues, gyms, public halls, bold studio sets, etc.)—only lean book- or living-room–heavy when the brief clearly says so.
+- **Set diversity (anti-cliché):** **Cover and copy** in Context should **stay in sync**—stage **diversified** environments. **Not recommended:** over-using study / home office / library wall / reading nook / café study OR **defaulting to** living-room / sofa–TV wall when the Context does not require it. **Indoor and outdoor** are both valid references—**rotate** between them as fits the hook (streets, transit, nature, rooftops, clinics, labs, factories, venues, gyms, public halls, bold studio sets, etc.)—only lean book- or living-room–heavy when the brief clearly says so.
+- **Versatile, vivid scenes (highly + strongly recommended):** ${PLATFORM_COVER_SCENE_VERSATILITY_EN}
 - **Layout habits:** multi-panel storyboard, dual-card note, or Xiaohongshu **image–text note** grammar is easy to over-default—**use only if** the brief asks. Avoid letting the **dominant** read be a dense step checklist or app **comment wall**; keep the hero title primary.
-- **MANDATORY — icon editorial band:** Always direct **2–4** **minimal line-art** icons + **short Simplified-Chinese** 辅标. Each icon must **vividly match** concrete ideas, metaphors, or props from the hook 「${hook}」**and** the Context—not decorative clutter. Cluster as a **compact band** or **floating group** (e.g. lower-third / mid-left), **subordinate** to the hero headline but **readable at thumbnail scale**; **do not** omit; **do not** let icons overpower the headline.
+- **Icon editorial band (required):** Always direct **2–4** refined **line-art** icons + **short Simplified-Chinese** 辅标. Each icon must **vividly match** concrete ideas, metaphors, or props from the hook 「${hook}」**and** the Context—not decorative clutter. Cluster as a **compact band** or **floating group** (e.g. lower-third / mid-left), **subordinate** to the hero headline but **readable at thumbnail scale**. **Not recommended:** omitting this layer; **not recommended:** letting icons overpower the headline.
 - **Visual impact:** Push for **beautiful layout** (balance, alignment, negative space) and **high feed-stopping contrast**—motivated light, bold hue vs accent, cinematic depth—so the cover feels **premium and magnetic** without misleading clickbait.
 - **Chrome:** account UI and comment bars often distract—**prefer** a clean editorial frame **unless** the concept needs them.
 - **Thumbnail legibility:** the **upper ~35–45%** is often a good band for **large, legible Simplified-Chinese** hook type with comfortable contrast; all-caption-minimal layouts can disappear small—**prefer** more air when unsure.
@@ -908,8 +922,9 @@ export async function callGemini3_1_Pro_AiStudio(
           "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
           "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不建議擅自改格数或把单封面写成多格，除非任务明确要求。",
           "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
-          "**選題豎封必達：** 英文 prompt **必須**寫明畫內 **2～4 個** 線稿小圖標 + 各 **短簡中輔標**，圖標須**生動對齊** Hook 與正文要點；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；**不得**僅有大字或略去圖標層。",
+          "**選題豎封必達：** 英文 prompt **必須**寫明畫內 **2～4 個** 線稿小圖標 + 各 **短簡中輔標**，圖標須**生動對齊** Hook 與正文要點；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；**不建議**僅有大字或略去圖標層。",
           "**場景：** **建議**封面與文案場景多元化；**室內、戶外**皆可作參考。**不建議**無正文依據時過度集中在書房、書桌、書架牆或**典型客廳、沙發電視牆**；英文須寫出與 Hook 匹配的**具體場所或置景**（街景自然、公共／醫療／工業室內、棚拍色片等）。",
+          PLATFORM_COVER_SCENE_VERSATILITY_EN,
           "请返回合法 JSON：{\"prompt\":\"...\"}；不建議附加解釋、不建議使用 markdown。",
           "若上游是封面/科普而正文未出现食物，**可不必**以廚房、食譜表、食材格為主場景。",
         ].join("\n")

@@ -13,6 +13,7 @@ import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
+import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import type {
   GrowthAnalysisScores,
@@ -86,6 +87,7 @@ import {
   Users,
   Video,
   Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
@@ -101,8 +103,6 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
-/** 管理員／監管：步驟 0.5 Deep Research Pro——**選題豎版封面**、**2×4／八格**在英文化前可插入（服端另受 env 總閘影響） */
-const PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY = "mvstudiopro.platform.topicCoverDeepResearchPro.v1";
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
 
@@ -373,37 +373,61 @@ function renderHighlightText(text: string): React.ReactNode {
   });
 }
 
-// Smart icon picker — matches persona keywords or signal content to an appropriate Lucide icon
-// Returns a JSX element (LucideIcon rendered at given size/color)
+/** 列表卡片左側裝飾圖示：不依關鍵字猜使用者領域，僅由文案字串 hash **穩定**挑一個，避免每人都得像同一種帳號類型。 */
+const PLATFORM_CARD_DECOR_ICONS: LucideIcon[] = [
+  Sparkles,
+  Star,
+  Award,
+  PlayCircle,
+  ArrowRight,
+  Rocket,
+  TrendingUp,
+  Eye,
+  Bot,
+  Camera,
+  Film,
+  CalendarRange,
+  ShieldCheck,
+  MessageSquareText,
+  Globe,
+  Target,
+  Flame,
+  Zap,
+  Layers,
+  Video,
+  Image,
+  FileText,
+  Users,
+  BarChart3,
+  DollarSign,
+  Briefcase,
+  PenLine,
+  BookOpen,
+  Trophy,
+  Share2,
+  Heart,
+  Mic,
+  Palette,
+  Landmark,
+  Activity,
+  Stethoscope,
+  Package,
+];
+
+function platformCardDecorIconHash(text: string): number {
+  let h = 2166136261;
+  const s = String(text || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+// 列表／卡片用裝飾圖示：語意中性，同一條文案每次得到同一圖、不同文案盡量錯開
 function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React.ReactElement {
-  const t = String(text || "").toLowerCase();
-  if (/医生|医师|心脏|临床|心血管|stethoscope|doctor|cardio/.test(t)) return <Stethoscope className={className} />;
-  if (/心电图|ekg|ecg|脉搏|动脉|血管/.test(t)) return <Activity className={className} />;
-  if (/文化|艺术|书画|人文|古代|历史|文物|古建|收藏/.test(t)) return <Landmark className={className} />;
-  if (/美学|审美|palette|设计|色彩|风格/.test(t)) return <Palette className={className} />;
-  if (/视频|短视频|短片|拍摄|分镜|film|video/.test(t)) return <Video className={className} />;
-  if (/图文|图片|封面|排版|image|photo|graphic/.test(t)) return <Image className={className} />;
-  if (/播客|直播|podcast|音频|声音|mic/.test(t)) return <Mic className={className} />;
-  if (/变现|收入|付费|课程|knowledge|monetize|商业化/.test(t)) return <DollarSign className={className} />;
-  if (/品牌|合作|赞助|brand|sponsor/.test(t)) return <Briefcase className={className} />;
-  if (/赛道|方向|策略|lane|track|strategy/.test(t)) return <Target className={className} />;
-  if (/热点|趋势|话题|trending|booster/.test(t)) return <Flame className={className} />;
-  if (/平台|platform|分发/.test(t)) return <Globe className={className} />;
-  if (/文案|copy|写作|script|脚本|内容/.test(t)) return <PenLine className={className} />;
-  if (/书|阅读|knowledge|知识/.test(t)) return <BookOpen className={className} />;
-  if (/奖|top|第一|冠军|award|trophy/.test(t)) return <Trophy className={className} />;
-  if (/步骤|行动|action|execute|step/.test(t)) return <Zap className={className} />;
-  if (/粉丝|用户|audience|followers/.test(t)) return <Users className={className} />;
-  if (/分享|share|传播/.test(t)) return <Share2 className={className} />;
-  if (/数据|analytics|stat|metric/.test(t)) return <BarChart3 className={className} />;
-  if (/layer|level|层|structure|结构/.test(t)) return <Layers className={className} />;
-  if (/情感|情绪|emotion|心理/.test(t)) return <Heart className={className} />;
-  if (/article|文章|报告|文档/.test(t)) return <FileText className={className} />;
-  // Rotating fallback based on hash of text (ensures different cards get different icons)
-  const fallbacks = [<Sparkles className={className} />, <Star className={className} />, <Award className={className} />, <PlayCircle className={className} />, <ArrowRight className={className} />];
-  let hash = 0;
-  for (let i = 0; i < t.length; i++) hash = (hash * 31 + t.charCodeAt(i)) & 0xffff;
-  return fallbacks[hash % fallbacks.length];
+  const Icon = PLATFORM_CARD_DECOR_ICONS[platformCardDecorIconHash(text) % PLATFORM_CARD_DECOR_ICONS.length];
+  return <Icon className={className} />;
 }
 
 // Universal safe-text extractor — handles string | object | null from LLM outputs
@@ -1308,25 +1332,6 @@ export default function PlatformPage() {
     }
   }, [platformCoverVertexNb2]);
 
-  const [platformTopicCoverDeepResearchPro, setPlatformTopicCoverDeepResearchPro] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return window.localStorage.getItem(PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY,
-        platformTopicCoverDeepResearchPro ? "1" : "0",
-      );
-    } catch {
-      /* ignore */
-    }
-  }, [platformTopicCoverDeepResearchPro]);
-
   const canConfigureCompositeImageTranslator =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
@@ -1859,7 +1864,7 @@ export default function PlatformPage() {
         creationRecordId: readOptionalReportBindingCreationId(),
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
-        ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+        ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
@@ -2011,7 +2016,6 @@ export default function PlatformPage() {
       effectiveCompositeImagePromptTranslator,
       canConfigureCompositeImageTranslator,
       platformCoverVertexNb2,
-      platformTopicCoverDeepResearchPro,
       platformImageFlowPollIntervalMs,
     ],
   );
@@ -2045,7 +2049,7 @@ export default function PlatformPage() {
         imagePromptTranslator: "gpt54",
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
-        ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+        ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
@@ -2177,7 +2181,7 @@ export default function PlatformPage() {
         coverClickEstimate,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformTopicCoverDeepResearchPro, platformImageFlowPollIntervalMs],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -2637,7 +2641,7 @@ export default function PlatformPage() {
         const supervisorTok = getSupervisorTrpcToken();
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
         const compositeDrProExtras = {
-          ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+          ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
             ? { enableTopicCoverDeepResearchPro: true as const }
             : {}),
           ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
@@ -5868,21 +5872,6 @@ export default function PlatformPage() {
                           <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
                         </span>
                       </label>
-                      <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-violet-400/35 bg-violet-950/30 px-3 py-2.5 text-left text-[11px] leading-snug text-violet-50/95 shadow-sm">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-violet-400/60 accent-violet-400"
-                          checked={platformTopicCoverDeepResearchPro}
-                          onChange={(e) => setPlatformTopicCoverDeepResearchPro(e.target.checked)}
-                        />
-                        <span>
-                          <span className="font-bold text-violet-200">监管专用 · 封面 / 2×4 步骤 0.5 Deep Research Pro</span>
-                          ：勾选后<strong className="text-violet-100/90">选题竖版封面、分镜 2×4、小红书八格</strong>在英文化前可多跑一轮
-                          Deep Research（Interactions）。偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
-                          会采纳该开关，其余仍只靠环境变量总闸（含{" "}
-                          <code className="rounded bg-black/30 px-1 text-[10px]">PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO</code>）。
-                        </span>
-                      </label>
                     </div>
                   ) : null}
 
@@ -5911,7 +5900,7 @@ export default function PlatformPage() {
                             const supervisorTok = getSupervisorTrpcToken();
                             const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
                             const compositeDrProExtras = {
-                              ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+                              ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                 ? { enableTopicCoverDeepResearchPro: true as const }
                                 : {}),
                               ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
@@ -6627,7 +6616,7 @@ export default function PlatformPage() {
                                 const supervisorTok = getSupervisorTrpcToken();
                                 const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
                                 const compositeDrProExtras = {
-                                  ...(canConfigureCompositeImageTranslator && platformTopicCoverDeepResearchPro
+                                  ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                     ? { enableTopicCoverDeepResearchPro: true as const }
                                     : {}),
                                   ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),

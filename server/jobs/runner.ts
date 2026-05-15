@@ -1085,6 +1085,7 @@ async function processPlatformJob(
       let topicHook: string;
       let contextRaw: string;
       let appealHookOut: string;
+      let snapshotPlatformsKey = "";
       try {
         const resolved = await assertOptimizedCoverInputsFromDb({
           userId: uidNum,
@@ -1094,6 +1095,7 @@ async function processPlatformJob(
         contextRaw = resolved.context;
         appealHookOut = resolved.appealHook;
         fmt = resolved.format;
+        snapshotPlatformsKey = resolved.snapshotPlatformsKey ?? "";
       } catch (e) {
         const msg = e instanceof PlatformCoverInputsError ? e.message : e instanceof Error ? e.message : String(e);
         throw new Error(msg || "无法从选题快照解析封面文案");
@@ -1105,6 +1107,14 @@ async function processPlatformJob(
         ? await buildPlatformCoverHistoryHintFromDb({ userId: uidNum })
         : "";
       const enrichedContext = mergeCoverContextWithDbHint(contextRaw, coverHistoryHint);
+      const preferFlyLiveTrend = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
+      const { loadMergedTrendEngagementVisualBriefForUserSnapshot } = await import(
+        "../services/trendEngagementVisualBrief.js",
+      );
+      const trendEngagementVisualBrief = await loadMergedTrendEngagementVisualBriefForUserSnapshot({
+        platformsKeyCsv: snapshotPlatformsKey,
+        preferFlyLive: preferFlyLiveTrend,
+      });
       const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
       const coverProEngine =
         rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
@@ -1154,6 +1164,7 @@ async function processPlatformJob(
         enableTopicCoverDeepResearchPro,
         drProSecondaryCoverInputs,
         batchSceneDiversity,
+        trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
       });
       return { provider: "vertex", output: result };
     }
@@ -1189,6 +1200,7 @@ async function processPlatformJob(
       let topicHook: string;
       let contextRaw: string;
       let appealHookOut: string;
+      let snapshotPlatformsKey = "";
       try {
         const resolved = await assertOptimizedCoverInputsFromDb({
           userId: uidNum,
@@ -1198,6 +1210,7 @@ async function processPlatformJob(
         contextRaw = resolved.context;
         appealHookOut = resolved.appealHook;
         fmt = resolved.format;
+        snapshotPlatformsKey = resolved.snapshotPlatformsKey ?? "";
       } catch (e) {
         const msg = e instanceof PlatformCoverInputsError ? e.message : e instanceof Error ? e.message : String(e);
         throw new Error(msg || "无法从选题快照解析封面文案");
@@ -1208,6 +1221,14 @@ async function processPlatformJob(
       const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId: uidNum });
       const enrichedContext = mergeCoverContextWithDbHint(contextRaw, coverHistoryHint);
 
+      const preferFlyLiveTrendBundle = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
+      const { loadMergedTrendEngagementVisualBriefForUserSnapshot } = await import(
+        "../services/trendEngagementVisualBrief.js",
+      );
+      const trendEngagementVisualBrief = await loadMergedTrendEngagementVisualBriefForUserSnapshot({
+        platformsKeyCsv: snapshotPlatformsKey,
+        preferFlyLive: preferFlyLiveTrendBundle,
+      });
       const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
       const coverProEngine =
         rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
@@ -1298,6 +1319,7 @@ async function processPlatformJob(
           enableTopicCoverDeepResearchPro,
           drProSecondaryCoverInputs,
           batchSceneDiversity: batchSceneDiversityBundle,
+          trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
         }),
         generatePlatformCompositeSheetImage({
           kind: compositeKind,
