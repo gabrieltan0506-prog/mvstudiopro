@@ -13,8 +13,8 @@
  * - **傳輸**：建立任務 **REST** `fetch`（UTF‑8 中文 `input`）；輪詢 **\@google/genai** \`interactions.get\`（見 {@link ./googleDeepResearchInteractions.ts}）。
  * - **時限**：`PLATFORM_COVER_DEEP_RESEARCH_PRO_TIMEOUT_MS`（未設時預設 **600000**，單次 interaction 輪詢預算；**硬頂 10min**，逾時則放棄本段 DR、下行走原語境 + GPT 5.4。）
  *   **雙條並行**：每條獨立預算與單條相同，見 {@link resolveDualPerSlotTimeoutMs}（預設即 **各 10min**，均受同一 env 與 600000 硬頂約束）。
- * - **雙條（可選）**：{@link runCoverDeepResearchDualBatchBrief} 對**兩則選題**各開一次 Interaction；{@link runCoverDeepResearchBriefPreferDual} **僅當兩條均**產出有效簡報時才注入主條 DR；**任一條逾時/解析失敗**則整段**不注入** DR（下階僅主選題語境 + GPT 5.4），**不**改用單條簡報湊合。不得把「兩組無關選題」塞進**同一則** GPT 翻譯請求。
- * - **輪詢**：`PLATFORM_COVER_DR_POLL_INTERVAL_MS`（預設 6000；勿低於 Google 側節奏避免 429）
+ * - **雙條（可選）**：{@link runCoverDeepResearchDualBatchBrief} 對**兩則選題**各開一次 Interaction；{@link runCoverDeepResearchBriefPreferDual} **僅當兩條均**產出有效簡報時才注入主條 DR；**任一條逾時/解析失敗**則整段**不注入** DR（下階僅主選題語境 + GPT 5.4），**不**改用單條簡報湊合。不建議把「兩組無關選題」塞進**同一則** GPT 翻譯請求。
+ * - **輪詢**：`PLATFORM_COVER_DR_POLL_INTERVAL_MS`（預設 6000；不建議低於 Google 側節奏避免 429）
  */
 import type { CoverTaskInput } from "./agenticCoverWorkflow.js";
 import {
@@ -92,17 +92,17 @@ function clipBrief(text: string, maxChars: number): string {
 
 const DR_AGENT_INVOCATION_COMMON = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
 【時間節奏】本輪以平台輪詢預算為硬上限（通常約十分鐘內）；請在時限內**高效率**整合並交付，無須冗長；下游另有 **GPT 5.4** 負責英文化与收斂，你這裡只做**輕量編導優化**，不是最終像素產出。
-【輸出語言】正文僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄。
-【聯網邊界】僅用於**同一選題語境**的輕量補強；勿換成無關話題與無關爆款案例。`.trim();
+【輸出語言】正文僅簡體中文；不建議整段英文；不建議 JSON；不建議 markdown 代碼欄。
+【聯網邊界】僅用於**同一選題語境**的輕量補強；不建議換成無關話題與無關爆款案例。`.trim();
 
 function drProductOneLiner(product: DrBriefProduct): string {
   if (product === "platform_cover") {
-    return "【本輪對象】豎版 9:16 信息流封面——補強可作畫的構圖/主體/光影/留白與簡中主標層級。";
+    return "【本輪對象】豎版 9:16 信息流封面——補強可作畫的構圖/主體/光影/留白與簡中主標層級；**封面與文案場景宜多元化**（**室內、戶外**皆可參考），不建議無據時過度集中在書房書桌或反覆客廳沙發區。";
   }
   if (product === "composite_storyboard") {
-    return "【本輪對象】橫版 2×4 電影感分鏡主表——補強八格的叙事情緒與畫面任務（勿輸出製片表或 JSON）。";
+    return "【本輪對象】橫版 2×4 電影感分鏡主表——補強八格的叙事情緒與畫面任務（不建議輸出製片表或 JSON）。";
   }
-  return "【本輪對象】小紅書 2×4 八格圖文拼圖——補強拼圖節奏與信息層級（勿寫成視頻分鏡製片註解堆砌）。";
+  return "【本輪對象】小紅書 2×4 八格圖文拼圖——補強拼圖節奏與信息層級（不建議寫成視頻分鏡製片註解堆砌）。";
 }
 
 function rolePreambleForProduct(product: DrBriefProduct): string {
@@ -113,7 +113,7 @@ function buildDrAgentFidelityBlock(): string {
   return `
 【輸出約定】
 1. 仅用简体中文连贯正文；无 JSON、无 markdown 代码栏；篇幅与条目數由你視效率自定，不必凑字。
-2. 紧扣【選題標題】【基礎文案摘錄】與【載體】；联网仅作同话题补充，勿换题。
+2. 紧扣【選題標題】【基礎文案摘錄】與【載體】；联网仅作同话题补充，不建議换题。
 3. 无需自证与正文逐字对齐；下游 GPT 5.4 会承接翻译与塑形。
 
 `.trim();

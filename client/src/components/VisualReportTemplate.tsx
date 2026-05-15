@@ -45,10 +45,15 @@ function safeTxt(item: any): string {
   return String(item);
 }
 
-/** 解析「+72%」「-3%」「125」等为整数；失败返回 null */
+/** 解析「+72%」「增长1.5倍」「-3%」等为整数（用于条宽，增长M倍视为 +M×100）；失败返回 null */
 function parseGrowthPercentString(growth: string): number | null {
   const s = String(growth || "").trim();
   if (!s) return null;
+  const times = s.replace(/\s/g, "").match(/^增长(\d+(?:\.\d+)?)倍$/);
+  if (times) {
+    const mult = Number(times[1]);
+    if (Number.isFinite(mult)) return Math.round(mult * 100);
+  }
   const compact = s.replace(/\s/g, "").replace(/%$/i, "");
   const m = compact.match(/^([+-]?)(\d+(?:\.\d+)?)$/);
   if (!m) return null;
@@ -187,7 +192,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               {/* Track growth */}
               {(data.trackGrowth?.length || 0) > 0 && (
                 <div style={card()}>
-                  <div style={ct(C[4])}><div style={dot(C[4])} />赛道爆款增长率排行</div>
+                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道 · 样本热度与环比</div>
                   {(data.trackGrowth || []).map((t, i) => {
                     const color = C[i % C.length];
                     const gStr = safeTxt(t.growth || "");
@@ -199,17 +204,20 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                       fillPct = 10;
                       valueTxt = /%/.test(gStr) ? gStr.trim() : `${parsed}%`;
                     } else if (parsed != null) {
-                      const clamped = Math.min(100, Math.max(8, parsed));
-                      fillPct = clamped;
-                      valueTxt = `+${clamped}%`;
+                      const v = Math.round(parsed);
+                      const compactG = gStr.replace(/\s/g, "");
+                      const isTimesForm = /^增长\d+(\.\d+)?倍$/.test(compactG);
+                      valueTxt = isTimesForm ? gStr.trim() : `+${v}%`;
+                      fillPct = v <= 100 ? Math.max(8, v) : 100;
                     } else {
-                      fillPct = Math.max(10, 100 - i * 12);
-                      valueTxt = `+${fillPct}%`;
+                      fillPct = 8;
+                      valueTxt = gStr.trim() || "无匹配样本";
                     }
+                    const barColor = isNeg ? muted : parsed != null ? color : muted;
                     return barRow(
                       safeTxt(t.name || t),
                       isNeg ? 10 : fillPct,
-                      isNeg ? muted : color,
+                      barColor,
                       valueTxt,
                       t.isHot ? "热" : undefined,
                       t.isHot ? { bg: "#3a0e2a", color: "#ff4fb8" } : undefined
@@ -314,7 +322,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                             <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
                               <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
                             </div>
-                            <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>{barW}%</span>
+                            <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>#{ti + 1}</span>
                             <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "99px", background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
                           </div>
                         </div>
@@ -388,7 +396,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                                 <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
                                   <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
                                 </div>
-                                <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>{barW}%</span>
+                                <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>#{ti + 1}</span>
                                 <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "99px", background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
                               </div>
                             </div>

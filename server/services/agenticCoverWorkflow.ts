@@ -157,19 +157,19 @@ export async function runAgenticCoverStrategist(
 
     const systemInstruction = [
       `你是顶级 ${input.format} 信息流「封面视觉总监」（抖音/小红书式竖封缩略图）。`,
-      `若搜索工具不可用，仍凭专业知识输出；勿编造不实外部链接标题。`,
+      `若搜索工具不可用，仍凭专业知识输出；不建議编造不实外部链接标题。`,
       `仅输出合法 JSON，三键：` +
         `"coverHeadline"（≤12 字简体钩子大字）、` +
-        `"rawImagePrompt"（**简体中文**生图企划：主体·隐喻·布光·镜头语言·材质色温，可多段编号）、` +
+        `"rawImagePrompt"（**简体中文**生图企划：主体·隐喻·布光·镜头语言·材质色温，可多段编号；**封面場景宜與文案一併多元化**，**室內與戶外**皆可作參考，不建議無依據時過度集中在書房書桌書架或反覆客廳沙發電視牆；可寫街景自然、公共／醫療／工業室內、棚拍色片等）、` +
         `"designRationale"（≤200 字 CTR 逻辑）。`,
-      `禁止 Markdown、禁止 JSON 外文字。`,
+      `不建議使用 Markdown、不建議在 JSON 外附加文字。`,
     ].join("");
 
     const userText = [
       `【创作者 IP】行业：${tp.industry}；优势：${tp.advantage}；风格主轴：${tp.flagship}`,
       `【选题】${input.topicTitle}`,
       `【基础文案】\n${input.baseCopywriting.slice(0, 6000)}`,
-      `请输出 JSON（竖版 9:16 单主视觉；不要宽幅 2×4 八格表）。`,
+      `请输出 JSON（竖版 9:16 单主视觉；不建議写成宽幅 2×4 八格表）。`,
     ].join("\n\n");
 
     const thinking = resolveVertexFlashThinkingConfigForSdk();
