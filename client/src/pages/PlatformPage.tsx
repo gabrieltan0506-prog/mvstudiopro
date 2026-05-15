@@ -181,6 +181,24 @@ function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
   return !raw || raw.includes("timeout") || raw.includes("error");
 }
 
+/**
+ * 新任務入隊時不要清空 Debug（否則第二張、第二次生成會先出現「DR Pro 整欄被清掉」直到輪詢有數據）。
+ * 在上一筆日誌後追加分割提示與占位行；首輪 poll 拿到 imageGenFlowLog 後仍會整份替換為服務端日誌。
+ */
+function appendTopicCoverDebugNewJobBanner(
+  prev: string[],
+  kind: "cover" | "bundle" | "composite2x4",
+  sceneHint: string,
+): string[] {
+  const ts = new Date().toISOString();
+  const tail = sceneHint.trim().replace(/\s+/g, " ").slice(0, 80);
+  const label = kind === "bundle" ? "套裝" : kind === "composite2x4" ? "2×4/八格" : "封面";
+  const banner = `${ts}  [客户端] ─── 新任務：${label}${tail ? ` · ${tail}` : ""} ───`;
+  const hold = `${ts}  [步骤0.5·DR-Pro] （客户端）等待服務端本輪日誌（上方可對照上一筆；下一則服務端行寫入後本區會切換為本輪完整流水）`;
+  if (prev.length === 0) return [hold];
+  return [...prev, banner, hold];
+}
+
 const WINDOW_OPTIONS = [
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
   { days: 30 as const, label: "30天", description: "看平台主流结构与相对稳定方向" },
@@ -1846,7 +1864,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
       });
-      setTopicCoverPipelineFlowLogDebug([]);
+      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "bundle", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2032,7 +2050,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
       });
-      setTopicCoverPipelineFlowLogDebug([]);
+      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "cover", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2456,7 +2474,13 @@ export default function PlatformPage() {
       const compositeDbgLabel =
         input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
-        setTopicCoverPipelineFlowLogDebug([]);
+        setTopicCoverPipelineFlowLogDebug((p) =>
+          appendTopicCoverDebugNewJobBanner(
+            p,
+            "composite2x4",
+            `${input.sceneId} ${String(input.title ?? "").slice(0, 60)}`,
+          ),
+        );
         setCompositeJobPollTrace({
           jobId: pid,
           label: compositeDbgLabel,
