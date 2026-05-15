@@ -1,8 +1,9 @@
 /**
  * 選題視覺管線 · **步驟 0.5**（可選）
  *
- * **封面單幀**：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` 或 `PLATFORM_COVER_DEEP_RESEARCH_PRO`。
- * **2×4 分鏡 / 小紅書八格**：上述任一為真 **或** `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`，即可在對應管線啟用同一套 Interactions Deep Research Pro。
+ * **選題單幀封面**：`PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` 或 `PLATFORM_COVER_DEEP_RESEARCH_PRO` 為真，或管理員入參 `enableTopicCoverDeepResearchPro`，即可能在英文化前插入步驟 0.5（見 {@link isTopicCoverDeepResearchProEnabled}）。
+ *
+ * **2×4 分鏡 / 小紅書八格**：上述 topic env **或** `PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO`（見 {@link isCompositeSheetDeepResearchProEnabled}）可在寬幅合成管線啟用同一套 Interactions Deep Research Pro。
  *
  * 啟用時經 Gemini **Interactions API** 發起輕量 Deep Research agent，產出一小段 **简体** 並合入中文語境，再交既有 **GPT‑5.4 → 生圖**。任務語義依 {@link DrBriefProduct}：**單幀封面**側重**高點擊+高轉化**；**2×4** 分別對應**電影級分鏡主表**或**小紅書八格圖文筆記**編導增强。
  *
@@ -22,6 +23,7 @@ import {
   pollInteractionUntilDone,
   requireGeminiApiKey,
 } from "./googleDeepResearchInteractions.js";
+import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 
 /** DR-Pro 步驟 0.5 產品形態（決定寫入 Agent 的任務與產出語義）。 */
 export type DrBriefProduct = "platform_cover" | "composite_storyboard" | "composite_xhs_note";
@@ -88,179 +90,39 @@ function clipBrief(text: string, maxChars: number): string {
   return `${t.slice(0, maxChars)}\n…(truncated)`;
 }
 
-const normCompact = (s: string): string =>
-  String(s || "")
-    .replace(/[\s\u3000]+/g, "")
-    .trim();
-
-/** 管線注入區塊標題，非使用者正文；若當成「文案錨點」會擷取到「身份锚点」等，DR 成品不會照抄而誤判失敗。 */
-function stripInternalCoverAnchorLabelsForCopyAnchor(raw: string): string {
-  return String(raw || "")
-    .replace(/^【封面身份锚点】[：:]\s*/, "")
-    .replace(/^【封面身份锚点】\s*/, "")
-    .replace(/^【身份锚点】[：:]\s*/, "")
-    .replace(/^【身份锚点】\s*/, "")
-    .replace(/^【封面人生锚点】[：:]\s*/, "")
-    .replace(/^【封面人生锚点】\s*/, "")
-    .replace(/^【人生锚点】[：:]\s*/, "")
-    .replace(/^【人生锚点】\s*/, "")
-    .replace(/^【文案锚点】[：:]\s*/, "")
-    .replace(/^【文案锚点】\s*/, "")
-    .trim();
-}
-
-/** 禁止作為「必須出現在 DR 正文」的錨詞（標籤詞／過短套話）。 */
-function isBoilerplateCopyAnchorFrag(frag: string): boolean {
-  const f = normCompact(frag);
-  if (f.length < 4) return true;
-  const deny = new Set([
-    "身份锚点",
-    "封面身份锚点",
-    "身份锚",
-    "锚点",
-    "基础文案",
-    "基礎文案",
-    "文案摘录",
-    "文案摘錄",
-    "选題標題",
-    "选题标题",
-  ]);
-  return deny.has(f) || deny.has(f.slice(0, Math.min(6, f.length)));
-}
-
-/**
- * 捨棄與題/文無可追溯綁定的空泛發揮（聯網趨勢僅可作輔證，主體須來自已給標題與文案）。
- * 2×4 編導段落常對「基礎文案」作近義改寫，過嚴的「文案字級」要求會誤殺；選題錨已防換題。
- */
-function passesCoverBriefTopicCopyAnchor(
-  textRaw: string,
-  task: CoverTaskInput,
-  product: DrBriefProduct,
-): { ok: boolean; reason?: string } {
-  const text = String(textRaw || "").trim();
-  const normText = normCompact(text);
-
-  const topic = String(task.topicTitle || "").trim();
-  const topicNorm = normCompact(topic);
-
-  if (text.length < 72) {
-    return { ok: false, reason: `正文過短（${text.length} 字，建議≥72）` };
-  }
-
-  if (topicNorm.length >= 2) {
-    if (topicNorm.length <= 36 && normText.includes(topicNorm)) {
-      /* 選題字面命中 */
-    } else {
-      const tokenRun = [...topicNorm.match(/[\u4e00-\u9fff]{4}|[A-Za-z0-9]{4}/g) ?? []][0];
-      const frag =
-        tokenRun ||
-        (topicNorm.length >= 6 ? topicNorm.slice(0, 6) : topicNorm.slice(0, Math.min(topicNorm.length, 4)));
-      if (!normText.includes(frag)) {
-        return { ok: false, reason: `未檢測到選題錨點「${frag}」——禁止換題發揮` };
-      }
-    }
-  }
-
-  if (product === "composite_storyboard" || product === "composite_xhs_note") {
-    return { ok: true };
-  }
-
-  const baseRaw = stripInternalCoverAnchorLabelsForCopyAnchor(String(task.baseCopywriting || ""));
-  const baseNorm = normCompact(baseRaw);
-  if (baseNorm.length >= 24) {
-    const head = baseNorm.slice(0, Math.min(baseNorm.length, 48));
-    const runs = head.match(/[\u4e00-\u9fff]{4,12}|[A-Za-z0-9]{6,}/g) ?? [];
-    const candidates: string[] = [];
-    for (const run of runs) {
-      const cand = String(run).slice(0, 12);
-      if (cand.length >= 4 && !isBoilerplateCopyAnchorFrag(cand)) candidates.push(cand);
-    }
-    if (candidates.length === 0) {
-      const fallback = (head.slice(0, Math.min(head.length, 8)).match(/[\u4e00-\u9fff]{4,8}/)?.[0] ?? "").slice(0, 12);
-      if (fallback.length >= 4 && !isBoilerplateCopyAnchorFrag(fallback)) candidates.push(fallback);
-    }
-    const anyHit = candidates.some((fragCopy) => fragCopy && normText.includes(fragCopy));
-    if (!anyHit && candidates.length > 0) {
-      return { ok: false, reason: `未檢測到文案錨點（嘗試 ${candidates.slice(0, 3).join(" / ")}）——須復用上下文具體信息` };
-    }
-  }
-
-  return { ok: true };
-}
-
 const DR_AGENT_INVOCATION_COMMON = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
-【時間節奏】在符合本指令要求的前提下，快速整合篇幅與聯網深度，以最快時間交付清晰與明確的優化結果。
+【時間節奏】本輪以平台輪詢預算為硬上限（通常約十分鐘內）；請在時限內**高效率**整合並交付，無須冗長；下游另有 **GPT 5.4** 負責英文化与收斂，你這裡只做**輕量編導優化**，不是最終像素產出。
 【輸出語言】正文僅簡體中文；勿整段英文；勿 JSON；勿 markdown 代碼欄。
-【聯網邊界】僅用於**同一選題語境**的輕量補強（句式/視覺趨勢）；禁止換題、禁止引入與下列【選題標題】【基礎文案摘錄】無關的爆款案例。`.trim();
+【聯網邊界】僅用於**同一選題語境**的輕量補強；勿換成無關話題與無關爆款案例。`.trim();
 
-const DR_GOAL_PLATFORM_COVER = `【本回合唯一目標】為「竖版 9:16 信息流封面」寫**一段**可給下游翻译成**英文生图 prompt** 的简体视觉企划（構圖/主體/光影/留白/簡中主標層級）。
-【商業目標 · 必須同時顧及】**高點擊率**（thumb-stop：鉤子、反差、主視覺記憶點、可读大標）與**高轉化率意圖**（信任與利益點可感知、畫面線索與素材一致的**單一路徑行動**——收藏/評論關鍵詞/私信/橱窗等，**禁止**只吸睛却看不出下一步）；不是市場研報、不是逐字講稿、不是分鏡表。`.trim();
-
-const DR_GOAL_COMPOSITE_STORYBOARD = `【本回合唯一目標】為即將生成的**橫版 2×4 電影級分鏡主表**（八格寫實電影感静帧帶）寫**一段**简体**編導增强**視覺企劃，給下游壓成英文宽幅生圖 prompt。
-【創作與商業目標】**電影級**画面气质（動機光、空間深度、景别/节奏暗示可含蓄存在）、格間**叙事節拍**（起承轉合、信息投放）；並帶**高點擊/高完播**意图（前三格抓人、中段信息、尾格收束或行動感畫面），避免八格平庸拼湊。`.trim();
-
-const DR_GOAL_COMPOSITE_XHS = `【本回合唯一目標】為即將生成的**小紅書 2×4 八格圖文筆記**拼圖寫**一段**简体**編導增强**視覺企劃，給下游壓成英文宽幅生圖 prompt。
-【創作與商業目標】**圖文筆記**语义（封面格強钩子、內頁格信息節奏與層級）；**高互動/高收藏**與**種草高轉化**（信任証据、利益点、**單一主行動**的視覺暗示與文案一致）；**禁止**寫成視頻分鏡製片欄位堆砌。`.trim();
-
-function rolePreambleForProduct(product: DrBriefProduct): string {
-  const goal =
-    product === "platform_cover"
-      ? DR_GOAL_PLATFORM_COVER
-      : product === "composite_storyboard"
-        ? DR_GOAL_COMPOSITE_STORYBOARD
-        : DR_GOAL_COMPOSITE_XHS;
-  return `${DR_AGENT_INVOCATION_COMMON}\n\n${goal}`;
-}
-
-function buildDrAgentFidelityBlock(product: DrBriefProduct): string {
-  const item6 =
-    product === "platform_cover"
-      ? "须覆盖：**高點擊**鉤子与**高轉化**視覺線索（信任/利益/主行動可讀暗示，與素材一致）／主視覺隱喻／光影與主色調／簡中大標层级；避免英文段落。"
-      : product === "composite_storyboard"
-        ? "须覆盖：**電影級**光影與空間層次、**2×4 八格帶**的叙事節拍（起承轉合）、各格畫面任務可讀（可含蓄景别/節奏暗示），便于下游写成宽幅分鏡主表英文 prompt。"
-        : "须覆盖：**八格圖文筆記**的信息節奏（封面钩+內頁利益/証据/收藏理由）、**種草轉化**埋点（單一主行動與文案一致）、格间层级差異；避免製片式分鏡術語欄；便于下游写成八格英文 prompt。";
-
-  const item7 =
-    product === "platform_cover"
-      ? "短句+可执行畫面描述，能想见**封面**長相，并感知**為何值得點進去行動**。"
-      : product === "composite_storyboard"
-        ? "短句+可执行畫面與節拍描述，能想见**整條電影感 2×4 分鏡帶**如何推進。"
-        : "短句+可执行拼圖版式語義，能想见**整張 2×4 圖文筆記**如何驅動收藏與轉化。";
-
-  return `
-【忠實約束 — 缺一不可】
-1. 全文必須**扣死**给定【選題標題】【基礎文案摘錄】中的具體主體、利益點或矛盾；禁止換成泛化行業雞湯或另一個話題。
-2. 第一段**第一行（或第一句）**：必須用簡体字寫一行「錨定句」，明確復述本條視覺創意服務對象為「選題標題所指內容 + 上文案中的某一具體信息點」（可短句）。
-3. 「聯網」僅可作**同話題语境**的趋势/視覺句法补强；不得引入與標題·文案無關的爆款梗或明星案例。
-4. 禁止捏造與【基礎文案摘錄】相背的具體事實、數據或產品名；没有把握就写視覺層級的概括，不写假數字。
-5. 输出只要**简体中文**連貫正文（無 JSON / 無markdown代碼欄）。
-6. 字数 **280～950 字**；${item6}
-7. 文风：${item7}
-`.trim();
-}
-
-function buildProductAssignmentBlock(product: DrBriefProduct): string {
+function drProductOneLiner(product: DrBriefProduct): string {
   if (product === "platform_cover") {
-    return `
-【封面專任 · 請嚴格遵守 · 離題視同失敗】
-【你的擅長】在**給定素材範圍內**優化「選題怎麼說更像封面鉤子」與「文案怎麼壓成可畫進圖的信息」，提煉懸念、反差、利益點與**可轉化信息**；**不改命題換題**，只做表達與結構強化。
-【你的任務】輸出**高點擊率 + 高轉化意圖**兼顧的一段視覺企劃：须能指揮構圖、主體、光影、留白、簡中大標层级，**且**行動/信任線索與【基礎文案摘錄】一致（非空喊）。
-【工作閉環】聯網僅可作同話題參考；最終落在连贯的简体**封面绘制指令**上（非白皮書）。
-`.trim();
+    return "【本輪對象】豎版 9:16 信息流封面——補強可作畫的構圖/主體/光影/留白與簡中主標層級。";
   }
   if (product === "composite_storyboard") {
-    return `
-【2×4 電影級分鏡主表 · 編導增强 · 離題視同失敗】
-【你的擅長】把劇本/卖点整理成**八格分鏡帶**的可執行視覺：**電影級**布光與鏡頭語感、格間節拍與懸念；**不改命題換題**。
-【你的任務】產出一段简体編導摘要，供下游展開為**橫版 2×4**英文 prompt；強調**高點進/高完播叙事**，每格在語義上可對應敘事功能（不必輸出製片表格或 JSON）。
-【工作閉環】格線/閱讀順序的硬約束由下游模板鎖定；你負責**画面內容與節拍**說清楚。
-`.trim();
+    return "【本輪對象】橫版 2×4 電影感分鏡主表——補強八格的叙事情緒與畫面任務（勿輸出製片表或 JSON）。";
   }
+  return "【本輪對象】小紅書 2×4 八格圖文拼圖——補強拼圖節奏與信息層級（勿寫成視頻分鏡製片註解堆砌）。";
+}
+
+function rolePreambleForProduct(product: DrBriefProduct): string {
+  return `${DR_AGENT_INVOCATION_COMMON}\n\n${drProductOneLiner(product)}`;
+}
+
+function buildDrAgentFidelityBlock(): string {
   return `
-【小紅書 2×4 八格圖文筆記 · 編導增强 · 離題視同失敗】
-【你的擅長】規划**整張拼圖筆記**的視覺節奏：封面格鉤子、內頁格信息層級；**高收藏/高互动**與**種草轉化**並重；**禁止**把八格写成視頻分鏡製片註解。
-【你的任務】產出一段简体編導摘要，供下游展開為**2×4 八格圖文筆記**英文 prompt；語義上區分「封面格」與「內容格」。
-【工作閉環】行動線索與【基礎文案摘錄】一致，單一主行動。
+【輸出約定】
+1. 仅用简体中文连贯正文；无 JSON、无 markdown 代码栏；篇幅与条目數由你視效率自定，不必凑字。
+2. 紧扣【選題標題】【基礎文案摘錄】與【載體】；联网仅作同话题补充，勿换题。
+3. 无需自证与正文逐字对齐；下游 GPT 5.4 会承接翻译与塑形。
+
+`.trim();
+}
+
+function buildProductAssignmentBlock(): string {
+  return `
+【編導優化】
+依據下方上下文，產出一段可併入下游英文化與生圖鏈路的简体要點即可；豎版封面、2×4 分鏡、八格圖文**共用**本要求，具體交付形態以【載體】與【本輪對象】一句為準。
 `.trim();
 }
 
@@ -270,9 +132,9 @@ function buildCoverBriefInteractionInput(task: CoverTaskInput, product: DrBriefP
   return `
 ${rolePreambleForProduct(product)}
 
-${buildProductAssignmentBlock(product)}
+${buildProductAssignmentBlock()}
 
-${buildDrAgentFidelityBlock(product)}
+${buildDrAgentFidelityBlock()}
 
 上下文（你的全部依據來源）
 ——
@@ -288,8 +150,8 @@ export type CoverDrProBriefOptions = {
   /** 日誌括號標籤，預設 `步骤0.5·DR-Pro`；2×4 合成用 `步骤0.5·DR-Pro·2×4` */
   logPrefix?: string;
   /**
-   * 預設 `platform_cover`（單幀封面）；2×4 管線請傳 `composite_storyboard` 或 `composite_xhs_note`，
-   * 否則 Agent 會误以為只做豎版封面。
+   * 預設 `platform_cover`（歷史：單幀信息流）；2×4 管線請傳 `composite_storyboard` 或 `composite_xhs_note`，
+   * 否則 Agent 会误以為只做選題**單幀**編導。
    */
   drBriefProduct?: DrBriefProduct;
   /** 覆寫本輪輪詢預算（毫秒）；未傳則與 `PLATFORM_COVER_DEEP_RESEARCH_PRO_TIMEOUT_MS` 解析一致（單次、預設 10min 內、硬頂 600000） */
@@ -311,7 +173,7 @@ export async function runCoverDeepResearchDualBatchBrief(
 ): Promise<CoverDeepResearchDualBatchResult> {
   const logBracket = String(options?.logPrefix ?? "步骤0.5·DR-Pro·双条").trim() || "步骤0.5·DR-Pro·双条";
   const log = (s: string) => {
-    flowLog.push(`${new Date().toISOString()}  [${logBracket}] ${s}`);
+    flowLog.push(`${platformFlowLogTimestamp()}  [${logBracket}] ${s}`);
   };
 
   const product: DrBriefProduct = options?.drBriefProduct ?? "platform_cover";
@@ -380,7 +242,7 @@ export async function runCoverDeepResearchDualBatchBrief(
 
 /**
  * 有第二則選題（雙條 DR-Pro）時：先 {@link runCoverDeepResearchDualBatchBrief}；**僅當兩條均**取得有效簡報時才注入 **主條 A** 的 DR 正文供下階英文化。
- * **任一條失敗、逾時或錨定校驗不通過** → 視為雙條 DR-Pro **未達成**，回傳 **null**（整段不注入 DR，不採用「只剩一條有效也勉強用」）。下階僅主選題快照語境 + GPT 5.4。
+ * **任一條失敗或逾時** → 視為雙條 DR-Pro **未達成**，回傳 **null**（整段不注入 DR，不採用「只剩一條有效也勉強用」）。下階僅主選題快照語境 + GPT 5.4。
  * 僅單題時：等同單次 {@link runCoverDeepResearchInteractionsBrief}。
  */
 export async function runCoverDeepResearchBriefPreferDual(
@@ -395,7 +257,7 @@ export async function runCoverDeepResearchBriefPreferDual(
   }
 
   const logBracket = String(options?.logPrefix ?? "步骤0.5·DR-Pro").trim() || "步骤0.5·DR-Pro";
-  const note = (s: string) => flowLog.push(`${new Date().toISOString()}  [${logBracket}·双条策略] ${s}`);
+  const note = (s: string) => flowLog.push(`${platformFlowLogTimestamp()}  [${logBracket}·双条策略] ${s}`);
 
   const { results } = await runCoverDeepResearchDualBatchBrief([primary, sec], flowLog, options);
   const a = results[0]?.trim() ? results[0]! : null;
@@ -405,7 +267,7 @@ export async function runCoverDeepResearchBriefPreferDual(
     return a;
   }
   note(
-    "雙條 DR-Pro：兩條未**同時**取得有效簡報（含逾時/解析或錨定失敗）· **不啟用 DR** · 下階僅主選題語境 + GPT 5.4（不採用單條殘報）",
+    "雙條 DR-Pro：兩條未**同時**取得有效簡報（含逾時或解析失敗）· **不啟用 DR** · 下階僅主選題語境 + GPT 5.4（不採用單條殘報）",
   );
   return null;
 }
@@ -445,7 +307,7 @@ export async function runCoverDeepResearchInteractionsBrief(
 ): Promise<string | null> {
   const logBracket = String(options?.logPrefix ?? "步骤0.5·DR-Pro").trim() || "步骤0.5·DR-Pro";
   const log = (s: string) => {
-    flowLog.push(`${new Date().toISOString()}  [${logBracket}] ${s}`);
+    flowLog.push(`${platformFlowLogTimestamp()}  [${logBracket}] ${s}`);
   };
 
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -495,16 +357,10 @@ export async function runCoverDeepResearchInteractionsBrief(
     });
 
     const { text: extracted } = extractDeepResearchTextAndImages(row);
-    const text = clipBrief(String(extracted ?? ""), 5200);
+    const text = clipBrief(String(extracted ?? ""), 5200).trim();
 
-    if (!text || text.length < 40) {
-      log(`正文過短 (${text?.length ?? 0} 字)，忽略`);
-      return null;
-    }
-
-    const anchor = passesCoverBriefTopicCopyAnchor(text, task, product);
-    if (!anchor.ok) {
-      log(`捨棄：與當前選題/文案錨定失敗 · ${anchor.reason}`);
+    if (!text) {
+      log("正文為空，忽略");
       return null;
     }
 

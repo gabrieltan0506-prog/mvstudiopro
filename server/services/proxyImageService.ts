@@ -7,7 +7,6 @@ import {
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import {
-  callGemini31ProForImagePrompt,
   resolveVertexFlashTranslationLocation,
   resolveVertexFlashTranslationModelName,
   type PlatformImagePromptTranslator,
@@ -17,6 +16,8 @@ import {
   buildGptImage2AlignedPlatformTopicCoverPrompt,
   PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX,
 } from "./platformTopicCoverPrompt.js";
+import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
+import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -31,22 +32,14 @@ function isFlyPlatformTopicImageStorage(): boolean {
 /** 平台頁 Debug：可選逐步驟時間線（僅在調用方傳入陣列時寫入）。jobs120：嚴格陣列校驗，避免非陣列誤傳導致運行時寫入失敗。 */
 export function appendImageFlowLog(log: string[] | undefined, message: string): void {
   if (!log || !Array.isArray(log)) return;
-  log.push(`${new Date().toISOString()}  ${message}`);
+  log.push(`${platformFlowLogTimestamp()}  ${message}`);
 }
 
 export type ProxyImageTypographyMode = "STRATEGIC" | "STORYBOARD" | "GRAPHIC";
 export type ImagePromptStats = {
   translatedPromptChars: number;
   translatedPromptWords: number;
-  condensedPromptChars: number;
-  condensedPromptWords: number;
-  condenseTriggered: boolean;
 };
-
-/** 智能提炼阈值：**大幅提高**，避免对正常长度英文 prompt 二次压短（平台单帧以画面一致性优先）。 */
-const PROMPT_CONDENSE_LENGTH_THRESHOLD = 24_000;
-const PROMPT_CONDENSE_HARD_CHAR_LIMIT = 24_000;
-const PROMPT_FINAL_HARD_CHAR_CAP = 24_000;
 
 function countPromptWords(text: string): number {
   return String(text || "")
@@ -55,145 +48,11 @@ function countPromptWords(text: string): number {
     .filter(Boolean).length;
 }
 
-function forceTrimPromptToHardCap(text: string, hardCap = PROMPT_FINAL_HARD_CHAR_CAP): string {
-  const raw = String(text || "").trim();
-  if (!raw || raw.length <= hardCap) return raw;
-  const sliced = raw.slice(0, hardCap);
-  const lastComma = sliced.lastIndexOf(",");
-  const trimmed = lastComma >= Math.floor(hardCap * 0.6) ? sliced.slice(0, lastComma) : sliced;
-  return trimmed.replace(/[,\s]+$/g, "").trim();
-}
-
-export type CondenseImagePromptOptions = {
-  maxLength?: number;
-  translator?: PlatformImagePromptTranslator;
-  flowLog?: string[];
-};
-
-/**
- * 超長 prompt 時啟動最多 3 次濃縮；**不對生圖串做 slice 物理截斷**（閾值僅決定是否觸發提煉）。
- * `flowLog` 與 `appendImageFlowLog` 約定一致；`translator` 與首階翻譯一致時整鏈路不走寫死 GPT。
- */
-export async function condenseImagePromptIfNeeded(
-  rawPrompt: string,
-  options?: CondenseImagePromptOptions,
-): Promise<string> {
-  const log = options?.flowLog;
-  const originalWords = countPromptWords(rawPrompt);
-  if (!rawPrompt || rawPrompt.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
-    const direct = forceTrimPromptToHardCap(rawPrompt);
-    if (direct.length !== String(rawPrompt || "").trim().length) {
-      appendImageFlowLog(
-        log,
-        `[Prompt 提炼] 直通前触发最终硬裁剪，chars=${String(rawPrompt || "").trim().length} -> ${direct.length}`,
-      );
-    }
-    return direct;
-  }
-
-  appendImageFlowLog(
-    log,
-    `[Prompt 提炼] 原始长度超标 (chars=${rawPrompt.length}, words=${originalWords})，启动 3 次智能重试机制...`,
-  );
-  const condenseTask = [
-    `请将以下过长的生图 Prompt 重写为一条更短、更准的英文生图指令。`,
-    `要求：`,
-    `1. 输出只能是一条英文 prompt 或英文 tags，不要解释，不要 markdown。`,
-    `2. 在保留构图、主体、灯光、版式类型（单封面 vs 宽幅 2×4 分镜 / 小红书 2×4 八格）与简中标题指令的前提下缩短；**无固定字符上限**，以「仍能指导生图模型」为准。`,
-    `3. 尽量不要丢失：构图、主体、灯光、镜头气质、以及原文锁定的版式类型。`,
-    `4. 若原文要求画面中出现简体中文标题或标签，请继续带上这条要求。`,
-    `5. 版式守恒：若原文是多格分镜、横向合成表、**2×2 四宫格** 等结构，提炼后应仍像是同一类版面；若原文是 vertical 9:16 单封面或单一主视觉，提炼后也保持单封气质。`,
-    `6. 其余细节可在不违背上述版式意图的前提下适当归纳合并，不必逐条复述原文的警示列表。`,
-    ``,
-    rawPrompt,
-  ].join("\n");
-
-  let bestAttempt = rawPrompt.trim();
-  let bestAttemptChars = bestAttempt.length || Number.MAX_SAFE_INTEGER;
-
-  // 2. 嚴格 3 次重試
-  for (let i = 1; i <= 3; i++) {
-    try {
-      const condensed = await callGemini31ProForImagePrompt(condenseTask, {
-        translator: options?.translator ?? "gpt54",
-        flowLog: log,
-        pipelineStatCtx: { pipeline: "prompt_condense" },
-      });
-      const out = condensed.trim();
-      const outWords = countPromptWords(out);
-      if (out && out.length < bestAttemptChars) {
-        bestAttempt = out;
-        bestAttemptChars = out.length;
-      }
-      if (out.length <= PROMPT_CONDENSE_HARD_CHAR_LIMIT) {
-        appendImageFlowLog(log, `[Prompt 提炼] 第 ${i} 次尝试成功，chars=${out.length}, words=${outWords}`);
-        return out.trim();
-      }
-      appendImageFlowLog(
-        log,
-        `[Prompt 提炼] 第 ${i} 次尝试结果未达标 (chars=${out.length}, words=${outWords})`,
-      );
-    } catch (e: unknown) {
-      appendImageFlowLog(
-        log,
-        `[Prompt 提炼] 第 ${i} 次尝试请求失败: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-
-  // 3. 不再中止：再做一次更强硬的最终压缩，避免整条主路径因提炼失败直接死亡
-  appendImageFlowLog(log, "[Prompt 提炼] 前 3 次未达标，启动最终强制浓缩，不再直接报失败");
-  const finalForceTask = [
-    "将下面这条英文生图指令在不丢失版式与主体的前提下精炼（可仍为长句或 tags，以生图可用为准）。",
-    "要求：",
-    "1. 只输出一条英文生图指令，不要解释、不要 markdown。",
-    `2. 无固定字符上限；以不丢单封面/分镜结构区分为先。`,
-    "3. 尽量保留：主体、灯光、场景、版式类型（单封面 vs 宽幅 2×4——与原文一致）、简体中文标题要求。",
-    "4. 若原文整体是单张竖封，请别把结果压缩成明显的宽幅多格主表；反之亦然。",
-    "",
-    bestAttempt,
-  ].join("\n");
-
-  try {
-    const forced = (
-      await callGemini31ProForImagePrompt(finalForceTask, {
-        translator: options?.translator ?? "gpt54",
-        flowLog: log,
-        pipelineStatCtx: { pipeline: "prompt_condense" },
-      })
-    ).trim();
-    const forcedWords = countPromptWords(forced);
-    const forcedTrimmed = forceTrimPromptToHardCap(forced);
-    appendImageFlowLog(
-      log,
-      `[Prompt 提炼] 最终强制浓缩完成，chars=${forced.length}, words=${forcedWords}${forcedTrimmed.length !== forced.length ? ` · 最终硬裁剪 -> ${forcedTrimmed.length}` : ""}`,
-    );
-    if (forcedTrimmed) {
-      return forcedTrimmed;
-    }
-  } catch (e: unknown) {
-    appendImageFlowLog(
-      log,
-      `[Prompt 提炼] 最终强制浓缩请求失败: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-
-  appendImageFlowLog(
-    log,
-    `[Prompt 提炼] 使用当前最短候选继续主路径，chars=${bestAttempt.length}, words=${countPromptWords(bestAttempt)}${forceTrimPromptToHardCap(bestAttempt).length !== bestAttempt.length ? ` · 最终硬裁剪 -> ${forceTrimPromptToHardCap(bestAttempt).length}` : ""}`,
-  );
-  return forceTrimPromptToHardCap(bestAttempt);
-}
-
-export function buildImagePromptStats(translatedPrompt: string, finalPrompt: string): ImagePromptStats {
-  const translated = String(translatedPrompt || "").trim();
-  const condensed = String(finalPrompt || translatedPrompt || "").trim();
+export function buildImagePromptStats(englishPrompt: string): ImagePromptStats {
+  const p = String(englishPrompt || "").trim();
   return {
-    translatedPromptChars: translated.length,
-    translatedPromptWords: countPromptWords(translated),
-    condensedPromptChars: condensed.length,
-    condensedPromptWords: countPromptWords(condensed),
-    condenseTriggered: translated !== condensed,
+    translatedPromptChars: p.length,
+    translatedPromptWords: countPromptWords(p),
   };
 }
 
@@ -1210,8 +1069,8 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const execute = async (): Promise<string | null> => {
   const L = options.flowLog;
-  const k = options.kind;
-  const isStoryboard = k === "storyboard_sheet_portrait" || k === "storyboard_sheet_landscape";
+  const k = normalizeCompositeSheetKind(options.kind);
+  const isStoryboard = k === "storyboard_sheet_landscape";
   const isXhs = k === "xiaohongshu_dual_note";
   if (!isStoryboard && !isXhs) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
@@ -1237,7 +1096,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4 · strict**" : " · 默认 Flash→GPT strict"}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ condenseImagePromptIfNeeded → ⑤ 像素锁 → ⑥ GPT-IMAGE-2 宽幅 → ⑦ 无图则 Nano Banana 2 兜底（2K）`,
+    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4 · strict**" : " · 默认 Flash→GPT strict"}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ 像素锁 → ⑤ GPT-IMAGE-2 宽幅 → ⑥ 无图则 Nano Banana 2 兜底（2K）`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1262,7 +1121,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   if (runCompositeDrPro) {
     appendImageFlowLog(
       L,
-      `${new Date().toISOString()}  [步骤0.5·DR-Pro·2×4] 管理员入参=${drFromAdmin ? "开启" : "关闭"} · 环境=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro（注入分镜/八格中文语境；失败则忽略）`,
+      `[步骤0.5·DR-Pro·2×4] 管理员入参=${drFromAdmin ? "开启" : "关闭"} · 环境=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro（注入分镜/八格中文语境；失败则忽略）`,
     );
     try {
       const drTask = buildCoverTaskInputFromPipeline({
@@ -1282,22 +1141,19 @@ export async function generatePlatformCompositeSheetImage(options: {
     } catch (e: unknown) {
       appendImageFlowLog(
         L,
-        `${new Date().toISOString()}  [步骤0.5·DR-Pro·2×4] 异常（忽略）: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
+        `[步骤0.5·DR-Pro·2×4] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
-  const phaseOrderTs = new Date().toISOString();
   if (runCompositeDrPro) {
     appendImageFlowLog(
       L,
-      `${phaseOrderTs}  [管线·阶段顺序·2×4] A/Deep Research Pro 段已结束 → B/中文骨架 extractChineseVisualBrief 与英文化`,
+      `[管线·阶段顺序·2×4] A/Deep Research Pro 段已结束 → B/中文骨架 extractChineseVisualBrief 与英文化`,
     );
   } else {
     appendImageFlowLog(
       L,
-      `${phaseOrderTs}  [管线·阶段顺序·2×4] 未启用 A/Deep Research Pro → 直接 B/中文骨架与英文化`,
+      `[管线·阶段顺序·2×4] 未启用 A/Deep Research Pro → 直接 B/中文骨架与英文化`,
     );
   }
 
@@ -1337,24 +1193,13 @@ export async function generatePlatformCompositeSheetImage(options: {
         throw new Error("宽幅合成翻译结果为空");
       }
 
-      appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，进入提炼/Prompt 整形");
+      appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，直接进入像素锁与送生图");
       appendImageFlowLog(
         L,
         `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
       );
 
-      appendImageFlowLog(
-        L,
-        `[2×4·步骤1b] Prompt 智能提炼（仅当超 PROMPT_CONDENSE 阈值触发；translator=${tr}）…`,
-      );
-      const condensedCore = await condenseImagePromptIfNeeded(englishCore, {
-        translator: options.imagePromptTranslator,
-        flowLog: L,
-      });
-      appendImageFlowLog(
-        L,
-        `[2×4·步骤1b·完成] chars ${englishCore.length} → ${condensedCore.length}${condensedCore.length < englishCore.length ? "（已缩短）" : "（未缩短或仅硬裁剪）"}`,
-      );
+      const trimmedEnglishCore = String(englishCore).trim();
       const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
       const topicTitleZh = String(options.title || "").trim().slice(0, 80);
       const storyboardTitleInject =
@@ -1367,7 +1212,7 @@ export async function generatePlatformCompositeSheetImage(options: {
           `[2×4·顶栏] 已并入 prompt · 内容总结锚点（简中）· len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
         );
       }
-      const promptForImageBase = `${String(condensedCore).trim()}\n\n${pixelLock}${storyboardTitleInject}`;
+      const promptForImageBase = `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
       const promptForImage = appendVertexProPhotographyPromptModifiers(
         promptForImageBase,
         "platform_landscape_sheet",

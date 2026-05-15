@@ -14,6 +14,7 @@ import {
   persistCoverChineseStagingToRunningJob,
 } from "./platformImageChineseStaging.js";
 import { estimateCoverCtrBand } from "../../shared/platformTitleVariants.js";
+import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 
 /** 與 repository patch 截斷一致，避免單欄位過大 */
 const FLOW_LOG_DB_CAP = 240;
@@ -69,9 +70,6 @@ function classifyPlatformTopicFrameStatus(url: string | null | undefined): "comp
 export type ImagePromptStats = {
   translatedPromptChars: number;
   translatedPromptWords: number;
-  condensedPromptChars: number;
-  condensedPromptWords: number;
-  condenseTriggered: boolean;
 };
 
 export type RunPlatformTopicImagePipelineInput = {
@@ -92,7 +90,8 @@ export type RunPlatformTopicImagePipelineInput = {
   /** 管理員專用：單幀主生圖改為 Vertex Nano Banana 2（9:16 · 官方 API；與主路徑共用光影語彙）。`nano_banana_pro` 為舊別名，行為相同。 */
   coverProEngine?: "nano_banana_2" | "nano_banana_pro";
   /**
-   * 管理員於 Platform 頁開啟並經 tRPC/job 為 true；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：任一為真即跑步驟 0.5。
+   * 管理員於 Platform 頁開啟並經 tRPC/job 為 true 時；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：
+   * 任一為真即跑步驟 0.5 Interactions DR-Pro（失敗則忽略，主鏈路照舊）。
    */
   enableTopicCoverDeepResearchPro?: boolean;
   /**
@@ -175,17 +174,17 @@ export async function runPlatformTopicImagePipeline(
 
   try {
     topicImageCondenseLog.push(
-      `${new Date().toISOString()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
+      `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${new Date().toISOString()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → ${
+      `${platformFlowLogTimestamp()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → ${
         useVertexNb2Cover
           ? "Vertex Nano Banana 2（9:16·2K）→ 无图则 GPT-IMAGE-2 · 仍无图则版式+NB2"
           : "generateGptImage2FromRawEnglishPrompt 9:16"
       }`,
     );
     topicImageCondenseLog.push(
-      `${new Date().toISOString()}  说明: ${
+      `${platformFlowLogTimestamp()}  说明: ${
         useVertexNb2Cover
           ? "监管 Vertex 封面：英文化 GPT 5.4；出图主路径 Nano Banana 2（2K）→ 无图则 fal→OhMyGPT→NB2（标准链）→ 仍无图则版式+NB2"
           : "中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束"
@@ -195,9 +194,6 @@ export async function runPlatformTopicImagePipeline(
     let promptStats: ImagePromptStats = {
       translatedPromptChars: 0,
       translatedPromptWords: 0,
-      condensedPromptChars: 0,
-      condensedPromptWords: 0,
-      condenseTriggered: false,
     };
     let fallbackUsed = false;
     let imageUrl: string | null = null;
@@ -207,7 +203,7 @@ export async function runPlatformTopicImagePipeline(
     let strategistChinesePrompt: string | null = null;
     if (isPlatformCoverAgenticBrainEnabled()) {
       topicImageCondenseLog.push(
-        `${new Date().toISOString()}  [步骤0·企划大脑] PLATFORM_COVER_AGENTIC_BRAIN 开启 → Vertex 中文企划（失败则降级原链路）`,
+        `${platformFlowLogTimestamp()}  [步骤0·企划大脑] PLATFORM_COVER_AGENTIC_BRAIN 开启 → Vertex 中文企划（失败则降级原链路）`,
       );
       try {
         const taskIn = buildCoverTaskInputFromPipeline({
@@ -221,7 +217,7 @@ export async function runPlatformTopicImagePipeline(
           strategistChinesePrompt = so.rawImagePrompt.trim();
           if (so.coverHeadline || so.designRationale) {
             topicImageCondenseLog.push(
-              `${new Date().toISOString()}  [步骤0] headline=${String(so.coverHeadline || "").slice(0, 28)} · rationale=${String(
+              `${platformFlowLogTimestamp()}  [步骤0] headline=${String(so.coverHeadline || "").slice(0, 28)} · rationale=${String(
                 so.designRationale || "",
               ).slice(0, 96)}`,
             );
@@ -229,7 +225,7 @@ export async function runPlatformTopicImagePipeline(
         }
       } catch (e: unknown) {
         topicImageCondenseLog.push(
-          `${new Date().toISOString()}  [步骤0] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
+          `${platformFlowLogTimestamp()}  [步骤0] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }
@@ -239,7 +235,7 @@ export async function runPlatformTopicImagePipeline(
     const runCoverDrPro = drFromAdminRequest || drFromEnv;
     if (runCoverDrPro) {
       topicImageCondenseLog.push(
-        `${new Date().toISOString()}  [步骤0.5·DR-Pro] 管理员入参=${drFromAdminRequest ? "开启" : "关闭"} · 环境全局=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro 简报（失败则忽略，主链路照旧）`,
+        `${platformFlowLogTimestamp()}  [步骤0.5·DR-Pro] 管理员入参=${drFromAdminRequest ? "开启" : "关闭"} · 环境全局=${drFromEnv ? "开启" : "关闭"} → Interactions Deep Research Pro 简报（失败则忽略，主链路照旧）`,
       );
       try {
         const drTask = buildCoverTaskInputFromPipeline({
@@ -262,14 +258,12 @@ export async function runPlatformTopicImagePipeline(
             : null;
         if (secIn && !drTaskSecondary && secondaryHookNorm) {
           topicImageCondenseLog.push(
-            `${new Date().toISOString()}  [步骤0.5·DR-Pro] 副選題與主選題相同，略過雙條並行 · 僅單條 Interaction`,
+            `${platformFlowLogTimestamp()}  [步骤0.5·DR-Pro] 副選題與主選題相同，略過雙條並行 · 僅單條 Interaction`,
           );
         }
-        const drBrief = await runCoverDeepResearchBriefPreferDual(
-          drTask,
-          drTaskSecondary,
-          topicImageCondenseLog,
-        );
+        const drBrief = await runCoverDeepResearchBriefPreferDual(drTask, drTaskSecondary, topicImageCondenseLog, {
+          drBriefProduct: "platform_cover",
+        });
         if (drBrief?.trim()) {
           const tag = "【DeepResearch Pro·优化后的简体封面生图提示词】";
           strategistChinesePrompt = strategistChinesePrompt?.trim()
@@ -278,19 +272,18 @@ export async function runPlatformTopicImagePipeline(
         }
       } catch (e: unknown) {
         topicImageCondenseLog.push(
-          `${new Date().toISOString()}  [步骤0.5] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
+          `${platformFlowLogTimestamp()}  [步骤0.5] 异常（忽略）: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }
 
-    const phaseOrderTs = new Date().toISOString();
     if (runCoverDrPro) {
       topicImageCondenseLog.push(
-        `${phaseOrderTs}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/GPT 5.4 英文化（步骤1 及以下）`,
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/GPT 5.4 英文化（步骤1 及以下）`,
       );
     } else {
       topicImageCondenseLog.push(
-        `${phaseOrderTs}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/GPT 5.4 英文化`,
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/GPT 5.4 英文化`,
       );
     }
 
@@ -322,38 +315,38 @@ export async function runPlatformTopicImagePipeline(
           coverPersonaContext: coverPersona || undefined,
         });
         topicImageCondenseLog.push(
-          `${new Date().toISOString()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,
+          `${platformFlowLogTimestamp()}  [步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`,
         );
         const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
           translator: imagePromptTranslator,
           flowLog: topicImageCondenseLog,
           pipelineStatCtx: { pipeline: "topic_cover" },
         });
-        topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
+        topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
         const trimmedEn = String(englishPrompt || "").trim();
         if (!trimmedEn) {
-          topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1] 翻译结果为空（不注入模版英文）`);
+          topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 翻译结果为空（不注入模版英文）`);
           throw new Error("英文 prompt 为空");
         }
         topicImageCondenseLog.push(
-          `${new Date().toISOString()}  [步骤1b] 已跳过「智能提炼」· 英文化原文直接进 GPT-IMAGE-2 / NB2（chars=${trimmedEn.length}）`,
+          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 英文化原文直接进 GPT-IMAGE-2 / NB2（chars=${trimmedEn.length}）`,
         );
         const safePrompt = trimmedEn;
         lastSafePrompt = safePrompt;
-        promptStats = buildImagePromptStats(englishPrompt || "", safePrompt);
+        promptStats = buildImagePromptStats(safePrompt);
         topicImageCondenseLog.push(
-          `${new Date().toISOString()}  [统计] translated=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words · condensed=${promptStats.condensedPromptChars} chars/${promptStats.condensedPromptWords} words · condenseTriggered=${promptStats.condenseTriggered}`,
+          `${platformFlowLogTimestamp()}  [统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
         );
         if (useVertexNb2Cover) {
           topicImageCondenseLog.push(
-            `${new Date().toISOString()}  [步骤2-NB2] Vertex Nano Banana 2 · 9:16 · GPT-IMAGE-2 同款比例锁 + 共用光影（非 OhMyGPT）…`,
+            `${platformFlowLogTimestamp()}  [步骤2-NB2] Vertex Nano Banana 2 · 9:16 · GPT-IMAGE-2 同款比例锁 + 共用光影（非 OhMyGPT）…`,
           );
           imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
             englishPrompt: safePrompt,
             flowLog: topicImageCondenseLog,
           });
         } else {
-          topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
+          topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…`);
           imageUrl = await generateGptImage2FromRawEnglishPrompt({
             englishPrompt: safePrompt,
             aspectRatio: "9:16",
@@ -363,7 +356,7 @@ export async function runPlatformTopicImagePipeline(
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤1/2] 主路径异常: ${msg}`);
+        topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1/2] 主路径异常: ${msg}`);
         if (topicImageCondenseLog.length > 0) {
           console.warn(`[runPlatformTopicImagePipeline] topic image flowLog:\n${topicImageCondenseLog.join("\n")}`);
         }
@@ -378,7 +371,7 @@ export async function runPlatformTopicImagePipeline(
           if (useVertexNb2Cover) {
             if (lastSafePrompt) {
               topicImageCondenseLog.push(
-                `${new Date().toISOString()}  [步骤3a] NB2 主路径无图 → fal→OhMyGPT GPT-IMAGE-2 链 · 9:16 · english prompt 沿用步骤1…`,
+                `${platformFlowLogTimestamp()}  [步骤3a] NB2 主路径无图 → fal→OhMyGPT GPT-IMAGE-2 链 · 9:16 · english prompt 沿用步骤1…`,
               );
               imageUrl = await generateGptImage2FromRawEnglishPrompt({
                 englishPrompt: lastSafePrompt,
@@ -389,7 +382,7 @@ export async function runPlatformTopicImagePipeline(
             }
             if (!imageUrl) {
               topicImageCondenseLog.push(
-                `${new Date().toISOString()}  [步骤3b] 仍无图 → 版式 prompt + Vertex Nano Banana 2（2K）…`,
+                `${platformFlowLogTimestamp()}  [步骤3b] 仍无图 → 版式 prompt + Vertex Nano Banana 2（2K）…`,
               );
               imageUrl = await generatePlatformTopicTypographyNanoBanana2Only({
                 title: title || "Content",
@@ -401,11 +394,11 @@ export async function runPlatformTopicImagePipeline(
             }
           } else {
             topicImageCondenseLog.push(
-              `${new Date().toISOString()}  [步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）`,
+              `${platformFlowLogTimestamp()}  [步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）`,
             );
             const primaryHook = String(input.topicHook || "").trim().slice(0, 72);
             topicImageCondenseLog.push(
-              `${new Date().toISOString()}  [步骤3·契約] 版式兜底仅为**本选题**一张竖版 9:16（非整页 2×4 宽幅）；语境锚点=主选题${
+              `${platformFlowLogTimestamp()}  [步骤3·契約] 版式兜底仅为**本选题**一张竖版 9:16（非整页 2×4 宽幅）；语境锚点=主选题${
                 primaryHook ? `「${primaryHook}${primaryHook.length >= 72 ? "…" : ""}」` : "（无标题）"
               }；副选题 DR-Pro 不会并入版式 copywriting`,
             );
@@ -418,7 +411,7 @@ export async function runPlatformTopicImagePipeline(
             });
           }
         } catch (e) {
-          topicImageCondenseLog.push(`${new Date().toISOString()}  [步骤3] 兜底异常: ${e instanceof Error ? e.message : String(e)}`);
+          topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤3] 兜底异常: ${e instanceof Error ? e.message : String(e)}`);
           console.warn(`[runPlatformTopicImagePipeline] 兜底异常:`, e instanceof Error ? e.message : e);
           imageUrl = null;
         }
@@ -431,7 +424,7 @@ export async function runPlatformTopicImagePipeline(
     const newJobMetaBase = input.newJobMetaBase;
 
     if (!imageUrl) {
-      topicImageCondenseLog.push(`${new Date().toISOString()}  ✗ 本条结束：仍无 URL`);
+      topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  ✗ 本条结束：仍无 URL`);
       if (creationIdOut != null && database) {
         try {
           await database
@@ -467,10 +460,10 @@ export async function runPlatformTopicImagePipeline(
     const appealForCtr = String(input.appealHook || "").trim();
     const coverClickEstimate = estimateCoverCtrBand(String(input.topicHook || "").trim(), appealForCtr);
     topicImageCondenseLog.push(
-      `${new Date().toISOString()}  [预估] ${coverClickEstimate.labelZh}（规则分数=${coverClickEstimate.score}，非实测CTR）`,
+      `${platformFlowLogTimestamp()}  [预估] ${coverClickEstimate.labelZh}（规则分数=${coverClickEstimate.score}，非实测CTR）`,
     );
 
-    topicImageCondenseLog.push(`${new Date().toISOString()}  ✓ 本条结束：已得到 imageUrl`);
+    topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  ✓ 本条结束：已得到 imageUrl`);
     const finalStatus = classifyPlatformTopicFrameStatus(imageUrl);
     if (creationIdOut != null && database) {
       try {

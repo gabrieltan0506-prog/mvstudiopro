@@ -101,7 +101,7 @@ const PLATFORM_IMAGE_PROMPT_TRANSLATOR_LS_KEY = "mvstudiopro.platform.imagePromp
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
-/** 管理員／監管：選題封面管线步驟 0.5 Deep Research Pro（Interactions） */
+/** 管理員／監管：步驟 0.5 Deep Research Pro——**選題豎版封面**、**2×4／八格**在英文化前可插入（服端另受 env 總閘影響） */
 const PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY = "mvstudiopro.platform.topicCoverDeepResearchPro.v1";
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
@@ -179,6 +179,24 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
 function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
   const raw = typeof url === "string" ? url.trim().toLowerCase() : "";
   return !raw || raw.includes("timeout") || raw.includes("error");
+}
+
+/**
+ * 新任務入隊時不要清空 Debug（否則第二張、第二次生成會先出現「DR Pro 整欄被清掉」直到輪詢有數據）。
+ * 在上一筆日誌後追加分割提示與占位行；首輪 poll 拿到 imageGenFlowLog 後仍會整份替換為服務端日誌。
+ */
+function appendTopicCoverDebugNewJobBanner(
+  prev: string[],
+  kind: "cover" | "bundle" | "composite2x4",
+  sceneHint: string,
+): string[] {
+  const ts = new Date().toISOString();
+  const tail = sceneHint.trim().replace(/\s+/g, " ").slice(0, 80);
+  const label = kind === "bundle" ? "套裝" : kind === "composite2x4" ? "2×4/八格" : "封面";
+  const banner = `${ts}  [客户端] ─── 新任務：${label}${tail ? ` · ${tail}` : ""} ───`;
+  const hold = `${ts}  [步骤0.5·DR-Pro] （客户端）等待服務端本輪日誌（上方可對照上一筆；下一則服務端行寫入後本區會切換為本輪完整流水）`;
+  if (prev.length === 0) return [hold];
+  return [...prev, banner, hold];
 }
 
 const WINDOW_OPTIONS = [
@@ -1389,7 +1407,7 @@ export default function PlatformPage() {
   const [coverWaitCarouselEngaged, setCoverWaitCarouselEngaged] = useState(false);
   const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
   const [compositeLoadRetriedKeys, setCompositeLoadRetriedKeys] = useState<Set<string>>(() => new Set());
-  /** 橫版 16:9 執行分鏡表（單張合成）；API kind 仍為 storyboard_sheet_portrait */
+  /** 橫版 16:9 執行分鏡表（單張合成）；API `kind` 使用 `storyboard_sheet_landscape`（舊別名 `storyboard_sheet_portrait` 服端視為同一產物）。 */
   const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
   /** 小紅書雙筆記卡（單張合成） */
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
@@ -1846,7 +1864,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
       });
-      setTopicCoverPipelineFlowLogDebug([]);
+      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "bundle", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2032,7 +2050,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
       });
-      setTopicCoverPipelineFlowLogDebug([]);
+      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "cover", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2456,7 +2474,13 @@ export default function PlatformPage() {
       const compositeDbgLabel =
         input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
-        setTopicCoverPipelineFlowLogDebug([]);
+        setTopicCoverPipelineFlowLogDebug((p) =>
+          appendTopicCoverDebugNewJobBanner(
+            p,
+            "composite2x4",
+            `${input.sceneId} ${String(input.title ?? "").slice(0, 60)}`,
+          ),
+        );
         setCompositeJobPollTrace({
           jobId: pid,
           label: compositeDbgLabel,
@@ -2609,7 +2633,7 @@ export default function PlatformPage() {
         const item = cards[slotIndex]!;
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
-        const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+        const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
         const supervisorTok = getSupervisorTrpcToken();
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
         const compositeDrProExtras = {
@@ -3671,7 +3695,7 @@ export default function PlatformPage() {
       for (const item of cards) {
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
-        const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+        const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
         liveLines.push(
           `${new Date().toISOString()}  [客户端] 开始套裝 · sceneId=${item.id} · compositeKind=${compositeKind}`,
@@ -5853,8 +5877,8 @@ export default function PlatformPage() {
                         />
                         <span>
                           <span className="font-bold text-violet-200">监管专用 · 封面 / 2×4 步骤 0.5 Deep Research Pro</span>
-                          ：勾选后<strong className="text-violet-100/90">选题封面、分镜 2×4、小红书八格</strong>在英文化前多跑一轮
-                          Deep Research（Interactions）；偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
+                          ：勾选后<strong className="text-violet-100/90">选题竖版封面、分镜 2×4、小红书八格</strong>在英文化前可多跑一轮
+                          Deep Research（Interactions）。偏好保存在本机。一般账号无此项；服务端仅 admin/supervisor
                           会采纳该开关，其余仍只靠环境变量总闸（含{" "}
                           <code className="rounded bg-black/30 px-1 text-[10px]">PLATFORM_COMPOSITE_SHEET_DEEP_RESEARCH_PRO</code>）。
                         </span>
@@ -5883,7 +5907,7 @@ export default function PlatformPage() {
                           const sourceRow = contentExecutionCards.find((row) => row.id === ref.sceneId);
                           const queueSilentCompositeRetry = () => {
                             if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
-                            const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+                            const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
                             const supervisorTok = getSupervisorTrpcToken();
                             const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
                             const compositeDrProExtras = {
@@ -5965,7 +5989,7 @@ export default function PlatformPage() {
                                     />
                                     <span className="max-w-[20rem] text-xs leading-snug text-gray-400">
                                       {compositePendingUxHints[
-                                        `${ref.sceneId}::${isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait"}`
+                                        `${ref.sceneId}::${isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape"}`
                                       ] ?? "正在绘制高定画面 · 合计常需约 3～5 分钟，请勿中途刷新"}
                                     </span>
                                   </div>
@@ -6033,7 +6057,7 @@ export default function PlatformPage() {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const headlineTitle = item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
-                      const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_portrait";
+                      const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
                       const compositeCost = isGraphicFormat
                         ? CREDIT_COSTS.platformXhsDualNote
                         : CREDIT_COSTS.platformStoryboardSheet;

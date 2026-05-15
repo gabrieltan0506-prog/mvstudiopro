@@ -3,6 +3,7 @@
  * 結案時由 {@link omitChineseStagingFromJobOutput} 剝離，避免長中文落庫成品。
  */
 import { patchJobRunningProgress } from "../jobs/repository.js";
+import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 
 export type CoverChineseStagingSnapshot = {
   kind: "cover";
@@ -77,7 +78,7 @@ export function finalizeCoverChineseStagingForTranslation(opts: {
 
 export function appendStagingCoverToFlowLog(flowLog: string[], staging: CoverChineseStagingSnapshot): void {
   flowLog.push(
-    `${new Date().toISOString()}  [chineseStaging·cover] topic≈${staging.topicHookZh.length}字 · blob≈${staging.optimizedChineseBlob.length}字`,
+    `${platformFlowLogTimestamp()}  [chineseStaging·cover] topic≈${staging.topicHookZh.length}字 · blob≈${staging.optimizedChineseBlob.length}字`,
   );
 }
 
@@ -98,7 +99,7 @@ export function logSheetChineseStagingBeforeTranslate(
 ): void {
   if (!flowLog) return;
   flowLog.push(
-    `${new Date().toISOString()}  [chineseStaging·2×4] 英文化前 · kind=${kind} · script≈${scriptContextChars}字 · task≈${taskChars}字`,
+    `${platformFlowLogTimestamp()}  [chineseStaging·2×4] 英文化前 · kind=${kind} · script≈${scriptContextChars}字 · task≈${taskChars}字`,
   );
 }
 
