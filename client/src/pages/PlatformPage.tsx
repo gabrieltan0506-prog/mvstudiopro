@@ -1229,6 +1229,9 @@ function PlatformIpDimensionGuide() {
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
+  /** Debug 開啟時加快輪詢與刷新，讓進度面板更接近即時 */
+  const platformImageFlowPollIntervalMs = debugMode ? 650 : 2500;
+  const compositeSheetLivePollIntervalMs = debugMode ? 380 : 850;
 
   useEffect(() => {
     captureSupervisorTokenFromUrl();
@@ -1343,6 +1346,12 @@ export default function PlatformPage() {
   const [topicCoverPipelineFlowLogDebug, setTopicCoverPipelineFlowLogDebug] = useState<string[]>([]);
   /** Debug：2×4 分镜 / 八格图文 合成 job 的輪詢次數（progressJobId） */
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
+  const topicCoverDebugPollCaption = useMemo(() => {
+    const label = topicImageJobPollTrace?.label ?? compositeJobPollTrace?.label;
+    const step = topicImageJobPollTrace?.currentStep ?? compositeJobPollTrace?.currentStep;
+    if (label && step) return `${label} · ${step}`;
+    return label || step;
+  }, [topicImageJobPollTrace, compositeJobPollTrace]);
   /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
@@ -1848,15 +1857,21 @@ export default function PlatformPage() {
       let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
       try {
         j = await pollJobUntilTerminal(jobId, {
-          intervalMs: 2500,
+          intervalMs: platformImageFlowPollIntervalMs,
           maxWaitMs: 28 * 60_000,
           onPoll: ({ attempt, output }) => {
             const out = output as { imageGenFlowLog?: string[] } | undefined;
             const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
-            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
+            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
+            const tail =
+              flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
               prev && prev.jobId === jobId
-                ? { ...prev, pollCount: attempt, currentStep: `套裝轮询 · ${attempt} 次` }
+                ? {
+                    ...prev,
+                    pollCount: attempt,
+                    currentStep: tail ? `第 ${attempt} 次 · ${tail}` : `套裝轮询 · ${attempt} 次`,
+                  }
                 : prev,
             );
           },
@@ -1979,6 +1994,7 @@ export default function PlatformPage() {
       canConfigureCompositeImageTranslator,
       platformCoverVertexNb2,
       platformTopicCoverDeepResearchPro,
+      platformImageFlowPollIntervalMs,
     ],
   );
 
@@ -2027,15 +2043,21 @@ export default function PlatformPage() {
       let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
       try {
         j = await pollJobUntilTerminal(jobId, {
-          intervalMs: 2500,
+          intervalMs: platformImageFlowPollIntervalMs,
           maxWaitMs: 18 * 60_000,
           onPoll: ({ attempt, output }) => {
             const out = output as { imageGenFlowLog?: string[] } | undefined;
             const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
-            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
+            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
+            const tail =
+              flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
               prev && prev.jobId === jobId
-                ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次` }
+                ? {
+                    ...prev,
+                    pollCount: attempt,
+                    currentStep: tail ? `第 ${attempt} 次 · ${tail}` : `轮询 · ${attempt} 次`,
+                  }
                 : prev,
             );
           },
@@ -2137,7 +2159,7 @@ export default function PlatformPage() {
         coverClickEstimate,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformTopicCoverDeepResearchPro],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformTopicCoverDeepResearchPro, platformImageFlowPollIntervalMs],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -2434,6 +2456,7 @@ export default function PlatformPage() {
       const compositeDbgLabel =
         input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
+        setTopicCoverPipelineFlowLogDebug([]);
         setCompositeJobPollTrace({
           jobId: pid,
           label: compositeDbgLabel,
@@ -2472,6 +2495,9 @@ export default function PlatformPage() {
       const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
         ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
         : [];
+      if (serverLines.length > 0) {
+        setTopicCoverPipelineFlowLogDebug(serverLines);
+      }
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
       ];
@@ -2709,12 +2735,22 @@ export default function PlatformPage() {
         const n = compositeLivePollAttemptRef.current;
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
         const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
+        if (log.length > 0) {
+          setTopicCoverPipelineFlowLogDebug([...log]);
+        }
         const ts = new Date().toISOString();
         const last = log.length > 0 ? String(log[log.length - 1]) : "";
 
         setCompositeJobPollTrace((prev) => {
           if (!prev || prev.jobId !== ctx.jobId) return prev;
-          return { ...prev, pollCount: n, currentStep: `轮询 · ${n} 次` };
+          const step = last
+            .replace(/\s+/g, " ")
+            .slice(0, 140);
+          return {
+            ...prev,
+            pollCount: n,
+            currentStep: step ? `第 ${n} 次 · ${step}` : `轮询 · ${n} 次`,
+          };
         });
 
         setPlatformImageGenFlowSnapshots((prev) => {
@@ -2758,12 +2794,12 @@ export default function PlatformPage() {
       }
     };
     void tick();
-    const id = window.setInterval(tick, 850);
+    const id = window.setInterval(tick, compositeSheetLivePollIntervalMs);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [generatePlatformCompositeSheetMutation.isPending]);
+  }, [generatePlatformCompositeSheetMutation.isPending, compositeSheetLivePollIntervalMs]);
 
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
   const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();
@@ -4910,12 +4946,18 @@ export default function PlatformPage() {
               ) : null}
 
               {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
-              {debugMode && (topicCoverPipelineFlowLogDebug.length > 0 || topicImageJobPollTrace) ? (
+              {debugMode &&
+              (topicCoverPipelineFlowLogDebug.length > 0 ||
+                topicImageJobPollTrace ||
+                (compositeJobPollTrace && generatePlatformCompositeSheetMutation.isPending)) ? (
                 <div className="mt-4">
                   <PlatformTopicCoverDrProGpt54DebugPanel
                     lines={topicCoverPipelineFlowLogDebug}
-                    pollLabel={topicImageJobPollTrace?.label}
-                    jobRunning={Boolean(topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus)}
+                    pollLabel={topicCoverDebugPollCaption}
+                    jobRunning={Boolean(
+                      (topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus) ||
+                        (compositeJobPollTrace && generatePlatformCompositeSheetMutation.isPending),
+                    )}
                   />
                 </div>
               ) : null}
@@ -5347,12 +5389,18 @@ export default function PlatformPage() {
                   )}
                 </div>
                 {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
-              {debugMode && (topicCoverPipelineFlowLogDebug.length > 0 || topicImageJobPollTrace) ? (
+              {debugMode &&
+              (topicCoverPipelineFlowLogDebug.length > 0 ||
+                topicImageJobPollTrace ||
+                (compositeJobPollTrace && generatePlatformCompositeSheetMutation.isPending)) ? (
                 <div className="mt-4">
                   <PlatformTopicCoverDrProGpt54DebugPanel
                     lines={topicCoverPipelineFlowLogDebug}
-                    pollLabel={topicImageJobPollTrace?.label}
-                    jobRunning={Boolean(topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus)}
+                    pollLabel={topicCoverDebugPollCaption}
+                    jobRunning={Boolean(
+                      (topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus) ||
+                        (compositeJobPollTrace && generatePlatformCompositeSheetMutation.isPending),
+                    )}
                   />
                 </div>
               ) : null}

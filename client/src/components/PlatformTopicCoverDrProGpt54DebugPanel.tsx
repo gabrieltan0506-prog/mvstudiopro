@@ -32,7 +32,9 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
       return { text: "DR-Pro：已請求但未採用簡報", tone: "text-amber-200" as const };
     if (hints.drProApiActivity) return { text: "DR-Pro：已觸發 API", tone: "text-sky-300" as const };
     if (
-      (/管理员入参=开启/.test(joinedDr) || /\[步骤0\.5·DR-Pro\][^\n]*开启/.test(joinedDr)) &&
+      (/管理员入参=开启/.test(joinedDr) ||
+        /\[步骤0\.5·DR-Pro\][^\n]*开启/.test(joinedDr) ||
+        /\[步骤0\.5·DR-Pro·2×4\][^\n]*开启/.test(joinedDr)) &&
       /DR-Pro/.test(joinedDr)
     )
       return { text: "DR-Pro：已開關（待觸發）", tone: "text-sky-300/90" as const };
@@ -42,10 +44,12 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
   }, [drProLines, hints, jobRunning]);
 
   const gptBadge = useMemo(() => {
-    if (hints.step1TranslationDone) return { text: "GPT 5.4：步驟1 已完成", tone: "text-emerald-300" as const };
-    if (hints.gpt54LayerActivity && jobRunning) return { text: "GPT 5.4：翻譯層進行中", tone: "text-amber-200" as const };
-    if (hints.gpt54LayerActivity) return { text: "GPT 5.4：已見翻譯層日誌", tone: "text-sky-300" as const };
-    return { text: "GPT 5.4：尚無翻譯層日誌", tone: "text-gray-500" as const };
+    if (hints.step1TranslationDone)
+      return { text: "B 英文化：步驟1 已完成", tone: "text-emerald-300" as const };
+    if (hints.gpt54LayerActivity && jobRunning)
+      return { text: "B 英文化：進行中（Vertex / GPT 等）", tone: "text-amber-200" as const };
+    if (hints.gpt54LayerActivity) return { text: "B 英文化：已有日誌", tone: "text-sky-300" as const };
+    return { text: "B 英文化：尚無日誌", tone: "text-gray-500" as const };
   }, [hints, jobRunning]);
 
   const imgBadge = useMemo(() => {
@@ -72,7 +76,8 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
       <p className="mt-2 text-[11px] leading-relaxed text-[#d7d0ef]">
         共用 <code className="text-[#cda0ff]">imageGenFlowLog</code>
         ：<strong className="text-violet-200/90">A</strong> 步驟 0.5（DR-Pro）· <strong className="text-cyan-200/90">B</strong>{" "}
-        英文化（GPT 5.4 / Flash）· <strong className="text-amber-200/90">C</strong> 生圖（GPT-IMAGE-2、NB2、fal、兜底）。C
+        英文化（GPT 5.4、Gemini、Vertex Flash 等任一）· <strong className="text-amber-200/90">C</strong>{" "}
+        生圖（GPT-IMAGE-2、NB2、fal、兜底）。C
         欄位可避免「翻譯完以為卡住」——實際仍在繪圖。
       </p>
 
@@ -115,7 +120,7 @@ export default function PlatformTopicCoverDrProGpt54DebugPanel({
         </div>
         <div className="min-h-[120px] rounded-xl border border-cyan-500/20 bg-black/25 p-3">
           <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-200/90">
-            B — 英文化（GPT 5.4 / Flash · 含步骤1 / 1b）
+            B — 英文化（B 欄：凡翻譯 / 步驟1·1b，含 Vertex·Flash、GPT54·英文化）
           </div>
           <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-[#d7f5ff]">
             {gpt54AndTranslationLines.length

@@ -23,6 +23,9 @@ import {
   requireGeminiApiKey,
 } from "./googleDeepResearchInteractions.js";
 
+/** DR-Pro 步驟 0.5 產品形態（決定寫入 Agent 的任務與產出語義）。 */
+export type DrBriefProduct = "platform_cover" | "composite_storyboard" | "composite_xhs_note";
+
 /** 與平台頁 Pro 一致；可用 `PLATFORM_COVER_DEEP_RESEARCH_AGENT` 覆寫。 */
 const DEFAULT_COVER_DR_AGENT = "deep-research-preview-04-2026";
 
@@ -97,6 +100,12 @@ function stripInternalCoverAnchorLabelsForCopyAnchor(raw: string): string {
     .replace(/^【封面身份锚点】\s*/, "")
     .replace(/^【身份锚点】[：:]\s*/, "")
     .replace(/^【身份锚点】\s*/, "")
+    .replace(/^【封面人生锚点】[：:]\s*/, "")
+    .replace(/^【封面人生锚点】\s*/, "")
+    .replace(/^【人生锚点】[：:]\s*/, "")
+    .replace(/^【人生锚点】\s*/, "")
+    .replace(/^【文案锚点】[：:]\s*/, "")
+    .replace(/^【文案锚点】\s*/, "")
     .trim();
 }
 
@@ -121,8 +130,13 @@ function isBoilerplateCopyAnchorFrag(frag: string): boolean {
 
 /**
  * 捨棄與題/文無可追溯綁定的空泛發揮（聯網趨勢僅可作輔證，主體須來自已給標題與文案）。
+ * 2×4 編導段落常對「基礎文案」作近義改寫，過嚴的「文案字級」要求會誤殺；選題錨已防換題。
  */
-function passesCoverBriefTopicCopyAnchor(textRaw: string, task: CoverTaskInput): { ok: boolean; reason?: string } {
+function passesCoverBriefTopicCopyAnchor(
+  textRaw: string,
+  task: CoverTaskInput,
+  product: DrBriefProduct,
+): { ok: boolean; reason?: string } {
   const text = String(textRaw || "").trim();
   const normText = normCompact(text);
 
@@ -147,32 +161,32 @@ function passesCoverBriefTopicCopyAnchor(textRaw: string, task: CoverTaskInput):
     }
   }
 
+  if (product === "composite_storyboard" || product === "composite_xhs_note") {
+    return { ok: true };
+  }
+
   const baseRaw = stripInternalCoverAnchorLabelsForCopyAnchor(String(task.baseCopywriting || ""));
   const baseNorm = normCompact(baseRaw);
   if (baseNorm.length >= 24) {
     const head = baseNorm.slice(0, Math.min(baseNorm.length, 48));
     const runs = head.match(/[\u4e00-\u9fff]{4,12}|[A-Za-z0-9]{6,}/g) ?? [];
-    let fragCopy = "";
+    const candidates: string[] = [];
     for (const run of runs) {
       const cand = String(run).slice(0, 12);
-      if (!isBoilerplateCopyAnchorFrag(cand)) {
-        fragCopy = cand;
-        break;
-      }
+      if (cand.length >= 4 && !isBoilerplateCopyAnchorFrag(cand)) candidates.push(cand);
     }
-    if (!fragCopy) {
-      fragCopy = (head.slice(0, Math.min(head.length, 8)).match(/[\u4e00-\u9fff]{4,8}/)?.[0] ?? "").slice(0, 12);
+    if (candidates.length === 0) {
+      const fallback = (head.slice(0, Math.min(head.length, 8)).match(/[\u4e00-\u9fff]{4,8}/)?.[0] ?? "").slice(0, 12);
+      if (fallback.length >= 4 && !isBoilerplateCopyAnchorFrag(fallback)) candidates.push(fallback);
     }
-    if (fragCopy.length >= 4 && !isBoilerplateCopyAnchorFrag(fragCopy) && !normText.includes(fragCopy)) {
-      return { ok: false, reason: `未檢測到文案錨點「${fragCopy}…」——須復用上下文具體信息` };
+    const anyHit = candidates.some((fragCopy) => fragCopy && normText.includes(fragCopy));
+    if (!anyHit && candidates.length > 0) {
+      return { ok: false, reason: `未檢測到文案錨點（嘗試 ${candidates.slice(0, 3).join(" / ")}）——須復用上下文具體信息` };
     }
   }
 
   return { ok: true };
 }
-
-/** DR-Pro 步驟 0.5 產品形態（決定寫入 Agent 的任務與產出語義）。 */
-export type DrBriefProduct = "platform_cover" | "composite_storyboard" | "composite_xhs_note";
 
 const DR_AGENT_INVOCATION_COMMON = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
 【時間節奏】在符合本指令要求的前提下，快速整合篇幅與聯網深度，以最快時間交付清晰與明確的優化結果。
@@ -488,7 +502,7 @@ export async function runCoverDeepResearchInteractionsBrief(
       return null;
     }
 
-    const anchor = passesCoverBriefTopicCopyAnchor(text, task);
+    const anchor = passesCoverBriefTopicCopyAnchor(text, task, product);
     if (!anchor.ok) {
       log(`捨棄：與當前選題/文案錨定失敗 · ${anchor.reason}`);
       return null;

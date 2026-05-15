@@ -190,6 +190,80 @@ export function normalizeGrowthDisplay(g: string): string {
   return rounded >= 0 ? `+${rounded}%` : `${rounded}%`;
 }
 
+/** 解析趨勢排行中的百分比為帶符號整數（無效則 null） */
+export function parseGrowthPercentToSignedInt(g: string): number | null {
+  const s = normalizeGrowthDisplay(String(g || "").trim());
+  const compact = s.replace(/\s/g, "").replace(/%$/g, "");
+  const m = compact.match(/^([+-]?)(\d+)$/);
+  if (!m) return null;
+  const sign = m[1] === "-" ? -1 : 1;
+  const n = sign * Number(m[2]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function trackLabelOverlapsNegative(a: string, negCompact: string): boolean {
+  const tn = normCompact(a);
+  if (!tn || !negCompact) return false;
+  if (tn.includes(negCompact) || negCompact.includes(tn)) return true;
+  const segments = String(a)
+    .split(/[/／·•、，,\|｜]+/)
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2);
+  for (const seg of segments) {
+    const sn = normCompact(seg);
+    if (sn.includes(negCompact) || negCompact.includes(sn)) return true;
+  }
+  return false;
+}
+
+/**
+ * 各平台「熱門賽道」不得與**全局** trackGrowth 中已標示為**負增長**的賽道語義重合（常見於快手樣本與 LLM 幻覺同時把萎縮賽道當熱點）。
+ * 若過濾後條目過少，從全局正增長排行補齊。
+ */
+export function reconcilePlatformHotTopicsWithGlobalTrackGrowth(
+  hotTopicsRaw: string[],
+  globalTrackGrowth: TrackGrowthRow[],
+): string[] {
+  const negatives = globalTrackGrowth
+    .map((r) => ({ name: String(r.name || "").trim(), growth: parseGrowthPercentToSignedInt(String(r.growth || "")) }))
+    .filter((r) => r.name && r.growth != null && r.growth < 0);
+  if (negatives.length === 0) return hotTopicsRaw.filter(Boolean);
+
+  const negCompacts = negatives.map((r) => normCompact(r.name)).filter((s) => s.length >= 2);
+  const filtered = hotTopicsRaw.filter((raw) => {
+    const t = String(raw || "").trim();
+    if (!t) return false;
+    return !negCompacts.some((nc) => trackLabelOverlapsNegative(t, nc));
+  });
+
+  if (filtered.length >= 3) return filtered.slice(0, 12);
+
+  const positives = globalTrackGrowth
+    .map((r) => ({ name: String(r.name || "").trim(), growth: parseGrowthPercentToSignedInt(String(r.growth || "")) }))
+    .filter((r) => r.name && r.growth != null && r.growth > 0);
+  const merged: string[] = [...filtered];
+  const seen = new Set(merged.map((x) => normCompact(x)));
+  for (const p of positives) {
+    if (merged.length >= 8) break;
+    const nc = normCompact(p.name);
+    if (!nc || seen.has(nc)) continue;
+    if (negCompacts.some((neg) => trackLabelOverlapsNegative(p.name, neg))) continue;
+    merged.push(p.name);
+    seen.add(nc);
+  }
+  for (const h of hotTopicsRaw) {
+    if (merged.length >= 8) break;
+    const t = String(h || "").trim();
+    if (!t) continue;
+    const nc = normCompact(t);
+    if (seen.has(nc)) continue;
+    if (negCompacts.some((neg) => trackLabelOverlapsNegative(t, neg))) continue;
+    merged.push(t);
+    seen.add(nc);
+  }
+  return merged.slice(0, 12);
+}
+
 function rankFallbackGrowth(index: number, total: number): string {
   const denom = Math.max(total - 1, 1);
   const pct = Math.round(Math.max(24, Math.min(96, 88 - (index * 64) / denom)));
