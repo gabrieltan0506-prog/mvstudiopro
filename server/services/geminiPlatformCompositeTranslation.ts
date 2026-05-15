@@ -110,7 +110,7 @@ function formatErrForVertexDebug(e: unknown): string {
 }
 
 /** 與 @google/genai Vertex 客戶端一致：專案 ID。 */
-function resolveVertexProjectIdForGenAi(): string {
+export function resolveVertexProjectIdForGenAi(): string {
   const p = String(
     process.env.GCP_PROJECT_ID ||
       process.env.VERTEX_PROJECT_ID ||
@@ -194,7 +194,9 @@ export function resolveVertexFlashTranslationMaxOutputTokens(): number {
 }
 
 /** 從環境變數構造 google-auth-library 可用的 credentials（Fly / Vercel JSON）。 */
-function buildGoogleGenAiAuthOptionsFromEnv(): { credentials: { client_email: string; private_key: string } } | undefined {
+export function buildGoogleGenAiAuthOptionsFromEnv():
+  | { credentials: { client_email: string; private_key: string } }
+  | undefined {
   const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
   if (!raw || raw === "{}") {
     return undefined;

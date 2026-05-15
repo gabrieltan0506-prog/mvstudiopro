@@ -1,7 +1,22 @@
 /**
- * 混合式即時資訊聚合：天氣／路況約 10 分鐘節流；即時新聞由 Gemini（+搜尋）產出並約 30 分鐘節流。
+ * 混合式即時資訊聚合：天氣／路況約 10 分鐘節流；即時新聞由 Gemini（**Vertex 優先** · Google Search Grounding）產出並約 30 分鐘節流。
+ *
+ * **Vertex 預設（可分模省成本）**
+ * - **路況**：`gemini-3-flash-preview`（低延遲＋搜尋；可 `GEMINI_DASHBOARD_VERTEX_TRAFFIC_MODEL` 覆寫）
+ * - **新聞**：`gemini-2.5-flash`（可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 覆寫）
+ * - 共用兜底：`GEMINI_DASHBOARD_VERTEX_MODEL`（僅在對應專用 env 未設時代入該路）
+ * - `GEMINI_DASHBOARD_USE_VERTEX=0` → 強制 Consumer **GEMINI_API_KEY**
+ *
+ * **Consumer 降級**：`GEMINI_DASHBOARD_TRAFFIC_MODEL`（預設 gemini-2.5-flash）、`GEMINI_DASHBOARD_NEWS_MODEL`（預設 gemini-2.5-flash，與 Vertex 新聞對齊）。
+ * 兩路並行時搜尋呼叫經 **序列化鎖**。
  */
 
+import { GoogleGenAI } from "@google/genai";
+import {
+  buildGoogleGenAiAuthOptionsFromEnv,
+  resolveVertexFlashTranslationLocation,
+  resolveVertexProjectIdForGenAi,
+} from "./geminiPlatformCompositeTranslation.js";
 /** 天氣 + 路況 + 時間（與新聞分開拉取，節奏不同） */
 export interface HybridDashboardLiveData {
   currentTime: string;
@@ -42,8 +57,154 @@ export interface HybridDashboardData {
 const LIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 const NEWS_CACHE_TTL_MS = 30 * 60 * 1000;
 
+/** Vertex：路況預設 3 Flash Preview；新聞預設 2.5 Flash。Consumer 降級見下。 */
+const DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL = "gemini-3-flash-preview";
+const DEFAULT_VERTEX_DASHBOARD_NEWS_MODEL = "gemini-2.5-flash";
+
+/** Consumer API（AI Studio）降級；新聞預設與 Vertex 新聞同為 2.5-flash。 */
+const DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_DASHBOARD_NEWS_MODEL = "gemini-2.5-flash";
+
+function dashboardVertexDisabled(): boolean {
+  const v = String(process.env.GEMINI_DASHBOARD_USE_VERTEX ?? "").trim().toLowerCase();
+  return v === "0" || v === "false" || v === "off" || v === "no";
+}
+
+function canUseVertexDashboard(): boolean {
+  if (dashboardVertexDisabled()) return false;
+  try {
+    resolveVertexProjectIdForGenAi();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveVertexDashboardTrafficModel(): string {
+  return (
+    String(process.env.GEMINI_DASHBOARD_VERTEX_TRAFFIC_MODEL || "").trim() ||
+    String(process.env.GEMINI_DASHBOARD_VERTEX_MODEL || "").trim() ||
+    DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL
+  );
+}
+
+function resolveVertexDashboardNewsModel(): string {
+  return (
+    String(process.env.GEMINI_DASHBOARD_VERTEX_NEWS_MODEL || "").trim() ||
+    String(process.env.GEMINI_DASHBOARD_VERTEX_MODEL || "").trim() ||
+    DEFAULT_VERTEX_DASHBOARD_NEWS_MODEL
+  );
+}
+
+function resolveConsumerTrafficModel(): string {
+  return (
+    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL).trim() ||
+    DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL
+  );
+}
+
+function resolveConsumerNewsModel(): string {
+  return (
+    String(process.env.GEMINI_DASHBOARD_NEWS_MODEL || DEFAULT_GEMINI_DASHBOARD_NEWS_MODEL).trim() ||
+    DEFAULT_GEMINI_DASHBOARD_NEWS_MODEL
+  );
+}
+
+/**
+ * Vertex（@google/genai `vertexai: true`）優先，附 **googleSearch**；失敗則 **GEMINI_API_KEY** Consumer。
+ */
+async function generateDashboardTextWithGoogleSearch(params: {
+  userText: string;
+  baseCfg: Record<string, unknown>;
+  vertexModel: string;
+  consumerModel: string;
+  logTag: string;
+}): Promise<string> {
+  const genCfgWithSearch = { ...params.baseCfg, tools: [{ googleSearch: {} }] } as any;
+
+  if (canUseVertexDashboard()) {
+    try {
+      const project = resolveVertexProjectIdForGenAi();
+      const location = resolveVertexFlashTranslationLocation();
+      const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
+      const ai = new GoogleGenAI({
+        vertexai: true,
+        project,
+        location,
+        ...(authOpts ? { googleAuthOptions: authOpts } : {}),
+      });
+      const model = params.vertexModel;
+      let text = "";
+      try {
+        const response = await withGeminiDashboardGoogleSearchLock(() =>
+          ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: params.userText }] }],
+            config: genCfgWithSearch,
+          }),
+        );
+        text = String((response as { text?: string })?.text ?? "").trim();
+      } catch (e) {
+        console.warn(`[${params.logTag}] Vertex googleSearch 降級:`, (e as Error)?.message);
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: params.userText }] }],
+          config: params.baseCfg as any,
+        });
+        text = String((response as { text?: string })?.text ?? "").trim();
+      }
+      if (text) return text;
+    } catch (e) {
+      console.warn(`[${params.logTag}] Vertex 不可用，改 consumer Gemini API:`, (e as Error)?.message);
+    }
+  }
+
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("missing_GEMINI_API_KEY_and_vertex");
+  }
+  const ai = new GoogleGenAI({ apiKey });
+  const model = params.consumerModel;
+  let text = "";
+  try {
+    const response = await withGeminiDashboardGoogleSearchLock(() =>
+      ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: params.userText }] }],
+        config: genCfgWithSearch,
+      }),
+    );
+    text = String((response as { text?: string })?.text ?? "").trim();
+  } catch (e) {
+    console.warn(`[${params.logTag}] consumer googleSearch 降級:`, (e as Error)?.message);
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: "user", parts: [{ text: params.userText }] }],
+      config: params.baseCfg as any,
+    });
+    text = String((response as { text?: string })?.text ?? "").trim();
+  }
+  return text;
+}
+
 const liveResponseCache = new Map<string, { expires: number; data: HybridDashboardLiveData }>();
 const newsBundleCache = new Map<string, { expires: number; data: AmbientNewsBundle }>();
+
+/**
+ * 序列化「帶 Google Search 工具」的 Gemini generateContent 呼叫。
+ * `dashboardLive`（路況）與 `dashboardNews` 若並行，容易觸發服務端限流或導致其中一次失敗後降級為**無搜尋**，
+ * 模型便會回覆「無法即時搜尋」而另一路仍正常——表現為路況與新聞「輪流失效」。
+ */
+let geminiDashboardGoogleSearchChain: Promise<unknown> = Promise.resolve();
+
+function withGeminiDashboardGoogleSearchLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = geminiDashboardGoogleSearchChain.then(fn, fn);
+  geminiDashboardGoogleSearchChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
 
 function getPreciseLocalTime(timeZone: string): string {
   try {
@@ -246,14 +407,6 @@ function safeParseTrafficJson(raw: string): HybridDashboardData["traffic"] {
 }
 
 async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashboardData["traffic"]> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-
-  const model =
-    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey });
-
   const systemInstruction =
     "你是交通資訊助理。請用 Google 搜尋查詢使用者給定區域的「即時路況」與「擁堵路段」（若搜尋不可用則依常識給出保守說明並註明不確定）。" +
     "僅輸出合法 JSON：{\"summary\":\"一句話繁體中文總結\",\"congestedAreas\":[\"路段1\",\"路段2\"]}。" +
@@ -261,31 +414,20 @@ async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashb
 
   const userText = `請查詢【${locationLabel}】現在的即時路況與主要擁堵區段。`;
 
-  type GenCfg = Record<string, unknown>;
-  const baseCfg: GenCfg = {
+  const baseCfg: Record<string, unknown> = {
     systemInstruction,
     responseMimeType: "application/json",
     temperature: 0.3,
     maxOutputTokens: 4096,
   };
 
-  let text = "";
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: userText }] }],
-      config: { ...baseCfg, tools: [{ googleSearch: {} }] } as any,
-    });
-    text = String((response as { text?: string })?.text ?? "").trim();
-  } catch (e) {
-    console.warn("[hybridDashboard] Gemini googleSearch 降級:", (e as Error)?.message);
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: userText }] }],
-      config: baseCfg as any,
-    });
-    text = String((response as { text?: string })?.text ?? "").trim();
-  }
+  const text = await generateDashboardTextWithGoogleSearch({
+    userText,
+    baseCfg,
+    vertexModel: resolveVertexDashboardTrafficModel(),
+    consumerModel: resolveConsumerTrafficModel(),
+    logTag: "hybridDashboard",
+  });
 
   return safeParseTrafficJson(text);
 }
@@ -364,18 +506,6 @@ function finalizeDomesticTiers(bundle: AmbientNewsBundle, allowLocalFirstPair: b
 }
 
 async function fetchAmbientNewsViaGemini(opts: { lat?: number; lon?: number }): Promise<AmbientNewsBundle> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-
-  const model =
-    String(
-      process.env.GEMINI_DASHBOARD_NEWS_MODEL ||
-        process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL ||
-        "gemini-2.5-flash",
-    ).trim() || "gemini-2.5-flash";
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey });
-
   const hasGeo =
     opts.lat != null && opts.lon != null && Number.isFinite(opts.lat) && Number.isFinite(opts.lon);
   const inChina = hasGeo && isRoughlyMainlandChina(opts.lat!, opts.lon!);
@@ -397,31 +527,20 @@ async function fetchAmbientNewsViaGemini(opts: { lat?: number; lon?: number }): 
 
   const userText = `${locationBlock} 请搜索并整理，填满 domestic 5 + international 5。`;
 
-  type GenCfg = Record<string, unknown>;
-  const baseCfg: GenCfg = {
+  const baseCfg: Record<string, unknown> = {
     systemInstruction,
     responseMimeType: "application/json",
     temperature: 0.35,
     maxOutputTokens: 8192,
   };
 
-  let text = "";
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: userText }] }],
-      config: { ...baseCfg, tools: [{ googleSearch: {} }] } as any,
-    });
-    text = String((response as { text?: string })?.text ?? "").trim();
-  } catch (e) {
-    console.warn("[dashboardNews] Gemini googleSearch 降級:", (e as Error)?.message);
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: userText }] }],
-      config: baseCfg as any,
-    });
-    text = String((response as { text?: string })?.text ?? "").trim();
-  }
+  const text = await generateDashboardTextWithGoogleSearch({
+    userText,
+    baseCfg,
+    vertexModel: resolveVertexDashboardNewsModel(),
+    consumerModel: resolveConsumerNewsModel(),
+    logTag: "dashboardNews",
+  });
 
   return safeParseAmbientNewsBundle(text);
 }
@@ -517,7 +636,7 @@ export async function executeDashboardLive(opts: HybridDashboardOpts = {}): Prom
   const traffic: HybridDashboardData["traffic"] =
     trafficResult.status === "fulfilled"
       ? trafficResult.value
-      : { summary: "路況資料暫時無法取得（請確認 GEMINI_API_KEY）", congestedAreas: [] };
+      : { summary: "路況資料暫時無法取得（請確認 Vertex 專案／IAM 或 GEMINI_API_KEY）", congestedAreas: [] };
 
   const data: HybridDashboardLiveData = {
     currentTime: getPreciseLocalTime(timeZone),
