@@ -29,12 +29,10 @@ function codeLabel(code: number): string {
 }
 
 const CAROUSEL_MS = 180000;
-/** 天氣實況 fetch 上限，避免 open‑meteo 拖住首屏後續體感 */
-const OPEN_METEO_WX_TIMEOUT_MS = 3000;
 
-async function fetchOpenMeteoWx(lat: number, lon: number, signal?: AbortSignal): Promise<Wx> {
+async function fetchOpenMeteoWx(lat: number, lon: number): Promise<Wx> {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`;
-  const res = await fetch(url, { signal });
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`天气接口 ${res.status}`);
   const j = await res.json();
   return {
@@ -46,28 +44,12 @@ async function fetchOpenMeteoWx(lat: number, lon: number, signal?: AbortSignal):
   };
 }
 
-async function fetchOpenMeteoWxWithTimeout(lat: number, lon: number, ms: number): Promise<Wx> {
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), ms);
-  try {
-    return await fetchOpenMeteoWx(lat, lon, c.signal);
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 export type AmbientSceneContextValue = {
   now: Date;
   wxLocal: Wx | null;
   geo: { lat: number; lon: number } | null;
   geoErr: string | null;
-  /**
-   * 仍保留於 context：`true` 表示儀表板 tRPC 無需再等待「定位握手」即可請求。
-   * （歷史欄位名未改，避免大範圍重構。）
-   */
   geoAttemptDone: boolean;
-  /** 天氣／逆地理／GPS 等非關鍵路徑是否在背景載入 */
-  isLocating: boolean;
   placeLabel: string | null;
   /** 當前天氣／路況／新聞所用的座標來源 */
   locationSource: LocationSourceMode;
@@ -104,15 +86,9 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
   const [now, setNow] = useState(() => new Date());
   const [wxLocal, setWxLocal] = useState<Wx | null>(null);
   const [geoErr, setGeoErr] = useState<string | null>(null);
-  const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(() =>
-    initialManual ? { lat: initialManual.lat, lon: initialManual.lon } : null,
-  );
-  /** 固定放行 tRPC／首屏，不與 GPS handshake 串行 */
-  const geoAttemptDone = true;
-  const [isLocating, setIsLocating] = useState(true);
-  const [placeLabel, setPlaceLabel] = useState<string | null>(() =>
-    initialManual ? `${initialManual.provinceName} — ${initialManual.cityName}（手动）` : null,
-  );
+  const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
+  const [placeLabel, setPlaceLabel] = useState<string | null>(null);
+  const [geoAttemptDone, setGeoAttemptDone] = useState(false);
   const [locationSource, setLocationSource] = useState<LocationSourceMode>(() =>
     initialManual ? "manual" : "device",
   );
@@ -145,25 +121,24 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (locationSource !== "manual" || !manualLocation) return;
     let cancelled = false;
-    setIsLocating(true);
-    setGeoErr(null);
-    const { lat, lon } = manualLocation;
-    setGeo({ lat, lon });
-    setPlaceLabel(`${manualLocation.provinceName} — ${manualLocation.cityName}（手动）`);
     (async () => {
+      setGeoAttemptDone(false);
+      setGeoErr(null);
+      const { lat, lon } = manualLocation;
+      setGeo({ lat, lon });
+      setPlaceLabel(`${manualLocation.provinceName} — ${manualLocation.cityName}（手动）`);
       try {
-        const wx = await fetchOpenMeteoWxWithTimeout(lat, lon, OPEN_METEO_WX_TIMEOUT_MS);
-        if (!cancelled) {
-          setWxLocal(wx);
-          setGeoErr(null);
-        }
+        const wx = await fetchOpenMeteoWx(lat, lon);
+        if (cancelled) return;
+        setWxLocal(wx);
+        setGeoErr(null);
       } catch (e: unknown) {
         if (!cancelled) {
           setWxLocal(null);
           setGeoErr(e instanceof Error ? e.message : "天气不可用");
         }
       } finally {
-        if (!cancelled) setIsLocating(false);
+        if (!cancelled) setGeoAttemptDone(true);
       }
     })();
     return () => {
@@ -176,7 +151,7 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
     if (locationSource !== "device") return;
     let cancelled = false;
     (async () => {
-      setIsLocating(true);
+      setGeoAttemptDone(false);
       setGeoErr(null);
       try {
         const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -193,31 +168,28 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
         if (!cancelled) setGeo({ lat, lon });
-        /** 逆地理不阻塞天氣載入 */
-        void reverseGeocodeShortLabel(lat, lon).then((label) => {
-          if (!cancelled) setPlaceLabel(label);
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`;
+        const [label, res] = await Promise.all([reverseGeocodeShortLabel(lat, lon), fetch(url)]);
+        if (!cancelled) setPlaceLabel(label);
+        if (!res.ok) throw new Error(`天气接口 ${res.status}`);
+        const j = await res.json();
+        if (cancelled) return;
+        setWxLocal({
+          lat,
+          lon,
+          temp: Math.round(Number(j?.current?.temperature_2m) * 10) / 10,
+          code: Number(j?.current?.weather_code ?? 0),
+          label: codeLabel(Number(j?.current?.weather_code ?? 0)),
         });
-        try {
-          const wx = await fetchOpenMeteoWxWithTimeout(lat, lon, OPEN_METEO_WX_TIMEOUT_MS);
-          if (!cancelled) {
-            setWxLocal(wx);
-            setGeoErr(null);
-          }
-        } catch (e: unknown) {
-          if (!cancelled) {
-            setWxLocal(null);
-            setGeoErr(e instanceof Error ? e.message : "天气不可用");
-          }
-        }
+        setGeoErr(null);
       } catch (e: unknown) {
         if (!cancelled) {
           setWxLocal(null);
           setGeoErr(e instanceof Error ? e.message : "定位或天气不可用");
           setPlaceLabel(null);
-          setGeo(null);
         }
       } finally {
-        if (!cancelled) setIsLocating(false);
+        if (!cancelled) setGeoAttemptDone(true);
       }
     })();
     return () => {
@@ -264,7 +236,7 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
       setGeoErr("当前为手动位置；请先点「设备GPS」再刷新浏览器定位。");
       return;
     }
-    setIsLocating(true);
+    setGeoAttemptDone(false);
     setGeoErr(null);
     try {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -281,22 +253,25 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
       setGeo({ lat, lon });
-      void reverseGeocodeShortLabel(lat, lon).then((label) => setPlaceLabel(label));
-      try {
-        const wx = await fetchOpenMeteoWxWithTimeout(lat, lon, OPEN_METEO_WX_TIMEOUT_MS);
-        setWxLocal(wx);
-        setGeoErr(null);
-      } catch (e: unknown) {
-        setWxLocal(null);
-        setGeoErr(e instanceof Error ? e.message : "天气不可用");
-      }
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`;
+      const [label, res] = await Promise.all([reverseGeocodeShortLabel(lat, lon), fetch(url)]);
+      setPlaceLabel(label);
+      if (!res.ok) throw new Error(`天气接口 ${res.status}`);
+      const j = await res.json();
+      setWxLocal({
+        lat,
+        lon,
+        temp: Math.round(Number(j?.current?.temperature_2m) * 10) / 10,
+        code: Number(j?.current?.weather_code ?? 0),
+        label: codeLabel(Number(j?.current?.weather_code ?? 0)),
+      });
+      setGeoErr(null);
     } catch (e: unknown) {
       setWxLocal(null);
       setGeoErr(e instanceof Error ? e.message : "定位或天气不可用");
       setPlaceLabel(null);
-      setGeo(null);
     } finally {
-      setIsLocating(false);
+      setGeoAttemptDone(true);
     }
   }, [locationSource]);
 
@@ -326,7 +301,6 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
       geo,
       geoErr,
       geoAttemptDone,
-      isLocating,
       placeLabel,
       locationSource,
       manualLocation,
@@ -347,7 +321,6 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
       geo,
       geoErr,
       geoAttemptDone,
-      isLocating,
       placeLabel,
       locationSource,
       manualLocation,

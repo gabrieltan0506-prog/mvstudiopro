@@ -26,7 +26,7 @@ function formatLocalTime(d: Date, timeZone: string): string {
  * 首页轻量展示：浏览器本地时区时间 + Open‑Meteo 当前天气（与 AmbientSceneProvider 共用一次定位）。
  */
 export default function HomeWeatherClock() {
-  const { wxLocal, geo, geoErr, isLocating, placeLabel, browserTimeZone, requestLocation } =
+  const { wxLocal, geo, geoErr, geoAttemptDone, placeLabel, browserTimeZone, requestLocation } =
     useAmbientScene();
   const [now, setNow] = useState(() => new Date());
 
@@ -73,11 +73,7 @@ export default function HomeWeatherClock() {
             </span>
           ) : null}
         </>
-      ) : isLocating ? (
-        <span style={{ fontWeight: 600, color: "rgba(255,255,255,0.35)", fontSize: 12 }}>
-          正在获取定位与天气…
-        </span>
-      ) : geoErr || !wxLocal ? (
+      ) : geoErr || (geoAttemptDone && !wxLocal) ? (
         <span
           role="button"
           tabIndex={0}
@@ -98,7 +94,11 @@ export default function HomeWeatherClock() {
         >
           未获取定位天气，点击重试
         </span>
-      ) : null}
+      ) : (
+        <span style={{ fontWeight: 600, color: "rgba(255,255,255,0.35)", fontSize: 12 }}>
+          正在获取定位与天气…
+        </span>
+      )}
     </div>
   );
 }
