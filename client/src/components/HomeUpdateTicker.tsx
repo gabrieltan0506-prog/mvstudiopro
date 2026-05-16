@@ -13,7 +13,7 @@ export default function HomeUpdateTicker() {
       style={{
         maxWidth: 1240,
         margin: "0 auto",
-        padding: "0 20px 20px",
+        padding: "12px 20px 20px",
       }}
     >
       <div

@@ -9,6 +9,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
 import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
+import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 function DomainRedirector() {
@@ -150,6 +151,7 @@ function App() {
             <GlobalAmbientBackdrop />
             <div className="relative z-[1] min-h-dvh">
               <Toaster />
+              <PWAInstallButton />
               <Router />
             </div>
           </AmbientSceneProvider>
