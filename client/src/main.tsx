@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { trpcBaseUrlToOrigin, withFlyHealthGate } from "@/lib/flyHealthGate";
+import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, httpLink, splitLink, TRPCClientError } from "@trpc/client";
@@ -8,58 +8,6 @@ import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
 import "./index.css";
-
-// Bypass Vercel Serverless Function proxying for API calls to improve latency
-const originalFetch = window.fetch;
-window.fetch = async (...args) => {
-  let [resource, config] = args;
-  
-  let urlObj;
-  try {
-    urlObj = new URL(resource instanceof Request ? resource.url : resource, window.location.origin);
-  } catch (e) {
-    // Ignore invalid URLs
-  }
-
-  if (urlObj && urlObj.pathname.startsWith("/api/")) {
-    const hostname = window.location.hostname;
-    // Intercept both relative "/api/..." and absolute "https://mvstudiopro.com/api/..."
-    if (hostname === "mvstudiopro.com" || hostname === "www.mvstudiopro.com") {
-      urlObj.host = "mvstudiopro.fly.dev";
-      urlObj.protocol = "https:";
-      resource = urlObj.toString();
-      // Ensure credentials are included for cross-origin API calls to fly.dev
-      config = { ...config, credentials: "include" };
-    }
-  }
-  return originalFetch(resource, config);
-};
-
-// 與 fetch 一致：正式網域上 XMLHttpRequest 打 /api 時直連 Fly（例如 MVAnalysis 影片上傳）
-const originalXhrOpen = XMLHttpRequest.prototype.open;
-XMLHttpRequest.prototype.open = function (
-  method: string,
-  url: string | URL,
-  async?: boolean,
-  username?: string | null,
-  password?: string | null,
-) {
-  let nextUrl = url;
-  try {
-    const hostname = window.location.hostname;
-    if (hostname === "mvstudiopro.com" || hostname === "www.mvstudiopro.com") {
-      const u = new URL(String(url), window.location.origin);
-      if (u.pathname.startsWith("/api/")) {
-        u.host = "mvstudiopro.fly.dev";
-        u.protocol = "https:";
-        nextUrl = u.toString();
-      }
-    }
-  } catch {
-    /**/
-  }
-  return originalXhrOpen.call(this, method, nextUrl, async ?? true, username ?? undefined, password ?? undefined);
-};
 
 // ─── PWA Service Worker Registration ──────────────────────────────────────────
 if ("serviceWorker" in navigator) {
@@ -117,11 +65,9 @@ if ("serviceWorker" in navigator) {
 const queryClient = new QueryClient();
 
 /**
- * 生产站（如 mvstudiopro.com）在 Vercel 上会把 `/api/*` rewrite 到 Fly（见 vercel.json）。
- * 下列 procedure 在生产环境由浏览器直连 Fly（`resolveMvAnalysisLongTrpcUrl`），少一跳边缘代理，降低长 LLM 响应被掐断的概率。
- * 说明：Vercel Hobby 的「12 个函数」指 `api/*.ts` Serverless 条目数；tRPC 主体在 Fly，新增吉祥物/ambient 能力不会占用该配额。
- *
- * 本地开发仍走同源 `/api/trpc`。可选用 `VITE_MV_ANALYSIS_TRPC_URL` 覆盖。
+ * 生產：前端只請求同源 `/api/*`，由 Vercel Edge rewrite 轉發至 Fly，瀏覽器視為同源，
+ * 減少跨域 preflight、Cookie 為第一方 Lax。
+ * 長鏈路 procedure 仍用獨立 httpLink（不 batch），並經 `/api/health` 閘門。
  */
 const FLY_DIRECT_TRPC_PATHS = new Set([
   "mvAnalysis.getGrowthSnapshot",
@@ -141,40 +87,8 @@ const MV_ANALYSIS_UNBATCH_IMAGE_MUTATION_PATHS = new Set([
   "mvAnalysis.generateAllPlatformTopicImages",
 ]);
 
-const DEFAULT_MV_ANALYSIS_TRPC_ORIGIN = "https://mvstudiopro.fly.dev/api/trpc";
-
-function resolveMvAnalysisLongTrpcUrl(): string | null {
-  if (typeof window === "undefined") return null;
-  const h = window.location.hostname.toLowerCase();
-  if (h === "localhost" || h === "127.0.0.1") return null;
-  const env = String(import.meta.env.VITE_MV_ANALYSIS_TRPC_URL || "").trim();
-  if (env) {
-    try {
-      const u = new URL(env);
-      if (u.protocol !== "http:" && u.protocol !== "https:") {
-        console.warn(
-          "[tRPC] VITE_MV_ANALYSIS_TRPC_URL 需为 http(s)，已回退直连:",
-          DEFAULT_MV_ANALYSIS_TRPC_ORIGIN,
-        );
-        return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
-      }
-      return u.href.replace(/\/$/, "");
-    } catch {
-      /** 相对路径或非法值会令 new URL 失败；勿整体 return null，否则长链路会落回 `/api/trpc`（Vercel rewrite 易 502 / 截断） */
-      console.warn(
-        "[tRPC] VITE_MV_ANALYSIS_TRPC_URL 非合法绝对 URL，已回退直连:",
-        DEFAULT_MV_ANALYSIS_TRPC_ORIGIN,
-      );
-      return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
-    }
-  }
-  return DEFAULT_MV_ANALYSIS_TRPC_ORIGIN;
-}
-
-const mvAnalysisLongTrpcUrl = resolveMvAnalysisLongTrpcUrl();
-
 function useFlyDirectTrpcLink(op: { path: string }) {
-  return Boolean(mvAnalysisLongTrpcUrl) && FLY_DIRECT_TRPC_PATHS.has(op.path);
+  return FLY_DIRECT_TRPC_PATHS.has(op.path);
 }
 
 function useMvAnalysisUnbatchImageMutationLink(op: { path: string }) {
@@ -225,14 +139,14 @@ const trpcClient = trpc.createClient({
       false: splitLink({
         condition: useFlyDirectTrpcLink,
         true: httpLink({
-          url: mvAnalysisLongTrpcUrl!,
+          url: "/api/trpc",
           transformer: superjson,
           fetch(input, init) {
-            const flyOrigin = trpcBaseUrlToOrigin(mvAnalysisLongTrpcUrl!);
-            return withFlyHealthGate(flyOrigin, () =>
+            const origin = window.location.origin;
+            return withFlyHealthGate(origin, () =>
               globalThis.fetch(input, {
                 ...(init ?? {}),
-                credentials: "omit",
+                credentials: "include",
               }),
             );
           },

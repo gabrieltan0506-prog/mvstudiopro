@@ -1,11 +1,10 @@
 /**
- * Before browser → Fly direct tRPC (`mvAnalysisLongTrpcUrl`), probe `/api/health` until `ok`
- * so we don't pile requests onto a machine that Fly health checks have marked unhealthy.
+ * 同源架構：探針打當前 Origin 的 `/api/health`（經 Vercel rewrite 至 Fly），
+ * 避免在後端不健康時對長鏈路 tRPC 堆請求。
  */
 
 const FLY_HEALTH_TIMEOUT_MS = 120_000;
 const FLY_HEALTH_POLL_MS = 1_000;
-/** After a successful probe, skip re-checking for this many ms (parallel Fly-direct calls share one gate). */
 const FLY_HEALTH_ASSUME_OK_MS = 1_500;
 
 const inflightWaitByOrigin = new Map<string, Promise<void>>();
@@ -15,13 +14,13 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function trpcBaseUrlToOrigin(trpcBaseUrl: string): string {
-  return new URL(trpcBaseUrl).origin;
+export function trpcBaseUrlToOrigin(): string {
+  return typeof window !== "undefined" ? window.location.origin : "";
 }
 
-async function probeFlyHealth(flyOrigin: string): Promise<boolean> {
+async function probeApiHealth(origin: string): Promise<boolean> {
   try {
-    const r = await fetch(`${flyOrigin}/api/health`, {
+    const r = await fetch(`${origin}/api/health`, {
       method: "GET",
       cache: "no-store",
       credentials: "omit",
@@ -34,53 +33,50 @@ async function probeFlyHealth(flyOrigin: string): Promise<boolean> {
   }
 }
 
-async function waitUntilFlyHealthyLoop(flyOrigin: string): Promise<void> {
+async function waitUntilHealthyLoop(origin: string): Promise<void> {
   const t0 = Date.now();
   let loggedWait = false;
   while (Date.now() - t0 < FLY_HEALTH_TIMEOUT_MS) {
-    if (await probeFlyHealth(flyOrigin)) {
+    if (await probeApiHealth(origin)) {
       if (loggedWait) {
-        console.info(`[FlyHealth] ${flyOrigin} is healthy again`);
+        console.info(`[FlyHealth] ${origin}/api/health is healthy again`);
       }
       return;
     }
     if (!loggedWait) {
-      console.warn(`[FlyHealth] ${flyOrigin}/api/health not ready; blocking Fly-direct tRPC until healthy…`);
+      console.warn(`[FlyHealth] ${origin}/api/health not ready; blocking tRPC until healthy…`);
       loggedWait = true;
     }
     await delay(FLY_HEALTH_POLL_MS);
   }
   throw new Error(
-    `[FlyHealth] Timed out after ${FLY_HEALTH_TIMEOUT_MS}ms waiting for ${flyOrigin}/api/health`,
+    `[FlyHealth] Timed out after ${FLY_HEALTH_TIMEOUT_MS}ms waiting for ${origin}/api/health`,
   );
 }
 
-/**
- * Resolves when Fly `/api/health` returns plain `ok`. Concurrent requests share one poll loop per origin.
- */
-export async function ensureFlyAppReady(flyOrigin: string): Promise<void> {
-  const until = healthyUntilByOrigin.get(flyOrigin) ?? 0;
+export async function ensureFlyAppReady(origin: string): Promise<void> {
+  const until = healthyUntilByOrigin.get(origin) ?? 0;
   if (Date.now() < until) return;
 
-  if (await probeFlyHealth(flyOrigin)) {
-    healthyUntilByOrigin.set(flyOrigin, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
+  if (await probeApiHealth(origin)) {
+    healthyUntilByOrigin.set(origin, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
     return;
   }
 
-  healthyUntilByOrigin.delete(flyOrigin);
+  healthyUntilByOrigin.delete(origin);
 
-  let wait = inflightWaitByOrigin.get(flyOrigin);
+  let wait = inflightWaitByOrigin.get(origin);
   if (!wait) {
-    wait = waitUntilFlyHealthyLoop(flyOrigin).finally(() => {
-      inflightWaitByOrigin.delete(flyOrigin);
+    wait = waitUntilHealthyLoop(origin).finally(() => {
+      inflightWaitByOrigin.delete(origin);
     });
-    inflightWaitByOrigin.set(flyOrigin, wait);
+    inflightWaitByOrigin.set(origin, wait);
   }
   await wait;
-  healthyUntilByOrigin.set(flyOrigin, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
+  healthyUntilByOrigin.set(origin, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
 }
 
-export async function withFlyHealthGate<T>(flyOrigin: string, run: () => Promise<T>): Promise<T> {
-  await ensureFlyAppReady(flyOrigin);
+export async function withFlyHealthGate<T>(origin: string, run: () => Promise<T>): Promise<T> {
+  await ensureFlyAppReady(origin);
   return run();
 }

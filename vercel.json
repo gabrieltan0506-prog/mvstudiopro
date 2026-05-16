@@ -21,6 +21,10 @@
       "destination": "https://mvstudiopro.fly.dev/api/oauth/callback"
     },
     {
+      "source": "/api/:path*",
+      "destination": "https://mvstudiopro.fly.dev/api/:path*"
+    },
+    {
       "source": "/:path((?!api/|assets/|.*\\..*).*)",
       "destination": "/index.html"
     }
