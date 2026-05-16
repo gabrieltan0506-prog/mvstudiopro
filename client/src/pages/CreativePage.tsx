@@ -170,23 +170,29 @@ export default function CreativePage() {
                   className="rounded-xl bg-indigo-500 hover:bg-indigo-600 flex-1"
                 >
                   {loading && imageUrl && !videoUrl ? <LoaderCircle className="w-4 h-4 mr-2 animate-spin" /> : <Video className="w-4 h-4 mr-2" />}
-                  图片生成视频
+                  Seedance 2.0 视频生成
                 </Button>
               </div>
 
-              {imageUrl && (
-                <div className="mt-4 space-y-2">
-                  <div className="text-sm font-semibold text-white/80">生成的图片</div>
-                  <img src={imageUrl} alt="Generated" className="w-full rounded-xl border border-white/10" />
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="flex-1 space-y-4">
+                  {imageUrl && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-semibold text-white/80">生成的图片</div>
+                      <img src={imageUrl} alt="Generated" className="w-full rounded-xl border border-white/10 shadow-lg" />
+                    </div>
+                  )}
                 </div>
-              )}
 
-              {videoUrl && (
-                <div className="mt-4 space-y-2">
-                  <div className="text-sm font-semibold text-white/80">生成的视频</div>
-                  <video src={videoUrl} controls className="w-full rounded-xl border border-white/10" />
+                <div className="flex-1 space-y-4">
+                  {videoUrl && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-semibold text-white/80">生成的视频</div>
+                      <video src={videoUrl} controls className="w-full rounded-xl border border-white/10 shadow-lg" />
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
               
             </CardContent>
           </Card>

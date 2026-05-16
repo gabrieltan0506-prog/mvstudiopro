@@ -529,6 +529,17 @@ export default function HomeHero() {
             arrow: "rgba(216,180,254,1)",
             cta: "开始解构 →",
           },
+          {
+            href: "/creative",
+            badge: "文字生图 · 图生视频",
+            badgeColor: "rgba(236,72,153,0.95)",
+            title: "创意轻工坊",
+            desc: "一站式生图与视频轻量化创作，Gemini Flash 生图与 Seedance 引擎转化。",
+            gradient: "linear-gradient(135deg, rgba(236,72,153,0.18), rgba(219,39,119,0.08))",
+            border: "rgba(236,72,153,0.35)",
+            arrow: "rgba(244,114,182,1)",
+            cta: "马上体验 →",
+          },
         ].map((card) => (
           <a
             key={card.href}

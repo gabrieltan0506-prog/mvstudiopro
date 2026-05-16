@@ -33,11 +33,13 @@ export default function HomePage() {
         >
       <HomeNavbar />
 
-      <HomeNoticeBar />
+      <HomeUpdateTicker />
 
       <HomeHero />
 
-      <HomeUpdateTicker />
+      <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
+        <HomePricing />
+      </div>
 
       {/* 全頁底圖與下列卡片区共用 Context：時段（顯示時區）× 天氣輪播 Unsplash；路況（Gemini）、國內/國際新聞 */}
       <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
@@ -56,9 +58,6 @@ export default function HomePage() {
       <HomeShowcase />
 
       <HomeMyWorks />
-
-      {/* 定价与转化（看完功能再做决策） */}
-      <HomePricing />
 
       {/* 企业定制（HomeEnterpriseAgentCard）产品未收尾前不展示入口 */}
 

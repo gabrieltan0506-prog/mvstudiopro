@@ -1,3 +1,5 @@
+import React from "react";
+
 // ─── 更新日志数据（仅展示用户可感知的功能更新）────────────────────
 // 【跑馬燈專用】維護此陣列即可：首頁 `HomeUpdateTicker` 會自動滾動顯示全部條目；
 // 不需在 Hero / HomeFeatureCarousel 重複貼同一段文字。
@@ -7,6 +9,16 @@
 // - 五月：僅保留「最近兩個發版日」的條目（例如 05/15、05/16）；舊日請刪除或移入內部文檔
 export const HOME_CHANGELOG_UPDATES = [
   // —— 2026 年 5 月：最近兩日 ——
+  {
+    date: "05/16",
+    tag: "新功能",
+    text: (
+      <span className="flex flex-col items-start gap-1">
+        <span>上線旗艦生圖GPT-image-2與</span>
+        <span style={{ color: "#ec4899", fontWeight: 800 }}>Seedance 2.0 視頻生成</span>
+      </span>
+    ),
+  },
   {
     date: "05/16",
     tag: "新功能",

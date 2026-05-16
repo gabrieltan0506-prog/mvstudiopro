@@ -9,6 +9,35 @@ import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
 import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
+import { PWAInstallButton } from "@/components/PWAInstallButton";
+import { useAuth } from "@/_core/hooks/useAuth";
+
+function DomainRedirector() {
+  const { user, loading } = useAuth();
+  
+  useEffect(() => {
+    if (loading) return;
+    
+    const hostname = window.location.hostname;
+    // 如果訪問的是 fly.dev 測試域名
+    if (hostname.endsWith("mvstudiopro.fly.dev")) {
+      // 豁免 /login，讓管理員有機會在此域名登入取得權限
+      if (window.location.pathname.startsWith("/login")) {
+        return;
+      }
+      
+      const isAdmin = user?.role === "admin" || user?.role === "supervisor";
+      
+      // 非管理員一律跳轉至正式 Vercel 域名
+      if (!isAdmin) {
+        const targetUrl = `https://mvstudiopro.com${window.location.pathname}${window.location.search}`;
+        window.location.replace(targetUrl);
+      }
+    }
+  }, [user, loading]);
+
+  return null;
+}
 
 // Lazy load pages for performance
 const Home = lazy(() => import("./pages/Home"));
@@ -118,9 +147,11 @@ function App() {
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <AmbientSceneProvider>
+            <DomainRedirector />
             <GlobalAmbientBackdrop />
             <div className="relative z-[1] min-h-dvh">
               <Toaster />
+              <PWAInstallButton />
               <Router />
             </div>
           </AmbientSceneProvider>
