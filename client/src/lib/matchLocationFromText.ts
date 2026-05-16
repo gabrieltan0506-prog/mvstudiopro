@@ -92,7 +92,8 @@ export async function matchLocationFromOpenMeteo(text: string): Promise<ManualLo
   const q = text.trim();
   if (!q) return null;
   const url =
-    `/api/ext/open-meteo?name=${encodeURIComponent(q)}` + `&count=12&language=zh&format=json`;
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}` +
+    `&count=12&language=zh&format=json`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), OPEN_METEO_GEOCODE_TIMEOUT_MS);
