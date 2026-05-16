@@ -35,6 +35,32 @@ window.fetch = async (...args) => {
   return originalFetch(resource, config);
 };
 
+// 與 fetch 一致：正式網域上 XMLHttpRequest 打 /api 時直連 Fly（例如 MVAnalysis 影片上傳）
+const originalXhrOpen = XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open = function (
+  method: string,
+  url: string | URL,
+  async?: boolean,
+  username?: string | null,
+  password?: string | null,
+) {
+  let nextUrl = url;
+  try {
+    const hostname = window.location.hostname;
+    if (hostname === "mvstudiopro.com" || hostname === "www.mvstudiopro.com") {
+      const u = new URL(String(url), window.location.origin);
+      if (u.pathname.startsWith("/api/")) {
+        u.host = "mvstudiopro.fly.dev";
+        u.protocol = "https:";
+        nextUrl = u.toString();
+      }
+    }
+  } catch {
+    /**/
+  }
+  return originalXhrOpen.call(this, method, nextUrl, async ?? true, username ?? undefined, password ?? undefined);
+};
+
 // ─── PWA Service Worker Registration ──────────────────────────────────────────
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
