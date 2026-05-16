@@ -236,11 +236,9 @@ export default function ResearchPage() {
     <div style={{
       minHeight: isEmbed ? "auto" : "100dvh",
       fontFamily: "'Inter', sans-serif",
-      // 琥珀暗金底：极深棕黑 + 暗琥珀渐变（嵌入模式透明以便融入上帝视角页）
-      background: isEmbed ? "#0E0700" : "linear-gradient(145deg, #0E0700 0%, #160B00 25%, #1E1000 50%, #160900 75%, #0C0600 100%)",
       position: "relative",
       overflow: "hidden",
-    }}>
+    }} className={isEmbed ? "bg-[#0E0700]" : "bg-transparent text-white"}>
       {/* ── 流光琥珀浮动光晕 ── */}
       {isEmbed ? null : (
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>

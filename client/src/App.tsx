@@ -12,10 +12,14 @@ import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
 import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { useAuth } from "@/_core/hooks/useAuth";
 
+import { captureSupervisorTokenFromUrl } from "@/lib/supervisorTrpcToken";
+
 function DomainRedirector() {
   const { user, loading } = useAuth();
   
   useEffect(() => {
+    captureSupervisorTokenFromUrl();
+    
     if (loading) return;
     
     const hostname = window.location.hostname;
@@ -26,12 +30,23 @@ function DomainRedirector() {
         return;
       }
       
+      // 豁免 ?supervisor=1 帶有 token 的請求，讓管理員直接使用免登入 URL
+      if (window.location.search.includes("supervisor=1")) {
+        return;
+      }
+      
       const isAdmin = user?.role === "admin" || user?.role === "supervisor";
       
       // 非管理員一律跳轉至正式 Vercel 域名
       if (!isAdmin) {
         const targetUrl = `https://mvstudiopro.com${window.location.pathname}${window.location.search}`;
         window.location.replace(targetUrl);
+      }
+    } else {
+      // 處理 mvstudiopro.com 正式域名下的 supervisor=1 的跳轉
+      if (window.location.search.includes("supervisor=1") && !window.location.hostname.includes("localhost")) {
+        // 可以加上其它特定的業務邏輯，但目前需求是保證 supervisor=1 也有效
+        // 因不涉及跨域跳轉，不需特別處理，它原本就有效
       }
     }
   }, [user, loading]);

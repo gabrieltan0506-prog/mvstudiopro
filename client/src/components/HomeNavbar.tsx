@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useIsBelowXl } from "@/hooks/useMobile";
 import { Menu } from "lucide-react";
@@ -19,6 +20,7 @@ const nav = [
 
 export default function HomeNavbar() {
   const { user, isAuthenticated, loading, logout } = useAuth({ autoFetch: true });
+  const [, navigate] = useLocation();
   const isBelowXl = useIsBelowXl();
   const [menuOpen, setMenuOpen] = useState(false); // desktop dropdown
   const [sheetOpen, setSheetOpen] = useState(false); // mobile drawer
@@ -279,9 +281,11 @@ export default function HomeNavbar() {
                     退出登录
                   </button>
                 ) : (
-                  <a
-                    href="/login"
-                    onClick={() => setSheetOpen(false)}
+                  <button
+                    onClick={() => {
+                      setSheetOpen(false);
+                      navigate("/login");
+                    }}
                     className="min-h-11"
                     style={{
                       display: "flex",
@@ -298,7 +302,7 @@ export default function HomeNavbar() {
                     }}
                   >
                     登录
-                  </a>
+                  </button>
                 )}
               </div>
             </SheetContent>
@@ -499,8 +503,8 @@ export default function HomeNavbar() {
                   )}
                 </div>
               ) : (
-                <a
-                  href="/login"
+                <button
+                  onClick={() => navigate("/login")}
                   style={{
                     padding: "10px 16px",
                     borderRadius: 12,
@@ -513,7 +517,7 @@ export default function HomeNavbar() {
                   }}
                 >
                   登录
-                </a>
+                </button>
               )}
             </div>
           </>

@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 import React, { useEffect, useState } from "react";
 import { Mic } from "lucide-react";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
@@ -202,7 +203,7 @@ export default function HomeHero() {
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-                  <a
+                  <Link
                     href="/workflow-nodes"
                     style={{
                       padding: "12px 18px",
@@ -217,8 +218,8 @@ export default function HomeHero() {
                     }}
                   >
                     进入视频基地
-                  </a>
-                  <a
+                  </Link>
+                  <Link
                     href="/creator-growth-camp"
                     style={{
                       padding: "10px 16px",
@@ -234,7 +235,7 @@ export default function HomeHero() {
                     }}
                   >
                     从成长营开始 →
-                  </a>
+                  </Link>
                 </div>
               </div>
             </div>
@@ -255,7 +256,7 @@ export default function HomeHero() {
                 主打能力 · 一键进入
               </span>
               {HERO_FLAGSHIP_LINKS.map(({ href, label }) => (
-                <a
+                <Link
                   key={href}
                   href={href}
                   style={{
@@ -271,7 +272,7 @@ export default function HomeHero() {
                   }}
                 >
                   {label}
-                </a>
+                </Link>
               ))}
             </div>
 
@@ -456,7 +457,7 @@ export default function HomeHero() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gridTemplateColumns: "repeat(4, 1fr)",
           gap: 14,
           marginTop: 16,
         }}
@@ -467,8 +468,8 @@ export default function HomeHero() {
             href: "/creator-growth-camp",
             badge: "成长营 · 二创",
             badgeColor: "rgba(251,146,60,0.9)",
-            title: "创作者成长营 + 二创中心",
-            desc: "增长诊断与 REMIX 二创同一入口：先进成长营，再按需跳转二创完成脚本与分镜。",
+            title: "创作优化变现营 + 爆款解构尊享版",
+            desc: "增长诊断与爆款逻辑无损拆解入口：同一平台涵盖先进成长营与二创分镜流程，实现对标分析及变现策略。",
             gradient: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(139,92,246,0.12))",
             border: "rgba(251,146,60,0.32)",
             arrow: "rgba(251,146,60,1)",
@@ -486,28 +487,6 @@ export default function HomeHero() {
             cta: "查看趋势 →",
           },
           {
-            href: "/research",
-            badge: "竞品调研",
-            badgeColor: "rgba(249,115,22,0.95)",
-            title: "竞品与对标分析",
-            desc: "四平台双引擎深潜，输出人设、脚本、视觉与 30 天增长路径（60 点/次）。",
-            gradient: "linear-gradient(135deg, rgba(249,115,22,0.20), rgba(234,88,12,0.10))",
-            border: "rgba(249,115,22,0.38)",
-            arrow: "rgba(253,186,116,1)",
-            cta: "开始调研 →",
-          },
-          {
-            href: "/god-view",
-            badge: "战略智库",
-            badgeColor: "rgba(245,200,80,0.95)",
-            title: "AI 上帝视角",
-            desc: "全景行业战报：半月刊、订阅与私人订制，附数据表与四平台对比矩阵。",
-            gradient: "linear-gradient(135deg, rgba(245,200,80,0.16), rgba(120,80,20,0.14))",
-            border: "rgba(212,175,55,0.42)",
-            arrow: "rgba(253,224,138,1)",
-            cta: "前往智库 →",
-          },
-          {
             href: "/workflow-nodes",
             badge: "脚本 · 分镜 · 成片",
             badgeColor: "rgba(52,211,153,0.95)",
@@ -519,29 +498,18 @@ export default function HomeHero() {
             cta: "进入视频基地 →",
           },
           {
-            href: "/creator-growth-camp/premium-remix",
-            badge: "尊享解构",
-            badgeColor: "rgba(167,139,250,0.95)",
-            title: "爆款解构 · 尊享版",
-            desc: "对标爆款逻辑的无损拆解与再创作入口，与成长营数据互通。",
-            gradient: "linear-gradient(135deg, rgba(167,139,250,0.18), rgba(192,132,252,0.08))",
-            border: "rgba(167,139,250,0.35)",
-            arrow: "rgba(216,180,254,1)",
-            cta: "开始解构 →",
-          },
-          {
             href: "/creative",
             badge: "文字生图 · 图生视频",
             badgeColor: "rgba(236,72,153,0.95)",
             title: "创意轻工坊",
-            desc: "一站式生图与视频轻量化创作，Gemini Flash 生图与 Seedance 引擎转化。",
+            desc: "一站式生图与视频轻量化创作，Nano Banana 2 生图与 Seedance 引擎转化。",
             gradient: "linear-gradient(135deg, rgba(236,72,153,0.18), rgba(219,39,119,0.08))",
             border: "rgba(236,72,153,0.35)",
             arrow: "rgba(244,114,182,1)",
             cta: "马上体验 →",
           },
         ].map((card) => (
-          <a
+          <Link
             key={card.href}
             href={card.href}
             style={{
@@ -586,7 +554,7 @@ export default function HomeHero() {
             <div style={{ marginTop: 14, fontSize: 13, fontWeight: 800, color: card.arrow }}>
               {card.cta}
             </div>
-          </a>
+          </Link>
         ))}
       </div>
 

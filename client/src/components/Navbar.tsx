@@ -111,7 +111,7 @@ export default function Navbar() {
           ) : (
             <Button
               size="sm"
-              onClick={() => { window.location.href = getLoginUrl(); }}
+              onClick={() => navigate("/login")}
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               登录
@@ -226,7 +226,10 @@ export default function Navbar() {
                 <Button
                   size="lg"
                   className="w-full min-h-11 bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={() => { window.location.href = getLoginUrl(); }}
+                  onClick={() => {
+                    setMobileOpen(false);
+                    navigate("/login");
+                  }}
                 >
                   登录
                 </Button>

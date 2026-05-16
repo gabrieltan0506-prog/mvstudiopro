@@ -3003,7 +3003,7 @@ export default function MVAnalysisPage() {
   if (!isAuthenticated && !supervisorAccess) return null;
 
   return (
-    <div className="min-h-dvh bg-[#08111f] text-[#f7f4ef]">
+    <div className="min-h-dvh bg-transparent text-[#f7f4ef]">
       <div className="mx-auto max-w-[1760px] px-4 py-8">
         <WorkAmbientPanel />
         <UsageQuotaBanner
