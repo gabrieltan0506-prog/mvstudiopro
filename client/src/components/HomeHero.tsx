@@ -5,6 +5,7 @@ import FloatingVideoWatermark from "./FloatingVideoWatermark";
 import { useAuth } from "../_core/hooks/useAuth";
 import HomeWeatherClock from "./HomeWeatherClock";
 import HomeProductGuide from "./HomeProductGuide";
+import { AmbientLocationPicker } from "@/components/AmbientLocationPicker";
 
 /** Hero 内一键直达：与产品 flagship 模块一致 */
 const HERO_FLAGSHIP_LINKS: { href: string; label: string }[] = [
@@ -312,6 +313,8 @@ export default function HomeHero() {
           >
             <div>
               <HomeWeatherClock />
+              <div style={{ height: 10 }} />
+              <AmbientLocationPicker compact />
               <div style={{ height: 12 }} />
               <div
                 style={{

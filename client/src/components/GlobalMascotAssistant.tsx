@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, Shuffle } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { useAmbientScene } from "@/components/AmbientSceneProvider";
 import "./mascot-assistant.css";
 
 const PROACTIVE_TTS_KEY = "mv_mascot_proactive_tts";
@@ -115,8 +116,7 @@ export type GlobalMascotAssistantProps = {
  * 吉祥物：文本朗讀、儀表板／新聞播報、資料變化提醒。（情緒關懷生成僅後台 Admin）
  */
 export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssistantProps) {
-  const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
-  const [geoAttemptDone, setGeoAttemptDone] = useState(false);
+  const { geo, geoAttemptDone, requestLocation } = useAmbientScene();
   const browserTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -163,33 +163,6 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
     }
     proactiveTtsRef.current = proactiveUi;
   }, [proactiveUi]);
-
-  useEffect(() => {
-    // 暂时移除加载时的地理定位请求，改为用户手动触发或统一上下文触发
-    setGeoAttemptDone(true);
-  }, []);
-
-  const requestMascotLocation = async () => {
-    setGeoAttemptDone(false);
-    try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error("浏览器未提供定位"));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          timeout: 15_000,
-          maximumAge: 120_000,
-        });
-      });
-      setGeo({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-    } catch {
-      setGeo(null);
-    } finally {
-      setGeoAttemptDone(true);
-    }
-  };
 
   const live = trpc.ambient.dashboardLive.useQuery(
     {
@@ -361,7 +334,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   const onDashboard = useCallback(() => {
     if (!geo) {
       speakAndShow("正在请求地理位置以获取天气与路况，请允许定位...");
-      requestMascotLocation().then(() => {
+      requestLocation().then(() => {
         // Next render or manual click will have it
       });
       return;
@@ -382,12 +355,13 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
     live.isLoading,
     newsHeadlineForReport,
     speakAndShow,
+    requestLocation,
   ]);
 
   const onNews = useCallback(() => {
     if (!geo) {
       speakAndShow("正在请求地理位置以获取周边新闻，请允许定位...");
-      requestMascotLocation().then(() => {
+      requestLocation().then(() => {
         // Next render or manual click will have it
       });
       return;
@@ -397,7 +371,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
       return;
     }
     speakAndShow(buildFullNewsSpeech(newsQ.data as NewsQueryData));
-  }, [geo, newsQ.data, newsQ.isLoading, speakAndShow]);
+  }, [geo, newsQ.data, newsQ.isLoading, speakAndShow, requestLocation]);
 
   const shuffleMascot = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

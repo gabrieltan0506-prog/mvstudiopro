@@ -1,5 +1,3 @@
-import React from "react";
-
 // ─── 更新日志数据（仅展示用户可感知的功能更新）────────────────────
 // 【跑馬燈專用】維護此陣列即可：首頁 `HomeUpdateTicker` 會自動滾動顯示全部條目；
 // 不需在 Hero / HomeFeatureCarousel 重複貼同一段文字。
@@ -12,32 +10,27 @@ export const HOME_CHANGELOG_UPDATES = [
   {
     date: "05/16",
     tag: "新功能",
-    text: (
-      <span className="flex flex-col items-start gap-1">
-        <span>上線旗艦生圖GPT-image-2與</span>
-        <span style={{ color: "#ec4899", fontWeight: 800 }}>Seedance 2.0 視頻生成</span>
-      </span>
-    ),
+    text: "上線旗艦 AI 高清生圖與新一代影片生成",
   },
   {
     date: "05/16",
     tag: "新功能",
-    text: "首頁 Hero 對齊六大主打能力、快捷鏈至智庫；全局環境底圖 Ambient（本地圖 + 拉圖腳本，App 層統一掛載）",
+    text: "首頁主視覺對齊六大主打能力、快捷鏈至智庫；全站環境底圖與天氣背景統一呈現",
   },
   {
     date: "05/16",
     tag: "优化",
-    text: "企業定制入口暫收斂（Navbar / 首頁輪播）；創作捷徑新增 /creative 文字生圖與圖生視頻（Gemini Flash 圖 + Seedance 權限）",
+    text: "企業定制入口暫收斂；創作捷徑新增文字生圖與圖生視頻能力",
   },
   {
     date: "05/15",
     tag: "优化",
-    text: "大師電影工作流：平台生圖流水線日誌統一上海時區；選題單幀封面 Deep Research 步驟恢復（PR 547）",
+    text: "大師級電影工作流：生圖流水線紀錄統一為上海時區；選題單幀封面的深度研究步驟已恢復",
   },
   {
     date: "05/15",
     tag: "优化",
-    text: "2×4 套裝 job 不再強制跳過 composite Deep Research；新任務入隊保留 Debug 日誌橫幅",
+    text: "大師電影八格套裝：深度研究不會再被略過；新任務排隊與狀態提示更清楚",
   },
   // —— 2026 年 4 月：精選一則 ——
   {

@@ -8,6 +8,7 @@ import {
 import "./work-ambient-scene.css";
 import { GlobalMascotAssistant } from "@/components/GlobalMascotAssistant";
 import { useAmbientScene } from "@/components/AmbientSceneProvider";
+import { AmbientLocationPicker } from "@/components/AmbientLocationPicker";
 
 function AmbientMediaCard({
   urls,
@@ -198,6 +199,7 @@ export default function WorkAmbientPanel() {
   return (
     <>
       <div className="mb-6 space-y-4 text-white">
+      <AmbientLocationPicker />
       <div className="grid gap-4 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
         <AmbientMediaCard
           urls={ambientUrls}
