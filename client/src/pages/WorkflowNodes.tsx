@@ -352,7 +352,7 @@ export default function WorkflowNodes() {
   const [videoEngine, setVideoEngine] = useState<VideoEngineChoice>("seedance");
   const [sceneVideoAspect, setSceneVideoAspect] = useState("16:9");
   const [sceneVideoResolution, setSceneVideoResolution] = useState<"720p" | "1080p">("720p");
-  /** Seedance：`auto` 或 4–15 的整数秒数字符串；Veo 仍固定 8s（由 Vertex 参数决定） */
+  /** Seedance：`auto` 或 4–15 的整数秒数字符串；Veo 固定（由 Vertex 参数决定） */
   const [sceneVideoDuration, setSceneVideoDuration] = useState<string>("8");
   const [generateSceneVideoAudio, setGenerateSceneVideoAudio] = useState(true);
   const [renderVoiceSceneMap, setRenderVoiceSceneMap] = useState<Record<string, boolean>>({});
@@ -1066,7 +1066,6 @@ export default function WorkflowNodes() {
           <input value={targetWords} onChange={(e) => setTargetWords(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="目标字数" />
           <input value={targetScenes} onChange={(e) => setTargetScenes(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="目标镜数" />
         </div>
-        <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-200">固定规则：在大师级视频基地里每个 scene 的时长固定为 8 秒，不再单独输入。</div>
         <Button disabled={globalStep.loading} onClick={() => void runOp("workflowGenerateScript", {
           workflowId,
           prompt,
@@ -1647,7 +1646,7 @@ export default function WorkflowNodes() {
             </select>
           </label>
           <label className="space-y-1 text-xs text-white/80">
-            <span className="font-semibold text-white">时长（仅 Seedance；Veo 仍约 8s）</span>
+            <span className="font-semibold text-white">时长（仅 Seedance）</span>
             <select
               value={sceneVideoDuration}
               onChange={(e) => setSceneVideoDuration(e.target.value)}
@@ -1692,7 +1691,7 @@ export default function WorkflowNodes() {
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-white">Scene {scene.sceneIndex}</div>
                 <div className="text-xs text-white/55">
-                  {videoEngine === "veo" ? "Veo 约 8s" : sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
+                  {videoEngine === "veo" ? "Veo 模型" : sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
                 </div>
               </div>
               <div className="text-xs text-white/60">Primary Subject: {scene.primarySubject || "--"}</div>
@@ -1995,7 +1994,7 @@ export default function WorkflowNodes() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">
-                    {videoEngine === "veo" ? "Veo ~8s" : sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
+                    {videoEngine === "veo" ? "Veo 模型" : sceneVideoDuration === "auto" ? "Seedance auto" : `Seedance ${sceneVideoDuration}s`}
                   </span>
                   <span className={`rounded-full border px-3 py-1 text-xs ${scene.renderStillNeeded ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"}`}>
                     {scene.renderStillNeeded ? "Render Still" : "Scene Video"}
@@ -2242,7 +2241,7 @@ export default function WorkflowNodes() {
           操作；此处仅作说明与状态对照。当前：
           <span className="ml-1 font-semibold text-primary">{WORKFLOW_NODE_TAB_LABELS[selected] ?? selected}</span>
         </div>
-        {debugMode ? (
+        {supervisorAccess && debugMode ? (
           <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4 text-sm text-white/72">
             <div className="text-xs uppercase tracking-[0.18em] text-white/45">Debug · 节点 id</div>
             <div className="mt-3 space-y-2 font-mono text-xs">
@@ -2279,15 +2278,15 @@ export default function WorkflowNodes() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#050816] text-white">
+    <div className="min-h-dvh bg-transparent text-white">
       <Navbar />
       <main className="px-4 pb-8 pt-24 md:px-6">
         <div className="mx-auto max-w-[1880px]">
           <div className="mb-4 overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(236,72,153,0.22),transparent_32%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6 md:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">大师级视频基地 <span className="ml-2 text-xs text-white/45">Master Video Lab</span></div>
-                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">大师级视频基地</h1>
+                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">大师电影故事创作 <span className="ml-2 text-xs text-white/45">Master Movie Story Creation</span></div>
+                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">大师电影故事创作</h1>
                 <p className="mt-3 max-w-4xl text-sm leading-7 text-white/72 md:text-base">
                   主线：<span className="font-semibold text-white">脚本</span> →{" "}
                   <span className="font-semibold text-white">分镜与素材</span> →{" "}
@@ -2365,7 +2364,7 @@ export default function WorkflowNodes() {
                       <button type="button" onClick={() => setDebugMode((prev) => !prev)} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/70"><Bug className="h-3.5 w-3.5" /> {debugMode ? "Debug ON" : "Debug OFF"}</button>
                     )}
                   </div>
-                  {debugMode && (
+                  {supervisorAccess && debugMode && (
                     <div className="mt-3 rounded-2xl border border-white/10 bg-[#0b1020] p-3">
                       <div className="flex items-center justify-between">
                         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ff7fd5]">🎤 语音输入 Debug Log</div>
@@ -2412,7 +2411,7 @@ export default function WorkflowNodes() {
 
                   {renderCompactInspector()}
 
-                  {debugMode ? (
+                  {supervisorAccess && debugMode ? (
                     <div className="mt-5 rounded-2xl border border-white/10 bg-[#0b1020] p-4">
                       <div className="mb-2 text-sm font-semibold text-white">最新输出快照</div>
                       <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs text-white/70">{JSON.stringify(selectedNodeSnapshot(), null, 2)}</pre>
@@ -2504,7 +2503,7 @@ export default function WorkflowNodes() {
                   ) : supervisorAccess ? (
                     <div className="mb-4 text-sm text-white/50">开启 Debug 后可粘贴历史 workflowId 或查看下方原始字段。</div>
                   ) : null}
-                  {debugMode ? (
+                  {supervisorAccess && debugMode ? (
                     <div className="space-y-2 border-t border-white/10 pt-4 text-xs text-white/72">
                       <div>
                         currentStep: <code>{s(workflow?.currentStep) || "--"}</code>
@@ -2532,7 +2531,7 @@ export default function WorkflowNodes() {
                 </CardContent>
               </Card>
 
-              {debugMode ? (
+              {supervisorAccess && debugMode ? (
                 <Card className="border-white/10 bg-white/5">
                   <CardContent className="p-5">
                     <div className="mb-3 text-lg font-bold">Debug 面板</div>

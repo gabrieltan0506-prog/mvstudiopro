@@ -217,7 +217,7 @@ export default function EnterpriseAgentPlayground() {
   }
   if (error || !data) {
     return (
-      <div className="p-8 text-red-400 flex flex-col items-start gap-4 bg-zinc-950 min-h-dvh">
+      <div className="p-8 text-red-400 flex flex-col items-start gap-4 bg-transparent min-h-dvh">
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5" />
           {error?.message || "无法加载 Agent 信息"}

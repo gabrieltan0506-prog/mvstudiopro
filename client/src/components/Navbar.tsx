@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/sheet";
 
 const NAV_ITEMS = [
-  { label: "大师级视频基地", href: "/workflow-nodes" },
+  { label: "大师电影故事创作", href: "/workflow-nodes" },
   { label: "创作者成长营", href: "/creator-growth-camp" },
   { label: "套餐", href: "/pricing" },
 ];

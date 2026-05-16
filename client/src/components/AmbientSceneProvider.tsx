@@ -19,7 +19,7 @@ function codeLabel(code: number): string {
   return "阴";
 }
 
-const CAROUSEL_MS = 9000;
+const CAROUSEL_MS = 180000;
 
 export type AmbientSceneContextValue = {
   now: Date;
