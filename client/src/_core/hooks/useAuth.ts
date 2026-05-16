@@ -61,6 +61,7 @@ export function useAuth(options?: UseAuthOptions) {
     onSuccess: () => {
       utils.auth.me.setData(undefined, null);
       queryClient.setQueryData(["api-me"], null);
+      localStorage.removeItem("manus-runtime-user-info");
     },
   });
 
@@ -78,11 +79,22 @@ export function useAuth(options?: UseAuthOptions) {
     } finally {
       utils.auth.me.setData(undefined, null);
       queryClient.setQueryData(["api-me"], null);
+      localStorage.removeItem("manus-runtime-user-info");
       await utils.auth.me.invalidate();
     }
   }, [logoutMutation, queryClient, utils]);
 
   const state = useMemo(() => {
+    let cachedUser = null;
+    try {
+      const cached = localStorage.getItem("manus-runtime-user-info");
+      if (cached && cached !== "null") {
+        cachedUser = JSON.parse(cached);
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const trpcUser = meQuery.data ?? null;
     const apiMeUser = apiMeQuery.data
       ? {
@@ -100,21 +112,27 @@ export function useAuth(options?: UseAuthOptions) {
           ...trpcUser,
           ...(apiMeQuery.data ?? {}),
         }
-      : apiMeUser;
+      : apiMeUser || cachedUser;
 
-    localStorage.setItem(
-      "manus-runtime-user-info",
-      JSON.stringify(user)
-    );
+    if (user && (trpcUser || apiMeUser)) {
+      localStorage.setItem(
+        "manus-runtime-user-info",
+        JSON.stringify(user)
+      );
+    } else if (!user && (meQuery.isSuccess || apiMeQuery.isSuccess)) {
+      localStorage.removeItem("manus-runtime-user-info");
+    }
 
     const authQueriesPending = autoFetch
-      ? (meQuery.isPending || apiMeQuery.isPending)
+      ? ((meQuery.isPending && !meQuery.data) || (apiMeQuery.isPending && !apiMeQuery.data))
       : false;
+
+    // 如果我们有缓存的用户，认为是不在 loading
+    const loading = (authQueriesPending && !cachedUser) || logoutMutation.isPending;
 
     return {
       user,
-      loading:
-        authQueriesPending || logoutMutation.isPending,
+      loading,
       error: apiMeQuery.error ?? meQuery.error ?? logoutMutation.error ?? null,
       isAuthenticated: Boolean(user),
     };
@@ -123,9 +141,11 @@ export function useAuth(options?: UseAuthOptions) {
     apiMeQuery.data,
     apiMeQuery.error,
     apiMeQuery.isPending,
+    apiMeQuery.isSuccess,
     meQuery.data,
     meQuery.error,
     meQuery.isPending,
+    meQuery.isSuccess,
     logoutMutation.error,
     logoutMutation.isPending,
   ]);

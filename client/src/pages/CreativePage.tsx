@@ -134,7 +134,7 @@ export default function CreativePage() {
       <main className="px-4 pb-8 pt-24 md:px-6 flex justify-center">
         <div className="w-full max-w-3xl">
           <h1 className="mb-6 text-3xl font-black tracking-tight">文字生图 / 图生视频</h1>
-          <p className="mb-8 text-white/60 text-sm">直接通过文字生成图片，然后将图片转换为视频。生成图片使用 Gemini 3 flash preview，视频使用 Seedance 2.0（限付费用户）。</p>
+          <p className="mb-8 text-white/60 text-sm">直接通过文字生成图片，然后将图片转换为视频。生成图片使用 Nano Banana 2，视频使用 Seedance 2.0（限付费用户）。</p>
           
           <Card className="border-white/10 bg-white/5 p-6">
             <CardContent className="p-0 flex flex-col gap-6">

@@ -12,10 +12,14 @@ import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
 import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { useAuth } from "@/_core/hooks/useAuth";
 
+import { captureSupervisorTokenFromUrl } from "@/lib/supervisorTrpcToken";
+
 function DomainRedirector() {
   const { user, loading } = useAuth();
   
   useEffect(() => {
+    captureSupervisorTokenFromUrl();
+    
     if (loading) return;
     
     const hostname = window.location.hostname;
@@ -23,6 +27,11 @@ function DomainRedirector() {
     if (hostname.endsWith("mvstudiopro.fly.dev")) {
       // 豁免 /login，讓管理員有機會在此域名登入取得權限
       if (window.location.pathname.startsWith("/login")) {
+        return;
+      }
+      
+      // 豁免 ?supervisor=1 帶有 token 的請求，讓管理員直接使用免登入 URL
+      if (window.location.search.includes("supervisor=1")) {
         return;
       }
       
