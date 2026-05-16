@@ -85,6 +85,7 @@ export function matchLocationFromCatalog(text: string): ManualLocationStored | n
 }
 
 const ALLOW_CC = new Set(["CN", "HK", "MO", "TW"]);
+const OPEN_METEO_GEOCODE_TIMEOUT_MS = 2000;
 
 /** Open‑Meteo Geocoding，補齊目錄未收錄的縣市／口語地名 */
 export async function matchLocationFromOpenMeteo(text: string): Promise<ManualLocationStored | null> {
@@ -92,23 +93,34 @@ export async function matchLocationFromOpenMeteo(text: string): Promise<ManualLo
   if (!q) return null;
   const url =
     `/api/ext/open-meteo?name=${encodeURIComponent(q)}` + `&count=12&language=zh&format=json`;
-  const res = await fetch(url, { credentials: "omit" });
-  if (!res.ok) return null;
-  const j = (await res.json()) as { results?: GeoHit[] };
-  const hits = Array.isArray(j.results) ? j.results : [];
-  const hit = hits.find((r) => ALLOW_CC.has(String(r.country_code || "").toUpperCase()));
-  if (!hit) return null;
-  const admin = String(hit.admin1 || "").trim();
-  const cc = String(hit.country_code || "").toUpperCase();
-  const provinceName = admin || (cc === "HK" ? "香港特别行政区" : cc === "MO" ? "澳门特别行政区" : cc === "TW" ? "台湾省" : "中国");
-  return {
-    v: 1,
-    provinceId: `geo:${cc}`,
-    provinceName,
-    cityName: String(hit.name || q).trim() || q,
-    lat: hit.latitude,
-    lon: hit.longitude,
-  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPEN_METEO_GEOCODE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { credentials: "omit", signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    const j = (await res.json()) as { results?: GeoHit[] };
+    const hits = Array.isArray(j.results) ? j.results : [];
+    const hit = hits.find((r) => ALLOW_CC.has(String(r.country_code || "").toUpperCase()));
+    if (!hit) return null;
+    const admin = String(hit.admin1 || "").trim();
+    const cc = String(hit.country_code || "").toUpperCase();
+    const provinceName =
+      admin ||
+      (cc === "HK" ? "香港特别行政区" : cc === "MO" ? "澳门特别行政区" : cc === "TW" ? "台湾省" : "中国");
+    return {
+      v: 1,
+      provinceId: `geo:${cc}`,
+      provinceName,
+      cityName: String(hit.name || q).trim() || q,
+      lat: hit.latitude,
+      lon: hit.longitude,
+    };
+  } catch {
+    clearTimeout(timeoutId);
+    return null;
+  }
 }
 
 export function expandVoiceLocationCandidates(raw: string): string[] {
