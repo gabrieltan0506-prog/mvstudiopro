@@ -460,23 +460,11 @@ export default function GodViewPage() {
     <div
       style={{
         minHeight: "100vh",
-        // 卡布奇諾深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
-        background: `
-          radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
-          radial-gradient(ellipse 70% 50% at 100% 100%, rgba(74,54,33,0.20) 0%, transparent 65%),
-          linear-gradient(180deg,
-            #ede1c5 0%,
-            #ddc59c 22%,
-            #c9a878 48%,
-            #b08c5a 72%,
-            #8e6c45 92%,
-            #7a5e3f 100%
-          )
-        `,
         fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif",
         position: "relative",
         overflow: "hidden",
       }}
+      className="bg-transparent text-[#f7f4ef]"
     >
       {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件） */}
       <IpProfileModal
