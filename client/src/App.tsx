@@ -29,6 +29,7 @@ const TemplatesLibrary = lazy(() => import("./pages/TemplatesLibrary"));
 const Login = lazy(() => import("./pages/Login"));
 const TestLab = lazy(() => import("./pages/TestLab"));
 const WorkflowNodes = lazy(() => import("./pages/WorkflowNodes"));
+const CreativePage = lazy(() => import("./pages/CreativePage"));
 const SupervisorAccess = lazy(() => import("./pages/SupervisorAccess"));
 
 const MyWorks = lazy(() => import("./pages/MyWorks"));
@@ -88,6 +89,7 @@ function Router() {
         <Route path={"/templates"} component={TemplatesLibrary} />
         <Route path={"/test-lab"} component={TestLab} />
         <Route path={"/workflow-nodes"} component={WorkflowNodes} />
+        <Route path={"/creative"} component={CreativePage} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />

@@ -11,6 +11,7 @@ import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
+import HomeUpdateTicker from "../components/HomeUpdateTicker";
 import SampleReportDownload from "../components/SampleReportDownload";
 import WorkAmbientPanel from "../components/WorkAmbientPanel";
 
@@ -27,7 +28,7 @@ export default function HomePage() {
           style={{
             minHeight: "100dvh",
             background:
-              "radial-gradient(circle at top center, rgba(255,79,179,0.12), transparent 18%), radial-gradient(circle at 0% 0%, rgba(139,92,246,0.18), transparent 24%), radial-gradient(circle at 100% 40%, rgba(59,130,246,0.10), transparent 20%), linear-gradient(180deg,#0a0814 0%, #0a0d1f 40%, #090915 100%)",
+              "radial-gradient(circle at top center, rgba(255,79,179,0.12), transparent 18%), radial-gradient(circle at 0% 0%, rgba(139,92,246,0.18), transparent 24%), radial-gradient(circle at 100% 40%, rgba(59,130,246,0.10), transparent 20%), linear-gradient(180deg, rgba(10,8,20,0.4) 0%, rgba(10,13,31,0.4) 40%, rgba(9,9,21,0.4) 100%)",
           }}
         >
       <HomeNavbar />
@@ -35,6 +36,8 @@ export default function HomePage() {
       <HomeNoticeBar />
 
       <HomeHero />
+
+      <HomeUpdateTicker />
 
       {/* 全頁底圖與下列卡片区共用 Context：時段（顯示時區）× 天氣輪播 Unsplash；路況（Gemini）、國內/國際新聞 */}
       <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">

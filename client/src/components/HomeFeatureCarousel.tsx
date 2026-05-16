@@ -4,7 +4,6 @@ import {
   Search, Crown, BookOpen, Star, FileDown, Zap, Clock,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
-import { HOME_CHANGELOG_UPDATES, HOME_UPDATE_TAG_COLORS } from "./HomeChangelog";
 
 // ─── 轮播功能动态 ───────────────────────────────────────────────────
 const CAROUSEL_CARDS = [
@@ -127,6 +126,21 @@ const CAROUSEL_CARDS = [
     bgGradient: "linear-gradient(135deg, rgba(251,146,60,0.10) 0%, rgba(251,146,60,0.03) 100%)",
   },
   {
+    isNew: true,
+    date: "2026/05/16",
+    tag: "今日上线",
+    title: "创意轻工坊",
+    subtitle: "文字生图 · 单图生视频",
+    desc: "独立的一站式生图与视频创作工具。采用 Gemini 3.1 Flash 模型生成超清图像，并支持直接调用 Seedance 2.0 引擎将单图转化为高清动态视频。",
+    pills: ["文字生图", "图片生视频", "Gemini 3.1 Flash", "Seedance 2.0"],
+    icon: Sparkles,
+    accentColor: "#ec4899",
+    glowColor: "rgba(236,72,153,0.20)",
+    borderColor: "rgba(236,72,153,0.35)",
+    bgGradient: "linear-gradient(135deg, rgba(236,72,153,0.10) 0%, rgba(236,72,153,0.03) 100%)",
+    href: "/creative",
+  },
+  {
     isNew: false,
     date: "2026/04/25",
     tag: "功能亮点",
@@ -160,7 +174,7 @@ const CAROUSEL_CARDS = [
     isNew: false,
     date: "2026/04/24",
     tag: "功能亮点",
-    title: "大师级视频基地",
+    title: "大师电影故事创作",
     subtitle: "脚本 · 分镜图 · 成片一条链",
     desc: "主链路：Gemini 3.1 Pro 生成脚本 → GPT-image-2 生成分镜图 → Seedance 2.0 生成影片。画布上可继续编排配乐、配音与合成；支持语音输入提示词。",
     pills: ["Gemini 3.1 Pro", "GPT-image-2", "Seedance 2.0"],
@@ -178,8 +192,8 @@ const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/creator-growth-camp/platform", label: "全网流量雷达" },
   { href: "/research", label: "竞品调研 · 60 点" },
   { href: "/god-view", label: "AI 战略智库" },
-  { href: "/workflow-nodes", label: "大师级视频基地" },
-  { href: "/creator-growth-camp/premium-remix", label: "尊享爆款解构" },
+  { href: "/workflow-nodes", label: "大师电影故事创作" },
+  { href: "/creative", label: "创意轻工坊 · 生图/视频" },
 ];
 
 function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
@@ -415,7 +429,6 @@ export default function HomeFeatureCarousel() {
   }, [next, isPaused]);
 
   const card = CAROUSEL_CARDS[current];
-  const tickerItems = [...HOME_CHANGELOG_UPDATES, ...HOME_CHANGELOG_UPDATES];
 
   return (
     <section style={{ width: "100%", padding: "0 0 48px" }}>
@@ -477,29 +490,7 @@ export default function HomeFeatureCarousel() {
               <Clock size={18} color="#a78bfa" />
               <span style={{ fontSize: 17, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>更新日志 & 功能动态</span>
             </div>
-            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>持续迭代中</span>
-          </div>
-
-          <div style={{
-            overflow: "hidden",
-            background: "rgba(255,255,255,0.025)",
-            borderTop: "1px solid rgba(255,255,255,0.06)",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-            padding: "12px 0",
-          }}>
-            <div className="mvsp-home-ticker-track" style={{ display: "flex", whiteSpace: "nowrap", gap: 0 }}>
-              {tickerItems.map((item, i) => {
-                const tc = HOME_UPDATE_TAG_COLORS[item.tag] ?? HOME_UPDATE_TAG_COLORS["新功能"];
-                return (
-                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "0 32px" }}>
-                    <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums" }}>{item.date}</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", background: tc.bg, color: tc.text, borderRadius: 4, padding: "2px 7px" }}>{item.tag}</span>
-                    <span style={{ fontSize: 15, color: "rgba(255,255,255,0.7)" }}>{item.text}</span>
-                    <span style={{ color: "rgba(255,255,255,0.12)", fontSize: 20, marginLeft: 8 }}>·</span>
-                  </span>
-                );
-              })}
-            </div>
+            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>上方滚动条为最新动态摘要</span>
           </div>
 
           <div style={{ padding: "20px 24px 24px", position: "relative" }}>
@@ -531,14 +522,6 @@ export default function HomeFeatureCarousel() {
       </div>
 
       <style>{`
-        @keyframes mvsp-home-ticker {
-          from { transform: translateX(0); }
-          to   { transform: translateX(-50%); }
-        }
-        .mvsp-home-ticker-track {
-          animation: mvsp-home-ticker 40s linear infinite;
-        }
-        .mvsp-home-ticker-track:hover { animation-play-state: paused; }
         @keyframes mvsp-pulse-orange {
           0%,100% { box-shadow: 0 2px 8px rgba(249,115,22,0.45); }
           50% { box-shadow: 0 2px 16px rgba(249,115,22,0.75); }

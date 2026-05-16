@@ -2993,7 +2993,7 @@ export default function MVAnalysisPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-dvh flex-col items-center justify-center bg-[#08111f] text-[#f7f4ef]">
+      <div className="flex min-h-dvh flex-col items-center justify-center bg-transparent text-[#f7f4ef]">
         <Loader2 className="h-8 w-8 animate-spin text-[#ff8a3d]" />
         <span className="mt-4 text-white/60">检查登录状态...</span>
       </div>

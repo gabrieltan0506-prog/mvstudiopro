@@ -11,8 +11,8 @@ const HERO_FLAGSHIP_LINKS: { href: string; label: string }[] = [
   { href: "/creator-growth-camp/platform", label: "全网流量雷达" },
   { href: "/research", label: "竞品调研 · 60 点" },
   { href: "/god-view", label: "AI 战略智库" },
-  { href: "/workflow-nodes", label: "大师级视频基地" },
-  { href: "/creator-growth-camp/premium-remix", label: "尊享爆款解构" },
+  { href: "/workflow-nodes", label: "大师电影故事创作" },
+  { href: "/creative", label: "创意轻工坊 · 生图/视频" },
 ];
 
 const HERO_VIDEO_TAGS = [
@@ -20,8 +20,9 @@ const HERO_VIDEO_TAGS = [
   "全网流量雷达",
   "竞品深潜调研",
   "AI 战略智库",
-  "大师级视频基地",
+  "大师电影故事创作",
   "尊享爆款解构",
+  "创意轻工坊",
 ];
 
 const slides = [
@@ -196,7 +197,7 @@ export default function HomeHero() {
                   <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>{slide.subtitle}</div>
                   <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>{slide.title}</div>
                   <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84, maxWidth: 560, lineHeight: 1.55 }}>
-                    先看成片；增长诊断、趋势雷达、对标调研、战略智库与爆款解构在同一产品闭环里，大师级视频基地负责脚本 → 分镜 → 成片。
+                    先看成片；增长诊断、趋势雷达、对标调研、战略智库与爆款解构在同一产品闭环里，大师电影故事创作负责脚本 → 分镜 → 成片。
                   </div>
                 </div>
 
@@ -392,7 +393,7 @@ export default function HomeHero() {
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                深度融合战略分析、多平台趋势与影院级生成：创作者成长营与二创中心、全网流量雷达、四平台竞品调研（60 点深度报告）、AI 上帝视角战略智库（半月刊 / 订阅 / 私订）、大师级视频基地（脚本 · 分镜 · 成片）以及尊享爆款解构，覆盖从洞察到成片的全链路。
+                深度融合战略分析、多平台趋势与影院级生成：创作者成长营与二创中心、全网流量雷达、四平台竞品调研（60 点深度报告）、AI 上帝视角战略智库（半月刊 / 订阅 / 私订）、大师电影故事创作（脚本 · 分镜 · 成片）以及尊享爆款解构，覆盖从洞察到成片的全链路。
               </div>
 
               <HomeProductGuide />
@@ -510,7 +511,7 @@ export default function HomeHero() {
             href: "/workflow-nodes",
             badge: "脚本 · 分镜 · 成片",
             badgeColor: "rgba(52,211,153,0.95)",
-            title: "大师级视频基地",
+            title: "大师电影故事创作",
             desc: "Gemini 脚本 → GPT-image-2 分镜 → Seedance 成片；画布上继续配乐、配音与合成。",
             gradient: "linear-gradient(135deg, rgba(52,211,153,0.16), rgba(16,185,129,0.08))",
             border: "rgba(52,211,153,0.35)",

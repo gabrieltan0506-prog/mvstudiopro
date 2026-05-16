@@ -8162,7 +8162,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
 
   /** GPT-image-2 生图（TestLab 调试用，走 Fly 直连 OpenAI） */
   openaiImage: router({
-    generate: publicProcedure
+    generate: protectedProcedure
       .input(z.object({
         prompt: z.string().min(1),
         model: z.string().optional(),
@@ -8172,7 +8172,62 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         output_compression: z.number().optional(),
         n: z.number().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        // Daily limit check for GPT-image-2
+        if (input.model === "gpt-image-2" || !input.model) {
+          const { getDb } = await import("./db");
+          const database = await getDb();
+          if (database) {
+            const { getUserPlan } = await import("./credits");
+            const { creditTransactions, stripeUsageLogs } = await import("../drizzle/schema");
+            const { eq, and, count, sql } = await import("drizzle-orm");
+
+            const userPlan = await getUserPlan(ctx.user.id);
+            const isAdmin = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+            
+            if (userPlan === "free" && !isAdmin) {
+              // Check if user has purchased credit pack
+              const [purchaseCount] = await database
+                .select({ count: count() })
+                .from(creditTransactions)
+                .where(
+                  and(
+                    eq(creditTransactions.userId, ctx.user.id),
+                    eq(creditTransactions.source, "purchase"),
+                    eq(creditTransactions.type, "credit")
+                  )
+                );
+                
+              const hasPurchasedCredits = Number(purchaseCount?.count || 0) > 0;
+              
+              if (!hasPurchasedCredits) {
+                // Check today's usage
+                const [usage] = await database
+                  .select({ count: count() })
+                  .from(stripeUsageLogs)
+                  .where(
+                    and(
+                      eq(stripeUsageLogs.userId, ctx.user.id),
+                      eq(stripeUsageLogs.action, "gpt-image-2-generate"),
+                      sql`DATE(${stripeUsageLogs.createdAt}) = CURRENT_DATE`
+                    )
+                  );
+                  
+                if (Number(usage?.count || 0) >= 2) {
+                  return { ok: false as const, error: "一天限用两次，超过必须购买积分或订阅才能继续使用。" };
+                }
+                
+                // Record usage
+                await database.insert(stripeUsageLogs).values({
+                  userId: ctx.user.id,
+                  action: "gpt-image-2-generate",
+                  description: "GPT-image-2 免费限额生图"
+                });
+              }
+            }
+          }
+        }
+
         const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
         if (!apiKey) return { ok: false as const, error: "Missing OPENAI_IMAGE_API_KEY on server" };
         const body: Record<string, unknown> = {
