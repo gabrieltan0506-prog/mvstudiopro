@@ -10,7 +10,7 @@ function getBody(req: VercelRequest): any {
 }
 
 function getPublicAssetBaseUrl() {
-  return String(process.env.OAUTH_SERVER_URL || "").trim() || "https://mvstudiopro.fly.dev";
+  return String(process.env.OAUTH_SERVER_URL || "").trim() || "https://mvstudiopro.com";
 }
 
 function buildBlobMediaUrlFromPath(pathname: string) {

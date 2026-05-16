@@ -977,7 +977,7 @@ function getBlobPathname(url: string) {
 }
 
 function getPublicAssetBaseUrl() {
-  return s(process.env.OAUTH_SERVER_URL).trim() || "https://mvstudiopro.fly.dev";
+  return s(process.env.OAUTH_SERVER_URL).trim() || "https://mvstudiopro.com";
 }
 
 function buildBlobMediaUrlFromPath(pathname: string) {

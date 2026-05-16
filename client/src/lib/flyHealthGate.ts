@@ -1,5 +1,5 @@
 /**
- * 同源架構：探針打當前 Origin 的 `/api/health`（經 Vercel rewrite 至 Fly），
+ * 同源架構：探針打當前 Origin 的 `/api/health`（與前端同主機或同反代目標），
  * 避免在後端不健康時對長鏈路 tRPC 堆請求。
  */
 

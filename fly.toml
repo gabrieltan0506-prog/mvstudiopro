@@ -3,6 +3,15 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
+# fly.io DNS（自訂網域完全指向 Fly 時）：
+#   1) fly certs create mvstudiopro.com
+#   2) fly certs create www.mvstudiopro.com   # 若要用 www；或只保留 apex 並在 DNS 做 www → apex 轉址
+#   3) 依 `fly certs show` / 控制台「Certificates」之指示，在域名註冊商處新增 A/AAAA 或 CNAME（以 Fly 顯示為準）
+#   4) 憑證就緒後：fly secrets set OAUTH_SERVER_URL=https://mvstudiopro.com FRONTEND_URL=https://mvstudiopro.com
+#      （若僅 apex、不用 www，兩者仍建議統一為 https://mvstudiopro.com）
+#   5) 在 Vercel 專案中移除/停用自訂網域，避免與 Fly 搶同一主機名之 TLS 與記錄衝突
+#   6) OAuth / Stripe 等第三方後台：把回調 URL 與允許來源改為 https://mvstudiopro.com（及既有 /api/oauth/callback 路徑）
+
 app = 'mvstudiopro'
 primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器实际所在地（亚洲用户低延迟）
 

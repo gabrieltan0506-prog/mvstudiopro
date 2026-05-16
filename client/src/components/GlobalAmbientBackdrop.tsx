@@ -4,7 +4,7 @@ import "@/components/work-ambient-scene.css";
 
 /**
  * 全站固定底图轮播：与 AmbientSceneProvider、WorkAmbientPanel 共用 Context；
- * 时段 × 天气图集约 9s 交叉淡入淡出。使用 fixed 保证所有路由滚动时底图仍在视窗层。
+ * 时段 × 天气图集约 30s 交叉淡入淡出。使用 fixed 保证所有路由滚动时底图仍在视窗层。
  */
 export default function GlobalAmbientBackdrop() {
   const { ambientUrls, bgIdx, motionOk } = useAmbientScene();

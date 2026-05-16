@@ -65,7 +65,7 @@ if ("serviceWorker" in navigator) {
 const queryClient = new QueryClient();
 
 /**
- * 生產：前端只請求同源 `/api/*`，由 Vercel Edge rewrite 轉發至 Fly，瀏覽器視為同源，
+ * 生產：前端只請求同源 `/api/*`（Fly 一體部署或由 CDN 反代至 Fly），瀏覽器視為同源，
  * 減少跨域 preflight、Cookie 為第一方 Lax。
  * 長鏈路 procedure 仍用獨立 httpLink（不 batch），並經 `/api/health` 閘門。
  */
