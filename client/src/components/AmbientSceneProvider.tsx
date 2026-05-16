@@ -82,17 +82,9 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
     let cancelled = false;
     (async () => {
       try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-          if (!navigator.geolocation) {
-            reject(new Error("浏览器未提供定位"));
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: false,
-            timeout: 15_000,
-            maximumAge: 120_000,
-          });
-        });
+        // Temporarily disable geolocation request on load as it blocks UX and causes perceived slowness
+        // We will default to a generic background instead
+        throw new Error("Geolocation request bypassed for performance");
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
         if (!cancelled) setGeo({ lat, lon });
