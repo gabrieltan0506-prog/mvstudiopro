@@ -190,10 +190,11 @@ const CAROUSEL_CARDS = [
 
 const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/creator-growth-camp", label: "成长营 · 二创" },
+  { href: "/creator-growth-camp/platform", label: "全网流量雷达" },
   { href: "/research", label: "竞品调研 · 60 点" },
-  { href: "/creator-growth-camp/platform", label: "流量雷达" },
+  { href: "/god-view", label: "AI 战略智库" },
   { href: "/workflow-nodes", label: "大师级视频基地" },
-  { href: "/creator-growth-camp/premium-remix", label: "爆款解构" },
+  { href: "/creator-growth-camp/premium-remix", label: "尊享爆款解构" },
 ];
 
 function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {

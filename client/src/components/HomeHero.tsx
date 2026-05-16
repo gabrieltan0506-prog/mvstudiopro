@@ -5,6 +5,25 @@ import { useAuth } from "../_core/hooks/useAuth";
 import HomeWeatherClock from "./HomeWeatherClock";
 import HomeProductGuide from "./HomeProductGuide";
 
+/** Hero 内一键直达：与产品 flagship 模块一致 */
+const HERO_FLAGSHIP_LINKS: { href: string; label: string }[] = [
+  { href: "/creator-growth-camp", label: "成长营 · 二创" },
+  { href: "/creator-growth-camp/platform", label: "全网流量雷达" },
+  { href: "/research", label: "竞品调研 · 60 点" },
+  { href: "/god-view", label: "AI 战略智库" },
+  { href: "/workflow-nodes", label: "大师级视频基地" },
+  { href: "/creator-growth-camp/premium-remix", label: "尊享爆款解构" },
+];
+
+const HERO_VIDEO_TAGS = [
+  "成长营 & 二创",
+  "全网流量雷达",
+  "竞品深潜调研",
+  "AI 战略智库",
+  "大师级视频基地",
+  "尊享爆款解构",
+];
+
 const slides = [
   {
     title: "雷电网球",
@@ -126,16 +145,16 @@ export default function HomeHero() {
                   flexWrap: "wrap",
                 }}
               >
-                {["影视级 AI 生成", "多平台趋势洞察", "大师级视频基地"].map((tag) => (
+                {HERO_VIDEO_TAGS.map((tag) => (
                   <span
                     key={tag}
                     style={{
-                      padding: "10px 14px",
+                      padding: "7px 12px",
                       borderRadius: 999,
                       background: "rgba(8,8,16,0.52)",
                       border: "1px solid rgba(255,255,255,0.14)",
                       color: "white",
-                      fontSize: 14,
+                      fontSize: 12,
                       fontWeight: 800,
                     }}
                   >
@@ -176,28 +195,83 @@ export default function HomeHero() {
                 <div style={{ color: "white" }}>
                   <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>{slide.subtitle}</div>
                   <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>{slide.title}</div>
-                  <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84 }}>
-                    先看成片，再在大师级视频基地里按灵感重制
+                  <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84, maxWidth: 560, lineHeight: 1.55 }}>
+                    先看成片；增长诊断、趋势雷达、对标调研、战略智库与爆款解构在同一产品闭环里，大师级视频基地负责脚本 → 分镜 → 成片。
                   </div>
                 </div>
 
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+                  <a
+                    href="/workflow-nodes"
+                    style={{
+                      padding: "12px 18px",
+                      borderRadius: 14,
+                      border: "1px solid rgba(255,138,91,0.38)",
+                      background: "rgba(255,138,91,0.14)",
+                      color: "white",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      textDecoration: "none",
+                    }}
+                  >
+                    进入视频基地
+                  </a>
+                  <a
+                    href="/creator-growth-camp"
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: 14,
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      background: "rgba(255,255,255,0.06)",
+                      color: "rgba(255,255,255,0.92)",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      textDecoration: "none",
+                    }}
+                  >
+                    从成长营开始 →
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                marginTop: 12,
+                padding: "12px 14px",
+                borderRadius: 16,
+                background: "rgba(0,0,0,0.22)",
+                border: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.45)", width: "100%", marginBottom: 2 }}>
+                主打能力 · 一键进入
+              </span>
+              {HERO_FLAGSHIP_LINKS.map(({ href, label }) => (
                 <a
-                  href="/workflow-nodes"
+                  key={href}
+                  href={href}
                   style={{
-                    padding: "12px 18px",
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,138,91,0.38)",
-                    background: "rgba(255,138,91,0.14)",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#fca5a5",
                     textDecoration: "none",
+                    padding: "6px 11px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(252,165,165,0.28)",
+                    background: "rgba(252,165,165,0.08)",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  进入大师级基地
+                  {label}
                 </a>
-              </div>
+              ))}
             </div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 14, overflowX: "auto", paddingBottom: 2 }}>
@@ -306,7 +380,7 @@ export default function HomeHero() {
                     文本支持语音输入
                   </div>
                   <div style={{ marginTop: 4, fontSize: 15, fontWeight: 600, color: "rgba(233,213,255,0.88)", lineHeight: 1.55 }}>
-                    成长营、平台趋势与大师级视频基地等多处输入框均可点麦克风，中文语音识别写入文案，免双手长段描述。
+                    成长营、流量雷达、竞品调研、战略智库、视频基地与爆款解构等模块的输入框均可点麦克风，中文语音识别写入文案，免双手长段描述。
                   </div>
                 </div>
               </div>
@@ -318,7 +392,7 @@ export default function HomeHero() {
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                深度融合顶级 AI 逻辑分析与影院级视频生成能力。为您提供赛道级数据分析、爆款脚本无损拆解与全自动影音生成。告别低效产能，用 AI 掌控流量密码。
+                深度融合战略分析、多平台趋势与影院级生成：创作者成长营与二创中心、全网流量雷达、四平台竞品调研（60 点深度报告）、AI 上帝视角战略智库（半月刊 / 订阅 / 私订）、大师级视频基地（脚本 · 分镜 · 成片）以及尊享爆款解构，覆盖从洞察到成片的全链路。
               </div>
 
               <HomeProductGuide />
@@ -381,7 +455,7 @@ export default function HomeHero() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
           gap: 14,
           marginTop: 16,
         }}
@@ -398,6 +472,17 @@ export default function HomeHero() {
             border: "rgba(251,146,60,0.32)",
             arrow: "rgba(251,146,60,1)",
             cta: "进入成长营 →",
+          },
+          {
+            href: "/creator-growth-camp/platform",
+            badge: "平台洞察",
+            badgeColor: "rgba(96,165,250,0.9)",
+            title: "全网流量雷达",
+            desc: "小红书、抖音、B站、快手数据窗口与趋势承接，可导出长图。",
+            gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
+            border: "rgba(96,165,250,0.30)",
+            arrow: "rgba(96,165,250,1)",
+            cta: "查看趋势 →",
           },
           {
             href: "/research",
@@ -422,15 +507,26 @@ export default function HomeHero() {
             cta: "前往智库 →",
           },
           {
-            href: "/creator-growth-camp/platform",
-            badge: "平台洞察",
-            badgeColor: "rgba(96,165,250,0.9)",
-            title: "全网流量雷达",
-            desc: "小红书、抖音、B站、快手数据窗口与趋势承接，可导出长图。",
-            gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
-            border: "rgba(96,165,250,0.30)",
-            arrow: "rgba(96,165,250,1)",
-            cta: "查看趋势 →",
+            href: "/workflow-nodes",
+            badge: "脚本 · 分镜 · 成片",
+            badgeColor: "rgba(52,211,153,0.95)",
+            title: "大师级视频基地",
+            desc: "Gemini 脚本 → GPT-image-2 分镜 → Seedance 成片；画布上继续配乐、配音与合成。",
+            gradient: "linear-gradient(135deg, rgba(52,211,153,0.16), rgba(16,185,129,0.08))",
+            border: "rgba(52,211,153,0.35)",
+            arrow: "rgba(110,231,183,1)",
+            cta: "进入视频基地 →",
+          },
+          {
+            href: "/creator-growth-camp/premium-remix",
+            badge: "尊享解构",
+            badgeColor: "rgba(167,139,250,0.95)",
+            title: "爆款解构 · 尊享版",
+            desc: "对标爆款逻辑的无损拆解与再创作入口，与成长营数据互通。",
+            gradient: "linear-gradient(135deg, rgba(167,139,250,0.18), rgba(192,132,252,0.08))",
+            border: "rgba(167,139,250,0.35)",
+            arrow: "rgba(216,180,254,1)",
+            cta: "开始解构 →",
           },
         ].map((card) => (
           <a
