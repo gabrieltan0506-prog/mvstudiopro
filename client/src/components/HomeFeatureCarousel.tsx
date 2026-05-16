@@ -1,28 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles,
-  Search, Crown, BookOpen, Star, FileDown, Zap, Briefcase, Clock,
+  Search, Crown, BookOpen, Star, FileDown, Zap, Clock,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { HOME_CHANGELOG_UPDATES, HOME_UPDATE_TAG_COLORS } from "./HomeChangelog";
 
 // ─── 轮播功能动态 ───────────────────────────────────────────────────
 const CAROUSEL_CARDS = [
-  {
-    isNew: true,
-    date: "2026/04/30",
-    tag: "今日上线",
-    title: "企业专属智能体定制",
-    subtitle: "把您的销冠 SOP / 客诉手册 / 战败分析喂给一个永远在线的战略大脑",
-    desc: "30 天 ¥15,000 试用版起步：1 个专属 Agent + 50 MB 知识库 + 100 次调用，企业隔离存储 + 用户主动一键删除。不满意不升级正式版。",
-    pills: ["¥15,000 起", "30 天试用", "知识库 50MB", "Gemini 3 Pro", "企业隔离存储"],
-    icon: Briefcase,
-    accentColor: "#FB7185",
-    glowColor: "rgba(251,113,133,0.20)",
-    borderColor: "rgba(251,113,133,0.40)",
-    bgGradient: "linear-gradient(135deg, rgba(251,113,133,0.10) 0%, rgba(251,113,133,0.03) 100%)",
-    href: "/enterprise-agent",
-  },
   {
     isNew: false,
     date: "2026/04/28",

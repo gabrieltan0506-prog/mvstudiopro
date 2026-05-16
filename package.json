@@ -24,6 +24,8 @@
     "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
     "ambient:ping-gemini": "tsx scripts/ping-dashboard-gemini-models.mts",
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
+    "ambient:fetch-images:refresh": "node scripts/fetch-ambient-images.mjs --refresh",
+    "ambient:fetch-images:daily": "node scripts/fetch-ambient-images.mjs --max-age-hours=24",
     "push:github": "bash scripts/gh-git-push.sh"
   },
   "dependencies": {

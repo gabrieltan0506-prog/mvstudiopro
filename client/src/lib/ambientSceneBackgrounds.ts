@@ -1,83 +1,97 @@
 /**
- * 環境底圖輪播：Unsplash License（https://unsplash.com/license）可免費使用，建議保留攝影師頁鏈接作致謝。
- * 圖片放在同源 `public/ambient/{photoId}.jpg`，由根目錄 `pnpm run ambient:fetch-images` 一次性拉取，運行時不再請求外網。
+ * 環境底圖輪播：圖片落在 `client/public/ambient/{photoId}.jpg`（由腳本拉取，運行時只讀同源）。
+ * - 首次：pnpm run ambient:fetch-images
+ * - 每日增量更新（超過 24h 則重下）：pnpm run ambient:fetch-images:daily
+ * - 強制全部重下：pnpm run ambient:fetch-images:refresh
+ * 未拉取前本地 404 時，可設 VITE_AMBIENT_IMAGE_CDN=1 臨時走 Unsplash CDN（僅兜底）。
  */
 
 export type AmbientTimeSegment = "dawn" | "day" | "dusk" | "lateNight";
 export type AmbientWeatherKind = "clear" | "cloudy" | "rain" | "thunder" | "snow" | "fog";
 
-/** `photoId` 形如 `photo-1469474968028-56623f02e42e`，對應 `client/public/ambient/{photoId}.jpg` */
-function localAmbient(photoId: string): string {
+function localAmbientPath(photoId: string): string {
   return `/ambient/${photoId}.jpg`;
+}
+
+function cdnAmbient(photoId: string): string {
+  const raw = photoId.startsWith("photo-") ? photoId.slice("photo-".length) : photoId;
+  return `https://images.unsplash.com/photo-${raw}?auto=format&fit=crop&w=1920&q=80`;
+}
+
+function ambientAssetUrl(photoId: string): string {
+  if (import.meta.env.VITE_AMBIENT_IMAGE_CDN === "1") {
+    return cdnAmbient(photoId);
+  }
+  return localAmbientPath(photoId);
 }
 
 /** 各時段 + 天氣對應 2～4 張輪播 */
 const BACKGROUNDS: Record<string, readonly string[]> = {
   "dawn-clear": [
-    localAmbient("photo-1469474968028-56623f02e42e"),
-    localAmbient("photo-1500382017468-9049fed747ef"),
-    localAmbient("photo-1472214103451-9374bd1c798e"),
+    ambientAssetUrl("photo-1469474968028-56623f02e42e"),
+    ambientAssetUrl("photo-1500382017468-9049fed747ef"),
+    ambientAssetUrl("photo-1472214103451-9374bd1c798e"),
   ],
   "dawn-cloudy": [
-    localAmbient("photo-1501594907352-04cda38ebc29"),
-    localAmbient("photo-1519681393784-d120267933ba"),
-    localAmbient("photo-1464822759023-fed622ff2c3b"),
+    ambientAssetUrl("photo-1501594907352-04cda38ebc29"),
+    ambientAssetUrl("photo-1519681393784-d120267933ba"),
+    ambientAssetUrl("photo-1464822759023-fed622ff2c3b"),
   ],
-  "dawn-rain": [localAmbient("photo-1527482797697-8795b05a13fe"), localAmbient("photo-1433086966358-54859d0ed716")],
-  "dawn-thunder": [localAmbient("photo-1507525428034-b723cf961d3e"), localAmbient("photo-1464822759023-fed622ff2c3b")],
-  "dawn-snow": [localAmbient("photo-1483921020237-2ff51e8e4b22"), localAmbient("photo-1527482797697-8795b05a13fe")],
-  "dawn-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1472214103451-9374bd1c798e")],
+  "dawn-rain": [ambientAssetUrl("photo-1527482797697-8795b05a13fe"), ambientAssetUrl("photo-1433086966358-54859d0ed716")],
+  "dawn-thunder": [ambientAssetUrl("photo-1507525428034-b723cf961d3e"), ambientAssetUrl("photo-1464822759023-fed622ff2c3b")],
+  "dawn-snow": [ambientAssetUrl("photo-1483921020237-2ff51e8e4b22"), ambientAssetUrl("photo-1527482797697-8795b05a13fe")],
+  "dawn-fog": [ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05"), ambientAssetUrl("photo-1472214103451-9374bd1c798e")],
 
   "day-clear": [
-    localAmbient("photo-1506905925346-21bda4d32df4"),
-    localAmbient("photo-1472214103451-9374bd1c798e"),
-    localAmbient("photo-1464822759023-fed622ff2c3b"),
+    ambientAssetUrl("photo-1506905925346-21bda4d32df4"),
+    ambientAssetUrl("photo-1472214103451-9374bd1c798e"),
+    ambientAssetUrl("photo-1464822759023-fed622ff2c3b"),
   ],
   "day-cloudy": [
-    localAmbient("photo-1519681393784-d120267933ba"),
-    localAmbient("photo-1501594907352-04cda38ebc29"),
-    localAmbient("photo-1472214103451-9374bd1c798e"),
+    ambientAssetUrl("photo-1519681393784-d120267933ba"),
+    ambientAssetUrl("photo-1501594907352-04cda38ebc29"),
+    ambientAssetUrl("photo-1472214103451-9374bd1c798e"),
   ],
-  "day-rain": [localAmbient("photo-1433086966358-54859d0ed716"), localAmbient("photo-1527482797697-8795b05a13fe")],
-  "day-thunder": [localAmbient("photo-1464822759023-fed622ff2c3b"), localAmbient("photo-1507525428034-b723cf961d3e")],
-  "day-snow": [localAmbient("photo-1527482797697-8795b05a13fe"), localAmbient("photo-1483921020237-2ff51e8e4b22")],
-  "day-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1501594907352-04cda38ebc29")],
+  "day-rain": [ambientAssetUrl("photo-1433086966358-54859d0ed716"), ambientAssetUrl("photo-1527482797697-8795b05a13fe")],
+  "day-thunder": [ambientAssetUrl("photo-1464822759023-fed622ff2c3b"), ambientAssetUrl("photo-1507525428034-b723cf961d3e")],
+  "day-snow": [ambientAssetUrl("photo-1527482797697-8795b05a13fe"), ambientAssetUrl("photo-1483921020237-2ff51e8e4b22")],
+  "day-fog": [ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05"), ambientAssetUrl("photo-1501594907352-04cda38ebc29")],
 
   "dusk-clear": [
-    localAmbient("photo-1500382017468-9049fed747ef"),
-    localAmbient("photo-1501594907352-04cda38ebc29"),
-    localAmbient("photo-1483921020237-2ff51e8e4b22"),
+    ambientAssetUrl("photo-1500382017468-9049fed747ef"),
+    ambientAssetUrl("photo-1501594907352-04cda38ebc29"),
+    ambientAssetUrl("photo-1483921020237-2ff51e8e4b22"),
   ],
   "dusk-cloudy": [
-    localAmbient("photo-1470071459604-3b5ec3a7fe05"),
-    localAmbient("photo-1501594907352-04cda38ebc29"),
-    localAmbient("photo-1500382017468-9049fed747ef"),
+    ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05"),
+    ambientAssetUrl("photo-1501594907352-04cda38ebc29"),
+    ambientAssetUrl("photo-1500382017468-9049fed747ef"),
   ],
-  "dusk-rain": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1527482797697-8795b05a13fe")],
-  "dusk-thunder": [localAmbient("photo-1507525428034-b723cf961d3e"), localAmbient("photo-1464822759023-fed622ff2c3b")],
-  "dusk-snow": [localAmbient("photo-1483921020237-2ff51e8e4b22"), localAmbient("photo-1527482797697-8795b05a13fe")],
-  "dusk-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1470071459604-3b5ec3a7fe05")],
+  "dusk-rain": [ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05"), ambientAssetUrl("photo-1527482797697-8795b05a13fe")],
+  "dusk-thunder": [ambientAssetUrl("photo-1507525428034-b723cf961d3e"), ambientAssetUrl("photo-1464822759023-fed622ff2c3b")],
+  "dusk-snow": [ambientAssetUrl("photo-1483921020237-2ff51e8e4b22"), ambientAssetUrl("photo-1527482797697-8795b05a13fe")],
+  "dusk-fog": [ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05"), ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05")],
 
   "lateNight-clear": [
-    localAmbient("photo-1506905925346-21bda4d32df4"),
-    localAmbient("photo-1472214103451-9374bd1c798e"),
-    localAmbient("photo-1507525428034-b723cf961d3e"),
+    ambientAssetUrl("photo-1506905925346-21bda4d32df4"),
+    ambientAssetUrl("photo-1472214103451-9374bd1c798e"),
+    ambientAssetUrl("photo-1507525428034-b723cf961d3e"),
   ],
   "lateNight-cloudy": [
-    localAmbient("photo-1472214103451-9374bd1c798e"),
-    localAmbient("photo-1501594907352-04cda38ebc29"),
-    localAmbient("photo-1506905925346-21bda4d32df4"),
+    ambientAssetUrl("photo-1472214103451-9374bd1c798e"),
+    ambientAssetUrl("photo-1501594907352-04cda38ebc29"),
+    ambientAssetUrl("photo-1506905925346-21bda4d32df4"),
   ],
-  "lateNight-rain": [localAmbient("photo-1527482797697-8795b05a13fe"), localAmbient("photo-1472214103451-9374bd1c798e")],
-  "lateNight-thunder": [localAmbient("photo-1464822759023-fed622ff2c3b"), localAmbient("photo-1507525428034-b723cf961d3e")],
-  "lateNight-snow": [localAmbient("photo-1483921020237-2ff51e8e4b22"), localAmbient("photo-1506905925346-21bda4d32df4")],
-  "lateNight-fog": [localAmbient("photo-1470071459604-3b5ec3a7fe05"), localAmbient("photo-1472214103451-9374bd1c798e")],
+  "lateNight-rain": [ambientAssetUrl("photo-1527482797697-8795b05a13fe"), ambientAssetUrl("photo-1472214103451-9374bd1c798e")],
+  "lateNight-thunder": [ambientAssetUrl("photo-1464822759023-fed622ff2c3b"), ambientAssetUrl("photo-1507525428034-b723cf961d3e")],
+  "lateNight-snow": [ambientAssetUrl("photo-1483921020237-2ff51e8e4b22"), ambientAssetUrl("photo-1506905925346-21bda4d32df4")],
+  "lateNight-fog": [ambientAssetUrl("photo-1470071459604-3b5ec3a7fe05"), ambientAssetUrl("photo-1472214103451-9374bd1c798e")],
 };
 
 const DEFAULT_FALLBACK = [
-  localAmbient("photo-1472214103451-9374bd1c798e"),
-  localAmbient("photo-1519681393784-d120267933ba"),
-  localAmbient("photo-1506905925346-21bda4d32df4"),
+  ambientAssetUrl("photo-1472214103451-9374bd1c798e"),
+  ambientAssetUrl("photo-1519681393784-d120267933ba"),
+  ambientAssetUrl("photo-1506905925346-21bda4d32df4"),
 ];
 
 /** 取指定 IANA 時區在該瞬間的小時（0–23），供底圖「時段」與時鐘顯示時區對齊 */
