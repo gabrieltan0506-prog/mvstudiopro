@@ -42,46 +42,42 @@ export default function HomeWeatherClock() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-          if (!navigator.geolocation) {
-            reject(new Error("no geolocation"));
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            timeout: 12_000,
-            maximumAge: 300_000,
-          });
-        });
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=Asia%2FShanghai`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`weather ${res.status}`);
-        const j = await res.json();
-        const code = Number(j?.current?.weather_code ?? 0);
-        const temp = Number(j?.current?.temperature_2m ?? 0);
-        if (cancelled) return;
-        setWx({
-          temp: Math.round(temp * 10) / 10,
-          code,
-          label: weatherCodeLabel(code),
-          city: `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`,
-        });
-        setErr(null);
-      } catch {
-        if (!cancelled) {
-          setWx(null);
-          setErr(null);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // 移除自动加载时的地理位置请求
   }, []);
+
+  const requestLocation = async () => {
+    try {
+      setErr(null);
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("no geolocation"));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          timeout: 12_000,
+          maximumAge: 300_000,
+        });
+      });
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=Asia%2FShanghai`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`weather ${res.status}`);
+      const j = await res.json();
+      const code = Number(j?.current?.weather_code ?? 0);
+      const temp = Number(j?.current?.temperature_2m ?? 0);
+      setWx({
+        temp: Math.round(temp * 10) / 10,
+        code,
+        label: weatherCodeLabel(code),
+        city: `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`,
+      });
+      setErr(null);
+    } catch {
+      setWx(null);
+      setErr("error");
+    }
+  };
 
   return (
     <div
@@ -112,7 +108,12 @@ export default function HomeWeatherClock() {
       ) : err ? (
         <span style={{ fontWeight: 600, color: "rgba(255,255,255,0.35)", fontSize: 12 }}>未获取定位天气</span>
       ) : (
-        <span style={{ fontWeight: 600, color: "rgba(255,255,255,0.35)", fontSize: 12 }}>正在读取天气…</span>
+        <span 
+          style={{ fontWeight: 600, color: "rgba(255,255,255,0.35)", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}
+          onClick={requestLocation}
+        >
+          点击获取本地天气与定位
+        </span>
       )}
     </div>
   );

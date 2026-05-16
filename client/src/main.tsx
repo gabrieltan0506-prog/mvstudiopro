@@ -13,10 +13,21 @@ import "./index.css";
 const originalFetch = window.fetch;
 window.fetch = async (...args) => {
   let [resource, config] = args;
-  if (typeof resource === "string" && resource.startsWith("/api/")) {
+  
+  let urlObj;
+  try {
+    urlObj = new URL(resource instanceof Request ? resource.url : resource, window.location.origin);
+  } catch (e) {
+    // Ignore invalid URLs
+  }
+
+  if (urlObj && urlObj.pathname.startsWith("/api/")) {
     const hostname = window.location.hostname;
+    // Intercept both relative "/api/..." and absolute "https://mvstudiopro.com/api/..."
     if (hostname === "mvstudiopro.com" || hostname === "www.mvstudiopro.com") {
-      resource = `https://mvstudiopro.fly.dev${resource}`;
+      urlObj.host = "mvstudiopro.fly.dev";
+      urlObj.protocol = "https:";
+      resource = urlObj.toString();
       // Ensure credentials are included for cross-origin API calls to fly.dev
       config = { ...config, credentials: "include" };
     }

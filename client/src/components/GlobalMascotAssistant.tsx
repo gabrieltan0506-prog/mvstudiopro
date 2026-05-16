@@ -165,33 +165,31 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   }, [proactiveUi]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-          if (!navigator.geolocation) {
-            reject(new Error("浏览器未提供定位"));
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: false,
-            timeout: 15_000,
-            maximumAge: 120_000,
-          });
-        });
-        if (!cancelled) {
-          setGeo({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        }
-      } catch {
-        if (!cancelled) setGeo(null);
-      } finally {
-        if (!cancelled) setGeoAttemptDone(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // 暂时移除加载时的地理定位请求，改为用户手动触发或统一上下文触发
+    setGeoAttemptDone(true);
   }, []);
+
+  const requestMascotLocation = async () => {
+    setGeoAttemptDone(false);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("浏览器未提供定位"));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          timeout: 15_000,
+          maximumAge: 120_000,
+        });
+      });
+      setGeo({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+    } catch {
+      setGeo(null);
+    } finally {
+      setGeoAttemptDone(true);
+    }
+  };
 
   const live = trpc.ambient.dashboardLive.useQuery(
     {
@@ -361,6 +359,13 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   }, [speakAndShow, userInput]);
 
   const onDashboard = useCallback(() => {
+    if (!geo) {
+      speakAndShow("正在请求地理位置以获取天气与路况，请允许定位...");
+      requestMascotLocation().then(() => {
+        // Next render or manual click will have it
+      });
+      return;
+    }
     if (!geoAttemptDone || live.isLoading) {
       speakAndShow("正在讀取天氣與路況，請稍候再試。");
       return;
@@ -371,6 +376,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
     }
     speakAndShow(buildReportMessage(dashboardData, newsHeadlineForReport));
   }, [
+    geo,
     dashboardData,
     geoAttemptDone,
     live.isLoading,
@@ -379,12 +385,19 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   ]);
 
   const onNews = useCallback(() => {
+    if (!geo) {
+      speakAndShow("正在请求地理位置以获取周边新闻，请允许定位...");
+      requestMascotLocation().then(() => {
+        // Next render or manual click will have it
+      });
+      return;
+    }
     if (newsQ.isLoading || !newsQ.data?.news?.length) {
       speakAndShow(newsQ.isLoading ? "新聞仍在載入中。" : "暫時沒有可播報的新聞條目。");
       return;
     }
     speakAndShow(buildFullNewsSpeech(newsQ.data as NewsQueryData));
-  }, [newsQ.data, newsQ.isLoading, speakAndShow]);
+  }, [geo, newsQ.data, newsQ.isLoading, speakAndShow]);
 
   const shuffleMascot = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

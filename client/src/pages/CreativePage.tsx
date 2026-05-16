@@ -5,6 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
+import { CREDIT_COSTS } from "../../../server/plans";
+import { estimateSeedanceWorkflowCreditsForProduct } from "@shared/seedancePricing";
 
 export default function CreativePage() {
   const { user } = useAuth();
@@ -14,6 +16,8 @@ export default function CreativePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [videoModel, setVideoModel] = useState("seedance-2.0");
+  const [videoAspect, setVideoAspect] = useState("16:9");
+  const [imageModel, setImageModel] = useState("gemini-3.1-flash-image-preview");
   
   const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
   const refundStepMutation = trpc.workflow.refundStep.useMutation();
@@ -35,27 +39,66 @@ export default function CreativePage() {
     
     let chargedCost = 0;
     try {
-      const charge = await chargeStepMutation.mutateAsync({ step: "scene_image", quantity: 1, creditsOverride: Math.ceil(5 * 1.5) });
+      const isGptImage2 = imageModel === "gpt-image-2";
+      // GPT-image-2 成本设定为 54，Nano Banana 2 (flash) 设定为 35
+      const overrideCost = isGptImage2 ? 54 : 35;
+      
+      if (isGptImage2 && !isPaidUser) {
+         const usageKey = `gpt2_usage_${user?.id}`;
+         const usedCount = parseInt(localStorage.getItem(usageKey) || "0", 10);
+         if (usedCount >= 1) {
+           throw new Error("GPT-image-2 免费/内测额度已用尽（限1张），请升级为付费用户继续使用。");
+         }
+         localStorage.setItem(usageKey, (usedCount + 1).toString());
+      }
+      
+      const charge = await chargeStepMutation.mutateAsync({ step: "scene_image", quantity: 1, creditsOverride: overrideCost });
       chargedCost = charge.cost;
       
-      const res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          tier: "flash",
-          model: "gemini-3.1-flash-image-preview",
-          imageSize: "16:9",
-          aspectRatio: "16:9",
-          numberOfImages: 1,
-          guidanceScale: 4
-        })
-      });
-      const json = await res.json();
-      if (!res.ok || !json.imageUrl) {
-        throw new Error(json.error || json.message || "生图失败");
+      let res;
+      if (isGptImage2) {
+        // 调用后台 /api/jobs 进行 GPT-image-2 生图 (复用生成参考图接口，由于其底层是 generateGptImage2FromRawEnglishPrompt)
+        res = await fetch(`/api/jobs?op=workflowGenerateSceneImage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scenePrompt: prompt,
+            imageModel: "gpt-image-1", // Backend mapping
+            sceneCount: 1,
+            // GPT-image-2 只支持 9:16 或 16:9
+            aspectRatio: videoAspect === "16:9" ? "16:9" : "9:16",
+          })
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || json.message || "生图失败");
+        }
+        if (json.storyboardImages && json.storyboardImages[0]?.selectedSceneImageUrl) {
+           setImageUrl(json.storyboardImages[0].selectedSceneImageUrl);
+        } else {
+           throw new Error("返回结果缺失图片 URL");
+        }
+      } else {
+        // Nano Banana 2 (Flash) 生图
+        res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            tier: "flash",
+            model: "gemini-3.1-flash-image-preview",
+            imageSize: videoAspect === "16:9" ? "16:9" : "9:16",
+            aspectRatio: videoAspect === "16:9" ? "16:9" : "9:16",
+            numberOfImages: 1,
+            guidanceScale: 4
+          })
+        });
+        const json = await res.json();
+        if (!res.ok || !json.imageUrl) {
+          throw new Error(json.error || json.message || "生图失败");
+        }
+        setImageUrl(json.imageUrl || json.imageUrls?.[0]);
       }
-      setImageUrl(json.imageUrl || json.imageUrls?.[0]);
     } catch (err: any) {
       if (chargedCost > 0) {
         await refundStepMutation.mutateAsync({ step: "scene_image", quantity: 1, creditsOverride: chargedCost, reason: "Creative生图失败退款" });
@@ -79,7 +122,18 @@ export default function CreativePage() {
     
     let chargedCost = 0;
     try {
-      const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: Math.ceil(80 * 1.5) });
+      let overrideCost = 0;
+      if (videoModel === "seedance-2.0") {
+        overrideCost = Math.ceil(estimateSeedanceWorkflowCreditsForProduct({
+          resolution: "720p",
+          aspectRatio: videoAspect as any,
+          durationSec: 10,
+        }).credits * 1.5);
+      } else {
+        overrideCost = Math.ceil(CREDIT_COSTS.workflowSceneVideo * 1.5);
+      }
+
+      const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: overrideCost });
       chargedCost = charge.cost;
       
       let finalVideoUrl = "";
@@ -93,7 +147,9 @@ export default function CreativePage() {
             model: "seedance-2.0",
             prompt,
             imageUrl,
-            duration: "10"
+            duration: "10",
+            resolution: "720p",
+            aspectRatio: videoAspect
           })
         });
         const json = await res.json();
@@ -123,7 +179,8 @@ export default function CreativePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt,
-            imageUrl
+            imageUrl,
+            aspectRatio: videoAspect
           })
         });
         const json = await res.json();
@@ -190,15 +247,46 @@ export default function CreativePage() {
 
               <div className="flex flex-col gap-4">
                 <div className="flex gap-4 items-center mb-2">
-                  <label className="text-sm font-semibold text-white/80 flex items-center gap-2">视频模型：</label>
+                  <label className="text-sm font-semibold text-white/80 flex items-center gap-2">生图模型：</label>
                   <select 
-                    value={videoModel}
-                    onChange={(e) => setVideoModel(e.target.value)}
+                    value={imageModel}
+                    onChange={(e) => setImageModel(e.target.value)}
                     className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
                   >
-                    <option value="veo-3.1">Veo 3.1</option>
-                    <option value="seedance-2.0">Seedance 2.0 (限付费用户)</option>
+                    <option value="gemini-3.1-flash-image-preview">Nano Banana 2</option>
+                    <option value="gpt-image-2">GPT-image-2</option>
                   </select>
+                </div>
+
+                <div className="flex gap-4 items-center mb-2 flex-wrap">
+                  <div className="flex gap-2 items-center">
+                    <label className="text-sm font-semibold text-white/80">视频模型：</label>
+                    <select 
+                      value={videoModel}
+                      onChange={(e) => setVideoModel(e.target.value)}
+                      className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
+                    >
+                      <option value="veo-3.1">Veo 3.1</option>
+                      <option value="seedance-2.0">Seedance 2.0 (限付费用户)</option>
+                    </select>
+                  </div>
+                  
+                  <div className="flex gap-2 items-center">
+                    <label className="text-sm font-semibold text-white/80">视频比例：</label>
+                    <select 
+                      value={videoAspect}
+                      onChange={(e) => setVideoAspect(e.target.value)}
+                      className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
+                    >
+                      <option value="16:9">16:9</option>
+                      <option value="9:16">9:16</option>
+                    </select>
+                  </div>
+                  
+                  <div className="flex gap-2 items-center">
+                    <label className="text-sm font-semibold text-white/80">画质：</label>
+                    <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">720P</div>
+                  </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4">
