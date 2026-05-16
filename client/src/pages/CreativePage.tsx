@@ -5,8 +5,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
-import { CREDIT_COSTS } from "../../../server/plans";
-import { estimateSeedanceWorkflowCreditsForProduct } from "@shared/seedancePricing";
+
+/** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
+const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
+const CREATIVE_VIDEO_CREDITS_SEEDANCE_20 = 118;
 
 export default function CreativePage() {
   const { user } = useAuth();
@@ -33,18 +35,11 @@ export default function CreativePage() {
   /** 页面展示用；实际扣费以 chargeStep 返回值为准，失败会 refundStep */
   const imageCreditPreview = useMemo(() => (imageModel === "gpt-image-2" ? 54 : 35), [imageModel]);
 
-  const videoCreditPreview = useMemo(() => {
-    if (videoModel === "seedance-2.0") {
-      return Math.ceil(
-        estimateSeedanceWorkflowCreditsForProduct({
-          resolution: "720p",
-          aspectRatio: videoAspect,
-          durationSec: 10,
-        }).credits * 1.5,
-      );
-    }
-    return Math.ceil(CREDIT_COSTS.workflowSceneVideo * 1.5);
-  }, [videoModel, videoAspect]);
+  const videoCreditPreview = useMemo(
+    () =>
+      videoModel === "seedance-2.0" ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20 : CREATIVE_VIDEO_CREDITS_VEO_31,
+    [videoModel],
+  );
 
   async function generateImage() {
     if (!prompt.trim()) return;
@@ -138,16 +133,10 @@ export default function CreativePage() {
     
     let chargedCost = 0;
     try {
-      let overrideCost = 0;
-      if (videoModel === "seedance-2.0") {
-        overrideCost = Math.ceil(estimateSeedanceWorkflowCreditsForProduct({
-          resolution: "720p",
-          aspectRatio: videoAspect as any,
-          durationSec: 10,
-        }).credits * 1.5);
-      } else {
-        overrideCost = Math.ceil(CREDIT_COSTS.workflowSceneVideo * 1.5);
-      }
+      const overrideCost =
+        videoModel === "seedance-2.0"
+          ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20
+          : CREATIVE_VIDEO_CREDITS_VEO_31;
 
       const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: overrideCost });
       chargedCost = charge.cost;
@@ -245,9 +234,9 @@ export default function CreativePage() {
                 <strong>{imageCreditPreview} 积分</strong>/ 张（Nano Banana 2 为 35；GPT-image-2 为 54；付费策略以站内为准）。
               </li>
               <li>
-                <strong>转视频</strong>：约扣 <strong>{videoCreditPreview} 积分</strong>/ 次（本页 Veo 3.1 Pro 按{" "}
-                <code className="text-amber-200/90">ceil({CREDIT_COSTS.workflowSceneVideo} × 1.5)</code>；Seedance 2.0 按 720p·10s·
-                {videoAspect} 动态估值再 ×1.5）。<strong>实际扣费以后台返回为准</strong>；失败会自动退还。
+                <strong>转视频</strong>：按所选模型各扣一次——<strong>Veo 3.1（Pro）</strong>为{" "}
+                <strong>{CREATIVE_VIDEO_CREDITS_VEO_31} 积分</strong>；<strong>Seedance 2.0</strong>为{" "}
+                <strong>{CREATIVE_VIDEO_CREDITS_SEEDANCE_20} 积分</strong>（本页 720p·10s 图生视频）。失败会自动按实扣退还。
               </li>
             </ul>
           </div>
@@ -311,6 +300,9 @@ export default function CreativePage() {
                   <div className="flex gap-2 items-center">
                     <label className="text-sm font-semibold text-white/80">画质：</label>
                     <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">720P</div>
+                  </div>
+                  <div className="w-full basis-full text-xs text-white/55">
+                    转视频将扣 <strong className="text-amber-200/90">{videoCreditPreview}</strong> 积分 / 次（与上方说明一致）
                   </div>
                 </div>
 
