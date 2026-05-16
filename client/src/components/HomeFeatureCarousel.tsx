@@ -1,28 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles,
-  Search, Crown, BookOpen, Star, FileDown, Zap, Briefcase, Clock,
+  Search, Crown, BookOpen, Star, FileDown, Zap, Clock,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { HOME_CHANGELOG_UPDATES, HOME_UPDATE_TAG_COLORS } from "./HomeChangelog";
 
 // ─── 轮播功能动态 ───────────────────────────────────────────────────
 const CAROUSEL_CARDS = [
-  {
-    isNew: true,
-    date: "2026/04/30",
-    tag: "今日上线",
-    title: "企业专属智能体定制",
-    subtitle: "把您的销冠 SOP / 客诉手册 / 战败分析喂给一个永远在线的战略大脑",
-    desc: "30 天 ¥15,000 试用版起步：1 个专属 Agent + 50 MB 知识库 + 100 次调用，企业隔离存储 + 用户主动一键删除。不满意不升级正式版。",
-    pills: ["¥15,000 起", "30 天试用", "知识库 50MB", "Gemini 3 Pro", "企业隔离存储"],
-    icon: Briefcase,
-    accentColor: "#FB7185",
-    glowColor: "rgba(251,113,133,0.20)",
-    borderColor: "rgba(251,113,133,0.40)",
-    bgGradient: "linear-gradient(135deg, rgba(251,113,133,0.10) 0%, rgba(251,113,133,0.03) 100%)",
-    href: "/enterprise-agent",
-  },
   {
     isNew: false,
     date: "2026/04/28",
@@ -175,10 +160,10 @@ const CAROUSEL_CARDS = [
     isNew: false,
     date: "2026/04/24",
     tag: "功能亮点",
-    title: "影视级全自动产线",
-    subtitle: "从想法到成片全自动",
-    desc: "将繁琐步骤降维：可视化节点串联脚本、分镜、配乐与语音输出，支持语音输入提示词；点击执行，坐等高清成片。",
-    pills: ["节点编排", "语音输入", "高清成片"],
+    title: "大师级视频基地",
+    subtitle: "脚本 · 分镜图 · 成片一条链",
+    desc: "主链路：Gemini 3.1 Pro 生成脚本 → GPT-image-2 生成分镜图 → Seedance 2.0 生成影片。画布上可继续编排配乐、配音与合成；支持语音输入提示词。",
+    pills: ["Gemini 3.1 Pro", "GPT-image-2", "Seedance 2.0"],
     icon: Clapperboard,
     accentColor: "#34d399",
     glowColor: "rgba(52,211,153,0.18)",
@@ -190,10 +175,11 @@ const CAROUSEL_CARDS = [
 
 const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/creator-growth-camp", label: "成长营 · 二创" },
+  { href: "/creator-growth-camp/platform", label: "全网流量雷达" },
   { href: "/research", label: "竞品调研 · 60 点" },
-  { href: "/creator-growth-camp/platform", label: "流量雷达" },
-  { href: "/workflow-nodes", label: "节点产线" },
-  { href: "/creator-growth-camp/premium-remix", label: "爆款解构" },
+  { href: "/god-view", label: "AI 战略智库" },
+  { href: "/workflow-nodes", label: "大师级视频基地" },
+  { href: "/creator-growth-camp/premium-remix", label: "尊享爆款解构" },
 ];
 
 function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
@@ -457,7 +443,7 @@ export default function HomeFeatureCarousel() {
             border: "1px solid rgba(255,255,255,0.08)",
           }}
         >
-          <span style={{ fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", marginRight: isMobile ? 0 : 4 }}>创作工作流</span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", marginRight: isMobile ? 0 : 4 }}>主打模块</span>
           {WORKFLOW_LINKS.map(({ href, label }) => (
             <a
               key={href}

@@ -179,7 +179,7 @@ export const betaCodeRouter = router({
       return {
         success: true,
         creditsAwarded: codeRow.credits,
-        message: `成功兑换 ${codeRow.credits} Credits！可立即使用创作者成长营、平台趋势分析、节点工作流等功能。`,
+        message: `成功兑换 ${codeRow.credits} Credits！可立即使用创作者成长营、平台趋势分析、大师级视频基地等功能。`,
       };
     }),
 

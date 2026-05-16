@@ -43,8 +43,8 @@ export default function SupervisorAccess() {
                 path: "/workflow",
               },
               {
-                title: "节点工作流",
-                desc: "进入 workflow-nodes 验收迁移界面。",
+                title: "大师级视频基地",
+                desc: "进入 /workflow-nodes 大师级视频基地验收迁移界面。",
                 path: "/workflow-nodes",
               },
             ].map((item) => (

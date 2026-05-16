@@ -4,7 +4,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { users, workflows, workflowStepRuns, workspaces, stripeUsageLogs } from "../../drizzle/schema";
-import { deductCredits, getCredits, refundCredits } from "../credits";
+import { deductCredits, deductCreditsAmount, getCredits, refundCredits } from "../credits";
 import { CREDIT_COSTS } from "../plans";
 import { hasUnlimitedAccess } from "../services/access-policy";
 
@@ -588,19 +588,26 @@ export const workflowRouter = router({
       return cards.sort((a, b) => b.relevance - a.relevance);
     }),
 
-  // ─── 节点工作流逐步计费 ──────────────────────────────────
+  // ─── 大师级视频基地逐步计费 ──────────────────────────────────
 
   chargeStep: protectedProcedure
     .input(
       z.object({
         step: z.enum(["storyboard", "scene_image", "render_still", "scene_video", "scene_voice", "music", "final_render"]),
         quantity: z.number().int().min(1).max(100).default(1),
+        /**
+         * 场景视频（Seedance）动态扣点：单场景积分 = creditsOverride（与 shared/seedancePricing 一致）。
+         * 不传则沿用 CREDIT_COSTS.workflowSceneVideo（Veo 等固定价）。
+         */
+        creditsOverride: z.number().int().min(1).max(5000).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const costKey = WORKFLOW_STEP_COST_KEY[input.step];
       const unitCost = CREDIT_COSTS[costKey];
-      const totalCost = unitCost * input.quantity;
+      const useOverride =
+        input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;
+      const totalCost = (useOverride ? input.creditsOverride! : unitCost) * input.quantity;
 
       if (totalCost === 0) return { cost: 0, remaining: -1 };
 
@@ -612,10 +619,20 @@ export const workflowRouter = router({
         });
       }
 
+      if (useOverride) {
+        const result = await deductCreditsAmount(
+          ctx.user.id,
+          totalCost,
+          "workflowSceneVideo",
+          `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}（动态 ${input.creditsOverride}×${input.quantity}）`,
+        );
+        return { cost: totalCost, remaining: result.remainingBalance };
+      }
+
       const result = await deductCredits(
         ctx.user.id,
         costKey,
-        `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}`,
+        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}`,
       );
       return { cost: totalCost, remaining: result.remainingBalance };
     }),
@@ -626,23 +643,27 @@ export const workflowRouter = router({
         step: z.enum(["storyboard", "scene_image", "render_still", "scene_video", "scene_voice", "music", "final_render"]),
         quantity: z.number().int().min(1).max(100).default(1),
         reason: z.string().max(200).optional(),
+        /** 与 chargeStep.creditsOverride 对称：动态场景视频退款总额 = amount × quantity（或单场景时 quantity=1） */
+        creditsOverride: z.number().int().min(1).max(5000).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const costKey = WORKFLOW_STEP_COST_KEY[input.step];
       const unitCost = CREDIT_COSTS[costKey];
-      const totalCost = unitCost * input.quantity;
+      const useOverride =
+        input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;
+      const totalCost = (useOverride ? input.creditsOverride! : unitCost) * input.quantity;
       if (totalCost === 0) return { refunded: 0 };
 
       await refundCredits(
         ctx.user.id,
         totalCost,
-        input.reason ?? `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}·生成失败·退回已扣积分`,
+        input.reason ?? `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}·生成失败·退回已扣积分`,
       );
       return { refunded: totalCost };
     }),
 
-  /** 节点工作流脚本：每日第 1 次免费，第 2 次起扣 2 cr（防薅）。请在调用 /api/jobs 前执行。 */
+  /** 大师级视频基地脚本：每日第 1 次免费，第 2 次起扣 2 cr（防薅）。请在调用 /api/jobs 前执行。 */
   prepareScriptGeneration: protectedProcedure.mutation(async ({ ctx }) => {
     const database = await db();
     const [u] = await database
@@ -670,7 +691,7 @@ export const workflowRouter = router({
     await deductCredits(
       ctx.user.id,
       "workflowScriptExtra",
-      `节点工作流·脚本生成（当日第 ${n + 1} 次）`,
+      `大师级视频基地·脚本生成（当日第 ${n + 1} 次）`,
     );
     return { chargedCredits: CREDIT_COSTS.workflowScriptExtra };
   }),

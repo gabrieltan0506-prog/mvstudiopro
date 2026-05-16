@@ -186,15 +186,15 @@ export const CREDIT_COSTS = {
   platformRefImage: 36,         // 平台趋势·生成参考图：36 cr/张（3×）
   platformRefImageUpscale2x: 108, // 参考图高清放大 2×：108 cr（3×）
   platformRefImageUpscale4x: 144, // 参考图高清放大 4×：144 cr（3×）
-  workflowNodes: 20,            // 节点工作流整体（已废弃，改为逐步计费）
+  workflowNodes: 20,            // 大师级视频基地整体（已废弃，改为逐步计费）
 
-  // ─── 节点工作流（逐步计费，脚本每日首通免费）────────
+  // ─── 大师级视频基地（逐步计费，脚本每日首通免费）────────
   workflowScript: 0,           // 脚本生成：每日第 1 次免费
   workflowScriptExtra: 2,      // 脚本生成：当日第 2 次起每次 2 cr（防薅 API）
   workflowStoryboard: 5,       // 故事板：5 cr（Gemini Pro 文本生成）
   workflowSceneImage: 5,       // 分镜图（NBP 2K）：5 cr/张
   workflowRenderStill: 9,      // 多人静帧（NBP 4K）：9 cr/次
-  workflowSceneVideo: 80,      // 场景视频（Veo 3.1 · Vertex AI）：80 cr/次
+  workflowSceneVideo: 80,      // 场景视频（Seedance 2.0 · 规划接入 / 历史为 Veo）：80 cr/次
   workflowSceneVoice: 5,       // 场景配音（TTS）：5 cr/次
   workflowMusic: 12,           // 自动配乐（Suno V5.5）：12 cr
   workflowFinalRender: 5,      // 最终合成：5 cr（计算资源）
@@ -260,13 +260,15 @@ export const CREDIT_COSTS = {
   platformTopicFrameGraphic: 48, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
   platformTopicFrameVideo: 15,  // 短视频分镜参考条
   /** 平台页：竖版封面 · ~~超高点击率加价~~（已下架，統一走 platformTopicFrameGraphic） */
-  // ─── 平台页·合成生图（分镜 2×4 / 小红书 2×4 八格图文）──────────────────────────
-  platformStoryboardSheet: 60, // 单条：分镜 2×4（双语编导；生图 GPT-IMAGE-2）
-  platformXhsDualNote: 72, // 单条：小红书 2×4 八格（内部 kind 仍 xiaohongshu_dual_note）
+  // ─── 平台页·合成生图（兩種 2×4 扣費不同，勿混用）────────────────────────────────
+  /** 短视频向·电影级分镜 2×4 宽幅（`storyboard_sheet_*`）·**60** — 非图文笔记八格 */
+  platformStoryboardSheet: 60,
+  /** 图文笔记·小红书 2×4 八格（`xiaohongshu_dual_note`）·**72** — 非分镜主表 */
+  platformXhsDualNote: 72,
   /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 串行非同步兩階段生圖） */
-  platformTopicCoverAndCompositeBundle: 268,
-  /** 平台页：批量四条 2×4 时客户端提示用语（router 按单次 generatePlatformCompositeSheet 扣费） */
-  platformCompositeBulkFourTopics: 168,
+  platformTopicCoverAndCompositeBundle: 388,
+  /** 平台页：四选题仅 2×4 套裝总价（router：bulk 模式下按序 4 笔整数分拆，合计=此值） */
+  platformCompositeBulkFourTopics: 238,
   /** 平台頁增值：個性化戰略地圖／決策智庫報告（首次體驗見 decisionIntelligenceReportFirst） */
   decisionIntelligenceReport: 200,
   decisionIntelligenceReportFirst: 150,
@@ -296,20 +298,20 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 48 cr，生图 GPT-IMAGE-2" },
-  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "双语编导；生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "短视频向 2×4 分镜主表 60 cr/次（kind: storyboard_sheet_*）· 非图文笔记八格" },
   {
     product: "平台数据分析",
     subFeature: "选题套裝（封面 + 2×4 分镜或八格 · 单条）",
     credits: CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
-    note: "一鍵異步 job 串行兩階段生圖（封面→2×4）；單次扣 268 cr",
+    note: "同一選題单条套裝 388 cr（封面+2×4）；2×4 侧按体裁走 60 或 72",
   },
   {
     product: "平台数据分析",
     subFeature: "2×4 合成四条套裝（一键四选题）",
     credits: CREDIT_COSTS.platformCompositeBulkFourTopics,
-    note: "合计 168 点；四次 API 均摊扣费",
+    note: "合计 238 点；四次 generatePlatformCompositeSheet 均摊整数扣费（与单条 60/72 散买区分）",
   },
-  { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "双语编导；生图 GPT-IMAGE-2" },
+  { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "图文笔记 2×4 八格 72 cr/次（kind: xiaohongshu_dual_note）· 非分镜主表" },
   {
     product: "平台数据分析",
     subFeature: "個性化戰略地圖（決策智庫）",
@@ -319,16 +321,16 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },
   { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },
   { product: "平台数据分析", subFeature: "参考图高清放大 4×", credits: CREDIT_COSTS.platformRefImageUpscale4x },
-  // ─── 节点工作流（逐步） ───────────────────────────────────
-  { product: "节点工作流", subFeature: "脚本生成（每日第1次）", credits: CREDIT_COSTS.workflowScript, note: "第2次起 2 cr/次" },
-  { product: "节点工作流", subFeature: "脚本生成（当日第2次起）", credits: CREDIT_COSTS.workflowScriptExtra, note: "同用户按自然日计" },
-  { product: "节点工作流", subFeature: "故事板确认", credits: CREDIT_COSTS.workflowStoryboard },
-  { product: "节点工作流", subFeature: "分镜图（每场景 NBP 2K）", credits: CREDIT_COSTS.workflowSceneImage, note: "按场景张数" },
-  { product: "节点工作流", subFeature: "多人静帧（NBP 4K）", credits: CREDIT_COSTS.workflowRenderStill, note: "每场景一次" },
-  { product: "节点工作流", subFeature: "场景视频（Veo 3.1）", credits: CREDIT_COSTS.workflowSceneVideo, note: "每场景一次" },
-  { product: "节点工作流", subFeature: "场景配音（TTS）", credits: CREDIT_COSTS.workflowSceneVoice, note: "每场景一次" },
-  { product: "节点工作流", subFeature: "自动配乐（Suno V5.5 + Gemini Prompt）", credits: CREDIT_COSTS.workflowMusic },
-  { product: "节点工作流", subFeature: "最终合成", credits: CREDIT_COSTS.workflowFinalRender },
+  // ─── 大师级视频基地（逐步） ───────────────────────────────────
+  { product: "大师级视频基地", subFeature: "脚本生成（每日第1次）", credits: CREDIT_COSTS.workflowScript, note: "第2次起 2 cr/次" },
+  { product: "大师级视频基地", subFeature: "脚本生成（当日第2次起）", credits: CREDIT_COSTS.workflowScriptExtra, note: "同用户按自然日计" },
+  { product: "大师级视频基地", subFeature: "故事板确认", credits: CREDIT_COSTS.workflowStoryboard },
+  { product: "大师级视频基地", subFeature: "分镜图（每场景 NBP 2K）", credits: CREDIT_COSTS.workflowSceneImage, note: "按场景张数" },
+  { product: "大师级视频基地", subFeature: "多人静帧（NBP 4K）", credits: CREDIT_COSTS.workflowRenderStill, note: "每场景一次" },
+  { product: "大师级视频基地", subFeature: "场景视频（Seedance 2.0）", credits: CREDIT_COSTS.workflowSceneVideo, note: "每场景一次" },
+  { product: "大师级视频基地", subFeature: "场景配音（TTS）", credits: CREDIT_COSTS.workflowSceneVoice, note: "每场景一次" },
+  { product: "大师级视频基地", subFeature: "自动配乐（Suno V5.5 + Gemini Prompt）", credits: CREDIT_COSTS.workflowMusic },
+  { product: "大师级视频基地", subFeature: "最终合成", credits: CREDIT_COSTS.workflowFinalRender },
   // ─── 基础与创作工具 ───────────────────────────────────────
   { product: "分镜图（工作流）", subFeature: "标准 2K", credits: CREDIT_COSTS.nbpImage2K },
   { product: "分镜图（工作流）", subFeature: "高清 4K", credits: CREDIT_COSTS.nbpImage4K },

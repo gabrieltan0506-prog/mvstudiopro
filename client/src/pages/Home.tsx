@@ -5,7 +5,6 @@ import HomeHero from "../components/HomeHero";
 import HomeRemixStrip from "../components/HomeRemixStrip";
 import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
-import { HomeEnterpriseAgentCard } from "../components/HomeEnterpriseAgentCard";
 import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
 import HomeMyWorks from "../components/HomeMyWorks";
@@ -14,8 +13,6 @@ import HomeInviteApply from "../components/HomeInviteApply";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
 import SampleReportDownload from "../components/SampleReportDownload";
 import WorkAmbientPanel from "../components/WorkAmbientPanel";
-import { AmbientSceneProvider } from "../components/AmbientSceneProvider";
-import HomeAmbientBackdrop from "../components/HomeAmbientBackdrop";
 
 // 以下 section 在正式版开放前暂时隐藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -24,9 +21,7 @@ import HomeAmbientBackdrop from "../components/HomeAmbientBackdrop";
 
 export default function HomePage() {
   return (
-    <AmbientSceneProvider>
       <div className="relative" style={{ minHeight: "100dvh" }}>
-        <HomeAmbientBackdrop />
         <div
           className="relative z-[1]"
           style={{
@@ -62,10 +57,7 @@ export default function HomePage() {
       {/* 定价与转化（看完功能再做决策） */}
       <HomePricing />
 
-      {/* 企业级专属定制 */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
-        <HomeEnterpriseAgentCard />
-      </div>
+      {/* 企业定制（HomeEnterpriseAgentCard）产品未收尾前不展示入口 */}
 
       {/* 兑换邀请码 / 申请邀请码（推到决策点之后）；锚点供更新日志等入口跳转 */}
       <div id="redeem-invite" style={{ scrollMarginTop: 80 }} />
@@ -85,6 +77,5 @@ export default function HomePage() {
       <div style={{ height: 60 }} />
         </div>
       </div>
-    </AmbientSceneProvider>
   );
 }

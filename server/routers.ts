@@ -86,6 +86,7 @@ import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
   getProductPackageDisplayRows,
+  platformCompositeBulkFourSlotCredits,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
@@ -4886,30 +4887,67 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     /**
      * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底。
-     * 单条：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr（批量多只好多筆各自扣；無「四條打包價」）。
+     * 单条散买：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
+     * 四选题一键：传 `bulkFourSequentialSlot` + `bulkFourPackSceneIds` 时按套裝整数分拆扣费（四次相加={@link CREDIT_COSTS.platformCompositeBulkFourTopics}）。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
-        z.object({
-          jobId: z.string().max(128).optional(),
-          sceneId: z.string().min(1),
-          title: z.string().min(1).max(220),
-          scriptContext: z.string().min(1).max(12000),
-          kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
-          /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
-          progressJobId: z.string().min(8).max(64).optional(),
-          executionDetails: z.string().max(4000).optional(),
-          /** 與單幀一致：英文 prompt 翻譯引擎 */
-          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
-          /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
-          creationRecordId: z.number().int().positive().optional(),
-          /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
-          supervisorToken: z.string().max(512).optional(),
-          /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
-          enableTopicCoverDeepResearchPro: z.boolean().optional(),
-          /** IP / 身份锚点，供 DR Pro 与翻译链 */
-          coverPersonaContext: z.string().max(8000).optional(),
-        }),
+        z
+          .object({
+            jobId: z.string().max(128).optional(),
+            sceneId: z.string().min(1),
+            title: z.string().min(1).max(220),
+            scriptContext: z.string().min(1).max(12000),
+            kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
+            /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
+            progressJobId: z.string().min(8).max(64).optional(),
+            executionDetails: z.string().max(4000).optional(),
+            /** 與單幀一致：英文 prompt 翻譯引擎 */
+            imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+            /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
+            creationRecordId: z.number().int().positive().optional(),
+            /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
+            supervisorToken: z.string().max(512).optional(),
+            /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
+            enableTopicCoverDeepResearchPro: z.boolean().optional(),
+            /** IP / 身份锚点，供 DR Pro 与翻译链 */
+            coverPersonaContext: z.string().max(8000).optional(),
+            /** 与 `bulkFourPackSceneIds` 同时出现；0..3 对应当前为四条套裝中的第几笔扣费 */
+            bulkFourSequentialSlot: z.number().int().min(0).max(3).optional(),
+            /** 四条选题 sceneId 固定顺序，须与客户端串行顺序一致且互不重复 */
+            bulkFourPackSceneIds: z
+              .tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)])
+              .optional(),
+          })
+          .superRefine((data, ctx) => {
+            const hasSlot = data.bulkFourSequentialSlot !== undefined;
+            const hasPack = data.bulkFourPackSceneIds !== undefined;
+            if (hasSlot !== hasPack) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "四条套裝须同时提供 bulkFourSequentialSlot 与 bulkFourPackSceneIds",
+                path: hasSlot ? ["bulkFourPackSceneIds"] : ["bulkFourSequentialSlot"],
+              });
+              return;
+            }
+            if (!hasSlot || !data.bulkFourPackSceneIds) return;
+            const ids = data.bulkFourPackSceneIds;
+            if (new Set(ids).size !== ids.length) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "四条套裝内 sceneId 须互不相同",
+                path: ["bulkFourPackSceneIds"],
+              });
+            }
+            const slot = data.bulkFourSequentialSlot!;
+            if (ids[slot] !== data.sceneId) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "sceneId 须与 bulkFourPackSceneIds[currentSlot] 一致",
+                path: ["sceneId"],
+              });
+            }
+          }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -4920,9 +4958,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
           input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
         const cost =
-          input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-            ? CREDIT_COSTS.platformStoryboardSheet
-            : CREDIT_COSTS.platformXhsDualNote;
+          input.bulkFourSequentialSlot !== undefined
+            ? platformCompositeBulkFourSlotCredits(input.bulkFourSequentialSlot)
+            : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
+              ? CREDIT_COSTS.platformStoryboardSheet
+              : CREDIT_COSTS.platformXhsDualNote;
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -4932,14 +4972,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: `Credits 不足，需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCreditsAmount(
-            userId,
-            cost,
-            "platformCompositeSheet",
+          const compositeDeductionNote =
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
-              : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`,
-          );
+              : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
+          const bulkTag =
+            input.bulkFourSequentialSlot !== undefined
+              ? ` · 四条2×4套裝第${input.bulkFourSequentialSlot + 1}/4笔`
+              : "";
+          await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
         }
 
         if (input.jobId) {

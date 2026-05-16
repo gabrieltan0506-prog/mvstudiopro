@@ -14,7 +14,7 @@ const nav = [
   ["首页", "Home", "/"],
   ["成长营", "Growth Camp", "/creator-growth-camp"],
   ["平台趋势", "Platform", "/creator-growth-camp/platform"],
-  ["节点工作流", "Workflow", "/workflow-nodes"],
+  ["大师级视频基地", "Master Video", "/workflow-nodes"],
 ];
 
 export default function HomeNavbar() {
@@ -473,7 +473,7 @@ export default function HomeNavbar() {
                         style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >
-                        节点工作流
+                        大师级视频基地
                       </a>
 
                       <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
