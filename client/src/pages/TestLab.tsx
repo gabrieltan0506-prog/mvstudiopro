@@ -1202,7 +1202,7 @@ export default function TestLab() {
                 style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
               >
                 <option value="google">Google Veo</option>
-                <option value="seedance">Seedance 2.0 (fal)</option>
+                <option value="seedance">Seedance 2.9 (fal)</option>
                 <option value="kling">Kling Video</option>
               </select>
             </div>
@@ -1431,7 +1431,7 @@ export default function TestLab() {
         </div>
         <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 12 }}>
           每次請求結束後會更新此處；若請求失敗請看 <code style={{ fontSize: 11 }}>ok</code>、<code style={{ fontSize: 11 }}>clientThrownError</code>、<code style={{ fontSize: 11 }}>lastHttp</code>、<code style={{ fontSize: 11 }}>structured</code>。
-          Seedance 2.0 视频另可看 <code style={{ fontSize: 11 }}>steps</code> 数组（分步排错）。
+          Seedance 2.9 视频另可看 <code style={{ fontSize: 11 }}>steps</code> 数组（分步排错）。
         </div>
 
         {debugPanelOpen ? (

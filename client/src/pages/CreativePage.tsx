@@ -1,12 +1,17 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
-import { CREDIT_COSTS } from "../../../server/plans";
-import { estimateSeedanceWorkflowCreditsForProduct } from "@shared/seedancePricing";
+
+/** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
+const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
+const CREATIVE_VIDEO_CREDITS_SEEDANCE_29 = 118;
+/** 成片：Veo 8s / 54 cr；Seedance 2.9 10s / 118 cr（与 API 参数一致） */
+const CREATIVE_VIDEO_DURATION_VEO_SEC = 8;
+const CREATIVE_VIDEO_DURATION_SEEDANCE_SEC = 10;
 
 export default function CreativePage() {
   const { user } = useAuth();
@@ -29,22 +34,6 @@ export default function CreativePage() {
   const userPlan = (subQuery.data?.plan || "free") as string;
   const isAdmin = user?.role === "admin" || user?.role === "supervisor";
   const isPaidUser = isAdmin || userPlan !== "free";
-
-  /** 页面展示用；实际扣费以 chargeStep 返回值为准，失败会 refundStep */
-  const imageCreditPreview = useMemo(() => (imageModel === "gpt-image-2" ? 54 : 35), [imageModel]);
-
-  const videoCreditPreview = useMemo(() => {
-    if (videoModel === "seedance-2.0") {
-      return Math.ceil(
-        estimateSeedanceWorkflowCreditsForProduct({
-          resolution: "720p",
-          aspectRatio: videoAspect,
-          durationSec: 10,
-        }).credits * 1.5,
-      );
-    }
-    return Math.ceil(CREDIT_COSTS.workflowSceneVideo * 1.5);
-  }, [videoModel, videoAspect]);
 
   async function generateImage() {
     if (!prompt.trim()) return;
@@ -128,7 +117,7 @@ export default function CreativePage() {
   async function generateVideo() {
     if (!imageUrl) return;
     if (videoModel === "seedance-2.0" && !isPaidUser) {
-      setError("Seedance 2.0 暂不开放给未付费用户，需购买积分包才能使用。");
+      setError("Seedance 2.9 暂不开放给未付费用户，需购买积分包才能使用。");
       return;
     }
     
@@ -138,16 +127,10 @@ export default function CreativePage() {
     
     let chargedCost = 0;
     try {
-      let overrideCost = 0;
-      if (videoModel === "seedance-2.0") {
-        overrideCost = Math.ceil(estimateSeedanceWorkflowCreditsForProduct({
-          resolution: "720p",
-          aspectRatio: videoAspect as any,
-          durationSec: 10,
-        }).credits * 1.5);
-      } else {
-        overrideCost = Math.ceil(CREDIT_COSTS.workflowSceneVideo * 1.5);
-      }
+      const overrideCost =
+        videoModel === "seedance-2.0"
+          ? CREATIVE_VIDEO_CREDITS_SEEDANCE_29
+          : CREATIVE_VIDEO_CREDITS_VEO_31;
 
       const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: overrideCost });
       chargedCost = charge.cost;
@@ -163,7 +146,7 @@ export default function CreativePage() {
             imageUrl,
             resolution: "720p",
             aspectRatio: videoAspect,
-            duration: 10,
+            duration: CREATIVE_VIDEO_DURATION_SEEDANCE_SEC,
           }),
         });
         const json = await res.json().catch(() => ({}));
@@ -180,7 +163,7 @@ export default function CreativePage() {
             prompt,
             imageUrl,
             provider: "pro",
-            durationSeconds: 8,
+            durationSeconds: CREATIVE_VIDEO_DURATION_VEO_SEC,
             aspectRatio: videoAspect,
             resolution: "720p",
           }),
@@ -233,21 +216,19 @@ export default function CreativePage() {
         <div className="w-full max-w-3xl">
           <h1 className="mb-6 text-3xl font-black tracking-tight">文字生图 / 图生视频</h1>
           <p className="mb-4 text-white/60 text-sm">
-            直接通过文字生成图片，再将图片转为视频。路径：<code className="text-white/80">/creative</code> 与{" "}
+            文字生图，再图生视频。<code className="text-white/80">/creative</code>、
             <code className="text-white/80">/create</code>。
           </p>
 
           <div className="mb-6 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95 leading-relaxed">
-            <div className="font-bold text-amber-200 mb-1">积分说明（下单前请看）</div>
+            <div className="font-bold text-amber-200 mb-1">积分</div>
             <ul className="list-disc pl-5 space-y-1 text-amber-100/90">
               <li>
-                <strong>生成图片</strong>：当前模型约扣{" "}
-                <strong>{imageCreditPreview} 积分</strong>/ 张（Nano Banana 2 为 35；GPT-image-2 为 54；付费策略以站内为准）。
+                <strong>生图</strong>：Nano Banana 2 每张 <strong>35</strong>；GPT-image-2 每张 <strong>54</strong>。
               </li>
               <li>
-                <strong>转视频</strong>：约扣 <strong>{videoCreditPreview} 积分</strong>/ 次（本页 Veo 3.1 Pro 按{" "}
-                <code className="text-amber-200/90">ceil({CREDIT_COSTS.workflowSceneVideo} × 1.5)</code>；Seedance 2.0 按 720p·10s·
-                {videoAspect} 动态估值再 ×1.5）。<strong>实际扣费以后台返回为准</strong>；失败会自动退还。
+                <strong>转视频</strong>：Veo 3.1，<strong>8 秒</strong> / <strong>54</strong> 积分。Seedance 2.9，<strong>10 秒</strong> /{" "}
+                <strong>118</strong> 积分。失败退还。
               </li>
             </ul>
           </div>
@@ -292,7 +273,7 @@ export default function CreativePage() {
                       className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
                     >
                       <option value="veo-3.1">Veo 3.1</option>
-                      <option value="seedance-2.0">Seedance 2.0 (限付费用户)</option>
+                      <option value="seedance-2.0">Seedance 2.9 (限付费用户)</option>
                     </select>
                   </div>
                   
@@ -311,6 +292,12 @@ export default function CreativePage() {
                   <div className="flex gap-2 items-center">
                     <label className="text-sm font-semibold text-white/80">画质：</label>
                     <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">720P</div>
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <label className="text-sm font-semibold text-white/80">时长</label>
+                    <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">
+                      {videoModel === "seedance-2.0" ? "10 秒" : "8 秒"}
+                    </div>
                   </div>
                 </div>
 
