@@ -42,7 +42,8 @@ export default function HomeWeatherClock() {
   }, []);
 
   useEffect(() => {
-    // 移除自动加载时的地理位置请求
+    // 页面加载后立即尝试获取定位
+    requestLocation();
   }, []);
 
   const requestLocation = async () => {

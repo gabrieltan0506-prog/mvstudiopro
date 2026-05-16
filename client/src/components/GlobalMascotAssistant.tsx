@@ -165,8 +165,8 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   }, [proactiveUi]);
 
   useEffect(() => {
-    // 暂时移除加载时的地理定位请求，改为用户手动触发或统一上下文触发
-    setGeoAttemptDone(true);
+    // 页面加载后立即尝试获取定位
+    requestMascotLocation();
   }, []);
 
   const requestMascotLocation = async () => {

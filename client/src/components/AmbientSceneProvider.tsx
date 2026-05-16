@@ -80,12 +80,37 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
   }, []);
 
   useEffect(() => {
+    // 页面加载后立即尝试获取定位
     let cancelled = false;
     (async () => {
       try {
-        // Temporarily disable geolocation request on load as it blocks UX and causes perceived slowness
-        // We will default to a generic background instead
-        throw new Error("Geolocation request bypassed for performance");
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error("浏览器未提供定位"));
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: false,
+            timeout: 15_000,
+            maximumAge: 120_000,
+          });
+        });
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        if (!cancelled) setGeo({ lat, lon });
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`天气接口 ${res.status}`);
+        const j = await res.json();
+        if (cancelled) return;
+        setWxLocal({
+          lat,
+          lon,
+          temp: Math.round(Number(j?.current?.temperature_2m) * 10) / 10,
+          code: Number(j?.current?.weather_code ?? 0),
+          label: codeLabel(Number(j?.current?.weather_code ?? 0)),
+        });
+        setGeoErr(null);
       } catch (e: unknown) {
         if (!cancelled) {
           setWxLocal(null);
