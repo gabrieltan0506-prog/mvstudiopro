@@ -28,7 +28,8 @@ function codeLabel(code: number): string {
   return "阴";
 }
 
-const CAROUSEL_MS = 180000;
+/** 底圖輪播切換間隔（與 WorkAmbientPanel／GlobalAmbientBackdrop 文案「約 30s」一致） */
+const CAROUSEL_MS = 30_000;
 
 async function fetchOpenMeteoWx(lat: number, lon: number): Promise<Wx> {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&timezone=auto`;

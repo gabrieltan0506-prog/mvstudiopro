@@ -8088,9 +8088,15 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           }
         }
 
-        // 优先在 Fly 直接走 GCS 长任务（2x/4x 同一路径，300s 与 GCS 轮询一致）；无凭据时回退 Vercel
+        // 优先在 Fly 直接走 GCS 长任务（2x/4x 同一路径，300s 与 GCS 轮询一致）；无凭据时对**对外公開** `/api/google` 做 HTTP 回退（與本站同域，如已把正式域名指到 Fly 則為 `https://mvstudiopro.com`）
         const hasVertexCreds = Boolean(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim());
-        const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+        const publicAppBase = String(
+          process.env.PUBLIC_APP_URL ||
+            process.env.OAUTH_SERVER_URL ||
+            process.env.FRONTEND_URL ||
+            process.env.VERCEL_APP_URL ||
+            "https://mvstudiopro.com",
+        ).replace(/\/$/, "");
         const safeToken = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
 
         let imageUrl = "";
@@ -8114,7 +8120,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           }
         } else {
           try {
-            const res = await fetch(`${vercelBaseUrl}/api/google?op=upscaleImage`, {
+            const res = await fetch(`${publicAppBase}/api/google?op=upscaleImage`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -8133,10 +8139,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             upscaleOk = res.ok && !!imageUrl;
             if (!upscaleOk) {
               const vertexErr = String(json?.error || json?.raw?.error?.message || "").slice(0, 300);
-              console.error(`[vertexImage.upscale] ${input.upscaleFactor} (vercel) failed (HTTP ${res.status}): ${vertexErr}`);
+              console.error(`[vertexImage.upscale] ${input.upscaleFactor} (public /api/google fallback) failed (HTTP ${res.status}): ${vertexErr}`);
             }
           } catch (e: any) {
-            console.error("[vertexImage.upscale] vercel proxy failed:", e?.message);
+            console.error("[vertexImage.upscale] public /api/google fallback failed:", e?.message);
           }
         }
 

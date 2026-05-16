@@ -231,7 +231,7 @@ export default function WorkAmbientPanel() {
           timeSegment={timeSegment}
           weatherKind={weatherKind}
           motionOk={motionOk}
-          label="天氣實況（底圖約 9s 輪播 · 資料約 10 分鐘更新）"
+          label="天氣實況（底圖約 30s 輪播 · 資料約 10 分鐘更新）"
         >
           <div className="mt-4">
             {serverWx && serverWx.source !== "unavailable" ? (

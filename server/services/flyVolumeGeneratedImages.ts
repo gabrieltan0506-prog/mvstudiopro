@@ -42,7 +42,7 @@ export async function writeFlyPlatformImageBuffer(params: {
 
 /** 與 {@link buildBlobMediaUrlFromPath} 類似：公開讀取走 Fly（或經 Vercel rewrite 到 Fly）的 /api/jobs。 */
 export function buildFlyPlatformImagePublicUrl(relPath: string): string {
-  const root = String(process.env.OAUTH_SERVER_URL || "").trim().replace(/\/+$/, "") || "https://mvstudiopro.fly.dev";
+  const root = String(process.env.OAUTH_SERVER_URL || "").trim().replace(/\/+$/, "") || "https://mvstudiopro.com";
   const rel = String(relPath || "").replace(/^\/+/, "");
   return `${root}/api/jobs?op=flyVolumeMedia&relPath=${encodeURIComponent(rel)}`;
 }
