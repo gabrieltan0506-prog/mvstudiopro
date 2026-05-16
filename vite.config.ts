@@ -170,6 +170,19 @@ export default defineConfig({
   },
   server: {
     host: true,
+    /** 與生產環境 `vercel.json` 對齊：本地開發時讓 `/api/ext/*` 可解析地理接口 */
+    proxy: {
+      "/api/ext/reverse-geocode": {
+        target: "https://api.bigdatacloud.net",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/ext\/reverse-geocode/, "/data/reverse-geocode-client"),
+      },
+      "/api/ext/open-meteo": {
+        target: "https://geocoding-api.open-meteo.com",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/ext\/open-meteo/, "/v1/search"),
+      },
+    },
     allowedHosts: [
       ".manuspre.computer",
       ".manus.computer",

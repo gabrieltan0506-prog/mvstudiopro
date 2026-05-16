@@ -1,11 +1,12 @@
 /**
- * 瀏覽器端免金鑰逆地理（BigDataCloud client API，可從一般網頁直接 fetch）。
+ * 逆地理短標籤：經生產環境 `vercel.json` 將 `/api/ext/reverse-geocode` 轉發至 BigDataCloud，
+ * 避免客戶端直連海外網域在部分網路下被拖慢或阻斷。
  */
 export async function reverseGeocodeShortLabel(lat: number, lon: number): Promise<string | null> {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   try {
     const u =
-      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(String(lat))}` +
+      `/api/ext/reverse-geocode?latitude=${encodeURIComponent(String(lat))}` +
       `&longitude=${encodeURIComponent(String(lon))}&localityLanguage=zh`;
     const res = await fetch(u, { credentials: "omit" });
     if (!res.ok) return null;
