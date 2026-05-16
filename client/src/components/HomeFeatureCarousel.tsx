@@ -457,7 +457,7 @@ export default function HomeFeatureCarousel() {
             border: "1px solid rgba(255,255,255,0.08)",
           }}
         >
-          <span style={{ fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", marginRight: isMobile ? 0 : 4 }}>创作工作流</span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", marginRight: isMobile ? 0 : 4 }}>主打模块</span>
           {WORKFLOW_LINKS.map(({ href, label }) => (
             <a
               key={href}

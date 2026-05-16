@@ -126,7 +126,7 @@ export default function HomeHero() {
                   flexWrap: "wrap",
                 }}
               >
-                {["影视级 AI 生成", "多平台数据分析", "全自动工作流"].map((tag) => (
+                {["影视级 AI 生成", "多平台趋势洞察", "大师级视频基地"].map((tag) => (
                   <span
                     key={tag}
                     style={{
@@ -177,7 +177,7 @@ export default function HomeHero() {
                   <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>{slide.subtitle}</div>
                   <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>{slide.title}</div>
                   <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84 }}>
-                    先看结果，再进入重新创作工作流
+                    先看成片，再在大师级视频基地里按灵感重制
                   </div>
                 </div>
 
@@ -195,7 +195,7 @@ export default function HomeHero() {
                     textDecoration: "none",
                   }}
                 >
-                  重新创作
+                  进入大师级基地
                 </a>
               </div>
             </div>
@@ -306,7 +306,7 @@ export default function HomeHero() {
                     文本支持语音输入
                   </div>
                   <div style={{ marginTop: 4, fontSize: 15, fontWeight: 600, color: "rgba(233,213,255,0.88)", lineHeight: 1.55 }}>
-                    成长营、平台分析与工作流等多处输入框均可点麦克风，中文语音识别写入文案，免双手长段描述。
+                    成长营、平台趋势与大师级视频基地等多处输入框均可点麦克风，中文语音识别写入文案，免双手长段描述。
                   </div>
                 </div>
               </div>
