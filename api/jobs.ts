@@ -92,6 +92,22 @@ function imageContentTypeToExtension(contentType: string) {
 
 const WORKFLOW_VIDEO_REF_MAX_EDGE = 1280;
 
+function mapVeoAspectRatio(raw: string): "16:9" | "9:16" {
+  const a = s(raw).trim();
+  if (a === "9:16" || a === "3:4") return "9:16";
+  return "16:9";
+}
+
+/** Seedance：fal duration 枚举 4–15 或 auto */
+function parseSeedanceDurationInput(raw: any): number | "auto" {
+  if (raw == null || raw === "") return "auto";
+  const str = String(raw).trim().toLowerCase();
+  if (str === "auto") return "auto";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return "auto";
+  return Math.min(15, Math.max(4, Math.floor(n)));
+}
+
 async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workflow-scene", options?: { mode?: "original" | "video" }) {
   const sourceUrl = s(imageUrl).trim();
   if (!sourceUrl) throw new Error("missing_image_url");
@@ -2036,10 +2052,80 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
       const prompt = simplifySceneVideoPrompt(effectiveScene);
-      // 仅上传参考图；视频生成改为异步模式，立即返回 taskId
       const preparedReferenceImages = await Promise.all(
         referenceImages.map((imageUrl, idx) => uploadWorkflowImageToBlob(imageUrl, `scene-video-${sceneIndex}-ref-${idx + 1}`, { mode: "video" })),
       );
+
+      const videoEngine = s(b.videoEngine || "veo").trim().toLowerCase();
+      const aspectRatioInput = s(b.aspectRatio || "16:9").trim() || "16:9";
+      const videoResolution = s(b.videoResolution || "720p").trim() === "1080p" ? "1080p" : "720p";
+
+      if (videoEngine === "seedance") {
+        let sceneVideoUrl = "";
+        let videoDurationForUi = 8;
+        try {
+          const { runSeedanceImageToVideo } = await import("../server/services/seedanceVideo.js");
+          const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("../server/services/gcs.js");
+          const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
+          const seedanceOut = await runSeedanceImageToVideo({
+            prompt,
+            imageUrl: preparedReferenceImages[0] || "",
+            resolution: videoResolution,
+            duration: durationInput,
+            aspectRatio: aspectRatioInput,
+            generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
+          });
+          const vidResp = await fetch(seedanceOut.videoUrl, {
+            redirect: "follow",
+            headers: { "User-Agent": "mvstudiopro/1.0 (+seedance)" },
+          });
+          if (!vidResp.ok) {
+            return res.status(502).json(fail("seedance_download_failed", `Seedance 视频拉取失败: ${vidResp.status}`));
+          }
+          const mp4 = Buffer.from(await vidResp.arrayBuffer());
+          if (!mp4.length) return res.status(502).json(fail("seedance_empty_video", "Seedance 返回空视频"));
+          const wfId = s(workflow.workflowId || workflow.id || `wf-${Date.now()}`).replace(/[^a-zA-Z0-9_-]+/g, "-");
+          const objectName = `growth-camp/videos/workflow-seedance-${wfId}-sc${sceneIndex}-${Date.now()}.mp4`;
+          const { gcsUri } = await uploadBufferToGcs({ objectName, buffer: mp4, contentType: "video/mp4" });
+          sceneVideoUrl = signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+          videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
+        } catch (err: any) {
+          return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));
+        }
+
+        const scene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
+        const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
+          prompt: s(scene?.scenePrompt).trim(),
+          duration: videoDurationForUi,
+          sceneVideoUrl,
+          backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+          characterLocked: Boolean(existing?.characterLocked),
+          referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+          characterPngUrl: s(existing?.characterPngUrl).trim(),
+        }));
+        const next = saveWorkflowPatch(workflow, {
+          currentStep: "video",
+          outputs: {
+            script: s(b.script || workflow.outputs?.script).trim(),
+            storyboard: storyboard.map((item: any) =>
+              Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
+            ),
+            storyboardImages: nextStoryboardImages,
+            videoProvider: "fal",
+            videoModel: "bytedance/seedance-2.0/image-to-video",
+            sceneVideoAspectRatio: aspectRatioInput,
+            sceneVideoResolution: videoResolution,
+          },
+        });
+        return res.status(200).json({
+          ok: true,
+          workflow: next,
+          sceneVideoUrl,
+          sceneIndex,
+          status: "completed",
+          videoEngine: "seedance",
+        });
+      }
 
       let operationName = "";
       let veoModel = "veo-3.1-generate-001";
@@ -2050,8 +2136,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           prompt,
           imageUrl: preparedReferenceImages[0] || "",
           quality: "standard",
-          aspectRatio: "16:9",
-          resolution: "720p",
+          aspectRatio: mapVeoAspectRatio(aspectRatioInput),
+          resolution: videoResolution,
           negativePrompt: "multiple people, extra limbs, duplicate subject, distorted face",
         });
         operationName = started.operationName;
@@ -2061,7 +2147,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(502).json(fail("veo_start_failed", err?.message || "Veo 3.1 task creation failed"));
       }
 
-      // 将 taskId 写入 workflow，供前端轮询
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
@@ -2072,6 +2157,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           storyboardImages: storyboardImages,
           videoProvider: "vertex",
           videoModel: veoModel,
+          sceneVideoAspectRatio: aspectRatioInput,
+          sceneVideoResolution: videoResolution,
         },
       });
       return res.status(200).json({
@@ -2082,6 +2169,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         veoLocation,
         sceneIndex,
         status: "pending",
+        videoEngine: "veo",
       });
     }
 
@@ -2254,29 +2342,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let aiMusicPrompt = s(b.musicPrompt).trim(); // 若前端手动传入则直接用
       if (!aiMusicPrompt) {
         const storyboardMoodSummary = (Array.isArray(storyboard) ? storyboard : [])
-          .slice(0, 5)
-          .map((sc: any) => [s(sc?.mood), s(sc?.lighting), s(sc?.scenePrompt).slice(0, 60)].filter(Boolean).join(", "))
-          .join(" | ");
+          .slice(0, 20)
+          .map((sc: any, idx: number) => {
+            const themeLine = s(sc?.theme || sc?.mood || "").trim();
+            const lighting = s(sc?.lighting).trim();
+            const action = s(sc?.action).trim();
+            const camera = s(sc?.camera).trim();
+            const excerpt = truncateText(s(sc?.scenePrompt || ""), 140);
+            return [
+              `[Scene ${idx + 1}]`,
+              themeLine && `theme:${themeLine}`,
+              lighting && `light:${lighting}`,
+              action && `action:${truncateText(action, 80)}`,
+              camera && `camera:${camera}`,
+              excerpt && `prompt:${excerpt}`,
+            ].filter(Boolean).join(" · ");
+          })
+          .join("\n");
         const geminiMusicPromptRequest = `You are a professional film composer and music director.
-Based on the video script and scene mood summary below, write a concise English music style prompt for Suno AI V5.5.
 
-Requirements:
-- English only, max 100 words
-- Describe: genre, mood, tempo, key instruments, energy level
+The FIRST LINE must be one short English phrase distilling the **overall video theme / north-star mood** (like a logline for the score).
+
+After that, on the same output, write the **Suno AI V5.5 instrumental prompt** (English only):
+- Max 120 words total (including the first line)
+- Genre, mood, tempo, key instruments, energy arc
 - Purely instrumental, no vocals
-- Suitable as a cinematic short-video BGM
-- Output only the prompt, no explanation
+- Suitable as cinematic short-video BGM
+
+Output only this combined text (first line = theme distill, then the Suno prompt). No bullets, no explanation.
 
 Script (excerpt):
-${truncateText(scriptText, 400)}
+${truncateText(scriptText, 500)}
 
-Scene mood summary:
-${truncateText(storyboardMoodSummary, 200)}`;
+Per-scene distilled themes / moods / beats:
+${truncateText(storyboardMoodSummary, 3500)}`;
 
         try {
           const geminiResult = await callGeminiScriptGateway(geminiMusicPromptRequest);
           const geminiText = extractGoogleText(geminiResult?.raw).trim();
-          if (geminiText) aiMusicPrompt = truncateText(geminiText, 160);
+          if (geminiText) aiMusicPrompt = truncateText(geminiText, 200);
         } catch (_err) {
           // Gemini 失败时回退到关键词推导
         }

@@ -268,7 +268,7 @@ export default function LayoutDashboard() {
                          log.action === "growthCampRemix" ? "成长营 · 二次创作" :
                          log.action === "platformTrend" ? "平台趋势分析" :
                          log.action === "platformTrendFollowUp" ? "平台趋势追问" :
-                         log.action === "workflowNodes" ? "节点工作流" :
+                         log.action === "workflowNodes" ? "大师级视频基地" :
                          log.action === "mvAnalysis" ? "视频 PK 评分" :
                          log.action === "idolGeneration" ? "虚拟偶像生成" :
                          log.action === "storyboard" ? "分镜脚本生成" :

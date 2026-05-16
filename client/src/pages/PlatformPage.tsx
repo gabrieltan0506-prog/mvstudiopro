@@ -23,7 +23,7 @@ import type {
   GrowthSnapshot,
   GrowthTitleExecution,
 } from "@shared/growth";
-import { CREDIT_COSTS } from "@shared/plans";
+import { CREDIT_COSTS, platformCompositeBulkFourSlotCredits } from "@shared/plans";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
@@ -2605,6 +2605,8 @@ export default function PlatformPage() {
 
   const runSequentialCompositeBatchGeneration = async () => {
     const cards = contentExecutionCards;
+    const bulkFourPackSceneIds: [string, string, string, string] | undefined =
+      cards.length === 4 ? [cards[0]!.id, cards[1]!.id, cards[2]!.id, cards[3]!.id] : undefined;
     const localOpId = `batch-composite-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     compositeBatchSilentUiRef.current = true;
     setIsSequentialCompositeBatchGenerating(true);
@@ -2681,6 +2683,9 @@ export default function PlatformPage() {
                 imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                 progressJobId: newPlatformCompositeProgressJobId(),
                 ...compositeDrProExtras,
+                ...(bulkFourPackSceneIds
+                  ? { bulkFourSequentialSlot: slotIndex, bulkFourPackSceneIds }
+                  : {}),
               }),
             (waitMs) => {
               liveLines.push(
@@ -3627,23 +3632,6 @@ export default function PlatformPage() {
     }
     return sum;
   }, [contentExecutionCards]);
-  const platformBulkCoverCompositeBundleCost = useMemo(
-    () => platformTopicCount * CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
-    [platformTopicCount],
-  );
-
-  /** 批量「仅 2×4」主按钮：区分四条套裝合计价 vs 单条/多条按体裁累加，避免与单条 168 混淆 */
-  const bulkCompositePrimaryButtonLabel = useMemo(() => {
-    const cost = platformBulkCompositeCost;
-    if (platformTopicCount === 4 && cost === CREDIT_COSTS.platformCompositeBulkFourTopics) {
-      return `仅 2×4 / 八格 · 四条套裝合计 ${cost} 积分`;
-    }
-    if (platformTopicCount === 1) {
-      return `仅 2×4 / 八格 · 单条 ${cost} 积分`;
-    }
-    return `仅 2×4 / 八格 · ${platformTopicCount} 条合计 ${cost} 积分`;
-  }, [platformTopicCount, platformBulkCompositeCost]);
-
   /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
   const platformBulkCompositeBreakdown = useMemo(() => {
     let videoLike = 0;
@@ -3656,17 +3644,17 @@ export default function PlatformPage() {
     return { videoLike, graphicLike };
   }, [contentExecutionCards]);
 
-  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四条套裝 168；否则按单条价累加） */
+  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四题为套裝总价；否则按单条价累加） */
   function onBulkCompositeOneClick() {
     if (!isAuthenticated) {
       toast.error("请先登录");
       return;
     }
-    const bulkFourSlot = Math.floor(CREDIT_COSTS.platformCompositeBulkFourTopics / 4);
+    const bulkFourDeductions = [0, 1, 2, 3].map((i) => platformCompositeBulkFourSlotCredits(i)).join("、");
     const note = supervisorAccess
       ? ""
       : platformTopicCount === 4
-        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次请求均摊各 ${bulkFourSlot} 积分）。每条约 3～5 分钟。是否继续？`
+        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次扣费分别为 ${bulkFourDeductions} 点）。每条约 3～5 分钟。是否继续？`
         : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。单条计价：短视频向 ${CREDIT_COSTS.platformStoryboardSheet} 积分/条，图文/小红书 ${CREDIT_COSTS.platformXhsDualNote} 积分/条；当前共 ${platformBulkCompositeBreakdown.videoLike} 条短视频向、${platformBulkCompositeBreakdown.graphicLike} 条图文/小红书向，合计 ${platformBulkCompositeCost} 积分。每条约 3～5 分钟。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCompositeBatchGeneration();
@@ -3812,9 +3800,7 @@ export default function PlatformPage() {
           },
         }),
       );
-      toast.success(
-        `已为 ${successCount}/${cards.length} 个选题完成套裝（封面 + 2×4／八格 · 合计约 ${platformBulkCoverCompositeBundleCost} 积分）`,
-      );
+      toast.success(`已为 ${successCount}/${cards.length} 个选题完成封面加分鏡`);
     }
   }
 
@@ -3826,7 +3812,7 @@ export default function PlatformPage() {
     const per = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
     const note = supervisorAccess
       ? ""
-      : `将为 ${platformTopicCount} 个选题各生成竖版封面与 2×4 分镜或八格图文。每条套裝 ${per} 积分，合计 ${platformBulkCoverCompositeBundleCost} 积分；客户端逐题串行，单题后台内双链并发，常需约 3～5 分钟。是否继续？`;
+      : `将为 ${platformTopicCount} 个选题依次生成封面 + 2×4/八格，每题 ${per} 积分，是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCoverCompositeBundleBatchGeneration();
   }
@@ -5657,63 +5643,10 @@ export default function PlatformPage() {
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
                         视频图文分镜表
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">
-                        <strong className="text-gray-400">推荐</strong>：一键套裝为每条选题并发生成{" "}
-                        <strong className="text-gray-300">竖版封面 + 2×4 分镜或八格</strong>
-                        ，单条 <strong className="text-gray-300">{CREDIT_COSTS.platformTopicCoverAndCompositeBundle}</strong>{" "}
-                        积分（优享低于 {CREDIT_COSTS.platformTopicFrameGraphic}+{CREDIT_COSTS.platformStoryboardSheet} 分开买）。
-                        亦可只买封面或只买 2×4。批量合成四条 2×4 的 <strong className="text-gray-300">168</strong> 积分套裝仍仅适用于「仅分镜/八格」路径。
-                        {platformTopicCount === 4 ? (
-                          <>
-                            {" "}
-                            当前 4 条选题仅分镜一键合计 <strong className="text-gray-300">{CREDIT_COSTS.platformCompositeBulkFourTopics}</strong>{" "}
-                            积分。
-                          </>
-                        ) : platformTopicCount > 0 ? (
-                          <>
-                            {" "}
-                            仅分镜合计约 <strong className="text-gray-300">{platformBulkCompositeCost}</strong> 积分
-                            （短视频向 {platformBulkCompositeBreakdown.videoLike} 条 + 图文/小红书 {platformBulkCompositeBreakdown.graphicLike}{" "}
-                            条）。
-                          </>
-                        ) : null}
-                      </p>
+                      <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套裝、一键生成分鏡套裝、一键生成封面加分鏡。</p>
                     </div>
                     {platformTopicCount > 0 ? (
                       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
-                        <button
-                          type="button"
-                          onClick={() => setCoverDecisionTrialReadOpen(true)}
-                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-[#49e6ff]/50 bg-[#49e6ff]/12 px-6 py-2.5 text-sm font-semibold text-[#a5f3fc] shadow-[0_6px_24px_rgba(72,212,240,0.15)] transition hover:bg-[#49e6ff]/22 sm:w-auto"
-                        >
-                          <Eye className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
-                          点击试读 · 决策智库样张
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            isSequentialCoverBatchGenerating ||
-                            isSequentialCompositeBatchGenerating ||
-                            isSequentialCoverCompositeBundleBatchGenerating ||
-                            generatePlatformCompositeSheetMutation.isPending ||
-                            coverCompositeBundleSceneId !== null ||
-                            isDashboardLoading ||
-                            isContentLoading ||
-                            !isAuthenticated ||
-                            platformTopicCount === 0
-                          }
-                          onClick={onBulkCoverCompositeBundleOneClick}
-                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
-                        >
-                          {isSequentialCoverCompositeBundleBatchGenerating ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Package className="h-4 w-4" />
-                          )}
-                          {isSequentialCoverCompositeBundleBatchGenerating
-                            ? "正在套裝生成（封面+2×4）…"
-                            : `一键套裝（封面+2×4）· ${platformBulkCoverCompositeBundleCost} 积分`}
-                        </button>
                         <button
                           type="button"
                           disabled={
@@ -5749,9 +5682,7 @@ export default function PlatformPage() {
                           ) : (
                             <Sparkles className="h-4 w-4" />
                           )}
-                          {isSequentialCoverBatchGenerating
-                            ? "正在生成封面单帧…"
-                            : `仅封面 · ${platformBulkGraphicCost} 积分`}
+                          {isSequentialCoverBatchGenerating ? "生成中…" : "一键生成封面套裝"}
                         </button>
                         <button
                           type="button"
@@ -5774,9 +5705,38 @@ export default function PlatformPage() {
                           ) : (
                             <Layers className="h-4 w-4" />
                           )}
-                          {isSequentialCompositeBatchGenerating
-                            ? "正在生成 2×4 分镜…"
-                            : bulkCompositePrimaryButtonLabel}
+                          {isSequentialCompositeBatchGenerating ? "生成中…" : "一键生成分鏡套裝"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            isSequentialCoverBatchGenerating ||
+                            isSequentialCompositeBatchGenerating ||
+                            isSequentialCoverCompositeBundleBatchGenerating ||
+                            generatePlatformCompositeSheetMutation.isPending ||
+                            coverCompositeBundleSceneId !== null ||
+                            isDashboardLoading ||
+                            isContentLoading ||
+                            !isAuthenticated ||
+                            platformTopicCount === 0
+                          }
+                          onClick={onBulkCoverCompositeBundleOneClick}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
+                        >
+                          {isSequentialCoverCompositeBundleBatchGenerating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Package className="h-4 w-4" />
+                          )}
+                          {isSequentialCoverCompositeBundleBatchGenerating ? "生成中…" : "一键生成封面加分鏡"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCoverDecisionTrialReadOpen(true)}
+                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border border-[#49e6ff]/50 bg-[#49e6ff]/12 px-6 py-2.5 text-sm font-semibold text-[#a5f3fc] shadow-[0_6px_24px_rgba(72,212,240,0.15)] transition hover:bg-[#49e6ff]/22 sm:w-auto"
+                        >
+                          <Eye className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                          点击试读 · 决策智库样张
                         </button>
                         <Dialog open={coverDecisionTrialReadOpen} onOpenChange={setCoverDecisionTrialReadOpen}>
                           <DialogContent className="max-h-[92vh] max-w-[min(1720px,calc(100vw-1rem))] w-full gap-0 overflow-y-auto overflow-x-auto border border-white/12 bg-[#05080f] p-3 sm:max-w-[min(1720px,calc(100vw-1rem))]">
@@ -6285,7 +6245,7 @@ export default function PlatformPage() {
                         if (
                           !supervisorAccess &&
                           !window.confirm(
-                            `将消耗 ${bundleCost} 积分，为本选题并发生成竖版封面与${compositeLabel}（套裝价低于分開购买）。是否继续？`,
+                            `将消耗 ${bundleCost} 积分，为本选题并发生成竖版封面与${compositeLabel}（封面 + 2×4 一体套裝固定打包价）。是否继续？`,
                           )
                         )
                           return;
@@ -6554,8 +6514,7 @@ export default function PlatformPage() {
                               GPT-IMAGE-2
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 推荐一键套裝 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点（竖版封面{" "}
-                              {CREDIT_COSTS.platformTopicFrameGraphic} 点 + 本条 2×4 {compositeCost} 点，分開约{" "}
+                              · 推荐一键套裝 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点（竖版封面 + 本条 2×4 固定打包价；若分步购买约{" "}
                               {CREDIT_COSTS.platformTopicFrameGraphic + compositeCost} 点）· 本条仅 2×4：{compositeCost}{" "}
                               点（{isGraphicFormat ? "图文/小红书八格" : "短视频分镜"}）
                             </span>

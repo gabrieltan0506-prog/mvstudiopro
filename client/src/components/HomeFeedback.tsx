@@ -71,7 +71,7 @@ export default function HomeFeedback() {
           <p style={{ fontSize: 15, color: "rgba(200,191,231,0.85)", lineHeight: 1.8, margin: 0 }}>
             我们真心希望听到你的使用感受。每一条被采纳的建议都会为你帐户发放
             <strong style={{ color: "#fff" }}> 100 Credits</strong>，
-            可直接用于成长营分析、平台趋势、节点工作流等所有功能。
+            可直接用于成长营分析、平台趋势、大师级视频基地等所有功能。
           </p>
 
           <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 12 }}>

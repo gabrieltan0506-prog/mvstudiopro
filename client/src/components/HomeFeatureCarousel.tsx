@@ -175,10 +175,10 @@ const CAROUSEL_CARDS = [
     isNew: false,
     date: "2026/04/24",
     tag: "功能亮点",
-    title: "影视级全自动产线",
-    subtitle: "从想法到成片全自动",
-    desc: "将繁琐步骤降维：可视化节点串联脚本、分镜、配乐与语音输出，支持语音输入提示词；点击执行，坐等高清成片。",
-    pills: ["节点编排", "语音输入", "高清成片"],
+    title: "大师级视频基地",
+    subtitle: "脚本 · 分镜图 · 成片一条链",
+    desc: "主链路：Gemini 3.1 Pro 生成脚本 → GPT-image-2 生成分镜图 → Seedance 2.0 生成影片。画布上可继续编排配乐、配音与合成；支持语音输入提示词。",
+    pills: ["Gemini 3.1 Pro", "GPT-image-2", "Seedance 2.0"],
     icon: Clapperboard,
     accentColor: "#34d399",
     glowColor: "rgba(52,211,153,0.18)",
@@ -192,7 +192,7 @@ const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/creator-growth-camp", label: "成长营 · 二创" },
   { href: "/research", label: "竞品调研 · 60 点" },
   { href: "/creator-growth-camp/platform", label: "流量雷达" },
-  { href: "/workflow-nodes", label: "节点产线" },
+  { href: "/workflow-nodes", label: "大师级视频基地" },
   { href: "/creator-growth-camp/premium-remix", label: "爆款解构" },
 ];
 

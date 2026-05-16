@@ -279,7 +279,7 @@ function WorkflowCanvas(props: {
     <div style={PANEL_STYLE}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 900 }}>Kling Studio 节点工作流</div>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>Kling Studio</div>
           <div style={MUTED_TEXT}>
             把生图、图生视频和音乐合并到同一张画布上，先产出参考图，再推进视频和配乐。
           </div>
@@ -867,7 +867,7 @@ export default function RemixStudio() {
           <div>
             <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>Kling Studio</div>
             <div style={{ marginTop: 6, color: "rgba(226,232,240,0.72)", fontSize: 14 }}>
-              节点工作流已经迁到这里：先生成参考图，再推进可灵图生视频，并补充配乐能力。
+              大师级视频基地（脚本 → 分镜图 → Seedance 成片）在 <strong>/workflow-nodes</strong>；此处串联可灵参考图与图生视频，并补充配乐。
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
