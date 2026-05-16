@@ -17,12 +17,20 @@
   ],
   "rewrites": [
     {
+      "source": "/api/ext/reverse-geocode",
+      "destination": "https://api.bigdatacloud.net/data/reverse-geocode-client"
+    },
+    {
+      "source": "/api/ext/open-meteo",
+      "destination": "https://geocoding-api.open-meteo.com/v1/search"
+    },
+    {
       "source": "/api/oauth/callback",
       "destination": "https://mvstudiopro.fly.dev/api/oauth/callback"
     },
     {
-      "source": "/api/:path*",
-      "destination": "https://mvstudiopro.fly.dev/api/:path*"
+      "source": "/api/:match*",
+      "destination": "https://mvstudiopro.fly.dev/api/:match*"
     },
     {
       "source": "/:path((?!api/|assets/|.*\\..*).*)",

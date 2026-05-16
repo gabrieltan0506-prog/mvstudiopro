@@ -91,8 +91,7 @@ export async function matchLocationFromOpenMeteo(text: string): Promise<ManualLo
   const q = text.trim();
   if (!q) return null;
   const url =
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}` +
-    `&count=12&language=zh&format=json`;
+    `/api/ext/open-meteo?name=${encodeURIComponent(q)}` + `&count=12&language=zh&format=json`;
   const res = await fetch(url, { credentials: "omit" });
   if (!res.ok) return null;
   const j = (await res.json()) as { results?: GeoHit[] };
