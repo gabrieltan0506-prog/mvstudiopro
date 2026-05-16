@@ -258,7 +258,31 @@ export default function HomeNavbar() {
                   borderTop: "1px solid rgba(255,255,255,0.08)",
                 }}
               >
-                {loading ? null : isAuthenticated && user ? (
+                {!isAuthenticated || !user ? (
+                  <button
+                    onClick={() => {
+                      setSheetOpen(false);
+                      navigate("/login");
+                    }}
+                    className="min-h-11"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "12px 16px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
+                      color: "white",
+                      fontWeight: 900,
+                      textDecoration: "none",
+                      fontSize: 14,
+                      width: "100%",
+                    }}
+                  >
+                    登录
+                  </button>
+                ) : (
                   <button
                     onClick={async () => {
                       setSheetOpen(false);
@@ -279,29 +303,6 @@ export default function HomeNavbar() {
                     }}
                   >
                     退出登录
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setSheetOpen(false);
-                      navigate("/login");
-                    }}
-                    className="min-h-11"
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: "12px 16px",
-                      borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
-                      color: "white",
-                      fontWeight: 900,
-                      textDecoration: "none",
-                      fontSize: 14,
-                    }}
-                  >
-                    登录
                   </button>
                 )}
               </div>
@@ -362,17 +363,23 @@ export default function HomeNavbar() {
             </nav>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              {loading ? (
-                <div
+              {!isAuthenticated || !user ? (
+                <button
+                  onClick={() => navigate("/login")}
                   style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.08)",
-                    animation: "pulse 1.5s infinite",
+                    padding: "10px 16px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    textDecoration: "none",
                   }}
-                />
-              ) : isAuthenticated && user ? (
+                >
+                  登录
+                </button>
+              ) : (
                 <div ref={menuRef} style={{ position: "relative" }}>
                   <button
                     onClick={() => setMenuOpen((v) => !v)}
@@ -502,22 +509,6 @@ export default function HomeNavbar() {
                     </div>
                   )}
                 </div>
-              ) : (
-                <button
-                  onClick={() => navigate("/login")}
-                  style={{
-                    padding: "10px 16px",
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    textDecoration: "none",
-                  }}
-                >
-                  登录
-                </button>
               )}
             </div>
           </>

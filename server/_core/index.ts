@@ -71,6 +71,7 @@ function applyApiCors(req: express.Request, res: express.Response) {
   res.header("Vary", "Origin");
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Max-Age", "86400");
   res.header(
     "Access-Control-Allow-Headers",
     String(req.headers["access-control-request-headers"] || "Content-Type, Authorization, X-Requested-With"),
@@ -190,6 +191,15 @@ async function startServer() {
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
   app.use(express.json({ limit: "650mb" }));
   app.use(express.urlencoded({ limit: "650mb", extended: true }));
+
+  // Global CORS middleware for all API routes
+  app.use("/api", (req, res, next) => {
+    applyApiCors(req, res);
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+    next();
+  });
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // File upload
@@ -375,21 +385,9 @@ async function startServer() {
 
   // Keep Fly health checks on a cheap route that never falls through to SPA static handling.
   // Also allow browser CORS preflight from www / Vercel / fly.dev so the client can gate Fly-direct tRPC.
-  app.options("/api/health", (req, res) => {
-    applyApiCors(req, res);
-    return res.status(204).end();
-  });
   app.get("/api/health", (req, res) => {
     applyApiCors(req, res);
     res.status(200).type("text/plain").send("ok");
-  });
-
-  app.use("/api/trpc", (req, res, next) => {
-    applyApiCors(req, res);
-    if (req.method === "OPTIONS") {
-      return res.status(204).end();
-    }
-    next();
   });
 
   app.get("/api/getGrowthSystemStatus", async (req, res) => {

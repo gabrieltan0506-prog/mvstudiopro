@@ -451,6 +451,89 @@ export default function HomeHero() {
             </div>
           </div>
         </div>
+
+        {/* Hero 下方黑色区域内置卡片 */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, 1fr)",
+            gap: 14,
+            marginTop: 24,
+          }}
+          className="hero-inner-cards"
+        >
+          {[
+            {
+              href: "/creative",
+              badge: "文字生图 · 图生视频",
+              badgeColor: "rgba(236,72,153,0.95)",
+              title: "创意轻工坊",
+              desc: "一站式生图与视频轻量化创作，Nano Banana 2 生图与 Seedance 引擎转化。",
+              gradient: "linear-gradient(135deg, rgba(236,72,153,0.18), rgba(219,39,119,0.08))",
+              border: "rgba(236,72,153,0.35)",
+              arrow: "rgba(244,114,182,1)",
+              cta: "马上体验 →",
+            },
+            {
+              href: "/creator-growth-camp/platform",
+              badge: "平台洞察",
+              badgeColor: "rgba(96,165,250,0.9)",
+              title: "全网流量雷达",
+              desc: "小红书、抖音、B站、快手数据窗口与趋势承接，可导出长图。",
+              gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
+              border: "rgba(96,165,250,0.30)",
+              arrow: "rgba(96,165,250,1)",
+              cta: "查看趋势 →",
+            },
+          ].map((card) => (
+            <Link
+              key={card.href}
+              href={card.href}
+              style={{
+                display: "block",
+                padding: "20px 22px",
+                borderRadius: 20,
+                background: card.gradient,
+                border: `1px solid ${card.border}`,
+                textDecoration: "none",
+                color: "white",
+                transition: "transform 0.18s, box-shadow 0.18s",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-3px)";
+                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 12px 36px rgba(0,0,0,0.35)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
+                (e.currentTarget as HTMLAnchorElement).style.boxShadow = "none";
+              }}
+            >
+              <div style={{ marginBottom: 10 }}>
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "3px 10px",
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    color: card.badgeColor,
+                    background: "rgba(255,255,255,0.07)",
+                    border: `1px solid ${card.border}`,
+                  }}
+                >
+                  {card.badge}
+                </span>
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.3 }}>{card.title}</div>
+              <div style={{ marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.68)", lineHeight: 1.7 }}>
+                {card.desc}
+              </div>
+              <div style={{ marginTop: 14, fontSize: 13, fontWeight: 800, color: card.arrow }}>
+                {card.cta}
+              </div>
+            </Link>
+          ))}
+        </div>
       </div>
 
       {/* 核心功能入口 */}
@@ -476,15 +559,26 @@ export default function HomeHero() {
             cta: "进入成长营 →",
           },
           {
-            href: "/creator-growth-camp/platform",
-            badge: "平台洞察",
-            badgeColor: "rgba(96,165,250,0.9)",
-            title: "全网流量雷达",
-            desc: "小红书、抖音、B站、快手数据窗口与趋势承接，可导出长图。",
-            gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
-            border: "rgba(96,165,250,0.30)",
-            arrow: "rgba(96,165,250,1)",
-            cta: "查看趋势 →",
+            href: "/research",
+            badge: "竞品调研",
+            badgeColor: "rgba(249,115,22,0.95)",
+            title: "竞品与对标分析",
+            desc: "四平台双引擎深潜，输出人设、脚本、视觉与 30 天增长路径（60 点/次）。",
+            gradient: "linear-gradient(135deg, rgba(249,115,22,0.20), rgba(234,88,12,0.10))",
+            border: "rgba(249,115,22,0.38)",
+            arrow: "rgba(253,186,116,1)",
+            cta: "开始调研 →",
+          },
+          {
+            href: "/god-view",
+            badge: "战略智库",
+            badgeColor: "rgba(245,200,80,0.95)",
+            title: "AI 上帝视角",
+            desc: "全景行业战报：半月刊、订阅与私人订制，附数据表与四平台对比矩阵。",
+            gradient: "linear-gradient(135deg, rgba(245,200,80,0.16), rgba(120,80,20,0.14))",
+            border: "rgba(212,175,55,0.42)",
+            arrow: "rgba(253,224,138,1)",
+            cta: "前往智库 →",
           },
           {
             href: "/workflow-nodes",
@@ -496,17 +590,6 @@ export default function HomeHero() {
             border: "rgba(52,211,153,0.35)",
             arrow: "rgba(110,231,183,1)",
             cta: "进入视频基地 →",
-          },
-          {
-            href: "/creative",
-            badge: "文字生图 · 图生视频",
-            badgeColor: "rgba(236,72,153,0.95)",
-            title: "创意轻工坊",
-            desc: "一站式生图与视频轻量化创作，Nano Banana 2 生图与 Seedance 引擎转化。",
-            gradient: "linear-gradient(135deg, rgba(236,72,153,0.18), rgba(219,39,119,0.08))",
-            border: "rgba(236,72,153,0.35)",
-            arrow: "rgba(244,114,182,1)",
-            cta: "马上体验 →",
           },
         ].map((card) => (
           <Link
@@ -566,9 +649,15 @@ export default function HomeHero() {
           .home-feature-cards {
             grid-template-columns: 1fr !important;
           }
+          .hero-inner-cards {
+            grid-template-columns: 1fr !important;
+          }
         }
         @media (max-width: 640px) {
           .home-feature-cards {
+            grid-template-columns: 1fr !important;
+          }
+          .hero-inner-cards {
             grid-template-columns: 1fr !important;
           }
         }

@@ -55,7 +55,8 @@ function DomainRedirector() {
 }
 
 // Lazy load pages for performance
-const Home = lazy(() => import("./pages/Home"));
+import Home from "./pages/Home";
+import Login from "./pages/Login";
 const Showcase = lazy(() => import("./pages/Showcase"));
 const GrowthCampPage = lazy(() => import("./pages/MVAnalysis"));
 const PlatformPage = lazy(() => import("./pages/PlatformPage"));
@@ -70,7 +71,7 @@ const RemixStudio = lazy(() => import("./pages/RemixStudio"));
 const RemixLanding = lazy(() => import("./pages/RemixLanding"));
 const WorkspaceStudio = lazy(() => import("./pages/WorkspaceStudio"));
 const TemplatesLibrary = lazy(() => import("./pages/TemplatesLibrary"));
-const Login = lazy(() => import("./pages/Login"));
+// Login is statically imported
 const TestLab = lazy(() => import("./pages/TestLab"));
 const WorkflowNodes = lazy(() => import("./pages/WorkflowNodes"));
 const CreativePage = lazy(() => import("./pages/CreativePage"));

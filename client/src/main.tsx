@@ -9,6 +9,21 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import "./index.css";
 
+// Bypass Vercel Serverless Function proxying for API calls to improve latency
+const originalFetch = window.fetch;
+window.fetch = async (...args) => {
+  let [resource, config] = args;
+  if (typeof resource === "string" && resource.startsWith("/api/")) {
+    const hostname = window.location.hostname;
+    if (hostname === "mvstudiopro.com" || hostname === "www.mvstudiopro.com") {
+      resource = `https://mvstudiopro.fly.dev${resource}`;
+      // Ensure credentials are included for cross-origin API calls to fly.dev
+      config = { ...config, credentials: "include" };
+    }
+  }
+  return originalFetch(resource, config);
+};
+
 // ─── PWA Service Worker Registration ──────────────────────────────────────────
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
