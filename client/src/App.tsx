@@ -7,8 +7,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
-import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
-import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
 import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { useAuth } from "@/_core/hooks/useAuth";
 
@@ -37,7 +35,7 @@ function DomainRedirector() {
       
       const isAdmin = user?.role === "admin" || user?.role === "supervisor";
       
-      // 非管理員一律跳轉至正式 Vercel 域名
+      // 非管理員一律跳轉至正式域名（DNS 應指向 Fly，與 fly.dev 區隔）
       if (!isAdmin) {
         const targetUrl = `https://mvstudiopro.com${window.location.pathname}${window.location.search}`;
         window.location.replace(targetUrl);
@@ -135,6 +133,8 @@ function Router() {
         <Route path={"/test-lab"} component={TestLab} />
         <Route path={"/workflow-nodes"} component={WorkflowNodes} />
         <Route path={"/creative"} component={CreativePage} />
+        <Route path={"/create"} component={CreativePage} />
+        <Route path={"/create"} component={CreativePage} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />
@@ -162,15 +162,12 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
-          <AmbientSceneProvider>
-            <DomainRedirector />
-            <GlobalAmbientBackdrop />
-            <div className="relative z-[1] min-h-dvh">
-              <Toaster />
-              <PWAInstallButton />
-              <Router />
-            </div>
-          </AmbientSceneProvider>
+          <DomainRedirector />
+          <div className="relative z-[1] min-h-dvh">
+            <Toaster />
+            <PWAInstallButton />
+            <Router />
+          </div>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
