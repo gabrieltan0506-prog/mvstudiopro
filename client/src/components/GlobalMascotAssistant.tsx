@@ -116,7 +116,7 @@ export type GlobalMascotAssistantProps = {
  * 吉祥物：文本朗讀、儀表板／新聞播報、資料變化提醒。（情緒關懷生成僅後台 Admin）
  */
 export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssistantProps) {
-  const { geo, requestLocation } = useAmbientScene();
+  const { geo, geoAttemptDone, requestLocation } = useAmbientScene();
   const browserTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -171,6 +171,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
       lon: geo?.lon,
     },
     {
+      enabled: geoAttemptDone,
       staleTime: 10 * 60_000,
       refetchInterval: 10 * 60_000,
       refetchOnWindowFocus: false,
@@ -180,6 +181,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   const newsQ = trpc.ambient.dashboardNews.useQuery(
     { lat: geo?.lat, lon: geo?.lon },
     {
+      enabled: geoAttemptDone,
       staleTime: 30 * 60_000,
       refetchInterval: 30 * 60_000,
       refetchOnWindowFocus: false,
@@ -284,7 +286,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   );
 
   useEffect(() => {
-    if (!live.data) return;
+    if (!geoAttemptDone || !live.data) return;
     const wx = normSig(
       `${live.data.weather.condition}|${live.data.weather.temperature}|${live.data.weather.humidity}`,
     );
@@ -318,7 +320,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
         runTypewriter(msg, 34);
       });
     }
-  }, [live.data, newsQ.data, proactiveUi, runTypewriter, stopTypewriter, trySpeak]);
+  }, [geoAttemptDone, live.data, newsQ.data, proactiveUi, runTypewriter, stopTypewriter, trySpeak]);
 
   const onReadInput = useCallback(() => {
     const t = userInput.trim();
@@ -337,7 +339,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
       });
       return;
     }
-    if (live.isLoading && !dashboardData) {
+    if (!geoAttemptDone || live.isLoading) {
       speakAndShow("正在讀取天氣與路況，請稍候再試。");
       return;
     }
@@ -349,6 +351,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   }, [
     geo,
     dashboardData,
+    geoAttemptDone,
     live.isLoading,
     newsHeadlineForReport,
     speakAndShow,
