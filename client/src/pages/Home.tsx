@@ -13,8 +13,6 @@ import HomeInviteApply from "../components/HomeInviteApply";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
 import SampleReportDownload from "../components/SampleReportDownload";
 import WorkAmbientPanel from "../components/WorkAmbientPanel";
-import { AmbientSceneProvider } from "../components/AmbientSceneProvider";
-import GlobalAmbientBackdrop from "../components/GlobalAmbientBackdrop";
 
 // 以下 section 在正式版开放前暂时隐藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -23,9 +21,7 @@ import GlobalAmbientBackdrop from "../components/GlobalAmbientBackdrop";
 
 export default function HomePage() {
   return (
-    <AmbientSceneProvider>
       <div className="relative" style={{ minHeight: "100dvh" }}>
-        <GlobalAmbientBackdrop />
         <div
           className="relative z-[1]"
           style={{
@@ -81,6 +77,5 @@ export default function HomePage() {
       <div style={{ height: 60 }} />
         </div>
       </div>
-    </AmbientSceneProvider>
   );
 }

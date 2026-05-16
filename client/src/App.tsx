@@ -7,6 +7,8 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
+import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
+import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
 
 // Lazy load pages for performance
 const Home = lazy(() => import("./pages/Home"));
@@ -113,8 +115,13 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
-          <Toaster />
-          <Router />
+          <AmbientSceneProvider>
+            <GlobalAmbientBackdrop />
+            <div className="relative z-[1] min-h-dvh">
+              <Toaster />
+              <Router />
+            </div>
+          </AmbientSceneProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
