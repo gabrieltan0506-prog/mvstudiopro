@@ -134,7 +134,6 @@ export default function WorkAmbientPanel() {
     wxLocal,
     geo,
     geoErr,
-    geoAttemptDone,
     timeSegment,
     weatherKind,
     ambientUrls,
@@ -150,7 +149,6 @@ export default function WorkAmbientPanel() {
       lon: geo?.lon,
     },
     {
-      enabled: geoAttemptDone,
       staleTime: 10 * 60_000,
       refetchInterval: 10 * 60_000,
       refetchOnWindowFocus: false,
@@ -161,7 +159,6 @@ export default function WorkAmbientPanel() {
   const newsQ = trpc.ambient.dashboardNews.useQuery(
     { lat: geo?.lat, lon: geo?.lon },
     {
-      enabled: geoAttemptDone,
       staleTime: 30 * 60_000,
       refetchInterval: 30 * 60_000,
       refetchOnWindowFocus: false,
@@ -274,7 +271,7 @@ export default function WorkAmbientPanel() {
           <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200/95">
             即時路況（Gemini）
           </div>
-          {(!geoAttemptDone || dash.isLoading) ? (
+          {dash.isLoading && !dash.data ? (
             <p className="mt-3 text-white/50">載入中…</p>
           ) : dash.data?.traffic ? (
             <>
