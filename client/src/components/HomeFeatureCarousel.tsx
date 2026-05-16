@@ -8,6 +8,21 @@ import { useIsMobile } from "@/hooks/useMobile";
 // ─── 轮播功能动态 ───────────────────────────────────────────────────
 const CAROUSEL_CARDS = [
   {
+    isNew: true,
+    date: "2026/05/16",
+    tag: "今日上线",
+    title: "创意轻工坊",
+    subtitle: "文字生图 · 单图生视频",
+    desc: "独立的一站式生图与视频创作工具。采用 Gemini 3.1 Flash 模型生成超清图像，并支持直接调用 Seedance 2.0 引擎将单图转化为高清动态视频。",
+    pills: ["文字生图", "图片生视频", "Gemini 3.1 Flash", "Seedance 2.0"],
+    icon: Sparkles,
+    accentColor: "#ec4899",
+    glowColor: "rgba(236,72,153,0.20)",
+    borderColor: "rgba(236,72,153,0.35)",
+    bgGradient: "linear-gradient(135deg, rgba(236,72,153,0.10) 0%, rgba(236,72,153,0.03) 100%)",
+    href: "/creative",
+  },
+  {
     isNew: false,
     date: "2026/04/28",
     tag: "本周新版",
@@ -124,21 +139,6 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(251,146,60,0.20)",
     borderColor: "rgba(251,146,60,0.35)",
     bgGradient: "linear-gradient(135deg, rgba(251,146,60,0.10) 0%, rgba(251,146,60,0.03) 100%)",
-  },
-  {
-    isNew: true,
-    date: "2026/05/16",
-    tag: "今日上线",
-    title: "创意轻工坊",
-    subtitle: "文字生图 · 单图生视频",
-    desc: "独立的一站式生图与视频创作工具。采用 Gemini 3.1 Flash 模型生成超清图像，并支持直接调用 Seedance 2.0 引擎将单图转化为高清动态视频。",
-    pills: ["文字生图", "图片生视频", "Gemini 3.1 Flash", "Seedance 2.0"],
-    icon: Sparkles,
-    accentColor: "#ec4899",
-    glowColor: "rgba(236,72,153,0.20)",
-    borderColor: "rgba(236,72,153,0.35)",
-    bgGradient: "linear-gradient(135deg, rgba(236,72,153,0.10) 0%, rgba(236,72,153,0.03) 100%)",
-    href: "/creative",
   },
   {
     isNew: false,
