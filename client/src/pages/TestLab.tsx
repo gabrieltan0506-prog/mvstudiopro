@@ -225,9 +225,11 @@ export default function TestLab() {
   const [editedImageUrl, setEditedImageUrl] = useState("");
 
   // Video
-  const [videoProvider, setVideoProvider] = useState<"google" | "kling">("google");
+  const [videoProvider, setVideoProvider] = useState<"google" | "kling" | "seedance">("google");
   const [veoMode, setVeoMode] = useState<VeoMode>("pro");
   const [veoResolution, setVeoResolution] = useState("720p");
+  /** Seedance 时长（秒，4–15，与 fal Seedance 一致） */
+  const [seedanceDuration, setSeedanceDuration] = useState("10");
   const [klingVideoMode, setKlingVideoMode] = useState<KlingVideoMode>("pro");
   const [videoBusy, setVideoBusy] = useState(false);
   const [videoTaskId, setVideoTaskId] = useState("");
@@ -503,6 +505,42 @@ export default function TestLab() {
         }
 
         throw new Error("veo_timeout");
+      }
+
+      if (videoProvider === "seedance") {
+        const steps: Record<string, unknown>[] = [];
+        const pushStep = (name: string, extra: Record<string, unknown> = {}) => {
+          steps.push({ name, at: new Date().toISOString(), ...extra });
+          setDebug({ ok: true, action: "video:seedance", steps: [...steps] });
+        };
+
+        pushStep("validate", {
+          hasImage: Boolean(inputImage),
+          promptLen: prompt.length,
+          aspectRatio,
+          resolution: veoResolution === "1080p" ? "1080p" : "720p",
+          durationSec: Number(seedanceDuration) || 10,
+        });
+
+        const create = await fetchJsonish("/api/jobs?op=seedanceI2V", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            imageUrl: inputImage,
+            resolution: veoResolution === "1080p" ? "1080p" : "720p",
+            aspectRatio,
+            duration: Number(seedanceDuration) || 10,
+          }),
+        });
+        last = create;
+        pushStep("http_seedanceI2V", { ...snapshotHttpForDebug(create) });
+
+        const vurl = String(create?.json?.videoUrl || "").trim();
+        if (!create.ok || !vurl) throw new Error("seedance_failed");
+        setVideoUrl(vurl);
+        pushStep("done", { videoUrlPreview: vurl.length > 160 ? `${vurl.slice(0, 160)}…` : vurl });
+        return;
       }
 
       // Kling video
@@ -1160,10 +1198,11 @@ export default function TestLab() {
               <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>引擎</div>
               <select
                 value={videoProvider}
-                onChange={(e) => setVideoProvider(e.target.value as any)}
+                onChange={(e) => setVideoProvider(e.target.value as "google" | "kling" | "seedance")}
                 style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
               >
                 <option value="google">Google Veo</option>
+                <option value="seedance">Seedance 2.0 (fal)</option>
                 <option value="kling">Kling Video</option>
               </select>
             </div>
@@ -1191,6 +1230,34 @@ export default function TestLab() {
                   >
                     <option value="720p">720p</option>
                     <option value="1080p">1080p</option>
+                  </select>
+                </div>
+              </>
+            ) : videoProvider === "seedance" ? (
+              <>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>分辨率（Seedance）</div>
+                  <select
+                    value={veoResolution}
+                    onChange={(e) => setVeoResolution(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="720p">720p</option>
+                    <option value="1080p">1080p</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>时长（秒）</div>
+                  <select
+                    value={seedanceDuration}
+                    onChange={(e) => setSeedanceDuration(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    {["4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"].map((d) => (
+                      <option key={d} value={d}>
+                        {d}s
+                      </option>
+                    ))}
                   </select>
                 </div>
               </>
@@ -1364,6 +1431,7 @@ export default function TestLab() {
         </div>
         <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 12 }}>
           每次請求結束後會更新此處；若請求失敗請看 <code style={{ fontSize: 11 }}>ok</code>、<code style={{ fontSize: 11 }}>clientThrownError</code>、<code style={{ fontSize: 11 }}>lastHttp</code>、<code style={{ fontSize: 11 }}>structured</code>。
+          Seedance 2.0 视频另可看 <code style={{ fontSize: 11 }}>steps</code> 数组（分步排错）。
         </div>
 
         {debugPanelOpen ? (

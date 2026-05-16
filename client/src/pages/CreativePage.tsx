@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +29,22 @@ export default function CreativePage() {
   const userPlan = (subQuery.data?.plan || "free") as string;
   const isAdmin = user?.role === "admin" || user?.role === "supervisor";
   const isPaidUser = isAdmin || userPlan !== "free";
+
+  /** 页面展示用；实际扣费以 chargeStep 返回值为准，失败会 refundStep */
+  const imageCreditPreview = useMemo(() => (imageModel === "gpt-image-2" ? 54 : 35), [imageModel]);
+
+  const videoCreditPreview = useMemo(() => {
+    if (videoModel === "seedance-2.0") {
+      return Math.ceil(
+        estimateSeedanceWorkflowCreditsForProduct({
+          resolution: "720p",
+          aspectRatio: videoAspect,
+          durationSec: 10,
+        }).credits * 1.5,
+      );
+    }
+    return Math.ceil(CREDIT_COSTS.workflowSceneVideo * 1.5);
+  }, [videoModel, videoAspect]);
 
   async function generateImage() {
     if (!prompt.trim()) return;
@@ -137,70 +153,61 @@ export default function CreativePage() {
       chargedCost = charge.cost;
       
       let finalVideoUrl = "";
-      
+
       if (videoModel === "seedance-2.0") {
-        // Use klingCreate (Seedance 2.0)
-        const res = await fetch(`/api/jobs?op=klingCreate`, {
+        const res = await fetch(`/api/jobs?op=seedanceI2V`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "seedance-2.0",
             prompt,
             imageUrl,
-            duration: "10",
             resolution: "720p",
-            aspectRatio: videoAspect
-          })
+            aspectRatio: videoAspect,
+            duration: 10,
+          }),
         });
-        const json = await res.json();
-        if (!res.ok || !json.taskId) {
-          throw new Error(json.error || json.message || "提交视频任务失败");
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.videoUrl) {
+          throw new Error(json.error || json.message || "Seedance 生成失败");
         }
-        
-        const taskId = json.taskId;
-        
-        for (let i = 0; i < 60; i++) {
-          await new Promise(r => setTimeout(r, 5000));
-          const pollRes = await fetch(`/api/jobs?op=klingTask&taskId=${encodeURIComponent(taskId)}`);
-          if (!pollRes.ok) continue;
-          const pollJson = await pollRes.json();
-          if (pollJson.failed) {
-            throw new Error(pollJson.error || "视频生成失败");
-          }
-          if (pollJson.done && pollJson.videoUrl) {
-            finalVideoUrl = pollJson.videoUrl;
-            break;
-          }
-        }
+        finalVideoUrl = String(json.videoUrl);
       } else {
-        // Use veoCreate (Veo 3.1)
-        const res = await fetch(`/api/jobs?op=veoCreate`, {
+        /** Veo 3.1 Pro：走 Vertex `/api/google`（与 Test Lab 一致），勿用 `/api/jobs`（会 unknown_op） */
+        const createRes = await fetch(`/api/google?op=veoCreate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt,
             imageUrl,
-            aspectRatio: videoAspect
-          })
+            provider: "pro",
+            durationSeconds: 8,
+            aspectRatio: videoAspect,
+            resolution: "720p",
+          }),
         });
-        const json = await res.json();
-        if (!res.ok || !json.taskId) {
-          throw new Error(json.error || json.message || "提交视频任务失败");
+        const createJson = await createRes.json().catch(() => ({}));
+        const taskId = String(createJson?.taskId || "").trim();
+        if (!createRes.ok || !taskId) {
+          throw new Error(createJson.error || createJson.message || "Veo 提交任务失败");
         }
-        
-        const taskId = json.taskId;
-        
-        for (let i = 0; i < 60; i++) {
-          await new Promise(r => setTimeout(r, 5000));
-          const pollRes = await fetch(`/api/jobs?op=veoTask&taskId=${encodeURIComponent(taskId)}`);
+
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 2500));
+          const pollRes = await fetch(
+            `/api/google?op=veoTask&provider=${encodeURIComponent("pro")}&taskId=${encodeURIComponent(taskId)}`,
+          );
           if (!pollRes.ok) continue;
-          const pollJson = await pollRes.json();
-          if (pollJson.failed) {
-            throw new Error(pollJson.error || "视频生成失败");
-          }
-          if (pollJson.done && pollJson.videoUrl) {
-            finalVideoUrl = pollJson.videoUrl;
+          const pollJson = await pollRes.json().catch(() => ({}));
+          const status = String(pollJson?.status || "");
+          const url = String(pollJson?.videoUrl || "").trim();
+          if (url) {
+            finalVideoUrl = url;
             break;
+          }
+          if (status.toLowerCase() === "failed") {
+            throw new Error(
+              String(pollJson?.raw?.error?.message || pollJson?.error || "Veo 任务失败"),
+            );
           }
         }
       }
@@ -225,8 +232,26 @@ export default function CreativePage() {
       <main className="px-4 pb-8 pt-24 md:px-6 flex justify-center">
         <div className="w-full max-w-3xl">
           <h1 className="mb-6 text-3xl font-black tracking-tight">文字生图 / 图生视频</h1>
-          <p className="mb-8 text-white/60 text-sm">直接通过文字生成图片，然后将图片转换为视频。生成图片使用 Nano Banana 2。</p>
-          
+          <p className="mb-4 text-white/60 text-sm">
+            直接通过文字生成图片，再将图片转为视频。路径：<code className="text-white/80">/creative</code> 与{" "}
+            <code className="text-white/80">/create</code>。
+          </p>
+
+          <div className="mb-6 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95 leading-relaxed">
+            <div className="font-bold text-amber-200 mb-1">积分说明（下单前请看）</div>
+            <ul className="list-disc pl-5 space-y-1 text-amber-100/90">
+              <li>
+                <strong>生成图片</strong>：当前模型约扣{" "}
+                <strong>{imageCreditPreview} 积分</strong>/ 张（Nano Banana 2 为 35；GPT-image-2 为 54；付费策略以站内为准）。
+              </li>
+              <li>
+                <strong>转视频</strong>：约扣 <strong>{videoCreditPreview} 积分</strong>/ 次（本页 Veo 3.1 Pro 按{" "}
+                <code className="text-amber-200/90">ceil({CREDIT_COSTS.workflowSceneVideo} × 1.5)</code>；Seedance 2.0 按 720p·10s·
+                {videoAspect} 动态估值再 ×1.5）。<strong>实际扣费以后台返回为准</strong>；失败会自动退还。
+              </li>
+            </ul>
+          </div>
+
           <Card className="border-white/10 bg-white/5 p-6">
             <CardContent className="p-0 flex flex-col gap-6">
               

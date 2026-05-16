@@ -2740,6 +2740,43 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw: rawOut });
     }
 
+    /** ByteDance Seedance 2.0（fal，單次 HTTP；訂閱完成後直接回 videoUrl） */
+    if (op === "seedanceI2V") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const prompt =
+        s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
+      if (!imageUrl) return res.status(400).json({ ok: false, error: "missing_image_url" });
+
+      const resolution = s(b.resolution || q.resolution || "720p") === "1080p" ? "1080p" : "720p";
+      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
+      const duration = parseSeedanceDurationInput(b.duration ?? q.duration ?? b.durationSec ?? 10);
+      const generateAudio = !(String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false);
+
+      try {
+        const { runSeedanceImageToVideo } = await import("../server/services/seedanceVideo.js");
+        const out = await runSeedanceImageToVideo({
+          prompt,
+          imageUrl,
+          resolution,
+          duration,
+          aspectRatio,
+          generateAudio,
+        });
+        return res.status(200).json({
+          ok: true,
+          videoUrl: out.videoUrl,
+          seed: out.seed,
+          provider: "seedance",
+          model: "bytedance/seedance-2.0/image-to-video",
+        });
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, error: e?.message || "seedance_failed" });
+      }
+    }
+
     if (op === "klingCreate") {
       if (!COMET_KEY && (!VAK || !VSK)) return res.status(500).json({ ok:false, error:"missing_env", detail:"COMETAPI_KEY or KLING_CN_VIDEO_ACCESS_KEY/SECRET_KEY" });
       if (!COMET_KEY && (!IAK || !ISK)) return res.status(500).json({ ok:false, error:"missing_env", detail:"COMETAPI_KEY or KLING_CN_IMAGE_ACCESS_KEY/SECRET_KEY" });
