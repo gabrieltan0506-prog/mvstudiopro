@@ -454,12 +454,47 @@ async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashb
   return safeParseTrafficJson(text);
 }
 
+/** 福建平潭一帶常與台灣西側 bbox 重疊，排除以免路況／新聞被誤標為台灣。 */
+function isPingtanFujianApprox(lat: number, lon: number): boolean {
+  return lat >= 25.12 && lat <= 25.68 && lon >= 119.52 && lon <= 119.99;
+}
+
+/** 台灣本島／澎湖一帶（不含金門、馬祖；排除平潭）。 */
+function isRoughlyTaiwanIsland(lat: number, lon: number): boolean {
+  if (isPingtanFujianApprox(lat, lon)) return false;
+  return lat >= 21.85 && lat <= 25.55 && lon >= 119.25 && lon <= 122.15;
+}
+
+function isRoughlyHongKong(lat: number, lon: number): boolean {
+  return lat >= 22.12 && lat <= 22.58 && lon >= 113.78 && lon <= 114.42;
+}
+
+function isRoughlyMacau(lat: number, lon: number): boolean {
+  return lat >= 22.04 && lat <= 22.24 && lon >= 113.52 && lon <= 113.65;
+}
+
+/**
+ * 中华人民共和国大陆辖境（含海南等），不含台港澳，方便新聞「周邊 2 條」與路況關鍵字分流。
+ */
 function isRoughlyMainlandChina(lat: number, lon: number): boolean {
-  return lat >= 18 && lat <= 54 && lon >= 73 && lon <= 135;
+  if (!(lat >= 18 && lat <= 54 && lon >= 73 && lon <= 135)) return false;
+  if (isRoughlyTaiwanIsland(lat, lon)) return false;
+  if (isRoughlyHongKong(lat, lon)) return false;
+  if (isRoughlyMacau(lat, lon)) return false;
+  return true;
 }
 
 /** 路況搜尋用：在座標基礎上給可搜關鍵字，避免只丟經緯度導致摘要空泛 */
 function trafficSearchLabelFromCoords(lat: number, lon: number): string | null {
+  if (isRoughlyTaiwanIsland(lat, lon)) {
+    return "台灣西部國道與主要都會區快速道路、市區幹道即時路況";
+  }
+  if (isRoughlyHongKong(lat, lon)) {
+    return "香港島、九龍與新界主要幹道即時路況";
+  }
+  if (isRoughlyMacau(lat, lon)) {
+    return "澳門半島與離島主幹道即時路況";
+  }
   if (!isRoughlyMainlandChina(lat, lon)) return null;
   if (lat >= 30.7 && lat <= 31.95 && lon >= 120.85 && lon <= 122.25) {
     return "上海市快速路、高架與市區主幹道";
@@ -474,7 +509,7 @@ function trafficSearchLabelFromCoords(lat: number, lon: number): string | null {
 }
 
 /** 快取版本後綴：後端修復空新聞後舊條目不應佔 30 分鐘。 */
-const NEWS_CACHE_KEY_REV = "v3";
+const NEWS_CACHE_KEY_REV = "v4";
 
 function newsBundleCacheKey(lat?: number, lon?: number): string {
   if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return `no-geo_${NEWS_CACHE_KEY_REV}`;
@@ -556,13 +591,22 @@ function finalizeDomesticTiers(bundle: AmbientNewsBundle, allowLocalFirstPair: b
 async function fetchAmbientNewsViaGemini(opts: { lat?: number; lon?: number }): Promise<AmbientNewsBundle> {
   const hasGeo =
     opts.lat != null && opts.lon != null && Number.isFinite(opts.lat) && Number.isFinite(opts.lon);
-  const inChina = hasGeo && isRoughlyMainlandChina(opts.lat!, opts.lon!);
+  const lat = hasGeo ? opts.lat! : NaN;
+  const lon = hasGeo ? opts.lon! : NaN;
+  const inMainland = hasGeo && isRoughlyMainlandChina(lat, lon);
+  const inTw = hasGeo && isRoughlyTaiwanIsland(lat, lon);
+  const inHk = hasGeo && isRoughlyHongKong(lat, lon);
+  const inMo = hasGeo && isRoughlyMacau(lat, lon);
 
   const locationBlock = hasGeo
-    ? `用户浏览器定位：纬度 ${opts.lat!.toFixed(4)}、经度 ${opts.lon!.toFixed(4)}。` +
-      (inChina
-        ? "坐标若在中国境内：请推断省／直辖市；domestic 前 2 条必须是「本省或相邻同城圈」的即时要闻（如上海侧重江浙沪、苏州侧重江苏省），后 3 条为全国层面重大新闻。"
-        : "坐标不在中国大陆：domestic 共 5 条全部为中国大陆全国要闻（勿写当地外国城市民生充数）。")
+    ? `用户浏览器定位：纬度 ${lat.toFixed(4)}、经度 ${lon.toFixed(4)}。` +
+      (inMainland
+        ? "坐标在中华人民共和国大陆：请推断省／直辖市；domestic 前 2 条必须是「本省或相邻同城圈」的即时要闻（如上海侧重江浙沪、苏州侧重江苏省），后 3 条为全国层面重大新闻。"
+        : inTw
+          ? "坐标在台湾地区：domestic 5 条仍全部为中国大陆全国要闻（tier 均为 national）；勿把台湾当局新闻塞进 domestic。international 可含全球公开报道。"
+          : inHk || inMo
+            ? "坐标在香港或澳门：domestic 5 条全部为中国大陆全国层面要闻；international 可含全球及港澳可核验的公开报道。"
+            : "坐标不在上述「大陆／台港澳」定义范围内：domestic 共 5 条全部为中国大陆全国要闻。")
     : "未提供定位：domestic 5 条全部为全国层面中国要闻。";
 
   const systemInstruction =

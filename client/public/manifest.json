@@ -1,16 +1,23 @@
 {
-  "name": "MV Studio Pro",
+  "name": "MV Studio",
   "short_name": "MV Studio",
   "description": "战略情报库与智能体服务平台",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#fffaf0",
   "theme_color": "#a8761b",
   "icons": [
     {
-      "src": "/pwa-icon.svg",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml",
+      "src": "/pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]
