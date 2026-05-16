@@ -9,6 +9,8 @@ import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
+import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
 
 import { captureSupervisorTokenFromUrl } from "@/lib/supervisorTrpcToken";
 
@@ -134,7 +136,6 @@ function Router() {
         <Route path={"/workflow-nodes"} component={WorkflowNodes} />
         <Route path={"/creative"} component={CreativePage} />
         <Route path={"/create"} component={CreativePage} />
-        <Route path={"/create"} component={CreativePage} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />
@@ -162,12 +163,15 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
-          <DomainRedirector />
-          <div className="relative z-[1] min-h-dvh">
-            <Toaster />
-            <PWAInstallButton />
-            <Router />
-          </div>
+          <AmbientSceneProvider>
+            <GlobalAmbientBackdrop />
+            <DomainRedirector />
+            <div className="relative z-[1] min-h-dvh">
+              <Toaster />
+              <PWAInstallButton />
+              <Router />
+            </div>
+          </AmbientSceneProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
