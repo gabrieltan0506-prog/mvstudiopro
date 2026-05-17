@@ -234,9 +234,9 @@ async function uploadFrame(
   index: number
 ): Promise<{ url: string; dataUrl: string }> {
   const originalBuffer = await fs.promises.readFile(framePath);
-  let buffer = originalBuffer;
+  let buffer: Buffer = Buffer.from(originalBuffer);
   try {
-    buffer = await sharp(originalBuffer, { failOnError: false })
+    const resized = await sharp(originalBuffer, { failOnError: false })
       .resize({
         width: 1280,
         height: 1280,
@@ -248,8 +248,9 @@ async function uploadFrame(
         mozjpeg: true,
       })
       .toBuffer();
+    buffer = Buffer.from(resized);
   } catch {
-    buffer = originalBuffer;
+    buffer = Buffer.from(originalBuffer);
   }
   const key = `video-frames/${Date.now()}_frame_${index}.jpg`;
   const { url } = await storagePut(key, buffer, "image/jpeg");
