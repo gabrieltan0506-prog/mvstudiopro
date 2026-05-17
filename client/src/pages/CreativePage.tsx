@@ -8,8 +8,8 @@ import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react"
 
 /** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
 const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
-const CREATIVE_VIDEO_CREDITS_SEEDANCE_29 = 118;
-/** 成片：Veo 8s / 54 cr；Seedance 2.9 10s / 118 cr（与 API 参数一致） */
+const CREATIVE_VIDEO_CREDITS_SEEDANCE_20 = 118;
+/** 成片：Veo 8s / 54 cr；Seedance 2.0 10s / 118 cr（与 API 参数一致） */
 const CREATIVE_VIDEO_DURATION_VEO_SEC = 8;
 const CREATIVE_VIDEO_DURATION_SEEDANCE_SEC = 10;
 
@@ -117,7 +117,7 @@ export default function CreativePage() {
   async function generateVideo() {
     if (!imageUrl) return;
     if (videoModel === "seedance-2.0" && !isPaidUser) {
-      setError("Seedance 2.9 暂不开放给未付费用户，需购买积分包才能使用。");
+      setError("Seedance 2.0 暂不开放给未付费用户，需购买积分包才能使用。");
       return;
     }
     
@@ -129,7 +129,7 @@ export default function CreativePage() {
     try {
       const overrideCost =
         videoModel === "seedance-2.0"
-          ? CREATIVE_VIDEO_CREDITS_SEEDANCE_29
+          ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20
           : CREATIVE_VIDEO_CREDITS_VEO_31;
 
       const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: overrideCost });
@@ -227,7 +227,7 @@ export default function CreativePage() {
                 <strong>生图</strong>：Nano Banana 2 每张 <strong>35</strong>；GPT-image-2 每张 <strong>54</strong>。
               </li>
               <li>
-                <strong>转视频</strong>：Veo 3.1，<strong>8 秒</strong> / <strong>54</strong> 积分。Seedance 2.9，<strong>10 秒</strong> /{" "}
+                <strong>转视频</strong>：Veo 3.1，<strong>8 秒</strong> / <strong>54</strong> 积分。Seedance 2.0，<strong>10 秒</strong> /{" "}
                 <strong>118</strong> 积分。失败退还。
               </li>
             </ul>
@@ -273,7 +273,7 @@ export default function CreativePage() {
                       className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
                     >
                       <option value="veo-3.1">Veo 3.1</option>
-                      <option value="seedance-2.0">Seedance 2.9 (限付费用户)</option>
+                      <option value="seedance-2.0">Seedance 2.0 (限付费用户)</option>
                     </select>
                   </div>
                   
