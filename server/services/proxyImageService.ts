@@ -144,7 +144,7 @@ const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
 );
 
 /**
- * **fal** `openai/gpt-image-2` 與 **OhMyGPT** 同段生圖：單段最多嘗試次數（含首次）。預設 **3**，滿次仍失敗則交下一段（OhMyGPT / Vertex）。
+ * **fal** `openai/gpt-image-2` 與 **OhMyGPT** 同段生圖：單段最多嘗試次數（含首次）。預設 **3**，滿次仍失敗則交下一段（fal / Vertex）。
  * 可用 `GPT_IMAGE2_MAX_ATTEMPTS` 或歷史名 `GPT_IMAGE2_PER_SIZE_MAX_ATTEMPTS` 覆寫，範圍 1～8。
  */
 const GPT_IMAGE2_MAX_ATTEMPTS = Math.min(
@@ -158,7 +158,7 @@ const GPT_IMAGE2_MAX_ATTEMPTS = Math.min(
 );
 
 /**
- * **OhMyGPT 段**跨尺寸累計失敗熔斷：達此值後 `return null` 交 Vertex 等（產品順序：**fal → OhMyGPT → Vertex**）。
+ * **OhMyGPT 主路徑**跨尺寸累計失敗熔斷：達此值後 `return null` 交 fal / Vertex 等（產品順序：**OhMyGPT → fal → Vertex**）。
  * 預設為 `GPT_IMAGE2_MAX_ATTEMPTS * 3`；現行尺寸白名單僅各一檔（**1024×1536** / **1536×1024**），可 `GPT_IMAGE2_PRIMARY_FAILS_BEFORE_FAL` 覆寫；上限 48。
  */
 const GPT_IMAGE2_OHMYGPT_ABORT_AFTER_FAILS = Math.min(
@@ -423,8 +423,8 @@ async function postGptImage2AndUpload(
   const L = opts.flowLog;
   const apiKey = String(process.env.PROXY_OPENAI_API_KEY || "").trim();
   if (!apiKey) {
-    appendImageFlowLog(L, "[GPT-IMAGE-2] PROXY_OPENAI_API_KEY 缺失，跳过主路径");
-    console.warn("[proxyImageService] PROXY_OPENAI_API_KEY missing, skip gpt-image-2");
+    appendImageFlowLog(L, "[GPT-IMAGE-2·OhMyGPT] PROXY_OPENAI_API_KEY 缺失，跳过 OhMyGPT");
+    console.warn("[proxyImageService] PROXY_OPENAI_API_KEY missing, OhMyGPT gpt-image-2 skipped");
     return null;
   }
 
@@ -447,7 +447,7 @@ async function postGptImage2AndUpload(
     if (primaryFailCount >= GPT_IMAGE2_OHMYGPT_ABORT_AFTER_FAILS) {
       appendImageFlowLog(
         L,
-        `[GPT-IMAGE-2] OhMyGPT 退路累计失败 ${primaryFailCount} 次（已达 ${GPT_IMAGE2_OHMYGPT_ABORT_AFTER_FAILS}，停止 OhMyGPT）→ 上层改走 Vertex Nano 等`,
+        `[GPT-IMAGE-2·OhMyGPT] 累计失败 ${primaryFailCount} 次（已达 ${GPT_IMAGE2_OHMYGPT_ABORT_AFTER_FAILS}，停止 OhMyGPT）→ 上层改走 fal / Vertex 等`,
       );
       return true;
     }
@@ -698,14 +698,17 @@ function getFalApiKeyForGptImage2(): string {
 }
 
 function isFalGptImage2FallbackEnabled(): boolean {
-  const raw = String(process.env.DISABLE_FAL_GPT_IMAGE2_FALLBACK || "").trim().toLowerCase();
-  return !(raw === "1" || raw === "true" || raw === "yes");
+  const disableLegacy = String(process.env.DISABLE_FAL_GPT_IMAGE2_FALLBACK || "").trim().toLowerCase();
+  if (disableLegacy === "1" || disableLegacy === "true" || disableLegacy === "yes" || disableLegacy === "on") {
+    return false;
+  }
+  const enable = String(process.env.ENABLE_FAL_GPT_IMAGE2_FALLBACK || "").trim().toLowerCase();
+  return enable === "1" || enable === "true" || enable === "yes" || enable === "on";
 }
 
 /**
- * **fal.ai** `openai/gpt-image-2`：**主路徑**（`fal.run` REST）；需 `FAL_API_KEY` / `FAL_KEY`。
- * `DISABLE_FAL_GPT_IMAGE2_FALLBACK=1` 時跳過 fal，由上層直接走 OhMyGPT。
- * 輸出臨時 URL 後經 {@link mirrorImageUrlToGcsSignedUrl} 落到 GCS/Fly。
+ * **fal.ai** `openai/gpt-image-2`：**退路**（`fal.run` REST）；需 `FAL_API_KEY` / `FAL_KEY`。
+ * `ENABLE_FAL_GPT_IMAGE2_FALLBACK=1` 時才會走 fal；默認關閉（僅 OhMyGPT + Vertex 等）。舊變量 `DISABLE_FAL_GPT_IMAGE2_FALLBACK=1` 仍強制關閉 fal。
  * @see https://fal.ai/models/openai/gpt-image-2/api
  */
 async function postGptImage2ViaFalAndUpload(
@@ -716,12 +719,15 @@ async function postGptImage2ViaFalAndUpload(
 ): Promise<string | null> {
   const L = flowLog;
   if (!isFalGptImage2FallbackEnabled()) {
-    appendImageFlowLog(L, "[FAL·GPT-IMAGE-2] 已禁用（DISABLE_FAL_GPT_IMAGE2_FALLBACK=1）→ 跳过 fal 主路径");
+    appendImageFlowLog(
+      L,
+      "[FAL·GPT-IMAGE-2] 未啟用（默認僅 OhMyGPT；若需 fal 退路請設 ENABLE_FAL_GPT_IMAGE2_FALLBACK=1）→ 跳过 fal",
+    );
     return null;
   }
   const key = getFalApiKeyForGptImage2();
   if (!key) {
-    appendImageFlowLog(L, "[FAL·GPT-IMAGE-2] 无 FAL_API_KEY/FAL_KEY，跳过 fal 主路径");
+    appendImageFlowLog(L, "[FAL·GPT-IMAGE-2] 无 FAL_API_KEY/FAL_KEY，跳过 fal 退路");
     return null;
   }
   const openAiSize = firstConcreteOpenAiGptImage2Size(
@@ -927,7 +933,7 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
 }
 
 /**
- * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **fal `openai/gpt-image-2`** 主路径 → **OhMyGPT** 退路
+ * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **OhMyGPT** `gpt-image-2` 主路径 → **fal** 退路
  * → **Nano Banana 2** 兜底。图像 API **不**执行翻译。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
@@ -954,39 +960,37 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
   const prompt = appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
-  const primaryOpenAiSize = firstConcreteOpenAiGptImage2Size(sizes);
-  const primaryFal = gptImage2OpenAiSizeToFalImageSize(primaryOpenAiSize);
 
   appendImageFlowLog(
     L,
-    `[单帧主路径] fal POST openai/gpt-image-2 · ${options.aspectRatio} · openAiSize=${primaryOpenAiSize} · fal=${primaryFal.width}×${primaryFal.height} · quality=${GPT_IMAGE2_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT} · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT} · 英文 prompt 约 ${prompt.length} 字`,
   );
-  const falFirst = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
-  if (falFirst) {
-    appendImageFlowLog(L, "[单帧主路径] fal GPT-IMAGE-2 成功，已落库");
-    return falFirst;
+  const fromOhm = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes, flowLog: L });
+  if (fromOhm) {
+    appendImageFlowLog(L, "[单帧主路径] OhMyGPT GPT-IMAGE-2 成功，已上传 GCS");
+    return fromOhm;
   }
 
   appendImageFlowLog(
     L,
-    `[单帧·OhMyGPT 退路] fal 无图 → GPT-IMAGE-2（OhMyGPT）· ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · 与 Vertex 共用鏡頭/光影語彙`,
+    `[单帧·fal 退路] OhMyGPT 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`,
   );
-  const fromProxy = await postGptImage2AndUpload(prompt, options.gcsSubdir, { sizes, flowLog: L });
-  if (fromProxy) {
-    appendImageFlowLog(L, "[单帧·OhMyGPT 退路] GPT-IMAGE-2 成功，已上传 GCS");
-    return fromProxy;
+  const falSecond = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
+  if (falSecond) {
+    appendImageFlowLog(L, "[单帧·fal 退路] fal GPT-IMAGE-2 成功，已落库");
+    return falSecond;
   }
 
   appendImageFlowLog(
     L,
-    `[单帧兜底] fal / OhMyGPT 均无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · 沿用同一条 prompt（已含比例/宽幅约束与共用光影）`,
+    `[单帧兜底] OhMyGPT / fal 均无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · 沿用同一条 prompt（已含比例/宽幅约束与共用光影）`,
   );
   return fallbackNanoBanana2FromPrompt(prompt, options.aspectRatio, L);
 }
 
 /**
- * 版式出图：`fal openai/gpt-image-2` 主路径 → OhMyGPT `gpt-image-2` 退路（需 `PROXY_OPENAI_API_KEY`）。
- * fal 可由 `DISABLE_FAL_GPT_IMAGE2_FALLBACK=1` 整段跳过。
+ * 版式出图：OhMyGPT `gpt-image-2` 主路径 → fal `openai/gpt-image-2` 退路（需 `PROXY_OPENAI_API_KEY` / `FAL_KEY`）。
+ * fal 預設關閉；設 `ENABLE_FAL_GPT_IMAGE2_FALLBACK=1` 才啟用 fal 退路。
  */
 export async function generateGptImage2(options: {
   title: string;
@@ -1009,11 +1013,11 @@ export async function generateGptImage2(options: {
     withAspect,
     "platform_vertical_cover_after_gpt2_aspect_lock",
   );
-  appendImageFlowLog(L, "[版式·主路径] fal openai/gpt-image-2 · 9:16");
-  const falUrl = await postGptImage2ViaFalAndUpload(finalPrompt, options.mode.toLowerCase(), "9:16", L);
-  if (falUrl) return falUrl;
-  appendImageFlowLog(L, "[版式·OhMyGPT 退路] fal 无图 → GPT-IMAGE-2（OhMyGPT）");
-  return postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase(), { flowLog: L });
+  appendImageFlowLog(L, "[版式·主路径] OhMyGPT gpt-image-2 · 9:16");
+  const ohmUrl = await postGptImage2AndUpload(finalPrompt, options.mode.toLowerCase(), { flowLog: L });
+  if (ohmUrl) return ohmUrl;
+  appendImageFlowLog(L, "[版式·fal 退路] OhMyGPT 无图 → fal openai/gpt-image-2 · 9:16");
+  return postGptImage2ViaFalAndUpload(finalPrompt, options.mode.toLowerCase(), "9:16", L);
 }
 
 export type PlatformCompositeSheetKind =
@@ -1029,8 +1033,8 @@ function resolvePlatformCompositeSheetTotalTimeoutMs(): number {
 }
 
 /**
- * 平台页宽幅合成：**同一條** 英文生图 prompt（双语编导 → 可选提炼 → 像素锁）先走 **fal `openai/gpt-image-2`**（16:9）；
- * 失败则 **OhMyGPT** `gpt-image-2`（尺寸白名单序列）；再败走 **Vertex** Nano Banana 2，传入 **完全相同** 的 prompt。
+ * 平台页宽幅合成：**同一條** 英文生图 prompt（双语编导 → 可选提炼 → 像素锁）先走 **OhMyGPT** `gpt-image-2`（16:9）；
+ * 失败则 **fal** `openai/gpt-image-2`；再败走 **Vertex** Nano Banana 2，传入 **完全相同** 的 prompt。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -1096,7 +1100,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4 · strict**" : " · 默认 Flash→GPT strict"}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ 像素锁 → ⑤ GPT-IMAGE-2 宽幅 → ⑥ 无图则 Nano Banana 2 兜底（2K）`,
+    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4 · strict**" : " · 默认 Flash→GPT strict"}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ 像素锁 → ⑤ OhMyGPT→fal 宽幅 GPT-IMAGE-2 → ⑥ 无图则 Nano Banana 2 兜底（2K）`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1225,30 +1229,14 @@ export async function generatePlatformCompositeSheetImage(options: {
 
       appendImageFlowLog(
         L,
-        `[2×4·步骤2] fal POST openai/gpt-image-2 · 宽幅 16:9 · gcsSubdir=${subdir}`,
-      );
-      const falWide = await postGptImage2ViaFalAndUpload(promptForImage, subdir, "16:9", L);
-      if (falWide) {
-        appendImageFlowLog(L, `[2×4·步骤2] fal GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
-        emitPlatformImagePipelineStat({
-          event: "composite_sheet_fal_gpt_image2_success",
-          sheetKind: k,
-          compositeSheetAttempt: attempt,
-          compositeSheetMaxAttempts: compositeMaxAttempts,
-        });
-        return falWide;
-      }
-
-      appendImageFlowLog(
-        L,
-        `[2×4·步骤2b] fal 无图 → OhMyGPT GPT-IMAGE-2 · 尺寸序列: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
+        `[2×4·步骤2] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · gcsSubdir=${subdir} · 尺寸序列: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
       );
       const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
         sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
         flowLog: L,
       });
       if (fromOhm) {
-        appendImageFlowLog(L, `[2×4·步骤2b] OhMyGPT GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        appendImageFlowLog(L, `[2×4·步骤2] OhMyGPT GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
         emitPlatformImagePipelineStat({
           event: "composite_sheet_gpt_image2_success",
           sheetKind: k,
@@ -1260,7 +1248,23 @@ export async function generatePlatformCompositeSheetImage(options: {
 
       appendImageFlowLog(
         L,
-        "[2×4·步骤2] fal / OhMyGPT 均未返回图像 → 若允许则走 Vertex Nano 兜底…",
+        `[2×4·步骤2b] OhMyGPT 无图 → fal POST openai/gpt-image-2 · 宽幅 16:9`,
+      );
+      const falWide = await postGptImage2ViaFalAndUpload(promptForImage, subdir, "16:9", L);
+      if (falWide) {
+        appendImageFlowLog(L, `[2×4·步骤2b] fal GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        emitPlatformImagePipelineStat({
+          event: "composite_sheet_fal_gpt_image2_success",
+          sheetKind: k,
+          compositeSheetAttempt: attempt,
+          compositeSheetMaxAttempts: compositeMaxAttempts,
+        });
+        return falWide;
+      }
+
+      appendImageFlowLog(
+        L,
+        "[2×4·步骤2] OhMyGPT / fal 均未返回图像 → 若允许则走 Vertex Nano 兜底…",
       );
 
       if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
@@ -1269,7 +1273,7 @@ export async function generatePlatformCompositeSheetImage(options: {
           "[2×4·兜底] 已跳过 Vertex Nano（GCP 避险或 PLATFORM_VERTEX_NANO_BANANA2 未开启）",
         );
         throw new Error(
-          "fal / OhMyGPT 均未出图；当前未启用 Vertex 图像兜底。请检查 FAL_API_KEY、OhMyGPT/PROXY_OPENAI_API_KEY；需兜底可设 PLATFORM_VERTEX_NANO_BANANA2=1 并确保未触发平台 GCP 避险。",
+          "OhMyGPT / fal 均未出图；当前未启用 Vertex 图像兜底。请检查 PROXY_OPENAI_API_KEY、FAL_API_KEY；需兜底可设 PLATFORM_VERTEX_NANO_BANANA2=1 并确保未触发平台 GCP 避险。",
         );
       }
 
@@ -1349,7 +1353,7 @@ export async function generatePlatformCompositeSheetImage(options: {
 }
 
 /**
- * 旗艦生圖引擎：**fal** `openai/gpt-image-2` → OhMyGPT `gpt-image-2` → Vertex **Nano Banana 2** 兜底。
+ * 旗艦生圖引擎：**OhMyGPT** `gpt-image-2` → fal `openai/gpt-image-2` → Vertex **Nano Banana 2** 兜底。
  *
  * @description 截斷與水印只在 `buildTypographyImagePrompt` 內執行一次，不建議在本函數重複 `sliceHeading`，
  *   以免已帶省略號的標題被二次截斷。
@@ -1368,17 +1372,17 @@ export async function generateImageGpt2WithImagenFallback(options: {
   const L = options.flowLog;
   appendImageFlowLog(
     L,
-    `[版式兜底] buildTypographyImagePrompt · mode=${options.mode} · 9:16（画内零字）· 顺序 fal → OhMyGPT → NB2`,
+    `[版式兜底] buildTypographyImagePrompt · mode=${options.mode} · 9:16（画内零字）· 顺序 OhMyGPT → fal → NB2`,
   );
   const primary = await generateGptImage2({ ...options, flowLog: L });
   if (primary) {
-    appendImageFlowLog(L, `[版式兜底] fal / OhMyGPT 已成功其一`);
+    appendImageFlowLog(L, `[版式兜底] OhMyGPT / fal 已成功其一`);
     return primary;
   }
 
   appendImageFlowLog(
     L,
-    "[版式兜底] fal / OhMyGPT 均无图 → Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 光影",
+    "[版式兜底] OhMyGPT / fal 均无图 → Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 光影",
   );
   const nbPrompt = buildTypographyImagePrompt({
     title: options.title,

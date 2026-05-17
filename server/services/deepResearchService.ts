@@ -79,7 +79,7 @@ function appendMagazineCoverDateInstructions(promptBase: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Gemini Consumer API key 生图（generativelanguage…:generateContent?key=）。
 // 戰略智庫主流程封面：**Gemini 3.1 Pro 英文指令 → GPT-IMAGE-2**；失败则 Fly 直連 Vertex（`generateAndStoreStrategicImage`），再败 **Consumer Nano Banana 2**（需 `GEMINI_API_KEY`）。
-// 正文场景配图：**fal / OhMyGPT gpt-image-2**（经 proxyImageService）+ Imagen Ultra 兜底（`proxyImageService`）。
+// 正文场景配图：**OhMyGPT / fal gpt-image-2**（经 proxyImageService）+ Imagen Ultra 兜底（`proxyImageService`）。
 // Vertex 全敗時封面可走本函式 **Consumer Nano Banana 2 · 2K**（需 `GEMINI_API_KEY`）。
 // ─────────────────────────────────────────────────────────────────────────────
 type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
