@@ -11,6 +11,7 @@
     "build": "tsc",
     "start": "NODE_ENV=production node dist/server/_core/index.js",
     "check": "tsc --noEmit",
+    "verify:lockfile": "pnpm install --frozen-lockfile",
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
