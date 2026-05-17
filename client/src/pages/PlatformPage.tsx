@@ -2550,18 +2550,21 @@ export default function PlatformPage() {
         }),
       );
 
-      if (!res.imageUrl) return;
-      if (variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape") {
-        setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
-      } else {
-        setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
-      }
-      const label =
-        variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
-          ? "分镜图文参考"
-          : "小红书 2×4 八格图文参考";
-      if (!compositeBatchSilentUiRef.current) {
-        toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
+      if (res.imageUrl) {
+        if (variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape") {
+          setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
+        } else {
+          setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
+        }
+        const label =
+          variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
+            ? "分镜图文参考"
+            : "小红书 2×4 八格图文参考";
+        if (!compositeBatchSilentUiRef.current) {
+          toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
+        }
+      } else if ((res as any).isAsync) {
+         console.log("[PlatformPage] composite mutation returned async pending status");
       }
     },
     onError: (error, variables, ctx) => {
@@ -2719,6 +2722,8 @@ export default function PlatformPage() {
           if (out) {
             successCount += 1;
             liveLines.push(`${new Date().toISOString()}  ✓ 合成完成 · sceneId=${item.id}`);
+          } else if ((res as any).isAsync) {
+            // 異步模式不立刻報錯，等輪詢結束
           } else {
             liveLines.push(`${new Date().toISOString()}  ✗ 合成无图 · sceneId=${item.id}`);
           }
@@ -2815,13 +2820,35 @@ export default function PlatformPage() {
               apiKind: ctx.kind,
               sceneId: ctx.sceneId,
               title: ctx.title.slice(0, 80),
-              pending: true,
+              pending: j.status === "running" || j.status === "pending",
               liveProgressJobId: ctx.jobId,
               liveCompositeFlowTail: last,
               serverFlowLogEntries: log.length,
             },
           });
         });
+
+        if (j.status === "completed" || j.status === "failed") {
+          cancelled = true;
+          // 完成時如果帶有圖，立刻賦予畫面
+          if (j.status === "completed" && out && (out as any).compositeImageUrl) {
+            if (ctx.kind === "storyboard_sheet_portrait" || ctx.kind === "storyboard_sheet_landscape") {
+              setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: (out as any).compositeImageUrl! }));
+            } else {
+              setPlatformXhsNoteMap((p) => ({ ...p, [ctx.sceneId]: (out as any).compositeImageUrl! }));
+            }
+            if (!compositeBatchSilentUiRef.current) {
+               toast.success("2x4 合成成功 (非同步返回)");
+            }
+          }
+          if (j.status === "failed") {
+            const errorReason = (out as any)?.error || "未知錯誤";
+            if (!compositeBatchSilentUiRef.current) {
+              toast.error(`2x4 合成失敗: ${errorReason}`);
+            }
+          }
+        }
+
       } catch {
         /* 下一拍重试 */
       }
