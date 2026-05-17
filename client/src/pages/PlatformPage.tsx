@@ -2820,7 +2820,7 @@ export default function PlatformPage() {
               apiKind: ctx.kind,
               sceneId: ctx.sceneId,
               title: ctx.title.slice(0, 80),
-              pending: j.status === "running" || j.status === "pending",
+              pending: j.status === "running" || j.status === "queued",
               liveProgressJobId: ctx.jobId,
               liveCompositeFlowTail: last,
               serverFlowLogEntries: log.length,
@@ -2828,10 +2828,10 @@ export default function PlatformPage() {
           });
         });
 
-        if (j.status === "completed" || j.status === "failed") {
+        if (j.status === "succeeded" || j.status === "failed") {
           cancelled = true;
-          // 完成時如果帶有圖，立刻賦予畫面
-          if (j.status === "completed" && out && (out as any).compositeImageUrl) {
+          // 完成時如果帶有圖，立刻賦予畫面（JobsRepo 終態為 succeeded，不是 completed）
+          if (j.status === "succeeded" && out && (out as any).compositeImageUrl) {
             if (ctx.kind === "storyboard_sheet_portrait" || ctx.kind === "storyboard_sheet_landscape") {
               setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: (out as any).compositeImageUrl! }));
             } else {
