@@ -7,7 +7,7 @@
  *
  * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
  *
- * **週末生存模式（可切換）：佈署環境變數 `PLATFORM_WEEKEND_SURVIVAL_MODE=1`（或 `true`/`yes`/`on`）時啟用**，等同開啟平台 GCP 避險（Stage2→OpenAI、2×4 英文化鎖 GPT 5.4 等）。**未設定或非 truthy 時預設關閉**，2×4 可走 Vertex Flash 與面板 translator。見 {@link isPlatformWeekendSurvivalModeEnabled}。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。
+ * **週末生存模式：** 當 {@link PLATFORM_WEEKEND_SURVIVAL_MODE_FORCE_OFF} 為 `true` 時**程式強制關閉**，不再讀 `PLATFORM_WEEKEND_SURVIVAL_MODE`。設為 `false` 後，佈署變數 `PLATFORM_WEEKEND_SURVIVAL_MODE=1`（或 `true`/`yes`/`on`）可再啟用，等同平台 GCP 避險（Stage2→OpenAI、2×4 英文化鎖 GPT 5.4 等）。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。
  *
  * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
@@ -20,11 +20,18 @@ function norm(s: string | undefined): string {
 }
 
 /**
- * 週末／帳單避險 **生存模式**：由環境變數 **`PLATFORM_WEEKEND_SURVIVAL_MODE`** 切換（dual mode）。
+ * **`true`**：忽略 `PLATFORM_WEEKEND_SURVIVAL_MODE`，生存模式一律關閉（{@link isPlatformWeekendSurvivalModeEnabled} 恒為 `false`）。
+ * 緊急需再起用時改為 `false` 並部署，再靠環境變數切換。
+ */
+export const PLATFORM_WEEKEND_SURVIVAL_MODE_FORCE_OFF = true;
+
+/**
+ * 週末／帳單避險 **生存模式**：預設由環境變數 **`PLATFORM_WEEKEND_SURVIVAL_MODE`** 切換；若 {@link PLATFORM_WEEKEND_SURVIVAL_MODE_FORCE_OFF} 為 `true` 則永久關閉直至改程式。
  * - **開啟**：`1` / `true` / `yes` / `on` → 觸發 {@link isPlatformWeekendGcpEscape} 內整鏈避險（含 2×4 英文化鎖 GPT 5.4）。
  * - **關閉**：未設定、`0` / `false` / `no` / `off` → **預設**，可走 Vertex Flash 與面板 translator。
  */
 export function isPlatformWeekendSurvivalModeEnabled(): boolean {
+  if (PLATFORM_WEEKEND_SURVIVAL_MODE_FORCE_OFF) return false;
   const v = norm(process.env.PLATFORM_WEEKEND_SURVIVAL_MODE);
   if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
   if (v === "0" || v === "false" || v === "no" || v === "off") return false;
@@ -61,6 +68,48 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
   if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
   if (v === "0" || v === "false" || v === "no" || v === "off") return false;
   return PLATFORM_VERTEX_NANO_BANANA2_ENABLED;
+}
+
+/**
+ * 平台頁 **2×4 / 八格** 合成出圖主引擎。
+ * - **`gpt_image2`（環境／相容預設）**：**OhMyGPT** → **fal** GPT‑Image‑2 → 可選 **NB2** 兜底（受 {@link isPlatformVertexNanoBanana2FallbackEnabled} 約束）。
+ * - **`nano_banana_2`**：略過 GPT‑Image‑2，直接 **Vertex Nano Banana 2**（16:9·2K）；需 Vertex 配置且非 GCP 避險。
+ *
+ * 部署：`PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2` 或 `nano_banana_2`（別名含 `gpt-image-2`、`nb2`、`vertex`）。
+ *
+ * **請求覆寫：** 前端或 worker 可傳 `compositeImageEngine`；若為 `gpt_image2` / `nano_banana_2` 則 **優先於** 環境變數。
+ */
+export type PlatformCompositeSheetImageEngine = "gpt_image2" | "nano_banana_2";
+
+/** 未設 `PLATFORM_COMPOSITE_SHEET_ENGINE`、且無請求覆寫時的預設：與既有 OhMyGPT→fal 主鏈一致。 */
+export const PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT: PlatformCompositeSheetImageEngine = "gpt_image2";
+
+export function resolvePlatformCompositeSheetImageEngine(
+  requested?: PlatformCompositeSheetImageEngine | null,
+): PlatformCompositeSheetImageEngine {
+  if (requested === "gpt_image2" || requested === "nano_banana_2") {
+    return requested;
+  }
+  const v = norm(process.env.PLATFORM_COMPOSITE_SHEET_ENGINE);
+  if (
+    v === "gpt_image2" ||
+    v === "gpt-image-2" ||
+    v === "gptimage2" ||
+    v === "openai" ||
+    v === "ohmygpt"
+  ) {
+    return "gpt_image2";
+  }
+  if (
+    v === "nano_banana_2" ||
+    v === "nano-banana-2" ||
+    v === "nanobanana2" ||
+    v === "nb2" ||
+    v === "vertex"
+  ) {
+    return "nano_banana_2";
+  }
+  return PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT;
 }
 
 /** 平台圖/Stage2 相關避險（關閉主開關、週末旗標、billing/環境變數）。不影響語音或其它非平台管線。 */

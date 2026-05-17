@@ -1269,14 +1269,16 @@ async function processPlatformJob(
       const compositeScriptContext = String(params.compositeScriptContext ?? "").trim();
       const compositeExecutionDetails =
         typeof params.compositeExecutionDetails === "string" ? params.compositeExecutionDetails.trim() : undefined;
-      const imagePromptTranslator =
-        params.compositeImagePromptTranslator === "gpt54" ||
-        params.compositeImagePromptTranslator === "vertex_gemini_3_flash_preview"
-          ? params.compositeImagePromptTranslator
-          : "vertex_gemini_3_flash_preview";
+      const imagePromptTranslator = "vertex_gemini_3_flash_preview" as const;
 
       const rawCompDr = (params as { enableCompositeDeepResearchPro?: unknown }).enableCompositeDeepResearchPro;
       const enableCompositeDeepResearchProAdmin = rawCompDr === true;
+
+      const rawCompositeEngine = (params as { compositeImageEngine?: unknown }).compositeImageEngine;
+      const compositeImageEngine =
+        rawCompositeEngine === "nano_banana_2" || rawCompositeEngine === "gpt_image2"
+          ? rawCompositeEngine
+          : undefined;
 
       const creationRecordIdRaw = (params as { creationRecordId?: unknown }).creationRecordId;
       const creationRecordId =
@@ -1332,6 +1334,7 @@ async function processPlatformJob(
           enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
           coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
           progressJobId: platformJobId,
+          compositeImageEngine,
         }),
       ]);
 

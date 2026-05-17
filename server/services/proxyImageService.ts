@@ -3,7 +3,9 @@ import {
   isPlatformVertexNanoBanana2FallbackEnabled,
   isPlatformWeekendGcpEscape,
   isPlatformWeekendSurvivalModeEnabled,
+  resolvePlatformCompositeSheetImageEngine,
   resolvePlatformImageStorageDriver,
+  type PlatformCompositeSheetImageEngine,
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import {
@@ -1033,8 +1035,67 @@ function resolvePlatformCompositeSheetTotalTimeoutMs(): number {
 }
 
 /**
- * 平台页宽幅合成：**同一條** 英文生图 prompt（双语编导 → 可选提炼 → 像素锁）先走 **OhMyGPT** `gpt-image-2`（16:9）；
- * 失败则 **fal** `openai/gpt-image-2`；再败走 **Vertex** Nano Banana 2，传入 **完全相同** 的 prompt。
+ * 2×4 合成：**主路徑**為 Vertex Nano Banana 2（16:9·2K），略過 OhMyGPT / fal 的 GPT‑Image‑2。
+ */
+async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
+  promptForImage: string;
+  subdir: string;
+  flowLog?: string[];
+  attempt: number;
+  compositeMaxAttempts: number;
+  sheetKind: string;
+}): Promise<string> {
+  const L = options.flowLog;
+  if (isPlatformWeekendGcpEscape()) {
+    appendImageFlowLog(L, "[2×4·NB2主路径] 平台 GCP 避险中，暂停 Vertex Nano Banana 2");
+    throw new Error("2×4 Nano Banana 2：平台 GCP 避险中，Vertex 暂停。");
+  }
+  const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
+  if (!isGeminiImageAvailable()) {
+    appendImageFlowLog(
+      L,
+      "[2×4·NB2主路径] Vertex 图像不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID）",
+    );
+    throw new Error("2×4 Vertex Nano Banana 2 主路径：Vertex 未配置。");
+  }
+  appendImageFlowLog(
+    L,
+    `[2×4·NB2主路径] Vertex Nano Banana 2 · 2K · 16:9 · prompt≈${options.promptForImage.length} chars（已跳过 OhMyGPT / fal；切回 GPT 链：请求 compositeImageEngine=gpt_image2 或 PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2）`,
+  );
+  const vertexResult = await generateGeminiImage({
+    prompt: options.promptForImage,
+    quality: "2k",
+    aspectRatio: "16:9",
+    personGeneration: "ALLOW_ADULT",
+    imagePersistFlowLog: L,
+  });
+  const rawUrl = String(vertexResult?.imageUrl || "").trim();
+  if (!rawUrl) {
+    appendImageFlowLog(L, "[2×4·NB2主路径] Nano Banana 2 返回空 URL");
+    throw new Error("Vertex Nano Banana 2 未返回图像。");
+  }
+  appendImageFlowLog(
+    L,
+    `[2×4·NB2主路径] Nano Banana 2 成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+  );
+  const mirrored = await mirrorNanoSheetUrlToGcs(rawUrl, options.subdir, L);
+  appendImageFlowLog(
+    L,
+    `[2×4·NB2主路径] 整链第 ${options.attempt}/${options.compositeMaxAttempts} 次 · 成功`,
+  );
+  emitPlatformImagePipelineStat({
+    event: "composite_sheet_nano_primary_success",
+    sheetKind: options.sheetKind,
+    compositeSheetAttempt: options.attempt,
+    compositeSheetMaxAttempts: options.compositeMaxAttempts,
+  });
+  return mirrored;
+}
+
+/**
+ * 平台页宽幅合成：**同一條** 英文生图 prompt（双语编导 → 可选提炼 → 像素锁）送生图；
+ * - **`gpt_image2`（環境與相容預設）**：**OhMyGPT** → **fal** → 可選 **Nano Banana 2** 兜底（受 `PLATFORM_VERTEX_NANO_BANANA2` 約束）。
+ * - **`nano_banana_2`**：**僅** Vertex **Nano Banana 2**（16:9·2K），略過 GPT‑Image‑2。
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -1042,7 +1103,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
-  /** 與單幀一致：預設 Vertex Gemini 3 Flash（三輪後 GPT 5.4）；可傳 gpt54 強制先 GPT */
+  /** 與單幀一致：分鏡/八格 **英文化** 固定 Vertex Flash（不含 GPT 5.4）；生存模式由服端覆寫 */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
@@ -1056,6 +1117,8 @@ export async function generatePlatformCompositeSheetImage(options: {
    * 異步 platform job：寫入 Neon `jobs.output.chineseStaging`（2×4 編導中文 task），結案時剝除。
    */
   progressJobId?: string | null;
+  /** 覆寫 2×4 出圖引擎；未傳則見 {@link resolvePlatformCompositeSheetImageEngine}（環境變數預設 gpt_image2 鏈）。 */
+  compositeImageEngine?: PlatformCompositeSheetImageEngine;
 }): Promise<string | null> {
   const totalMs = resolvePlatformCompositeSheetTotalTimeoutMs();
   appendImageFlowLog(
@@ -1080,13 +1143,14 @@ export async function generatePlatformCompositeSheetImage(options: {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
+  const compositeImageEngine = resolvePlatformCompositeSheetImageEngine(options.compositeImageEngine ?? null);
 
   const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
     L,
     survival
       ? `[2×4·英文化机制] **生存模式已开启**（環境變數 PLATFORM_WEEKEND_SURVIVAL_MODE）：英文化僅 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），失败宣告 **系统算力紧张**。另有 **GCP 避险** 时亦可能压制 Vertex。`
-      : `[2×4·英文化机制] **默认** **Vertex Gemini 3 Flash** 英文化最多 3 轮 → 失败则 **GPT 5.4** 最多 3 轮；双轨仍失败则 **系统算力紧张，请稍后再试**（不向用户伪造可用英文化结果）。显式 translator=gpt54：先 GPT 5.4 再 Vertex Flash（兼容旧序）。GCP 避险时强制仅 GPT 5.4，失败同样抛错。`,
+      : `[2×4·英文化机制] **默认** **Vertex Gemini 3 Flash** 英文化最多 3 轮；**不再**在英文化阶段回退 OpenAI GPT 5.4（失败即 **系统算力紧张**）。**生存模式**（PLATFORM_WEEKEND_SURVIVAL_MODE）下仍仅用 GPT 5.4。GCP 避险时亦可能压制 Vertex。`,
   );
   appendImageFlowLog(
     L,
@@ -1096,11 +1160,16 @@ export async function generatePlatformCompositeSheetImage(options: {
     L,
     `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
-  const tr = options.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
   const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（面板 translator=${tr}${survival ? " · **生存模式：英文化实际锁定 GPT 5.4 · strict**" : " · 默认 Flash→GPT strict"}；Vertex 参考=${vertexRef}）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（英文化；见 [GPT54·英文化]/[Vertex·Flash]）→ ④ 像素锁 → ⑤ OhMyGPT→fal 宽幅 GPT-IMAGE-2 → ⑥ 无图则 Nano Banana 2 兜底（2K）`,
+    `[2×4·流程总览] 分镜图/八格全链路（出图=${
+      compositeImageEngine === "nano_banana_2"
+        ? "**Nano Banana 2 主路径**（略过 GPT‑Image‑2；请求 `compositeImageEngine=gpt_image2` 或部署 `PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2` 可恢复）"
+        : "**OhMyGPT→fal GPT‑Image‑2** → 可选 NB2 兜底"
+    }；英文化=**仅** Vertex Flash；Vertex=${vertexRef}${
+      survival ? " · **生存模式：英文化实际为 GPT 5.4 · strict**" : ""
+    }）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（Vertex Flash，见 [Vertex·Flash]）→ ④ 像素锁 → ⑤ 送生图`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1171,11 +1240,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     appendImageFlowLog(
       L,
       `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· ${
-        survival
-          ? "**生存模式 → 仅 GPT 5.4 英文化 · strict**"
-          : tr === "gpt54"
-            ? "**相容路径：先 GPT 5.4**，无效再 Vertex Flash"
-            : "**默认：Vertex Gemini 3 Flash ×3 → GPT 5.4 ×3**（双轨失败则系统算力紧张）"
+        survival ? "**生存模式 → 仅 GPT 5.4 英文化 · strict**" : "**Vertex Gemini 3 Flash ×3**（英文化阶段不含 GPT 5.4）"
       } …`,
     );
 
@@ -1226,6 +1291,17 @@ export async function generatePlatformCompositeSheetImage(options: {
         L,
         `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
       );
+
+      if (compositeImageEngine === "nano_banana_2") {
+        return await generatePlatformCompositeSheetViaNanoBanana2Primary({
+          promptForImage,
+          subdir,
+          flowLog: L,
+          attempt,
+          compositeMaxAttempts,
+          sheetKind: k,
+        });
+      }
 
       appendImageFlowLog(
         L,
