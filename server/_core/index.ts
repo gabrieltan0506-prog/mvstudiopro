@@ -181,6 +181,8 @@ async function startServer() {
   void runAutoMigrations();
 
   const app = express();
+  // Fly / Vercel 反代在最前層；開啟後 req.hostname 才會跟使用者的公開域名一致（登入 Set-Cookie 的 Domain 才推斷得對）
+  app.set("trust proxy", 1);
   const server = createServer(app);
   // PDF：Deep Research Max 全链路可逼近 1h；须略大于 routers PDF_PROXY_FETCH_TIMEOUT_MS。
   server.setTimeout(3_450_000);
@@ -294,6 +296,9 @@ async function startServer() {
 
   app.get("/api/jobs/:id", async (req, res) => {
     try {
+      /** 輪詢任務狀態：禁止任何 CDN／瀏覽器快取 404/200，否則正式域名經 Vercel 時可能長時間誤顯「Job not found」。 */
+      res.setHeader("Cache-Control", "private, no-store, max-age=0");
+
       const jobId = req.params.id;
       if (!jobId) {
         return res.status(400).json({ error: "Job id is required" });

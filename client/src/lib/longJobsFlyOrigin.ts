@@ -46,7 +46,7 @@ export function flyHealthProbeOriginForUrl(url: string): string {
  * 長耗時 tRPC（2×4 / 封面等）專用：`ROUTER_EXTERNAL_TARGET_*` 來自 Vercel→Fly 反代腰斬，須直連 Fly（或同 apex 的 api 子域）繞過 Vercel。
  *
  * **Cookie**：`www.mvstudiopro.com` 上設的主機級 Session **不會**隨請求發到 `*.fly.dev`（不同站點）。
- * 生產建議：`api.mvstudiopro.com` CNAME 到 Fly，設 `VITE_FLY_API_ORIGIN=https://api.mvstudiopro.com` 與服端 `SESSION_COOKIE_DOMAIN=.mvstudiopro.com`
+ * 生產建議：`api.mvstudiopro.com` CNAME 到 Fly，設 `VITE_FLY_API_ORIGIN=https://api.mvstudiopro.com` 與服端 `SESSION_COOKIE_DOMAIN=mvstudiopro.com`（勿加引號／尾隨空格）
  *（SameSite=Lax 即可覆蓋子域請求）。若暫只有 fly.dev，須自行承擔登入態或改用與登入同站的 API 主機名。
  */
 export function longJobsTrpcHttpUrl(): string {
