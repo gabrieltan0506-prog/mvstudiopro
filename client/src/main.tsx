@@ -1,6 +1,5 @@
 import { trpc } from "@/lib/trpc";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
-import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, httpLink, splitLink, TRPCClientError } from "@trpc/client";
@@ -128,27 +127,22 @@ const trpcClient = trpc.createClient({
     splitLink({
       condition: useMvAnalysisUnbatchImageMutationLink,
       true: httpLink({
-        url: withLongJobsFlyDirect("/api/trpc"),
+        url: "/api/trpc",
         transformer: superjson,
         fetch(input, init) {
-          const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : input.url);
-          const origin = flyHealthProbeOriginForUrl(urlStr);
-          return withFlyHealthGate(origin, () =>
-            globalThis.fetch(input, {
-              ...(init ?? {}),
-              credentials: "include",
-            }),
-          );
+          return globalThis.fetch(input, {
+            ...(init ?? {}),
+            credentials: "include",
+          });
         },
       }),
       false: splitLink({
         condition: useFlyDirectTrpcLink,
         true: httpLink({
-          url: withLongJobsFlyDirect("/api/trpc"),
+          url: "/api/trpc",
           transformer: superjson,
           fetch(input, init) {
-            const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : input.url);
-            const origin = flyHealthProbeOriginForUrl(urlStr);
+            const origin = window.location.origin;
             return withFlyHealthGate(origin, () =>
               globalThis.fetch(input, {
                 ...(init ?? {}),
