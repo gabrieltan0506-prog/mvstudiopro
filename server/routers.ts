@@ -5013,78 +5013,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: "無法建立實時進度任務，請稍後再試",
             });
           }
-          
-          // 🚀 核心修復：如果前端傳了 progressJobId（非同步輪詢模式），
-          // 則在背景啟動耗時的生成任務，並立即回傳 HTTP 200 給前端，避免 Vercel 60s Timeout。
-          const runBackgroundComposite = async () => {
-            const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
-            detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
-            
-            appendImageFlowLog(
-              imageGenFlowLog,
-              `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
-            );
-            const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
-            appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
-            let imageUrl: string | null = null;
-            try {
-              imageUrl = await generatePlatformCompositeSheetImage({
-                kind: input.kind,
-                title: input.title,
-                scriptContext: input.scriptContext,
-                isTrial,
-                executionDetails: input.executionDetails,
-                imagePromptTranslator: imagePromptTranslatorForComposite,
-                flowLog: imageGenFlowLog,
-                enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
-                coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
-              });
-
-              appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
-              await markJobSucceeded(progressJobId, {
-                imageGenFlowLog,
-                compositeSheetProgress: true,
-                compositeImageUrl: imageUrl,
-                done: true,
-              });
-            } catch (error: any) {
-              const rawMessage = error instanceof Error ? error.message : String(error);
-              console.error("\n[生图致命错误 (Async Background)]:", rawMessage);
-              
-              const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
-              await markJobFailed(
-                progressJobId,
-                tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage,
-              );
-              
-              if (!isAdminUser) {
-                await refundCredits(userId, cost, "platformCompositeSheet 生图致命错误退还");
-              }
-            } finally {
-              detachLiveProgress?.();
-            }
-          };
-
-          // 啟動背景任務 (Fire-and-Forget)
-          runBackgroundComposite().catch(e => console.error("Unhandled background composite error:", e));
-
-          // 立刻返回給前端，避免 Timeout
-          return {
-            success: true as const,
-            imageUrl: null, // 前端會從輪詢 API 去拿真正的圖
-            totalCost: isAdminUser ? 0 : cost,
-            kind: input.kind,
-            imageGenFlowLog: ["[系統] 任務已成功送入背景駐列，請透過實時進度追蹤。"],
-            isAsync: true,
-          };
+          const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
+          detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
         }
 
-        // --- 若無 progressJobId，則退回原本的同步等待邏輯 (極少發生，保留作相容) ---
         appendImageFlowLog(
           imageGenFlowLog,
-          `[2×4 接口] generatePlatformCompositeSheet 开始 (同步执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
+          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
         );
-        // --- 同步執行部分 (繼續) ---
         const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
         appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
         let imageUrl: string | null = null;
