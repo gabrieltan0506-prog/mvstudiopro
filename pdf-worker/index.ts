@@ -350,8 +350,8 @@ app.post("/generate-pdf", async (req, res) => {
 
     const page = await browser.newPage();
     await page.setViewport({
-      width: 1280,
-      height: 800,
+      width: PDF_VIEWPORT_WIDTH,
+      height: PDF_VIEWPORT_HEIGHT,
       deviceScaleFactor: SCALE_FACTOR,
     });
 
