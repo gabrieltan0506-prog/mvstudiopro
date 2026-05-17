@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
+import { longJobsTrpcHealthOrigin, longJobsTrpcHttpUrl } from "@/lib/longJobsFlyOrigin";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, httpLink, splitLink, TRPCClientError } from "@trpc/client";
@@ -122,18 +123,23 @@ queryClient.getMutationCache().subscribe((event: any) => {
   }
 });
 
+const heavyTrpcHttpUrl = longJobsTrpcHttpUrl();
+const heavyTrpcHealthOrigin = longJobsTrpcHealthOrigin();
+
 const trpcClient = trpc.createClient({
   links: [
     splitLink({
       condition: useMvAnalysisUnbatchImageMutationLink,
       true: httpLink({
-        url: "/api/trpc",
+        url: heavyTrpcHttpUrl,
         transformer: superjson,
         fetch(input, init) {
-          return globalThis.fetch(input, {
-            ...(init ?? {}),
-            credentials: "include",
-          });
+          return withFlyHealthGate(heavyTrpcHealthOrigin, () =>
+            globalThis.fetch(input, {
+              ...(init ?? {}),
+              credentials: "include",
+            }),
+          );
         },
       }),
       false: splitLink({
