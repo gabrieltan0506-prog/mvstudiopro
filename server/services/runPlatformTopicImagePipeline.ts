@@ -197,7 +197,7 @@ export async function runPlatformTopicImagePipeline(
     topicImageCondenseLog.push(
       `${platformFlowLogTimestamp()}  说明: ${
         useVertexNb2Cover
-          ? "监管 Vertex 封面：英文化 GPT 5.4；出图主路径 Nano Banana 2（2K）→ 无图则 fal→OhMyGPT→NB2（标准链）→ 仍无图则版式+NB2"
+          ? "监管 Vertex 封面：英文化 GPT 5.4；出图主路径 Nano Banana 2（2K）→ 无图则 OhMyGPT→fal→NB2（标准链）→ 仍无图则版式+NB2"
           : "中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束"
       }`,
     );
@@ -389,7 +389,7 @@ export async function runPlatformTopicImagePipeline(
           if (useVertexNb2Cover) {
             if (lastSafePrompt) {
               topicImageCondenseLog.push(
-                `${platformFlowLogTimestamp()}  [步骤3a] NB2 主路径无图 → fal→OhMyGPT GPT-IMAGE-2 链 · 9:16 · english prompt 沿用步骤1…`,
+                `${platformFlowLogTimestamp()}  [步骤3a] NB2 主路径无图 → OhMyGPT→fal GPT-IMAGE-2 链 · 9:16 · english prompt 沿用步骤1…`,
               );
               imageUrl = await generateGptImage2FromRawEnglishPrompt({
                 englishPrompt: lastSafePrompt,

@@ -2065,7 +2065,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let videoDurationForUi = 8;
         try {
           const { runSeedanceImageToVideo } = await import("../server/services/seedanceVideo.js");
-          const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("../server/services/gcs.js");
           const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
           const seedanceOut = await runSeedanceImageToVideo({
             prompt,
@@ -2075,19 +2074,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             aspectRatio: aspectRatioInput,
             generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
           });
-          const vidResp = await fetch(seedanceOut.videoUrl, {
-            redirect: "follow",
-            headers: { "User-Agent": "mvstudiopro/1.0 (+seedance)" },
-          });
-          if (!vidResp.ok) {
-            return res.status(502).json(fail("seedance_download_failed", `Seedance 视频拉取失败: ${vidResp.status}`));
-          }
-          const mp4 = Buffer.from(await vidResp.arrayBuffer());
-          if (!mp4.length) return res.status(502).json(fail("seedance_empty_video", "Seedance 返回空视频"));
-          const wfId = s(workflow.workflowId || workflow.id || `wf-${Date.now()}`).replace(/[^a-zA-Z0-9_-]+/g, "-");
-          const objectName = `growth-camp/videos/workflow-seedance-${wfId}-sc${sceneIndex}-${Date.now()}.mp4`;
-          const { gcsUri } = await uploadBufferToGcs({ objectName, buffer: mp4, contentType: "video/mp4" });
-          sceneVideoUrl = signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+          sceneVideoUrl = seedanceOut.videoUrl;
           videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
         } catch (err: any) {
           return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));

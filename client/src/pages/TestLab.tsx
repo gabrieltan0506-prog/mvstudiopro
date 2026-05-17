@@ -1,4 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
+import { withFlyHealthGate } from "@/lib/flyHealthGate";
+import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 
 type TabKey = "script" | "translate" | "image" | "video" | "music";
 type GoogleImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
@@ -522,17 +524,22 @@ export default function TestLab() {
           durationSec: Number(seedanceDuration) || 10,
         });
 
-        const create = await fetchJsonish("/api/jobs?op=seedanceI2V", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            imageUrl: inputImage,
-            resolution: veoResolution === "1080p" ? "1080p" : "720p",
-            aspectRatio,
-            duration: Number(seedanceDuration) || 10,
+        const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
+        const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
+        const create = await withFlyHealthGate(probeOrigin, () =>
+          fetchJsonish(seedanceUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "omit",
+            body: JSON.stringify({
+              prompt,
+              imageUrl: inputImage,
+              resolution: veoResolution === "1080p" ? "1080p" : "720p",
+              aspectRatio,
+              duration: Number(seedanceDuration) || 10,
+            }),
           }),
-        });
+        );
         last = create;
         pushStep("http_seedanceI2V", { ...snapshotHttpForDebug(create) });
 

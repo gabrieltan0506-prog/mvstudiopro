@@ -4,6 +4,8 @@ import Navbar from "@/components/Navbar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
+import { withFlyHealthGate } from "@/lib/flyHealthGate";
+import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
 
 /** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
@@ -138,17 +140,22 @@ export default function CreativePage() {
       let finalVideoUrl = "";
 
       if (videoModel === "seedance-2.0") {
-        const res = await fetch(`/api/jobs?op=seedanceI2V`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            imageUrl,
-            resolution: "720p",
-            aspectRatio: videoAspect,
-            duration: CREATIVE_VIDEO_DURATION_SEEDANCE_SEC,
+        const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
+        const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
+        const res = await withFlyHealthGate(probeOrigin, () =>
+          fetch(seedanceUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "omit",
+            body: JSON.stringify({
+              prompt,
+              imageUrl,
+              resolution: "720p",
+              aspectRatio: videoAspect,
+              duration: CREATIVE_VIDEO_DURATION_SEEDANCE_SEC,
+            }),
           }),
-        });
+        );
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.videoUrl) {
           throw new Error(json.error || json.message || "Seedance 生成失败");
