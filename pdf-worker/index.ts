@@ -32,8 +32,8 @@ const PORT = process.env.PORT || 8080;
 //   NOTO_SANS_CJK_TTC_FONT_INDEX  默认 2（SC；JP/KR/TC 順序因字型版本而異，可 env 修正）
 //   page.pdf preferCSSPageSize   固定 true：尊重 HTML @page（平台横版 / 作品库直版）
 // ════════════════════════════════════════════════════════════════════════════
-const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.35;
-const POST_LAYOUT_WAIT_MS = Number(process.env.PDF_POST_LAYOUT_WAIT_MS) || 18_000;
+const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.0;
+const POST_LAYOUT_WAIT_MS = Number(process.env.PDF_POST_LAYOUT_WAIT_MS) || 2_000;
 const PER_IMAGE_WAIT_MS = Number(process.env.PDF_PER_IMAGE_WAIT_MS) || 20_000;
 const ALLOWED_WAIT = new Set(["load", "domcontentloaded", "networkidle0", "networkidle2"]);
 const SET_CONTENT_WAIT_RAW = (process.env.PDF_SET_CONTENT_WAIT_UNTIL || "load").toLowerCase();
@@ -350,8 +350,8 @@ app.post("/generate-pdf", async (req, res) => {
 
     const page = await browser.newPage();
     await page.setViewport({
-      width: 1280,
-      height: 800,
+      width: PDF_VIEWPORT_WIDTH,
+      height: PDF_VIEWPORT_HEIGHT,
       deviceScaleFactor: SCALE_FACTOR,
     });
 
@@ -443,6 +443,45 @@ app.post("/generate-pdf", async (req, res) => {
     })`,
     );
     console.log(`[pdf-worker:${reqId}] step3/5 images load+decode +${Date.now() - tImg}ms`);
+
+    // 🌟 核心優化：在不使用 Ghostscript 的情況下，直接在 DOM 層面壓縮所有超大圖片
+    // 這會將大圖片繪製到 Canvas 並以 75% 的 JPEG 格式輸出，大幅縮減最終 PDF 寫入時的體積
+    const tCompress = Date.now();
+    console.log(`[pdf-worker:${reqId}] step3.5/5 inline image compression start`);
+    await page.evaluate(`(async function() {
+      var images = Array.from(document.images);
+      for (var i = 0; i < images.length; i++) {
+        var img = images[i];
+        if (!img.src || img.src.indexOf('image/svg') !== -1) continue;
+        if (img.naturalWidth < 100 && img.naturalHeight < 100) continue;
+        try {
+          var canvas = document.createElement('canvas');
+          var MAX_DIM = 1200; // 限制最大邊長，超過則等比縮小
+          var w = img.naturalWidth;
+          var h = img.naturalHeight;
+          if (w > MAX_DIM || h > MAX_DIM) {
+            var ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+          canvas.width = w;
+          canvas.height = h;
+          var ctx = canvas.getContext('2d');
+          // 填白底，避免透明 PNG 轉 JPEG 變黑底
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          // 壓縮為 JPEG (Quality: 0.75)
+          var newData = canvas.toDataURL('image/jpeg', 0.75);
+          // 只有當壓縮後更小，或是原本不是 data URI (外部圖片) 時才替換
+          if (newData.length < img.src.length || !img.src.startsWith('data:')) {
+            img.src = newData;
+            img.srcset = '';
+          }
+        } catch(e) {}
+      }
+    })()`);
+    console.log(`[pdf-worker:${reqId}] step3.5/5 inline image compression done +${Date.now() - tCompress}ms`);
 
     const tHard0 = Date.now();
     console.log(`[pdf-worker:${reqId}] step4/5 layout settle wait ${POST_LAYOUT_WAIT_MS}ms start`);
