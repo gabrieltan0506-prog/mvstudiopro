@@ -734,6 +734,12 @@ function readOptionalReportBindingCreationId(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/** 僅在 ?reportId= 有效時帶上；勿傳 `creationRecordId: undefined`，否則序列化可出現字串 "undefined"。 */
+function optionalBoundCreationRecordId(): { creationRecordId: number } | Record<string, never> {
+  const id = readOptionalReportBindingCreationId();
+  return id !== undefined ? { creationRecordId: id } : {};
+}
+
 function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleVariant[]): PlatformTitleVariant[] {
   if (!Array.isArray(raw) || raw.length < 2) return fallback;
   const out: PlatformTitleVariant[] = [];
@@ -1861,7 +1867,7 @@ export default function PlatformPage() {
         compositeKind: inp.compositeKind,
         compositeExecutionDetails: inp.executionDetails,
         imagePromptTranslator: effectiveCompositeImagePromptTranslator,
-        creationRecordId: readOptionalReportBindingCreationId(),
+        ...optionalBoundCreationRecordId(),
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
@@ -2679,7 +2685,7 @@ export default function PlatformPage() {
                 scriptContext: buildPlatformSheetScriptContext(item as any),
                 kind: compositeKind,
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
-                creationRecordId: readOptionalReportBindingCreationId(),
+                ...optionalBoundCreationRecordId(),
                 imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                 progressJobId: newPlatformCompositeProgressJobId(),
                 ...compositeDrProExtras,
@@ -5886,7 +5892,7 @@ export default function PlatformPage() {
                               scriptContext: buildPlatformSheetScriptContext(sourceRow as any),
                               kind: compositeKind,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
-                              creationRecordId: readOptionalReportBindingCreationId(),
+                              ...optionalBoundCreationRecordId(),
                               imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                               progressJobId: newPlatformCompositeProgressJobId(),
                               ...compositeDrProExtras,
@@ -6588,7 +6594,7 @@ export default function PlatformPage() {
                                     scriptContext: buildPlatformSheetScriptContext(item as any),
                                     kind: compositeKind,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
-                                    creationRecordId: readOptionalReportBindingCreationId(),
+                                    ...optionalBoundCreationRecordId(),
                                     imagePromptTranslator: effectiveCompositeImagePromptTranslator,
                                     progressJobId: newPlatformCompositeProgressJobId(),
                                     ...compositeDrProExtras,
