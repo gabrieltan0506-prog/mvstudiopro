@@ -48,7 +48,7 @@ export function buildSessionCookie(token: string, maxAgeSec = 60 * 60 * 24 * 7) 
     `${SESSION_COOKIE}=${token}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    "SameSite=None",
     "Secure",
     `Max-Age=${maxAgeSec}`
   ].join("; ");
@@ -59,7 +59,7 @@ export function buildLogoutCookie() {
     `${SESSION_COOKIE}=`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    "SameSite=None",
     "Secure",
     "Max-Age=0"
   ].join("; ");
