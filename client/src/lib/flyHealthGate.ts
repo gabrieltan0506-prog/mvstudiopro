@@ -1,6 +1,6 @@
 /**
- * 同源架構：探針打當前 Origin 的 `/api/health`（與前端同主機或同反代目標），
- * 避免在後端不健康時對長鏈路 tRPC 堆請求。
+ * 同源架构：探针打当前 Origin 的 `/api/health`（与前端同主机或同反代目标），
+ * 避免在后端不健康时对长链路 tRPC 堆请求。
  */
 
 const FLY_HEALTH_TIMEOUT_MS = 120_000;

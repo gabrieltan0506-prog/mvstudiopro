@@ -22,7 +22,7 @@ function stripAdminSuffix(s: string): string {
     .replace(/壮族|回族|维吾尔/, "");
 }
 
-/** 「朝陽區」「浦東新區」→ 便于匹配語音「朝陽」「浦東」 */
+/** 「朝阳区」「浦东新区」→ 便于匹配语音「朝阳」「浦东」 */
 function placeBareName(name: string): string {
   return name
     .replace(/新区$/, "")
@@ -32,7 +32,7 @@ function placeBareName(name: string): string {
     .trim();
 }
 
-/** 目錄最長詞匹配（適合語音輸出含城市名） */
+/** 目录最长词匹配（适合语音输出含城市名） */
 export function matchLocationFromCatalog(text: string): ManualLocationStored | null {
   const t = norm(text);
   if (!t) return null;
@@ -86,7 +86,7 @@ export function matchLocationFromCatalog(text: string): ManualLocationStored | n
 
 const ALLOW_CC = new Set(["CN", "HK", "MO", "TW"]);
 
-/** Open‑Meteo Geocoding，補齊目錄未收錄的縣市／口語地名 */
+/** Open‑Meteo Geocoding，补齐目录未收录的县市／口语地名 */
 export async function matchLocationFromOpenMeteo(text: string): Promise<ManualLocationStored | null> {
   const q = text.trim();
   if (!q) return null;

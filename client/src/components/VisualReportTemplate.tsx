@@ -171,7 +171,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 <div style={card()}>
                   <div style={ct(C[2])}><div style={dot(C[2])} />🔥 当期节日与社会热点</div>
                   {(data.hotFestivals || []).length === 0 ? (
-                    <div style={{ fontSize: "12px", color: muted }}>当前无显著节日热点</div>
+                    <div style={{ fontSize: "12px", color: muted }}>当前无显着节日热点</div>
                   ) : (data.hotFestivals || []).map((item, i) => (
                     <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
                       <span style={{ color: C[2], fontWeight: 700 }}>•</span>

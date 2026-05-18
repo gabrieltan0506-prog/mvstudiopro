@@ -1,12 +1,12 @@
 /**
- * B 端「爆款決策與增長管線」智庫報告資料結構。
+ * B 端「爆款决策与增长管线」智库报告资料结构。
  * 用于内部决策／智库 PDF 等场景；数值由参考历史数据与蓝图的预测引擎填充，并可持续对接真实模型。
  */
 
 export type AdvancedMABVariantMode = "utilize" | "explore";
 
 export interface AdvancedAIReportHitPotentialRadar {
-  /** 預期播放量維度（雷達 0–100） */
+  /** 预期播放量维度（雷达 0–100） */
   views: number;
   conversion: number;
   brandFit: number;
@@ -19,8 +19,8 @@ export interface AdvancedAIReportGlobalPredictions {
   averageConversionRate: number;
   hitPotentialRadar: AdvancedAIReportHitPotentialRadar;
   /**
-   * 主戰場平台切片雷達（五維定義與全局一致，數值依平台特性與藍圖獨立演算）。
-   * 舊存檔可能闕漏，前端可退回為從全局衍生之保守近似。
+   * 主战场平台切片雷达（五维定义与全局一致，数值依平台特性与蓝图独立演算）。
+   * 旧存档可能阙漏，前端可退回为从全局衍生之保守近似。
    */
   platformHitPotentialRadar?: AdvancedAIReportHitPotentialRadar;
 }
@@ -61,7 +61,7 @@ export interface AdvancedAIReportTopicStructureExample {
 }
 
 /**
- * 平台詳細區塊：保留彈性，對應原熱榜／多平台圖表 JSON。
+ * 平台详细区块：保留弹性，对应原热榜／多平台图表 JSON。
  */
 export type AdvancedAIReportPlatformDetailedData = Record<string, unknown>;
 

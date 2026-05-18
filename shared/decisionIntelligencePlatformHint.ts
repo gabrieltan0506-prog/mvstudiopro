@@ -1,5 +1,5 @@
 /**
- * 決策智庫 API 的 `platformHint` 與增長看板 `GrowthPlatform` 對齊。
+ * 决策智库 API 的 `platformHint` 与增长看板 `GrowthPlatform` 对齐。
  */
 
 import type { GrowthPlatformSnapshot } from "./growth";
@@ -20,7 +20,7 @@ export function resolveDecisionIntelPlatformHintFromGrowthPlatform(platform: str
   return map[p] ?? "douyin";
 }
 
-/** 依動量 + 受眾契合自動選主戰場（與「優先平台」卡片一致的方向）。 */
+/** 依动量 + 受众契合自动选主战场（与「优先平台」卡片一致的方向）。 */
 export function pickPrimaryDecisionIntelPlatformHint(
   snapshots: GrowthPlatformSnapshot[],
 ): DecisionIntelPlatformHint {

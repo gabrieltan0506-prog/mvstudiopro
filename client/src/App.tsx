@@ -23,30 +23,30 @@ function DomainRedirector() {
     if (loading) return;
     
     const hostname = window.location.hostname;
-    // 如果訪問的是 fly.dev 測試域名
+    // 如果访问的是 fly.dev 测试域名
     if (hostname.endsWith("mvstudiopro.fly.dev")) {
-      // 豁免 /login，讓管理員有機會在此域名登入取得權限
+      // 豁免 /login，让管理员有机会在此域名登入取得权限
       if (window.location.pathname.startsWith("/login")) {
         return;
       }
       
-      // 豁免 ?supervisor=1 帶有 token 的請求，讓管理員直接使用免登入 URL
+      // 豁免 ?supervisor=1 带有 token 的请求，让管理员直接使用免登入 URL
       if (window.location.search.includes("supervisor=1")) {
         return;
       }
       
       const isAdmin = user?.role === "admin" || user?.role === "supervisor";
       
-      // 非管理員一律跳轉至正式域名（DNS 應指向 Fly，與 fly.dev 區隔）
+      // 非管理员一律跳转至正式域名（DNS 应指向 Fly，与 fly.dev 区隔）
       if (!isAdmin) {
         const targetUrl = `https://mvstudiopro.com${window.location.pathname}${window.location.search}`;
         window.location.replace(targetUrl);
       }
     } else {
-      // 處理 mvstudiopro.com 正式域名下的 supervisor=1 的跳轉
+      // 处理 mvstudiopro.com 正式域名下的 supervisor=1 的跳转
       if (window.location.search.includes("supervisor=1") && !window.location.hostname.includes("localhost")) {
-        // 可以加上其它特定的業務邏輯，但目前需求是保證 supervisor=1 也有效
-        // 因不涉及跨域跳轉，不需特別處理，它原本就有效
+        // 可以加上其它特定的业务逻辑，但目前需求是保证 supervisor=1 也有效
+        // 因不涉及跨域跳转，不需特别处理，它原本就有效
       }
     }
   }, [user, loading]);

@@ -1,9 +1,9 @@
 /**
- * 環境底圖輪播：圖片落在 `client/public/ambient/{photoId}.jpg`（由腳本拉取，運行時只讀同源）。
+ * 环境底图轮播：图片落在 `client/public/ambient/{photoId}.jpg`（由脚本拉取，运行时只读同源）。
  * - 首次：pnpm run ambient:fetch-images
- * - 每日增量更新（超過 24h 則重下）：pnpm run ambient:fetch-images:daily
- * - 強制全部重下：pnpm run ambient:fetch-images:refresh
- * 未拉取前本地 404 時，可設 VITE_AMBIENT_IMAGE_CDN=1 臨時走 Unsplash CDN（僅兜底）。
+ * - 每日增量更新（超过 24h 则重下）：pnpm run ambient:fetch-images:daily
+ * - 强制全部重下：pnpm run ambient:fetch-images:refresh
+ * 未拉取前本地 404 时，可设 VITE_AMBIENT_IMAGE_CDN=1 临时走 Unsplash CDN（仅兜底）。
  */
 
 export type AmbientTimeSegment = "dawn" | "day" | "dusk" | "lateNight";
@@ -25,7 +25,7 @@ function ambientAssetUrl(photoId: string): string {
   return localAmbientPath(photoId);
 }
 
-/** 各時段 + 天氣對應 2～4 張輪播 */
+/** 各时段 + 天气对应 2～4 张轮播 */
 const BACKGROUNDS: Record<string, readonly string[]> = {
   "dawn-clear": [
     ambientAssetUrl("photo-1469474968028-56623f02e42e"),
@@ -94,7 +94,7 @@ const DEFAULT_FALLBACK = [
   ambientAssetUrl("photo-1506905925346-21bda4d32df4"),
 ];
 
-/** 取指定 IANA 時區在該瞬間的小時（0–23），供底圖「時段」與時鐘顯示時區對齊 */
+/** 取指定 IANA 时区在该瞬间的小时（0–23），供底图「时段」与时钟显示时区对齐 */
 export function getHourInTimeZone(d: Date, timeZone: string): number {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
@@ -135,7 +135,7 @@ export function segmentLabelZh(seg: AmbientTimeSegment): string {
   }
 }
 
-/** 與 Open‑Meteo WMO weather_code 對齊（見 WorkAmbientPanel codeLabel） */
+/** 与 Open‑Meteo WMO weather_code 对齐（见 WorkAmbientPanel codeLabel） */
 export function deriveAmbientWeatherKind(
   conditionText: string,
   wxCode?: number | null,
@@ -153,8 +153,8 @@ export function deriveAmbientWeatherKind(
   if (/雷|thunder/i.test(t)) return "thunder";
   if (/雪|snow/i.test(t)) return "snow";
   if (/雨|rain|drizzle|shower/i.test(t)) return "rain";
-  if (/霧|雾|fog|mist/i.test(t)) return "fog";
-  if (/云|雲|阴|多雲|多云|cloud/i.test(t)) return "cloudy";
+  if (/雾|雾|fog|mist/i.test(t)) return "fog";
+  if (/云|云|阴|多云|多云|cloud/i.test(t)) return "cloudy";
   if (/晴|clear|sunny/i.test(t)) return "clear";
   return "cloudy";
 }

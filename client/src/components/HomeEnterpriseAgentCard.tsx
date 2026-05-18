@@ -6,7 +6,7 @@ export function HomeEnterpriseAgentCard() {
     <div className="rounded-2xl bg-white border-2 border-[#C9A858]/40 p-6 md:p-8 shadow-xl">
       <div className="flex items-center gap-2 mb-3">
         <span className="px-2 py-0.5 bg-[#1F3A5F] text-[#C9A858] text-[10px] font-bold rounded uppercase tracking-widest">
-          Enterprise · 企業專屬
+          Enterprise · 企业专属
         </span>
         <span className="px-2 py-0.5 bg-[#FB7185]/10 text-[#FB7185] text-[10px] font-bold rounded">
           ¥15,000 起 · 30 天试用

@@ -28,7 +28,7 @@ function codeLabel(code: number): string {
   return "阴";
 }
 
-/** 底圖輪播切換間隔（與 WorkAmbientPanel／GlobalAmbientBackdrop 文案「約 30s」一致） */
+/** 底图轮播切换间隔（与 WorkAmbientPanel／GlobalAmbientBackdrop 文案「约 30s」一致） */
 const CAROUSEL_MS = 30_000;
 
 async function fetchOpenMeteoWx(lat: number, lon: number): Promise<Wx> {
@@ -52,9 +52,9 @@ export type AmbientSceneContextValue = {
   geoErr: string | null;
   geoAttemptDone: boolean;
   placeLabel: string | null;
-  /** 當前天氣／路況／新聞所用的座標來源 */
+  /** 当前天气／路况／新闻所用的座标来源 */
   locationSource: LocationSourceMode;
-  /** 手動選點時非空；device 模式為 null */
+  /** 手动选点时非空；device 模式为 null */
   manualLocation: ManualLocationStored | null;
   timeSegment: AmbientTimeSegment;
   weatherKind: AmbientWeatherKind;
@@ -62,13 +62,13 @@ export type AmbientSceneContextValue = {
   bgIdx: number;
   motionOk: boolean;
   browserTimeZone: string;
-  /** 重新請求瀏覽器定位（僅 device 模式有意義；手動模式下會提示先切回定位） */
+  /** 重新请求浏览器定位（仅 device 模式有意义；手动模式下会提示先切回定位） */
   requestLocation: () => Promise<void>;
-  /** 套用目錄或接口解析後的座標（寫入 localStorage） */
+  /** 套用目录或接口解析后的座标（写入 localStorage） */
   applyManualLocation: (spec: ManualLocationStored) => void;
-  /** 清除手動覆寫並重新走設備定位 */
+  /** 清除手动覆写并重新走设备定位 */
   revertToDeviceLocation: () => void;
-  /** 語音或文字：目錄＋Open‑Meteo 解析；成功則套用 */
+  /** 语音或文字：目录＋Open‑Meteo 解析；成功则套用 */
   applyLocationFromSpeechOrText: (text: string) => Promise<{ ok: boolean; message: string }>;
 };
 
@@ -77,7 +77,7 @@ const AmbientSceneContext = createContext<AmbientSceneContextValue | null>(null)
 export function useAmbientScene(): AmbientSceneContextValue {
   const ctx = useContext(AmbientSceneContext);
   if (!ctx) {
-    throw new Error("useAmbientScene 必須在 <AmbientSceneProvider> 內使用");
+    throw new Error("useAmbientScene 必须在 <AmbientSceneProvider> 内使用");
   }
   return ctx;
 }
@@ -118,7 +118,7 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
     return () => clearInterval(t);
   }, []);
 
-  /** 手動城市：不依賴 GPS，直接取 Open‑Meteo 實況 */
+  /** 手动城市：不依赖 GPS，直接取 Open‑Meteo 实况 */
   useEffect(() => {
     if (locationSource !== "manual" || !manualLocation) return;
     let cancelled = false;
@@ -147,7 +147,7 @@ export function AmbientSceneProvider({ children }: { children: React.ReactNode }
     };
   }, [locationSource, manualLocation]);
 
-  /** 設備 GPS */
+  /** 设备 GPS */
   useEffect(() => {
     if (locationSource !== "device") return;
     let cancelled = false;

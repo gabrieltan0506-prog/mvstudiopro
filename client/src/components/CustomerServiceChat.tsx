@@ -26,7 +26,7 @@ interface ChatMessage {
 // ─── 常量 ─────────────────────────────────────────────────
 const QUICK_QUESTIONS = [
   "平台有哪些功能？",
-  "Credits 怎么充值？",
+  "Credits 怎幺充值？",
   "如何生成虚拟偶像？",
   "视频生成要多少 Credits？",
   "有学生优惠吗？",
@@ -35,7 +35,7 @@ const QUICK_QUESTIONS = [
 const WELCOME_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "assistant",
-  content: "你好！我是小M，MV Studio Pro 的 AI 客服助手 👋\n\n有什么可以帮到你的吗？你可以直接输入问题，或点击下方快捷按钮。",
+  content: "你好！我是小M，MV Studio Pro 的 AI 客服助手 👋\n\n有什幺可以帮到你的吗？你可以直接输入问题，或点击下方快捷按钮。",
   timestamp: Date.now(),
 };
 

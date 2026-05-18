@@ -49,7 +49,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** 閘道 502、上游抖動、瀏覽器層網路失敗：輪詢時應退避重試，避免誤判任務失敗 */
+/** 闸道 502、上游抖动、浏览器层网路失败：轮询时应退避重试，避免误判任务失败 */
 function isTransientJobPollError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const m = err.message;
@@ -68,7 +68,7 @@ function isTransientJobPollError(err: unknown): boolean {
 }
 
 /**
- * 供輪詢使用：對單次 GET 做有限次退避重試（不 increment poll attempt，由 pollJobUntilTerminal 外層計數）
+ * 供轮询使用：对单次 GET 做有限次退避重试（不 increment poll attempt，由 pollJobUntilTerminal 外层计数）
  */
 export async function getJobForPoll(jobId: string): Promise<JobResponse> {
   const maxAttempts = 6;
@@ -87,7 +87,7 @@ export async function getJobForPoll(jobId: string): Promise<JobResponse> {
   throw lastErr ?? new Error("getJobForPoll: unknown error");
 }
 
-/** 單次 GET /api/jobs/:id 後回調（含第幾次、當前狀態、耗時、部分 output） */
+/** 单次 GET /api/jobs/:id 后回调（含第几次、当前状态、耗时、部分 output） */
 export type PollJobTick = {
   jobId: string;
   attempt: number;
@@ -98,19 +98,19 @@ export type PollJobTick = {
 
 const MAX_POLL_DEBUG_LINES = 120;
 
-/** Fly jobs 隊列（含 platform 文案 / 封面生圖）：輪詢直到終態 */
+/** Fly jobs 队列（含 platform 文案 / 封面生图）：轮询直到终态 */
 export async function pollJobUntilTerminal(
   jobId: string,
   opts?: {
     intervalMs?: number;
     maxWaitMs?: number;
     /**
-     * 自第幾次輪詢起拉長間隔（預設 36 ≈ 首段約 1.5min×2.5s），避免長任務下 GET 過於密集、計數暴漲。
+     * 自第几次轮询起拉长间隔（预设 36 ≈ 首段约 1.5min×2.5s），避免长任务下 GET 过于密集、计数暴涨。
      */
     adaptiveBackoffAfterAttempts?: number;
-    /** 拉長後的間隔上限（預設 8s） */
+    /** 拉长后的间隔上限（预设 8s） */
     maxIntervalMs?: number;
-    /** 每次拉取 job 後觸發（含尚未進入終態的中間狀態） */
+    /** 每次拉取 job 后触发（含尚未进入终态的中间状态） */
     onPoll?: (tick: PollJobTick) => void;
   },
 ): Promise<JobResponse> {
@@ -140,10 +140,10 @@ export async function pollJobUntilTerminal(
     await sleep(spacing);
   }
   const waitedMin = Math.round(maxWait / 60_000);
-  throw new Error(`任務輪詢已超過約 ${waitedMin} 分鐘（${attempt} 次），請刷新或稍後再試`);
+  throw new Error(`任务轮询已超过约 ${waitedMin} 分钟（${attempt} 次），请刷新或稍后再试`);
 }
 
-/** 將輪詢步驟追加到陣列並截斷長度，避免 Debug 面板無限變長 */
+/** 将轮询步骤追加到阵列并截断长度，避免 Debug 面板无限变长 */
 export function appendPollDebugLine(lines: string[], line: string): string[] {
   return [...lines, line].slice(-MAX_POLL_DEBUG_LINES);
 }

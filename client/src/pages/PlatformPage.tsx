@@ -98,19 +98,19 @@ const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 
-/** 2×4 分鏡／小紅書八格 **英文化** 固定 Vertex Gemini 3 Flash（與服端一致；不含 GPT 5.4 翻譯）。豎版封面單幀仍走 GPT 5.4。 */
+/** 2×4 分镜／小红书八格 **英文化** 固定 Vertex Gemini 3 Flash（与服端一致；不含 GPT 5.4 翻译）。竖版封面单帧仍走 GPT 5.4。 */
 const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "vertex_gemini_3_flash_preview";
 
-/** 管理員／監管：單幀封面主生圖是否走 Vertex Nano Banana 2（官方 API） */
+/** 管理员／监管：单帧封面主生图是否走 Vertex Nano Banana 2（官方 API） */
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
-/** 舊鍵：曾標為 Pro，行為已統一為 NB2，讀取時遷移 */
+/** 旧键：曾标为 Pro，行为已统一为 NB2，读取时迁移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
 
 /** 全用户：2×4 / 八格 **出图** 引擎（英文化不变；与封面单帧 NB2 开关独立） */
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
-/** 監管／內部：Stage 2 專屬文案 LLM（一般用戶不可見、也不可繞過改線路） */
+/** 监管／内部：Stage 2 专属文案 LLM（一般用户不可见、也不可绕过改线路） */
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformStage2SupervisorCopyEngine = "vertex" | "openai";
 
@@ -133,19 +133,19 @@ function parseCoverClickEstimate(raw: unknown): CoverClickEstimate | undefined {
   if (!band || score == null || !labelZh) return undefined;
   return { band, score, labelZh };
 }
-/** 與 MyReports `myreports-pdf-root` 對齊：只克隆報告主體，避免整頁 document 帶入 #root / portal */
+/** 与 MyReports `myreports-pdf-root` 对齐：只克隆报告主体，避免整页 document 带入 #root / portal */
 const PLATFORM_PDF_SNAPSHOT_ROOT_ID = "platform-report";
-/** 英雄區「付费能力」锚点：接線至下方對應區塊 */
+/** 英雄区「付费能力」锚点：接线至下方对应区块 */
 const PLATFORM_SECTION_DECISION_INTEL_ID = "platform-decision-intel";
 const PLATFORM_SECTION_DEEP_QA_ID = "platform-deep-qa";
 const PLATFORM_SECTION_TREND_RUN_ID = "platform-trend-run";
 const PLATFORM_SECTION_TREND_SIGNALS_ID = "platform-trend-signals";
 
-/** 快照克隆前：單張圖 load/error 逾時（選題多時並行等待，總耗時≈最慢一張） */
+/** 快照克隆前：单张图 load/error 逾时（选题多时并行等待，总耗时≈最慢一张） */
 const PLATFORM_PDF_PER_IMAGE_WAIT_MS = 12_000;
 
 /**
- * 克隆 #platform-report 前，確保區域內 img 已載入（含 lazy→eager、decode），避免 PDF 空白圖塊。
+ * 克隆 #platform-report 前，确保区域内 img 已载入（含 lazy→eager、decode），避免 PDF 空白图块。
  */
 async function waitForPlatformReportImagesReady(pdfRoot: HTMLElement): Promise<void> {
   const images = Array.from(pdfRoot.querySelectorAll("img"));
@@ -164,7 +164,7 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
     try {
       await img.decode();
     } catch {
-      /* 仍可有已解碼柵格供 clone 使用 */
+      /* 仍可有已解码栅格供 clone 使用 */
     }
     return;
   }
@@ -187,19 +187,19 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
   try {
     await img.decode();
   } catch {
-    /* pdf-worker 仍會再擋 decode；此處不擋快照 */
+    /* pdf-worker 仍会再挡 decode；此处不挡快照 */
   }
 }
 
-/** 選題封面 URL 若為占位、逾時或失敗標記則視為未就緒（與卡片区 isBlackImageOrTimeout 對齊）。 */
+/** 选题封面 URL 若为占位、逾时或失败标记则视为未就绪（与卡片区 isBlackImageOrTimeout 对齐）。 */
 function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
   const raw = typeof url === "string" ? url.trim().toLowerCase() : "";
   return !raw || raw.includes("timeout") || raw.includes("error");
 }
 
 /**
- * 新任務入隊時不要清空 Debug（否則第二張、第二次生成會先出現「DR Pro 整欄被清掉」直到輪詢有數據）。
- * 在上一筆日誌後追加分割提示與占位行；首輪 poll 拿到 imageGenFlowLog 後仍會整份替換為服務端日誌。
+ * 新任务入队时不要清空 Debug（否则第二张、第二次生成会先出现「DR Pro 整栏被清掉」直到轮询有数据）。
+ * 在上一笔日志后追加分割提示与占位行；首轮 poll 拿到 imageGenFlowLog 后仍会整份替换为服务端日志。
  */
 function appendTopicCoverDebugNewJobBanner(
   prev: string[],
@@ -208,9 +208,9 @@ function appendTopicCoverDebugNewJobBanner(
 ): string[] {
   const ts = new Date().toISOString();
   const tail = sceneHint.trim().replace(/\s+/g, " ").slice(0, 80);
-  const label = kind === "bundle" ? "套裝" : kind === "composite2x4" ? "2×4/八格" : "封面";
-  const banner = `${ts}  [客户端] ─── 新任務：${label}${tail ? ` · ${tail}` : ""} ───`;
-  const hold = `${ts}  [步骤0.5·DR-Pro] （客户端）等待服務端本輪日誌（上方可對照上一筆；下一則服務端行寫入後本區會切換為本輪完整流水）`;
+  const label = kind === "bundle" ? "套装" : kind === "composite2x4" ? "2×4/八格" : "封面";
+  const banner = `${ts}  [客户端] ─── 新任务：${label}${tail ? ` · ${tail}` : ""} ───`;
+  const hold = `${ts}  [步骤0.5·DR-Pro] （客户端）等待服务端本轮日志（上方可对照上一笔；下一则服务端行写入后本区会切换为本轮完整流水）`;
   if (prev.length === 0) return [hold];
   return [...prev, banner, hold];
 }
@@ -281,7 +281,7 @@ type PlatformDashboard = {
   subheadline: string;
   personaSummary: string;
   topSignals: any[];
-  /** 後端 Zod 課程與 LLM 輸出；含 referenceAccounts、trafficBoosters；允許 label/lane/nextMove 等舊欄位 */
+  /** 后端 Zod 课程与 LLM 输出；含 referenceAccounts、trafficBoosters；允许 label/lane/nextMove 等旧栏位 */
   platformMenu: Array<Record<string, any>>;
   hotTopics: any[];
   contentBlueprints: Array<{
@@ -311,14 +311,14 @@ type ProcessingStepCard = {
   status: "done" | "active" | "pending";
 };
 
-/** Debug：單次 Fly job 在前端的入隊與輪詢步驟 */
+/** Debug：单次 Fly job 在前端的入队与轮询步骤 */
 type ClientJobPollTrace = {
   jobId: string;
   label: string;
   lines: string[];
   pollCount: number;
   terminalStatus?: string;
-  /** 進行中：僅保留一行「當前步驟」，不把整段 imageGenFlowLog / 輪詢流水刷進面板 */
+  /** 进行中：仅保留一行「当前步骤」，不把整段 imageGenFlowLog / 轮询流水刷进面板 */
   currentStep?: string;
 };
 
@@ -335,7 +335,7 @@ function pickActiveStage2SubStepOneLine(contentDebug: Record<string, unknown> | 
   return last ? `${last.id} ${last.title} · ${last.status}` : null;
 }
 
-/** Stage 2 失敗或空載荷時，從 `debug.buildPlatformContent` 摘錄高信號欄位寫入輪詢區（避免只看 toast）。 */
+/** Stage 2 失败或空载荷时，从 `debug.buildPlatformContent` 摘录高信号栏位写入轮询区（避免只看 toast）。 */
 function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefined): string {
   if (!debug || typeof debug !== "object") return "";
   const parts: string[] = [];
@@ -389,7 +389,7 @@ function renderHighlightText(text: string): React.ReactNode {
   });
 }
 
-/** 列表卡片左側裝飾圖示：不依關鍵字猜使用者領域，僅由文案字串 hash **穩定**挑一個，避免每人都得像同一種帳號類型。 */
+/** 列表卡片左侧装饰图示：不依关键字猜使用者领域，仅由文案字串 hash **稳定**挑一个，避免每人都得像同一种帐号类型。 */
 const PLATFORM_CARD_DECOR_ICONS: LucideIcon[] = [
   Sparkles,
   Star,
@@ -440,7 +440,7 @@ function platformCardDecorIconHash(text: string): number {
   return h >>> 0;
 }
 
-// 列表／卡片用裝飾圖示：語意中性，同一條文案每次得到同一圖、不同文案盡量錯開
+// 列表／卡片用装饰图示：语意中性，同一条文案每次得到同一图、不同文案尽量错开
 function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React.ReactElement {
   const Icon = PLATFORM_CARD_DECOR_ICONS[platformCardDecorIconHash(text) % PLATFORM_CARD_DECOR_ICONS.length];
   return <Icon className={className} />;
@@ -558,13 +558,13 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
-/** menu 項常見欄位順序（先找中文標籤；若無漢字再整段掃一次取英文 slug 等）。 */
+/** menu 项常见栏位顺序（先找中文标签；若无汉字再整段扫一次取英文 slug 等）。 */
 function stringContainsHan(text: string): boolean {
-  /** 日用汉字區間檢測；不依賴需 ES2018+ 的 Unicode 屬性轉義。 */
+  /** 日用汉字区间检测；不依赖需 ES2018+ 的 Unicode 属性转义。 */
   return /[\u4e00-\u9fff]/.test(text);
 }
 
-/** LLM／示例 JSON 常用的假渠道占位（會被過濾，改走快照 hinted 名或可讀英文字段）。 */
+/** LLM／示例 JSON 常用的假渠道占位（会被过滤，改走快照 hinted 名或可读英文字段）。 */
 function looksLikeGarbagePlatformMenuLabel(raw: string): boolean {
   const s = String(raw || "").trim();
   if (!s) return true;
@@ -578,7 +578,7 @@ function looksLikeGarbagePlatformMenuLabel(raw: string): boolean {
   return false;
 }
 
-/** 解析不出具體渠道名時的順位備援（不使用「平台 1、2」式占位）。 */
+/** 解析不出具体渠道名时的顺位备援（不使用「平台 1、2」式占位）。 */
 function platformMenuRankFallback(index: number): string {
   switch (index) {
     case 0:
@@ -595,8 +595,8 @@ function platformMenuRankFallback(index: number): string {
 }
 
 /**
- * platformMenu：優先後端約定的 platform / displayName，再掃 passthrough 欄位。
- * `snapshotHint` 為快照里對應順位的真實平台名／展示名（補模型漏欄時用）。
+ * platformMenu：优先后端约定的 platform / displayName，再扫 passthrough 栏位。
+ * `snapshotHint` 为快照里对应顺位的真实平台名／展示名（补模型漏栏时用）。
  */
 function resolvePlatformMenuDisplayName(
   item: Record<string, unknown> | null | undefined,
@@ -623,7 +623,7 @@ function resolvePlatformMenuDisplayName(
   const candidates: string[] = [];
   if (item && typeof item === "object") {
     const o = item as Record<string, unknown>;
-    /** 順序對齊 growthPlatformMenuItemSchema + Prompt 明示的 platform / displayName。 */
+    /** 顺序对齐 growthPlatformMenuItemSchema + Prompt 明示的 platform / displayName。 */
     const keys: unknown[] = [
       o.platform,
       o.displayName,
@@ -679,7 +679,7 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「内容身份」注入封面生图链，供 GPT 5.4 锁定人設（此前仅传选题文案时模型无法看到身份设定） */
+/** 将 IP 基因库 + 仪表盘「内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
 function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
@@ -692,7 +692,7 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: 
   return parts.join("\n").trim().slice(0, 3800);
 }
 
-/** 供分鏡表 / 小紅書 2×4 八格圖文單圖：彙整摺疊區內容，供 gpt-image-2 拆鏡（後端再截斷） */
+/** 供分镜表 / 小红书 2×4 八格图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
 function buildPlatformSheetScriptContext(item: {
   title: string;
   hook: string;
@@ -726,7 +726,7 @@ function buildPlatformSheetScriptContext(item: {
   return parts.join("\n\n").slice(0, 12000);
 }
 
-/** 合成生圖：燈光／環境彙總，供後端寫入 [EMOTION & LIGHTING]（Cam5） */
+/** 合成生图：灯光／环境汇总，供后端写入 [EMOTION & LIGHTING]（Cam5） */
 function buildPlatformExecutionDetailsPayload(item: {
   executionDetails?: { lightingAndCamera?: string; environmentAndWardrobe?: string };
 }): string {
@@ -741,7 +741,7 @@ function buildPlatformExecutionDetailsPayload(item: {
   );
 }
 
-/** Cam8：從網址 `?reportId=<user_creations.id>` 綁定戰報，生圖扣點成功後寫入該筆 metadata */
+/** Cam8：从网址 `?reportId=<user_creations.id>` 绑定战报，生图扣点成功后写入该笔 metadata */
 function readOptionalReportBindingCreationId(): number | undefined {
   if (typeof window === "undefined") return undefined;
   const raw = new URLSearchParams(window.location.search).get("reportId");
@@ -750,7 +750,7 @@ function readOptionalReportBindingCreationId(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-/** 僅在 ?reportId= 有效時帶上；勿傳 `creationRecordId: undefined`，否則 tRPC / Query 序列化會出現字串 "undefined" */
+/** 仅在 ?reportId= 有效时带上；勿传 `creationRecordId: undefined`，否则 tRPC / Query 序列化会出现字串 "undefined" */
 function optionalBoundCreationRecordId(): { creationRecordId: number } | Record<string, never> {
   const id = readOptionalReportBindingCreationId();
   return id !== undefined ? { creationRecordId: id } : {};
@@ -772,7 +772,7 @@ function normalizeTitleVariantsFromServer(raw: unknown, fallback: PlatformTitleV
   return out.length >= 2 ? out : fallback;
 }
 
-/** 與後端單條展示標題對齊（具體規則在 shared / 後台）。 */
+/** 与后端单条展示标题对齐（具体规则在 shared / 后台）。 */
 function resolveExecutionCardTitleVariants(
   rawItem: Record<string, unknown>,
   title: string,
@@ -799,16 +799,16 @@ function resolveExecutionCardTitleVariants(
   return buildAutoPickedTitleVariantsForBlueprint(seed, index);
 }
 
-/** 執行選題卡 DOM id：穩定錨點 `execution-card-…`（畫廊不綁定點擊滾動） */
+/** 执行选题卡 DOM id：稳定锚点 `execution-card-…`（画廊不绑定点击滚动） */
 function executionCardDomId(sceneId: string): string {
   return `execution-card-${encodeURIComponent(sceneId).replace(/%/g, "")}`;
 }
 
-/** 生圖請求速率：滾動窗口長度（毫秒），與上游「每分鐘 N 次」配額對齊。 */
+/** 生图请求速率：滚动窗口长度（毫秒），与上游「每分钟 N 次」配额对齐。 */
 const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
 /**
- * 上述窗口內最多**發起**幾次生圖（封面單幀 · 2×4 分鏡 · 小紅書 2×4 八格圖文合成等共用同一節流器）。
- * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆寫（整數 1～24，預設 6）。
+ * 上述窗口内最多**发起**几次生图（封面单帧 · 2×4 分镜 · 小红书 2×4 八格图文合成等共用同一节流器）。
+ * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆写（整数 1～24，预设 6）。
  */
 const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
   24,
@@ -817,7 +817,7 @@ const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
 
 const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
 
-/** 寬幅合成：服务端 jobs 表旁路进度，供 GET /api/jobs 轮询 `imageGenFlowLog` */
+/** 宽幅合成：服务端 jobs 表旁路进度，供 GET /api/jobs 轮询 `imageGenFlowLog` */
 function newPlatformCompositeProgressJobId(): string {
   try {
     const u = globalThis.crypto?.randomUUID?.();
@@ -853,14 +853,14 @@ function upsertPlatformImageFlowSnapshot(
   return [next, ...withoutSameOp].slice(0, 8);
 }
 
-/** 滾動窗口內只保留「仍在 60s 內」的發起時間戳 */
+/** 滚动窗口内只保留「仍在 60s 内」的发起时间戳 */
 function prunePlatformImageRateWindow(times: number[], now: number, windowMs: number): void {
   while (times.length > 0 && times[0]! <= now - windowMs) {
     times.shift();
   }
 }
 
-/** 失敗時寫入 Debug 綠框，便于对照 Network / 服务端日志 */
+/** 失败时写入 Debug 绿框，便于对照 Network / 服务端日志 */
 function linesFromClientMutationFailure(prefix: string, err: unknown): string[] {
   const lines = [`${prefix} · ${new Date().toISOString()}`];
   if (err instanceof Error) {
@@ -903,16 +903,16 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
   if (kind === "cover_batch") {
     return [
       `${ts}  [客户端] 异步逐张封面生成已发起`,
-      `${ts}  [等待中] sceneId=${sceneId || "N/A"}（詳見下方服務端 imageGenFlowLog）`,
+      `${ts}  [等待中] sceneId=${sceneId || "N/A"}（详见下方服务端 imageGenFlowLog）`,
     ];
   }
   if (kind === "storyboard") {
-    return [`${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}（詳見下方服務端流水）`];
+    return [`${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}（详见下方服务端流水）`];
   }
-  return [`${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}（詳見下方服務端流水）`];
+  return [`${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}（详见下方服务端流水）`];
 }
 
-/** 寬幅合成：pending 時由 progressJobId + GET /api/jobs 實時刷新（分鏡 / 小紅書同一套）。 */
+/** 宽幅合成：pending 时由 progressJobId + GET /api/jobs 实时刷新（分镜 / 小红书同一套）。 */
 function buildCompositeImageGenPendingLines(input: {
   kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   sceneId: string;
@@ -922,7 +922,7 @@ function buildCompositeImageGenPendingLines(input: {
 }): string[] {
   const ts = new Date().toISOString();
   const trLine =
-    "2×4／八格英文化：僅 Vertex Gemini 3 Flash Preview（最多 3 次重試；不含 GPT 5.4 英文化）。生存模式由服端覆寫。";
+    "2×4／八格英文化：仅 Vertex Gemini 3 Flash Preview（最多 3 次重试；不含 GPT 5.4 英文化）。生存模式由服端覆写。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"
@@ -936,15 +936,15 @@ function buildCompositeImageGenPendingLines(input: {
     `${ts}  [客户端] 翻译引擎：${trLine}`,
     ...(pid.length >= 8
       ? [
-          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s 拉取 GET 计数；細節不寫進「Fly Jobs」面板`,
+          `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s 拉取 GET 计数；细节不写进「Fly Jobs」面板`,
         ]
       : [`${ts}  [提示] 未带 progressJobId，无法实时轮询步骤`]),
   ];
 }
 
 /**
- * 從輪詢或響應合併後的 snapshot 文案推測進度標籤，減少用戶以為「卡住」。
- * （僅為 UX 輔助；細節仍以下方 Debug imageGenFlowLog 為準）
+ * 从轮询或响应合并后的 snapshot 文案推测进度标签，减少用户以为「卡住」。
+ * （仅为 UX 辅助；细节仍以下方 Debug imageGenFlowLog 为准）
  */
 function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServerTail = ""): string {
   const tail = `${liveServerTail}\n${snapshotLines.length ? snapshotLines.slice(-48).join("\n") : ""}`;
@@ -969,7 +969,7 @@ function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServer
   return "英文化与绘图合计大约 3～5 分钟，请勿中途刷新 ";
 }
 
-/** Stage 2 等長任務：用 shimmer / 光斑 / 節拍點轉移注意力（不向用戶展示技術細節） */
+/** Stage 2 等长任务：用 shimmer / 光斑 / 节拍点转移注意力（不向用户展示技术细节） */
 function PlatformGeneratingCharm(props: {
   className?: string;
   iconClass?: string;
@@ -1023,7 +1023,7 @@ function PlatformGeneratingCharm(props: {
   );
 }
 
-/** 封面生成等待期間：輪播前四條選題文案摘要；每條約 60s；顯示持續至當前列表內每條選題均有有效封面 URL（不依賴任務旗標提前收起）。 */
+/** 封面生成等待期间：轮播前四条选题文案摘要；每条约 60s；显示持续至当前列表内每条选题均有有效封面 URL（不依赖任务旗标提前收起）。 */
 const COVER_GEN_WAIT_CAROUSEL_MS = 60_000;
 
 type CoverGenWaitCarouselItem = { id: string; title: string; excerpt: string };
@@ -1113,7 +1113,7 @@ type PlatformSignalsCarouselItem = {
   summary: string;
   detail: string;
   tone: PlatformSignalsCarouselTone;
-  /** 平台卡：引導購買趨勢分析額度 / 積分加值包 */
+  /** 平台卡：引导购买趋势分析额度 / 积分加值包 */
   purchaseCta?: { href: string; label: string };
 };
 
@@ -1128,7 +1128,7 @@ function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
   }
 }
 
-/** 分析報告輪播大卡：與「分析中」「分鏡／封面區」共用。 */
+/** 分析报告轮播大卡：与「分析中」「分镜／封面区」共用。 */
 function PlatformSignalsCarouselPanel(props: {
   items: PlatformSignalsCarouselItem[];
   activeIndex: number;
@@ -1259,7 +1259,7 @@ function PlatformSignalsCarouselPanel(props: {
   );
 }
 
-/** 3A：四維度 IP 引導面板（與 buildPlatformContent 硬約束對齊） */
+/** 3A：四维度 IP 引导面板（与 buildPlatformContent 硬约束对齐） */
 function PlatformIpDimensionGuide() {
   return (
     <div className="mb-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-md">
@@ -1288,7 +1288,7 @@ function PlatformIpDimensionGuide() {
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
-  /** Debug 開啟時加快輪詢與刷新，讓進度面板更接近即時 */
+  /** Debug 开启时加快轮询与刷新，让进度面板更接近即时 */
   const platformImageFlowPollIntervalMs = debugMode ? 650 : 2500;
   const compositeSheetLivePollIntervalMs = debugMode ? 380 : 850;
 
@@ -1349,7 +1349,7 @@ export default function PlatformPage() {
   const canConfigureCompositeImageTranslator =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
-  /** 與封面進階開關一致：supervisor 入口 / admin / supervisor，一般用戶不可見 */
+  /** 与封面进阶开关一致：supervisor 入口 / admin / supervisor，一般用户不可见 */
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
@@ -1379,12 +1379,12 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
-  /** Stage 2：佇列/worker 狀態文案（不宣稱具體模型已完成，僅描述後台進度） */
-  const [contentLoadingText, setContentLoadingText] = useState("等待戰略看板就緒…");
+  /** Stage 2：伫列/worker 状态文案（不宣称具体模型已完成，仅描述后台进度） */
+  const [contentLoadingText, setContentLoadingText] = useState("等待战略看板就绪…");
   const [stage2Failed, setStage2Failed] = useState(false);
-  /** Stage 2：platform_build_content job + GET /api/jobs 輪詢時的錯誤說明 */
+  /** Stage 2：platform_build_content job + GET /api/jobs 轮询时的错误说明 */
   const [contentJobError, setContentJobError] = useState<string | null>(null);
-  /** 供「重新生成文案」：上次入隊的快照（避免虛構成功） */
+  /** 供「重新生成文案」：上次入队的快照（避免虚构成功） */
   const lastStage2InputRef = useRef<{ snapshotSummary: Record<string, unknown>; windowDays: 15 | 30 | 45 } | null>(
     null,
   );
@@ -1392,9 +1392,9 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
-  /** Debug：選題封面管線 `imageGenFlowLog`（輪詢中與完成後保留，對照 DR-Pro → GPT 5.4） */
+  /** Debug：选题封面管线 `imageGenFlowLog`（轮询中与完成后保留，对照 DR-Pro → GPT 5.4） */
   const [topicCoverPipelineFlowLogDebug, setTopicCoverPipelineFlowLogDebug] = useState<string[]>([]);
-  /** Debug：2×4 分镜 / 八格图文 合成 job（含 progressJobId、輪詢次數） */
+  /** Debug：2×4 分镜 / 八格图文 合成 job（含 progressJobId、轮询次数） */
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   const topicCoverDebugPollCaption = useMemo(() => {
     const label = topicImageJobPollTrace?.label ?? compositeJobPollTrace?.label;
@@ -1404,7 +1404,7 @@ export default function PlatformPage() {
     if (!jid?.trim()) return head || undefined;
     return head ? `${head} · job ${jid}` : `job ${jid}`;
   }, [topicImageJobPollTrace, compositeJobPollTrace]);
-  /** Stage 2：有 platformContent 物件但選題與變現皆 0 條 — 假成功，須與真完成區分 */
+  /** Stage 2：有 platformContent 物件但选题与变现皆 0 条 — 假成功，须与真完成区分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
     const bp = Array.isArray(platformContent.contentBlueprints) ? platformContent.contentBlueprints.length : 0;
@@ -1412,20 +1412,20 @@ export default function PlatformPage() {
     return bp === 0 && ml === 0;
   }, [platformContent]);
 
-  /** 與後台實際結果一致：不宣稱具體模型「已完成」，只描述任務狀態 */
+  /** 与后台实际结果一致：不宣称具体模型「已完成」，只描述任务状态 */
   const stage2UserFacingLine = useMemo(() => {
     if (isContentLoading) return contentLoadingText;
-    if (stage2Failed || contentJobError) return `無法完成：${contentJobError || "請重試"}`;
+    if (stage2Failed || contentJobError) return `无法完成：${contentJobError || "请重试"}`;
     if (stage2EmptyPayload) {
-      return "後台已返回，但沒有有效選題（0 條）。請展開 Debug「Stage 2」或點擊重試（將再次扣除積分）。";
+      return "后台已返回，但没有有效选题（0 条）。请展开 Debug「Stage 2」或点击重试（将再次扣除积分）。";
     }
     if (platformContent && !stage2EmptyPayload) {
-      return "✅ 專屬選題與文案已由後台寫入（可下滑查看卡片）";
+      return "✅ 专属选题与文案已由后台写入（可下滑查看卡片）";
     }
     if (platformDashboard && !platformContent) {
-      return "戰略看板已就緒。若流程中斷，可點下方手動「生成專屬文案」繼續。";
+      return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `點擊「开始全案分析」將一次跑完戰略看板與專屬文案（入隊時扣 ${CREDIT_COSTS.platformStage2Copywriting} 積分）。`;
+    return `点击「开始全案分析」将一次跑完战略看板与专属文案（入队时扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -1437,24 +1437,24 @@ export default function PlatformPage() {
   ]);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
-  /** 用戶發起封面繪製後置為 true；收起條件為當前視窗內每一條選題均有有效封面 URL（與 Stage1 輪播只看「任務旗標」區分）。 */
+  /** 用户发起封面绘制后置为 true；收起条件为当前视窗内每一条选题均有有效封面 URL（与 Stage1 轮播只看「任务旗标」区分）。 */
   const [coverWaitCarouselEngaged, setCoverWaitCarouselEngaged] = useState(false);
   const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
   const [compositeLoadRetriedKeys, setCompositeLoadRetriedKeys] = useState<Set<string>>(() => new Set());
-  /** 橫版 16:9 執行分鏡表（單張合成）；API `kind` 使用 `storyboard_sheet_landscape`（舊別名 `storyboard_sheet_portrait` 服端視為同一產物）。 */
+  /** 横版 16:9 执行分镜表（单张合成）；API `kind` 使用 `storyboard_sheet_landscape`（旧别名 `storyboard_sheet_portrait` 服端视为同一产物）。 */
   const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
-  /** 小紅書雙筆記卡（單張合成） */
+  /** 小红书双笔记卡（单张合成） */
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
   /**
-   * 2×4 非同步：TRPC 已 200 但須輪詢 GET /api/jobs 至 succeeded/failed。
-   * 須與 {@link generatePlatformCompositeSheetMutation.isPending} 一併作為「仍在處理」與輪詢 effect 依賴，否則 isPending 瞬間 false 會拆掉輪詢、清掉 ref，畫面也不轉圈。
+   * 2×4 非同步：TRPC 已 200 但须轮询 GET /api/jobs 至 succeeded/failed。
+   * 须与 {@link generatePlatformCompositeSheetMutation.isPending} 一并作为「仍在处理」与轮询 effect 依赖，否则 isPending 瞬间 false 会拆掉轮询、清掉 ref，画面也不转圈。
    */
   const [compositeAwaitingJobTerminal, setCompositeAwaitingJobTerminal] = useState(false);
-  /** 2×4 寬幅合成：與 TRPC 並行的 GET /api/jobs 輪詢（progressJobId） */
+  /** 2×4 宽幅合成：与 TRPC 并行的 GET /api/jobs 轮询（progressJobId） */
   const compositeSheetLivePollCtxRef = useRef<{
     jobId: string;
     localOpId: string;
@@ -1462,13 +1462,13 @@ export default function PlatformPage() {
     title: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
   } | null>(null);
-  /** 與 GET /api/jobs 合成輪詢同步的計數（僅用於 Debug 面板，不刷整條 imageGenFlowLog） */
+  /** 与 GET /api/jobs 合成轮询同步的计数（仅用于 Debug 面板，不刷整条 imageGenFlowLog） */
   const compositeLivePollAttemptRef = useRef(0);
   /** Debug：批量单帧 / 2×4 合成 · 服务端逐步日志（最新在前） */
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
   );
-  /** 2×4 / 小红书合成進行中：由 live log 粗略推進度標籤 */
+  /** 2×4 / 小红书合成进行中：由 live log 粗略推进度标签 */
   const compositePendingUxHints = useMemo(() => {
     const map: Record<string, string> = {};
     for (const snap of platformImageGenFlowSnapshots) {
@@ -1488,7 +1488,7 @@ export default function PlatformPage() {
   const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
-  /** 封面成功返回後：規則估計的點擊率檔位（非實測） */
+  /** 封面成功返回后：规则估计的点击率档位（非实测） */
   const [platformCoverCtrBySceneId, setPlatformCoverCtrBySceneId] = useState<Record<string, CoverClickEstimate>>(
     () => ({}),
   );
@@ -1499,10 +1499,10 @@ export default function PlatformPage() {
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
   /** 一键 2×4 / 八格图文：串行逐张合成（与单卡共用一个 mutation，批量期间抑制逐张 toast） */
   const [isSequentialCompositeBatchGenerating, setIsSequentialCompositeBatchGenerating] = useState(false);
-  /** 选题套裝：竖版封面 + 2×4/八格 · 客户端逐选题串行（每题 worker 内双链并发） */
+  /** 选题套装：竖版封面 + 2×4/八格 · 客户端逐选题串行（每题 worker 内双链并发） */
   const [isSequentialCoverCompositeBundleBatchGenerating, setIsSequentialCoverCompositeBundleBatchGenerating] =
     useState(false);
-  /** 单卡套裝进行中（避免与批量/单帧/单合成并行） */
+  /** 单卡套装进行中（避免与批量/单帧/单合成并行） */
   const [coverCompositeBundleSceneId, setCoverCompositeBundleSceneId] = useState<string | null>(null);
   const compositeBatchSilentUiRef = useRef(false);
   /** 封面生成区旁：决策智库对外试读样张（演示数据 + 脱敏） */
@@ -1533,9 +1533,9 @@ export default function PlatformPage() {
 
   const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
 
-  /** Fly worker 回傳後解析 platformContent（輪詢與錯誤處理集中一處，供初次與重試共用） */
+  /** Fly worker 回传后解析 platformContent（轮询与错误处理集中一处，供初次与重试共用） */
   const runStage2FromJobId = useCallback(async (jobId: string) => {
-    setContentLoadingText("後台正在處理專屬文案…");
+    setContentLoadingText("后台正在处理专属文案…");
     const j = await pollJobUntilTerminal(jobId, {
       intervalMs: 2500,
       maxWaitMs: 25 * 60_000,
@@ -1548,11 +1548,11 @@ export default function PlatformPage() {
             : prev,
         );
         if (status === "queued") {
-          setContentLoadingText("任務排隊中，請稍候…");
+          setContentLoadingText("任务排队中，请稍候…");
         } else if (status === "running") {
-          if (attempt < 12) setContentLoadingText("後台正在生成專屬文案（撰寫與校對中）…");
-          else if (attempt < 28) setContentLoadingText("內容較長，後台仍在處理…");
-          else setContentLoadingText("已等待較久，後台仍在處理；請勿關閉頁面…");
+          if (attempt < 12) setContentLoadingText("后台正在生成专属文案（撰写与校对中）…");
+          else if (attempt < 28) setContentLoadingText("内容较长，后台仍在处理…");
+          else setContentLoadingText("已等待较久，后台仍在处理；请勿关闭页面…");
         }
       },
     });
@@ -1576,7 +1576,7 @@ export default function PlatformPage() {
             }
           : prev,
       );
-      throw new Error(j.error || "專屬文案任務失敗");
+      throw new Error(j.error || "专属文案任务失败");
     }
     const raw = j.output;
     if (!raw || typeof raw !== "object") {
@@ -1587,12 +1587,12 @@ export default function PlatformPage() {
               terminalStatus: j.status,
               lines: appendPollDebugLine(
                 prev.lines,
-                `${new Date().toISOString()} 任務返回但無法解析 output`,
+                `${new Date().toISOString()} 任务返回但无法解析 output`,
               ),
             }
           : prev,
       );
-      throw new Error("任務已完成但無有效輸出，請重試");
+      throw new Error("任务已完成但无有效输出，请重试");
     }
     const out = raw as Record<string, unknown>;
     const res = {
@@ -1636,7 +1636,7 @@ export default function PlatformPage() {
             }
           : prev,
       );
-      throw new Error("專屬文案生成逾時，請稍後再試或縮短背景描述");
+      throw new Error("专属文案生成逾时，请稍后再试或缩短背景描述");
     }
     if (res.platformContent) {
       const pc = res.platformContent as { contentBlueprints?: unknown[]; monetizationLanes?: unknown[] };
@@ -1656,14 +1656,14 @@ export default function PlatformPage() {
                 lines: appendPollDebugLine(
                   prev.lines,
                   snippet
-                    ? `${new Date().toISOString()} Stage 2 任務成功但 0 條選題 · 摘要: ${snippet}`
-                    : `${new Date().toISOString()} Stage 2 任務成功但 0 條選題（无 buildPlatformContent 摘要）`,
+                    ? `${new Date().toISOString()} Stage 2 任务成功但 0 条选题 · 摘要: ${snippet}`
+                    : `${new Date().toISOString()} Stage 2 任务成功但 0 条选题（无 buildPlatformContent 摘要）`,
                 ),
               }
             : prev,
         );
         toast.error(
-          "專屬文案沒有生成有效選題（0 條）。請展開下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
+          "专属文案没有生成有效选题（0 条）。请展开下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
         );
       } else {
         setContentJobPollTrace(null);
@@ -1690,12 +1690,12 @@ export default function PlatformPage() {
             }
           : prev,
       );
-      setContentJobError("專屬文案生成失敗：任務完成但未返回有效內容");
-      toast.error("專屬文案生成失敗：AI 數據格式異常，請重試");
+      setContentJobError("专属文案生成失败：任务完成但未返回有效内容");
+      toast.error("专属文案生成失败：AI 数据格式异常，请重试");
     }
   }, []);
 
-  /** 入隊並輪詢專屬文案（扣費發生在後端 enqueue 時）；供主流程鏈式調用與手動重試 */
+  /** 入队并轮询专属文案（扣费发生在后端 enqueue 时）；供主流程链式调用与手动重试 */
   const enqueueAndPollExclusiveContent = useCallback(
     async (
       dash: PlatformDashboard,
@@ -1705,7 +1705,7 @@ export default function PlatformPage() {
       setContentJobError(null);
       setIsContentLoading(true);
       setStage2Failed(false);
-      setContentLoadingText("正在提交專屬文案後台任務…");
+      setContentLoadingText("正在提交专属文案后台任务…");
       setContentDebug(null);
       try {
         const supervisorTok = getSupervisorTrpcToken();
@@ -1735,7 +1735,7 @@ export default function PlatformPage() {
         const msg = e instanceof Error ? e.message : String(e);
         setStage2Failed(true);
         setContentJobError(msg);
-        toast.error(`文案生成失敗: ${msg}`);
+        toast.error(`文案生成失败: ${msg}`);
         setContentJobPollTrace((prev) =>
           prev
             ? {
@@ -1752,17 +1752,17 @@ export default function PlatformPage() {
     [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, canConfigureStage2CopyEngine, stage2SupervisorCopyEngine],
   );
 
-  /** 用戶確認後入隊 Stage 2（後端立即扣積分）並輪詢直至完成 */
+  /** 用户确认后入队 Stage 2（后端立即扣积分）并轮询直至完成 */
   const startStage2ContentGeneration = useCallback(async () => {
     if (!platformDashboard || !lastStage2InputRef.current) {
-      toast.error("請先完成戰略看板分析");
+      toast.error("请先完成战略看板分析");
       return;
     }
     const inp = lastStage2InputRef.current;
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `專屬文案與選題將消耗 ${cost} 積分，確認後立即扣費並由後台生成（約數分鐘，請勿關閉頁面）。是否繼續？`,
+        `专属文案与选题将消耗 ${cost} 积分，确认后立即扣费并由后台生成（约数分钟，请勿关闭页面）。是否继续？`,
       )
     ) {
       return;
@@ -1774,7 +1774,7 @@ export default function PlatformPage() {
     await startStage2ContentGeneration();
   }, [startStage2ContentGeneration]);
 
-  // Stage 1 Mutation: 戰略看板（除 handleAnalyze 外通常不單獨觸發；成功時不保留 debug，僅失敗時保留）
+  // Stage 1 Mutation: 战略看板（除 handleAnalyze 外通常不单独触发；成功时不保留 debug，仅失败时保留）
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
     onSuccess: (result) => {
       const dbg = result.debug as Record<string, unknown> | null | undefined;
@@ -1861,7 +1861,7 @@ export default function PlatformPage() {
           <span className="text-gray-500">
             ｜每行均含 <span className="text-gray-300">jobId</span>（可复制到 Fly 日志或 <code className="text-gray-400">GET /api/jobs/&lt;id&gt;</code>）
           </span>
-          <span className="text-gray-500"> · Stage 2 文案／封面／2×4 合成各一行；失敗時下方展開完整流水</span>
+          <span className="text-gray-500"> · Stage 2 文案／封面／2×4 合成各一行；失败时下方展开完整流水</span>
         </p>
         <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">{overviewText}</p>
         {showFailureLog ? (
@@ -1895,7 +1895,7 @@ export default function PlatformPage() {
     }) => {
       const pollLabel =
         inp.pollDebugLabel ??
-        (inp.sceneId ? `套裝 · ${inp.sceneId}` : "套裝 · platform_topic_cover_composite_bundle");
+        (inp.sceneId ? `套装 · ${inp.sceneId}` : "套装 · platform_topic_cover_composite_bundle");
       const supervisorToken = getSupervisorTrpcToken();
       const { jobId } = await enqueueTopicCoverAndCompositeBundleMutation.mutateAsync({
         sceneId: inp.sceneId,
@@ -1920,7 +1920,7 @@ export default function PlatformPage() {
         label: pollLabel,
         lines: [],
         pollCount: 0,
-        currentStep: "套裝已入队…",
+        currentStep: "套装已入队…",
       });
       let j: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
       try {
@@ -1938,7 +1938,7 @@ export default function PlatformPage() {
                 ? {
                     ...prev,
                     pollCount: attempt,
-                    currentStep: tail ? `第 ${attempt} 次 · ${tail}` : `套裝轮询 · ${attempt} 次`,
+                    currentStep: tail ? `第 ${attempt} 次 · ${tail}` : `套装轮询 · ${attempt} 次`,
                   }
                 : prev,
             );
@@ -1977,7 +1977,7 @@ export default function PlatformPage() {
             ),
           };
         });
-        throw new Error(j.error || "套裝生图任务失败");
+        throw new Error(j.error || "套装生图任务失败");
       }
       const raw = j.output;
       if (!raw || typeof raw !== "object") {
@@ -2039,7 +2039,7 @@ export default function PlatformPage() {
                 terminalStatus: "succeeded",
                 lines: appendPollDebugLine(
                   prev.lines,
-                  `${new Date().toISOString()} 终态 succeeded 但套裝输出不完整 · ${pollLabel}`,
+                  `${new Date().toISOString()} 终态 succeeded 但套装输出不完整 · ${pollLabel}`,
                 ),
               }
             : prev,
@@ -2067,7 +2067,7 @@ export default function PlatformPage() {
 
   const runEnqueueTopicImageAndPoll = useCallback(
     async (inp: {
-      /** @deprecated 忽略；服端僅使用 DB 快照優化後的主句。 */
+      /** @deprecated 忽略；服端仅使用 DB 快照优化后的主句。 */
       topicHook?: string;
       format: "短视频" | "图文";
       /** @deprecated 忽略。 */
@@ -2077,7 +2077,7 @@ export default function PlatformPage() {
       sceneId: string;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
-      /** 管理員專用：Vertex Nano Banana 2 主生圖（官方 API） */
+      /** 管理员专用：Vertex Nano Banana 2 主生图（官方 API） */
       coverProEngine?: "nano_banana_2";
     }) => {
       const pollLabel =
@@ -2090,7 +2090,7 @@ export default function PlatformPage() {
         coverPersonaContext: inp.coverPersonaContext,
         failedJobId: inp.failedJobId,
         sceneId: inp.sceneId,
-        /** 封面 topic 管線；與下方 2×4 合成英文化開關無關。 */
+        /** 封面 topic 管线；与下方 2×4 合成英文化开关无关。 */
         imagePromptTranslator: "gpt54",
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
@@ -2192,7 +2192,7 @@ export default function PlatformPage() {
       if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
-      /** job output 若僅缺 success（序列化/進度合併），有 URL 也應寫入 platformImageMap */
+      /** job output 若仅缺 success（序列化/进度合并），有 URL 也应写入 platformImageMap */
       const success =
         Boolean(imageUrl) &&
         o.success !== false &&
@@ -2687,7 +2687,7 @@ export default function PlatformPage() {
           `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成已发起 · topicCount=${cards.length} · concurrency=1`,
           `${new Date().toISOString()}  [等待中] ${
             cards.length === 4
-              ? `四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（4 次均摊）`
+              ? `四条套装合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（4 次均摊）`
               : "每条依选题格式扣点（短视频→分镜表 · 图文/小红书→八格笔记）"
           }，单张约 3～5 分钟`,
         ],
@@ -2790,7 +2790,7 @@ export default function PlatformPage() {
             successCount += 1;
             liveLines.push(`${new Date().toISOString()}  ✓ 合成完成 · sceneId=${item.id}`);
           } else if ((res as any).isAsync) {
-            // 異步模式不立刻報錯，等輪詢結束
+            // 异步模式不立刻报错，等轮询结束
           } else {
             liveLines.push(`${new Date().toISOString()}  ✗ 合成无图 · sceneId=${item.id}`);
           }
@@ -2912,7 +2912,7 @@ export default function PlatformPage() {
                 }
               : prev,
           );
-          // 完成時如果帶有圖，立刻賦予畫面（JobsRepo 終態為 succeeded，不是 completed）
+          // 完成时如果带有图，立刻赋予画面（JobsRepo 终态为 succeeded，不是 completed）
           if (j.status === "succeeded" && out && (out as any).compositeImageUrl) {
             if (ctx.kind === "storyboard_sheet_portrait" || ctx.kind === "storyboard_sheet_landscape") {
               setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: (out as any).compositeImageUrl! }));
@@ -2924,9 +2924,9 @@ export default function PlatformPage() {
             }
           }
           if (j.status === "failed") {
-            const errorReason = (out as any)?.error || "未知錯誤";
+            const errorReason = (out as any)?.error || "未知错误";
             if (!compositeBatchSilentUiRef.current) {
-              toast.error(`2x4 合成失敗: ${errorReason}`);
+              toast.error(`2x4 合成失败: ${errorReason}`);
             }
           }
         }
@@ -3069,9 +3069,9 @@ export default function PlatformPage() {
   }, []);
 
   const handleDownloadPlatformPdf = useCallback(async () => {
-    // 與 MyReports `captureAndUploadSnapshot` 對齊：精準克隆 `#platform-report` + head 副本 +
-    // optimizePdfSnapshotHtml / injectPlatformPdfSnapshotSanitizeIntoHead；並保留 details 行內展開以防截斷。
-    // 圖片：克隆前 waitForPlatformReportImagesReady（lazy→eager、load/decode），避免 GPT 封面等尚未載入即成空塊。
+    // 与 MyReports `captureAndUploadSnapshot` 对齐：精准克隆 `#platform-report` + head 副本 +
+    // optimizePdfSnapshotHtml / injectPlatformPdfSnapshotSanitizeIntoHead；并保留 details 行内展开以防截断。
+    // 图片：克隆前 waitForPlatformReportImagesReady（lazy→eager、load/decode），避免 GPT 封面等尚未载入即成空块。
     try {
       setIsDownloadingPdf(true);
       if (typeof document !== "undefined" && (document as any).fonts?.ready) {
@@ -3757,7 +3757,7 @@ export default function PlatformPage() {
     return { videoLike, graphicLike };
   }, [contentExecutionCards]);
 
-  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四题为套裝总价；否则按单条价累加） */
+  /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四题为套装总价；否则按单条价累加） */
   function onBulkCompositeOneClick() {
     if (!isAuthenticated) {
       toast.error("请先登录");
@@ -3767,7 +3767,7 @@ export default function PlatformPage() {
     const note = supervisorAccess
       ? ""
       : platformTopicCount === 4
-        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次扣费分别为 ${bulkFourDeductions} 点）。每条约 3～5 分钟。是否继续？`
+        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套装合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次扣费分别为 ${bulkFourDeductions} 点）。每条约 3～5 分钟。是否继续？`
         : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。单条计价：短视频向 ${CREDIT_COSTS.platformStoryboardSheet} 积分/条，图文/小红书 ${CREDIT_COSTS.platformXhsDualNote} 积分/条；当前共 ${platformBulkCompositeBreakdown.videoLike} 条短视频向、${platformBulkCompositeBreakdown.graphicLike} 条图文/小红书向，合计 ${platformBulkCompositeCost} 积分。每条约 3～5 分钟。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCompositeBatchGeneration();
@@ -3782,7 +3782,7 @@ export default function PlatformPage() {
         at: new Date().toISOString(),
         kind: "batch_cover_composite_bundle",
         lines: [
-          `${new Date().toISOString()}  [客户端] 选题套裝已发起 · topicCount=${cards.length} · 每条 ${CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 积分 · worker 内封面与 2×4 并发`,
+          `${new Date().toISOString()}  [客户端] 选题套装已发起 · topicCount=${cards.length} · 每条 ${CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 积分 · worker 内封面与 2×4 并发`,
           `${new Date().toISOString()}  [等待中] 客户端逐题串行 · 单题常需约 3～5 分钟`,
         ],
         meta: {
@@ -3803,7 +3803,7 @@ export default function PlatformPage() {
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
         liveLines.push(
-          `${new Date().toISOString()}  [客户端] 开始套裝 · sceneId=${item.id} · compositeKind=${compositeKind}`,
+          `${new Date().toISOString()}  [客户端] 开始套装 · sceneId=${item.id} · compositeKind=${compositeKind}`,
         );
         setPlatformImageGenFlowSnapshots((prev) =>
           upsertPlatformImageFlowSnapshot(prev, {
@@ -3835,7 +3835,7 @@ export default function PlatformPage() {
                 compositeKind,
                 scriptContext: buildPlatformSheetScriptContext(item as any),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
-                pollDebugLabel: `套裝批量 · ${item.id}`,
+                pollDebugLabel: `套装批量 · ${item.id}`,
               }),
             (waitMs) => {
               liveLines.push(
@@ -3883,13 +3883,13 @@ export default function PlatformPage() {
             } else if (res.compositeKind === "xiaohongshu_dual_note") {
               setPlatformXhsNoteMap((p) => ({ ...p, [item.id]: compUrl }));
             }
-            liveLines.push(`${new Date().toISOString()}  ✓ 套裝完成 · sceneId=${item.id}`);
+            liveLines.push(`${new Date().toISOString()}  ✓ 套装完成 · sceneId=${item.id}`);
           } else {
-            liveLines.push(`${new Date().toISOString()}  ✗ 套裝输出不完整 · sceneId=${item.id}`);
+            liveLines.push(`${new Date().toISOString()}  ✗ 套装输出不完整 · sceneId=${item.id}`);
           }
         } catch (err) {
           liveLines.push(
-            `${new Date().toISOString()}  ✗ 套裝异常 · sceneId=${item.id} · ${err instanceof Error ? err.message : String(err)}`,
+            `${new Date().toISOString()}  ✗ 套装异常 · sceneId=${item.id} · ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
@@ -3901,7 +3901,7 @@ export default function PlatformPage() {
           kind: "batch_cover_composite_bundle",
           lines: [
             ...liveLines,
-            `${new Date().toISOString()}  [客户端] 选题套裝批量结束 · success=${successCount}/${cards.length}`,
+            `${new Date().toISOString()}  [客户端] 选题套装批量结束 · success=${successCount}/${cards.length}`,
           ],
           meta: {
             localOpId,
@@ -3913,7 +3913,7 @@ export default function PlatformPage() {
           },
         }),
       );
-      toast.success(`已为 ${successCount}/${cards.length} 个选题完成封面加分鏡`);
+      toast.success(`已为 ${successCount}/${cards.length} 个选题完成封面加分镜`);
     }
   }
 
@@ -3986,7 +3986,7 @@ export default function PlatformPage() {
     setCoverWaitCarouselEngaged(false);
   }, [coverWaitCarouselEngaged, allTopicCoverImagesReady]);
 
-  /** 頂部「2×4 / 小紅書合成」畫廊：各選題合成 URL / pending（Grid + ImageUpscaleBar） */
+  /** 顶部「2×4 / 小红书合成」画廊：各选题合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
     type StripItem = {
       key: string;
@@ -4255,8 +4255,8 @@ export default function PlatformPage() {
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `【平台全案分析】將基於四平台實時樣本與你的 IP 背景，一次性交付：戰略優先級看板 + 專屬選題與可拍攝長文案／分鏡級內容（結構化落地稿，而非 ChatGPT 式泛泛建議）。\n\n` +
-          `專屬文案任務入隊時扣除 ${cost} 積分；全程約數分鐘，請勿關閉頁面。是否開始？`,
+        `【平台全案分析】将基于四平台实时样本与你的 IP 背景，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
+          `专属文案任务入队时扣除 ${cost} 积分；全程约数分钟，请勿关闭页面。是否开始？`,
       )
     ) {
       return;
@@ -4306,7 +4306,7 @@ export default function PlatformPage() {
       return;
     }
     setHasAnalyzed(true);
-    toast.success("快照已就緒，正在生成戰略看板與專屬文案…");
+    toast.success("快照已就绪，正在生成战略看板与专属文案…");
 
     const snap = result.data.snapshot;
     const snapSummary = snap as Record<string, unknown>;
@@ -4319,9 +4319,9 @@ export default function PlatformPage() {
       });
 
       if (!dashResult.platformDashboard) {
-        console.warn("[PlatformPage] Stage 1 AI 解析失敗:", dashResult.debug?.error);
+        console.warn("[PlatformPage] Stage 1 AI 解析失败:", dashResult.debug?.error);
         toast.error(
-          `戰略看板生成失敗：AI 數據格式異常，請重試 (${String((dashResult.debug as { error?: unknown })?.error ?? "未知")})`,
+          `战略看板生成失败：AI 数据格式异常，请重试 (${String((dashResult.debug as { error?: unknown })?.error ?? "未知")})`,
         );
         return;
       }
@@ -4342,8 +4342,8 @@ export default function PlatformPage() {
     } catch (e) {
       console.warn("[PlatformPage] handleAnalyze chain error:", e);
       const msg = e instanceof Error ? e.message : String(e);
-      if (!String(msg).includes("文案生成失敗")) {
-        toast.error(`分析中斷：${msg}`);
+      if (!String(msg).includes("文案生成失败")) {
+        toast.error(`分析中断：${msg}`);
       }
     } finally {
       setIsDashboardLoading(false);
@@ -4710,11 +4710,11 @@ export default function PlatformPage() {
                 <div className="rounded-[26px] border border-amber-500/30 bg-[linear-gradient(180deg,rgba(120,53,15,0.14),rgba(28,16,60,0.5))] p-5">
                   <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
                     <ShieldCheck className="h-4 w-4 shrink-0 text-amber-300" aria-hidden />
-                    監管專用 · 專屬文案後台模型（Stage 2）
+                    监管专用 · 专属文案后台模型（Stage 2）
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-white/55">
-                    僅 administrator（admin / supervisor）或 supervisor 入口可見；一般用戶不會看到此區，且後端會忽略未授權的線路參數。預設{" "}
-                    <span className="font-semibold text-[#8cefff]">Vertex · gemini-3.1-pro-preview</span>；OpenAI 需帳戶額度。
+                    仅 administrator（admin / supervisor）或 supervisor 入口可见；一般用户不会看到此区，且后端会忽略未授权的线路参数。预设{" "}
+                    <span className="font-semibold text-[#8cefff]">Vertex · gemini-3.1-pro-preview</span>；OpenAI 需帐户额度。
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
@@ -4786,9 +4786,9 @@ export default function PlatformPage() {
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
-                    title="已含專屬選題與長文案／分鏡稿；任務入隊時扣除右側積分（與通用聊天不同，結合當前窗口樣本與 IP 基因）"
+                    title="已含专属选题与长文案／分镜稿；任务入队时扣除右侧积分（与通用聊天不同，结合当前窗口样本与 IP 基因）"
                   >
-                    {CREDIT_COSTS.platformStage2Copywriting} 積分
+                    {CREDIT_COSTS.platformStage2Copywriting} 积分
                   </span>
                   {hasAnalyzed ? (
                     <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
@@ -4807,7 +4807,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-2 max-w-xl text-[11px] leading-5 text-white/38">
-                  點擊後會<strong className="text-white/80">自動接續</strong>生成專屬選題與長文案／分鏡稿；扣款在<strong className="text-[#fef08a]">後台任務入隊時</strong>，金額即右側標示。
+                  点击后会<strong className="text-white/80">自动接续</strong>生成专属选题与长文案／分镜稿；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>，金额即右侧标示。
                   {hasAnalyzed ? (
                     <>
                       {" "}
@@ -4815,7 +4815,7 @@ export default function PlatformPage() {
                         href="#platform-stage2-copy"
                         className="font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
                       >
-                        跳至生成區
+                        跳至生成区
                       </a>
                     </>
                   ) : null}
@@ -4939,7 +4939,7 @@ export default function PlatformPage() {
                       : platformContent && !stage2EmptyPayload
                         ? "✅"
                         : platformContent && stage2EmptyPayload
-                          ? "⚠️ 空載荷"
+                          ? "⚠️ 空载荷"
                           : contentJobError || stage2Failed
                             ? "❌"
                             : "⏸"}
@@ -4950,7 +4950,7 @@ export default function PlatformPage() {
                   </div>
                 </div>
                 {!pipelineDebugShowExtras && isDashboardLoading ? (
-                  <div className="mt-2 text-[11px] leading-relaxed text-[#8cefff]">当前：戰略看板生成中…</div>
+                  <div className="mt-2 text-[11px] leading-relaxed text-[#8cefff]">当前：战略看板生成中…</div>
                 ) : null}
                 {!pipelineDebugShowExtras && isContentLoading && contentJobPollTrace?.currentStep ? (
                   <div className="mt-2 text-[11px] leading-relaxed text-gray-300">
@@ -4973,7 +4973,7 @@ export default function PlatformPage() {
                           typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
                           typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
                           stage2EmptyPayload
-                            ? "Stage 2 返回空選題：請查看下方 Stage 2.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
+                            ? "Stage 2 返回空选题：请查看下方 Stage 2.debug（如 buildPlatformContent / jsonParseStrategy / rawContentEmpty）。"
                             : null,
                         ]
                           .filter(Boolean)
@@ -5002,14 +5002,14 @@ export default function PlatformPage() {
                       <div>
                         2a. 状态:{" "}
                         <span>
-                          {isDashboardLoading ? "⏳ 正在推演戰略看板..." : platformDashboard ? "✅ 已完成" : "⏸ 等待"}
+                          {isDashboardLoading ? "⏳ 正在推演战略看板..." : platformDashboard ? "✅ 已完成" : "⏸ 等待"}
                         </span>
                       </div>
                       <div>2b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                       <div>2c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                       <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 文案与选题跟进 ──</div>
                       <div>
-                        3. 專屬文案（enqueuePlatformContentJob · 入隊時扣 {CREDIT_COSTS.platformStage2Copywriting} 積分 → Fly worker；轮询见下方面板）
+                        3. 专属文案（enqueuePlatformContentJob · 入队时扣 {CREDIT_COSTS.platformStage2Copywriting} 积分 → Fly worker；轮询见下方面板）
                       </div>
                       <div>
                         3a. 状态:{" "}
@@ -5019,7 +5019,7 @@ export default function PlatformPage() {
                             : platformContent && !stage2EmptyPayload
                               ? "✅ 已完成"
                               : platformContent && stage2EmptyPayload
-                                ? "⚠️ 接口成功但內容為空"
+                                ? "⚠️ 接口成功但内容为空"
                                 : contentJobError
                                   ? "❌ 解析失败"
                                   : "⏸ 等待 Stage 1"}
@@ -5037,7 +5037,7 @@ export default function PlatformPage() {
                         </span>
                       </div>
                       <div className="break-words">
-                        3g. GPT‑5 reasoning 診斷:{" "}
+                        3g. GPT‑5 reasoning 诊断:{" "}
                         <span className="font-mono text-[10px] text-[#d7d0ef]">
                           {(() => {
                             const r = (
@@ -5048,7 +5048,7 @@ export default function PlatformPage() {
                         </span>
                       </div>
                       <div className="break-words">
-                        3h. Stage 2 當前步驟:{" "}
+                        3h. Stage 2 当前步骤:{" "}
                         <span className="font-mono text-[10px] text-[#d7d0ef]">
                           {pickActiveStage2SubStepOneLine(contentDebug ?? undefined) ?? "—"}
                         </span>
@@ -5137,7 +5137,7 @@ export default function PlatformPage() {
                 <div>
                   <div className="text-sm font-semibold text-white">平台样本已就绪，正在生成战略优先级看板…</div>
                   <div className="mt-1 text-xs text-[#b7add8]">
-                    通常 30–90 秒。看板就绪后将<strong className="text-[#d4d4ff]">自动接续</strong>專屬選題與長文案／分鏡稿（結合實時樣本與你的 IP，非泛泛建議），全程請勿關閉頁面。
+                    通常 30–90 秒。看板就绪后将<strong className="text-[#d4d4ff]">自动接续</strong>专属选题与长文案／分镜稿（结合实时样本与你的 IP，非泛泛建议），全程请勿关闭页面。
                   </div>
                 </div>
               </div>
@@ -5147,7 +5147,7 @@ export default function PlatformPage() {
 
         {snapshot && platformDashboard ? (
           <section id="platform-report" className="mt-8 space-y-6">
-            {/* 僅写入 PDF 快照：頁面視覺隱藏，克隆後於導出前移除 hidden（含顧問台主標 + 四格摘要，避免報告缺頭） */}
+            {/* 仅写入 PDF 快照：页面视觉隐藏，克隆后于导出前移除 hidden（含顾问台主标 + 四格摘要，避免报告缺头） */}
             <div
               data-pdf-only
               className="hidden space-y-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(7,10,20,0.92)] p-4 md:p-5"
@@ -5230,20 +5230,20 @@ export default function PlatformPage() {
             <div
               className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
               role="region"
-              aria-label="全案分析扣費說明"
+              aria-label="全案分析扣费说明"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
                 <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
                   <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
-                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣費說明</span>
+                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣费说明</span>
                 </div>
                 <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                  首次「开始全案分析」確認後，系統會接續入隊專屬文案；任務<strong className="text-white">入隊時</strong>扣除{" "}
-                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 積分</strong>
-                  並由後台結合當前窗口樣本與你的背景寫入<strong className="text-white">可執行長稿／分鏡</strong>
-                  。任務失敗、逾時或結果不滿意，
-                  <strong className="text-red-200">積分不予退還</strong>。若之後點「重新生成」，
-                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分</strong>。
+                  首次「开始全案分析」确认后，系统会接续入队专属文案；任务<strong className="text-white">入队时</strong>扣除{" "}
+                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>
+                  并由后台结合当前窗口样本与你的背景写入<strong className="text-white">可执行长稿／分镜</strong>
+                  。任务失败、逾时或结果不满意，
+                  <strong className="text-red-200">积分不予退还</strong>。若之后点「重新生成」，
+                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
                 </div>
               </div>
             </div>
@@ -5336,10 +5336,10 @@ export default function PlatformPage() {
                       ) : unlockedStrategicReport ? (
                         <>
                           再次生成（{decisionIntelPricingQuery.data?.nextCredits ?? CREDIT_COSTS.decisionIntelligenceReport}{" "}
-                          點）
+                          点）
                         </>
                       ) : (
-                        <>付費解鎖戰略地圖</>
+                        <>付费解锁战略地图</>
                       )}
                     </button>
                     {unlockedStrategicReport ? (
@@ -5352,19 +5352,19 @@ export default function PlatformPage() {
                         {isExportingStrategicPng ? (
                           <>
                             <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                            導出中…
+                            导出中…
                           </>
                         ) : (
                           <>
                             <Download className="h-4 w-4 shrink-0" />
-                            導出報告圖（PNG）
+                            导出报告图（PNG）
                           </>
                         )}
                       </button>
                     ) : null}
                   </div>
                 ) : (
-                  <p className="text-xs text-amber-200/90">登入後可解鎖此增值模組。</p>
+                  <p className="text-xs text-amber-200/90">登入后可解锁此增值模组。</p>
                 )}
               </div>
 
@@ -5380,26 +5380,26 @@ export default function PlatformPage() {
                     <DecisionIntelLockedDemoPreview
                       footnote={
                         strategicMapPreviewReport
-                          ? "上為匿名化演示樣張（英文與品牌區已打碼）。解鎖後將依您當前戰略看板與專屬文案生成清晰專屬版並存檔。"
-                          : "上為匿名化演示樣張（英文與品牌區已打碼）。完成專屬文案後即可付費解鎖，獲取基於您數據的完整報告。"
+                          ? "上为匿名化演示样张（英文与品牌区已打码）。解锁后将依您当前战略看板与专属文案生成清晰专属版并存档。"
+                          : "上为匿名化演示样张（英文与品牌区已打码）。完成专属文案后即可付费解锁，获取基于您数据的完整报告。"
                       }
                     />
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
                       <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
                         <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
                         <p className="text-sm font-semibold text-white">
-                          {strategicMapPreviewReport ? "試讀樣張 · 解鎖拿專屬高清版" : "試讀樣張 · 完成文案後可解鎖"}
+                          {strategicMapPreviewReport ? "试读样张 · 解锁拿专属高清版" : "试读样张 · 完成文案后可解锁"}
                         </p>
                         <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
                           {strategicMapPreviewReport ? (
                             <>
-                              解鎖後版式與演示一致，但數字與建議均來自<strong className="text-[#fde047]">您的全案結果</strong>
-                              ，非示意樣張。
+                              解锁后版式与演示一致，但数字与建议均来自<strong className="text-[#fde047]">您的全案结果</strong>
+                              ，非示意样张。
                             </>
                           ) : (
                             <>
-                              請先完成本頁<strong className="text-[#fde047]">專屬文案</strong>
-                              ；解鎖價格已列於上方。
+                              请先完成本页<strong className="text-[#fde047]">专属文案</strong>
+                              ；解锁价格已列于上方。
                             </>
                           )}
                         </p>
@@ -5433,7 +5433,7 @@ export default function PlatformPage() {
                     </div>
                   </div>
                   {!pipelineDebugShowExtras && isDashboardLoading ? (
-                    <div className="mt-2 text-[11px] text-[#8cefff]">当前：戰略看板生成中…</div>
+                    <div className="mt-2 text-[11px] text-[#8cefff]">当前：战略看板生成中…</div>
                   ) : null}
                   {!pipelineDebugShowExtras && isContentLoading && contentJobPollTrace?.currentStep ? (
                     <div className="mt-2 text-[11px] text-gray-300">当前：{contentJobPollTrace.currentStep}</div>
@@ -5453,7 +5453,7 @@ export default function PlatformPage() {
                             typeof dashboardDebug?.error === "string" ? dashboardDebug.error : null,
                             typeof contentDebug?.stage2Error === "string" ? contentDebug.stage2Error : null,
                             stage2EmptyPayload
-                              ? "Stage 2 返回空選題：請查看 Stage 2.debug。"
+                              ? "Stage 2 返回空选题：请查看 Stage 2.debug。"
                               : null,
                           ]
                             .filter(Boolean)
@@ -5510,11 +5510,11 @@ export default function PlatformPage() {
                     ) : null}
                   </div>
                   <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    成功跑通的单帧 / 2×4 不再占用本區；僅在客戶端標記為失敗時顯示。
+                    成功跑通的单帧 / 2×4 不再占用本区；仅在客户端标记为失败时显示。
                   </p>
                   {platformImageGenFlowSnapshotsFailedOnly.length === 0 ? (
                     <div className="mt-3 rounded-xl border border-dashed border-white/15 bg-black/30 px-3 py-6 text-center text-[11px] leading-relaxed text-gray-500">
-                      目前無失敗流水。若批量或合成報錯，此處會出現紅框記錄。
+                      目前无失败流水。若批量或合成报错，此处会出现红框记录。
                     </div>
                   ) : (
                     <div className="mt-3 max-h-[min(70vh,520px)] space-y-4 overflow-y-auto">
@@ -5716,12 +5716,12 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="專屬選題與文案狀態">
+            <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="专属选题与文案状态">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <h2 className="flex flex-wrap items-center gap-2 text-lg font-bold tracking-tight text-white sm:text-xl">
                     <Sparkles className="h-5 w-5 shrink-0 text-[#c4b5fd]" />
-                    專屬選題與文案
+                    专属选题与文案
                     {isContentLoading ? (
                       <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#c4b5fd]" aria-hidden />
                     ) : null}
@@ -5754,7 +5754,7 @@ export default function PlatformPage() {
                       className="inline-flex items-center justify-center gap-2 rounded-full border border-[#c4b5fd]/40 bg-[linear-gradient(135deg,rgba(196,181,253,0.18),rgba(125,115,255,0.14))] px-5 py-2.5 text-sm font-bold text-white shadow-[0_8px_28px_rgba(125,115,255,0.25)] transition hover:brightness-110"
                     >
                       <CircleDollarSign className="h-4 w-4 text-[#fde68a]" aria-hidden />
-                      補跑專屬文案（全案未自動入隊時 · {CREDIT_COSTS.platformStage2Copywriting} 積分）
+                      补跑专属文案（全案未自动入队时 · {CREDIT_COSTS.platformStage2Copywriting} 积分）
                     </button>
                   ) : null}
                   {(stage2Failed || stage2EmptyPayload) && platformDashboard && !isContentLoading ? (
@@ -5764,7 +5764,7 @@ export default function PlatformPage() {
                       className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-red-500/35 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
                     >
                       <RefreshCw className="h-4 w-4" />
-                      重新生成（再扣 {CREDIT_COSTS.platformStage2Copywriting} 積分）
+                      重新生成（再扣 {CREDIT_COSTS.platformStage2Copywriting} 积分）
                     </button>
                   ) : null}
                 </div>
@@ -5793,7 +5793,7 @@ export default function PlatformPage() {
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
                         视频图文分镜表
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套裝、一键生成分鏡套裝、一键生成封面加分鏡。</p>
+                      <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成分镜套装、一键生成封面加分镜。</p>
                     </div>
                     {platformTopicCount > 0 ? (
                       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
@@ -5832,7 +5832,7 @@ export default function PlatformPage() {
                           ) : (
                             <Sparkles className="h-4 w-4" />
                           )}
-                          {isSequentialCoverBatchGenerating ? "生成中…" : "一键生成封面套裝"}
+                          {isSequentialCoverBatchGenerating ? "生成中…" : "一键生成封面套装"}
                         </button>
                         <button
                           type="button"
@@ -5855,7 +5855,7 @@ export default function PlatformPage() {
                           ) : (
                             <Layers className="h-4 w-4" />
                           )}
-                          {isSequentialCompositeBatchGenerating ? "生成中…" : "一键生成分鏡套裝"}
+                          {isSequentialCompositeBatchGenerating ? "生成中…" : "一键生成分镜套装"}
                         </button>
                         <button
                           type="button"
@@ -5878,7 +5878,7 @@ export default function PlatformPage() {
                           ) : (
                             <Package className="h-4 w-4" />
                           )}
-                          {isSequentialCoverCompositeBundleBatchGenerating ? "生成中…" : "一键生成封面加分鏡"}
+                          {isSequentialCoverCompositeBundleBatchGenerating ? "生成中…" : "一键生成封面加分镜"}
                         </button>
                         <button
                           type="button"
@@ -5940,7 +5940,7 @@ export default function PlatformPage() {
                           <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
                           ：启用后走 Vertex <strong className="text-amber-100/90">Nano Banana 2</strong>
                           （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">1024×1536 竖版</code>
-                          、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语彙）；主路径失败再走版式 + NB2，
+                          、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语汇）；主路径失败再走版式 + NB2，
                           <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
                         </span>
                       </label>
@@ -6118,7 +6118,7 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
 
-                {/* 3A：選題卡片 Grid 上方 — IP 維度引導（含底部提示） */}
+                {/* 3A：选题卡片 Grid 上方 — IP 维度引导（含底部提示） */}
                 {platformDashboard ? <PlatformIpDimensionGuide /> : null}
 
                 {contentExecutionCards.length > 0 ? (
@@ -6129,7 +6129,7 @@ export default function PlatformPage() {
                     已启用<strong className="text-white">选题与封面一体化优化</strong>
                     ：后台会为每条方案<strong className="text-white">择优主标题</strong>
                     并与出图主句对齐（正文与分镜不改编），竖版封面强调
-                    <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套裝（
+                    <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套装（
                     {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点/题）或于下方卡片分步购买。
                   </div>
                 ) : null}
@@ -6178,7 +6178,7 @@ export default function PlatformPage() {
                       const isBlackImageOrTimeout =
                         currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
-                      /** 單張豎版封面統一按「圖文封面」定價扣點（與後端 generateTopicImage 一致），與選題是短視頻還是圖文無關 */
+                      /** 单张竖版封面统一按「图文封面」定价扣点（与后端 generateTopicImage 一致），与选题是短视频还是图文无关 */
                       const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
                       const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
@@ -6393,7 +6393,7 @@ export default function PlatformPage() {
                         if (
                           !supervisorAccess &&
                           !window.confirm(
-                            `将消耗 ${bundleCost} 积分，为本选题并发生成竖版封面与${compositeLabel}（封面 + 2×4 一体套裝固定打包价）。是否继续？`,
+                            `将消耗 ${bundleCost} 积分，为本选题并发生成竖版封面与${compositeLabel}（封面 + 2×4 一体套装固定打包价）。是否继续？`,
                           )
                         )
                           return;
@@ -6407,7 +6407,7 @@ export default function PlatformPage() {
                             compositeKind,
                             scriptContext: buildPlatformSheetScriptContext(item as any),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
-                            pollDebugLabel: `套裝单卡 · ${item.id}`,
+                            pollDebugLabel: `套装单卡 · ${item.id}`,
                           }),
                         )
                           .then((res) => {
@@ -6435,9 +6435,9 @@ export default function PlatformPage() {
                               }
                             }
                             if (res.success && res.imageUrl && res.compositeImageUrl) {
-                              toast.success(`套裝已完成：封面 + ${compositeLabel}`);
+                              toast.success(`套装已完成：封面 + ${compositeLabel}`);
                             } else {
-                              toast.error("套裝未完成，请重试或使用「仅封面 / 仅 2×4」分步生成。");
+                              toast.error("套装未完成，请重试或使用「仅封面 / 仅 2×4」分步生成。");
                             }
                           })
                           .catch((err) => toast.error(err.message || "操作失败"))
@@ -6637,7 +6637,7 @@ export default function PlatformPage() {
                               <Loader2 className="h-7 w-7 animate-spin text-[#ff4fb8]/70" />
                               <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
                                 {coverCompositeBundleSceneId === item.id
-                                  ? "套裝绘制中（封面+2×4 并发）…"
+                                  ? "套装绘制中（封面+2×4 并发）…"
                                   : regeneratingCoverSceneId === item.id
                                     ? "单帧重新绘制中..."
                                     : coverSilentRetryIds.has(item.id)
@@ -6662,7 +6662,7 @@ export default function PlatformPage() {
                               Nano Banana 2
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 推荐一键套裝 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点（竖版封面 + 本条 2×4 固定打包价；若分步购买约{" "}
+                              · 推荐一键套装 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点（竖版封面 + 本条 2×4 固定打包价；若分步购买约{" "}
                               {CREDIT_COSTS.platformTopicFrameGraphic + compositeCost} 点）· 本条仅 2×4：{compositeCost}{" "}
                               点（{isGraphicFormat ? "图文/小红书八格" : "短视频分镜"}）
                             </span>
@@ -6691,12 +6691,12 @@ export default function PlatformPage() {
                               {isThisBundleLoading ? (
                                 <span className="inline-flex items-center gap-1.5">
                                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                                  套裝生成中…
+                                  套装生成中…
                                 </span>
                               ) : (
                                 <>
                                   <Package className="h-3.5 w-3.5 shrink-0" />
-                                  {`一键套裝 · ${bundleCost} 点`}
+                                  {`一键套装 · ${bundleCost} 点`}
                                 </>
                               )}
                             </button>

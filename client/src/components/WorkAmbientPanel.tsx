@@ -126,7 +126,7 @@ function AmbientMediaCard({
 }
 
 /**
- * 工作页（成长营）环境概览：天氣／路況約 10 分鐘、新聞約 30 分鐘；時間與天氣為獨立大图卡片並共用時段×天氣主題輪播底圖（Unsplash）+ CSS 動效。
+ * 工作页（成长营）环境概览：天气／路况约 10 分钟、新闻约 30 分钟；时间与天气为独立大图卡片并共用时段×天气主题轮播底图（Unsplash）+ CSS 动效。
  */
 export default function WorkAmbientPanel() {
   const {
@@ -207,7 +207,7 @@ export default function WorkAmbientPanel() {
           timeSegment={timeSegment}
           weatherKind={weatherKind}
           motionOk={motionOk}
-          label={`當地時間 · ${segmentLabelZh(timeSegment)}（與天氣卡片同步輪播底圖）`}
+          label={`当地时间 · ${segmentLabelZh(timeSegment)}（与天气卡片同步轮播底图）`}
         >
           <div className="mt-4">
             <div className="text-5xl font-black tabular-nums tracking-tight drop-shadow-md md:text-6xl">
@@ -215,7 +215,7 @@ export default function WorkAmbientPanel() {
             </div>
             <div className="mt-3 text-lg font-semibold text-white/88 drop-shadow">{dateZh}</div>
             <p className="mt-2 max-w-md text-sm leading-relaxed text-white/55">
-              服務端同步：
+              服务端同步：
               <span className="text-white/70">{serverTimeFallback}</span>
             </p>
           </div>
@@ -231,7 +231,7 @@ export default function WorkAmbientPanel() {
           timeSegment={timeSegment}
           weatherKind={weatherKind}
           motionOk={motionOk}
-          label="天氣實況（底圖約 30s 輪播 · 資料約 10 分鐘更新）"
+          label="天气实况（底图约 30s 轮播 · 资料约 10 分钟更新）"
         >
           <div className="mt-4">
             {serverWx && serverWx.source !== "unavailable" ? (
@@ -243,7 +243,7 @@ export default function WorkAmbientPanel() {
                   {serverWx.condition}
                 </div>
                 <div className="mt-2 text-sm text-white/60">
-                  來源 {serverWx.source === "openweather" ? "OpenWeather" : "Open‑Meteo"} · 濕度{" "}
+                  来源 {serverWx.source === "openweather" ? "OpenWeather" : "Open‑Meteo"} · 湿度{" "}
                   {serverWx.humidity}
                 </div>
               </>
@@ -262,7 +262,7 @@ export default function WorkAmbientPanel() {
               </>
             ) : (
               <div className="text-lg text-white/55">
-                {geoErr || dash.isLoading ? "正在讀取天氣…" : "天氣暫不可用"}
+                {geoErr || dash.isLoading ? "正在读取天气…" : "天气暂不可用"}
               </div>
             )}
           </div>
@@ -272,10 +272,10 @@ export default function WorkAmbientPanel() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="min-h-[180px] rounded-2xl border border-white/12 bg-slate-950/55 p-5 text-sm leading-relaxed text-white/78 shadow-lg backdrop-blur-md">
           <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200/95">
-            即時路況（Gemini）
+            即时路况（Gemini）
           </div>
           {(!geoAttemptDone || dash.isLoading) ? (
-            <p className="mt-3 text-white/50">載入中…</p>
+            <p className="mt-3 text-white/50">载入中…</p>
           ) : dash.data?.traffic ? (
             <>
               <p className="mt-3">{dash.data.traffic.summary}</p>
@@ -288,27 +288,27 @@ export default function WorkAmbientPanel() {
               ) : null}
             </>
           ) : (
-            <p className="mt-3 text-white/50">暫無資料</p>
+            <p className="mt-3 text-white/50">暂无资料</p>
           )}
-          {dash.isError ? <p className="mt-3 text-rose-300/90">路況載入失敗，請稍後重試</p> : null}
+          {dash.isError ? <p className="mt-3 text-rose-300/90">路况载入失败，请稍后重试</p> : null}
         </div>
 
         <div className="min-h-[180px] rounded-2xl border border-white/12 bg-slate-950/55 p-5 shadow-lg backdrop-blur-md">
           <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-300/95">
-            即時要聞（國內 5 + 國際 5 · AI 聚合 · 約 30 分鐘更新）
+            即时要闻（国内 5 + 国际 5 · AI 聚合 · 约 30 分钟更新）
           </div>
           <p className="mt-1 text-[11px] text-white/40">
-            已授權定位且座標在中國大陸範圍內時，國內前 2 條為周邊省區即時要聞，後 3 條為全國重大新聞；否則國內 5 條均為全國層級。
+            已授权定位且座标在中国大陆范围内时，国内前 2 条为周边省区即时要闻，后 3 条为全国重大新闻；否则国内 5 条均为全国层级。
           </p>
           {newsQ.isLoading ? (
-            <p className="mt-3 text-[13px] text-white/50">載入中…</p>
+            <p className="mt-3 text-[13px] text-white/50">载入中…</p>
           ) : newsQ.data?.news?.length ? (
             <div className="mt-3 max-h-[min(48vh,26rem)] space-y-4 overflow-y-auto pr-1 text-[13px] leading-snug text-white/80">
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-teal-200/90">國內</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-teal-200/90">国内</div>
                 {localTierNews.length > 0 ? (
                   <div className="mt-2">
-                    <div className="text-[11px] font-semibold text-white/55">周邊／本省區</div>
+                    <div className="text-[11px] font-semibold text-white/55">周边／本省区</div>
                     <ul className="mt-1.5 space-y-2">
                       {localTierNews.map((n) => (
                         <li key={`local-${n.source}-${n.headline.slice(0, 28)}`}>
@@ -321,7 +321,7 @@ export default function WorkAmbientPanel() {
                 ) : null}
                 <div className={localTierNews.length > 0 ? "mt-3" : "mt-2"}>
                   <div className="text-[11px] font-semibold text-white/55">
-                    {localTierNews.length > 0 ? "全國重大" : "國內要聞"}
+                    {localTierNews.length > 0 ? "全国重大" : "国内要闻"}
                   </div>
                   <ul className="mt-1.5 space-y-2">
                     {nationalDomesticNews.map((n) => (
@@ -334,7 +334,7 @@ export default function WorkAmbientPanel() {
                 </div>
               </div>
               <div>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-200/90">國際</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-200/90">国际</div>
                 <ul className="mt-2 space-y-2">
                   {internationalNews.map((n) => (
                     <li key={`intl-${n.source}-${n.headline.slice(0, 28)}`}>
@@ -346,10 +346,10 @@ export default function WorkAmbientPanel() {
               </div>
             </div>
           ) : (
-            <p className="mt-3 text-[13px] text-white/50">暫無新聞條目</p>
+            <p className="mt-3 text-[13px] text-white/50">暂无新闻条目</p>
           )}
           {newsQ.isError ? (
-            <p className="mt-3 text-[13px] text-rose-300/90">新聞載入失敗，請稍後重試</p>
+            <p className="mt-3 text-[13px] text-rose-300/90">新闻载入失败，请稍后重试</p>
           ) : null}
         </div>
       </div>

@@ -1,10 +1,10 @@
 /**
- * 省／直轄市 + 下級節點：普通省為地級市；直轄市為「區」級（如北京市—朝陽區、上海市—浦東新區）。
- * 座標為區縣中心近似值，供 Open‑Meteo 天氣與路況關鍵字使用。
+ * 省／直辖市 + 下级节点：普通省为地级市；直辖市为「区」级（如北京市—朝阳区、上海市—浦东新区）。
+ * 座标为区县中心近似值，供 Open‑Meteo 天气与路况关键字使用。
  */
 
 export type ChinaPlace = { name: string; lat: number; lon: number };
-/** @deprecated 與 ChinaPlace 同義，保留別名以免舊引用報錯 */
+/** @deprecated 与 ChinaPlace 同义，保留别名以免旧引用报错 */
 export type ChinaCity = ChinaPlace;
 export type ChinaProvince = { id: string; name: string; cities: ChinaPlace[] };
 

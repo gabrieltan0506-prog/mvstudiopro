@@ -1,8 +1,8 @@
 /**
- * 作品庫 DOM 快照上傳 GCS / pdf-worker 前的輕量優化：
- * - 去掉 HTML 註釋
- * - 壓縮標籤間空白（保護 <pre> / <textarea> 內容）
- * - 將 macOS/Windows 字體棧映射到 Linux pdf-worker 的 Noto CJK；pdf-worker 端再以 pyftsubset 動態 WOFF2 子集縮檔
+ * 作品库 DOM 快照上传 GCS / pdf-worker 前的轻量优化：
+ * - 去掉 HTML 注释
+ * - 压缩标签间空白（保护 <pre> / <textarea> 内容）
+ * - 将 macOS/Windows 字体栈映射到 Linux pdf-worker 的 Noto CJK；pdf-worker 端再以 pyftsubset 动态 WOFF2 子集缩档
  */
 export function optimizePdfSnapshotHtml(html: string): string {
   let s = html.replace(/<!--([\s\S]*?)-->/g, "");
@@ -44,8 +44,8 @@ export function optimizePdfSnapshotHtml(html: string): string {
 }
 
 /**
- * Platform 頁 PDF 快照：與 MyReports `injectPdfSnapshotSanitizeIntoHead` 同源思路
- *（摘掉 Sonner / Toast、列印根容器與圖表分頁），根選擇器為 `#platform-report`。
+ * Platform 页 PDF 快照：与 MyReports `injectPdfSnapshotSanitizeIntoHead` 同源思路
+ *（摘掉 Sonner / Toast、列印根容器与图表分页），根选择器为 `#platform-report`。
  */
 export function injectPlatformPdfSnapshotSanitizeIntoHead(html: string): string {
   const strip = `<style id="mvs-pdf-snapshot-sanitize">

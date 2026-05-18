@@ -842,12 +842,12 @@ export default function ReportRenderer({
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
 
         @media print {
-          /* 紙張可列印區：與 pdf-worker page.pdf margin:0 對齊，盡量滿版 */
+          /* 纸张可列印区：与 pdf-worker page.pdf margin:0 对齐，尽量满版 */
           @page {
             margin: 0;
             size: A4 portrait;
           }
-          /* 列印環境淨化：避免外層留白把封面擠到第二頁（與精準快照 #myreports-pdf-root 配合） */
+          /* 列印环境净化：避免外层留白把封面挤到第二页（与精准快照 #myreports-pdf-root 配合） */
           html, body {
             height: auto !important;
             overflow: visible !important;
@@ -862,7 +862,7 @@ export default function ReportRenderer({
             padding: 0 !important;
             max-width: none !important;
           }
-          /* 正文「模板」區：螢幕上大內距 + 圓角；PDF 改窄邊距、去陰影，視覺更接近滿版 */
+          /* 正文「模板」区：萤幕上大内距 + 圆角；PDF 改窄边距、去阴影，视觉更接近满版 */
           [data-report-surface] {
             padding: 4mm 6mm !important;
             border-radius: 0 !important;
@@ -898,7 +898,7 @@ export default function ReportRenderer({
           /* 图片 / 图表 figure 不被中间切断 */
           figure:not(.cover-page), img:not(:is(.cover-page img)), .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 正文內大圖：限制單頁高度，避免超過一頁時被硬切兩頁（break-inside:avoid 對超高塊無效） */
+          /* 正文内大图：限制单页高度，避免超过一页时被硬切两页（break-inside:avoid 对超高块无效） */
           figure:not(.cover-page) img,
           .report-raw-html figure:not(.cover-page) img,
           img:not(:is(.cover-page img)) {
@@ -909,7 +909,7 @@ export default function ReportRenderer({
             object-fit: contain !important;
           }
 
-          /* 封面：整頁滿版（A4 210×297mm）、object-fit: cover 铺满略裁切，白边趋近零；禁止图内分页 */
+          /* 封面：整页满版（A4 210×297mm）、object-fit: cover 铺满略裁切，白边趋近零；禁止图内分页 */
           .cover-page, .cover-page.cover-image-only {
             page-break-before: avoid !important;
             break-before: avoid !important;
@@ -974,7 +974,7 @@ export default function ReportRenderer({
           [data-pdf-exclude="true"] {
             display: none !important;
           }
-          /* Sonner 掛在 body，若未剔除則 fixed toast 會在 Chromium page.pdf() 每頁重複出現 */
+          /* Sonner 挂在 body，若未剔除则 fixed toast 会在 Chromium page.pdf() 每页重复出现 */
           [data-sonner-toaster],
           [data-sonner-toast],
           li[data-sonner-toast] {

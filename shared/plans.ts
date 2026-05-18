@@ -252,27 +252,27 @@ export const CREDIT_COSTS = {
 
   // ─── 平台趋势·参考图 / 生图（与 server/plans 一致 · 扣点 3× 慎用完）────────────
   platformRefImage: 36,
-  /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2）；单张「生成封面」統一走此價 */
+  /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2）；单张「生成封面」统一走此价 */
   platformTopicFrameGraphic: 48,
   /** 短视频向·分镜 2×4 宽幅 **60**（`storyboard_sheet_*`，非图文笔记八格） */
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格 **72**（`xiaohongshu_dual_note`，非分镜主表） */
   platformXhsDualNote: 72,
   /**
-   * 平台页：**同一選題**一鍵「豎版封面 + 2×4 分鏡或八格圖文」套裝（異步 job 內 **串行非同步** 兩階段生圖 · 單次扣費）
+   * 平台页：**同一选题**一键「竖版封面 + 2×4 分镜或八格图文」套装（异步 job 内 **串行非同步** 两阶段生图 · 单次扣费）
    */
   platformTopicCoverAndCompositeBundle: 388,
-  /** 平台页：四选题仅 2×4/八格一键套裝总价（服务端按序 4 笔整数分拆扣费，合计=此值；单条散买仍为 60/72） */
+  /** 平台页：四选题仅 2×4/八格一键套装总价（服务端按序 4 笔整数分拆扣费，合计=此值；单条散买仍为 60/72） */
   platformCompositeBulkFourTopics: 238,
-  /** 平台頁增值：個性化戰略地圖／決策智庫報告，之後每次原價 */
+  /** 平台页增值：个性化战略地图／决策智库报告，之后每次原价 */
   decisionIntelligenceReport: 200,
-  /** 同功能首次體驗優惠價（與 decisionIntelligenceReport 搭配後端計次） */
+  /** 同功能首次体验优惠价（与 decisionIntelligenceReport 搭配后端计次） */
   decisionIntelligenceReportFirst: 150,
-  /** 平台頁：全案流程之專屬選題與長文案／分鏡稿（platform_build_content · 任務入隊時扣費） */
+  /** 平台页：全案流程之专属选题与长文案／分镜稿（platform_build_content · 任务入队时扣费） */
   platformStage2Copywriting: 60,
 } as const;
 
-/** 四条 2×4 套裝总价按序分拆到 4 次扣费（整数，四次相加等于 {@link CREDIT_COSTS.platformCompositeBulkFourTopics}） */
+/** 四条 2×4 套装总价按序分拆到 4 次扣费（整数，四次相加等于 {@link CREDIT_COSTS.platformCompositeBulkFourTopics}） */
 export function platformCompositeBulkFourSlotCredits(slotIndex: number): number {
   const total = CREDIT_COSTS.platformCompositeBulkFourTopics;
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex > 3) {

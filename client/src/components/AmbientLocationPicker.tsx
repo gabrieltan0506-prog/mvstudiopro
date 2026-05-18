@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 
 type Props = {
-  /** 首頁窄條 */
+  /** 首页窄条 */
   compact?: boolean;
 };
 

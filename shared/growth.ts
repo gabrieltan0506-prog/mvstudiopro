@@ -11,14 +11,14 @@ export const growthPlatformValues = [
 
 export const growthPlatformSchema = z.enum(growthPlatformValues);
 
-/** 不納入增長統計聚合的平台（樣本過少會拉歪口徑；仍可採集與單獨展示）。 */
+/** 不纳入增长统计聚合的平台（样本过少会拉歪口径；仍可采集与单独展示）。 */
 const growthPlatformsExcludedFromStatsAggregate = new Set<string>(["toutiao"]);
 
 export function isGrowthPlatformInStatsAggregate(platform: (typeof growthPlatformValues)[number]): boolean {
   return !growthPlatformsExcludedFromStatsAggregate.has(platform);
 }
 
-/** 參與全站 trend 彙總、覆蓋窗口等統計的平台列表（與採集列表分離）。 */
+/** 参与全站 trend 汇总、覆盖窗口等统计的平台列表（与采集列表分离）。 */
 export function growthPlatformsForStatsAggregationList(): (typeof growthPlatformValues)[number][] {
   return growthPlatformValues.filter((p) => isGrowthPlatformInStatsAggregate(p));
 }
@@ -378,8 +378,8 @@ export const growthPlatformRecommendationSchema = z.object({
 });
 
 /**
- * getPlatformDashboard 的 platformMenu 單項（與 server/routers ` platformDashboardResponseSchema` 對齊）。
- * 勿與 {@link growthPlatformRecommendationSchema}（快照 platformRecommendations：name/reason/action）混淆。
+ * getPlatformDashboard 的 platformMenu 单项（与 server/routers ` platformDashboardResponseSchema` 对齐）。
+ * 勿与 {@link growthPlatformRecommendationSchema}（快照 platformRecommendations：name/reason/action）混淆。
  */
 export const growthPlatformMenuItemSchema = z.object({
   platform: z.string().optional(),

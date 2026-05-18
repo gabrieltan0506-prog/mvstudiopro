@@ -31,7 +31,7 @@ type HttpSnapshot = Awaited<ReturnType<typeof fetchJsonish>>;
 
 const DEBUG_RAW_TEXT_MAX = 14_000;
 const DEBUG_STRING_INLINE_MAX = 2000;
-/** 超過此字數的 HTTP 原文字節串不再放入 debug（避免成功生圖時 predict 回傳數 MB base64 塞滿面板） */
+/** 超过此字数的 HTTP 原文字节串不再放入 debug（避免成功生图时 predict 回传数 MB base64 塞满面板） */
 const DEBUG_RAW_WIRE_OMIT_MIN = 24_000;
 
 function truncateRawTextForDebug(s: string): string {
@@ -119,7 +119,7 @@ function snapshotHttpForDebug(r: HttpSnapshot): Record<string, unknown> {
     contentType: r.contentType,
     structured: extractStructuredApiErrors(r.json),
     json: redactForDebug(r.json),
-    /** 已脱敏、可讀性優先（成功生圖时请看这个，不要依赖 wire rawText） */
+    /** 已脱敏、可读性优先（成功生图时请看这个，不要依赖 wire rawText） */
     redactedBodyText: stringifyRedactedJsonPreview(r.json),
     rawWireCharacterCount: wireLen,
     rawText: omitWire
@@ -245,7 +245,7 @@ export default function TestLab() {
   const [selectedClipId, setSelectedClipId] = useState("");
 
   const [debug, setDebug] = useState<any>(null);
-  /** 底部調試區是否展開（預設展開，方便排錯） */
+  /** 底部调试区是否展开（预设展开，方便排错） */
   const [debugPanelOpen, setDebugPanelOpen] = useState(true);
 
   const stopRef = useRef(false);
@@ -837,7 +837,7 @@ export default function TestLab() {
         <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>Vertex · 翻译（TestLab）</div>
           <div style={{ marginTop: 8, opacity: 0.8 }}>
-            模型 <code style={{ fontSize: 12 }}>gemini-3-flash-preview</code>，區域固定 <code style={{ fontSize: 12 }}>global</code>
+            模型 <code style={{ fontSize: 12 }}>gemini-3-flash-preview</code>，区域固定 <code style={{ fontSize: 12 }}>global</code>
             （<code style={{ fontSize: 11 }}>locations/global</code>）；与「脚本」同属 Vertex IAM <code>/api/google</code> 闸道；本接口为 REST{" "}
             <code>generateContent</code>（与 <code>@google-cloud/vertexai</code> SDK 并存，此处不强制改用 SDK）。
           </div>
@@ -905,7 +905,7 @@ export default function TestLab() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div>
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
-                {/* 僅 Flash / Pro；若自訂欄填 imagen-4.0* 等舊 ID，後端 /api/google op=nanoImage 會強制改為 gemini-3.1-flash-image-preview 並附 remappedFromLegacyImagen */}
+                {/* 仅 Flash / Pro；若自订栏填 imagen-4.0* 等旧 ID，后端 /api/google op=nanoImage 会强制改为 gemini-3.1-flash-image-preview 并附 remappedFromLegacyImagen */}
                 <select
                   value={googleImageModel}
                   onChange={(e) => setGoogleImageModel(e.target.value as GoogleImageModel)}
@@ -915,7 +915,7 @@ export default function TestLab() {
                   <option value="gemini-3-pro-image-preview">Nano Banana Pro（gemini-3-pro-image-preview）</option>
                 </select>
                 <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.65, lineHeight: 1.45 }}>
-                  若手動填寫舊版 <code style={{ fontSize: 10 }}>imagen-4.0*</code> 模型 ID，閘道會自動改走 Vertex Nano Banana 2（Flash）。
+                  若手动填写旧版 <code style={{ fontSize: 10 }}>imagen-4.0*</code> 模型 ID，闸道会自动改走 Vertex Nano Banana 2（Flash）。
                 </p>
                 </div>
                 <div>
@@ -1391,7 +1391,7 @@ export default function TestLab() {
         </div>
       )}
 
-      {/* Debug：固定在頁面底部，一律可見，便於對照 HTTP / 錯誤 */}
+      {/* Debug：固定在页面底部，一律可见，便于对照 HTTP / 错误 */}
       <div
         style={{
           marginTop: 32,
@@ -1437,7 +1437,7 @@ export default function TestLab() {
           </div>
         </div>
         <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 12 }}>
-          每次請求結束後會更新此處；若請求失敗請看 <code style={{ fontSize: 11 }}>ok</code>、<code style={{ fontSize: 11 }}>clientThrownError</code>、<code style={{ fontSize: 11 }}>lastHttp</code>、<code style={{ fontSize: 11 }}>structured</code>。
+          每次请求结束后会更新此处；若请求失败请看 <code style={{ fontSize: 11 }}>ok</code>、<code style={{ fontSize: 11 }}>clientThrownError</code>、<code style={{ fontSize: 11 }}>lastHttp</code>、<code style={{ fontSize: 11 }}>structured</code>。
           Seedance 2.9 视频另可看 <code style={{ fontSize: 11 }}>steps</code> 数组（分步排错）。
         </div>
 
