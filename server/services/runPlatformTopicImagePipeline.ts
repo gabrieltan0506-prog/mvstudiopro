@@ -178,7 +178,7 @@ export async function runPlatformTopicImagePipeline(
       `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [主路径] Vertex 英文化 → 豎封像素（${coverPixelEngineOverride ?? "env PLATFORM_TOPIC_COVER_PIXEL_ENGINE"}）· 无版式二次生圖`,
+      `${platformFlowLogTimestamp()}  [主路径] Vertex 英文化 → 豎封像素（${coverPixelEngineOverride ?? "預設：有 GEMINI_API_KEY 則 Imagen 4 Ultra（失敗拋錯·不回落 NB2）；否則 NB2；見 PLATFORM_TOPIC_COVER_PIXEL_ENGINE"}）· 无版式二次生圖`,
     );
 
     if (trendBrief) {

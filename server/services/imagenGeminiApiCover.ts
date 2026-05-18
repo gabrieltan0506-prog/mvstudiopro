@@ -1,6 +1,6 @@
 /**
  * 選題 **單幀豎封**：**Google AI Studio · Imagen 4 Ultra**（`generateImages` · 需 `GEMINI_API_KEY`）。
- * 與 Vertex **Nano Banana 2** 並存，切換見 {@link resolvePlatformTopicCoverPixelEngine}。
+ * **失敗直接拋錯**，不回落其他生圖引擎。
  */
 import { GoogleGenAI, PersonGeneration } from "@google/genai";
 
@@ -18,19 +18,22 @@ export function isImagenGeminiApiCoverConfigured(): boolean {
   return Boolean(String(process.env.GEMINI_API_KEY ?? "").trim());
 }
 
+/**
+ * @throws Error 前綴 `platform_cover_imagen:` — 缺少 key、無圖、API 異常等一律拋出，由上游管線記錄。
+ */
 export async function generatePlatformTopicCoverImagenUltra(options: {
   englishPromptForVertexOrImagen: string;
   flowLog?: string[];
-}): Promise<{ imageUrl: string; model: string } | null> {
+}): Promise<{ imageUrl: string; model: string }> {
   const apiKey = String(process.env.GEMINI_API_KEY ?? "").trim();
   if (!apiKey) {
-    appendCoverPixelLog(options.flowLog, "[Imagen·封面] 跳过：未配置 GEMINI_API_KEY");
-    return null;
+    appendCoverPixelLog(options.flowLog, "[Imagen·封面] 缺失 GEMINI_API_KEY（将抛错）");
+    throw new Error("platform_cover_imagen: missing GEMINI_API_KEY");
   }
   const prompt = String(options.englishPromptForVertexOrImagen ?? "").trim();
   if (!prompt) {
-    appendCoverPixelLog(options.flowLog, "[Imagen·封面] 跳过：prompt 为空");
-    return null;
+    appendCoverPixelLog(options.flowLog, "[Imagen·封面] prompt 为空（将抛错）");
+    throw new Error("platform_cover_imagen: empty prompt");
   }
 
   const L = options.flowLog;
@@ -55,8 +58,8 @@ export async function generatePlatformTopicCoverImagenUltra(options: {
 
     const bytesB64 = response?.generatedImages?.[0]?.image?.imageBytes;
     if (!bytesB64) {
-      appendCoverPixelLog(L, "[Imagen·封面] 模型未返回 imageBytes");
-      return null;
+      appendCoverPixelLog(L, "[Imagen·封面] 模型未返回 imageBytes（将抛错）");
+      throw new Error("platform_cover_imagen: model returned no imageBytes");
     }
     const first = response.generatedImages?.[0]?.image;
     const mime = String(first?.mimeType || "image/png").trim() || "image/png";
@@ -68,9 +71,12 @@ export async function generatePlatformTopicCoverImagenUltra(options: {
     );
     return { imageUrl, model: PLATFORM_IMAGEN_ULTRA_COVER_MODEL_ID };
   } catch (e: unknown) {
+    if (e instanceof Error && e.message.startsWith("platform_cover_imagen:")) {
+      throw e;
+    }
     const msg = e instanceof Error ? e.message : String(e);
-    appendCoverPixelLog(L, `[Imagen·封面] 失败: ${msg}`);
+    appendCoverPixelLog(L, `[Imagen·封面] API 异常: ${msg}`);
     console.warn("[imagenGeminiApiCover] generatePlatformTopicCoverImagenUltra failed:", e);
-    return null;
+    throw new Error(`platform_cover_imagen: ${msg}`, { cause: e });
   }
 }

@@ -79,16 +79,16 @@ export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2"
 /**
  * 選題 **單幀豎封** 像素：**Vertex Nano Banana 2** 與 **Gemini API · Imagen 4 Ultra**（`GEMINI_API_KEY`）並存，便於 A/B，**不刪 NB2 代碼**。
  *
- * - **`nb2_only`（預設）**：僅 NB2，行為與歷史一致。
- * - **`imagen_then_nb2`**：有 `GEMINI_API_KEY` 時先 Imagen，失敗或未配置 key 再 **完整走 NB2**。
- * - **`imagen_only`**：僅 Imagen；失敗則無圖（**不**回落 NB2）。
+ * - **`imagen_only` / `imagen_then_nb2` / `auto` 等**：僅 **Imagen 4 Ultra**（`GEMINI_API_KEY`）；**失敗拋錯**，不回落 NB2。
+ * - **`nb2_only`**：僅 Vertex NB2（明確關閉 Imagen 豎封像素時）。
  *
  * `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`：`nb2` | `nb2_only` | `nano_banana2` | `imagen_then_nb2` | `imagen_nb2` | `imagen+nb2` | `auto` | `imagen_only` | `imagen`
  */
-export type PlatformTopicCoverPixelEngineMode = "nb2_only" | "imagen_then_nb2" | "imagen_only";
+export type PlatformTopicCoverPixelEngineMode = "nb2_only" | "imagen_only";
 
 export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelEngineMode {
   const v = norm(process.env.PLATFORM_TOPIC_COVER_PIXEL_ENGINE);
+  /** 歷史別名：曾允許 Imagen→NB2；現與 imagen_only 相同（**不回落**）。 */
   if (
     v === "imagen_then_nb2" ||
     v === "imagen_nb2" ||
@@ -96,7 +96,7 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
     v === "dual" ||
     v === "auto"
   ) {
-    return "imagen_then_nb2";
+    return "imagen_only";
   }
   if (v === "imagen_only" || v === "imagen_ultra_only" || v === "imagen") {
     return "imagen_only";
@@ -110,7 +110,8 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
   ) {
     return "nb2_only";
   }
-  return "nb2_only";
+  /** 未顯式設定：有 `GEMINI_API_KEY` → 預設僅 Imagen 4 Ultra（失敗拋錯）；否則僅 NB2。 */
+  return String(process.env.GEMINI_API_KEY ?? "").trim() ? "imagen_only" : "nb2_only";
 }
 
 /**
