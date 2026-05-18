@@ -881,7 +881,8 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面像素：**GPT‑Image‑2** / **Vertex Nano Banana Pro**（預設）/ **Vertex NB2**；監管可傳 `coverPixelEngine`，否則依 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`。
+ * 單幀封面像素：**預設 Vertex Nano Banana 2**；**GPT‑Image‑2（OhMyGPT / fal）主鏈程式保留**，額度／充值就緒後設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 或請求 `coverPixelEngine=gpt_image2` 即可沿用，無需改碼。
+ * **Nano Banana Pro**：`PLATFORM_TOPIC_COVER_PIXEL_ENGINE=nbp_only` 或請求 `nano_banana_pro`。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
   englishPrompt: string;
@@ -936,8 +937,21 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   const engine = resolvePlatformTopicCoverPixelEngine();
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（nbp_only=Vertex Nano Banana Pro；nb2_only=Nano Banana 2）`,
+    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（nb2_only=Nano Banana 2 預設；gpt_image2_only=GPT‑Image‑2；nbp_only=Nano Banana Pro）`,
   );
+
+  if (engine === "gpt_image2_only") {
+    appendImageFlowLog(
+      L,
+      `${platformFlowLogTimestamp()}  [封面·像素] env=gpt_image2_only · OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
+    );
+    return generateGptImage2FromRawEnglishPrompt({
+      englishPrompt: raw,
+      aspectRatio: "9:16",
+      gcsSubdir: "platform_topic_reference",
+      flowLog: L,
+    });
+  }
 
   if (engine === "nbp_only") {
     const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");

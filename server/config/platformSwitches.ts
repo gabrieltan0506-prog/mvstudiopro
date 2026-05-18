@@ -71,25 +71,28 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 }
 
 /**
- * 監管／請求：**選題豎封** 像素三選一（**優先於**下方 env {@link resolvePlatformTopicCoverPixelEngine}）。
- * 將由後續 PR 自前端／tRPC 接入；目前僅型別供 {@link generatePlatformTopicCoverNanoBanana2FromEnglishPrompt} 使用。
+ * 監管／請求：**選題豎封** 像素引擎（**優先於**下方 env {@link resolvePlatformTopicCoverPixelEngine}）。
+ *
+ * **`gpt_image2`：** OhMyGPT / fal **GPT‑Image‑2** 整段主鏈**程式保留、未刪除**（額度／充值就緒後可啟用）。**目前未設 env 時預設仍走 Vertex Nano Banana 2**，無需額外 API 時維持現狀即可。
+ * 啟用豎封 GPT‑Image‑2：部署設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2`（或 `gpt-image-2` / `ohmygpt` 等別名，見 {@link resolvePlatformTopicCoverPixelEngine}），或由請求傳 `coverPixelEngine: "gpt_image2"`（待前端接入）。
  */
 export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "nano_banana_pro";
 
 /**
- * 選題 **單幀豎封** 像素：**Vertex Nano Banana Pro**（預設）與 **Nano Banana 2** 並存；**已棄用** Imagen 4 Ultra 豎封（簡中語料易劣化）。
+ * 選題 **單幀豎封** env 預設像素（無請求覆寫 {@link PlatformTopicCoverPixelEngineChoice} 時）。
  *
- * - **`nbp_only`（預設）**：`gemini-3-pro-image-preview` · 9:16（見 `generatePlatformTopicCoverNanoBananaProImage`）。
- * - **`nb2_only`**：僅 Nano Banana 2（`gemini-3.1-flash-image-preview`）。
- * - 歷史 **`imagen_*` / `auto` / `dual`** env：視為 **`nbp_only`**（避免舊部署仍走已停用 Imagen 豎封）。
+ * - **`gpt_image2_only`**：**GPT‑Image‑2**（OhMyGPT → fal；**保留供額度恢復後使用**，非預設）。
+ * - **`nb2_only`（程式預設·當前主線）**：Vertex **Nano Banana 2** · 9:16 · 2K。
+ * - **`nbp_only`**：Vertex **Nano Banana Pro**（`generatePlatformTopicCoverNanoBananaProImage`）。
+ * - 歷史 **Imagen / `auto` / `dual`**：視為 **`nb2_only`**（不再走 Imagen）。
  *
- * `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`：`nbp` | `nbp_only` | `nano_banana_pro` | `nb2` | `nb2_only` | `nano_banana2` | 以及歷史 imagen 別名（→ NBP）。
+ * `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`：`gpt_image2` | `gpt-image-2` | `ohmygpt` | `nb2` | `nb2_only` | … | `nbp_only` | …
  */
-export type PlatformTopicCoverPixelEngineMode = "nb2_only" | "nbp_only";
+export type PlatformTopicCoverPixelEngineMode = "gpt_image2_only" | "nb2_only" | "nbp_only";
 
 export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelEngineMode {
   const v = norm(process.env.PLATFORM_TOPIC_COVER_PIXEL_ENGINE);
-  /** 歷史：曾用 Imagen 4 Ultra；產品改為 NBP，舊值統一走 Pro 圖像模型。 */
+  /** 歷史 Imagen／auto：主產品改走 NB2。 */
   if (
     v === "imagen_then_nb2" ||
     v === "imagen_nb2" ||
@@ -100,7 +103,17 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
     v === "imagen_ultra_only" ||
     v === "imagen"
   ) {
-    return "nbp_only";
+    return "nb2_only";
+  }
+  if (
+    v === "gpt_image2_only" ||
+    v === "gpt_image2" ||
+    v === "gpt-image-2" ||
+    v === "gptimage2" ||
+    v === "ohmygpt" ||
+    v === "openai_image"
+  ) {
+    return "gpt_image2_only";
   }
   if (
     v === "nbp_only" ||
@@ -120,8 +133,8 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
   ) {
     return "nb2_only";
   }
-  /** 未顯式設定：預設 Nano Banana Pro（豎封）。 */
-  return "nbp_only";
+  /** 未顯式設定：預設 Nano Banana 2（豎封）。 */
+  return "nb2_only";
 }
 
 /**
