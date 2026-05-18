@@ -4332,10 +4332,8 @@ export default function PlatformPage() {
       return;
     }
 
-    /** 本輪 API 使用當下輸入；隨即清空右側框，避免上次長篇人設/判斷殘留影響下一輪 */
+    /** 本輪 Stage1/2 使用此字串；須在清空輸入框「之前」存下，且清空前須等快照 refetch 完成，否則 query context 會變空導致分析不執行 */
     const capturedJudgment = String(focusPrompt || "").trim();
-    setFocusPrompt("");
-    setQuestion("");
 
     platformAnalysisEpochRef.current += 1;
     void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
@@ -4380,6 +4378,8 @@ export default function PlatformPage() {
       toast.error("平台分析暂时没有返回结果");
       return;
     }
+    setFocusPrompt("");
+    setQuestion("");
     setHasAnalyzed(true);
     toast.success("快照已就绪，正在生成战略看板与专属文案…");
 
