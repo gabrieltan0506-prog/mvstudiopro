@@ -941,44 +941,29 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   if (pick === "imagen_4_ultra") {
     appendImageFlowLog(
       L,
-      `${platformFlowLogTimestamp()}  [封面·像素] 请求=imagen_4_ultra · Gemini API Imagen 4 Ultra · 失败回落 NB2 …`,
+      `${platformFlowLogTimestamp()}  [封面·像素] 请求=imagen_4_ultra · Imagen 4 Ultra（失败抛错，不回落）…`,
     );
     const { generatePlatformTopicCoverImagenUltra } = await import("./imagenGeminiApiCover.js");
     const imagen = await generatePlatformTopicCoverImagenUltra({
       englishPromptForVertexOrImagen: withProVisual,
       flowLog: L,
     });
-    if (imagen?.imageUrl) {
-      return mirrorCoverUrl(imagen.imageUrl);
-    }
-    appendImageFlowLog(L, "[封面·像素] Imagen 无图或未配置 GEMINI_API_KEY · 回落 Vertex NB2");
-    appendImageFlowLog(
-      L,
-      `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
-    );
-    return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
+    return mirrorCoverUrl(imagen.imageUrl);
   }
 
   const engine = resolvePlatformTopicCoverPixelEngine();
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（nb2_only=僅 Vertex NB2；imagen_then_nb2=Imagen 優先並保留 NB2 回落）`,
+    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（imagen_only=仅 Imagen·失败抛错；nb2_only=仅 Vertex NB2）`,
   );
 
-  if (engine === "imagen_only" || engine === "imagen_then_nb2") {
+  if (engine === "imagen_only") {
     const { generatePlatformTopicCoverImagenUltra } = await import("./imagenGeminiApiCover.js");
     const imagen = await generatePlatformTopicCoverImagenUltra({
       englishPromptForVertexOrImagen: withProVisual,
       flowLog: L,
     });
-    if (imagen?.imageUrl) {
-      return mirrorCoverUrl(imagen.imageUrl);
-    }
-    if (engine === "imagen_only") {
-      appendImageFlowLog(L, "[封面·像素] imagen_only：Imagen 无可用图，且本模式不回落 NB2");
-      return null;
-    }
-    appendImageFlowLog(L, "[封面·像素] Imagen 无图或未配置 key · 回落完整 Vertex Nano Banana 2 路径");
+    return mirrorCoverUrl(imagen.imageUrl);
   }
 
   appendImageFlowLog(
