@@ -17,7 +17,11 @@ import {
   invokeLLM,
   truncateForMemory,
 } from "./_core/llm";
-import { getPlatformStage2OpenAiModel, resolvePlatformStage2LlmMode } from "./config/platformSwitches.js";
+import {
+  getPlatformStage2OpenAiModel,
+  resolvePlatformStage2LlmMode,
+  type PlatformStage2LlmMode,
+} from "./config/platformSwitches.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -988,6 +992,11 @@ export async function buildPlatformContent(params: {
   abortSignal?: AbortSignal;
   /** Stage 1 戰略看板清洗摘要（標題／文案／分鏡種子）；由 worker 或同步路由注入 */
   stage1Handoff?: ReturnType<typeof buildStage1StrategicHandoffForStage2> | null;
+  /**
+   * 單次請求覆寫 Stage2 線路（Vertex Gemini 3.1 Pro vs OpenAI GPT‑5.5）。
+   * 未傳時沿用 {@link resolvePlatformStage2LlmMode}（Fly env 等）。
+   */
+  stage2LlmModeOverride?: PlatformStage2LlmMode | null;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1280,10 +1289,16 @@ export async function buildPlatformContent(params: {
       },
   ];
 
-  const stage2LlmMode = resolvePlatformStage2LlmMode();
+  const stage2LlmMode =
+    params.stage2LlmModeOverride === "openai" || params.stage2LlmModeOverride === "vertex"
+      ? params.stage2LlmModeOverride
+      : resolvePlatformStage2LlmMode();
   diagnostics.stage2LlmMode = stage2LlmMode;
+  diagnostics.stage2LlmModeSource =
+    params.stage2LlmModeOverride === "openai" || params.stage2LlmModeOverride === "vertex" ? "request" : "env";
   console.log("[buildPlatformContent] Stage2 LLM", {
     stage2LlmMode,
+    stage2LlmModeSource: diagnostics.stage2LlmModeSource,
     openaiModel: stage2LlmMode === "openai" ? getPlatformStage2OpenAiModel() : null,
   });
 
@@ -5358,11 +5373,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           snapshotSummary: z.record(z.string(), z.any()),
           /** Stage 1 完整戰略看板：後端清洗為 stage1StrategicHandoff 再併入 Stage 2 提示 */
           strategicDashboard: z.record(z.string(), z.any()).optional(),
+          /**
+           * 僅 {@link resolvePlatformSupervisorOpsAllowed} 為真時生效，否則忽略（防一般使用者改線路）。
+           * Vertex = gemini-3.1-pro-preview；OpenAI = PLATFORM_STAGE2_OPENAI_MODEL（預設 gpt-5.5）。
+           */
+          stage2LlmMode: z.enum(["vertex", "openai"]).optional(),
+          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorStage2Ops = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const stage2LlmModeForJob =
+          supervisorStage2Ops && (input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai")
+            ? input.stage2LlmMode
+            : undefined;
         if (!isAdminUser) {
           const cost = CREDIT_COSTS.platformStage2Copywriting;
           const creditsInfo = await getCredits(userId);
@@ -5394,6 +5420,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               platformMenu: input.platformMenu ?? [],
               snapshotSummary: input.snapshotSummary,
               strategicDashboard: input.strategicDashboard,
+              ...(stage2LlmModeForJob ? { stage2LlmMode: stage2LlmModeForJob } : {}),
             },
           },
         });
@@ -5407,6 +5434,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         platformMenu: z.array(z.any()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
         strategicDashboard: z.record(z.string(), z.any()).optional(),
+        stage2LlmMode: z.enum(["vertex", "openai"]).optional(),
+        supervisorToken: z.string().max(512).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const t0 = Date.now();
@@ -5455,6 +5484,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input.snapshotSummary,
           );
 
+          const supervisorStage2Ops = resolvePlatformSupervisorOpsAllowed(ctx.user ?? { role: null }, input.supervisorToken);
+          const stage2LlmModeOverride =
+            supervisorStage2Ops && (input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai")
+              ? input.stage2LlmMode
+              : undefined;
+
           type Stage2RaceDone = { kind: "done"; data: z.infer<typeof platformContentResponseSchema>; diagnostics: Record<string, unknown> };
           type Stage2RaceTimeout = { kind: "timeout" };
           const raced = await Promise.race([
@@ -5467,6 +5502,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               store,
               abortSignal: ctx.clientDisconnected,
               stage1Handoff,
+              stage2LlmModeOverride: stage2LlmModeOverride ?? null,
             }).then(
               (r): Stage2RaceDone => ({
                 kind: "done",
