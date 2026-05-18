@@ -16,21 +16,21 @@ export type MascotDashboardData = {
 export const MASCOT_OPTIONS = [
   {
     id: "cloud",
-    label: "雲朵播報員",
+    label: "云朵播报员",
     src: "/mascots/mascot-cloud.svg",
     fallbackEmoji: "☁️",
     gradient: "from-sky-300/90 to-indigo-400/90",
   },
   {
     id: "fox",
-    label: "智庫狐",
+    label: "智库狐",
     src: "/mascots/mascot-fox.svg",
     fallbackEmoji: "🦊",
     gradient: "from-orange-300/90 to-amber-600/90",
   },
   {
     id: "cat",
-    label: "數碼貓",
+    label: "数码猫",
     src: "/mascots/mascot-cat.svg",
     fallbackEmoji: "🐱",
     gradient: "from-cyan-300/90 to-slate-500/90",
@@ -65,16 +65,16 @@ function buildReportMessage(
   d: MascotDashboardData,
   newsHeadline?: string | null,
 ): string {
-  const wx = `今天天氣${d.weather.condition}，氣溫大約${d.weather.temperature}，濕度${d.weather.humidity}`;
+  const wx = `今天天气${d.weather.condition}，气温大约${d.weather.temperature}，湿度${d.weather.humidity}`;
   let road = d.traffic.summary;
   const areas = d.traffic.congestedAreas;
   if (areas && areas.length > 0) {
-    road += `。主要擁堵路段包括：${areas.slice(0, 4).join("、")}`;
+    road += `。主要拥堵路段包括：${areas.slice(0, 4).join("、")}`;
   }
-  let s = `現在時間是 ${d.currentTime}。${wx}。路況方面，${road}。`;
+  let s = `现在时间是 ${d.currentTime}。${wx}。路况方面，${road}。`;
   const head = newsHeadline?.trim();
-  if (head) s += ` 頭條速報：${head}。`;
-  s += " 祝您創作順利！";
+  if (head) s += ` 头条速报：${head}。`;
+  s += " 祝您创作顺利！";
   return s;
 }
 
@@ -94,26 +94,26 @@ function buildFullNewsSpeech(data: NewsQueryData): string {
   const local = data.domestic.filter((x) => x.tier === "local");
   const nat = data.domestic.filter((x) => x.tier === "national");
   const intl = data.international;
-  let s = "為您播報即時新聞。";
+  let s = "为您播报即时新闻。";
   if (local.length) {
-    s += "周邊與本地：" + local.map((n) => n.headline).join("；") + "。";
+    s += "周边与本地：" + local.map((n) => n.headline).join("；") + "。";
   }
   if (nat.length) {
-    s += "國內要聞：" + nat.map((n) => n.headline).join("；") + "。";
+    s += "国内要闻：" + nat.map((n) => n.headline).join("；") + "。";
   }
   if (intl.length) {
-    s += "國際：" + intl.map((n) => n.headline).join("；") + "。";
+    s += "国际：" + intl.map((n) => n.headline).join("；") + "。";
   }
   return s;
 }
 
 export type GlobalMascotAssistantProps = {
-  /** embedded：嵌在環境儀表（時間／天氣）一列中間；floating 已棄用，請改用 embedded */
+  /** embedded：嵌在环境仪表（时间／天气）一列中间；floating 已弃用，请改用 embedded */
   variant?: "embedded" | "floating";
 };
 
 /**
- * 吉祥物：文本朗讀、儀表板／新聞播報、資料變化提醒。（情緒關懷生成僅後台 Admin）
+ * 吉祥物：文本朗读、仪表板／新闻播报、资料变化提醒。（情绪关怀生成仅后台 Admin）
  */
 export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssistantProps) {
   const { geo, geoAttemptDone, requestLocation } = useAmbientScene();
@@ -128,7 +128,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   );
   const [imgBroken, setImgBroken] = useState(false);
   const [bubbleText, setBubbleText] = useState(
-    "我是全站播報員，點我展開：可朗讀您輸入的文字，或播報天氣、路況與新聞。",
+    "我是全站播报员，点我展开：可朗读您输入的文字，或播报天气、路况与新闻。",
   );
   const [displayedText, setDisplayedText] = useState(bubbleText);
   const [isTalking, setIsTalking] = useState(false);
@@ -299,9 +299,9 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
     if (!prev) return;
 
     const hints: string[] = [];
-    if (prev.wx !== wx) hints.push("天氣資訊有更新，請留意穿著與出行");
-    if (prev.tr !== tr) hints.push("路況摘要已變化");
-    if (newsDigest && prev.news !== newsDigest) hints.push("即時新聞頭條已刷新");
+    if (prev.wx !== wx) hints.push("天气资讯有更新，请留意穿着与出行");
+    if (prev.tr !== tr) hints.push("路况摘要已变化");
+    if (newsDigest && prev.news !== newsDigest) hints.push("即时新闻头条已刷新");
 
     if (hints.length === 0) return;
     if (!proactiveUi) return;
@@ -309,7 +309,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
     if (now - lastProactiveAt.current < 120_000) return;
     lastProactiveAt.current = now;
 
-    const msg = `小提醒：${hints.join("；")}。需要完整內容可點「儀表板」或「新聞」播放。`;
+    const msg = `小提醒：${hints.join("；")}。需要完整内容可点「仪表板」或「新闻」播放。`;
     toast.message("吉祥物提醒", { description: msg });
     setPanelOpen(true);
     setBubbleText(msg);
@@ -325,7 +325,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
   const onReadInput = useCallback(() => {
     const t = userInput.trim();
     if (!t) {
-      toast.message("請先在文本框輸入內容");
+      toast.message("请先在文本框输入内容");
       return;
     }
     speakAndShow(t);
@@ -340,11 +340,11 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
       return;
     }
     if (!geoAttemptDone || live.isLoading) {
-      speakAndShow("正在讀取天氣與路況，請稍候再試。");
+      speakAndShow("正在读取天气与路况，请稍候再试。");
       return;
     }
     if (!dashboardData) {
-      speakAndShow("暫時無法取得儀表板資料，請稍後再試。");
+      speakAndShow("暂时无法取得仪表板资料，请稍后再试。");
       return;
     }
     speakAndShow(buildReportMessage(dashboardData, newsHeadlineForReport));
@@ -367,7 +367,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
       return;
     }
     if (newsQ.isLoading || !newsQ.data?.news?.length) {
-      speakAndShow(newsQ.isLoading ? "新聞仍在載入中。" : "暫時沒有可播報的新聞條目。");
+      speakAndShow(newsQ.isLoading ? "新闻仍在载入中。" : "暂时没有可播报的新闻条目。");
       return;
     }
     speakAndShow(buildFullNewsSpeech(newsQ.data as NewsQueryData));
@@ -410,7 +410,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
           <textarea
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
-            placeholder="輸入想讓吉祥物朗讀的文字…"
+            placeholder="输入想让吉祥物朗读的文字…"
             rows={3}
             className="w-full resize-none rounded-xl border border-white/15 bg-black/35 px-3 py-2 text-[13px] leading-snug text-white placeholder:text-white/35 focus:border-cyan-400/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/30"
           />
@@ -421,21 +421,21 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
               onClick={onReadInput}
               className="rounded-lg border border-sky-400/35 bg-sky-500/20 px-2.5 py-1.5 text-[12px] font-semibold text-sky-100 transition hover:bg-sky-500/30"
             >
-              朗讀文本框
+              朗读文本框
             </button>
             <button
               type="button"
               onClick={onDashboard}
               className="rounded-lg border border-amber-400/35 bg-amber-500/20 px-2.5 py-1.5 text-[12px] font-semibold text-amber-100 transition hover:bg-amber-500/25"
             >
-              天氣路況
+              天气路况
             </button>
             <button
               type="button"
               onClick={onNews}
               className="rounded-lg border border-emerald-400/35 bg-emerald-500/20 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
             >
-              即時新聞
+              即时新闻
             </button>
           </div>
 
@@ -446,7 +446,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
               onChange={(e) => setProactiveUi(e.target.checked)}
               className="accent-cyan-400"
             />
-            資料更新時通知並朗讀摘要（關閉則不主動打擾；約每 2 分鐘最多提醒一次）
+            资料更新时通知并朗读摘要（关闭则不主动打扰；约每 2 分钟最多提醒一次）
           </label>
 
           <button
@@ -465,8 +465,8 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
           type="button"
           onClick={shuffleMascot}
           className={`absolute -top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/30 bg-slate-900/80 text-white shadow-lg backdrop-blur-md transition hover:scale-105 hover:bg-slate-800 ${isEmbedded ? "left-1/2 -translate-x-1/2" : "-left-1"}`}
-          aria-label="隨機更換吉祥物"
-          title={`隨機更換（目前：${mascot.label}）`}
+          aria-label="随机更换吉祥物"
+          title={`随机更换（目前：${mascot.label}）`}
         >
           <Shuffle className="h-4 w-4 opacity-90" />
         </button>
@@ -477,7 +477,7 @@ export function GlobalMascotAssistant({ variant = "embedded" }: GlobalMascotAssi
           className={`relative cursor-pointer rounded-2xl border border-white/15 bg-white/5 p-1 shadow-xl backdrop-blur-sm transition hover:scale-[1.05] active:scale-95 ${isTalking ? "mascot-assistant-talk" : "mascot-assistant-float"} `}
           style={{ width: 112, height: 112 }}
           aria-expanded={panelOpen}
-          aria-label={`${mascot.label}：展開播報面板`}
+          aria-label={`${mascot.label}：展开播报面板`}
         >
           {!imgBroken ? (
             <img

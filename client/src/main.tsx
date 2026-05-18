@@ -66,8 +66,8 @@ if ("serviceWorker" in navigator) {
 const queryClient = new QueryClient();
 
 /**
- * 長耗時 / 大 payload tRPC：打 `longJobsTrpcHttpUrl()`（`VITE_FLY_API_ORIGIN` 或正式預設 API 主機），
- * 避免 `www`→Vercel 反代逾時。含 **專屬文案入隊**、戰略看板、成長快照與生圖鏈。
+ * 长耗时 / 大 payload tRPC：打 `longJobsTrpcHttpUrl()`（`VITE_FLY_API_ORIGIN` 或正式预设 API 主机），
+ * 避免 `www`→Vercel 反代逾时。含 **专属文案入队**、战略看板、成长快照与生图链。
  */
 const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.getGrowthSnapshot",

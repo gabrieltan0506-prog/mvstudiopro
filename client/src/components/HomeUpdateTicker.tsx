@@ -2,8 +2,8 @@ import { Clock } from "lucide-react";
 import { HOME_CHANGELOG_UPDATES, HOME_UPDATE_TAG_COLORS } from "./HomeChangelog";
 
 /**
- * 首頁跑馬燈：文案僅維護 `HomeChangelog.tsx` 的 HOME_CHANGELOG_UPDATES，
- * 新增/改日期後會自動出現在此軌道（無需在 Hero 或輪播卡重複貼文）。
+ * 首页跑马灯：文案仅维护 `HomeChangelog.tsx` 的 HOME_CHANGELOG_UPDATES，
+ * 新增/改日期后会自动出现在此轨道（无需在 Hero 或轮播卡重复贴文）。
  */
 export default function HomeUpdateTicker() {
   const tickerItems = [...HOME_CHANGELOG_UPDATES, ...HOME_CHANGELOG_UPDATES];

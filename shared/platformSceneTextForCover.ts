@@ -1,5 +1,5 @@
 /**
- * 與 PlatformPage.buildPlatformSceneText 對齊的純字串版，供服務端從 DB 快照還原封面 context。
+ * 与 PlatformPage.buildPlatformSceneText 对齐的纯字串版，供服务端从 DB 快照还原封面 context。
  */
 export function buildPlatformSceneTextForCover(item: {
   title: string;

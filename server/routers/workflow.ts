@@ -8,6 +8,20 @@ import { deductCredits, deductCreditsAmount, getCredits, refundCredits } from ".
 import { CREDIT_COSTS } from "../plans";
 import { hasUnlimitedAccess } from "../services/access-policy";
 
+/**
+ * 歷史表名 `stripe_usage_logs` 僅為功能計次／審計，與 Stripe Checkout 金流無關。
+ * 設 `DISABLE_STRIPE_USAGE_LOGS=1`（或 `MV_DISABLE_STRIPE_USAGE_LOGS`）時，大師腳本流程**不讀寫**該表：
+ * 當日腳本不再加收 `workflowScriptExtra`（暫時關閉「每日第 2 次起加收」防薅）。
+ */
+function isStripeUsageLogsDisabledForWorkflow(): boolean {
+  const v = String(
+    process.env.DISABLE_STRIPE_USAGE_LOGS ?? process.env.MV_DISABLE_STRIPE_USAGE_LOGS ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 // 付费步骤 → CREDIT_COSTS 键映射（脚本生成免费，不在此表中）
 const WORKFLOW_STEP_COST_KEY = {
   storyboard:    "workflowStoryboard",
@@ -674,6 +688,9 @@ export const workflowRouter = router({
     if (hasUnlimitedAccess({ role: u?.role, email: u?.email ?? undefined })) {
       return { chargedCredits: 0 };
     }
+    if (isStripeUsageLogsDisabledForWorkflow()) {
+      return { chargedCredits: 0 };
+    }
     const [row] = await database
       .select({ c: count() })
       .from(stripeUsageLogs)
@@ -681,7 +698,8 @@ export const workflowRouter = router({
         and(
           eq(stripeUsageLogs.userId, ctx.user.id),
           eq(stripeUsageLogs.action, "workflowScriptDaily"),
-          sql`DATE(${stripeUsageLogs.createdAt}) = CURDATE()`,
+          /** Postgres / Neon：勿用 MySQL 的 CURDATE() */
+          sql`(${stripeUsageLogs.createdAt}::date = CURRENT_DATE)`,
         ),
       );
     const n = Number(row?.c ?? 0);
@@ -699,6 +717,9 @@ export const workflowRouter = router({
   recordScriptGeneration: protectedProcedure
     .input(z.object({ chargedCredits: z.number().int().min(0).max(10) }))
     .mutation(async ({ ctx, input }) => {
+      if (isStripeUsageLogsDisabledForWorkflow()) {
+        return { ok: true as const };
+      }
       const database = await db();
       await database.insert(stripeUsageLogs).values({
         userId: ctx.user.id,

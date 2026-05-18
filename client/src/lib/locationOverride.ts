@@ -1,4 +1,4 @@
-/** 瀏覽器端持久化：手動城市（繞過 VPN 對 IP 的影響，與設備 GPS 二選一） */
+/** 浏览器端持久化：手动城市（绕过 VPN 对 IP 的影响，与设备 GPS 二选一） */
 
 export const LOCATION_OVERRIDE_STORAGE_KEY = "mv_ambient_location_v1";
 

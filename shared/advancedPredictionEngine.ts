@@ -28,9 +28,9 @@ export function predictViewsAdvanced(contentBlueprint: unknown, platformData: { 
   const text = JSON.stringify(contentBlueprint);
   const seed = text.slice(0, 2000);
 
-  if (text.includes("女性心病") && (text.includes("宋代點茶") || text.includes("宋代点茶"))) baseViews *= 2.5;
-  if (text.includes("跨界美學") || text.includes("跨界美学")) baseViews *= 1.5;
-  if (text.includes("爵士樂") || text.includes("爵士")) baseViews *= 1.8;
+  if (text.includes("女性心病") && (text.includes("宋代点茶") || text.includes("宋代点茶"))) baseViews *= 2.5;
+  if (text.includes("跨界美学") || text.includes("跨界美学")) baseViews *= 1.5;
+  if (text.includes("爵士乐") || text.includes("爵士")) baseViews *= 1.8;
 
   const variance = jitter(seed, "views", 0.1);
   return Math.round(baseViews * (1 + variance));
@@ -44,9 +44,9 @@ export function predictConversionRateAdvanced(
   const seed = text.slice(0, 2000);
   let baseRate = thinkingLevel === "HIGH" ? 8.0 : 5.0;
 
-  if (text.includes("醫學衛教") || text.includes("医学卫教") || text.includes("預防醫學") || text.includes("预防医学")) baseRate += 3.5;
-  if (text.includes("宋代點茶") || text.includes("宋代点茶")) baseRate += 2.0;
-  if (text.includes("情感療癒") || text.includes("情感疗愈")) baseRate += 1.5;
+  if (text.includes("医学卫教") || text.includes("医学卫教") || text.includes("预防医学") || text.includes("预防医学")) baseRate += 3.5;
+  if (text.includes("宋代点茶") || text.includes("宋代点茶")) baseRate += 2.0;
+  if (text.includes("情感疗愈") || text.includes("情感疗愈")) baseRate += 1.5;
 
   const variance = jitter(seed, "conv", 0.1);
   return parseFloat(clamp(baseRate * (1 + variance), 1, 25).toFixed(2));
@@ -62,8 +62,8 @@ export function calculateIPFit(contentBlueprint: unknown, userProfile: { brandGe
       hits++;
       continue;
     }
-    if (g === "生活美学" && text.includes("生活美學")) hits++;
-    else if (g === "宋代点茶" && text.includes("宋代點茶")) hits++;
+    if (g === "生活美学" && text.includes("生活美学")) hits++;
+    else if (g === "宋代点茶" && text.includes("宋代点茶")) hits++;
   }
   const base = 38;
   const add = genes.length ? Math.min(58, (hits / genes.length) * 55 + hits * 6) : 20;
@@ -109,7 +109,7 @@ function radarFromBlueprint(text: string, seed: string): AdvancedAIReportData["g
     views += 8;
     brandFit += 6;
   }
-  if (text.includes("宋代點茶") || text.includes("宋代点茶") || text.includes("點茶") || text.includes("点茶")) {
+  if (text.includes("宋代点茶") || text.includes("宋代点茶") || text.includes("点茶") || text.includes("点茶")) {
     views += 10;
     platformPotential += 8;
   }
@@ -156,7 +156,7 @@ function applyBlueprintRadarNudgesForPlatformSlice(text: string, r: SimRadar, st
     brandFit += Math.round(6 * k);
     views += Math.round(4 * k);
   }
-  if (text.includes("宋代點茶") || text.includes("點茶")) {
+  if (text.includes("宋代点茶") || text.includes("点茶")) {
     views += Math.round(6 * k);
     platformPotential += Math.round(6 * k);
   }
@@ -168,7 +168,7 @@ function applyBlueprintRadarNudgesForPlatformSlice(text: string, r: SimRadar, st
   return { views, conversion, brandFit, platformPotential, mabEfficiency };
 }
 
-/** 平台切片雷达：以平台轮廓为主体 + 蓝图弱调 + 独立种子抖动，形状与全局面板显著不同。 */
+/** 平台切片雷达：以平台轮廓为主体 + 蓝图弱调 + 独立种子抖动，形状与全局面板显着不同。 */
 function platformHitPotentialRadarFromBlueprint(text: string, seed: string, platformKey: string): SimRadar {
   const key = normalizePlatformRadarKey(platformKey);
   let base = { ...PLATFORM_RADAR_SILHOUETTE[key] };
@@ -387,7 +387,7 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
     platformDetailedData: {
       note: "热榜＋品牌契合可在此挂接现有 growth JSON",
       hotListBrandFitHint:
-        text.includes("宋代點茶") || text.includes("宋代点茶")
+        text.includes("宋代点茶") || text.includes("宋代点茶")
           ? "跨界话题与账号基因契合度偏高"
           : "建议以主航道关键词对齐榜单",
       matchedPlatform: platformKey,

@@ -1,4 +1,4 @@
-/** 選題封面／2×4 管线 Deep Research Pro：由成長營「競品分析調研」面板（監管）寫入，平台趨勢頁讀取。 */
+/** 选题封面／2×4 管线 Deep Research Pro：由成长营「竞品分析调研」面板（监管）写入，平台趋势页读取。 */
 export const PLATFORM_TOPIC_COVER_DR_PRO_LS_KEY = "mvstudiopro.platform.topicCoverDeepResearchPro.v1";
 
 export function readTopicCoverDeepResearchProFromLs(): boolean {

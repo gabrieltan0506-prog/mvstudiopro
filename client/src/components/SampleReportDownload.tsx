@@ -18,7 +18,7 @@ function svgToDataUri(svg: string): string {
 }
 
 // 主 Logo —— 用于封面页顶部（深色背景 + 浅色字 + 金色咖啡豆图标）
-// 设计：六边形外框 = 战略框架 · 内部咖啡豆 = 卡布奇諾品味 · 右侧 MVStudioPro 字标
+// 设计：六边形外框 = 战略框架 · 内部咖啡豆 = 卡布奇诺品味 · 右侧 MVStudioPro 字标
 const BRAND_LOGO_DARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="50" viewBox="0 0 260 50">
   <defs>
     <linearGradient id="hexg" x1="0" x2="1" y1="0" y2="1">
@@ -35,7 +35,7 @@ const BRAND_LOGO_DARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="260"
   <text x="52" y="40" font-family="'Helvetica Neue', sans-serif" font-size="8" font-weight="700" fill="rgba(255,247,223,0.78)" letter-spacing="2.4">STRATEGIC INTELLIGENCE · MVSTUDIOPRO.COM</text>
 </svg>`;
 
-// 浅色版 Logo —— 用于网页可见区域（卡布奇諾米色背景 + 深色字）
+// 浅色版 Logo —— 用于网页可见区域（卡布奇诺米色背景 + 深色字）
 const BRAND_LOGO_LIGHT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="50" viewBox="0 0 260 50">
   <defs>
     <linearGradient id="hexgL" x1="0" x2="1" y1="0" y2="1">
@@ -65,7 +65,7 @@ const BRAND_LOGO_LIGHT_URI = svgToDataUri(BRAND_LOGO_LIGHT_SVG);
 const WATERMARK_TILE_URI = svgToDataUri(WATERMARK_TILE_SVG);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 试读版 Markdown 内容（卡布奇諾色调 · 富图文 · 配五大必选模块）
+// 试读版 Markdown 内容（卡布奇诺色调 · 富图文 · 配五大必选模块）
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BIWEEKLY_TOPIC = "AI 短剧大揭秘 · 一秒钟脑补三集，这届年轻人为什么戒不掉？";
@@ -618,7 +618,7 @@ export default function SampleReportDownload() {
         maxWidth: 1200,
         margin: "0 auto",
         padding: "56px 24px",
-        // 柔和的卡布奇諾光晕（深紫背景下让 section 有自己的视觉容器，但不抢风头）
+        // 柔和的卡布奇诺光晕（深紫背景下让 section 有自己的视觉容器，但不抢风头）
         backgroundImage:
           "radial-gradient(ellipse 80% 60% at 50% 25%, rgba(216, 162, 58, 0.10) 0%, transparent 70%)",
       }}
@@ -653,7 +653,7 @@ export default function SampleReportDownload() {
             backdropFilter: "blur(4px)",
           }}
         >
-          免费试读 · 卡布奇諾级商务质感
+          免费试读 · 卡布奇诺级商务质感
         </div>
         <h2
           style={{

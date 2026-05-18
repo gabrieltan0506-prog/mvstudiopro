@@ -65,18 +65,18 @@ export default function AdminPanel() {
   const mascotCareMutation = trpc.ambient.mascotCareMessage.useMutation({
     onSuccess: (data) => {
       setMascotCareResult(data.message);
-      toast.success("已生成關懷短語");
+      toast.success("已生成关怀短语");
     },
-    onError: (err) => toast.error(err.message || "生成失敗"),
+    onError: (err) => toast.error(err.message || "生成失败"),
   });
 
   const reapNeonJobsMutation = trpc.admin.reapStaleNeonJobs.useMutation({
     onSuccess: (data) => {
       toast.success(
-        `已清理過期佇列任務：刪除 running ${data.runningCleared} 條、queued ${data.queuedCleared} 條（規則與後台定時 reaper 一致）`,
+        `已清理过期伫列任务：删除 running ${data.runningCleared} 条、queued ${data.queuedCleared} 条（规则与后台定时 reaper 一致）`,
       );
     },
-    onError: (err) => toast.error(err.message || "清理失敗"),
+    onError: (err) => toast.error(err.message || "清理失败"),
   });
 
   const generateCodesMutation = trpc.betaCode.generate.useMutation({
@@ -428,13 +428,13 @@ export default function AdminPanel() {
             </Card>
           </TabsContent>
 
-          {/* 單進程緩存指標 · 不重啟不累積 */}
+          {/* 单进程缓存指标 · 不重启不累积 */}
           <TabsContent value="runtime-metrics" className="space-y-4">
             <Card className="bg-card/50 border-amber-500/25 border">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Eraser className="h-5 w-5 text-amber-400" />
-                  異步佇列殭屍清理（Neon jobs）
+                  异步伫列僵尸清理（Neon jobs）
                 </CardTitle>
                 <Button
                   type="button"
@@ -453,19 +453,19 @@ export default function AdminPanel() {
                   ) : (
                     <Eraser className="h-3.5 w-3.5" />
                   )}
-                  一鍵清理過期任務
+                  一键清理过期任务
                 </Button>
               </CardHeader>
               <CardContent className="space-y-2 text-xs text-muted-foreground">
                 {isSupervisorUrl && !isAdminOnly ? (
                   <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1.5">
                     <label className="text-[11px] text-amber-200/90 font-medium block">
-                      Supervisor 密钥（與生成邀請碼相同 <span className="font-mono">SUPERVISOR_SECRET</span>，免登入）
+                      Supervisor 密钥（与生成邀请码相同 <span className="font-mono">SUPERVISOR_SECRET</span>，免登入）
                     </label>
                     <input
                       type="password"
                       autoComplete="off"
-                      placeholder="貼上後再點「一鍵清理」"
+                      placeholder="贴上后再点「一键清理」"
                       value={supervisorReapToken}
                       onChange={(e) => {
                         const v = e.target.value;
@@ -481,15 +481,15 @@ export default function AdminPanel() {
                   </div>
                 ) : null}
                 <p>
-                  對資料庫 <span className="font-mono text-foreground/80">jobs</span> 表執行與伺服器定時 reaper
-                  <strong className="text-foreground/90"> 相同條件 </strong>的 <strong className="text-foreground/90">DELETE</strong>
-                  ：久未認領的 <span className="font-mono">queued</span>、以及 <span className="font-mono">running</span> 但{" "}
-                  <span className="font-mono">updatedAt</span> 長時間未更新的列（有進度的長任務不會誤刪）。
-                  戰略深研狀態不在此表，不受此按鈕影響。此按鈕為<strong className="text-foreground/90"> 手動強制 </strong>
-                  執行，即使已設定 <span className="font-mono">DISABLE_JOBS_STALE_REAPER</span> 關閉自動掃描也會刪除符合條件的列。
+                  对资料库 <span className="font-mono text-foreground/80">jobs</span> 表执行与伺服器定时 reaper
+                  <strong className="text-foreground/90"> 相同条件 </strong>的 <strong className="text-foreground/90">DELETE</strong>
+                  ：久未认领的 <span className="font-mono">queued</span>、以及 <span className="font-mono">running</span> 但{" "}
+                  <span className="font-mono">updatedAt</span> 长时间未更新的列（有进度的长任务不会误删）。
+                  战略深研状态不在此表，不受此按钮影响。此按钮为<strong className="text-foreground/90"> 手动强制 </strong>
+                  执行，即使已设定 <span className="font-mono">DISABLE_JOBS_STALE_REAPER</span> 关闭自动扫描也会删除符合条件的列。
                 </p>
                 {!isAdminOnly ? (
-                  <p className="text-amber-200/90">請使用已登入的 Admin / Supervisor 帳號操作。</p>
+                  <p className="text-amber-200/90">请使用已登入的 Admin / Supervisor 帐号操作。</p>
                 ) : null}
               </CardContent>
             </Card>
@@ -497,17 +497,17 @@ export default function AdminPanel() {
             {isAdminOnly ? (
               <Card className="bg-card/50 border-violet-500/20 border">
                 <CardHeader>
-                  <CardTitle className="text-lg">吉祥物情緒關懷（後台試打）</CardTitle>
+                  <CardTitle className="text-lg">吉祥物情绪关怀（后台试打）</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <p className="text-xs text-muted-foreground">
-                    僅已登入 Admin / Supervisor 可調用；前台使用者界面已移除。可用於校對 Gemini 語氣與長度。
+                    仅已登入 Admin / Supervisor 可调用；前台使用者界面已移除。可用于校对 Gemini 语气与长度。
                   </p>
                   <textarea
                     rows={3}
                     value={mascotCareNote}
                     onChange={(e) => setMascotCareNote(e.target.value)}
-                    placeholder="可選：備註或模擬用戶狀態…"
+                    placeholder="可选：备注或模拟用户状态…"
                     className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   />
                   <Button
@@ -523,7 +523,7 @@ export default function AdminPanel() {
                     }
                   >
                     {mascotCareMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                    生成關懷短語
+                    生成关怀短语
                   </Button>
                   {mascotCareResult ? (
                     <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border/50 bg-background/60 p-3 text-[13px] leading-relaxed text-foreground">
@@ -536,7 +536,7 @@ export default function AdminPanel() {
 
             <Card className="bg-card/50 border-border/50">
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
-                <CardTitle className="text-lg">運維打點（本進程）</CardTitle>
+                <CardTitle className="text-lg">运维打点（本进程）</CardTitle>
                 <Button
                   type="button"
                   variant="outline"
@@ -551,8 +551,8 @@ export default function AdminPanel() {
               </CardHeader>
               <CardContent className="space-y-3 text-xs text-muted-foreground">
                 <p>
-                  · 資料僅保存在當前 Node 進程記憶體，<span className="text-foreground/90 font-medium">部署重啟即清空</span>。
-                  <br />· 聚合含：趨勢報表 generator（visual.report）、生圖管線 GPT54 / 合成成功次數等。
+                  · 资料仅保存在当前 Node 进程记忆体，<span className="text-foreground/90 font-medium">部署重启即清空</span>。
+                  <br />· 聚合含：趋势报表 generator（visual.report）、生图管线 GPT54 / 合成成功次数等。
                 </p>
                 {runtimeMx?.meta ? (
                   <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2 font-mono text-[11px] text-foreground/80">
@@ -572,7 +572,7 @@ export default function AdminPanel() {
                 ) : null}
                 <div className="rounded-lg border border-border/40 bg-black/35 p-3">
                   <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-200/85">
-                    recent（時間正序尾部）
+                    recent（时间正序尾部）
                   </div>
                   {runtimeMx?.recent?.length ? (
                     <pre className="max-h-[22rem] overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-sky-50/92">

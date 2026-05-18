@@ -1,10 +1,10 @@
-/** 正式站預設 API 主機（須 `SESSION_COOKIE_DOMAIN=.mvstudiopro.com`）。 */
+/** 正式站预设 API 主机（须 `SESSION_COOKIE_DOMAIN=.mvstudiopro.com`）。 */
 const DEFAULT_CANONICAL_API_ORIGIN = "https://api.mvstudiopro.com";
 /** Preview 兜底。 */
 const DEFAULT_FLY_DEV_ORIGIN = "https://mvstudiopro.fly.dev";
 
 /**
- * 長請求須直連 API 主機，避免 `www`→Vercel→Fly 反代逾時。
+ * 长请求须直连 API 主机，避免 `www`→Vercel→Fly 反代逾时。
  */
 export function longJobsFlyOrigin(): string | null {
   const fromEnv = String(import.meta.env.VITE_FLY_API_ORIGIN || "")
@@ -44,11 +44,11 @@ export function flyHealthProbeOriginForUrl(url: string): string {
 }
 
 /**
- * 長耗時 tRPC（2×4 / 封面等）專用：`ROUTER_EXTERNAL_TARGET_*` 來自 Vercel→Fly 反代腰斬，須直連 Fly（或同 apex 的 api 子域）繞過 Vercel。
+ * 长耗时 tRPC（2×4 / 封面等）专用：`ROUTER_EXTERNAL_TARGET_*` 来自 Vercel→Fly 反代腰斩，须直连 Fly（或同 apex 的 api 子域）绕过 Vercel。
  *
- * **Cookie**：`www.mvstudiopro.com` 上設的主機級 Session **不會**隨請求發到 `*.fly.dev`（不同站點）。
- * 生產建議：`api.mvstudiopro.com` CNAME 到 Fly，設 `VITE_FLY_API_ORIGIN=https://api.mvstudiopro.com` 與服端 `SESSION_COOKIE_DOMAIN=mvstudiopro.com`（勿加引號／尾隨空格）
- *（SameSite=Lax 即可覆蓋子域請求）。若暫只有 fly.dev，須自行承擔登入態或改用與登入同站的 API 主機名。
+ * **Cookie**：`www.mvstudiopro.com` 上设的主机级 Session **不会**随请求发到 `*.fly.dev`（不同站点）。
+ * 生产建议：`api.mvstudiopro.com` CNAME 到 Fly，设 `VITE_FLY_API_ORIGIN=https://api.mvstudiopro.com` 与服端 `SESSION_COOKIE_DOMAIN=mvstudiopro.com`（勿加引号／尾随空格）
+ *（SameSite=Lax 即可覆盖子域请求）。若暂只有 fly.dev，须自行承担登入态或改用与登入同站的 API 主机名。
  */
 export function longJobsTrpcHttpUrl(): string {
   const fly = longJobsFlyOrigin();
@@ -56,7 +56,7 @@ export function longJobsTrpcHttpUrl(): string {
   return base ? `${base}/api/trpc` : "/api/trpc";
 }
 
-/** {@link withFlyHealthGate} / `/api/health` 探針使用的 origin。 */
+/** {@link withFlyHealthGate} / `/api/health` 探针使用的 origin。 */
 export function longJobsTrpcHealthOrigin(): string {
   const fly = longJobsFlyOrigin();
   if (fly) return fly.replace(/\/+$/, "");

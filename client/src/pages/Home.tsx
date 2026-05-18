@@ -41,7 +41,7 @@ export default function HomePage() {
         <HomePricing />
       </div>
 
-      {/* 全頁底圖與下列卡片区共用 Context：時段（顯示時區）× 天氣輪播 Unsplash；路況（Gemini）、國內/國際新聞 */}
+      {/* 全页底图与下列卡片区共用 Context：时段（显示时区）× 天气轮播 Unsplash；路况（Gemini）、国内/国际新闻 */}
       <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
         <WorkAmbientPanel />
       </div>

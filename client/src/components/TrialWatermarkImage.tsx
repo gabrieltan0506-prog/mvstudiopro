@@ -6,7 +6,7 @@ interface TrialWatermarkImageProps {
   alt?: string;
   isTrial?: boolean;
   className?: string;
-  /** 底圖 object-fit；預設 cover（小紅書 16:9 雙卡建議 contain） */
+  /** 底图 object-fit；预设 cover（小红书 16:9 双卡建议 contain） */
   objectFit?: "contain" | "cover";
   style?: React.CSSProperties;
   onError?: React.ReactEventHandler<HTMLImageElement>;
@@ -44,7 +44,7 @@ export default function TrialWatermarkImage({
         src={src}
         alt={alt}
         className={className}
-        /** 外鏈生圖（GCS/R2 等）部分桶依 Referer 攔截嵌入；不帶 Referer 可避免封面/2×4 裂圖 */
+        /** 外链生图（GCS/R2 等）部分桶依 Referer 拦截嵌入；不带 Referer 可避免封面/2×4 裂图 */
         referrerPolicy="no-referrer"
         draggable={isTrial ? false : undefined}
         onContextMenu={preventAction}

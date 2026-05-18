@@ -1,5 +1,5 @@
 /**
- * 與 AdminPanel「維運 token」共用 sessionStorage 鍵；值須與服端 env `SUPERVISOR_SECRET` 一致。
+ * 与 AdminPanel「维运 token」共用 sessionStorage 键；值须与服端 env `SUPERVISOR_SECRET` 一致。
  */
 export const SUPERVISOR_TRPC_TOKEN_SESSION_KEY = "mvs-supervisor-reap-token";
 
@@ -14,7 +14,7 @@ export function getSupervisorTrpcToken(): string | undefined {
 }
 
 /**
- * URL 帶 `supervisor=1` 且 `supervisorToken` 時寫入 sessionStorage，並從地址欄移除 token，避免分享連結洩漏。
+ * URL 带 `supervisor=1` 且 `supervisorToken` 时写入 sessionStorage，并从地址栏移除 token，避免分享连结泄漏。
  */
 export function captureSupervisorTokenFromUrl(): void {
   if (typeof window === "undefined") return;

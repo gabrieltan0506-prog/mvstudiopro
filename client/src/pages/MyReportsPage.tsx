@@ -11,13 +11,13 @@ import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 
-/** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
+/** 作品库阅读模式：PDF 只克隆此容器（封面 + 正文），避免整页 document 带入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
-/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
+/** HTML 快照 ≤ 此字节时走同步 downloadAnalysisPdf；更大或失败则改走 GCS 队列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
 
-/** 設為 1 或網址加 ?pdfDebug=1：僅內部排錯用；一般客戶不須看到診斷 UI（避免干擾體驗） */
+/** 设为 1 或网址加 ?pdfDebug=1：仅内部排错用；一般客户不须看到诊断 UI（避免干扰体验） */
 const MY_REPORTS_PDF_DEBUG_LS = "mvs-myreports-pdf-debug";
 
 function isMyReportsPdfDebugModeEnabled(): boolean {
@@ -33,10 +33,10 @@ function isMyReportsPdfDebugModeEnabled(): boolean {
   return false;
 }
 
-/** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
+/** 注入快照 HTML：对抗 Sonner 等 portal 残留与列印分页异常（优先于 app 内其它 CSS） */
 function injectPdfSnapshotSanitizeIntoHead(html: string): string {
   const strip = `<style id="mvs-pdf-snapshot-sanitize">
-/* 強制摘掉各版 Sonner / Toast 與 notifications 區塊（含 fixed 在每頁重複繪製） */
+/* 强制摘掉各版 Sonner / Toast 与 notifications 区块（含 fixed 在每页重复绘制） */
 [data-sonner-toaster],[data-sonner-toast],[data-sonner-toaster] li,
 ol[data-sonner-toaster],section[aria-label*="tific" i],section[aria-label*="通知" i],
 [class*="sonner-toast"],.toaster.group,.toaster{display:none!important;visibility:hidden!important;
@@ -58,7 +58,7 @@ figure:not(.cover-page) img,.report-raw-html figure:not(.cover-page) img,img:not
   return `${strip}${html}`;
 }
 
-/** 給封面圖補齊列印用內在尺寸（html 裡 9:16 的 aspect-ratio 在 Chromium page.pdf 下偶發不繪圖） */
+/** 给封面图补齐列印用内在尺寸（html 里 9:16 的 aspect-ratio 在 Chromium page.pdf 下偶发不绘图） */
 function stampCoverImgPrintDimensions(
   img: HTMLImageElement,
   liveCoverImg: HTMLImageElement | null,
@@ -89,7 +89,7 @@ function stampCoverImgPrintDimensions(
   }
 }
 
-/** 快照專用：把封面 <img> 換成 data URL，避免 pdf-worker setContent 後遠端圖失敗 → 高度 0 + page-break 空白首頁 */
+/** 快照专用：把封面 <img> 换成 data URL，避免 pdf-worker setContent 后远端图失败 → 高度 0 + page-break 空白首页 */
 async function embedMyReportsCoverImageInPdfFragment(
   fragment: HTMLElement,
   liveCoverImg: HTMLImageElement | null,
@@ -152,7 +152,7 @@ async function embedMyReportsCoverImageInPdfFragment(
   }
 }
 
-/** 快照裡封面必須已是 data URL，否則 worker 側遠端 URL 常載入失敗 → 幽靈換頁留白 */
+/** 快照里封面必须已是 data URL，否则 worker 侧远端 URL 常载入失败 → 幽灵换页留白 */
 function dropCoverFromPdfFragmentUnlessEmbedded(fragment: HTMLElement): void {
   const fig = fragment.querySelector("figure.cover-page");
   if (!fig) return;
@@ -162,7 +162,7 @@ function dropCoverFromPdfFragmentUnlessEmbedded(fragment: HTMLElement): void {
     /^data:image\/(png|jpeg|jpg|webp|gif|bmp);base64,/i.test(img.src) &&
     img.src.length > 256;
   if (!ok) {
-    console.warn("[PDF] 封面非合法 Base64 或未達最小長度，已移除以防空白頁");
+    console.warn("[PDF] 封面非合法 Base64 或未达最小长度，已移除以防空白页");
     fig.remove();
   }
 }
@@ -188,7 +188,7 @@ interface Report {
   coverUrl?: string | null;
   summary?: string | null;
   duration?: string | null;
-  /** Cam7：與 DB metadata 同源，下載 HTML 時透傳以對齊分鏡網格 */
+  /** Cam7：与 DB metadata 同源，下载 HTML 时透传以对齐分镜网格 */
   storyboardSheetExport?: {
     imageUrl?: string;
     scriptContextForPanels?: string;
@@ -239,9 +239,9 @@ export default function MyReportsPage() {
 
   const pdfAsyncHandledRef = useRef(false);
   const pdfAsyncTitleRef = useRef<string>("");
-  /** 點「下載 PDF」後自動寫入診斷面板，直到 reset / 失敗；與 localStorage 常駐開關無關 */
+  /** 点「下载 PDF」后自动写入诊断面板，直到 reset / 失败；与 localStorage 常驻开关无关 */
   const myReportsPdfDebugSessionRef = useRef(false);
-  /** 異步 pdf_export 任務 id（GCS 快照 → worker → 簽名下載） */
+  /** 异步 pdf_export 任务 id（GCS 快照 → worker → 签名下载） */
   const [asyncPdfJobId, setAsyncPdfJobId] = useState<string | null>(null);
 
   const resetPdfDownloadUi = useCallback(() => {
@@ -258,7 +258,7 @@ export default function MyReportsPage() {
   const [myReportsPdfDebugOpen, setMyReportsPdfDebugOpen] = useState(false);
   const [myReportsPdfDebugLines, setMyReportsPdfDebugLines] = useState<string[]>([]);
   const [myReportsPdfDebugLogging, setMyReportsPdfDebugLogging] = useState(false);
-  /** 與 append 閘門同步，避免 capture 閉包讀到舊的「常駐」false 而丟失 jobId 等行 */
+  /** 与 append 闸门同步，避免 capture 闭包读到旧的「常驻」false 而丢失 jobId 等行 */
   const myReportsPdfDebugLoggingRef = useRef(false);
   useEffect(() => {
     myReportsPdfDebugLoggingRef.current = myReportsPdfDebugLogging;
@@ -292,7 +292,7 @@ export default function MyReportsPage() {
     setMyReportsPdfDebugLines((prev) => [...prev.slice(-150), `[${ts}] ${line}`]);
   }, []);
 
-  /** 僅在 ?pdfDebug=1 或已開「常駐记录」時：下載 PDF 自動開面板並種子說明。 */
+  /** 仅在 ?pdfDebug=1 或已开「常驻记录」时：下载 PDF 自动开面板并种子说明。 */
   const beginMyReportsPdfAutoDebug = useCallback(() => {
     if (!isMyReportsPdfDebugModeEnabled()) return;
     myReportsPdfDebugSessionRef.current = true;
@@ -332,7 +332,7 @@ export default function MyReportsPage() {
     setMyReportsPdfDebugOpen(false);
   }, []);
 
-  /** 異步隊列回來的 jobId 與 capture 非同步：單獨補一行，避免閉包/時序導致面板缺任務 id */
+  /** 异步队列回来的 jobId 与 capture 非同步：单独补一行，避免闭包/时序导致面板缺任务 id */
   useEffect(() => {
     if (!asyncPdfJobId || !isMyReportsPdfDebugModeEnabled()) return;
     const id = asyncPdfJobId;
@@ -369,7 +369,7 @@ export default function MyReportsPage() {
     if (!asyncPdfJobId || !pdfExportPollQuery.data) return;
 
     if (pdfExportPollQuery.data.status === "failed") {
-      const msg = pdfExportPollQuery.data.error || "PDF 任務失敗";
+      const msg = pdfExportPollQuery.data.error || "PDF 任务失败";
       toast.error(msg, { duration: 20_000 });
       setAsyncPdfJobId(null);
       pdfAsyncHandledRef.current = false;
@@ -386,7 +386,7 @@ export default function MyReportsPage() {
         ? (out as { downloadUrl: string }).downloadUrl
         : null;
     if (!url) {
-      toast.error("PDF 已完成但未返回下載鏈接");
+      toast.error("PDF 已完成但未返回下载链接");
       setAsyncPdfJobId(null);
       pdfAsyncHandledRef.current = false;
       resetPdfDownloadUi();
@@ -410,7 +410,7 @@ export default function MyReportsPage() {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 15_000);
         toast.success(`PDF 下载已开始（${fileNameTitle}.pdf）`);
       } catch (e: any) {
-        toast.error("PDF 已生成但下載失敗：" + (e?.message || "未知錯誤"));
+        toast.error("PDF 已生成但下载失败：" + (e?.message || "未知错误"));
         window.open(url, "_blank", "noopener");
       } finally {
         setAsyncPdfJobId(null);
@@ -425,8 +425,8 @@ export default function MyReportsPage() {
   const ensureCoverMutation = trpc.creations.ensureCover.useMutation();
 
   // ── HTML 交互版导出（PDF 之外的第二条下载路径） ─────────────────────────
-  // 用户决策："直接讓用戶下載 PDF 跟 HTML 的選項就好，除非檔案很大，超過 10 MB，
-  // 在採用壓縮成 zip 下載。"
+  // 用户决策："直接让用户下载 PDF 跟 HTML 的选项就好，除非档案很大，超过 10 MB，
+  // 在采用压缩成 zip 下载。"
   // - 后端返 dataUrl: data:text/html;base64,... 或 data:application/zip;base64,...
   // - 前端用 <a download> 触发本地下载（无需 GCS 签名链接）
   const [htmlDownloadingCardId, setHtmlDownloadingCardId] = useState<number | null>(null);
@@ -580,11 +580,11 @@ export default function MyReportsPage() {
       appendMyReportsPdfDebug("document.fonts.ready 已就绪");
       await new Promise((r) => setTimeout(r, 2800));
 
-      // 關閉並移出 DOM：Sonner 為 fixed，不處理會被採進 PDF 且在 Chromium 每頁重複繪製
+      // 关闭并移出 DOM：Sonner 为 fixed，不处理会被采进 PDF 且在 Chromium 每页重复绘制
       toast.dismiss();
       await new Promise((r) => setTimeout(r, 400));
 
-      // 精準快照：只克隆報告容器（封面 + ReportRenderer），不採 documentElement → 不會帶入 Sonner / React root / 導航等
+      // 精准快照：只克隆报告容器（封面 + ReportRenderer），不采 documentElement → 不会带入 Sonner / React root / 导航等
       const pdfRoot = document.getElementById(MYREPORTS_PDF_SNAPSHOT_ROOT_ID);
       if (!pdfRoot) {
         appendMyReportsPdfDebug("错误：找不到 PDF 快照容器 myreports-pdf-root");
@@ -592,7 +592,7 @@ export default function MyReportsPage() {
       }
       appendMyReportsPdfDebug(`已找到 pdfRoot id=${pdfRoot.id} childCount=${pdfRoot.childNodes.length}`);
 
-      // 封面若未 decode 完成，快照裡 naturalHeight=0 → pdf-worker 得到空白首頁 + page-break-after 仍生效
+      // 封面若未 decode 完成，快照里 naturalHeight=0 → pdf-worker 得到空白首页 + page-break-after 仍生效
       const coverImg = pdfRoot.querySelector("figure.cover-page img");
       if (coverImg instanceof HTMLImageElement) {
         appendMyReportsPdfDebug(

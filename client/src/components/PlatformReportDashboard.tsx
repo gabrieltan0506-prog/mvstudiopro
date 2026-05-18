@@ -62,7 +62,7 @@ function TrialReadSensitive({
   );
 }
 
-/** 預設展開；使用者可收起。React 19 的 defaultOpen 在 @types/react 尚未收錄，故用 ref 初始化。 */
+/** 预设展开；使用者可收起。React 19 的 defaultOpen 在 @types/react 尚未收录，故用 ref 初始化。 */
 function TopicStructureDetails({
   className,
   summaryClassName,

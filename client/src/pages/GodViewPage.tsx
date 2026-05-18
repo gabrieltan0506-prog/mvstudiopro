@@ -10,7 +10,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
-// ── 定價配置（與後端 billingService.ts 保持同步）──────────────────────────────
+// ── 定价配置（与后端 billingService.ts 保持同步）──────────────────────────────
 type ProductType = "magazine_single" | "magazine_sub" | "personalized" | "enterprise_flagship";
 
 const PRODUCT_FIRST_KEYS: Record<ProductType, string> = {
@@ -305,7 +305,7 @@ export default function GodViewPage() {
         setElapsedSec(Math.max(0, Math.floor((Date.now() - launched.getTime()) / 1000)));
       }
     } catch {}
-    toast.message("已恢复正在跑的深潛任务（无需重新启动）");
+    toast.message("已恢复正在跑的深潜任务（无需重新启动）");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeJobsQuery.data?.jobs?.length]);
 
@@ -474,7 +474,7 @@ export default function GodViewPage() {
         onClose={() => setShowIpModal(false)}
       />
 
-      {/* 卡布奇諾暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
+      {/* 卡布奇诺暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
         {/* 顶部奶泡高光（让顶端阅读区更明亮，文字更易读）*/}
         <div style={{ position: "absolute", top: "-15%", left: "50%", transform: "translateX(-50%)", width: 1100, height: 700, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,247,224,0.55) 0%,transparent 70%)", filter: "blur(70px)" }} />
@@ -819,7 +819,7 @@ export default function GodViewPage() {
           </div>
         )}
 
-        {/* ── 定價矩陣 ── 普通三款一行 + 企业旗舰款单独占整行（高客单视觉锚点） */}
+        {/* ── 定价矩阵 ── 普通三款一行 + 企业旗舰款单独占整行（高客单视觉锚点） */}
         {(phase === "idle" || phase === "launching") && (() => {
           const renderCard = (p: typeof PRODUCTS[number], opts?: { hero?: boolean }) => {
             const isSelected = selectedProduct === p.id;
@@ -937,7 +937,7 @@ export default function GodViewPage() {
         })()}
 
         {/* 注：模板预选已搬到「战略作品快照库 / 在线阅读」页面 ——
-            用户在出刊后挑封面更直觉，启动深潛前不再让模板抢戏 */}
+            用户在出刊后挑封面更直觉，启动深潜前不再让模板抢戏 */}
 
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
@@ -1191,7 +1191,7 @@ export default function GodViewPage() {
             )}
             {(jobDoneQuery.data as any)?.cancelRequestedAt && (
               <div style={{ marginTop: 18, marginLeft: isMobile ? 16 : 0, marginRight: isMobile ? 16 : 0, padding: isMobile ? "10px 14px" : "12px 18px", textAlign: "center", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px dashed rgba(220,38,38,0.35)", color: "#dc2626", fontSize: 12.5, fontWeight: 700 }}>
-                🛑 已发起主动取消，正在停止深潛引擎（按规则不退还积分）…
+                🛑 已发起主动取消，正在停止深潜引擎（按规则不退还积分）…
               </div>
             )}
           </>
@@ -1217,7 +1217,7 @@ export default function GodViewPage() {
             <textarea
               value={planFeedback}
               onChange={(e) => setPlanFeedback(e.target.value)}
-              placeholder="（可选）补充意见或调整方向，AI 会按您的反馈调整后再开始深潛..."
+              placeholder="（可选）补充意见或调整方向，AI 会按您的反馈调整后再开始深潜..."
               style={{ width: "100%", minHeight: 80, padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", color: "rgba(245,235,210,0.92)", fontSize: isMobile ? 16 : 13, lineHeight: 1.7, resize: "vertical", outline: "none", marginBottom: 14, fontFamily: "inherit", boxSizing: "border-box" }}
             />
 
@@ -1229,7 +1229,7 @@ export default function GodViewPage() {
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "12px 26px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: approvePlanMutation.isPending ? "not-allowed" : "pointer", opacity: approvePlanMutation.isPending ? 0.6 : 1, boxShadow: "0 4px 16px rgba(168,118,27,0.30)" }}
               >
                 {approvePlanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Crown size={14} />}
-                {planFeedback.trim() ? "按反馈调整后开始深潛" : "批准计划 · 开始深潛"}
+                {planFeedback.trim() ? "按反馈调整后开始深潜" : "批准计划 · 开始深潜"}
               </button>
               {/* 取消任务·主动取消不退还积分（防恶意刷算力） — 计划审核阶段 */}
               {pollingJobId && (
@@ -1259,7 +1259,7 @@ export default function GodViewPage() {
                 </button>
               )}
               <span style={{ fontSize: isMobile ? 12 : 11, color: "rgba(160,140,90,0.65)", lineHeight: 1.6 }}>
-                批准后 Agent 会立即开始最长 60 分钟的全网深潛，完成后自动进入研报中心
+                批准后 Agent 会立即开始最长 60 分钟的全网深潜，完成后自动进入研报中心
               </span>
             </div>
           </div>

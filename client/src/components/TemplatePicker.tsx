@@ -600,7 +600,7 @@ export const PDF_STYLE_KEYS = ORDER;
 
 // ─── 大尺寸横向 banner（在报告阅读页头下方/上帝视角输入区下方等"显眼位"用） ─
 //   设计目的：用户反馈"右上角小方块谁看得到"，这版直接把 5 张缩略卡铺在外面。
-//   高度约 280px，标题 + 副标题在上方，一眼就明白是干什么的。
+//   高度约 280px，标题 + 副标题在上方，一眼就明白是干什幺的。
 export function TemplateStripBanner({
   value,
   onChange,

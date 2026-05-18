@@ -7,7 +7,7 @@ function clip(s: string, max: number): string {
   return `${t.slice(0, Math.max(0, max - 1))}…`;
 }
 
-/** 與後端 prompt 主欄位一致的主標題（變體 A 必須與此對齊，避免用戶以為換了選題）。 */
+/** 与后端 prompt 主栏位一致的主标题（变体 A 必须与此对齐，避免用户以为换了选题）。 */
 function canonicalMainTitle(bp: Record<string, unknown>, index: number): string {
   const t =
     bp.title ??
@@ -45,7 +45,7 @@ function copyOpeningSnippet(bp: Record<string, unknown>): string {
 }
 
 /**
- * 第三句主標：從正文開頭或鉤子衍生，與 A/B 盡量錯開語感，供封面择优多一路。
+ * 第三句主标：从正文开头或钩子衍生，与 A/B 尽量错开语感，供封面择优多一路。
  */
 function buildThirdTitleCandidate(bp: Record<string, unknown>, main: string, second: string, index: number): string {
   const hook = hookSnippet(bp);
@@ -76,8 +76,8 @@ function readTitleAlternate(bp: Record<string, unknown>): string {
 }
 
 /**
- * 同一條選題：發文大標 / 封面主句 **A·B·C 三路**（C 多取自正文開頭或鉤子衍生）。
- * 優先用 Stage2 模型輸出的 titleAlternate 作 B；缺省時用規則補 B 與 C（不另起選題）。
+ * 同一条选题：发文大标 / 封面主句 **A·B·C 三路**（C 多取自正文开头或钩子衍生）。
+ * 优先用 Stage2 模型输出的 titleAlternate 作 B；缺省时用规则补 B 与 C（不另起选题）。
  */
 export function buildTitleVariantsFromBlueprint(bp: Record<string, unknown>, index: number): PlatformTitleVariant[] {
   const main = clip(canonicalMainTitle(bp, index), 88);
@@ -106,8 +106,8 @@ export function buildTitleVariantsFromBlueprint(bp: Record<string, unknown>, ind
 }
 
 /**
- * 粗粒度「封面主句點擊意圖」分數（僅內部排序用，不對用戶報 CTR 或小數）。
- * 分數高者優先作為出圖與列表主標題。
+ * 粗粒度「封面主句点击意图」分数（仅内部排序用，不对用户报 CTR 或小数）。
+ * 分数高者优先作为出图与列表主标题。
  */
 export function scoreTitleForCoverClickAppeal(title: string, hook: string): number {
   const t = (title || "").replace(/\s+/g, " ").trim();
@@ -125,7 +125,7 @@ export function scoreTitleForCoverClickAppeal(title: string, hook: string): numb
 const CTR_BAND_HIGH_MIN_SCORE = 4;
 
 /**
- * 依內部 {@link scoreTitleForCoverClickAppeal} 分成「高 / 中」兩檔，供封面生成後展示（非承諾實際 CTR）。
+ * 依内部 {@link scoreTitleForCoverClickAppeal} 分成「高 / 中」两档，供封面生成后展示（非承诺实际 CTR）。
  */
 export function estimateCoverCtrBand(
   topicHook: string,
@@ -141,7 +141,7 @@ export function estimateCoverCtrBand(
 }
 
 /**
- * 在 A/B/C 中選與基線主標不同、且點擊意圖分最高者，供「超高點擊率封面」再生成。
+ * 在 A/B/C 中选与基线主标不同、且点击意图分最高者，供「超高点击率封面」再生成。
  */
 export function pickHighCtrAlternateTitle(
   variants: PlatformTitleVariant[],
@@ -158,7 +158,7 @@ export function pickHighCtrAlternateTitle(
   return ranked[0]!.v;
 }
 
-/** 在 A/B/C 標題中選封面意圖較高的一句；平手保留最先候選。 */
+/** 在 A/B/C 标题中选封面意图较高的一句；平手保留最先候选。 */
 export function pickPreferredTitleVariant(variants: PlatformTitleVariant[], hook: string): PlatformTitleVariant {
   if (variants.length === 0) return { id: "a", title: "" };
   let best = variants[0]!;
@@ -175,8 +175,8 @@ export function pickPreferredTitleVariant(variants: PlatformTitleVariant[], hook
 }
 
 /**
- * 後端 / 列表統一：自動選定一條主標題（不向用戶展示二選一）。
- * 與 buildTitleVariantsFromBlueprint 同源種子，只輸出勝者一條（id 統一為 a）。
+ * 后端 / 列表统一：自动选定一条主标题（不向用户展示二选一）。
+ * 与 buildTitleVariantsFromBlueprint 同源种子，只输出胜者一条（id 统一为 a）。
  */
 export function buildAutoPickedTitleVariantsForBlueprint(bp: Record<string, unknown>, index: number): PlatformTitleVariant[] {
   const pair = buildTitleVariantsFromBlueprint(bp, index);
@@ -185,5 +185,5 @@ export function buildAutoPickedTitleVariantsForBlueprint(bp: Record<string, unkn
   return [{ id: "a", title: w.title }];
 }
 
-/** 與 {@link buildTitleVariantsFromBlueprint} 同義（舊匯入名）。 */
+/** 与 {@link buildTitleVariantsFromBlueprint} 同义（旧汇入名）。 */
 export const buildTitleVariantsForBlueprint = buildTitleVariantsFromBlueprint;

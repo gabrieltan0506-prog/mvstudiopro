@@ -1,5 +1,5 @@
 /**
- * 瀏覽器端免金鑰逆地理（BigDataCloud client API，可從一般網頁直接 fetch）。
+ * 浏览器端免金钥逆地理（BigDataCloud client API，可从一般网页直接 fetch）。
  */
 export async function reverseGeocodeShortLabel(lat: number, lon: number): Promise<string | null> {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
