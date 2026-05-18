@@ -4463,6 +4463,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           compositeExecutionDetails: z.string().max(4000).optional(),
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           creationRecordId: z.number().int().positive().optional(),
+          compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4594,8 +4595,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const coverHistoryHint = await buildPlatformCoverHistoryHintFromDb({ userId });
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
 
-        let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
-          input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
+        void input.imagePromptTranslator;
+        const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
 
         const jobId = nanoid(16);
         await createJobRecord({
@@ -4625,6 +4626,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeImagePromptTranslator: imagePromptTranslatorForComposite,
               creationRecordId: input.creationRecordId,
               enableCompositeDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
+              compositeImageEngine: input.compositeImageEngine,
             },
           },
         });
@@ -4912,6 +4914,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             enableTopicCoverDeepResearchPro: z.boolean().optional(),
             /** IP / 身份锚点，供 DR Pro 与翻译链 */
             coverPersonaContext: z.string().max(8000).optional(),
+            /** 2×4 出图：GPT-Image-2 主链 vs Vertex Nano Banana 2 主路径（优先于部署变量 PLATFORM_COMPOSITE_SHEET_ENGINE） */
+            compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
             /** 与 `bulkFourPackSceneIds` 同时出现；0..3 对应当前为四条套裝中的第几笔扣费 */
             bulkFourSequentialSlot: z.number().int().min(0).max(3).optional(),
             /** 四条选题 sceneId 固定顺序，须与客户端串行顺序一致且互不重复 */
@@ -4955,8 +4959,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
         const enableCompositeDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
-        let imagePromptTranslatorForComposite: "gpt54" | "vertex_gemini_3_flash_preview" =
-          input.imagePromptTranslator ?? "vertex_gemini_3_flash_preview";
+        void input.imagePromptTranslator;
+        const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
         const cost =
           input.bulkFourSequentialSlot !== undefined
             ? platformCompositeBulkFourSlotCredits(input.bulkFourSequentialSlot)
@@ -5013,14 +5017,80 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: "無法建立實時進度任務，請稍後再試",
             });
           }
-          const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
-          detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
+          
+          // 🚀 核心修復：如果前端傳了 progressJobId（非同步輪詢模式），
+          // 則在背景啟動耗時的生成任務，並立即回傳 HTTP 200 給前端，避免 Vercel 60s Timeout。
+          const runBackgroundComposite = async () => {
+            const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
+            detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
+            
+            appendImageFlowLog(
+              imageGenFlowLog,
+              `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
+            );
+            const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
+            appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
+            let imageUrl: string | null = null;
+            try {
+              imageUrl = await generatePlatformCompositeSheetImage({
+                kind: input.kind,
+                title: input.title,
+                scriptContext: input.scriptContext,
+                isTrial,
+                executionDetails: input.executionDetails,
+                imagePromptTranslator: imagePromptTranslatorForComposite,
+                flowLog: imageGenFlowLog,
+                enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
+                coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
+                compositeImageEngine: input.compositeImageEngine,
+              });
+
+              appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+              await markJobSucceeded(progressJobId, {
+                imageGenFlowLog,
+                compositeSheetProgress: true,
+                compositeImageUrl: imageUrl,
+                done: true,
+              });
+            } catch (error: any) {
+              const rawMessage = error instanceof Error ? error.message : String(error);
+              console.error("\n[生图致命错误 (Async Background)]:", rawMessage);
+              
+              const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
+              await markJobFailed(
+                progressJobId,
+                tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage,
+              );
+              
+              if (!isAdminUser) {
+                await refundCredits(userId, cost, "platformCompositeSheet 生图致命错误退还");
+              }
+            } finally {
+              detachLiveProgress?.();
+            }
+          };
+
+          // 啟動背景任務 (Fire-and-Forget)
+          runBackgroundComposite().catch(e => console.error("Unhandled background composite error:", e));
+
+          // 立刻返回給前端，避免 Timeout（回傳 progressJobId 與封面 jobId 對齊，方便 Network 除錯）
+          return {
+            success: true as const,
+            imageUrl: null, // 前端會從輪詢 API 去拿真正的圖
+            totalCost: isAdminUser ? 0 : cost,
+            kind: input.kind,
+            imageGenFlowLog: ["[系統] 任務已成功送入背景駐列，請透過實時進度追蹤。"],
+            isAsync: true,
+            progressJobId,
+          };
         }
 
+        // --- 若無 progressJobId，則退回原本的同步等待邏輯 (極少發生，保留作相容) ---
         appendImageFlowLog(
           imageGenFlowLog,
-          `[2×4 接口] generatePlatformCompositeSheet 开始 · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
+          `[2×4 接口] generatePlatformCompositeSheet 开始 (同步执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
         );
+        // --- 同步執行部分 (繼續) ---
         const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
         appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
         let imageUrl: string | null = null;
@@ -5035,6 +5105,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             flowLog: imageGenFlowLog,
             enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
             coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
+            compositeImageEngine: input.compositeImageEngine,
           });
         } catch (error: any) {
           detachLiveProgress?.();
