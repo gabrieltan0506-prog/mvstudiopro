@@ -66,34 +66,30 @@ if ("serviceWorker" in navigator) {
 const queryClient = new QueryClient();
 
 /**
- * 生產：前端只請求同源 `/api/*`（Fly 一體部署或由 CDN 反代至 Fly），瀏覽器視為同源，
- * 減少跨域 preflight、Cookie 為第一方 Lax。
- * 長鏈路 procedure 仍用獨立 httpLink（不 batch），並經 `/api/health` 閘門。
+ * 長耗時 / 大 payload tRPC：打 `longJobsTrpcHttpUrl()`（`VITE_FLY_API_ORIGIN` 或正式預設 API 主機），
+ * 避免 `www`→Vercel 反代逾時。含 **專屬文案入隊**、戰略看板、成長快照與生圖鏈。
  */
-const FLY_DIRECT_TRPC_PATHS = new Set([
+const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.getGrowthSnapshot",
   "mvAnalysis.getPlatformDashboard",
+  "mvAnalysis.enqueuePlatformContentJob",
+  "mvAnalysis.enqueueGenerateTopicImage",
+  "mvAnalysis.enqueueTopicCoverAndCompositeBundle",
+  "mvAnalysis.generatePlatformCompositeSheet",
+  "mvAnalysis.generateTopicImage",
+  "mvAnalysis.generateAllPlatformTopicImages",
+  "mvAnalysis.askPlatformFollowUp",
+  "mvAnalysis.createPlatformQAJob",
+  "mvAnalysis.downloadPlatformPdf",
+  "mvAnalysis.generateDecisionIntelligenceReport",
   "ambient.dashboardLive",
   "ambient.dashboardNews",
   "ambient.hybridDashboard",
   "ambient.mascotCareMessage",
 ]);
 
-/**
- * 分钟级 GPT-IMAGE-2 / 编导链：不从 httpBatchLink 拼车发送，减轻中间层对大体量 JSON 的请求异常与「Pending 过久 → Failed to fetch」体感。
- */
-const MV_ANALYSIS_UNBATCH_IMAGE_MUTATION_PATHS = new Set([
-  "mvAnalysis.generatePlatformCompositeSheet",
-  "mvAnalysis.generateTopicImage",
-  "mvAnalysis.generateAllPlatformTopicImages",
-]);
-
-function useFlyDirectTrpcLink(op: { path: string }) {
-  return FLY_DIRECT_TRPC_PATHS.has(op.path);
-}
-
-function useMvAnalysisUnbatchImageMutationLink(op: { path: string }) {
-  return MV_ANALYSIS_UNBATCH_IMAGE_MUTATION_PATHS.has(op.path);
+function useLongTrpcHttpLink(op: { path: string }) {
+  return TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
 }
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
@@ -129,7 +125,7 @@ const heavyTrpcHealthOrigin = longJobsTrpcHealthOrigin();
 const trpcClient = trpc.createClient({
   links: [
     splitLink({
-      condition: useMvAnalysisUnbatchImageMutationLink,
+      condition: useLongTrpcHttpLink,
       true: httpLink({
         url: heavyTrpcHttpUrl,
         transformer: superjson,
@@ -142,31 +138,15 @@ const trpcClient = trpc.createClient({
           );
         },
       }),
-      false: splitLink({
-        condition: useFlyDirectTrpcLink,
-        true: httpLink({
-          url: "/api/trpc",
-          transformer: superjson,
-          fetch(input, init) {
-            const origin = window.location.origin;
-            return withFlyHealthGate(origin, () =>
-              globalThis.fetch(input, {
-                ...(init ?? {}),
-                credentials: "include",
-              }),
-            );
-          },
-        }),
-        false: httpBatchLink({
-          url: "/api/trpc",
-          transformer: superjson,
-          fetch(input, init) {
-            return globalThis.fetch(input, {
-              ...(init ?? {}),
-              credentials: "include",
-            });
-          },
-        }),
+      false: httpBatchLink({
+        url: "/api/trpc",
+        transformer: superjson,
+        fetch(input, init) {
+          return globalThis.fetch(input, {
+            ...(init ?? {}),
+            credentials: "include",
+          });
+        },
       }),
     }),
   ],
