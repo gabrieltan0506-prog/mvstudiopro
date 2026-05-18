@@ -9,6 +9,8 @@ import {
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import {
+  normalizeCompositeSheetKind,
+  PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP,
   resolveVertexFlashTranslationLocation,
   resolveVertexFlashTranslationModelName,
   type PlatformImagePromptTranslator,
@@ -19,7 +21,6 @@ import {
   PLATFORM_TOPIC_COVER_GPT2_ASPECT_LOCK_PROMPT_SUFFIX,
 } from "./platformTopicCoverPrompt.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
-import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -314,13 +315,13 @@ export function buildTypographyImagePrompt(options: {
         : `SUBJECT / MOOD ANCHOR (for composition only; do NOT spell as text): ${displayHeading}`,
       `STYLE: ${stylePrompt}`,
       typographyBlock,
-      "Output framing: tall portrait matching OpenAI gpt-image-2 **1024×1536**. 8k aesthetic, masterpiece, no browser or phone UI mockups.",
+      "Output framing: tall portrait **1024×1536** (match your deployment primary image endpoint tall preset / aspect lock). 8k aesthetic, masterpiece, no browser or phone UI mockups.",
     ].join("\n");
   }
 
   return `
-Model: GPT-Image-2
-Task: Create a professional 1024×1536 portrait vertical image (OpenAI tall preset).
+Model: ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP}
+Task: Create a professional 1024×1536 portrait vertical image (OpenAI-class tall preset when routed to that backend).
 VISUAL BRIEF: ${visualContext}
 MOOD ANCHOR: ${displayHeading}
 STYLE: ${stylePrompt}
@@ -351,7 +352,7 @@ export function buildStoryboardSheetLandscapePrompt(options: {
     || "High-end intellectual authority, Rembrandt lighting, cinematic softbox";
 
   return `
-Model: GPT-Image-2 / Gemini Image
+Model: ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP} (routed per deployment; backends may be OpenAI-class or Gemini-class).
 TASK: Cinematic 2×4 grid storyboard contact sheet — one single wide landscape master frame (~16:9), eight dramatic film stills, 8k, intricate details.
 
 COMPOSITION (NON-NEGOTIABLE):
@@ -366,7 +367,7 @@ VISUAL CONTEXT — SCENES (render as the film stills): ${scriptSlice}
 CINEMA STAGING & LIGHTING: ${staging}
 
 STYLE: Cinematic storyboard contact sheet, premium editorial, dramatic film stills, 8k.
-Use a wide landscape master; GPT IMAGE 主路径多为 ~1536×1024 级宽幅；Vertex / Nano 16:9 兜底時構圖語義一致即可。
+Use a wide landscape master; deployment primary path often ~1536×1024-class wide; Vertex / Nano 16:9 fallbacks — preserve the same layout semantics.
 `.trim();
 }
 
@@ -395,8 +396,8 @@ export function buildXiaohongshuDualNotePrompt(options: {
     || "High-net-worth IP style, minimalist luxury, cinematic lighting.";
 
   return `
-Model: GPT-Image-2
-TASK: Create a strict **2×2 four-quadrant** layout for Xiaohongshu (Little Red Book) inside a wide landscape canvas (GPT IMAGE 主路径多为 1536×1024 级宽幅).
+Model: ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP}
+TASK: Create a strict **2×2 four-quadrant** layout for Xiaohongshu (Little Red Book) inside a wide landscape canvas (deployment primary path often 1536×1024-class wide).
 
 🛑 GEOMETRIC LAYOUT RULES (FATAL IF IGNORED):
 1. You MUST partition the canvas into EXACTLY **four equal rectangles** in a **2 rows × 2 columns** grid: **top-left**, **top-right**, **bottom-left**, **bottom-right**. One continuous **horizontal midline** and one continuous **vertical midline** must span the full width and full height, forming a clean **cross gutter** (four cells of equal area, ~25% each).
@@ -413,7 +414,7 @@ ${NO_TEXT_ON_IMAGE_BLOCK}
 [CONTENT — visualize this logic as imagery only; do NOT paste as typography]: ${content}
 
 STYLE: Editorial magazine photography, Vogue aesthetic, 8k resolution, masterpiece.
-Wide landscape master frame; GPT IMAGE 主路径约为 1536×1024 级宽幅，几何上为 **2×2 四宫格**（四等分 + 十字对齐 gutter）。
+Wide landscape master frame; primary path often ~1536×1024-class wide; geometry locked as **2×2 四宫格**（四等分 + 十字对齐 gutter）。
 `.trim();
 }
 

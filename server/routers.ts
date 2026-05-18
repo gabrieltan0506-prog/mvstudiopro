@@ -702,17 +702,20 @@ async function buildPlatformDashboard(params: {
 
 请根据用户背景和近 ${params.windowDays} 天平台数据，生成平台决策看板（轻量版，不包含长文案）。
 
+【人设口径】下文的「人设」「Persona」「IP」统指该创作者在用户背景与数据中的真实画像，**至少须纳入可获知信息中的：职业、身份、兴趣、爱好、专长等**；禁止只写泛化的「创作者」「博主」而不和上述维度对齐。
+
 【绝对禁止输出泛平台画像】
 在生成 platformMenu 的推荐理由（whyNow 等字段）时，绝对禁止写「抖音适合短视频」、「B站适合长视频讲透」、「小红书适合图文」等通用废话。
-你的 positioning 或推荐理由，必须 100% 绑定该用户的 Persona 与专长领域。
+你的 positioning 或推荐理由，必须 100% 绑定该用户的**人设**（职业、身份、兴趣、爱好、专长等）与可落地的表达优势。
 例如：如果用户是"爱好中国历史的心脏科医生"，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
 
-【强制热点关联与深度四维量化】
-你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
-1. referenceAccounts：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。【格式必须为对象数组】：[{"account": "画像名称", "reason": "具体描述"}]。绝对禁止输出单个对象或单个字符串。
-2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动或即将到来的节日热点。【格式必须为字符串数组】：例如 ["带上 #医学硬核科普 参与近期知识区流量扶持", "夏季健康打卡"]。绝对禁止输出单行字符串。
-3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
-4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。
+【热点参考与深度五维量化】
+你在输出 platformMenu 的各个平台时，须在以下**五个维度**上给出深度指标与分析。**热点、流量扶持与大促仅作参考**：优先结合 \`snapshot\` 与趋势数据；若近期样本稀疏、或热点与该用户 IP 关联弱，可给出**不与具体活动强行绑定**、但仍可执行的垂类话题/节点方向/运营契机，**禁止**编造不存在的官方活动名；不必为了「看起来关联热点」写空话。**凡借鉴热点、活动名或话题标签，必须先改写为「只有该用户人设（职业、身份、兴趣、爱好、专长等）才说得出口、做得动」的表述，禁止把泛热榜话术或他人梗硬套在用户身上。**
+**【异质化硬约束 — 禁止整篇一套话术】**：同一 JSON 内，platformMenu **各条**的 positioning / whyNow / nextMove **禁止**只把同一模板替换平台名；**须**针对该平台在 user JSON 里的 **summary、动量/适配分、样本 topic** 写出**可区分的**理由与动作。topSignals、hotTopics、actionCards **每条**须有**不同论证角度**（忌多条同义反复「做好垂直」「抓住窗口」）。多平台的 trafficBoosters **禁止**逐条复制同一组字符串；至少一条须落点本平台独有的抓手（人群切口、栏目形态、搜索词族或具体场景，与别条**不得**仅差一两个词）。
+1. **维一 · 受众与对标（referenceAccounts）**：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。【格式必须为对象数组】：[{"account": "画像名称", "reason": "具体描述"}]。绝对禁止输出单个对象或单个字符串。
+2. **维二 · 流量契机（trafficBoosters，热点参考）**：结合 \`snapshot\` 近期热点与趋势给出 1–3 条可参与契机（有则写具体活动/标签/节日，无则写可落地的内容方向）；**每条须在措辞上转写为该用户人设（职业、身份、兴趣、爱好、专长等）可自然接住的动作，禁止逐字硬套 snapshot 热词或通用运营腔。**【格式必须为字符串数组】：例如 ["带上 #医学硬核科普 参与近期知识区流量扶持", "夏季健康打卡"]。绝对禁止输出单行字符串。
+3. **维三 · 主攻赛道（primaryTrack）**：结合 snapshot 选出最适合该用户的主攻赛道。
+4. **维四 · 预估流量（estimatedTraffic）**：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。
    【严格禁止输出"XX万"、"X万+"等占位符！必须计算真实数字！】
    计算公式：真实值 = medianTraffic45d × 1.2~1.5。然后格式化：
    - 如果结果 >1,000,000 → 输出 "X.XM+"（例如 1,200,000 → "1.2M+"）
@@ -720,16 +723,17 @@ async function buildPlatformDashboard(params: {
    - 如果结果 >10,000 → 输出 具体数字+"万+"（例如 52,000 → "5.2万+"）
    - 如果 medianTraffic45d === 0（无样本）→ 使用 audienceFitScore × 8000 × 1.3 作为代理估算，再格式化
    禁止输出文字描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
-5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
-6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
-7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
-8. 平台动态决策链必须强制使用：抖音 / 快手优先参考近 3-5 天样本（当前统一按 5 天窗口给你），B站 / 小红书优先参考近 7-15 天样本（当前统一按 15 天窗口给你）。判断“现在先做什么”时，优先读取 dynamicDecisionEvidence，不要只复述宽窗口快照。
+5. **维五 · IP 差异化、商业转化与下一步**：
+   - ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
+   - commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
+   - nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
+6. 平台动态决策链必须强制使用：抖音 / 快手优先参考近 3-5 天样本（当前统一按 5 天窗口给你），B站 / 小红书优先参考近 7-15 天样本（当前统一按 15 天窗口给你）。判断“现在先做什么”时，优先读取 dynamicDecisionEvidence，不要只复述宽窗口快照。
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
-2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
+2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清**人设（职业、身份、兴趣、爱好、专长等）**与商业价值。
 3. platformMenu：**必须输出至少 3 条、至多 4 条**。凡是上方 \`platforms\` 数组中出现的抖音 / 快手 / 小红书 / B站，只要带有 summary 或动量/适配分数，就应各占一条 platformMenu（**快手样本稀疏也必须写 nextMove**，不得以「数据少」整条省略；顺位仍可 1→4 排序）。**严禁只输出 2 条就结束。** 每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
-4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
+4. topSignals：3 个关键信号；hotTopics：3 个**可参考**的热点方向（不必强行与每条选题一一绑定，以**人设各维**（职业、身份、兴趣、爱好、专长等）在先；**须改写为贴合该用户人设的说法，禁止硬套榜单原句**；且 **3 条标题/表述须明显异质**，禁同一骨架换词）；actionCards：3 个立刻能做的动作。
    【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
 5. conversationStarters：3 个让用户愿意继续追问的问题。
 6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答"为什么这条路更适合你"时必须深度剖析，禁止出现"电商带货"等泛泛而谈词汇。${personaContextLine}${personaConstraint}
@@ -1153,7 +1157,7 @@ export async function buildPlatformContent(params: {
           dynamicDecisionChain,
           /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
           trendEngagementAlignmentPolicy:
-            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在人设约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，禁止照抄标题或正文。",
+            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测 CTR 或转化）。contentBlueprints 在**人设（职业、身份、兴趣、爱好、专长等）**与真实背景约束下，可**酌情借鉴**其结构技法（钩子节奏、信息密度），**禁止硬套**样本题材、人设与结论；须**改写**为仅本用户人设成立的具体命题与场景。**不必**为蹭热点而强行沿用样本话题。禁止照抄样本标题或正文。**异质化**：四条产出的切口与命题须明显可区分——**禁止**四条共用同一种「爆款句式」或同一悬念模具；借鉴时须换用自己的专有断言、数字与场景。",
           snapshotData: {
             titleExecutions: params.snapshot.titleExecutions || [],
             monetizationStrategies: params.snapshot.monetizationStrategies || [],
@@ -1163,7 +1167,7 @@ export async function buildPlatformContent(params: {
           /** Stage 1 看板清洗手遞：含 contentSeeds（title/hook/copywriting/分鏡欄位） */
           stage1StrategicHandoff: handoff,
           ipContextBinding:
-            "当前用户真实的 IP 定位与行业背景，必须据此生成恰好 4 条、四维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
+            "当前用户真实人设（**职业、身份、兴趣、爱好、专长**等，见 context 与快照）与 IP/行业背景，必须据此生成恰好 4 条可执行选题：前 4 条分别对应 Stage2 system 所列维度 1–4；维度 5 为四条整体的场景多元化约束（可参考热门结构作技法，**须改写为贴合本人设各维**，**禁止硬套**与本人设无关的热梗或样本话题）。四条主场景须互不重复、生动具体，禁止默认全员书房/客厅套路。**禁止**四条在 title/hook/copywriting 层只作同义改写或「顾问腔」换皮；须让读者感到四条是四套不同打法。泛化或与此 IP/人设脱钩的内容将被拒收。",
         });
 
   const structuredStage2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
@@ -1173,7 +1177,9 @@ export async function buildPlatformContent(params: {
 
 根据已生成的平台方向与用户背景数据，请为这位创作者制定深度内容的执行蓝图与商业变现路径。
 
-【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。你必须在此基础上产出 4 条更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但不得偏离人设与 headline/subheadline/persona 主线；若种子不足 4 条，可补充新选题但必须与同一 IP 身份一致。
+【人设口径】下文人设、IP、身份均指该创作者在 user JSON 与快照中可核验的画像，**须综合其职业、身份、兴趣、爱好、专长等**（以已知信息为准）；选题、脚本与变现须可被上述维度解释，禁止写成与具体人无关的通用模板。
+
+【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。你必须在此基础上产出 4 条更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但不得偏离人设与 headline/subheadline/persona 主线；若种子不足 4 条，可补充新选题但必须与**同一套人设**（职业、身份、兴趣、爱好、专长等）一致。
 
 【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，必须重写）：
 - "电商带货" / "带货" / "橱窗"
@@ -1181,34 +1187,36 @@ export async function buildPlatformContent(params: {
 - "开头先给结果" / "视频开头先给判断，中段给例子，结尾给行动引导"
 - "可能都可以" / "先试试" / "先探索一下"
 - "制作身份名片" / "锁定文化符号" / "设计轻量级产品"
-- 任何泛化建议，不针对此用户的具体身份和专长
+- 任何泛化建议，不针对此用户的**人设**（职业、身份、兴趣、爱好、专长等）
 
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：你必须为该平台精确生成 4 个深度内容方案（少於 4 個將導致系統拒收）。请严格结合 ipContextBinding，依序从以下四个维度各发散一个独特选题：
+【核心数量与维度指令】：你必须为该平台精确生成 4 个深度内容方案（少於 4 個將導致系統拒收）。请严格结合 ipContextBinding，依序落实以下五个维度——其中维度 1–4 各对应输出中的第 1–4 条 contentBlueprint（一題一維）；维度 5 为横跨四条选题的共同约束（场景多元化；热点与高互动样本**仅作参考**，**须改写后**嵌入本人设——**职业、身份、兴趣、爱好、专长等**，**禁止硬套**），**且全文须遵守下方「异质化硬约束」**；不得在四条之间重复或仅换皮：
 1.核心专业洞察(Professional Insight)
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
+5.场景多元化与可选热门参考（Scenario Diversity & Optional Trend Reference）：综合 user JSON 中的用户自述、snapshotData、stage1StrategicHandoff 等系统侧真实背景；**可酌情参照** dynamicDecisionChain（含 highEngagementSamples、recentTitles、topBuckets）获取技法或切口灵感，**凡落笔必须改写为与该用户人设（职业、身份、兴趣、爱好、专长等）一致的具体命题，禁止把外来热点或样本话题硬套进正文**；**勿**为蹭热点而编造或偏离 IP。为 **四条** contentBlueprints **各绑定一个主场景**（叙事/拍摄环境须生动、具体、与 Hook 及正文强相关）。四条的主场景 **必须互不相同**，禁止换成同一书房伏案、满墙书架、固定「阅读角」、或雷同的客厅沙发电视墙等套路来回贴；**仅当**该条选题正文**明确**以读书、书房、特定居家客厅为核心叙事时，方可主导该类空间。可优先户外/半户外（街景、交通节点、自然与地标等）、商业与公共室内（商场、超市、咖啡日常社交、展馆、医院/诊室、实验室、展厅、健身房、演播后台、大交通枢纽等）及与 IP 专业场域匹配的多样场景（示例不限于此）。须在 executionDetails.environmentAndWardrobe、detailedScript 的「视觉」描述与 actionableSteps 中写清可拍摄场所，让读者感到四条像四个不同的世界。
 【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 4 条。
+**【异质化硬约束 — 禁止四条一个模子】**：四条 contentBlueprints 的 **title 与 hook 禁止共用同一开场句型或同一悬念结构**（例如四条都以「你以为」「很多人都不知道」起头视为不合格须重写）。copywriting **禁止**只替换关键词的批量换皮；**至少两条**须在论证形态上与其余两条明显不同（例如：硬知识拆解 vs 亲历故事 vs 误区清单 vs 对比式断言）。四条 actionableSteps、executionDetails 亦**禁止**复制粘贴仅改名词。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
-【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
-(1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——适配该用户 IP，而非泛化稿；
-(2) 优先借鉴切口、句式节奏与信息密度，**禁止**字面抄袭 sample 标题或洗稿；
-(3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
+【高互动样本对齐（抓取数据 · 非实测CTR/转化 · 可参考，须改写、禁止硬套）】：每条 dynamicDecisionChain 可能附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。热点与样本**仅为参考**：**禁止硬套**其题材、身份与结论；**须改写**为当前用户人设（职业、身份、兴趣、爱好、专长等）下才成立的钩子与叙事；**不得**脱离人设硬蹭。同时须满足：
+(1) 四条 **hook 的张力来源须覆盖至少两种不同类型**（例如：具体数字/对比、身份反差、场景故事、反常识二择一等），**禁止**四条落成同一种「爆款腔」模具；可在 title、hook、copywriting、detailedScript、publishingAdvice 中**酌情**借鉴样本的**节奏与信息密度**——**每处借鉴均须转写话术与命题**，须适配该用户人设（职业、身份、兴趣、爱好、专长等），而非泛化稿；
+(2) 优先借鉴结构技法，**禁止**字面抄袭 sample 标题、背景设定或洗稿；**禁止**把样本中的具体情节/圈层梗未改写直接迁移；
+(3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets **仍可**作技法参考，但**须改写命题**，**不得**脱离人设硬蹭或硬套榜单句；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
-请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
+请绝对忠于当前用户的真实人设（**职业、身份、兴趣、爱好、专长**等）与行业背景，绝不允许套用任何无关的专业标签。
 
-1. contentBlueprints：必须恰好包含 4 个具体可执行的内容方案，并与上方 4 个维度一一对应（第 1 条对应维度 1，依此类推）。每个方案必须包含：
+1. contentBlueprints：必须恰好包含 4 个具体可执行的内容方案；第 1–4 条分别对应上方维度 1–4（第 N 条对应维度 N）。维度 5 的要求须同时在四条中落实（四条主场景互不重复、生动切合选题且避免书房/客厅刻板默认；热点与高互动样本**仅参考**，**须改写后嵌入人设——职业、身份、兴趣、爱好、专长等**，**禁止硬套**）。每个方案必须包含：
    - title（选题标题，必须是具体的，不是抽象的）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
    - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
-	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出使用什么具体平台搜索关键词。
+	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导；**若有**前序 platformMenu 的 trafficBoosters、节日或活动热点，**须先改写为贴合本人设（职业、身份、兴趣、爱好、专长等）后再写入**，**无强关联则不必硬凑、禁止硬套原标签**；例如可指出适合的平台搜索关键词。
      【强制脚本排版规则 — 必须严格遵守，不得简化】：
      ▸ 如果 format 为「短视频」（抖音/B站/快手）：必须使用精确时间轴格式，每段必须包含「视觉描述」与「口播文案」，例如：
        "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
@@ -1269,7 +1277,7 @@ export async function buildPlatformContent(params: {
 
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
-4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。在详细脚本与指导设计中，强制融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动要求。${personaConstraint}
+4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户**人设**（**职业、身份、兴趣、爱好、专长**等）。在详细脚本与指导设计中，**若** Call 2 (platformMenu) 的 \`trafficBoosters\` 可作参考，**须改写**为该用户人设下可执行的具体动作与话术后再写入；**禁止未改写硬套**；**无强关联或未提供时不必硬写**。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
@@ -3776,21 +3784,21 @@ ${JSON.stringify(platformEvidence, null, 2)}
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
-1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : ""}
-2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
-3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
+1. trafficBoosters：**热点与官方扶持仅作参考**，结合上文数据快照与公开信息，**尽量**写出 0–3 条可参与契机（有具体活动/标签/节日则写实名，**无则写可落地的内容方向或垂类话题**，禁止编造不存在的官方活动名称）。${wd <= 7 ? " 【极速窗口：" + wd + " 天】可侧重短期信号（当日话题、节假日前后），但不必强行关联。" : ""}
+2. cashRewards：现金或任务激励，**尽量**各平台 0–2 条；**有**公开金额或门槛则写清，**无可靠信源则留空数组或写「以平台创作中心为准」类说明**，勿虚构活动。
+3. hotTopics：**【建议数量：约 5–8 个，可略少】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；附带简短内容说明。**不建议**纯热搜词云或与表中 key 无语义对应关系的碎片标签。**不建议**与本报告全局 trackGrowth 中 growth 已为负值的赛道语义重复；热榜应体现仍能加码的方向。
 
-报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
+报告全局层级（不在 platformDetails 内）须输出以下维度（不得省略顶层字段，但子数组长度可按实据伸缩）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
-- insightSummary：输出 4 个核心洞察，必须严格遵循 [{"title":"短标题","description":"详细分析"}] 的 JSON 对象数组格式。
+- insightSummary：输出 **约 4 个**核心洞察，严格遵循 [{"title":"短标题","description":"详细分析"}] 的 JSON 对象数组格式。
   - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
-  - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
-  - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
-- trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
-- audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
-- topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
-- trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
-- hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
+  - description：必须是具体的详细分析与案例，尽量引用上文数据、平台现象或已知活动，**约** 30–50 个字即可；无则可略短但须有实质信息。
+  - 【软约束】：description 尽量不要与 title 完全同义重复；宜有现象或数据支撑，避免只改写标题。
+- trackGrowth：**【建议数量：5–8 条，可略少】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，须写「高热」**，勿自造百分比。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**避免** N/A、冗长括号句。
+- audiencesAndBiz：目标人群与商业方向（**建议** 2–3 条，可 1 条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
+- topicExamples：针对排名靠前赛道设计选题公式与案例（**建议** 3–5 条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
+- trafficSupport：全局流量扶持观察（**建议** 1–3 条）；**有**则写具体名称，**无则写「暂无在快照中锚定的全局活动」或类似实话**，勿编报名。格式：["活动名称：详细说明"]
+- hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出节日、节气或社会讨论（**建议** 1–3 个）。格式：["节日/热点：简要说明与内容切入角度"]
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 

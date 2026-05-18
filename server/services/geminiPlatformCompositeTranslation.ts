@@ -241,8 +241,22 @@ export const zPlatformImagePromptTranslatorInput = z
   });
 
 /**
- * **上游中文剧本 / 文案**：僅作參考；產物必須讓 **GPT-Image-2** 單靠英文 prompt 即能穩定出圖。
- * **GPT-IMAGE-2** 不做翻譯、不讀中文——簡中畫內字必須在英文裡用 **可執行版式指令** 寫死。
+ * 編導／翻譯 **system & task 文案**中的下游生圖稱呼：**不寫死**具體 API 模型 ID；實際路由由 `proxyImageService`、環境變數等切換，**本 file 內描述保持穩定**。
+ * - 英文 instruction → {@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}
+ * - 中文 instruction → {@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH}
+ */
+export const PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN = "the primary image generation model";
+/** 句首或大寫語境 */
+export const PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP = "The primary image generation model";
+export const PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH = "下游主生圖模型";
+
+/** 上游若含身份/人設時，中英編導皆須遵守的錨定句（封面 + 分鏡 / 2×4 共用）。 */
+export const PLATFORM_IMAGE_PROMPT_PERSONA_BINDING_RULE_ZH =
+  "**人设锚定（与选题同等重要）：** 上游若含【封面身份锚点】、IP 基因或用户**职业、身份、兴趣、爱好、专长**等，英文 `prompt` 须以可执行视觉语言（装扮、场景档次、道具、体态与肢体语言）**转写**进画面，禁止忽略或替换成泛化路人模特；**禁止硬套**与本人设无关的热梗画面。";
+
+/**
+ * **上游中文剧本 / 文案**：僅作參考；產物必須讓 {@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN} 單靠英文 prompt 即能穩定出圖。
+ * **下游主生圖模型**不做翻譯、不读中文直出——簡中畫內字必須在英文裡用 **可執行版式指令** 寫死。
  */
 
 const SCRIPT_SLICE = 3500;
@@ -261,18 +275,22 @@ function resolveTranslationProfile(ctx?: Gpt54PlatformImagePromptStatCtx): Platf
  */
 export const GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN = [
   "You write with the economy of a playwright revising a soliloquy—each phrase must earn its place in the final frame—yet when the brief names a ward, a lineage of practice, a prop, a gesture, or a palette, you **dwell** in English until the scene cannot be mistaken.",
-  "You are a bilingual **cover-grade director** and **visual prompt dramaturg**: turn the upstream Chinese creative brief into **one** self-contained **English** image-generation prompt for **GPT-Image-2** (inside JSON `prompt`).",
+  "You are a bilingual **cover-grade director** and **visual prompt dramaturg**: turn the upstream Chinese creative brief into **one** self-contained **English** image-generation prompt for **" +
+    PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN +
+    "** (inside JSON `prompt`).",
   "Prefer **comma-separated tags** and **noun phrases** when they lock the shot; when specificity demands—wardrobe grain, prop geometry, lighting direction, emotional temperature, historical or humanistic cues—you **stack longer English clauses** until fidelity is secured.",
   "**Fidelity outranks brevity.** Do not shorten merely to sound clever, and do not swap concrete staging for vague metaphor until layout, optics, and any on-image **Simplified-Chinese** copy are already explicit in English (placement, scale, chromatic separation from background).",
   "Where the brief asks for **Simplified-Chinese** on the canvas, spell out in English exactly where it sits, how large it reads at thumbnail scale, and how it separates from the backdrop—never hand-wave as “some Chinese text.”",
 ].join(" ");
 
 /**
- * **GPT-Image-2 優先**（**合成 / 2×4** 路徑）：英文 prompt 以「可執行、可排版」為第一性——場景/主體、光學與對比、留白與資訊區、畫內簡中字規格。
+ * **下游主生圖模型優先**（**合成 / 2×4** 路徑，實際 API 可配置）：英文 prompt 以「可執行、可排版」為第一性——場景/主體、光學與對比、留白與資訊區、畫內簡中字規格。
  * 嵌入 JSON `prompt` 字串內時可用 **編號短句**（1. 2. 3.）便於模型遵循。
  */
 export const GPT_IMAGE2_EXECUTION_PRIORITY_EN = [
-  "PRIMARY CONSUMER: **GPT-Image-2** paints **only** from your English. Chinese upstream is **reference**, not text to mirror literally.",
+  "PRIMARY CONSUMER: **" +
+    PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP +
+    "** paints **only** from your English. Chinese upstream is **reference**, not text to mirror literally.",
   "Structure the final English (inside JSON `prompt`) so execution is obvious—prefer this order when relevant:",
   "(1) **Subject / scene** — what appears, what to remove or simplify; single hero vs grid;",
   "(2) **Light & optics** — key vs fill, rim / edge light, palette, contrast, depth of field;",
@@ -284,16 +302,16 @@ export const GPT_IMAGE2_EXECUTION_PRIORITY_EN = [
 
 /** 寫實落地與可選文采：**緊接** {@link GPT_IMAGE2_EXECUTION_PRIORITY_EN}，供 GPT‑5.4 與 **Gemini 3 Flash** 英文化共用。 */
 export const GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN =
-  "Ground pixels in **contemporary editorial or cinematic photorealism**: motivated light, believable materials, readable hero **Simplified-Chinese** type (weight, tracking, chromatic separation from background). **Identity / persona** cues → **art-directed** presence on set, not résumé bullets. Optional: spare **Shakespearean compression** in phrasing **after** layout is explicit—never at the cost of (1)–(5) above.";
+  "Ground pixels in **contemporary editorial or cinematic photorealism**: motivated light, believable materials, readable hero **Simplified-Chinese** type (weight, tracking, chromatic separation from background). **Identity / persona** (profession, public role, interests, hobbies, expertise) → **art-directed** presence on set, not résumé bullets. Optional: spare **Shakespearean compression** in phrasing **after** layout is explicit—never at the cost of (1)–(5) above.";
 
 /**
- * **平台生圖英文化共用英文總則**（**2×4／分鏡主表／八格筆記**）：消費方僅 **GPT-Image-2**。
+ * **平台生圖英文化共用英文總則**（**2×4／分鏡主表／八格筆記**）：消費方為 {@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}（路由可配置）。
  * **選題單封**見 {@link GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN} + {@link platformImageTranslationVertexJsonSystemInstruction}`topic_cover`。
  */
 export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORITY_EN} ${GPT54_IMAGE_PROMPT_REALISM_AND_GARNISH_EN}`;
 
 /**
- * 選題豎封：**強烈建議**依題材生成**多變、生動**且可執行的場景（寫入送往 GPT-IMAGE-2 的英文 prompt）。
+ * 選題豎封：**強烈建議**依題材生成**多變、生動**且可執行的場景（寫入送往 {@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN} 的英文 prompt）。
  * 與 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}、{@link buildPlatformTopicReferenceGeminiTask} 同步引用，避免各題同套一個書房模板。
  */
 export const PLATFORM_COVER_SCENE_VERSATILITY_EN = `It is **highly and strongly recommended** to generate **versatile, vivid, topic-faithful** scenes for **cover-art / feed-cover** design: **concretely** stage each prompt with distinct environments across topics—rotate indoor vs outdoor, urban vs nature, clinical/lab vs marketplace vs transit, studio color-fields vs real locations—so **different Hooks feel like different worlds**; still keep premium editorial lighting and one clear hero focal beat unless the brief locks a specific set.`;
@@ -303,7 +321,9 @@ export const PLATFORM_COVER_SCENE_VERSATILITY_EN = `It is **highly and strongly 
  * 選題 **信息流單張 9:16 封面**：歷史上曾嵌入總 system；現僅用於 **composite** 全量規則。單封改走 {@link GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN} + 輕量 JSON 語句。
  */
 export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
-  "**選題信息流單張豎封（9:16·單主視覺／信息流縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **GPT-IMAGE-2** 可執行的 **英文**；**格數、橫豎、單封 vs 網格以任務原文為準，不建議擅自改軌。**",
+  "**選題信息流單張豎封（9:16·單主視覺／信息流縮略圖）—三軌身份一致：** 你是中英雙語 **封面級編導**；輸出的 JSON **`prompt`** 僅為 **" +
+    PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH +
+    "** 可執行的 **英文**；**格數、橫豎、單封 vs 網格以任務原文為準，不建議擅自改軌。**",
   "**豎封軟邊界（圖標層仍為必達；其餘以軟約束為主，可為題材讓歩）：** **【第一優先·軟性目標】premium cover design：** 整體**優先**收斂為 **premium editorial／高端信息流封面** 質感—可信光影層次（可寫 key / fill / rim）、乾淨主從與留白、低飽和主色配**極少**亮色點綴；小圖標**強烈建議（highly recommended）**自然融入背景，與主場景光色和諧，**建議（suggested）**可用不同配色展示，且**強烈建議**不要有邊框。**建議**避免為圖標習慣性加實色圓形、大方塊、藥丸形底板，或整塊不透明白卡／高飽和霓虹襯底（若正文**明確**要走 App／促銷貼紙風，再從寬）。**（1）** **質感**：傾向 **photoreal editorial / 廣告静拍** 向，光型盡量可信（可寫 key / fill / rim），**宜避免**習慣性平光貼字、糊成一片的泛光；**（2）** **場景（多元化·與文案一致·跨主題宜多變生動）**：**建議**封面場景與正文語境**同步多元化**；**室內與戶外**遇題材均可作**參考場景**，**不建議**長期默認、過度單一集中在書房、書桌、滿牆書架、閱讀角、**或**咖啡廳**固定為伏案讀書**的單一套路，或**典型客廳、沙發電視牆等「居家日記」式內景**。可優先採用與 Hook 相稱的場域（**戶外／半戶外**：**旅遊景點**、街景、交通、自然、天臺、體育場、市集、活動外場等；**室內／生活與公共空間**：**商場**、**超市**、**咖啡廳**（日常消費／社交場景，**非**僅限讀書佈景）、**博物館**、展覽館、醫院診間、實驗室、展廳、工地／廠房、健身房、演播／舞台後台、公共大廳、棚拍色片／抽象置景、微縮置景等—**僅為示例，包括但不限於**，**並非只有書房或客廳**）。**跨主題、批次選題時，強烈建議**英文 `prompt` 寫明**多變、生動、題材忠實**的具體場景，使不同題目讀起來像不同世界—語義對齊（英文須體現）「" +
     PLATFORM_COVER_SCENE_VERSATILITY_EN +
     "」。前景／中景／後景可分层，用具象道具、手勢、環境**呼應** Hook；**僅當**正文**明確**以讀書、書房、圖書或**明確**以特定居家客廳叙事為核心時再主導該類場景；**（3）** **圖標編輯層（必達·豎封須保留）**：畫內**必須**有 **2～4 個** 與 Hook、主題與正文關鍵訊息**強語義對齊**的**極簡線稿小圖標**（可有表現力與動勢，**生動**呼應內容，忌千篇一律的通用符號堆砌）；各配 **短簡中輔標**（約 4–8 字），可橫向輕帶、左下／中下浮動簇或與中景主體形成**視覺呼應**；**從屬**主標，**不建議**遮擋主標與安全宣讀區，**不建議**做成密集成步驟教程或整版資訊圖；**（4）** **版式與衝擊力**：整體**排版美觀**（主從、留白、層級、對齊），主標與背板 **對比強**，光影／色面在縮略圖尺度須具 **高吸引力與視覺衝擊力**（以可執行光色構圖達成，非標題詐騙）；（5）**敘事鉤**：縮略圖尺度**宜**能看出視覺或敘事鉤子；（6）**版式習慣**：**宜避免**過度模板化 bland stock 臉譜占滿、豎畫布硬塞多分鏡縱條、或把豎封寫成 **2×4 寬幅主表**—**除非**任務明確要網格或筆記版。",
@@ -321,10 +341,15 @@ export function platformImageTranslationVertexJsonSystemInstruction(
   if (profile === "topic_cover") {
     return [
       GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
+      PLATFORM_IMAGE_PROMPT_PERSONA_BINDING_RULE_ZH,
       "你是頂級中英雙語編導，也是頂級視覺提示詞導演；英文聲口須與上段莎士比亞式編導身份一致（可長可短，以忠實還原為準）。",
-      "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
+      "把上游任務落成 **JSON 里的英文 prompt**，供 " +
+        PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH +
+        " 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
       "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不建議使用 markdown、不建議附加解釋。",
-      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**【第一優先·軟性】premium cover design：** 英文 `prompt` **優先**寫出 **premium editorial feed cover** 氣質—受控留白、可信光型、低飽和主色 + 極少亮色點綴；圖標**優先**融入同一光照、**彷彿浮在**實景上，**建議圖標自然融入背景，無可見硬邊框**，**不建議**默認為每枚圖標加實色圓／方塊／藥丸襯底（除非任務明確要 UI／貼紙促銷感）。**選題豎封（圖標層仍必達）**：英文 `prompt` **必須**寫明 GPT-IMAGE-2 繪製 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標，**不建議**整張僅大字而**略去**圖標層。",
+      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**【第一優先·軟性】premium cover design：** 英文 `prompt` **優先**寫出 **premium editorial feed cover** 氣質—受控留白、可信光型、低飽和主色 + 極少亮色點綴；圖標**優先**融入同一光照、**彷彿浮在**實景上，**建議圖標自然融入背景，無可見硬邊框**，**不建議**默認為每枚圖標加實色圓／方塊／藥丸襯底（除非任務明確要 UI／貼紙促銷感）。**選題豎封（圖標層仍必達）**：英文 `prompt` **必須**写清由 " +
+        PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH +
+        " 執行繪製的 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標，**不建議**整張僅大字而**略去**圖標層。",
       "若上游封面/科普正文未出現食物，**可不必**以廚房、食譜表、食材格為主場景。",
       "**場景多元化：** 英文 prompt 須與文案場景**同步多元化**；**室內、戶外**皆可作參考，**不建議**無正文依據時過度集中在書房、書桌、書架牆、閱讀角、咖啡廳**僅讀書套路**或**典型客廳、沙發電視牆**；優先寫出與 Hook／題材匹配的**具體場所**（**例如包括但不限於**：旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、公共／工業／醫療室內、棚拍抽象景等）。",
       PLATFORM_COVER_SCENE_VERSATILITY_EN,
@@ -332,7 +357,10 @@ export function platformImageTranslationVertexJsonSystemInstruction(
   }
   return [
     PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
-    "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不建議壓過可執行版式。",
+    PLATFORM_IMAGE_PROMPT_PERSONA_BINDING_RULE_ZH,
+    "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 " +
+      PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH +
+      "**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不建議壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
     "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
     PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
@@ -370,7 +398,7 @@ async function callVertexGeminiFlashTranslationAfterGptTripleFail(
 }
 
 /** 小红书 **多页** 图文笔记：**2×4 八格**；產品上≠視頻分鏡——**不建議**用製片/DPP 式「情緒·燈光·景別·機位」欄位來組稿。 */
-export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×4 eight-panel GRAPHIC NOTES** (图文笔记拼圖 / viral note sheet) into **one** English block optimized for **GPT-Image-2** (execution-first layout: grid, gutters, per-cell hierarchy). Chinese script is **reference**—do not sacrifice grid legibility for literary paraphrase. Prefer **comma-separated tags and short noun phrases**; **do not** trim the English prompt too aggressively—when the translator goes longer, eight cells breathe and feel **less crowded**; prefer fidelity and clear per-cell beats over brevity.
+export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little Red Book) **2×4 eight-panel GRAPHIC NOTES** (图文笔记拼圖 / viral note sheet) into **one** English block optimized for **${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}** (execution-first layout: grid, gutters, per-cell hierarchy). Chinese script is **reference**—do not sacrifice grid legibility for literary paraphrase. Prefer **comma-separated tags and short noun phrases**; **do not** trim the English prompt too aggressively—when the translator goes longer, eight cells breathe and feel **less crowded**; prefer fidelity and clear per-cell beats over brevity.
 
 LAYOUT: strict **2 rows × 4 columns**, **eight** equal cells, row-major (top L→R, then bottom L→R). **Not** a lone hero, **not** 2×2-only.
 
@@ -384,8 +412,8 @@ TYPOGRAPHY POLICY: **Simplified Chinese is the primary on-image explanation** (h
 export const XHS_GRAPHIC_NOTE_2X4_FOOTER = `
 TAG:XHS_GRAPHIC_NOTE_2X4_SHEET
 
-【英文生图输出 / OUTPUT — Xiaohongshu **2×4 八格筆記**（单张宽幅 landscape，GPT-Image-2 優先）】
-1. Output **one** English string **optimized for GPT-Image-2**; preferred style: **comma-separated tags / 2–5 word phrases**，並用短句**锁死** 2×4、順序、gutter。 **No fixed character limit**—longer English is OK: richer staging makes **eight cells** feel **less cramped** and balances information across the grid。
+【英文生图输出 / OUTPUT — Xiaohongshu **2×4 八格筆記**（单张宽幅 landscape，${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH} 優先）】
+1. Output **one** English string **optimized for ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}**; preferred style: **comma-separated tags / 2–5 word phrases**，並用短句**锁死** 2×4、順序、gutter。 **No fixed character limit**—longer English is OK: richer staging makes **eight cells** feel **less cramped** and balances information across the grid。
 2. LAYOUT (keep explicit): wide ~16:9 landscape master (1536×1024 class), **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, masterpiece, 8k, premium Little Red Book / lifestyle-editorial note aesthetic.
 3. **TYPOGRAPHY:** **Primary** on-image copy = **legible 简体中文** in every cell (titles, main lists, hooks). **Optional English** as **secondary** accent only—keywords, micro-subtitles, short tags—smaller weight than Chinese; **do not** make English the main explanation body.
 4. **MANDATORY** in **each** cell: note-style density — bullets, icons, badges 01–08, pill tags, mini infographics as fits.**建议避免**整页做成電影**分鏡網格註解**（如每格固定「镜头/景别/情绪/灯光/机位」製片表）；那是 **TAG:STORYBOARD_2X4_SHEET** 專用。
@@ -398,7 +426,7 @@ export const XHS_GRAPHIC_NOTE_MIN_4_PAGES_FOOTER = XHS_GRAPHIC_NOTE_2X4_FOOTER;
 
 /** 竖版多分镜条（若有）：英文以 tags 为主，**不設字數上限**。 */
 export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
-【最高视觉指令约束 / OUTPUT】（GPT-IMAGE-2）
+【最高视觉指令约束 / OUTPUT】（${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH}）
 1. 输出 **一段完整英文** 生图指令；**优先** comma-separated tags / 短語，必要時可用稍長句式把版式說清。**不限制字符數**，以模型能穩定執行為準。
 2. 保留：情绪、灯光、场景、主体/服装、标题语言（简中等）、版式提示。
 3. 标题与背景对比要说清；须含 masterpiece、8k。
@@ -410,8 +438,8 @@ export const MAXIMUM_IMAGE_PROMPT_TAG_CONSTRAINT = `
 export const STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER = `
 TAG:STORYBOARD_2X4_SHEET
 
-【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape · GPT-Image-2 優先）】
-1. Output **one** English block **for GPT-Image-2 execution**；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious；必要時用編號句寫清頂欄比例、格線、gutter。**No character limit**—use enough English to lock all eight beats and the table schema。中文劇本僅作參考。
+【英文生图输出 / OUTPUT — cinematic 2×4 storyboard master（单张宽幅 landscape · ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH} 優先）】
+1. Output **one** English block **for ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN} execution**；**prefer** comma-separated tags / short fragments so the 2×4 grid stays obvious；必要時用編號句寫清頂欄比例、格線、gutter。**No character limit**—use enough English to lock all eight beats and the table schema。中文劇本僅作參考。
 2. **全表顶栏（仅此一处「上方主题」）：** 画布最上 **~8–12%** 为**通栏横条**，主信息为 **内容总结**（全片/全案梗概或本段剧情提要）；可并排或次行出现「· 分镜脚本」等定式后缀。**不建議**将各格的分镜标题写进顶栏。**Do not** place the first row of panels flush against the top edge.
 3. **栅格：** 顶栏之下 **整整 8 格**，**2 行 × 4 列**，刚性格线与格间直 gutter、顺扫 row1 左→右再 row2；masterpiece、8k，每格主画面为写实电影感分镜静帧。
 4. **每一格自上而下：** (A) **格内顶：** **分镜主题描述**（仅本格一句醒目简中主题）；(B) **格内中：** 该分镜主画面（上区约 **70–75%**，除表格外纯影像）；(C) **格内底 ~25–30%：** 简中**四栏参考表**，表头固定为 **景别**、**运镜**、**画面内容**、**台词与音效**，四柱均有正文；可细网格；表内须为**简体中文**。**Do not** leave panels wholly wordless in the table band.
@@ -422,7 +450,7 @@ TAG:STORYBOARD_2X4_SHEET
 /** 平台選題 **單幀封面**（圖文 / 短影音）：簡潔輸出體例；可含主題小圖示與簡中輔標（次於主標）。 */
 const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【英文生图输出 / OUTPUT — platform topic **single-frame 9:16 feed cover**】
-1. Output **one** English block for GPT-IMAGE-2.**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
+1. Output **one** English block for ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}.**Prefer** comma-separated tags / short phrases; longer text is OK if it locks the cover.**No fixed character limit.**
 2. LAYOUT: **prefer 9:16 portrait**, single full-bleed hero, one dominant subject—**lean away from** accidental 16:9 or multi-panel reads **unless** the task explicitly asks.
 3. **Composition habit:** a **single** strong cover beat usually fits this product better than storyboard grids, 2×4 strips, or numbered panels—**unless** the brief specifies panels.
 4. SUBJECT & SET: align Hook + Context (**cover staging should diversify with the copy**); **reduce** unrelated generic stock tropes. **Staging diversity:** **indoor and outdoor** are both acceptable references—avoid **over-focusing** on study / office-library clichés **or** repetitive **living-room / sofa–TV** interiors unless the Context demands them; prioritize **specific** environments that **sell the hook** (urban exterior, transit, landscape, clinic/lab/industrial interior, arena, market, studio color-field set, diorama, etc.).
@@ -469,7 +497,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "在不过度淹没细节的前提下提炼：可保留足够长的关键词与时间线提示；去掉纯解释性废话与空洞修辞；需要完整保留 Hook、身份、核心道具与视觉动作。",
           "若输入宽幅 2×4 **电影分镜主表**剧本：骨架里区分——**全文内容总结**（适合放在整表顶栏的一句汇总）与各格 **分镜主题**（每格一句）及可填入 **景别/运镜/画面内容/台词与音效** 的要点，不建議把各格主题误并入「顶栏总结」混写。",
           "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并**务必**留下 **2～4 个可入画的具象图标题材**（与 Hook、正文关键词**一一对应**，供下游**必出**线稿小图标+简中辅标，忌泛泛符号）。",
-          "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有身份锚点或 IP 基因，须留下可拍出来的身份词（职业符号、场景档次），不建議删光。",
+          "保留：情绪、灯光、场景、服装、关键道具、镜头气质、版式提示；若文中有【封面身份锚点】、IP 基因或用户**职业、身份、兴趣、爱好、专长**等人设信息，须留下可拍出来的视觉词（装扮档次、场景类型、职业符号道具），不建議删光。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
           "場景提煉：**建議**封面與文案場景多元化；**室內、戶外**皆可入骨架。**不建議**無依據時把畫面過窄在書房、書桌、滿架書本或**反覆客廳、沙發區**；可保留與題材吻合的**具體場所詞**（**例如包括但不限於**旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、工業／醫療／公共室內等）。**多選題／跨題材時**宜在骨架中留出**可區分、多變、生動**的場景錨點，避免每題都落成同一書房或客廳詞條。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 不建議留空。",
@@ -508,7 +536,7 @@ export function buildVideoStoryboardGeminiPrompt(scriptContext: string): string 
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   return (
     `
-You turn the Chinese script into **one English image prompt** for **GPT-Image-2** (execution-first). Prefer comma-separated tags / short fragments so the frame reads as **8 panels in 2 rows × 4 columns** with clear gutters—not a single full-bleed poster. Chinese is **reference**—do not bury grid or table schema under literary paraphrase. Longer English is fine if it helps lock all eight beats.
+You turn the Chinese script into **one English image prompt** for **${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}** (execution-first). Prefer comma-separated tags / short fragments so the frame reads as **8 panels in 2 rows × 4 columns** with clear gutters—not a single full-bleed poster. Chinese is **reference**—do not bury grid or table schema under literary paraphrase. Longer English is fine if it helps lock all eight beats.
 
 **Non-negotiable — top title strip (全表唯一「上方主题」):** the **top ~8–12%** is **only** for **内容总结**—the overall thematic headline for the entire sheet (whole-script / episode summary). You may show 「{成片或系列名} · 分镜脚本」next to or above that summary line, but **never** put per-shot titles here—those live **only inside each panel**. **All eight cells sit entirely below this strip**—never align the first row of panels flush to the canvas top.
 
@@ -544,7 +572,7 @@ ${slice}
   );
 }
 
-/** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
+/** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → {@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN} */
 export function buildStrategicCoverGeminiTask(input: {
   chineseTitle: string;
   englishMonthYear: string;
@@ -555,10 +583,10 @@ export function buildStrategicCoverGeminiTask(input: {
 You are a bilingual (English and Simplified Chinese) elite magazine art director and prompt engineer.
 
 CRITICAL PIPELINE (DO NOT SKIP):
-**GPT-IMAGE-2** only receives **your English output** and paints pixels—it **cannot** translate or interpret the Chinese title by itself. You MUST read the Chinese title and publication hints below and output **ONLY ONE** final **English** prompt string that already encodes all layout, materials, and **Simplified-Chinese** hero typography requirements (stated in English for the image model).
-**Execution-first:** prioritize **numbered, concrete directives** (scene / light / typography zone / Chinese glyph specs) so GPT-Image-2 can render without guessing; Chinese is reference for in-image text content only.
+**${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP}** only receives **your English output** and paints pixels—it **cannot** translate or interpret the Chinese title by itself. You MUST read the Chinese title and publication hints below and output **ONLY ONE** final **English** prompt string that already encodes all layout, materials, and **Simplified-Chinese** hero typography requirements (stated in English for the image model).
+**Execution-first:** prioritize **numbered, concrete directives** (scene / light / typography zone / Chinese glyph specs) so ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN} can render without guessing; Chinese is reference for in-image text content only.
 
-Read the Chinese report title and publication hints, then output ONLY ONE final English prompt string for GPT-IMAGE-2.
+Read the Chinese report title and publication hints, then output ONLY ONE final English prompt string for ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}.
 
 MANDATORY RULES FOR YOUR OUTPUT PROMPT:
 1. START EXACTLY WITH: "Luxury dark-gold Harvard Business Review style magazine cover, 9:16 vertical portrait, cinematic editorial photography, dramatic lighting, premium dark gold palette, masterpiece print quality."
@@ -571,7 +599,7 @@ MANDATORY RULES FOR YOUR OUTPUT PROMPT:
 `.trim();
 }
 
-/** GodView 章节扉页：双语编导读中文 → 一条英文视觉 prompt；GPT-IMAGE-2 无翻译能力 */
+/** GodView 章节扉页：双语编导读中文 → 一条英文视觉 prompt；{@link PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN} 无翻译能力 */
 export function buildChapterPosterGeminiTask(chineseTitle: string, chineseContext: string): string {
   const t = String(chineseTitle || "").trim().slice(0, 120);
   const c = String(chineseContext || "").trim().slice(0, 2000);
@@ -579,10 +607,10 @@ export function buildChapterPosterGeminiTask(chineseTitle: string, chineseContex
 You are a bilingual (English and Simplified Chinese) art director and strategic visual translator.
 
 CRITICAL PIPELINE (DO NOT SKIP):
-**GPT-IMAGE-2** sees **only** your **English** prompt—**not** the Chinese passage. You MUST distill the Chinese title and passage into **one** self-contained **English** visual prompt, with hero **Simplified-Chinese** lines specified via explicit English instructions to the image model.
+**${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN_CAP}** sees **only** your **English** prompt—**not** the Chinese passage. You MUST distill the Chinese title and passage into **one** self-contained **English** visual prompt, with hero **Simplified-Chinese** lines specified via explicit English instructions to the image model.
 **Execution-first:** lock **layout, lighting, and on-image Chinese type specs** in plain English **before** any lyrical phrasing.
 
-Output ONLY ONE English prompt for GPT-IMAGE-2.
+Output ONLY ONE English prompt for ${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN}.
 
 MANDATORY RULES:
 1. START EXACTLY WITH: "Luxury strategic intelligence chapter poster, 9:16 vertical, cinematic editorial, dark gold and ink palette, museum-grade lighting."
@@ -646,7 +674,7 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   const personaBlock =
     personaRaw.length > 0
       ? `
-【单帧出镜 · 身份锚定】（英文 tags 须体现可视觉化身份与场景档次；**場景可多元**，**室內與戶外**皆可，不默認書房書桌或反覆客廳；须服务 **情绪、文化语境与人文关怀**，可用隐喻与具象符号，但避免空泛堆砌；封面单帧适用）
+【单帧出镜 · 身份锚定】（须落实**职业、身份、兴趣、爱好、专长**等可视觉化线索；英文 tags 须体现可拍的身份与场景档次；**場景可多元**，**室內與戶外**皆可，不默認書房書桌或反覆客廳；须服务 **情绪、文化语境与人文关怀**，可用隐喻与具象符号，但避免空泛堆砌；封面单帧适用；分镜参考任务中亦须沿用同一套人设约束）
 ${personaRaw}
 
 `.trim() + "\n\n"
@@ -918,7 +946,10 @@ export async function callGemini3_1_Pro_AiStudio(
     translationProfile === "topic_cover"
       ? [
           GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
-          "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
+          PLATFORM_IMAGE_PROMPT_PERSONA_BINDING_RULE_ZH,
+          "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 " +
+            PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH +
+            " 的 **英文** 生图指令（JSON 的 prompt 字段）。",
           "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
           "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不建議擅自改格数或把单封面写成多格，除非任务明确要求。",
           "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
@@ -930,8 +961,13 @@ export async function callGemini3_1_Pro_AiStudio(
         ].join("\n")
       : [
           PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
-          "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
-          "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 GPT-Image-2 为第一优先级。",
+          PLATFORM_IMAGE_PROMPT_PERSONA_BINDING_RULE_ZH,
+          "你是一位双语视觉编导：**上游中文僅作參照**；把任务收成 **一条** 可直接给 " +
+            PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH +
+            " 的 **英文** 生图指令（JSON 的 prompt 字段）。",
+          "**优先** comma-separated tags / 短語；需要时用 **编号短句** 把版式、主体、光型、留白、简中标题规格写清。**不设字符上限**，以一次生图能忠实执行 " +
+            PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_EN +
+            " 为第一优先级。",
           "OpenAI **`model`** 對應名稱或为 **gpt‑5.4、gpt‑5.5** 等—只影響 API 調用標識與環境設定；**宽幅網格／分鏡**之身分與版式規格必須與 Vertex（Gemini **3 Flash**）及 GPT 盡後 **Gemini 3 Flash Preview 兜底** **完全一致**，見常量 **PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN**。",
           PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
           "**2×4 分镜主表**（若上游为分镜表）：英文 **prompt** 须明确版式 — **全表最上一行通栏**仅 **全文内容总结**（整片梗概作主主题，可带「· 分镜脚本」等后缀）；**不建議**把各镜的「分镜主题」写进该顶栏。**每格**自上而下：**分镜主题描述**（该格简中一句）→ 主画面静帧 → 底部简中四列表格，列标题固定为 **景别**、**运镜**、**画面内容**、**台词与音效**。其余画面与光影用英文写清即可。",
@@ -1172,10 +1208,10 @@ export async function translateBundleCoverAndCompositeEnglishPair(options: {
 
   const userBody = `同一選題、兩個生圖交付物（不建議當成兩則無關選題）。
 
-=== PART_A — 9:16 豎版封面（GPT-IMAGE-2 單主視覺）===
+=== PART_A — 9:16 豎版封面（${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH} · 單主視覺）===
 ${options.coverTranslationTask}
 
-=== PART_B — 16:9 橫幅 2×4 格主表或八格筆記（GPT-IMAGE-2）===
+=== PART_B — 16:9 橫幅 2×4 格主表或八格筆記（${PLATFORM_IMAGE_PROMPT_DOWNSTREAM_LABEL_ZH}）===
 ${options.compositeTranslationTask}
 
 请只返回合法 JSON 对象，且必须同时包含非空字符串：
@@ -1203,6 +1239,7 @@ ${options.compositeTranslationTask}
           content: [
             PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
             GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
+            PLATFORM_IMAGE_PROMPT_PERSONA_BINDING_RULE_ZH,
             "你是双语视觉编导：上游 **PART_A + PART_B** 描述 **同一套** 內容企劃的兩個像素交付物（豎封面 + 橫幅整表），**不是**兩個獨立選題。",
             "把 PART_A 收成 **cover_prompt**：只服務 **9:16** 單幀封面；口吻與 **選題單封** 一致——優先忠實還原 brief、tags／名詞組、篇幅不限，可融入情緒與文化／人文語境；**不建議**把 PART_B 的 **2×4 網格硬性 checklist** 或分鏡表條款硬套進單封。",
             "把 PART_B 收成 **composite_prompt**：只服務 **16:9** **2×4** 整表；格線/頂欄/分鏡表格欄位等規格與既有 **分鏡主表 / 小紅書八格** 英文化一致（可執行、英文為主、簡中字由英文指令約束）。",
