@@ -74,32 +74,42 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
  * 監管／請求：**選題豎封** 像素三選一（**優先於**下方 env {@link resolvePlatformTopicCoverPixelEngine}）。
  * 將由後續 PR 自前端／tRPC 接入；目前僅型別供 {@link generatePlatformTopicCoverNanoBanana2FromEnglishPrompt} 使用。
  */
-export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "imagen_4_ultra";
+export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "nano_banana_pro";
 
 /**
- * 選題 **單幀豎封** 像素：**Vertex Nano Banana 2** 與 **Gemini API · Imagen 4 Ultra**（`GEMINI_API_KEY`）並存，便於 A/B，**不刪 NB2 代碼**。
+ * 選題 **單幀豎封** 像素：**Vertex Nano Banana Pro**（預設）與 **Nano Banana 2** 並存；**已棄用** Imagen 4 Ultra 豎封（簡中語料易劣化）。
  *
- * - **`imagen_only` / `imagen_then_nb2` / `auto` 等**：僅 **Imagen 4 Ultra**（`GEMINI_API_KEY`）；**失敗拋錯**，不回落 NB2。
- * - **`nb2_only`**：僅 Vertex NB2（明確關閉 Imagen 豎封像素時）。
+ * - **`nbp_only`（預設）**：`gemini-3-pro-image-preview` · 9:16（見 `generatePlatformTopicCoverNanoBananaProImage`）。
+ * - **`nb2_only`**：僅 Nano Banana 2（`gemini-3.1-flash-image-preview`）。
+ * - 歷史 **`imagen_*` / `auto` / `dual`** env：視為 **`nbp_only`**（避免舊部署仍走已停用 Imagen 豎封）。
  *
- * `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`：`nb2` | `nb2_only` | `nano_banana2` | `imagen_then_nb2` | `imagen_nb2` | `imagen+nb2` | `auto` | `imagen_only` | `imagen`
+ * `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`：`nbp` | `nbp_only` | `nano_banana_pro` | `nb2` | `nb2_only` | `nano_banana2` | 以及歷史 imagen 別名（→ NBP）。
  */
-export type PlatformTopicCoverPixelEngineMode = "nb2_only" | "imagen_only";
+export type PlatformTopicCoverPixelEngineMode = "nb2_only" | "nbp_only";
 
 export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelEngineMode {
   const v = norm(process.env.PLATFORM_TOPIC_COVER_PIXEL_ENGINE);
-  /** 歷史別名：曾允許 Imagen→NB2；現與 imagen_only 相同（**不回落**）。 */
+  /** 歷史：曾用 Imagen 4 Ultra；產品改為 NBP，舊值統一走 Pro 圖像模型。 */
   if (
     v === "imagen_then_nb2" ||
     v === "imagen_nb2" ||
     v === "imagen+nb2" ||
     v === "dual" ||
-    v === "auto"
+    v === "auto" ||
+    v === "imagen_only" ||
+    v === "imagen_ultra_only" ||
+    v === "imagen"
   ) {
-    return "imagen_only";
+    return "nbp_only";
   }
-  if (v === "imagen_only" || v === "imagen_ultra_only" || v === "imagen") {
-    return "imagen_only";
+  if (
+    v === "nbp_only" ||
+    v === "nbp" ||
+    v === "nano_banana_pro" ||
+    v === "vertex_pro" ||
+    v === "banana_pro"
+  ) {
+    return "nbp_only";
   }
   if (
     v === "nb2_only" ||
@@ -110,8 +120,8 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
   ) {
     return "nb2_only";
   }
-  /** 未顯式設定：有 `GEMINI_API_KEY` → 預設僅 Imagen 4 Ultra（失敗拋錯）；否則僅 NB2。 */
-  return String(process.env.GEMINI_API_KEY ?? "").trim() ? "imagen_only" : "nb2_only";
+  /** 未顯式設定：預設 Nano Banana Pro（豎封）。 */
+  return "nbp_only";
 }
 
 /**

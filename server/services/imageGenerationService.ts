@@ -213,10 +213,8 @@ export async function generateAndStoreStrategicImage(
 }
 
 /**
- * 平台選題單幀封面：**已棄用於主產品管線**（{@link runPlatformTopicImagePipeline} 改走 {@link generatePlatformTopicCoverNanoBanana2FromEnglishPrompt}）。
- * 保留供日後實驗或手動調用；Vertex **`gemini-3-pro-image-preview` @ `global`**。
- *
- * @deprecated 監管封面主路徑已改為 Nano Banana 2；此函式不再被平台 enqueue 管線呼叫。
+ * 平台選題單幀豎封：**Vertex Nano Banana Pro**（`gemini-3-pro-image-preview`，可 `VERTEX_PLATFORM_TOPIC_PRO_IMAGE_MODEL` 覆寫）· 9:16。
+ * 預設像素引擎見 {@link resolvePlatformTopicCoverPixelEngine} · `nbp_only`；Imagen 4 已不再用於本管線。
  */
 export async function generatePlatformTopicCoverNanoBananaProImage(options: {
   englishPrompt: string;
