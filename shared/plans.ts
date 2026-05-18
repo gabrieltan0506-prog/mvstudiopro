@@ -261,9 +261,11 @@ export const CREDIT_COSTS = {
   /**
    * 平台页：**同一選題**一鍵「豎版封面 + 2×4 分鏡或八格圖文」套裝（異步 job 內 **串行非同步** 兩階段生圖 · 單次扣費）
    */
-  platformTopicCoverAndCompositeBundle: 388,
-  /** 平台页：四选题仅 2×4/八格一键套裝总价（服务端按序 4 笔整数分拆扣费，合计=此值；单条散买仍为 60/72） */
-  platformCompositeBulkFourTopics: 238,
+  platformTopicCoverAndCompositeBundle: 268,
+  /** 平台页：四选题 2×4/八格一键套裝总价（prepay 一笔扣清；单条散买仍为 60/72） */
+  platformCompositeBulkFourTopics: 198,
+  /** 平台页：四选题竖版封面一键套裝总价（prepay 一笔扣清；单张散买仍为 {@link CREDIT_COSTS.platformTopicFrameGraphic}） */
+  platformBulkCoverFourTopics: 128,
   /** 平台頁增值：個性化戰略地圖／決策智庫報告，之後每次原價 */
   decisionIntelligenceReport: 200,
   /** 同功能首次體驗優惠價（與 decisionIntelligenceReport 搭配後端計次） */
@@ -271,17 +273,6 @@ export const CREDIT_COSTS = {
   /** 平台頁：全案流程之專屬選題與長文案／分鏡稿（platform_build_content · 任務入隊時扣費） */
   platformStage2Copywriting: 60,
 } as const;
-
-/** 四条 2×4 套裝总价按序分拆到 4 次扣费（整数，四次相加等于 {@link CREDIT_COSTS.platformCompositeBulkFourTopics}） */
-export function platformCompositeBulkFourSlotCredits(slotIndex: number): number {
-  const total = CREDIT_COSTS.platformCompositeBulkFourTopics;
-  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex > 3) {
-    throw new RangeError("platformCompositeBulkFourSlotCredits: slotIndex must be integer 0..3");
-  }
-  const base = Math.floor(total / 4);
-  const rem = total - base * 4;
-  return base + (slotIndex < rem ? 1 : 0);
-}
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */
 export const IMAGE_UPSCALE_BASE_CREDIT_KEYS = [

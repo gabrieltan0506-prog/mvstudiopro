@@ -23,7 +23,7 @@ import type {
   GrowthSnapshot,
   GrowthTitleExecution,
 } from "@shared/growth";
-import { CREDIT_COSTS, platformCompositeBulkFourSlotCredits } from "@shared/plans";
+import { CREDIT_COSTS } from "@shared/plans";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
@@ -1341,6 +1341,10 @@ export default function PlatformPage() {
   const canConfigureCompositeImageTranslator =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
+  /** 管理員／監管帳號：四題套裝不入「预付」流（服端逐題仍 0 扣點） */
+  const skipFourTopicBulkPrepay =
+    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+
   // Separate state for dashboard — populated by the second call after snapshot loads
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
@@ -1840,6 +1844,10 @@ export default function PlatformPage() {
   }, [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
+  const prepayPlatformBulkFourCoverPackMutation =
+    trpc.mvAnalysis.prepayPlatformBulkFourCoverPack.useMutation();
+  const prepayPlatformBulkFourCompositePackMutation =
+    trpc.mvAnalysis.prepayPlatformBulkFourCompositePack.useMutation();
   const enqueueTopicCoverAndCompositeBundleMutation =
     trpc.mvAnalysis.enqueueTopicCoverAndCompositeBundle.useMutation();
 
@@ -2042,6 +2050,8 @@ export default function PlatformPage() {
       pollDebugLabel?: string;
       /** 管理員專用：Vertex Nano Banana 2 主生圖（官方 API） */
       coverProEngine?: "nano_banana_2";
+      /** 四选题套裝：由 prepayPlatformBulkFourCoverPack 得到，逐题核銷 */
+      bulkFourCoverPrepayCreationId?: number;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
@@ -2061,6 +2071,9 @@ export default function PlatformPage() {
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
+        ...(inp.bulkFourCoverPrepayCreationId != null
+          ? { bulkFourCoverPrepayCreationId: inp.bulkFourCoverPrepayCreationId }
+          : {}),
       });
       setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "cover", inp.sceneId));
       setTopicImageJobPollTrace({
@@ -2337,12 +2350,35 @@ export default function PlatformPage() {
   ) => {
     const localOpId = `batch-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setIsSequentialCoverBatchGenerating(true);
+
+    let coverPrepayCreationId: number | undefined;
+    try {
+      if (scenes.length === 4 && !skipFourTopicBulkPrepay) {
+        const sceneIds: [string, string, string, string] = [
+          scenes[0]!.id,
+          scenes[1]!.id,
+          scenes[2]!.id,
+          scenes[3]!.id,
+        ];
+        const prepay = await prepayPlatformBulkFourCoverPackMutation.mutateAsync({ sceneIds });
+        coverPrepayCreationId = prepay.prepayCreationId;
+      }
+    } catch (err) {
+      setIsSequentialCoverBatchGenerating(false);
+      toast.error(err instanceof Error ? err.message : "套裝预付失败");
+      return;
+    }
+
     setPlatformImageGenFlowSnapshots((prev) =>
       upsertPlatformImageFlowSnapshot(prev, {
         at: new Date().toISOString(),
         kind: "batch_topic_frames",
         lines: [
-          `${new Date().toISOString()}  [客户端] 异步逐张封面生成已发起 · sceneCount=${scenes.length} · concurrency=1`,
+          `${new Date().toISOString()}  [客户端] 异步逐张封面生成已发起 · sceneCount=${scenes.length} · concurrency=1${
+            scenes.length === 4 && coverPrepayCreationId != null
+              ? ` · 四条封面套裝已预付 ${CREDIT_COSTS.platformBulkCoverFourTopics} 积分（一笔扣清，四张仅核銷）`
+              : ""
+          }`,
           ...buildPendingImageGenLines("cover_batch"),
         ],
         meta: {
@@ -2386,6 +2422,9 @@ export default function PlatformPage() {
               coverPersonaContext: coverPersonaContext.trim() || undefined,
               sceneId: scene.id,
               pollDebugLabel: `异步逐张批量 · ${scene.id}`,
+              ...(coverPrepayCreationId != null
+                ? { bulkFourCoverPrepayCreationId: coverPrepayCreationId }
+                : {}),
             }),
           (waitMs) => {
             liveLines.push(
@@ -2637,11 +2676,29 @@ export default function PlatformPage() {
 
   const runSequentialCompositeBatchGeneration = async () => {
     const cards = contentExecutionCards;
-    const bulkFourPackSceneIds: [string, string, string, string] | undefined =
-      cards.length === 4 ? [cards[0]!.id, cards[1]!.id, cards[2]!.id, cards[3]!.id] : undefined;
     const localOpId = `batch-composite-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     compositeBatchSilentUiRef.current = true;
     setIsSequentialCompositeBatchGenerating(true);
+
+    let compositePrepayCreationId: number | undefined;
+    try {
+      if (cards.length === 4 && !skipFourTopicBulkPrepay) {
+        const sceneIds: [string, string, string, string] = [
+          cards[0]!.id,
+          cards[1]!.id,
+          cards[2]!.id,
+          cards[3]!.id,
+        ];
+        const prepay = await prepayPlatformBulkFourCompositePackMutation.mutateAsync({ sceneIds });
+        compositePrepayCreationId = prepay.prepayCreationId;
+      }
+    } catch (err) {
+      setIsSequentialCompositeBatchGenerating(false);
+      compositeBatchSilentUiRef.current = false;
+      toast.error(err instanceof Error ? err.message : "套裝预付失败");
+      return;
+    }
+
     setPlatformImageGenFlowSnapshots((prev) =>
       upsertPlatformImageFlowSnapshot(prev, {
         at: new Date().toISOString(),
@@ -2649,8 +2706,8 @@ export default function PlatformPage() {
         lines: [
           `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成已发起 · topicCount=${cards.length} · concurrency=1`,
           `${new Date().toISOString()}  [等待中] ${
-            cards.length === 4
-              ? `四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（4 次均摊）`
+            cards.length === 4 && compositePrepayCreationId != null
+              ? `四条 2×4 套裝已预付 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（一笔扣清，四张仅核銷）`
               : "每条依选题格式扣点（短视频→分镜表 · 图文/小红书→八格笔记）"
           }，单张约 3～5 分钟`,
         ],
@@ -2667,8 +2724,7 @@ export default function PlatformPage() {
     let successCount = 0;
     const liveLines: string[] = [];
     try {
-      for (let slotIndex = 0; slotIndex < cards.length; slotIndex++) {
-        const item = cards[slotIndex]!;
+      for (const item of cards) {
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
@@ -2715,8 +2771,8 @@ export default function PlatformPage() {
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                 progressJobId: newPlatformCompositeProgressJobId(),
                 ...compositeDrProExtras,
-                ...(bulkFourPackSceneIds
-                  ? { bulkFourSequentialSlot: slotIndex, bulkFourPackSceneIds }
+                ...(compositePrepayCreationId != null
+                  ? { bulkFourCompositePrepayCreationId: compositePrepayCreationId }
                   : {}),
                 compositeImageEngine: platformComposite2x4Engine,
               }),
@@ -2742,19 +2798,88 @@ export default function PlatformPage() {
               );
             },
           );
-          const out = String(res.imageUrl ?? "").trim();
-          const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
+          let out = String(res.imageUrl ?? "").trim();
+          let serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
             ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
             : [];
+          const asyncRes = res as { isAsync?: boolean; progressJobId?: string };
+          /**
+           * 一鍵批量：非同步 TRPC 會立刻 resolve，若在上一筆尚未落盤前就發下一筆，
+           * 會覆寫 compositeSheetLivePollCtxRef 並讓 useEffect 以錯誤 jobId 搶先 GET，出現 /api/jobs 404。
+           * 此處改為在批量迴圈內顯式輪詢至終態後再進下一題。
+           */
+          if (!out && asyncRes.isAsync) {
+            const pid = String(asyncRes.progressJobId ?? "").trim();
+            if (pid.length >= 8) {
+              try {
+                const terminal = await pollJobUntilTerminal(pid, {
+                  intervalMs: compositeSheetLivePollIntervalMs,
+                  maxWaitMs: 28 * 60_000,
+                  onPoll: ({ output }) => {
+                    const flow = Array.isArray(
+                      (output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog,
+                    )
+                      ? ((output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+                      : [];
+                    if (flow.length > 0) {
+                      setTopicCoverPipelineFlowLogDebug([...flow]);
+                    }
+                  },
+                });
+                setCompositeAwaitingJobTerminal(false);
+                setPendingCompositeSheet(null);
+                compositeSheetLivePollCtxRef.current = null;
+                setCompositeJobPollTrace(null);
+
+                const tout = terminal.output as
+                  | { compositeImageUrl?: string; imageGenFlowLog?: string[] }
+                  | undefined;
+                if (terminal.status === "succeeded" && tout) {
+                  out = String(tout.compositeImageUrl ?? "").trim();
+                  if (Array.isArray(tout.imageGenFlowLog) && tout.imageGenFlowLog.length > 0) {
+                    serverLines = tout.imageGenFlowLog;
+                  }
+                  if (out) {
+                    if (compositeKind === "xiaohongshu_dual_note") {
+                      setPlatformXhsNoteMap((p) => ({ ...p, [item.id]: out }));
+                    } else {
+                      setPlatformStoryboardSheetMap((p) => ({ ...p, [item.id]: out }));
+                    }
+                  }
+                } else if (terminal.status === "failed") {
+                  const failMsg =
+                    typeof terminal.error === "string" && terminal.error.trim()
+                      ? terminal.error.trim()
+                      : String((tout as { error?: string } | undefined)?.error ?? "failed");
+                  liveLines.push(
+                    `${new Date().toISOString()}  ✗ 合成失败（异步） · sceneId=${item.id} · ${failMsg}`,
+                  );
+                }
+              } catch (pollErr) {
+                setCompositeAwaitingJobTerminal(false);
+                setPendingCompositeSheet(null);
+                compositeSheetLivePollCtxRef.current = null;
+                setCompositeJobPollTrace(null);
+                liveLines.push(
+                  `${new Date().toISOString()}  ✗ 异步轮询异常 · sceneId=${item.id} · ${
+                    pollErr instanceof Error ? pollErr.message : String(pollErr)
+                  }`,
+                );
+              }
+            } else {
+              liveLines.push(
+                `${new Date().toISOString()}  ✗ 异步响应缺少 progressJobId · sceneId=${item.id}`,
+              );
+            }
+          }
+
           if (serverLines.length > 0) {
             liveLines.push(`${new Date().toISOString()}  [当前步骤] ${serverLines[serverLines.length - 1]}`);
           }
           if (out) {
             successCount += 1;
             liveLines.push(`${new Date().toISOString()}  ✓ 合成完成 · sceneId=${item.id}`);
-          } else if ((res as any).isAsync) {
-            // 異步模式不立刻報錯，等輪詢結束
-          } else {
+          } else if (!asyncRes.isAsync) {
             liveLines.push(`${new Date().toISOString()}  ✗ 合成无图 · sceneId=${item.id}`);
           }
         } catch (err) {
@@ -3694,7 +3819,10 @@ export default function PlatformPage() {
 
   const platformTopicCount = contentExecutionCards.length;
   const platformBulkGraphicCost = useMemo(
-    () => platformTopicCount * CREDIT_COSTS.platformTopicFrameGraphic,
+    () =>
+      platformTopicCount === 4
+        ? CREDIT_COSTS.platformBulkCoverFourTopics
+        : platformTopicCount * CREDIT_COSTS.platformTopicFrameGraphic,
     [platformTopicCount],
   );
   const platformBulkCompositeCost = useMemo(() => {
@@ -3726,11 +3854,10 @@ export default function PlatformPage() {
       toast.error("请先登录");
       return;
     }
-    const bulkFourDeductions = [0, 1, 2, 3].map((i) => platformCompositeBulkFourSlotCredits(i)).join("、");
     const note = supervisorAccess
       ? ""
       : platformTopicCount === 4
-        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套裝合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次扣费分别为 ${bulkFourDeductions} 点）。每条约 3～5 分钟。是否继续？`
+        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**开始前将先一次性扣除 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（一笔入账，不分拆）**。每条约 3～5 分钟。是否继续？`
         : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。单条计价：短视频向 ${CREDIT_COSTS.platformStoryboardSheet} 积分/条，图文/小红书 ${CREDIT_COSTS.platformXhsDualNote} 积分/条；当前共 ${platformBulkCompositeBreakdown.videoLike} 条短视频向、${platformBulkCompositeBreakdown.graphicLike} 条图文/小红书向，合计 ${platformBulkCompositeCost} 积分。每条约 3～5 分钟。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCompositeBatchGeneration();
@@ -5719,7 +5846,11 @@ export default function PlatformPage() {
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
                         视频图文分镜表
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套裝、一键生成分鏡套裝、一键生成封面加分鏡。</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        批量：一键封面套裝（四题 {CREDIT_COSTS.platformBulkCoverFourTopics}）、一键分鏡 2×4 套裝（四题{" "}
+                        {CREDIT_COSTS.platformCompositeBulkFourTopics}）、一键封面+分鏡（每题{" "}
+                        {CREDIT_COSTS.platformTopicCoverAndCompositeBundle}）。
+                      </p>
                     </div>
                     {platformTopicCount > 0 ? (
                       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
@@ -5744,7 +5875,9 @@ export default function PlatformPage() {
                             const scenes = contentExecutionCards.map((row) => ({ id: row.id }));
                             const discountNote = supervisorAccess
                               ? ""
-                              : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面单帧，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
+                              : platformTopicCount === 4
+                                ? `将先一次性扣除 ${CREDIT_COSTS.platformBulkCoverFourTopics} 积分（一笔套裝价，不分拆），再依次为 4 个选题生成竖版封面。是否继续？`
+                                : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面单帧，共消耗 ${platformBulkGraphicCost} 积分（单张 ${CREDIT_COSTS.platformTopicFrameGraphic} 点），是否继续？`;
                             if (!supervisorAccess && !window.confirm(discountNote)) return;
                             void runSequentialCoverBatchGeneration(
                               scenes,

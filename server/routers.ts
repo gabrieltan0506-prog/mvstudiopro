@@ -65,6 +65,10 @@ import {
   summarizeRuntimeMetrics,
 } from "./services/runtimeMetricsBuffer.js";
 import {
+  consumeBulkFourPackPrepayForScene,
+  insertBulkFourPackPrepayRow,
+} from "./services/platformBulkFourPackPrepay.js";
+import {
   PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE,
   zPlatformImagePromptTranslatorInput,
 } from "./services/geminiPlatformCompositeTranslation.js";
@@ -86,7 +90,6 @@ import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
   getProductPackageDisplayRows,
-  platformCompositeBulkFourSlotCredits,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
@@ -4190,30 +4193,159 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
       }),
 
+    prepayPlatformBulkFourCoverPack: protectedProcedure
+      .input(
+        z.object({
+          sceneIds: z.tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)]),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const ids = input.sceneIds;
+        if (new Set(ids).size !== 4) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "四条选题 sceneId 须互不相同" });
+        }
+        const database = await db.getDb();
+        if (!database) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "数据库不可用，请稍后重试" });
+        }
+        const {
+          assertOptimizedCoverInputsFromDb,
+          PlatformCoverInputsError,
+        } = await import("./services/platformStrategicBlueprintSnapshots.js");
+        for (const sid of ids) {
+          try {
+            await assertOptimizedCoverInputsFromDb({ userId, sceneId: sid });
+          } catch (e) {
+            if (e instanceof PlatformCoverInputsError) {
+              throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.message });
+            }
+            throw e;
+          }
+        }
+        const cost = CREDIT_COSTS.platformBulkCoverFourTopics;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，四条封面套裝需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformTopicImages",
+            `平台竖版封面·四条套裝（一次扣清 ${cost} 点）`,
+          );
+        }
+        const prepayCreationId = await insertBulkFourPackPrepayRow({
+          database,
+          userId,
+          kind: "cover",
+          sceneIds: ids,
+          creditsCharged: isAdminUser ? 0 : cost,
+        });
+        return { prepayCreationId };
+      }),
+
+    prepayPlatformBulkFourCompositePack: protectedProcedure
+      .input(
+        z.object({
+          sceneIds: z.tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)]),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const ids = input.sceneIds;
+        if (new Set(ids).size !== 4) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "四条选题 sceneId 须互不相同" });
+        }
+        const database = await db.getDb();
+        if (!database) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "数据库不可用，请稍后重试" });
+        }
+        const {
+          assertOptimizedCoverInputsFromDb,
+          PlatformCoverInputsError,
+        } = await import("./services/platformStrategicBlueprintSnapshots.js");
+        for (const sid of ids) {
+          try {
+            await assertOptimizedCoverInputsFromDb({ userId, sceneId: sid });
+          } catch (e) {
+            if (e instanceof PlatformCoverInputsError) {
+              throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.message });
+            }
+            throw e;
+          }
+        }
+        const cost = CREDIT_COSTS.platformCompositeBulkFourTopics;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，四条 2×4 套裝需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformCompositeSheet",
+            `平台 2×4·四条套裝（一次扣清 ${cost} 点）`,
+          );
+        }
+        const prepayCreationId = await insertBulkFourPackPrepayRow({
+          database,
+          userId,
+          kind: "composite",
+          sceneIds: ids,
+          creditsCharged: isAdminUser ? 0 : cost,
+        });
+        return { prepayCreationId };
+      }),
+
     /**
      * 平台单帧生图：先入队，由 Fly jobs worker 执行生图；前端轮询 GET /api/jobs/:id，避免长 HTTP 占用。
+     * 四选题套裝：请先调用 `prepayPlatformBulkFourCoverPack` 一笔扣清，再逐题传 `bulkFourCoverPrepayCreationId` 核銷（本接口不再分拆扣费）。
      */
     enqueueGenerateTopicImage: protectedProcedure
       .input(
-        z.object({
-          /** @deprecated 忽略。 */
-          topicHook: z.string().max(500).optional().default(""),
-          format: z.enum(["短视频", "图文"]).optional(),
-          /** @deprecated 忽略。 */
-          context: z.string().optional(),
-          coverPersonaContext: z.string().max(4000).optional(),
-          failedJobId: z.string().max(32).optional(),
-          sceneId: z.string().min(1).max(128),
-          /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
-          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
-          coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
-          /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
-          enableTopicCoverDeepResearchPro: z.boolean().optional(),
-          /** 可選：第二條選題 sceneId（同用戶快照）· DR-Pro 雙條並行 */
-          drProSecondarySceneId: z.string().min(1).max(128).optional(),
-          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
-          supervisorToken: z.string().max(512).optional(),
-        }),
+        z
+          .object({
+            /** @deprecated 忽略。 */
+            topicHook: z.string().max(500).optional().default(""),
+            format: z.enum(["短视频", "图文"]).optional(),
+            /** @deprecated 忽略。 */
+            context: z.string().optional(),
+            coverPersonaContext: z.string().max(4000).optional(),
+            failedJobId: z.string().max(32).optional(),
+            sceneId: z.string().min(1).max(128),
+            /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
+            imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+            coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
+            /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
+            enableTopicCoverDeepResearchPro: z.boolean().optional(),
+            /** 可選：第二條選題 sceneId（同用戶快照）· DR-Pro 雙條並行 */
+            drProSecondarySceneId: z.string().min(1).max(128).optional(),
+            /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
+            supervisorToken: z.string().max(512).optional(),
+            /** 由 prepayPlatformBulkFourCoverPack 返回；本題仅核銷预付，不再次扣套裝价 */
+            bulkFourCoverPrepayCreationId: z.number().int().positive().optional(),
+          })
+          .superRefine((data, ctx) => {
+            const failed = Boolean(data.failedJobId && String(data.failedJobId).trim());
+            const hasPrepay = data.bulkFourCoverPrepayCreationId != null;
+            if (failed && hasPrepay) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "免费重试不可与套裝预付同时使用",
+                path: ["failedJobId"],
+              });
+            }
+          }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -4226,7 +4358,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             : undefined;
         const enableTopicCoverDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
-        const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
+
+        const bulkCoverPrepayId =
+          !isAdminUser && input.bulkFourCoverPrepayCreationId != null
+            ? input.bulkFourCoverPrepayCreationId
+            : undefined;
+
+        const topicFramePaidCost =
+          bulkCoverPrepayId != null ? 0 : CREDIT_COSTS.platformTopicFrameGraphic;
+        const coverFrameDeductionNote =
+          bulkCoverPrepayId != null
+            ? "平台竖版封面·四条套裝（预付核銷·本題 0 点）"
+            : `平台单帧参考重绘（${topicFramePaidCost}点）`;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -4316,27 +4459,50 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
 
           if (!isAdminUser && !isFreeRetry) {
-            const creditsInfo = await getCredits(userId);
-            if (creditsInfo.totalAvailable < topicFramePaidCost) {
-              await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
-              creationIdOut = undefined;
-              throw new TRPCError({
-                code: "PAYMENT_REQUIRED",
-                message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
-              });
+            if (bulkCoverPrepayId != null) {
+              try {
+                await consumeBulkFourPackPrepayForScene({
+                  database,
+                  userId,
+                  prepayCreationId: bulkCoverPrepayId,
+                  sceneId: sid,
+                  kind: "cover",
+                });
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+                creationIdOut = undefined;
+                throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+              }
+            } else {
+              const creditsInfo = await getCredits(userId);
+              if (creditsInfo.totalAvailable < topicFramePaidCost) {
+                await database.delete(userCreations).where(eq(userCreations.id, creationIdOut));
+                creationIdOut = undefined;
+                throw new TRPCError({
+                  code: "PAYMENT_REQUIRED",
+                  message: `Credits 不足，单帧需要 ${topicFramePaidCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+                });
+              }
+              await deductCreditsAmount(
+                userId,
+                topicFramePaidCost,
+                "platformTopicImages",
+                coverFrameDeductionNote,
+              );
+              await database
+                .update(userCreations)
+                .set({ creditsUsed: topicFramePaidCost, updatedAt: new Date() })
+                .where(eq(userCreations.id, creationIdOut));
             }
-            await deductCreditsAmount(
-              userId,
-              topicFramePaidCost,
-              "platformTopicImages",
-              `平台单帧参考重绘（${topicFramePaidCost}点）`,
-            );
-            await database
-              .update(userCreations)
-              .set({ creditsUsed: topicFramePaidCost, updatedAt: new Date() })
-              .where(eq(userCreations.id, creationIdOut));
           }
         } else if (!isAdminUser) {
+          if (bulkCoverPrepayId != null) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "当前环境无法完成套裝核銷，请稍后重试",
+            });
+          }
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < topicFramePaidCost) {
             throw new TRPCError({
@@ -4348,7 +4514,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             userId,
             topicFramePaidCost,
             "platformTopicImages",
-            `平台单帧参考重绘（${topicFramePaidCost}点）`,
+            coverFrameDeductionNote,
           );
         }
 
@@ -4890,68 +5056,34 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     /**
      * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底。
      * 单条散买：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
-     * 四选题一键：传 `bulkFourSequentialSlot` + `bulkFourPackSceneIds` 时按套裝整数分拆扣费（四次相加={@link CREDIT_COSTS.platformCompositeBulkFourTopics}）。
+     * 四选题套裝：请先 `prepayPlatformBulkFourCompositePack`，再逐题传 `bulkFourCompositePrepayCreationId` 核銷（本接口不再分拆扣费）。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
-        z
-          .object({
-            jobId: z.string().max(128).optional(),
-            sceneId: z.string().min(1),
-            title: z.string().min(1).max(220),
-            scriptContext: z.string().min(1).max(12000),
-            kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
-            /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
-            progressJobId: z.string().min(8).max(64).optional(),
-            executionDetails: z.string().max(4000).optional(),
-            /** 與單幀一致：英文 prompt 翻譯引擎 */
-            imagePromptTranslator: zPlatformImagePromptTranslatorInput,
-            /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
-            creationRecordId: z.number().int().positive().optional(),
-            /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
-            supervisorToken: z.string().max(512).optional(),
-            /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
-            enableTopicCoverDeepResearchPro: z.boolean().optional(),
-            /** IP / 身份锚点，供 DR Pro 与翻译链 */
-            coverPersonaContext: z.string().max(8000).optional(),
-            /** 2×4 出图：GPT-Image-2 主链 vs Vertex Nano Banana 2 主路径（优先于部署变量 PLATFORM_COMPOSITE_SHEET_ENGINE） */
-            compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
-            /** 与 `bulkFourPackSceneIds` 同时出现；0..3 对应当前为四条套裝中的第几笔扣费 */
-            bulkFourSequentialSlot: z.number().int().min(0).max(3).optional(),
-            /** 四条选题 sceneId 固定顺序，须与客户端串行顺序一致且互不重复 */
-            bulkFourPackSceneIds: z
-              .tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)])
-              .optional(),
-          })
-          .superRefine((data, ctx) => {
-            const hasSlot = data.bulkFourSequentialSlot !== undefined;
-            const hasPack = data.bulkFourPackSceneIds !== undefined;
-            if (hasSlot !== hasPack) {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "四条套裝须同时提供 bulkFourSequentialSlot 与 bulkFourPackSceneIds",
-                path: hasSlot ? ["bulkFourPackSceneIds"] : ["bulkFourSequentialSlot"],
-              });
-              return;
-            }
-            if (!hasSlot || !data.bulkFourPackSceneIds) return;
-            const ids = data.bulkFourPackSceneIds;
-            if (new Set(ids).size !== ids.length) {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "四条套裝内 sceneId 须互不相同",
-                path: ["bulkFourPackSceneIds"],
-              });
-            }
-            const slot = data.bulkFourSequentialSlot!;
-            if (ids[slot] !== data.sceneId) {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "sceneId 须与 bulkFourPackSceneIds[currentSlot] 一致",
-                path: ["sceneId"],
-              });
-            }
-          }),
+        z.object({
+          jobId: z.string().max(128).optional(),
+          sceneId: z.string().min(1),
+          title: z.string().min(1).max(220),
+          scriptContext: z.string().min(1).max(12000),
+          kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
+          /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
+          progressJobId: z.string().min(8).max(64).optional(),
+          executionDetails: z.string().max(4000).optional(),
+          /** 與單幀一致：英文 prompt 翻譯引擎 */
+          imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
+          creationRecordId: z.number().int().positive().optional(),
+          /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
+          supervisorToken: z.string().max(512).optional(),
+          /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
+          enableTopicCoverDeepResearchPro: z.boolean().optional(),
+          /** IP / 身份锚点，供 DR Pro 与翻译链 */
+          coverPersonaContext: z.string().max(8000).optional(),
+          /** 2×4 出图：GPT-Image-2 主链 vs Vertex Nano Banana 2 主路径（优先于部署变量 PLATFORM_COMPOSITE_SHEET_ENGINE） */
+          compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
+          /** 由 prepayPlatformBulkFourCompositePack 返回 */
+          bulkFourCompositePrepayCreationId: z.number().int().positive().optional(),
+        }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -4961,9 +5093,37 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
+
+        const bulkCompositePrepayId =
+          !isAdminUser && input.bulkFourCompositePrepayCreationId != null
+            ? input.bulkFourCompositePrepayCreationId
+            : undefined;
+
+        const database = await db.getDb();
+        if (bulkCompositePrepayId != null) {
+          if (!database) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "当前环境无法完成套裝核銷，请稍后重试",
+            });
+          }
+          try {
+            await consumeBulkFourPackPrepayForScene({
+              database,
+              userId,
+              prepayCreationId: bulkCompositePrepayId,
+              sceneId: input.sceneId,
+              kind: "composite",
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+          }
+        }
+
         const cost =
-          input.bulkFourSequentialSlot !== undefined
-            ? platformCompositeBulkFourSlotCredits(input.bulkFourSequentialSlot)
+          bulkCompositePrepayId != null
+            ? 0
             : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? CREDIT_COSTS.platformStoryboardSheet
               : CREDIT_COSTS.platformXhsDualNote;
@@ -4981,9 +5141,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag =
-            input.bulkFourSequentialSlot !== undefined
-              ? ` · 四条2×4套裝第${input.bulkFourSequentialSlot + 1}/4笔`
-              : "";
+            bulkCompositePrepayId != null ? ` · 四条2×4套裝（预付核銷·本題 0 点）` : "";
           await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
         }
 

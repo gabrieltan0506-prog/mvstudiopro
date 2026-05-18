@@ -266,9 +266,11 @@ export const CREDIT_COSTS = {
   /** 图文笔记·小红书 2×4 八格（`xiaohongshu_dual_note`）·**72** — 非分镜主表 */
   platformXhsDualNote: 72,
   /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 串行非同步兩階段生圖） */
-  platformTopicCoverAndCompositeBundle: 388,
-  /** 平台页：四选题仅 2×4 套裝总价（router：bulk 模式下按序 4 笔整数分拆，合计=此值） */
-  platformCompositeBulkFourTopics: 238,
+  platformTopicCoverAndCompositeBundle: 268,
+  /** 平台页：四选题 2×4/八格套裝总价（先调 prepay 一笔扣清；与单条散买不混用） */
+  platformCompositeBulkFourTopics: 198,
+  /** 平台页：四选题竖版封面套裝总价（先 prepay 一笔扣清；与单张散买不混用） */
+  platformBulkCoverFourTopics: 128,
   /** 平台頁增值：個性化戰略地圖／決策智庫報告（首次體驗見 decisionIntelligenceReportFirst） */
   decisionIntelligenceReport: 200,
   decisionIntelligenceReportFirst: 150,
@@ -303,13 +305,19 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
     product: "平台数据分析",
     subFeature: "选题套裝（封面 + 2×4 分镜或八格 · 单条）",
     credits: CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
-    note: "同一選題单条套裝 388 cr（封面+2×4）；2×4 侧按体裁走 60 或 72",
+    note: "同一選題单条套裝 268 cr（封面+2×4）；2×4 侧按体裁走 60 或 72",
   },
   {
     product: "平台数据分析",
     subFeature: "2×4 合成四条套裝（一键四选题）",
     credits: CREDIT_COSTS.platformCompositeBulkFourTopics,
-    note: "合计 238 点；四次 generatePlatformCompositeSheet 均摊整数扣费（与单条 60/72 散买区分）",
+    note: "合计 198 点；四选题套裝在 prepay 接口一笔扣除（与单条 60/72 散买区分）",
+  },
+  {
+    product: "平台数据分析",
+    subFeature: "竖版封面四条套裝（一键四选题）",
+    credits: CREDIT_COSTS.platformBulkCoverFourTopics,
+    note: "合计 128 点；四选题套裝在 prepay 接口一笔扣除（与单张 48 cr 散买区分）",
   },
   { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "图文笔记 2×4 八格 72 cr/次（kind: xiaohongshu_dual_note）· 非分镜主表" },
   {

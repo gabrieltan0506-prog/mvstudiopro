@@ -1148,6 +1148,14 @@ export async function generatePlatformCompositeSheetImage(options: {
   const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
     L,
+    `[2×4·存图策略] ${
+      isFlyPlatformTopicImageStorage()
+        ? "**Fly 持久卷**（PLATFORM_IMAGE_STORAGE=fly）；成功后流水会含 [存图] 已写入 Fly…，非 GCS。"
+        : "**GCS 签名读链**（默认）；成功后流水会含 [Vertex 出图] 已镜像到 GCS…"
+    }`,
+  );
+  appendImageFlowLog(
+    L,
     survival
       ? `[2×4·英文化机制] **生存模式已开启**（環境變數 PLATFORM_WEEKEND_SURVIVAL_MODE）：英文化僅 **OpenAI GPT 5.4**（最多 3 轮、间隔 3s/6s），失败宣告 **系统算力紧张**。另有 **GCP 避险** 时亦可能压制 Vertex。`
       : `[2×4·英文化机制] **默认** **Vertex Gemini 3 Flash** 英文化最多 3 轮；**不再**在英文化阶段回退 OpenAI GPT 5.4（失败即 **系统算力紧张**）。**生存模式**（PLATFORM_WEEKEND_SURVIVAL_MODE）下仍仅用 GPT 5.4。GCP 避险时亦可能压制 Vertex。`,
