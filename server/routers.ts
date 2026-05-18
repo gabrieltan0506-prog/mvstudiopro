@@ -4836,7 +4836,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1b] 无智能提炼 · 英文化原文直接进 Nano Banana 2（chars=${trimmedEn.length}）`,
+              `[步骤1b] 无智能提炼 · 英文化原文直接进封面像素链路（NB2 / Imagen 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${trimmedEn.length}）`,
             );
             const safePrompt = trimmedEn;
             promptStats = buildImagePromptStats(safePrompt);
@@ -4844,7 +4844,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               flowLog,
               `[统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
             );
-            appendImageFlowLog(flowLog, "[步骤2-NB2] Vertex Nano Banana 2（子步骤见下组日志）…");
+            appendImageFlowLog(flowLog, "[步骤2] 竖封像素（NB2 与 Imagen Ultra 并存，见下组 flowLog · PLATFORM_TOPIC_COVER_PIXEL_ENGINE）…");
             url = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
               englishPrompt: safePrompt,
               flowLog,
