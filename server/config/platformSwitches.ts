@@ -203,7 +203,8 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
     return "openai";
   }
 
-  return "openai";
+  /** 未顯式指定時預設 Vertex（Gemini）；OpenAI 僅在 env 或管理員 {@link buildPlatformContent} 覆寫時使用。 */
+  return "vertex";
 }
 
 /**

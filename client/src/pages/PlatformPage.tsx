@@ -110,6 +110,14 @@ const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBanan
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
+/** 監管／內部：Stage 2 專屬文案 LLM（一般用戶不可見、也不可繞過改線路） */
+const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
+type PlatformStage2SupervisorCopyEngine = "vertex" | "openai";
+
+function parseStage2SupervisorCopyEngineLs(raw: string | null): PlatformStage2SupervisorCopyEngine {
+  return raw === "openai" ? "openai" : "vertex";
+}
+
 function parseComposite2x4EngineLs(raw: string | null): PlatformComposite2x4ImageEngine {
   return raw === "nano_banana_2" ? "nano_banana_2" : "gpt_image2";
 }
@@ -1341,6 +1349,28 @@ export default function PlatformPage() {
   const canConfigureCompositeImageTranslator =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
+  /** 與封面進階開關一致：supervisor 入口 / admin / supervisor，一般用戶不可見 */
+  const canConfigureStage2CopyEngine =
+    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+
+  const [stage2SupervisorCopyEngine, setStage2SupervisorCopyEngine] = useState<PlatformStage2SupervisorCopyEngine>(() => {
+    if (typeof window === "undefined") return "vertex";
+    try {
+      return parseStage2SupervisorCopyEngineLs(window.localStorage.getItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY));
+    } catch {
+      return "vertex";
+    }
+  });
+
+  useEffect(() => {
+    if (!canConfigureStage2CopyEngine) return;
+    try {
+      window.localStorage.setItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY, stage2SupervisorCopyEngine);
+    } catch {
+      /* ignore */
+    }
+  }, [canConfigureStage2CopyEngine, stage2SupervisorCopyEngine]);
+
   // Separate state for dashboard — populated by the second call after snapshot loads
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
@@ -1678,12 +1708,19 @@ export default function PlatformPage() {
       setContentLoadingText("正在提交專屬文案後台任務…");
       setContentDebug(null);
       try {
+        const supervisorTok = getSupervisorTrpcToken();
         const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
           context: focusPrompt || undefined,
           windowDays,
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
           strategicDashboard: dash as unknown as Record<string, unknown>,
+          ...(canConfigureStage2CopyEngine
+            ? {
+                stage2LlmMode: stage2SupervisorCopyEngine,
+                ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+              }
+            : {}),
         });
         setContentJobPollTrace({
           jobId,
@@ -1712,7 +1749,7 @@ export default function PlatformPage() {
         setIsContentLoading(false);
       }
     },
-    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId],
+    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, canConfigureStage2CopyEngine, stage2SupervisorCopyEngine],
   );
 
   /** 用戶確認後入隊 Stage 2（後端立即扣積分）並輪詢直至完成 */
@@ -4668,6 +4705,43 @@ export default function PlatformPage() {
                   })}
                 </div>
               </div>
+
+              {canConfigureStage2CopyEngine ? (
+                <div className="rounded-[26px] border border-amber-500/30 bg-[linear-gradient(180deg,rgba(120,53,15,0.14),rgba(28,16,60,0.5))] p-5">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-amber-300" aria-hidden />
+                    監管專用 · 專屬文案後台模型（Stage 2）
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-white/55">
+                    僅 administrator（admin / supervisor）或 supervisor 入口可見；一般用戶不會看到此區，且後端會忽略未授權的線路參數。預設{" "}
+                    <span className="font-semibold text-[#8cefff]">Vertex · gemini-3.1-pro-preview</span>；OpenAI 需帳戶額度。
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStage2SupervisorCopyEngine("vertex")}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                        stage2SupervisorCopyEngine === "vertex"
+                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
+                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                      }`}
+                    >
+                      Gemini 3.1 Pro（Vertex）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStage2SupervisorCopyEngine("openai")}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                        stage2SupervisorCopyEngine === "openai"
+                          ? "border-amber-400/50 bg-[rgba(251,191,36,0.12)] text-amber-100"
+                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                      }`}
+                    >
+                      GPT‑5.5（OpenAI）
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">

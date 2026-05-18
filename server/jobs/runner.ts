@@ -1002,6 +1002,9 @@ async function processPlatformJob(
           });
       });
       const t0 = Date.now();
+      const rawStage2 = (params as Record<string, unknown>).stage2LlmMode;
+      const stage2LlmModeOverride =
+        rawStage2 === "vertex" || rawStage2 === "openai" ? rawStage2 : undefined;
       const built = await buildPlatformContent({
         snapshot: snapshotSummary,
         platformMenu,
@@ -1011,6 +1014,7 @@ async function processPlatformJob(
         store,
         abortSignal: undefined,
         stage1Handoff,
+        stage2LlmModeOverride: stage2LlmModeOverride ?? null,
       });
       const uidRaw = jobUserId != null ? Number(jobUserId) : NaN;
       if (Number.isFinite(uidRaw) && Array.isArray(built.data?.contentBlueprints) && built.data.contentBlueprints.length > 0) {
