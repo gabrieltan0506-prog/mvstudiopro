@@ -467,11 +467,11 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
 
 /**
  * Stage 2 `buildPlatformContent`：送進各家 API 的 **completion / max_output 上限**，與線路標籤無關。  
- * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 16384，下限 4096。
+ * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 32768（4 條長腳本 + 維度 5 場景約束後易更長；仍可用環境變數覆寫），下限 4096。
  */
 const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
-  if (!Number.isFinite(raw) || raw < 4096) return 16384;
+  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "32768");
+  if (!Number.isFinite(raw) || raw < 4096) return 32768;
   return Math.min(65536, Math.floor(raw));
 })();
 
@@ -1280,6 +1280,7 @@ export async function buildPlatformContent(params: {
 4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户**人设**（**职业、身份、兴趣、爱好、专长**等）。在详细脚本与指导设计中，**若** Call 2 (platformMenu) 的 \`trafficBoosters\` 可作参考，**须改写**为该用户人设下可执行的具体动作与话术后再写入；**禁止未改写硬套**；**无强关联或未提供时不必硬写**。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
+【閉合與篇幅】必須輸出**語法完整、可被解析的 JSON**（所有括號與引號成對閉合）。若擔心總長過長，可在不刪字段的前提下**略練**各條 \`detailedScript\` / \`copywriting\` 中單段的字數，**切勿**以截斷半句或缺尾巴的 JSON 收尾。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
       },
       {

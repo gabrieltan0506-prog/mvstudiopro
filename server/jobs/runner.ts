@@ -143,6 +143,18 @@ function getPlatformJobErrorMessage(error: unknown): string {
   if (isPlatformTimeoutError(error)) {
     return "AI 深度思考时间过长导致连接超时。请尝试缩减提示词范围，或重新提交分析。";
   }
+  const message = error instanceof Error ? error.message : String(error || "");
+  /** `buildPlatformContent` 等已帶可讀排錯句，勿再用泛化文案蓋掉（否則前端只見「解析失败」） */
+  if (
+    message.includes("Stage2") ||
+    message.includes("模型输出") ||
+    message.includes("截断") ||
+    message.includes("未形成完整 JSON") ||
+    message.includes("OpenAI 返回空正文") ||
+    message.includes("buildPlatformContent")
+  ) {
+    return message.length > 2500 ? `${message.slice(0, 2500)}…` : message;
+  }
   return "任务执行失败，请稍后重试。";
 }
 
