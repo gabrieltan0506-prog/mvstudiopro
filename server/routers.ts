@@ -464,13 +464,16 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
 
 /**
  * Stage 2 `buildPlatformContent`：送進各家 API 的 **completion / max_output 上限**，與線路標籤無關。  
- * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 16384，下限 4096。
+ * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 65536，上限 65536，下限 4096。
  */
 const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "16384");
-  if (!Number.isFinite(raw) || raw < 4096) return 16384;
+  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "65536");
+  if (!Number.isFinite(raw) || raw < 4096) return 65536;
   return Math.min(65536, Math.floor(raw));
 })();
+
+/** Stage 2 取樣溫度（Vertex/Gemini 生效；GPT‑5 系 OpenAI 可能忽略 temperature，見 llm.ts）。 */
+const STAGE2_LLM_TEMPERATURE = 0.9;
 
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
 // platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
@@ -1304,6 +1307,7 @@ export async function buildPlatformContent(params: {
         provider: "openai",
         modelName: openaiCreativeModel,
         max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+        temperature: STAGE2_LLM_TEMPERATURE,
         response_format: { type: "json_object" },
         messages: structuredStage2Messages,
         abortSignal: params.abortSignal,
@@ -1315,6 +1319,7 @@ export async function buildPlatformContent(params: {
         provider: "openai",
         modelName: openaiCreativeModel,
         max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+        temperature: STAGE2_LLM_TEMPERATURE,
         messages: structuredStage2Messages,
         abortSignal: params.abortSignal,
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
@@ -1381,6 +1386,7 @@ export async function buildPlatformContent(params: {
         provider: "vertex",
         modelName: "gemini-3.1-pro-preview",
         max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+        temperature: STAGE2_LLM_TEMPERATURE,
         response_format: { type: "json_object" },
         messages: structuredStage2Messages,
         abortSignal: params.abortSignal,
@@ -1394,6 +1400,7 @@ export async function buildPlatformContent(params: {
           provider: "vertex",
           modelName: "gemini-3.1-pro-preview",
           max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+          temperature: STAGE2_LLM_TEMPERATURE,
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
         });
@@ -1406,6 +1413,7 @@ export async function buildPlatformContent(params: {
             provider: "gemini",
             modelName: "gemini-3.1-pro-preview",
             max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+            temperature: STAGE2_LLM_TEMPERATURE,
             response_format: { type: "json_object" },
             messages: structuredStage2Messages,
             abortSignal: params.abortSignal,
@@ -4663,8 +4671,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const batchCoverPersona = String(input.coverPersonaContext || "").trim();
         void input.imagePromptTranslator;
-        const imagePromptTranslator = "gpt54" as const;
-        const translatorLogLabel = "GPT 5.4（OpenAI）";
 
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? CREDIT_COSTS.platformTopicFrameVideo : CREDIT_COSTS.platformTopicFrameGraphic;
@@ -4713,18 +4719,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const {
           buildPlatformTopicReferenceGeminiTask,
-          callGemini31ProForImagePrompt,
           extractChineseVisualBrief,
+          resolveVertexCoverTranslationModelName,
+          translatePlatformTopicCoverToEnglishVertexOnly,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
-          generateImageGpt2WithImagenFallback,
-          generateGptImage2FromRawEnglishPrompt,
+          generatePlatformTopicCoverNanoBanana2FromEnglishPrompt,
           appendImageFlowLog,
         } = await import("./services/proxyImageService.js");
-        const mode = isVideo ? ("STORYBOARD" as const) : ("GRAPHIC" as const);
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        /** 逐張串行：降低 gpt-image-2 尖峰失敗率；單帳戶 API 配額足時也不圖並發擠爆。 */
+        const coverTranslatorLogLabel = `Vertex · ${resolveVertexCoverTranslationModelName()}（英文化，无 OpenAI）`;
+        /** 逐張串行：降低同題多張對 Vertex 生圖的尖峰失敗率。 */
         const pool = 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 串行（并发=1）· 单价=${costPerImage}点`;
 
@@ -4771,11 +4777,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           appendImageFlowLog(
             flowLog,
-            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ callGemini31ProForImagePrompt(${translatorLogLabel}) → generateGptImage2FromRawEnglishPrompt 9:16`,
+            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ ${coverTranslatorLogLabel} → Vertex Nano Banana 2 9:16 · 无二次兜底`,
           );
           appendImageFlowLog(
             flowLog,
-            `说明: 中文语境供翻译模型吸收；产出一条英文视觉指令；GPT-IMAGE-2 只读英文；画内简中字由英文指令约束`,
+            `说明: 豎封英文化僅 Vertex（預設 Gemini 2.5 Pro）；出图僅 NB2；不調 OpenAI、無版式二次生圖`,
           );
           let url: string | null = null;
           let fallbackUsed = false;
@@ -4792,12 +4798,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               batchSceneDiversity:
                 input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
             });
-            appendImageFlowLog(flowLog, `[步骤1] 调用 ${translatorLogLabel} 生成英文 prompt …`);
-            const englishPrompt = await callGemini31ProForImagePrompt(geminiTask, {
-              translator: imagePromptTranslator,
-              flowLog,
-              pipelineStatCtx: { pipeline: "topic_cover" },
-            });
+            appendImageFlowLog(flowLog, `[步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`);
+            const englishPrompt = await translatePlatformTopicCoverToEnglishVertexOnly(geminiTask, flowLog);
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             const trimmedEn = String(englishPrompt || "").trim();
             if (!trimmedEn) {
@@ -4806,7 +4808,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1b] 无智能提炼 · 英文化原文直接进 GPT-IMAGE-2（chars=${trimmedEn.length}）`,
+              `[步骤1b] 无智能提炼 · 英文化原文直接进 Nano Banana 2（chars=${trimmedEn.length}）`,
             );
             const safePrompt = trimmedEn;
             promptStats = buildImagePromptStats(safePrompt);
@@ -4814,11 +4816,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               flowLog,
               `[统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
             );
-            appendImageFlowLog(flowLog, "[步骤2] 调用 GPT-IMAGE-2（子步骤见下组日志）…");
-            url = await generateGptImage2FromRawEnglishPrompt({
+            appendImageFlowLog(flowLog, "[步骤2-NB2] Vertex Nano Banana 2（子步骤见下组日志）…");
+            url = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
               englishPrompt: safePrompt,
-              aspectRatio: "9:16",
-              gcsSubdir: "platform_topic_batch_reference",
               flowLog,
             });
           } catch (e: unknown) {
@@ -4830,22 +4830,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             );
           }
           if (!url) {
-            appendImageFlowLog(flowLog, "[步骤3] 主路径无图 → generateImageGpt2WithImagenFallback（Typography / Nano Banana 2 版式兜底）");
-            try {
-              fallbackUsed = true;
-              url = await generateImageGpt2WithImagenFallback({
-                title: opt.topicHook,
-                copywriting: [batchCoverPersona ? `【封面身份锚点】\n${batchCoverPersona}` : "", body].filter(Boolean).join("\n\n"),
-                mode,
-                isTrial: false,
-                flowLog,
-              });
-            } catch (fallbackErr) {
-              const msg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-              appendImageFlowLog(flowLog, `[步骤3] 兜底异常: ${msg}`);
-              console.warn(`[mvAnalysis.generateAllPlatformTopicImages] 兜底异常 ${s.id}:`, fallbackErr);
-              url = null;
-            }
+            appendImageFlowLog(flowLog, "[步骤3] 主路径无图 · 已關閉二次兜底 · 本条失败");
           }
           appendImageFlowLog(flowLog, url ? "✓ 本条结束：已得到 imageUrl" : "✗ 本条结束：仍无 URL");
           const creationId = sceneToCreationId.get(s.id);
