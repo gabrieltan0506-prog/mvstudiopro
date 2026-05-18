@@ -1,9 +1,10 @@
-const DEFAULT_FLY_ORIGIN = "https://mvstudiopro.fly.dev";
+/** 正式站預設 API 主機（須 `SESSION_COOKIE_DOMAIN=.mvstudiopro.com`）。 */
+const DEFAULT_CANONICAL_API_ORIGIN = "https://api.mvstudiopro.com";
+/** Preview 兜底。 */
+const DEFAULT_FLY_DEV_ORIGIN = "https://mvstudiopro.fly.dev";
 
 /**
- * 正式域名走 Vercel 托管、由 vercel.json 将 `/api/*` rewrite 到 Fly 时，
- * 边缘对外部源有超时上限；Seedance 等单连接长耗时 fal.subscribe 易触发 502（如 ROUTER_EXTERNAL_TARGET_*）。
- * Fly 已对 mvstudiopro.com / www 放行 CORS，正式站可直连 Fly 绕开该层超时。
+ * 長請求須直連 API 主機，避免 `www`→Vercel→Fly 反代逾時。
  */
 export function longJobsFlyOrigin(): string | null {
   const fromEnv = String(import.meta.env.VITE_FLY_API_ORIGIN || "")
@@ -15,10 +16,10 @@ export function longJobsFlyOrigin(): string | null {
 
   const h = window.location.hostname.toLowerCase();
   if (h === "mvstudiopro.com" || h === "www.mvstudiopro.com") {
-    return DEFAULT_FLY_ORIGIN;
+    return DEFAULT_CANONICAL_API_ORIGIN;
   }
   if (h.endsWith(".vercel.app")) {
-    return DEFAULT_FLY_ORIGIN;
+    return DEFAULT_FLY_DEV_ORIGIN;
   }
   return null;
 }
