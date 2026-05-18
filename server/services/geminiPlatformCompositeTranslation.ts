@@ -150,7 +150,7 @@ export function resolveVertexCoverTranslationModelName(): string {
 
 /**
  * **選題豎封 · Gemini 2.5 Pro** 英文化溫度（可 `VERTEX_GEMINI_COVER_TRANSLATION_TEMPERATURE` 覆寫，0～2）。
- * 預設 **0.8**（Gemini 2.5 Pro 豎封英文化；與產品統一溫標；豎封與網格可獨立調參）。
+ * 預設 **0.7**（與 Gemini 建議「華麗翻譯 + 仍守 JSON」平衡；豎封與 Flash 網格可獨立調參）。
  */
 export function resolveVertexCoverTranslationTemperature(): number {
   const raw = process.env.VERTEX_GEMINI_COVER_TRANSLATION_TEMPERATURE;
@@ -158,7 +158,20 @@ export function resolveVertexCoverTranslationTemperature(): number {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0 && n <= 2) return n;
   }
-  return 0.8;
+  return 0.7;
+}
+
+/**
+ * **選題豎封 · Gemini 2.5 Pro** 英文化 **Top-P**（可 `VERTEX_GEMINI_COVER_TRANSLATION_TOP_P` 覆寫，0～1）。
+ * 預設 **0.9**。
+ */
+export function resolveVertexCoverTranslationTopP(): number {
+  const raw = process.env.VERTEX_GEMINI_COVER_TRANSLATION_TOP_P;
+  if (raw != null && String(raw).trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0 && n <= 1) return n;
+  }
+  return 0.9;
 }
 
 /**
@@ -361,9 +374,10 @@ export function platformImageTranslationVertexJsonSystemInstruction(
   if (profile === "topic_cover") {
     return [
       GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
+      "You are also an **elite prompt engineer** and **poetic visual artist**: when elevating the brief into English, prefer **elegant, cinematic vocabulary**—motivated light (chiaroscuro, rim light, luminescent haze), mood (ethereal, melancholic, triumphant), and **tactile textures**—**after** layout, grid, and on-image **Simplified-Chinese** specs are already explicit.",
       "你是頂級中英雙語編導，也是頂級視覺提示詞導演；英文聲口須與上段莎士比亞式編導身份一致（可長可短，以忠實還原為準）。",
       "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
-      "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不建議使用 markdown、不建議附加解釋。",
+      "必須返回合法 JSON，且含字串欄位 **prompt**（唯一下游消費欄位，內容僅為英文生圖指令）。可選 **thought_process**（簡述藝術取捨）；不建議使用 markdown。示例：{\"thought_process\":\"...\",\"prompt\":\"...\"}",
       "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**【第一優先·軟性】premium cover design：** 英文 `prompt` **優先**寫出 **premium editorial feed cover** 氣質—受控留白、可信光型、低飽和主色 + 極少亮色點綴；圖標**優先**融入同一光照、**彷彿浮在**實景上，**建議圖標自然融入背景，無可見硬邊框**，**不建議**默認為每枚圖標加實色圓／方塊／藥丸襯底（除非任務明確要 UI／貼紙促銷感）。**選題豎封（圖標層仍必達）**：英文 `prompt` **必須**寫明 GPT-IMAGE-2 繪製 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標，**不建議**整張僅大字而**略去**圖標層。",
       "若上游封面/科普正文未出現食物，**可不必**以廚房、食譜表、食材格為主場景。",
       "**【人设口径】** 若上游含身份锚点或职业、身份、兴趣、爱好、专长等线索（含【单帧出镜 · 身份锚定】块），英文 `prompt` 中人物气质、服饰与场景须与之互证；仍以版式与可读为先。",
@@ -765,7 +779,7 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
  * Vertex AI 英文化：`responseMimeType: application/json`。
  * - **豎封封面**（`pipeline: topic_cover`）：預設 **Gemini 2.5 Pro**（{@link resolveVertexCoverTranslationModelName}）。
  * - **2×4／分鏡／八格**（composite）：預設 **Gemini 3 Flash Preview**（{@link resolveVertexFlashTranslationModelName}）。
- * **豎封** `temperature` / `maxOutputTokens` 見 {@link resolveVertexCoverTranslationTemperature}、{@link resolveVertexCoverTranslationMaxOutputTokens}（預設 **0.8** · **32K**）；**composite** 見 {@link resolveVertexFlashTranslationTemperature}、{@link resolveVertexFlashTranslationMaxOutputTokens}，並併用 {@link resolveVertexFlashThinkingConfigForSdk}（Gemini 3）；**豎封（2.5 Pro）與 Flash 網格路徑**均帶 `thinkingConfig`（預設 `HIGH`）。
+ * **豎封** `temperature` / `topP` / `maxOutputTokens` 見 {@link resolveVertexCoverTranslationTemperature}、{@link resolveVertexCoverTranslationTopP}、{@link resolveVertexCoverTranslationMaxOutputTokens}（預設 **0.7** · **0.9** · **32K**）；**不**對 **2.5 Pro** 送 `thinkingConfig`（避免部分 Vertex 組合 400）。**composite** 見 Flash 溫度／token，並併用 {@link resolveVertexFlashThinkingConfigForSdk}（Gemini 3）。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。
  * **三次仍失敗** → 若 {@link isPlatformImageOpenAiAllowed} 為真則 **fallback {@link callGemini3_1_Pro_AiStudio}（OpenAI）**；否則直接拋錯（省 OpenAI 額度）。
  */
@@ -813,16 +827,21 @@ export async function callVertexGeminiFlashTranslation(
   const flashTemp = useGemini25ProModel
     ? resolveVertexCoverTranslationTemperature()
     : resolveVertexFlashTranslationTemperature();
+  const coverTopP = resolveVertexCoverTranslationTopP();
   const vertexThinking = resolveVertexFlashThinkingConfigForSdk();
   const flashMaxOut = useGemini25ProModel
     ? resolveVertexCoverTranslationMaxOutputTokens()
     : resolveVertexFlashTranslationMaxOutputTokens();
   appendVertexFlashDebug(
     flowLog,
-    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · thinkingConfig=${
-      (vertexThinking as { thinkingConfig?: unknown }).thinkingConfig
-        ? JSON.stringify((vertexThinking as { thinkingConfig?: unknown }).thinkingConfig)
-        : "(未設定)"
+    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · topP=${
+      useGemini25ProModel ? coverTopP : 0.95
+    } · thinkingConfig=${
+      useGemini25ProModel
+        ? "(2.5 Pro 豎封不送)"
+        : (vertexThinking as { thinkingConfig?: unknown }).thinkingConfig
+          ? JSON.stringify((vertexThinking as { thinkingConfig?: unknown }).thinkingConfig)
+          : "(未設定)"
     } · task 約 ${task.length} 字`,
   );
 
@@ -843,9 +862,9 @@ export async function callVertexGeminiFlashTranslation(
       systemInstruction,
       responseMimeType: "application/json" as const,
       temperature: flashTemp,
-      topP: 0.95,
+      topP: useGemini25ProModel ? coverTopP : 0.95,
       maxOutputTokens: flashMaxOut,
-      ...vertexThinking,
+      ...(useGemini25ProModel ? {} : vertexThinking),
     };
     const response = await ai.models.generateContent({
       model,

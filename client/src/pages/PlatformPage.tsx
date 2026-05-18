@@ -1705,6 +1705,8 @@ export default function PlatformPage() {
       dash: PlatformDashboard,
       snapshotSummary: Record<string, unknown>,
       windowDays: 15 | 30 | 45,
+      /** 若傳入（含 `""`），本輪入隊用該字串；省略則用當前 `focusPrompt`（手動重試 Stage 2） */
+      capturedJudgment?: string,
     ) => {
       setContentJobError(null);
       setIsContentLoading(true);
@@ -1713,8 +1715,12 @@ export default function PlatformPage() {
       setContentDebug(null);
       try {
         const supervisorTok = getSupervisorTrpcToken();
+        const ctxForJob =
+          capturedJudgment !== undefined
+            ? String(capturedJudgment).trim() || undefined
+            : focusPrompt.trim() || undefined;
         const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
-          context: focusPrompt || undefined,
+          context: ctxForJob,
           windowDays,
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
@@ -4082,7 +4088,11 @@ export default function PlatformPage() {
   );
 
   const personaSummary = useMemo(
-    () => cleanUserCopy(platformDashboard?.personaSummary || "", "把专业身份和中国文化审美结合成一个更容易创建信任的IP入口。"),
+    () =>
+      cleanUserCopy(
+        platformDashboard?.personaSummary || "",
+        "选择分析窗口，并在右侧用一两句话说明你这轮最想判断什么；我们会结合实时样本与你的企业 IP 基因，给出平台优先级与可落地建议。",
+      ),
     [platformDashboard],
   );
 
@@ -4266,6 +4276,11 @@ export default function PlatformPage() {
       return;
     }
 
+    /** 本輪 API 使用當下輸入；隨即清空右側框，避免上次長篇人設/判斷殘留影響下一輪 */
+    const capturedJudgment = String(focusPrompt || "").trim();
+    setFocusPrompt("");
+    setQuestion("");
+
     platformAnalysisEpochRef.current += 1;
     void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
     queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
@@ -4317,7 +4332,7 @@ export default function PlatformPage() {
     setIsDashboardLoading(true);
     try {
       const dashResult = await getPlatformDashboardMutation.mutateAsync({
-        context: focusPrompt || undefined,
+        context: capturedJudgment || undefined,
         windowDays: selectedWindowDays,
         snapshotSummary: snap as any,
       });
@@ -4342,7 +4357,7 @@ export default function PlatformPage() {
       };
       setIsDashboardLoading(false);
 
-      await enqueueAndPollExclusiveContent(dash, snapSummary, selectedWindowDays);
+      await enqueueAndPollExclusiveContent(dash, snapSummary, selectedWindowDays, capturedJudgment);
     } catch (e) {
       console.warn("[PlatformPage] handleAnalyze chain error:", e);
       const msg = e instanceof Error ? e.message : String(e);

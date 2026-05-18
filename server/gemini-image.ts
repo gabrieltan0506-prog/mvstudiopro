@@ -1,6 +1,7 @@
 /**
- * Vertex AI image generation（平台政策：**僅 Nano Banana 2**，`gemini-3.1-flash-image-preview`）。
- * 與 **`VERTEX_IMAGE_MODEL_FLASH`** 對應區域：`getVertexImageFlashLocation`。
+ * Vertex AI image generation（平台政策：**僅 Nano Banana 2**）。
+ * **模型 ID 固定為** {@link VERTEX_NANO_BANANA_2_MODEL}`gemini-3.1-flash-image-preview`（`generateContent` + `responseModalities: IMAGE`；**不可**改用 `gemini-3-flash-image` 等未對齊本鏈的別名）。
+ * 與 **`VERTEX_IMAGE_MODEL_FLASH`**（僅供 Google 端遷移時覆寫）及區域 `getVertexImageFlashLocation`。
  * 像素主路徑另可走 OhMyGPT **GPT-IMAGE-2**（見 proxyImageService）；本模組不調用 `gemini-3-pro-image-preview`。
  */
 import { storagePut } from "./storage";
@@ -40,10 +41,16 @@ export interface GeminiImageResult {
   location?: string;
 }
 
+/**
+ * Vertex **Nano Banana 2** 官方（本倉）綁定模型 ID；平台出圖、proxy、TestLab 均以此為準。
+ * 勿改為 `gemini-3-flash-image`；若 Google 發布新穩定 ID，應在此統一替換並回歸測試整鏈。
+ */
+export const VERTEX_NANO_BANANA_2_MODEL = "gemini-3.1-flash-image-preview" as const;
+
 /** 僅 Nano Banana 2（Flash）；不串 Pro。`quality` 仍影響 Vertex `imageSize`（建議平台路徑傳 `2k`）。 */
 function resolveVertexNanoImageModelAndIds(): string[] {
-  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview").trim();
-  return flashModel ? [flashModel] : ["gemini-3.1-flash-image-preview"];
+  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || VERTEX_NANO_BANANA_2_MODEL).trim();
+  return flashModel ? [flashModel] : [VERTEX_NANO_BANANA_2_MODEL];
 }
 
 function shouldRetryVertexImage(status: number, json: any, rawText: string) {
