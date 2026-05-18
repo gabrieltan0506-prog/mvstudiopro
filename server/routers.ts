@@ -467,11 +467,11 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
 
 /**
  * Stage 2 `buildPlatformContent`：送進各家 API 的 **completion / max_output 上限**，與線路標籤無關。  
- * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 32768（4 條長腳本 + 維度 5 場景約束後易更長；仍可用環境變數覆寫），下限 4096。
+ * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 65536（四條長腳本 + 人設／場景約束下輸出較長，降低 JSON 截斷；仍可用環境變數覆寫至上限 65536），下限 4096。
  */
 const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "32768");
-  if (!Number.isFinite(raw) || raw < 4096) return 32768;
+  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "65536");
+  if (!Number.isFinite(raw) || raw < 4096) return 65536;
   return Math.min(65536, Math.floor(raw));
 })();
 
