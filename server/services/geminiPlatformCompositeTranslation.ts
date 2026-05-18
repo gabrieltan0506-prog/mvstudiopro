@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
-import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled } from "../config/platformSwitches.js";
+import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled, isPlatformImageOpenAiAllowed } from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   logSheetChineseStagingBeforeTranslate,
@@ -20,6 +20,8 @@ export function normalizeCompositeSheetKind(
 export type Gpt54PlatformImagePromptStatCtx = {
   pipeline:
     | "topic_cover"
+    /** 豎封英文化兜底：與 `topic_cover` 同源 JSON system，模型改為 {@link resolveVertexFlashTranslationModelName}。 */
+    | "topic_cover_flash"
     | "composite_sheet"
     | "topic_cover_composite_bundle"
     | "other";
@@ -132,11 +134,48 @@ export function resolveVertexFlashTranslationLocation(): string {
   return loc || "global";
 }
 
-/** 預設 Vertex Flash 翻譯模型 ID。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
+/** 預設 Vertex Flash 翻譯模型 ID（**2×4／分鏡／八格 composite**）。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
 export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3-flash-preview";
 
 export function resolveVertexFlashTranslationModelName(): string {
   return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
+}
+
+/** **選題豎封封面**英文化：預設 **Gemini 2.5 Pro**（與 2×4 的 Flash 分離）。可 `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` 覆寫。 */
+export const DEFAULT_VERTEX_COVER_TRANSLATION_MODEL = "gemini-2.5-pro";
+
+export function resolveVertexCoverTranslationModelName(): string {
+  return String(process.env.VERTEX_GEMINI_COVER_TRANSLATION_MODEL || DEFAULT_VERTEX_COVER_TRANSLATION_MODEL).trim();
+}
+
+/**
+ * **選題豎封 · Gemini 2.5 Pro** 英文化溫度（可 `VERTEX_GEMINI_COVER_TRANSLATION_TEMPERATURE` 覆寫，0～2）。
+ * 預設 **0.9**（與 Flash 預設一致；豎封與網格可獨立調參）。
+ */
+export function resolveVertexCoverTranslationTemperature(): number {
+  const raw = process.env.VERTEX_GEMINI_COVER_TRANSLATION_TEMPERATURE;
+  if (raw != null && String(raw).trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0 && n <= 2) return n;
+  }
+  return 0.9;
+}
+
+/**
+ * **選題豎封 · Gemini 2.5 Pro** 英文化 **`maxOutputTokens`**（可 `VERTEX_GEMINI_COVER_TRANSLATION_MAX_TOKENS` 覆寫）。
+ * 預設 **32768**（32K）；合法範圍 **4096～65536**。
+ */
+export function resolveVertexCoverTranslationMaxOutputTokens(): number {
+  const fallback = 32768;
+  const raw = process.env.VERTEX_GEMINI_COVER_TRANSLATION_MAX_TOKENS;
+  if (raw != null && String(raw).trim() !== "") {
+    const n = Math.floor(Number(raw));
+    if (Number.isFinite(n)) {
+      const clamped = Math.min(65536, Math.max(4096, n));
+      return clamped;
+    }
+  }
+  return fallback;
 }
 
 /**
@@ -253,7 +292,9 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 export type PlatformImageTranslationProfile = "topic_cover" | "composite";
 
 function resolveTranslationProfile(ctx?: Gpt54PlatformImagePromptStatCtx): PlatformImageTranslationProfile {
-  return ctx?.pipeline === "topic_cover" ? "topic_cover" : "composite";
+  const p = ctx?.pipeline;
+  if (p === "topic_cover" || p === "topic_cover_flash") return "topic_cover";
+  return "composite";
 }
 
 /**
@@ -343,7 +384,7 @@ export function platformImageTranslationVertexJsonSystemInstruction(
 }
 
 /**
- * GPT 5.4 三轮耗尽后：**Vertex Gemini 3 Flash Preview** 再試三輪（同源 JSON **`prompt`** 契約；**不再**呼叫 3.1 Pro）。
+ * GPT 5.4 三轮耗尽后：**Vertex** 再試三輪（**豎封**預設 **Gemini 2.5 Pro**，**2×4/composite** 預設 **Gemini 3 Flash Preview**；同源 JSON **`prompt`** 契約）。
  */
 async function callVertexGeminiFlashTranslationAfterGptTripleFail(
   translationTask: string,
@@ -353,15 +394,19 @@ async function callVertexGeminiFlashTranslationAfterGptTripleFail(
   const task = String(translationTask || "").trim();
   if (!task) {
     appendGpt54TranslationDebug(flowLog, `[Vertex·Flash·GPT後兜底] 上游 task 为空`);
-    throw new Error("Gemini 3 Flash Preview 兜底：上游 task 为空");
+    throw new Error("Vertex 英文化兜底：上游 task 为空");
   }
   const statCtx: Gpt54PlatformImagePromptStatCtx =
     translationProfile === "topic_cover"
       ? { pipeline: "topic_cover" }
       : { pipeline: "composite_sheet" };
+  const modelNameForLog =
+    translationProfile === "topic_cover"
+      ? resolveVertexCoverTranslationModelName()
+      : resolveVertexFlashTranslationModelName();
   appendGpt54TranslationDebug(
     flowLog,
-    `→ Vertex Gemini 3 Flash Preview（${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}）英文化兜底（GPT 三轮后，最多再 3 轮 Flash）`,
+    `→ Vertex 英文化兜底（${modelNameForLog} · ${resolveVertexFlashTranslationLocation()}）（GPT 三轮后，最多再 3 轮）`,
   );
   return callVertexGeminiFlashTranslation(task, flowLog, {
     pipelineStatCtx: statCtx,
@@ -450,8 +495,18 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
 
   appendVertexFlashDebug(
     flowLog,
-    `[骨架·中文视觉] extractChineseVisualBrief 開始（GPT 5.4 → JSON brief）· 輸入約 ${slice.length} 字（上限切片 ${SCRIPT_SLICE}）`,
+    `[骨架·中文视觉] extractChineseVisualBrief 開始 · 輸入約 ${slice.length} 字（上限切片 ${SCRIPT_SLICE}）`,
   );
+
+  if (!isPlatformImageOpenAiAllowed()) {
+    appendVertexFlashDebug(
+      flowLog,
+      `[骨架·中文视觉] OpenAI 未啟用（未設 PLATFORM_IMAGE_ALLOW_OPENAI=1）· 跳過 GPT 骨架 · 回傳原文切片`,
+    );
+    return slice.slice(0, CHINESE_VISUAL_BRIEF_MAX_CHARS);
+  }
+
+  appendVertexFlashDebug(flowLog, `[骨架·中文视觉] GPT 5.4 → JSON brief …`);
 
   try {
   const response = await invokeLLM({
@@ -707,13 +762,12 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 }
 
 /**
- * 探索 / 極速：Vertex AI **Gemini 3 Flash Preview** + `responseMimeType: application/json`。
- * `temperature` 見 {@link resolveVertexFlashTranslationTemperature}（預設 0.9，偏創意）；`thinkingConfig` 見 {@link resolveVertexFlashThinkingConfigForSdk}（預設思考層級 **HIGH**）；`maxOutputTokens` 見 {@link resolveVertexFlashTranslationMaxOutputTokens}（預設 **32768**）。
- * 區域見 {@link resolveVertexFlashTranslationLocation}（預設 **global**；可用環境變數改）。
- * 模型預設 {@link DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL}，可用 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。
+ * Vertex AI 英文化：`responseMimeType: application/json`。
+ * - **豎封封面**（`pipeline: topic_cover`）：預設 **Gemini 2.5 Pro**（{@link resolveVertexCoverTranslationModelName}）。
+ * - **2×4／分鏡／八格**（composite）：預設 **Gemini 3 Flash Preview**（{@link resolveVertexFlashTranslationModelName}）。
+ * **豎封** `temperature` / `maxOutputTokens` 見 {@link resolveVertexCoverTranslationTemperature}、{@link resolveVertexCoverTranslationMaxOutputTokens}（預設 0.9 · 32K）；**composite** 見 {@link resolveVertexFlashTranslationTemperature}、{@link resolveVertexFlashTranslationMaxOutputTokens}，並併用 {@link resolveVertexFlashThinkingConfigForSdk}（Gemini 3）；**豎封**不送 thinking 欄位，避免與 2.5 Pro 不相容。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。
- * **三次仍失敗** → **fallback {@link callGemini3_1_Pro_AiStudio}（OpenAI GPT 5.4，同樣最多 3 輪，且不再回呼 Vertex）**。
- * @param opts.compositeTranslationStrict 分鏡/八格專用：GPT 三輪仍失敗時改 **拋出** {@link PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}。
+ * **三次仍失敗** → 若 {@link isPlatformImageOpenAiAllowed} 為真則 **fallback {@link callGemini3_1_Pro_AiStudio}（OpenAI）**；否則直接拋錯（省 OpenAI 額度）。
  */
 export async function callVertexGeminiFlashTranslation(
   translationTask: string,
@@ -721,14 +775,16 @@ export async function callVertexGeminiFlashTranslation(
   opts?: {
     compositeTranslationStrict?: boolean;
     pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx;
-    /** `throw`：Flash 三輪仍失敗時直接拋錯（供 GPT 三輪後專用兜底，避免再回呼 GPT）。預設 `gpt`。 */
+    /** `throw`：Vertex 輪次耗盡後直接拋錯，不呼叫 OpenAI。 */
     afterFlashFailure?: "gpt" | "throw";
+    /** 同一模型 Vertex 調用上限（預設 3；豎封 Pro 首段可設 1 以便交給 Flash 兜底）。 */
+    maxVertexAttempts?: number;
   },
 ): Promise<string> {
   const task = String(translationTask || "").trim();
   if (!task) {
     appendVertexFlashDebug(flowLog, `輸入 task 為空 → 中止`);
-    throw new Error("Vertex Flash 翻译：上游 task 为空");
+    throw new Error("Vertex 英文化：上游 task 为空");
   }
 
   let project: string;
@@ -739,27 +795,38 @@ export async function callVertexGeminiFlashTranslation(
     throw e instanceof Error ? e : new Error(String(e));
   }
 
+  const ctxPipe = opts?.pipelineStatCtx?.pipeline;
+  const useGemini25ProModel = ctxPipe === "topic_cover";
+
+  const profile = resolveTranslationProfile(opts?.pipelineStatCtx);
+  const model = useGemini25ProModel
+    ? resolveVertexCoverTranslationModelName()
+    : resolveVertexFlashTranslationModelName();
   const location = resolveVertexFlashTranslationLocation();
-  const model = resolveVertexFlashTranslationModelName();
   const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
   const authMode = authOpts ? "GOOGLE_APPLICATION_CREDENTIALS_JSON(service_account)" : "ADC/運行環境默認憑證";
 
   appendVertexFlashDebug(
     flowLog,
-    `── Flash Live 英文化開始 ── project=${project} · location=${location} · model=${model} · auth=${authMode}`,
+    `── Vertex 英文化開始 ── project=${project} · location=${location} · model=${model} · ctxPipeline=${ctxPipe ?? "n/a"} · profile=${profile} · auth=${authMode}`,
   );
-  const flashTemp = resolveVertexFlashTranslationTemperature();
-  const flashThinking = resolveVertexFlashThinkingConfigForSdk();
-  const flashMaxOut = resolveVertexFlashTranslationMaxOutputTokens();
+  const flashTemp = useGemini25ProModel
+    ? resolveVertexCoverTranslationTemperature()
+    : resolveVertexFlashTranslationTemperature();
+  const vertexThinking = useGemini25ProModel ? {} : resolveVertexFlashThinkingConfigForSdk();
+  const flashMaxOut = useGemini25ProModel
+    ? resolveVertexCoverTranslationMaxOutputTokens()
+    : resolveVertexFlashTranslationMaxOutputTokens();
   appendVertexFlashDebug(
     flowLog,
     `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · thinkingConfig=${
-      flashThinking.thinkingConfig ? JSON.stringify(flashThinking.thinkingConfig) : "(未設定)"
+      (vertexThinking as { thinkingConfig?: unknown }).thinkingConfig
+        ? JSON.stringify((vertexThinking as { thinkingConfig?: unknown }).thinkingConfig)
+        : "(未設定)"
     } · task 約 ${task.length} 字`,
   );
 
-  /** Flash：`topic_cover` 與 5/11 晚輕量 system 一致；`composite` 為網格執行優先。 */
-  const profile = resolveTranslationProfile(opts?.pipelineStatCtx);
+  /** `topic_cover` 與 5/11 晚輕量 system 一致；`composite` 為網格執行優先。 */
   const systemInstruction = platformImageTranslationVertexJsonSystemInstruction(profile);
 
   appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
@@ -778,7 +845,7 @@ export async function callVertexGeminiFlashTranslation(
       temperature: flashTemp,
       topP: 0.95,
       maxOutputTokens: flashMaxOut,
-      ...flashThinking,
+      ...vertexThinking,
     };
     const response = await ai.models.generateContent({
       model,
@@ -831,11 +898,16 @@ export async function callVertexGeminiFlashTranslation(
     }
 
     appendVertexFlashDebug(flowLog, `prompt 空且裸字串不可用 → 本次失敗`);
-    throw new Error("Vertex Flash 翻译：模型未返回有效 prompt（JSON prompt 字段为空且无法从响应文本恢复）");
+    throw new Error("Vertex 英文化：模型未返回有效 prompt（JSON prompt 字段为空且无法从响应文本恢复）");
   };
 
   let lastFailure: unknown = null;
-  for (let i = 0; i < 3; i++) {
+  const configuredAttempts = opts?.maxVertexAttempts;
+  const maxAttempts =
+    typeof configuredAttempts === "number" && Number.isFinite(configuredAttempts)
+      ? Math.min(8, Math.max(1, Math.floor(configuredAttempts)))
+      : 3;
+  for (let i = 0; i < maxAttempts; i++) {
     if (i === 1) {
       appendVertexFlashDebug(flowLog, "[Flash·翻译] 第 1 次無效，等待 3000ms 後第 2 次…");
       await new Promise((r) => setTimeout(r, 3000));
@@ -851,13 +923,21 @@ export async function callVertexGeminiFlashTranslation(
       return out;
     } catch (e: unknown) {
       lastFailure = e;
-      appendVertexFlashDebug(flowLog, `[Flash·翻译] 第 ${i + 1}/3 次失败 · ${formatErrForVertexDebug(e)}`);
+      appendVertexFlashDebug(flowLog, `[Flash·翻译] 第 ${i + 1}/${maxAttempts} 次失败 · ${formatErrForVertexDebug(e)}`);
     }
   }
 
-  appendVertexFlashDebug(flowLog, `[Flash·翻译] 已 3 次仍失败 · ${formatErrForVertexDebug(lastFailure)}`);
-  if (opts?.afterFlashFailure === "throw") {
-    appendVertexFlashDebug(flowLog, `[Flash·翻译] afterFlashFailure=throw · 不再回退 OpenAI · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`);
+  appendVertexFlashDebug(
+    flowLog,
+    `[Flash·翻译] 已 ${maxAttempts} 次仍失败 · ${formatErrForVertexDebug(lastFailure)}`,
+  );
+  if (opts?.afterFlashFailure === "throw" || !isPlatformImageOpenAiAllowed()) {
+    appendVertexFlashDebug(
+      flowLog,
+      !isPlatformImageOpenAiAllowed()
+        ? `[Flash·翻译] OpenAI 未啟用（未設 PLATFORM_IMAGE_ALLOW_OPENAI=1）· 不再回退 · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`
+        : `[Flash·翻译] afterFlashFailure=throw · 不再回退 OpenAI · ${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}`,
+    );
     throw new Error(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
   }
   appendVertexFlashDebug(
@@ -871,6 +951,38 @@ export async function callVertexGeminiFlashTranslation(
   return await callGemini3_1_Pro_AiStudio(task, flowLog, opts?.pipelineStatCtx, {
     skipVertexFallback: true,
     compositeTranslationStrict: Boolean(opts?.compositeTranslationStrict),
+  });
+}
+
+/**
+ * 選題 **豎封**英文化：**先** {@link resolveVertexCoverTranslationModelName}（預設 **gemini-2.5-pro**）**單次**；
+ * 失敗則 **Gemini 3 Flash Preview**（`topic_cover_flash`，同源豎封 JSON 契約）最多 **3** 次間隔重試；
+ * **不**回退 OpenAI（`afterFlashFailure=throw`；且預設 {@link isPlatformImageOpenAiAllowed} 為關）。
+ */
+export async function translatePlatformTopicCoverToEnglishVertexOnly(
+  translationTask: string,
+  flowLog?: string[],
+): Promise<string> {
+  const task = String(translationTask || "").trim();
+  if (!task) {
+    appendVertexFlashDebug(flowLog, `輸入 task 為空 → 中止`);
+    throw new Error("Vertex 英文化：上游 task 为空");
+  }
+  try {
+    return await callVertexGeminiFlashTranslation(task, flowLog, {
+      pipelineStatCtx: { pipeline: "topic_cover" },
+      afterFlashFailure: "throw",
+      maxVertexAttempts: 1,
+    });
+  } catch (e) {
+    appendVertexFlashDebug(
+      flowLog,
+      `[豎封·兜底] ${resolveVertexCoverTranslationModelName()} 單次未成功 → ${resolveVertexFlashTranslationModelName()} · ${formatErrForVertexDebug(e)}`,
+    );
+  }
+  return callVertexGeminiFlashTranslation(task, flowLog, {
+    pipelineStatCtx: { pipeline: "topic_cover_flash" },
+    afterFlashFailure: "throw",
   });
 }
 
@@ -902,6 +1014,14 @@ export async function callGemini3_1_Pro_AiStudio(
   statCtx?: Gpt54PlatformImagePromptStatCtx,
   opts?: { skipVertexFallback?: boolean; compositeTranslationStrict?: boolean },
 ): Promise<string> {
+  if (!isPlatformImageOpenAiAllowed()) {
+    appendGpt54TranslationDebug(flowLog, "[英文化] OpenAI 未啟用 · 改走 Vertex（設 PLATFORM_IMAGE_ALLOW_OPENAI=1 可恢復 GPT）");
+    return callVertexGeminiFlashTranslation(prompt, flowLog, {
+      pipelineStatCtx: statCtx,
+      afterFlashFailure: "throw",
+    });
+  }
+
   const skipVertexFallback = Boolean(opts?.skipVertexFallback);
   const compositeTranslationStrict = Boolean(opts?.compositeTranslationStrict);
   const translationProfile = resolveTranslationProfile(statCtx);
@@ -1155,6 +1275,11 @@ export async function translateBundleCoverAndCompositeEnglishPair(options: {
   compositeTranslationTask: string;
   flowLog?: string[];
 }): Promise<{ coverEn: string; compositeEn: string }> {
+  if (!isPlatformImageOpenAiAllowed()) {
+    throw new Error(
+      "套裝併翻目前僅實作 OpenAI 單次 JSON；已關閉（設 PLATFORM_IMAGE_ALLOW_OPENAI=1）。请改用串行 cover 与 2×4 英文化。",
+    );
+  }
   const flowLog = options.flowLog;
   const coverChars = String(options.coverTranslationTask || "").length;
   const compChars = String(options.compositeTranslationTask || "").length;
@@ -1437,6 +1562,16 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
   });
 
   if (isPlatformWeekendSurvivalModeEnabled()) {
+    if (!isPlatformImageOpenAiAllowed()) {
+      appendVertexFlashDebug(
+        flowLog,
+        "[生存模式] OpenAI 未啟用 · 改 Vertex Flash ×3 · compositeTranslationStrict",
+      );
+      return callVertexGeminiFlashTranslation(task, flowLog, {
+        ...compositeFlashOpts,
+        afterFlashFailure: "throw",
+      });
+    }
     appendVertexFlashDebug(
       flowLog,
       "[生存模式] 強制 OpenAI 英文化鏈（忽略 engine / translator 選項）· compositeTranslationStrict",
@@ -1464,6 +1599,16 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
 
   if (options.engine === "gemini31flash") {
     if (isPlatformWeekendGcpEscape()) {
+      if (!isPlatformImageOpenAiAllowed()) {
+        appendVertexFlashDebug(
+          flowLog,
+          "[GCP避險] OpenAI 未啟用 · engine=gemini31flash 仍走 Vertex Flash",
+        );
+        return callVertexGeminiFlashTranslation(task, flowLog, {
+          ...compositeFlashOpts,
+          afterFlashFailure: "throw",
+        });
+      }
       appendVertexFlashDebug(
         flowLog,
         "[GCP避險] engine=gemini31flash 已改走 GPT 5.4（跳过 Vertex Flash）",

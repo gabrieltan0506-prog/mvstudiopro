@@ -1,7 +1,7 @@
 /**
- * 默认：Stage2 = OpenAI，**平台图 = GCS**（`PLATFORM_IMAGE_STORAGE` 未设时）。
- * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。对照：`PLATFORM_STAGE2_LLM=vertex`；`PLATFORM_IMAGE_STORAGE=gcs`。
- * 换 OpenAI 模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5）。
+ * 默认：Stage2 = **Vertex Gemini**（`gemini-3.1-pro-preview`，備援 `gemini-2.5-pro`）；**平台图 = GCS**。
+ * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。OpenAI 文案：設 `PLATFORM_STAGE2_LLM=openai`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
+ * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
  *
@@ -39,10 +39,10 @@ export function isPlatformWeekendSurvivalModeEnabled(): boolean {
 }
 
 /**
- * Vertex / Gemini 3.1 Pro（Stage 2 長文鏈）暫不可用時為 `true`，強制 Stage2 → OpenAI。
- * 下週 Vertex 就緒後改 `false`，或保持 `true` 並設環境變數 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1` 放行 vertex 模式。
+ * Vertex / Gemini Stage 2 關閉時為 `true`，強制 Stage2 → OpenAI（應急）。
+ * 正常運維請維持 `false`；若單獨關閉可改 `true` 並視需要設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`。
  */
-export const PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED = true;
+export const PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED = false;
 
 /**
  * **主開關：** `true` = 平台 Stage2/存圖/英文化兜底可按 env 走 Vertex·GCS；`false` = 強制避險（OpenAI 等；存圖見 `PLATFORM_IMAGE_STORAGE`）。與語音辨識等獨立服務無關。
@@ -72,21 +72,30 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 
 /**
  * 平台頁 **2×4 / 八格** 合成出圖主引擎。
- * - **`gpt_image2`（環境／相容預設）**：**OhMyGPT** → **fal** GPT‑Image‑2 → 可選 **NB2** 兜底（受 {@link isPlatformVertexNanoBanana2FallbackEnabled} 約束）。
- * - **`nano_banana_2`**：略過 GPT‑Image‑2，直接 **Vertex Nano Banana 2**（16:9·2K）；需 Vertex 配置且非 GCP 避險。
+ * - **`nano_banana_2`（程式預設）**：**僅** Vertex **Nano Banana 2**（16:9·2K），略過 GPT‑Image‑2。
+ * - **`gpt_image2`**：保留相容；**OhMyGPT** → **fal** GPT‑Image‑2 → 可選 NB2 兜底（需環境顯式設 `PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2`）。
  *
- * 部署：`PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2` 或 `nano_banana_2`（別名含 `gpt-image-2`、`nb2`、`vertex`）。
+ * 部署：`PLATFORM_COMPOSITE_SHEET_ENGINE=nano_banana_2` 或 `gpt_image2`（別名含 `gpt-image-2`、`nb2`、`vertex`）。
  *
- * **請求覆寫：** 前端或 worker 可傳 `compositeImageEngine`；若為 `gpt_image2` / `nano_banana_2` 則 **優先於** 環境變數。
+ * **請求覆寫：** 前端或 worker 可傳 `compositeImageEngine`；若為 `gpt_image2` / `nano_banana_2` 則 **優先於** 環境變數（但見 {@link PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED}）。
  */
 export type PlatformCompositeSheetImageEngine = "gpt_image2" | "nano_banana_2";
 
-/** 未設 `PLATFORM_COMPOSITE_SHEET_ENGINE`、且無請求覆寫時的預設：與既有 OhMyGPT→fal 主鏈一致。 */
-export const PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT: PlatformCompositeSheetImageEngine = "gpt_image2";
+/** 未設 `PLATFORM_COMPOSITE_SHEET_ENGINE`、且無請求覆寫時的預設：Vertex Nano Banana 2（暫停 GPT‑Image‑2 主鏈）。 */
+export const PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT: PlatformCompositeSheetImageEngine = "nano_banana_2";
+
+/**
+ * **`true`**：平台頁 2×4／八格**一律** Nano Banana 2，忽略請求與環境中的 `gpt_image2`（暫停 GPT‑Image‑2）。
+ * 恢復 GPT‑Image‑2 時改為 `false` 並重新部署。
+ */
+export const PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED = true;
 
 export function resolvePlatformCompositeSheetImageEngine(
   requested?: PlatformCompositeSheetImageEngine | null,
 ): PlatformCompositeSheetImageEngine {
+  if (PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED) {
+    return "nano_banana_2";
+  }
   if (requested === "gpt_image2" || requested === "nano_banana_2") {
     return requested;
   }
@@ -110,6 +119,15 @@ export function resolvePlatformCompositeSheetImageEngine(
     return "nano_banana_2";
   }
   return PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT;
+}
+
+/**
+ * 平台 **生圖前置鏈**（`extractChineseVisualBrief`、Vertex 失敗後的 GPT 英文化兜底等）是否允許呼叫 **OpenAI**。
+ * 預設 **false**（無額度時零 OpenAI）。設 `PLATFORM_IMAGE_ALLOW_OPENAI=1`（或 `true`/`yes`/`on`）恢復舊兜底。
+ */
+export function isPlatformImageOpenAiAllowed(): boolean {
+  const v = norm(process.env.PLATFORM_IMAGE_ALLOW_OPENAI);
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /** 平台圖/Stage2 相關避險（關閉主開關、週末旗標、billing/環境變數）。不影響語音或其它非平台管線。 */
