@@ -1501,7 +1501,7 @@ export default function PlatformPage() {
   /** 一键封面：前端异步逐张生成（单张串行） */
   const [batchGeneratingCoverIds, setBatchGeneratingCoverIds] = useState<Set<string>>(() => new Set());
   const [isSequentialCoverBatchGenerating, setIsSequentialCoverBatchGenerating] = useState(false);
-  /** 一键 2×4 / 八格图文：串行逐张合成（与单卡共用一个 mutation，批量期间抑制逐张 toast） */
+  /** 一键 2×4 / 八格：逐题入队后端异步任务，每题 pollJobUntilTerminal 至终态再发下一题（与封面批量一致；批量时禁用下方单槽轮询 effect） */
   const [isSequentialCompositeBatchGenerating, setIsSequentialCompositeBatchGenerating] = useState(false);
   /** 选题套装：竖版封面 + 2×4/八格 · 客户端逐选题串行（每题 worker 内双链并发） */
   const [isSequentialCoverCompositeBundleBatchGenerating, setIsSequentialCoverCompositeBundleBatchGenerating] =
@@ -2623,7 +2623,6 @@ export default function PlatformPage() {
         }
       } else if ((res as any).isAsync) {
         setCompositeAwaitingJobTerminal(true);
-        console.log("[PlatformPage] composite mutation returned async pending status");
       }
     },
     onError: (error, variables, ctx) => {
@@ -2694,7 +2693,7 @@ export default function PlatformPage() {
         at: new Date().toISOString(),
         kind: "batch_composite_2x4",
         lines: [
-          `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成已发起 · topicCount=${cards.length} · concurrency=1`,
+          `${new Date().toISOString()}  [客户端] 一键 2×4/八格批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
           `${new Date().toISOString()}  [等待中] ${
             cards.length === 4
               ? `四条套装合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（4 次均摊）`
@@ -2749,6 +2748,7 @@ export default function PlatformPage() {
           }),
         );
         try {
+          const progressJobId = newPlatformCompositeProgressJobId();
           const res = await runThrottledPlatformImageRequest(
             `composite:${item.id}:${compositeKind}`,
             () =>
@@ -2760,7 +2760,7 @@ export default function PlatformPage() {
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 ...optionalBoundCreationRecordId(),
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
-                progressJobId: newPlatformCompositeProgressJobId(),
+                progressJobId,
                 ...compositeDrProExtras,
                 ...(bulkFourPackSceneIds
                   ? { bulkFourSequentialSlot: slotIndex, bulkFourPackSceneIds }
@@ -2789,18 +2789,71 @@ export default function PlatformPage() {
               );
             },
           );
-          const out = String(res.imageUrl ?? "").trim();
+          let out = String(res.imageUrl ?? "").trim();
           const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
             ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
             : [];
           if (serverLines.length > 0) {
             liveLines.push(`${new Date().toISOString()}  [当前步骤] ${serverLines[serverLines.length - 1]}`);
           }
-          if (out) {
+          const asyncMeta = res as { isAsync?: boolean; progressJobId?: string };
+          const pollJobId = String(asyncMeta.progressJobId ?? progressJobId ?? "").trim();
+          if (!out && asyncMeta.isAsync && pollJobId.length >= 8) {
+            liveLines.push(
+              `${new Date().toISOString()}  [客户端] 2×4 已入队 · progressJobId=${pollJobId} · pollJobUntilTerminal 等待终态后再下一题…`,
+            );
+            setCompositeAwaitingJobTerminal(false);
+            try {
+              const j = await pollJobUntilTerminal(pollJobId, {
+                intervalMs: compositeSheetLivePollIntervalMs,
+                maxWaitMs: 18 * 60_000,
+                adaptiveBackoffAfterAttempts: 36,
+                maxIntervalMs: 8000,
+                onPoll: ({ output }) => {
+                  const flow = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)
+                    ? ((output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+                    : [];
+                  if (flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
+                },
+              });
+              const jo = j.output as { compositeImageUrl?: string; imageGenFlowLog?: string[] } | undefined;
+              const flowTail = Array.isArray(jo?.imageGenFlowLog) ? jo!.imageGenFlowLog! : [];
+              if (flowTail.length > 0) {
+                liveLines.push(`${new Date().toISOString()}  [当前步骤] ${flowTail[flowTail.length - 1]}`);
+              }
+              if (j.status === "succeeded" && jo?.compositeImageUrl) {
+                out = String(jo.compositeImageUrl).trim();
+                if (out) {
+                  if (compositeKind === "storyboard_sheet_landscape") {
+                    setPlatformStoryboardSheetMap((p) => ({ ...p, [item.id]: out }));
+                  } else {
+                    setPlatformXhsNoteMap((p) => ({ ...p, [item.id]: out }));
+                  }
+                  successCount += 1;
+                  liveLines.push(`${new Date().toISOString()}  ✓ 合成完成（异步轮询）· sceneId=${item.id}`);
+                }
+              } else if (j.status === "failed") {
+                liveLines.push(
+                  `${new Date().toISOString()}  ✗ 合成失败（异步）· sceneId=${item.id} · ${j.error || "未知错误"}`,
+                );
+              } else if (!out) {
+                liveLines.push(`${new Date().toISOString()}  ✗ 合成无图（异步终态）· sceneId=${item.id}`);
+              }
+            } catch (pollErr) {
+              liveLines.push(
+                `${new Date().toISOString()}  ✗ 异步轮询异常 · sceneId=${item.id} · ${
+                  pollErr instanceof Error ? pollErr.message : String(pollErr)
+                }`,
+              );
+            } finally {
+              setCompositeAwaitingJobTerminal(false);
+              compositeSheetLivePollCtxRef.current = null;
+              setPendingCompositeSheet(null);
+              setCompositeJobPollTrace(null);
+            }
+          } else if (out) {
             successCount += 1;
             liveLines.push(`${new Date().toISOString()}  ✓ 合成完成 · sceneId=${item.id}`);
-          } else if ((res as any).isAsync) {
-            // 异步模式不立刻报错，等轮询结束
           } else {
             liveLines.push(`${new Date().toISOString()}  ✗ 合成无图 · sceneId=${item.id}`);
           }
@@ -2819,7 +2872,7 @@ export default function PlatformPage() {
           kind: "batch_composite_2x4",
           lines: [
             ...liveLines,
-            `${new Date().toISOString()}  [客户端] 异步逐张 2×4/八格图文合成结束 · success=${successCount}/${cards.length}`,
+            `${new Date().toISOString()}  [客户端] 一键 2×4/八格批量结束 · success=${successCount}/${cards.length}`,
           ],
           meta: {
             localOpId,
@@ -2838,6 +2891,8 @@ export default function PlatformPage() {
   };
 
   useEffect(() => {
+    /** 批量 2×4 在 runSequentialCompositeBatchGeneration 内已用 pollJobUntilTerminal 等每题完成；跳过此处，避免 compositeSheetLivePollCtxRef 单槽被覆盖只轮询最后一题（易 404 / 不落图） */
+    if (isSequentialCompositeBatchGenerating) return;
     const keepPolling =
       generatePlatformCompositeSheetMutation.isPending || compositeAwaitingJobTerminal;
     if (!keepPolling) return;
@@ -2955,6 +3010,7 @@ export default function PlatformPage() {
     generatePlatformCompositeSheetMutation.isPending,
     compositeAwaitingJobTerminal,
     compositeSheetLivePollIntervalMs,
+    isSequentialCompositeBatchGenerating,
   ]);
 
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
