@@ -669,6 +669,26 @@ function isGemini31Model(modelName: string) {
   return /gemini-3\.1/i.test(modelName);
 }
 
+function isGemini31ProModel(modelName: string) {
+  return /gemini-3\.1.*pro/i.test(String(modelName || ""));
+}
+
+/** Gemini 2.5 Pro 文本（排除 Flash 等變體） */
+function isGemini25ProModel(modelName: string) {
+  const m = String(modelName || "").toLowerCase();
+  if (!m.includes("gemini-2.5") || !m.includes("pro")) return false;
+  if (m.includes("flash")) return false;
+  return true;
+}
+
+/** Gemini 3 Flash 文本（如 gemini-3-flash-preview；不含 gemini-3.1*、不含 image 生图 ID） */
+function isGemini3FlashTextModel(modelName: string) {
+  const m = String(modelName || "").toLowerCase();
+  if (!m.includes("flash") || m.includes("image")) return false;
+  if (/gemini-3\.1/i.test(m)) return false;
+  return /^gemini-3-flash/i.test(m) || /^gemini-3(?!\.1).*flash/i.test(m);
+}
+
 function isGemini25Model(modelName: string) {
   return /gemini-2\.5/i.test(modelName);
 }
@@ -685,6 +705,12 @@ function readStringEnv(name: string): string | undefined {
   return raw || undefined;
 }
 
+function normalizeVertexThinkingLevel(envName: string, fallback: string): string {
+  const raw = String(readStringEnv(envName) ?? fallback).trim().toUpperCase();
+  const allowed = new Set(["MINIMAL", "LOW", "MEDIUM", "HIGH"]);
+  return allowed.has(raw) ? raw : fallback;
+}
+
 function buildGeminiGenerationConfig(
   modelName: string,
   format: ReturnType<typeof normalizeResponseFormat>,
@@ -695,12 +721,48 @@ function buildGeminiGenerationConfig(
   const config: Record<string, unknown> = {
     ...getGeminiConfig(format),
   };
-  if (typeof maxOutputTokens === "number" && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
-    config.maxOutputTokens = maxOutputTokens;
+
+  let effectiveMax = maxOutputTokens;
+  if (effectiveMax == null || !Number.isFinite(effectiveMax) || effectiveMax <= 0) {
+    if (isGemini31ProModel(modelName)) {
+      effectiveMax = 65536;
+    } else if (isGemini25ProModel(modelName) || isGemini3FlashTextModel(modelName)) {
+      effectiveMax = 32768;
+    }
+  }
+  if (typeof effectiveMax === "number" && Number.isFinite(effectiveMax) && effectiveMax > 0) {
+    config.maxOutputTokens = Math.floor(effectiveMax);
   }
 
-  if (typeof maxOutputTokens === "number" && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
-    config.maxOutputTokens = Math.floor(maxOutputTokens);
+  if (isGemini31ProModel(modelName)) {
+    config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.9;
+    config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
+    config.thinkingConfig = {
+      includeThoughts: false,
+      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_31_THINKING_LEVEL", "HIGH"),
+    };
+    return config;
+  }
+
+  if (isGemini25ProModel(modelName)) {
+    config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.8;
+    config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
+    config.thinkingConfig = {
+      includeThoughts: false,
+      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_25_THINKING_LEVEL", "HIGH"),
+    };
+    return config;
+  }
+
+  if (isGemini3FlashTextModel(modelName)) {
+    config.temperature =
+      temperature ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TEMPERATURE") ?? readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.8;
+    config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TOP_P") ?? readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
+    config.thinkingConfig = {
+      includeThoughts: false,
+      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_3_FLASH_THINKING_LEVEL", "HIGH"),
+    };
+    return config;
   }
 
   if (isGemini31Model(modelName)) {
@@ -708,7 +770,7 @@ function buildGeminiGenerationConfig(
     config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
     config.thinkingConfig = {
       includeThoughts: false,
-      thinkingLevel: readStringEnv("VERTEX_GEMINI_31_THINKING_LEVEL") ?? "MEDIUM",
+      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_31_THINKING_LEVEL", "MEDIUM"),
     };
     return config;
   }
@@ -730,13 +792,26 @@ async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
 
+  const maxFromParamsGemini =
+    typeof params.maxTokens === "number" && Number.isFinite(params.maxTokens)
+      ? params.maxTokens
+      : typeof params.max_tokens === "number" && Number.isFinite(params.max_tokens)
+        ? params.max_tokens
+        : undefined;
+
   const response = await withLlmTimeout(
     ai.models.generateContent({
       model: target.modelName,
       contents,
       config: {
         ...(systemInstruction ? { systemInstruction } : {}),
-        ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, undefined, params.temperature, params.topP),
+        ...buildGeminiGenerationConfig(
+          target.modelName,
+          normalizedResponseFormat,
+          maxFromParamsGemini,
+          params.temperature,
+          params.topP,
+        ),
       },
     }),
     params.abortSignal,
@@ -784,9 +859,16 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
       : typeof params.max_tokens === "number" && Number.isFinite(params.max_tokens)
         ? params.max_tokens
         : undefined;
+  const modelDefaultMax = (() => {
+    if (isGemini31ProModel(target.modelName)) return 65536;
+    if (isGemini25ProModel(target.modelName)) return 32768;
+    if (isGemini3FlashTextModel(target.modelName)) return 32768;
+    return undefined;
+  })();
   const maxOutputTokens =
     maxFromParams ??
     readNumberEnv("VERTEX_GEMINI_MAX_OUTPUT_TOKENS") ??
+    modelDefaultMax ??
     (normalizedResponseFormat?.type === "json_object" || normalizedResponseFormat?.type === "json_schema"
       ? readNumberEnv("VERTEX_GEMINI_JSON_MAX_OUTPUT_TOKENS") ?? 8192
       : undefined);

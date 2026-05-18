@@ -1,5 +1,5 @@
 /**
- * 默认：Stage2 = **Vertex Gemini**（`gemini-3.1-pro-preview`，備援 `gemini-2.5-pro`）；**平台图 = GCS**。
+ * 默认：Creator Growth **Stage 2 文案 / 平台分析 Stage 2** = **`gemini-3.1-pro-preview`**；**选题竖封英文化** = **`gemini-2.5-pro`**（`VERTEX_GEMINI_COVER_TRANSLATION_MODEL`）。**平台图 = GCS**。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。OpenAI 文案：設 `PLATFORM_STAGE2_LLM=openai`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *

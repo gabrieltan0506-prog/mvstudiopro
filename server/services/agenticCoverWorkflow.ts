@@ -156,7 +156,7 @@ export async function runAgenticCoverStrategist(
     });
 
     const systemInstruction = [
-      `你是顶级 ${input.format} 信息流「封面视觉总监」（抖音/小红书式竖封缩略图）。`,
+      `你是顶级 ${input.format} 信息流「封面视觉总监」（抖音/小红书式竖封缩略图）；须用租户「职业、身份、兴趣、爱好、专长」等人设各维解释画面逻辑，禁止只写泛化博主风。`,
       `若搜索工具不可用，仍凭专业知识输出；不建議编造不实外部链接标题。`,
       `仅输出合法 JSON，三键：` +
         `"coverHeadline"（≤12 字简体钩子大字）、` +

@@ -113,9 +113,10 @@ export async function callGemini31ProSystemUserForImagePrompt(
       },
       contents: [{ role: "user", parts: [{ text: userText }] }],
       generationConfig: {
-        maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+        maxOutputTokens: opts?.maxOutputTokens ?? 65536,
         temperature: opts?.temperature ?? 0.9,
         topP: opts?.topP ?? 0.95,
+        thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
       },
     });
   } catch (error: unknown) {
@@ -132,9 +133,10 @@ export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOp
     return await vertexGemini31ProRestGenerateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: opts?.maxOutputTokens ?? 8192,
+        maxOutputTokens: opts?.maxOutputTokens ?? 65536,
         temperature: opts?.temperature ?? 0.9,
-        topP: opts?.topP ?? 0.8,
+        topP: opts?.topP ?? 0.95,
+        thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
       },
     });
   } catch (error: unknown) {

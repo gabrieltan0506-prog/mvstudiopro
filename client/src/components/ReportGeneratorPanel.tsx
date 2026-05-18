@@ -32,9 +32,11 @@ const PLATFORM_NAMES: Record<PlatformKey, string> = {
 
 type Props = {
   supervisorAccess?: boolean;
+  /** 可選：人設補充，併入視覺趨勢報告請求（與後端 generateVisualReport.personaContext 對齊） */
+  personaContext?: string;
 };
 
-export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
+export default function ReportGeneratorPanel({ supervisorAccess, personaContext }: Props) {
   const reportRef = useRef<HTMLDivElement>(null);
   const [windowDays, setWindowDays] = useState<WindowDays>("30");
   const [theme, setTheme] = useState<Theme>("dark");
@@ -89,7 +91,14 @@ export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
       toast.error("请至少选择一个平台");
       return;
     }
-    generateMutation.mutate({ windowDays, theme, platforms });
+    generateMutation.mutate({
+      windowDays,
+      theme,
+      platforms,
+      ...(String(personaContext || "").trim()
+        ? { personaContext: String(personaContext).trim().slice(0, 4000) }
+        : {}),
+    });
   };
 
   const handleDownload = async () => {

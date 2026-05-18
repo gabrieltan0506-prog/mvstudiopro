@@ -706,15 +706,17 @@ async function buildPlatformDashboard(params: {
 
 请根据用户背景和近 ${params.windowDays} 天平台数据，生成平台决策看板（轻量版，不包含长文案）。
 
+【人设口径】此处「人设 / Persona / IP」均指在可获知信息下尽量还原的创作者真实画像，须至少纳入**职业、身份、兴趣、爱好、专长**等可解释、可拍成内容的维度；禁止把人设写成泛化的「创作者」「博主」「达人」等空壳。headline、subheadline、personaSummary、positioning、trafficBoosters、hotTopics、platformMenu 的推荐理由与 nextMove 等，须显式用上述人设各维说清楚「为什么是你」；热点与扶持活动可参考 snapshot / 趋势证据，但必须**改写**为贴合该用户口吻与身份的事实落点，禁止机械硬套无关热梗。
+
 【绝对禁止输出泛平台画像】
 在生成 platformMenu 的推荐理由（whyNow 等字段）时，绝对禁止写「抖音适合短视频」、「B站适合长视频讲透」、「小红书适合图文」等通用废话。
-你的 positioning 或推荐理由，必须 100% 绑定该用户的 Persona 与专长领域。
+你的 positioning 或推荐理由，必须 100% 绑定该用户的上述人设各维（职业、身份、兴趣、爱好、专长等），而非笼统「专长」一词带过。
 例如：如果用户是"爱好中国历史的心脏科医生"，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
 
-【强制热点关联与深度四维量化】
+【强制热点关联与平台深度指标（须对齐人设各维）】
 你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
 1. referenceAccounts：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。【格式必须为对象数组】：[{"account": "画像名称", "reason": "具体描述"}]。绝对禁止输出单个对象或单个字符串。
-2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动或即将到来的节日热点。【格式必须为字符串数组】：例如 ["带上 #医学硬核科普 参与近期知识区流量扶持", "夏季健康打卡"]。绝对禁止输出单行字符串。
+2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动或即将到来的节日热点；每条须**改写**为贴合该用户人设（职业、身份、兴趣、爱好、专长）的表达，禁止照抄榜单句式或与本人无关的热梗。【格式必须为字符串数组】：例如 ["带上 #医学硬核科普 参与近期知识区流量扶持", "夏季健康打卡"]。绝对禁止输出单行字符串。
 3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
 4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。
    【严格禁止输出"XX万"、"X万+"等占位符！必须计算真实数字！】
@@ -731,9 +733,9 @@ async function buildPlatformDashboard(params: {
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
-2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
+2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清人设各维度中的身份与商业价值（职业、身份、兴趣、爱好、专长中至少点到 2～3 维，禁止只写「博主」）。
 3. platformMenu：**必须输出至少 3 条、至多 4 条**。凡是上方 \`platforms\` 数组中出现的抖音 / 快手 / 小红书 / B站，只要带有 summary 或动量/适配分数，就应各占一条 platformMenu（**快手样本稀疏也必须写 nextMove**，不得以「数据少」整条省略；顺位仍可 1→4 排序）。**严禁只输出 2 条就结束。** 每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
-4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
+4. topSignals：3 个关键信号；hotTopics：3 个热点方向（须说明如何经人设各维——职业、身份、兴趣、爱好、专长——改写落地，禁止纯泛热榜）；actionCards：3 个立刻能做的动作。
    【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
 5. conversationStarters：3 个让用户愿意继续追问的问题。
 6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答"为什么这条路更适合你"时必须深度剖析，禁止出现"电商带货"等泛泛而谈词汇。${personaContextLine}${personaConstraint}
@@ -1162,7 +1164,7 @@ export async function buildPlatformContent(params: {
           dynamicDecisionChain,
           /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
           trendEngagementAlignmentPolicy:
-            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在人设约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，禁止照抄标题或正文。",
+            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在完整人设（职业、身份、兴趣、爱好、专长）约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，热点与样本仅作参考，须改写为贴合本人设的表达，禁止字面抄袭标题或正文，禁止硬套无关热梗。",
           snapshotData: {
             titleExecutions: params.snapshot.titleExecutions || [],
             monetizationStrategies: params.snapshot.monetizationStrategies || [],
@@ -1172,7 +1174,7 @@ export async function buildPlatformContent(params: {
           /** Stage 1 看板清洗手遞：含 contentSeeds（title/hook/copywriting/分鏡欄位） */
           stage1StrategicHandoff: handoff,
           ipContextBinding:
-            "当前用户真实的 IP 定位与行业背景，必须据此生成恰好 4 条、四维各一的选题。泛化或与此 IP 脱钩的内容将被拒收。",
+            "当前用户真实人设（职业、身份、兴趣、爱好、专长等，见 context 与用户 JSON 快照），必须据此生成恰好 5 条、五个内容维度各一的 contentBlueprints。泛化、与此人设脱钩或仅用「创作者」「博主」等空壳表述的内容将被拒收。",
         });
 
   const structuredStage2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
@@ -1182,7 +1184,9 @@ export async function buildPlatformContent(params: {
 
 根据已生成的平台方向与用户背景数据，请为这位创作者制定深度内容的执行蓝图与商业变现路径。
 
-【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。你必须在此基础上产出 4 条更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但不得偏离人设与 headline/subheadline/persona 主线；若种子不足 4 条，可补充新选题但必须与同一 IP 身份一致。
+【人设口径】此处「人设 / Persona / IP」均指可获知信息下尽量还原的真实创作者画像；选题、脚本、变现须能用**职业、身份、兴趣、爱好、专长**等多维解释。禁止把人设写成泛化「创作者」「博主」。热点与高互动样本仅作结构与节奏参考，**必须改写**为贴合本人设的事实与口气，禁止硬套无关热梗。
+
+【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。你必须在此基础上产出 **5 条**更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但不得偏离人设与 headline/subheadline/persona 主线；若种子不足 5 条，可补充新选题但必须与同一真实人设一致。
 
 【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，必须重写）：
 - "电商带货" / "带货" / "橱窗"
@@ -1190,34 +1194,35 @@ export async function buildPlatformContent(params: {
 - "开头先给结果" / "视频开头先给判断，中段给例子，结尾给行动引导"
 - "可能都可以" / "先试试" / "先探索一下"
 - "制作身份名片" / "锁定文化符号" / "设计轻量级产品"
-- 任何泛化建议，不针对此用户的具体身份和专长
+- 任何泛化建议，不针对此用户具体人设维度（职业、身份、兴趣、爱好、专长等），或仅使用空泛「创作者」「博主」套话
 
 严格要求：
 必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：你必须为该平台精确生成 4 个深度内容方案（少於 4 個將導致系統拒收）。请严格结合 ipContextBinding，依序从以下四个维度各发散一个独特选题：
+【核心数量与维度指令】：你必须为该平台精确生成 **5** 个深度内容方案（**少于 5 个将导致系统拒收**）。请严格结合 ipContextBinding，依序从以下**五个维度**各发散**一个**独特选题（每条对应一个维度，顺序不可乱）：
 1.核心专业洞察(Professional Insight)
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
-【资安要求】：若内容与 IP 脱钩或使用泛化模板，则视为不合格。必须恰好 4 条。
+5.多场景热点与生动选题（Versatile & Vivid Scenes / Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**站得住脚的热门切口**；要求在**场景与叙事场域上生动、可区分**，鼓励在室内外、公共与私人、工作与生活、城市与自然等之间轮换，**避免**无依据时多条选题扎堆书房、客厅、书桌等同质布景。热点梗**可参考但必须改写**，使之贴合用户的**职业、身份、兴趣、爱好、专长**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
+【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。必须恰好 **5** 条。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
 【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
-(1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——适配该用户 IP，而非泛化稿；
+(1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——**适配该用户本人设（职业、身份、兴趣、爱好、专长）**，而非泛化稿；热点结构须**改写**落地到本人设；
 (2) 优先借鉴切口、句式节奏与信息密度，**禁止**字面抄袭 sample 标题或洗稿；
 (3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
-请绝对忠于当前用户的真实行业背景，绝不允许套用任何无关的专业标签。
+请绝对忠于当前用户的真实行业背景与人设各维，绝不允许套用任何无关的专业标签。
 
-1. contentBlueprints：必须恰好包含 4 个具体可执行的内容方案，并与上方 4 个维度一一对应（第 1 条对应维度 1，依此类推）。每个方案必须包含：
+1. contentBlueprints：必须恰好包含 **5** 个具体可执行的内容方案，并与上方 **5** 个维度一一对应（第 1 条对应维度 1，依此类推，第 5 条对应维度 5）。每个方案必须包含：
    - title（选题标题，必须是具体的，不是抽象的）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
    - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
-	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出使用什么具体平台搜索关键词。
+	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；无正文依据时**避免** 5 条方案集体扎堆书房、客厅、书桌等同质布景；**第 5 条（维度 5）**须在视觉与场域上与前几段方案明显区隔。
      【强制脚本排版规则 — 必须严格遵守，不得简化】：
      ▸ 如果 format 为「短视频」（抖音/B站/快手）：必须使用精确时间轴格式，每段必须包含「视觉描述」与「口播文案」，例如：
        "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
@@ -1236,7 +1241,7 @@ export async function buildPlatformContent(params: {
 
 2. monetizationLanes：生成 1-2 条强相关的变现路径（例如"知识付费-心血管健康私人咨询"）。必须包含：
    - title（变现方向名，具体到品类）
-   - fitReason（为什么适合此用户，基于其具体身份）
+   - fitReason（为什么适合此用户，基于其具体人设各维：职业、身份、兴趣、爱好、专长等）
    - offerShape（交付形态，例如"90分钟1v1线上问诊+报告解读"）
    - revenueModes（具体变现方式数组）
    - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
@@ -1278,7 +1283,7 @@ export async function buildPlatformContent(params: {
 
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
-4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。在详细脚本与指导设计中，强制融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动要求。${personaConstraint}
+4. 必须极度详细、有落地感，不要泛泛而谈。文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，禁止硬套。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
@@ -1582,7 +1587,7 @@ export async function buildPlatformContent(params: {
     }
     return { title: "", hook: "", copywriting: "" };
   });
-  /** 極端長輸出保護（不影響正常 4–8 條） */
+  /** 極端長輸出保護（不影響正常 5–8 條） */
   const blueprintsForSchema = coercedBp.length > 48 ? coercedBp.slice(0, 48) : coercedBp;
   const rawMl = Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [];
   const monetizationCoerced = (rawMl as unknown[]).map((item: unknown) => {
@@ -1709,7 +1714,7 @@ function buildFallbackPlatformDashboard(params: {
       whyHot: item.rationale,
       howToUse: params.snapshot.titleExecutions[index]?.copywriting || item.executionHint,
     })),
-    contentBlueprints: params.snapshot.titleExecutions.slice(0, 4).map((item) => ({
+    contentBlueprints: params.snapshot.titleExecutions.slice(0, 5).map((item) => ({
       title: item.title,
       format: item.presentationMode,
       hook: item.openingHook || item.copywriting,
@@ -1775,7 +1780,7 @@ function buildPlatformFollowUpFallback(params: {
       `为什么：你当前更需要先验证“什么表达最容易让用户记住你”，而不是一上来堆很多泛变现路线。优先内容可以直接用“${topExecution?.title || "把专业身份和文化内容收成一个明确切口"}”，开头先说“${topExecution?.openingHook || "我先给你一个明确判断"}”，主体按“判断 -> 解释 -> 例子 -> 给行动”展开。${topExecution?.presentationMode === "图文" ? `图文写法先用 ${topExecution?.graphicPlan || "封面一句结论，正文三段展开"}。` : `视频拍法先用 ${topExecution?.videoPlan || "先给判断，再讲例子，最后给行动"}。`}`,
       `下一步怎么做：商业承接只先保留 ${topMonetization?.primaryTrack || "一条最贴近你身份的路径"}${secondMonetization ? `，备选是 ${secondMonetization.primaryTrack}` : ""}。先不要把所有变现方式一起上。第一轮只验证“${topMonetization?.callToAction || "用户会不会愿意继续咨询、收藏或私信"}”，看反馈后再决定是否放大。`,
     ].join("\n\n"),
-    encouragement: "这轮先把第一条内容和第一条承接验证出来，不要同时铺四条线。",
+    encouragement: "这轮先把第一条内容和第一条承接验证出来，不要同时铺五条线。",
     nextQuestions,
   });
 }
@@ -3722,6 +3727,8 @@ export const appRouter = router({
         windowDays: z.enum(["3", "7", "15", "30"]),
         theme: z.enum(["light", "dark"]),
         platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili"])),
+        /** 可選：創作者人設補充（職業、身份、興趣、專長等），用於收窄熱點解讀與選題公式落點 */
+        personaContext: z.string().max(4000).optional(),
       }))
       .mutation(async ({ input }) => {
         const PLATFORM_NAMES: Record<string, string> = {
@@ -3780,6 +3787,8 @@ export const appRouter = router({
         const currentDateStr = todayStr; // ISO-style date already computed above
         const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于发现平台算法逻辑与赛道流量趋势。今天是 ${currentDateStr}（时间一律按 Asia/Shanghai 北京时间 UTC+8）。
 
+【人设口径】此处「人设」指创作者可辨识的真实画像：**职业、身份、兴趣、爱好、专长** 等；不是泛化「博主」「达人」。本报告中的 insightSummary、topicExamples、hotTopics、trafficSupport、audiencesAndBiz 等，应写得让**某一类具体身份的人**能对号入座——说明「谁更适合借这条趋势发力、怎样用自身维度解释该热点」，避免与任何人都无关的纯大盘词云或空泛平台运营套话。若 user JSON 中含 personaContext，你必须以其为主轴收紧解读与选题示例，热点只可参考、**须改写为可落在该人设上的表达**，禁止硬套无关梗。
+
 【关键时间约束 — 绝对禁止预测未来！】
 本报告分析的时间段是：${pastStr} 至 ${todayStr}（过去 ${wd} 个连续上海日，含今天；与前一同长度上海日窗口对照）。
 你将对比「近 ${wd} 天」与「前 ${wd} 天」（共 ${totalDays} 天数据，均为上海日历连续日）来识别赛道加速或减速信号。
@@ -3837,6 +3846,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             pastDate: pastStr,
             platformEvidence,
             industrySampleGrowth: industryGrowthHintsObj,
+            ...(String(input.personaContext || "").trim()
+              ? { personaContext: String(input.personaContext).trim().slice(0, 4000) }
+              : {}),
           });
 
           const response = visualReportUsesGeminiConsumer
@@ -3846,9 +3858,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 modelName: visualReportGeminiModel,
                 response_format: { type: "json_object" },
                 max_tokens: Math.min(
-                  16_384,
-                  Math.max(2048, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 8192),
+                  32768,
+                  Math.max(2048, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32768),
                 ),
+                temperature: 0.8,
                 messages: [
                   { role: "system", content: systemPrompt },
                   { role: "user", content: userPayload },
