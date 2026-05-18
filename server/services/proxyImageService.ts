@@ -881,7 +881,7 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面像素：**GPT‑Image‑2** / **Vertex NB2** / **Imagen 4 Ultra**；監管可傳 `coverPixelEngine`，否則依 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`。
+ * 單幀封面像素：**GPT‑Image‑2** / **Vertex Nano Banana Pro**（預設）/ **Vertex NB2**；監管可傳 `coverPixelEngine`，否則依 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
   englishPrompt: string;
@@ -899,20 +899,6 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     gpt2Aligned,
     "platform_vertical_cover_after_gpt2_aspect_lock",
   );
-
-  const mirrorCoverUrl = async (url: string): Promise<string> => {
-    let u = String(url || "").trim();
-    if (!u) return u;
-    try {
-      u = await mirrorImageUrlToGcsSignedUrl(u, "platform_topic_reference", L);
-    } catch (e: unknown) {
-      appendImageFlowLog(
-        L,
-        `[封面·像素] → GCS 镜像失败（仍返回原始 URL）: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    return u;
-  };
 
   const pick = options.coverPixelEngine;
   if (pick === "gpt_image2") {
@@ -938,32 +924,24 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     );
     return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
   }
-  if (pick === "imagen_4_ultra") {
+  if (pick === "nano_banana_pro") {
     appendImageFlowLog(
       L,
-      `${platformFlowLogTimestamp()}  [封面·像素] 请求=imagen_4_ultra · Imagen 4 Ultra（失败抛错，不回落）…`,
+      `${platformFlowLogTimestamp()}  [封面·像素] 请求=nano_banana_pro · Vertex Nano Banana Pro（gemini-3-pro-image-preview）…`,
     );
-    const { generatePlatformTopicCoverImagenUltra } = await import("./imagenGeminiApiCover.js");
-    const imagen = await generatePlatformTopicCoverImagenUltra({
-      englishPromptForVertexOrImagen: withProVisual,
-      flowLog: L,
-    });
-    return mirrorCoverUrl(imagen.imageUrl);
+    const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");
+    return generatePlatformTopicCoverNanoBananaProImage({ englishPrompt: raw, flowLog: L });
   }
 
   const engine = resolvePlatformTopicCoverPixelEngine();
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（imagen_only=仅 Imagen·失败抛错；nb2_only=仅 Vertex NB2）`,
+    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（nbp_only=Vertex Nano Banana Pro；nb2_only=Nano Banana 2）`,
   );
 
-  if (engine === "imagen_only") {
-    const { generatePlatformTopicCoverImagenUltra } = await import("./imagenGeminiApiCover.js");
-    const imagen = await generatePlatformTopicCoverImagenUltra({
-      englishPromptForVertexOrImagen: withProVisual,
-      flowLog: L,
-    });
-    return mirrorCoverUrl(imagen.imageUrl);
+  if (engine === "nbp_only") {
+    const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");
+    return generatePlatformTopicCoverNanoBananaProImage({ englishPrompt: raw, flowLog: L });
   }
 
   appendImageFlowLog(

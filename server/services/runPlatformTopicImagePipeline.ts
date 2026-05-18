@@ -88,7 +88,7 @@ export type RunPlatformTopicImagePipelineInput = {
   newJobMetaBase: Record<string, unknown>;
   /** 異步 jobs worker 傳 job.id：管線執行中節流寫入 jobs.output.imageGenFlowLog，前端輪詢可見步驟 */
   progressJobId?: string | null;
-  /** 監管：`coverProEngine` 為舊別名時視為強制 NB2；其餘豎封像素見 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`（含 Imagen 路徑）。 */
+  /** 監管：`coverProEngine` 為舊別名時視為強制 NB2；其餘豎封像素預設 Vertex Nano Banana Pro，見 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`。 */
   coverProEngine?: "nano_banana_2" | "nano_banana_pro";
   /**
    * 管理員於 Platform 頁開啟並經 tRPC/job 為 true 時；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：
@@ -178,7 +178,7 @@ export async function runPlatformTopicImagePipeline(
       `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [主路径] Vertex 英文化 → 豎封像素（${coverPixelEngineOverride ?? "預設：有 GEMINI_API_KEY 則 Imagen 4 Ultra（失敗拋錯·不回落 NB2）；否則 NB2；見 PLATFORM_TOPIC_COVER_PIXEL_ENGINE"}）· 无版式二次生圖`,
+      `${platformFlowLogTimestamp()}  [主路径] Vertex 英文化 → 豎封像素（${coverPixelEngineOverride ?? "預設：Vertex Nano Banana Pro（nbp_only）；可設 PLATFORM_TOPIC_COVER_PIXEL_ENGINE=nb2_only 改 NB2"}）· 无版式二次生圖`,
     );
 
     if (trendBrief) {
@@ -323,7 +323,7 @@ export async function runPlatformTopicImagePipeline(
           throw new Error("英文 prompt 为空");
         }
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 英文化原文直接进封面像素链路（NB2 / Imagen 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${trimmedEn.length}）`,
+          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 英文化原文直接进封面像素链路（NBP / NB2 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${trimmedEn.length}）`,
         );
         const safePrompt = trimmedEn;
         promptStats = buildImagePromptStats(safePrompt);
@@ -331,7 +331,7 @@ export async function runPlatformTopicImagePipeline(
           `${platformFlowLogTimestamp()}  [统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
         );
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤2] 竖封像素（NB2 与 Imagen Ultra 并存，见 flowLog · PLATFORM_TOPIC_COVER_PIXEL_ENGINE）…`,
+          `${platformFlowLogTimestamp()}  [步骤2] 竖封像素（Nano Banana Pro 与 NB2 由 env 决定，见 flowLog · PLATFORM_TOPIC_COVER_PIXEL_ENGINE）…`,
         );
         imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
           englishPrompt: safePrompt,

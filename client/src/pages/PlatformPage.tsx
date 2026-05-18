@@ -4332,7 +4332,7 @@ export default function PlatformPage() {
       return;
     }
 
-    /** 本輪 Stage1/2 使用此字串；須在清空輸入框「之前」存下，且清空前須等快照 refetch 完成，否則 query context 會變空導致分析不執行 */
+    /** 本輪 Stage1/2 使用此字串（與輸入框內容一致即可；不再自動清空輸入框）。 */
     const capturedJudgment = String(focusPrompt || "").trim();
 
     platformAnalysisEpochRef.current += 1;
@@ -4378,8 +4378,6 @@ export default function PlatformPage() {
       toast.error("平台分析暂时没有返回结果");
       return;
     }
-    setFocusPrompt("");
-    setQuestion("");
     setHasAnalyzed(true);
     toast.success("快照已就绪，正在生成战略看板与专属文案…");
 
