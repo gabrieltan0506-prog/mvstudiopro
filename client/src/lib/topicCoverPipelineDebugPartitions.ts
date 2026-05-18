@@ -1,24 +1,24 @@
 /**
- * 选题单帧封面管线：将 `imageGenFlowLog` 拆成 **DR-Pro（0.5）**、**英文化**、**生图（GPT-IMAGE-2 / NB2 / 兜底）**，
- * 供 Platform Debug 对照全链路（避免生图阶段只在折叠「其余」里以为卡住）。
+ * 選題單幀封面管線：將 `imageGenFlowLog` 拆成 **DR-Pro（0.5）**、**英文化**、**生圖（GPT-IMAGE-2 / NB2 / 兜底）**，
+ * 供 Platform Debug 對照全鏈路（避免生圖階段只在摺疊「其餘」裡以為卡住）。
  */
 
 export type TopicCoverPipelinePartitionHints = {
-  /** 服务端写入的 `[管线·阶段顺序]`（有则表示后端已打阶段分界标记） */
+  /** 服務端寫入的 `[管线·阶段顺序]`（有則表示後端已打階段分界標記） */
   phaseOrderLine?: string;
-  /** 曾出现 Interactions create / poll（代表至少打到 DR Pro API） */
+  /** 曾出現 Interactions create / poll（代表至少打到 DR Pro API） */
   drProApiActivity: boolean;
-  /** 简报锚定通过并合并（`完成 · 简报长`） */
+  /** 簡報錨定通過並合併（`完成 · 简报長`） */
   drProBriefMerged: boolean;
-  /** 略过 DR（金钥未设、create 失败、锚定失败等会写入 0.5 行） */
+  /** 略過 DR（金鑰未設、create 失敗、錨定失敗等會寫入 0.5 行） */
   drProSkippedOrEmpty: boolean;
-  /** GPT 5.4 / Flash 翻译层有日志 */
+  /** GPT 5.4 / Flash 翻譯層有日誌 */
   gpt54LayerActivity: boolean;
-  /** 步骤1 英文化已完成字样 */
+  /** 步驟1 英文化已完成字樣 */
   step1TranslationDone: boolean;
-  /** 步骤2/3 生图子日志（GPT-IMAGE-2、NB2、fal 等） */
+  /** 步驟2/3 生圖子日誌（GPT-IMAGE-2、NB2、fal 等） */
   imageGenLayerActivity: boolean;
-  /** 单条任务已成功取得 URL（服务端 ✓ 行） */
+  /** 單條任務已成功取得 URL（服務端 ✓ 行） */
   imageGenSuccess: boolean;
 };
 
@@ -44,16 +44,16 @@ function lineMatchesGpt54Layer(s: string): boolean {
     /\[GPT54|GPT54·|\[步骤1\]|\[步骤1b\]|Vertex·Flash|骨架·中文视觉|extractChineseVisualBrief|\[语境\]|调用 GPT 5\.4|GPT 5\.4（OpenAI）|\[\s*统计\s*\]\s*translated=/.test(
       s,
     ) ||
-    /\[2×4·步骤1|2×4·步骤1b|translatePlatformComposite|\[GPT54·英文化\]|\[套装·并翻\]/.test(s)
+    /\[2×4·步骤1|2×4·步骤1b|translatePlatformComposite|\[GPT54·英文化\]|\[套裝·併翻\]/.test(s)
   );
 }
 
-/** 生图与其前置衔接（勿与 Vertex·Flash 英文化混淆） */
+/** 生圖與其前置銜接（勿與 Vertex·Flash 英文化混淆） */
 function lineMatchesImageGenLayer(s: string): boolean {
   return (
-    /\[步骤2\]|\[步骤2-NB2\]|\[步骤3[ab]?\]|\[步骤1\/2\]/.test(s) ||
+    /\[步骤2\]|\[步骤2-NB2\]|\[封面·像素\]|\[Imagen·封面\]|\[步骤3[ab]?\]|\[步骤1\/2\]/.test(s) ||
     /\[步骤3/.test(s) ||
-    /\[GPT-IMAGE-2\]|FAL·GPT-IMAGE-2|OhMyGPT|像素锁|生图|生图/.test(s) ||
+    /\[GPT-IMAGE-2\]|FAL·GPT-IMAGE-2|OhMyGPT|像素锁|生图|生圖/.test(s) ||
     /Nano Banana|\bNB2\b|Vertex Nano|nbpImage|platform_topic_reference/.test(s) ||
     /\[2×4·步骤(2|2b|3)\b|宽?幅.*GPT-IMAGE|2×4.*提炼完成/.test(s)
   );
@@ -90,15 +90,15 @@ export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverP
 
   const joinedDr = drProLines.join("\n");
   const joinedImg = imageGenLines.join("\n");
-  const drProBriefMerged = /完成 · 简报长=/.test(joinedDr);
+  const drProBriefMerged = /完成 · 简报長=/.test(joinedDr);
   const hints: TopicCoverPipelinePartitionHints = {
     phaseOrderLine,
-    drProApiActivity: /interaction=|进入轮询|polling · elapsed|create HTTP/i.test(joinedDr),
+    drProApiActivity: /interaction=|進入輪詢|polling · elapsed|create HTTP/i.test(joinedDr),
     drProBriefMerged,
     drProSkippedOrEmpty:
       !drProBriefMerged &&
-      (/跳过：`GEMINI_API_KEY`/.test(joinedDr) ||
-        /create HTTP|正文过短|舍弃：与当前选题/.test(joinedDr) ||
+      (/跳過：`GEMINI_API_KEY`/.test(joinedDr) ||
+        /create HTTP|正文過短|捨棄：與當前選題/.test(joinedDr) ||
         /\[步骤0\.5\] 异常/.test(joinedDr)),
     gpt54LayerActivity: gpt54AndTranslationLines.length > 0,
     step1TranslationDone:

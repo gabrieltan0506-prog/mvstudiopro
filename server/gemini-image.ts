@@ -78,17 +78,18 @@ function appendVertexPersistLog(log: string[] | undefined, message: string): voi
 }
 
 /**
- * Vertex inlineData → 瀏覽器可讀 URL（與平台 GPT-IMAGE-2 存圖一致：Fly 公開或 GCS V4 簽名）。
- * 若先走 {@link storagePut} 到私密 R2，後續 {@link mirrorImageUrlToGcsSignedUrl} 匿名 fetch 會 403，前端也無法載入。
+ * 內聯像素 Buffer → 瀏覽器可讀 URL（與平台 GPT-IMAGE-2 存圖一致：Fly 公開或 GCS V4 簽名）。
+ * Vertex Nano、**Gemini API Imagen** 共用；`subdir` 區分物件前綴。
+ * 若先走 {@link storagePut} 到私密 R2，後續 mirror 匿名 fetch 會 403，前端也無法載入。
  */
-async function persistVertexInlineImagePublicUrl(
+export async function persistPlatformGeneratedImagePublicUrl(
   buffer: Buffer,
   mimeType: string,
   flowLog?: string[],
+  subdir: string = "vertex_nano",
 ): Promise<string> {
   const ct = normalizeVertexPersistContentType(mimeType);
   const ext = extFromVertexMime(mimeType);
-  const subdir = "vertex_nano";
   const bytes = buffer.byteLength;
 
   const { resolvePlatformImageStorageDriver } = await import("./config/platformSwitches.js");
@@ -263,7 +264,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     const image = generated[index];
     const buffer = Buffer.from(image.data, "base64");
     const mimeType = image.mimeType || "image/png";
-    const url = await persistVertexInlineImagePublicUrl(buffer, mimeType, opts.imagePersistFlowLog);
+    const url = await persistPlatformGeneratedImagePublicUrl(buffer, mimeType, opts.imagePersistFlowLog);
     imageUrls.push(url);
   }
 

@@ -5,7 +5,9 @@ import {
   isPlatformWeekendSurvivalModeEnabled,
   resolvePlatformCompositeSheetImageEngine,
   resolvePlatformImageStorageDriver,
+  resolvePlatformTopicCoverPixelEngine,
   type PlatformCompositeSheetImageEngine,
+  type PlatformTopicCoverPixelEngineChoice,
 } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 import {
@@ -879,28 +881,111 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面：**僅 Vertex Nano Banana 2**（`generateGeminiImage`），不經 OhMyGPT GPT-IMAGE-2。
- * 供 **Nano Banana Pro** 监管模式在 Pro 失败时的第一档兜底。
+ * 單幀封面像素：**GPT‑Image‑2** / **Vertex NB2** / **Imagen 4 Ultra**；監管可傳 `coverPixelEngine`，否則依 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
   englishPrompt: string;
   flowLog?: string[];
+  coverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
 }): Promise<string | null> {
   const raw = String(options.englishPrompt || "").trim();
   if (!raw) {
-    appendImageFlowLog(options.flowLog, "[NB2·封面] 英文 prompt 为空，跳过");
+    appendImageFlowLog(options.flowLog, "[封面·像素] 英文 prompt 为空，跳过");
     return null;
   }
-  appendImageFlowLog(
-    options.flowLog,
-    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
-  );
+  const L = options.flowLog;
   const gpt2Aligned = buildGptImage2AlignedPlatformTopicCoverPrompt(raw);
   const withProVisual = appendVertexProPhotographyPromptModifiers(
     gpt2Aligned,
     "platform_vertical_cover_after_gpt2_aspect_lock",
   );
-  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", options.flowLog, "platform_vertex_cover_primary");
+
+  const mirrorCoverUrl = async (url: string): Promise<string> => {
+    let u = String(url || "").trim();
+    if (!u) return u;
+    try {
+      u = await mirrorImageUrlToGcsSignedUrl(u, "platform_topic_reference", L);
+    } catch (e: unknown) {
+      appendImageFlowLog(
+        L,
+        `[封面·像素] → GCS 镜像失败（仍返回原始 URL）: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    return u;
+  };
+
+  const pick = options.coverPixelEngine;
+  if (pick === "gpt_image2") {
+    appendImageFlowLog(
+      L,
+      `${platformFlowLogTimestamp()}  [封面·像素] 请求=gpt_image2 · OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
+    );
+    return generateGptImage2FromRawEnglishPrompt({
+      englishPrompt: raw,
+      aspectRatio: "9:16",
+      gcsSubdir: "platform_topic_reference",
+      flowLog: L,
+    });
+  }
+  if (pick === "nano_banana_2") {
+    appendImageFlowLog(
+      L,
+      `${platformFlowLogTimestamp()}  [封面·像素] 请求=nano_banana_2 · 仅 Vertex Nano Banana 2 …`,
+    );
+    appendImageFlowLog(
+      L,
+      `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
+    );
+    return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
+  }
+  if (pick === "imagen_4_ultra") {
+    appendImageFlowLog(
+      L,
+      `${platformFlowLogTimestamp()}  [封面·像素] 请求=imagen_4_ultra · Gemini API Imagen 4 Ultra · 失败回落 NB2 …`,
+    );
+    const { generatePlatformTopicCoverImagenUltra } = await import("./imagenGeminiApiCover.js");
+    const imagen = await generatePlatformTopicCoverImagenUltra({
+      englishPromptForVertexOrImagen: withProVisual,
+      flowLog: L,
+    });
+    if (imagen?.imageUrl) {
+      return mirrorCoverUrl(imagen.imageUrl);
+    }
+    appendImageFlowLog(L, "[封面·像素] Imagen 无图或未配置 GEMINI_API_KEY · 回落 Vertex NB2");
+    appendImageFlowLog(
+      L,
+      `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
+    );
+    return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
+  }
+
+  const engine = resolvePlatformTopicCoverPixelEngine();
+  appendImageFlowLog(
+    L,
+    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（nb2_only=僅 Vertex NB2；imagen_then_nb2=Imagen 優先並保留 NB2 回落）`,
+  );
+
+  if (engine === "imagen_only" || engine === "imagen_then_nb2") {
+    const { generatePlatformTopicCoverImagenUltra } = await import("./imagenGeminiApiCover.js");
+    const imagen = await generatePlatformTopicCoverImagenUltra({
+      englishPromptForVertexOrImagen: withProVisual,
+      flowLog: L,
+    });
+    if (imagen?.imageUrl) {
+      return mirrorCoverUrl(imagen.imageUrl);
+    }
+    if (engine === "imagen_only") {
+      appendImageFlowLog(L, "[封面·像素] imagen_only：Imagen 无可用图，且本模式不回落 NB2");
+      return null;
+    }
+    appendImageFlowLog(L, "[封面·像素] Imagen 无图或未配置 key · 回落完整 Vertex Nano Banana 2 路径");
+  }
+
+  appendImageFlowLog(
+    L,
+    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
+  );
+  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
 }
 
 /**

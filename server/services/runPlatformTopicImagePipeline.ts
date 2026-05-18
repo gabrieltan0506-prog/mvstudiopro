@@ -88,7 +88,7 @@ export type RunPlatformTopicImagePipelineInput = {
   newJobMetaBase: Record<string, unknown>;
   /** 異步 jobs worker 傳 job.id：管線執行中節流寫入 jobs.output.imageGenFlowLog，前端輪詢可見步驟 */
   progressJobId?: string | null;
-  /** 管理員專用：單幀主生圖改為 Vertex Nano Banana 2（9:16 · 官方 API；與主路徑共用光影語彙）。`nano_banana_pro` 為舊別名，行為相同。 */
+  /** 監管：`coverProEngine` 為舊別名時視為強制 NB2；其餘豎封像素見 env `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`（含 Imagen 路徑）。 */
   coverProEngine?: "nano_banana_2" | "nano_banana_pro";
   /**
    * 管理員於 Platform 頁開啟並經 tRPC/job 為 true 時；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：
@@ -130,8 +130,9 @@ export type RunPlatformTopicImagePipelineResult = {
 export async function runPlatformTopicImagePipeline(
   input: RunPlatformTopicImagePipelineInput,
 ): Promise<RunPlatformTopicImagePipelineResult> {
-  /** 全員豎封出圖一律 Nano Banana 2；`coverProEngine` 保留僅作舊入參相容，服端忽略。 */
-  void input.coverProEngine;
+  const legacyCoverNb2 =
+    input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro";
+  const coverPixelEngineOverride = legacyCoverNb2 ? ("nano_banana_2" as const) : undefined;
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
   void input.imagePromptTranslator;
@@ -177,10 +178,7 @@ export async function runPlatformTopicImagePipeline(
       `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [主路径] buildPlatformTopicReferenceGeminiTask（variant=${isGraphic ? "graphic" : "video"}）→ ${coverTranslatorLogLabel} → Vertex Nano Banana 2（9:16·2K）· 无二次兜底`,
-    );
-    topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  说明: 豎封英文化僅 Vertex（預設 Gemini 2.5 Pro）；出图僅 NB2；不調 OpenAI、無版式二次生圖`,
+      `${platformFlowLogTimestamp()}  [主路径] Vertex 英文化 → 豎封像素（${coverPixelEngineOverride ?? "env PLATFORM_TOPIC_COVER_PIXEL_ENGINE"}）· 无版式二次生圖`,
     );
 
     if (trendBrief) {
@@ -325,7 +323,7 @@ export async function runPlatformTopicImagePipeline(
           throw new Error("英文 prompt 为空");
         }
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 英文化原文直接进 Nano Banana 2（chars=${trimmedEn.length}）`,
+          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 英文化原文直接进封面像素链路（NB2 / Imagen 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${trimmedEn.length}）`,
         );
         const safePrompt = trimmedEn;
         promptStats = buildImagePromptStats(safePrompt);
@@ -333,11 +331,12 @@ export async function runPlatformTopicImagePipeline(
           `${platformFlowLogTimestamp()}  [统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
         );
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤2-NB2] Vertex Nano Banana 2 · 9:16 · 比例锁 + 共用光影 …`,
+          `${platformFlowLogTimestamp()}  [步骤2] 竖封像素（NB2 与 Imagen Ultra 并存，见 flowLog · PLATFORM_TOPIC_COVER_PIXEL_ENGINE）…`,
         );
         imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
           englishPrompt: safePrompt,
           flowLog: topicImageCondenseLog,
+          coverPixelEngine: coverPixelEngineOverride,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
