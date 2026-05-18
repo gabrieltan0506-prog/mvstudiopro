@@ -1528,11 +1528,23 @@ export default function PlatformPage() {
     });
     if (j.status === "failed") {
       const out = j.output;
+      const merged: Record<string, unknown> = {};
       if (out && typeof out === "object" && !Array.isArray(out)) {
-        const d = (out as Record<string, unknown>).debug;
+        const o = out as Record<string, unknown>;
+        const d = o.debug;
         if (d && typeof d === "object" && !Array.isArray(d)) {
-          setContentDebug(d as Record<string, unknown>);
+          Object.assign(merged, d as Record<string, unknown>);
         }
+        const oe = o.error;
+        if (typeof oe === "string" && oe.trim()) {
+          merged.jobOutputError = oe;
+        }
+      }
+      if (typeof j.error === "string" && j.error.trim()) {
+        merged.jobStatusError = j.error;
+      }
+      if (Object.keys(merged).length > 0) {
+        setContentDebug(merged);
       }
       setContentJobPollTrace((prev) =>
         prev && prev.jobId === jobId
@@ -3099,6 +3111,61 @@ export default function PlatformPage() {
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
   const snapshotDebug = growthSnapshotQuery.data?.debug as Record<string, unknown> | undefined;
   const askDebug = askPlatformFollowUpMutation.data?.debug as Record<string, unknown> | undefined;
+
+  /** 成功載入看板時後端會清空 raw debug；補摘要避免除錯面板整段為 null。 */
+  const platformDashboardDebugForPanel = useMemo((): Record<string, unknown> | null => {
+    if (dashboardDebug && Object.keys(dashboardDebug).length > 0) {
+      return dashboardDebug;
+    }
+    const dashErr = getPlatformDashboardMutation.error?.message;
+    if (dashErr) {
+      return { error: dashErr };
+    }
+    if (platformDashboard) {
+      const d = platformDashboard as Record<string, unknown>;
+      return {
+        note: "戰略看板已成功載入。成功時後端不附帶完整 debug，此處僅列摘要。",
+        headlinePreview: typeof d.headline === "string" ? d.headline.slice(0, 160) : undefined,
+        hotTopicsCount: Array.isArray(d.hotTopics) ? d.hotTopics.length : 0,
+        platformMenuCount: Array.isArray(d.platformMenu) ? d.platformMenu.length : 0,
+      };
+    }
+    return null;
+  }, [dashboardDebug, platformDashboard, getPlatformDashboardMutation.error]);
+
+  const stage2DebugForPanel = useMemo((): Record<string, unknown> | null => {
+    if (contentDebug && Object.keys(contentDebug).length > 0) {
+      return contentDebug;
+    }
+    const needsFallback =
+      stage2Failed || Boolean(contentJobError) || (Boolean(platformContent) && stage2EmptyPayload);
+    if (!needsFallback) {
+      return null;
+    }
+    const trace = contentJobPollTrace;
+    return {
+      note: "後台未附帶結構化 debug 時，由頁面補上錯誤與輪詢摘要；請對照下方 Fly Jobs。",
+      clientFacingError: contentJobError,
+      stage2Failed,
+      stage2EmptyPayload,
+      poll: trace
+        ? {
+            jobId: trace.jobId,
+            terminalStatus: trace.terminalStatus ?? null,
+            pollCount: trace.pollCount,
+            tailLog: trace.lines.slice(-24),
+          }
+        : null,
+    };
+  }, [
+    contentDebug,
+    stage2Failed,
+    contentJobError,
+    stage2EmptyPayload,
+    platformContent,
+    contentJobPollTrace,
+  ]);
+
   const mainPath = snapshot?.decisionFramework.mainPath;
   const assetAdaptation = snapshot?.decisionFramework.assetAdaptation;
   const topRecommendation = snapshot?.platformRecommendations[0];
@@ -5022,13 +5089,13 @@ export default function PlatformPage() {
                     <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                       <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
                       <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                        {JSON.stringify(dashboardDebug || null, null, 2)}
+                        {JSON.stringify(platformDashboardDebugForPanel, null, 2)}
                       </pre>
                     </div>
                     <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                       <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">Stage 2 · debug</div>
                       <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                        {JSON.stringify(contentDebug || null, null, 2)}
+                        {JSON.stringify(stage2DebugForPanel, null, 2)}
                       </pre>
                     </div>
                   </div>
@@ -5408,7 +5475,7 @@ export default function PlatformPage() {
                       <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                         <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
                         <pre className="mt-3 max-h-[32rem] overflow-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
-                          {JSON.stringify(dashboardDebug || null, null, 2)}
+                          {JSON.stringify(platformDashboardDebugForPanel, null, 2)}
                         </pre>
                       </div>
                       <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
