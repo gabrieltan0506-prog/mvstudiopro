@@ -337,6 +337,28 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
       const model = (s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
+      const is31Pro = /gemini-3\.1.*pro/i.test(model);
+      const is25Pro = /gemini-2\.5/i.test(model) && /pro/i.test(model) && !/flash/i.test(model);
+      const is3Flash =
+        (/^gemini-3-flash/i.test(model) || /^gemini-3(?!\.1).*flash/i.test(model)) &&
+        !/gemini-3\.1/i.test(model) &&
+        !/image/i.test(model);
+      const generationConfig = is31Pro
+        ? {
+            maxOutputTokens: 65536,
+            temperature: 0.9,
+            topP: 0.95,
+            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
+          }
+        : is25Pro || is3Flash
+          ? {
+              maxOutputTokens: 32768,
+              temperature: 0.8,
+              topP: 0.95,
+              thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
+            }
+          : { maxOutputTokens: 8192, temperature: 0.9 };
+
       const base = baseUrlFor(location);
       const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
@@ -345,7 +367,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
         body: JSON.stringify({
           contents:[{role:"user",parts:[{text:prompt}]}],
-          generationConfig:{ maxOutputTokens:8192, temperature:0.9 },
+          generationConfig,
         })
       });
 

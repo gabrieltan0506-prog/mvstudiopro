@@ -822,7 +822,7 @@ async function processPlatformJob(
             context,
             windowDays,
             snapshotData: snapshotSummary,
-            task: "必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。在 contentBlueprints 数组中，务必精确生成 4 个深度内容方案/选题，切勿少于 4 个；须严格结合用户 context 所描述的真实 IP 背景与定位，从以下 4 个维度各出 1 个独特选题：①核心专业洞察 ②跨界结合与价值观 ③目标受众痛点暴击 ④个人经历与人设魅力。输出严格合法 JSON，必须包含以下字段：contentBlueprints（必须恰好 4 条内容方案数组，每项含：title（选题标题）/format（「短视频」或「图文」）/hook（≥30字开场钩子，必须是让用户停下来的具体一句话）/copywriting（≥200字逐字文案，包含完整开头段落/中段展开/结尾引导行动）/suitablePlatforms（适合平台数组）/actionableSteps（至少3个落地步骤，字符串数组）/detailedScript（精确时间轴拍摄脚本：视频格式用「[00:00-00:05] 画面：...口播：...情绪：...」格式；图文格式用「[封面] 设计：... [图2] 文案：...」格式，≥400字）/publishingAdvice（发布时机与平台设置，包含具体hashtag）/executionDetails（对象，必须包含environmentAndWardrobe（拍摄环境+服装道具，≥50字）/lightingAndCamera（灯光+机位设置，≥50字）/stepByStepScript（逐步脚本数组，每步「[时段]动作描述」格式，至少5步））/highlightKeywords（热点关键字数组，格式如「[高亮:职场霸凌]」）） 和 monetizationLanes（1-2条变现路径数组，每项含：title/fitReason/offerShape/revenueModes（数组）/firstValidation）。第一个字符必须是 {，最后必须是 }。",
+            task: "必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。在 contentBlueprints 数组中，务必精确生成 5 个深度内容方案/选题，切勿少于 5 个；须严格结合用户 context 所描述的真实人设（职业、身份、兴趣、爱好、专长等），从以下 5 个维度各出 1 个独特选题：①核心专业洞察 ②跨界结合与价值观 ③目标受众痛点暴击 ④个人经历与人设魅力 ⑤多场景热点与生动选题（结合趋势与热点改写适配本人设，场景宜多元，避免无依据时扎堆书房客厅）。输出严格合法 JSON，必须包含以下字段：contentBlueprints（必须恰好 5 条内容方案数组，每项含：title（选题标题）/format（「短视频」或「图文」）/hook（≥30字开场钩子，必须是让用户停下来的具体一句话）/copywriting（≥200字逐字文案，包含完整开头段落/中段展开/结尾引导行动）/suitablePlatforms（适合平台数组）/actionableSteps（至少3个落地步骤，字符串数组）/detailedScript（精确时间轴拍摄脚本：视频格式用「[00:00-00:05] 画面：...口播：...情绪：...」格式；图文格式用「[封面] 设计：... [图2] 文案：...」格式，≥400字）/publishingAdvice（发布时机与平台设置，包含具体hashtag）/executionDetails（对象，必须包含environmentAndWardrobe（拍摄环境+服装道具，≥50字）/lightingAndCamera（灯光+机位设置，≥50字）/stepByStepScript（逐步脚本数组，每步「[时段]动作描述」格式，至少5步））/highlightKeywords（热点关键字数组，格式如「[高亮:职场霸凌]」）） 和 monetizationLanes（1-2条变现路径数组，每项含：title/fitReason/offerShape/revenueModes（数组）/firstValidation）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
       ],
@@ -843,13 +843,14 @@ async function processPlatformJob(
         contentResult = {};
       }
 
-    // Stage 2: 3.1 Pro — trend calibration + dashboard signals + 3 key metrics
+    // Stage 2: Gemini 3.1 Pro — trend calibration + dashboard signals（與 Creator Growth Stage 2 文案同線，不用 2.5 Pro；2.5 Pro 僅用於豎封英文化）
     const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，计算关键指标，输出最终平台看板 JSON。";
       const stage2Response = await invokeLLM({
       provider: "vertex",
-      modelName: "gemini-2.5-pro",
+      modelName: "gemini-3.1-pro-preview",
       response_format: { type: "json_object" },
-      max_tokens: 32768,
+      max_tokens: 65536,
+      temperature: 0.9,
       messages: [
         { role: "system", content: stage2SystemInstruction },
         {

@@ -1259,20 +1259,24 @@ function PlatformSignalsCarouselPanel(props: {
   );
 }
 
-/** 3A：四维度 IP 引导面板（与 buildPlatformContent 硬约束对齐） */
+/** 3A：五维度 IP 引导面板（与 buildPlatformContent 硬约束对齐） */
 function PlatformIpDimensionGuide() {
   return (
     <div className="mb-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-md">
       <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#ff9900]">
         <Bot className="h-4 w-4 shrink-0 animate-pulse" />
-        高定内容生成指南：四大维度
+        高定内容生成指南：五大维度
       </h3>
-      <div className="grid grid-cols-1 gap-4 text-left md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 text-left sm:grid-cols-2 xl:grid-cols-5">
         {[
           { t: "专业洞察 (Insight)", d: "展现行业壁垒与权威知识。" },
           { t: "跨界价值 (Value)", d: "融合美学与个人哲学视野。" },
           { t: "受众痛点 (Pain Point)", d: "精准击中粉丝的核心焦虑。" },
           { t: "人设魅力 (Persona)", d: "分享真实经历建立情感信任。" },
+          {
+            t: "多场景热点 (Scenes)",
+            d: "借趋势改写适配本人设；场景生动多元，避免总落在书房客厅。",
+          },
         ].map((v, i) => (
           <div key={i} className="rounded-lg bg-white/5 p-3 transition-colors hover:bg-white/10">
             <div className="mb-1 text-[12px] font-bold text-gray-200">{v.t}</div>
@@ -1280,7 +1284,7 @@ function PlatformIpDimensionGuide() {
           </div>
         ))}
       </div>
-      <p className="mt-4 text-[11px] text-gray-500">提示：在上方 IP 定位中描述得越具体，内容生成越精准。</p>
+      <p className="mt-4 text-[11px] text-gray-500">提示：在上方 IP 定位中把职业、身份、兴趣、专长写具体，生成更贴脸。</p>
     </div>
   );
 }
