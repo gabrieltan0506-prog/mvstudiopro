@@ -11,3 +11,8 @@ export type DecisionIntelTopicPick = {
 export function normalizeDecisionIntelTopicTitleKey(title: string): string {
   return title.replace(/\s+/g, " ").trim().toLowerCase();
 }
+
+/** 服务端 creditTransactions.description 中标记选题，用于统计重生成次数 */
+export function decisionIntelTopicRegenDescriptionMarker(titleKey: string): string {
+  return `titleKey=${titleKey}`;
+}

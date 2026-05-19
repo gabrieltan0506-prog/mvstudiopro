@@ -951,11 +951,11 @@ function mapBonusBlueprintsToExecutionCards(
 const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
 /**
  * 上述窗口内最多**发起**几次生图（封面单帧 · 2×4 分镜 · 小红书 2×4 八格图文合成等共用同一节流器）。
- * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆写（整数 1～24，预设 6）。
+ * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆写（整数 1～24，预设 24；付费生图不设低上限）。
  */
 const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
   24,
-  Math.max(1, Number(import.meta.env.VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S) || 6),
+  Math.max(1, Number(import.meta.env.VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S) || 24),
 );
 
 const PLATFORM_REFERENCE_GALLERY_ID = "platform-reference-storyboard-gallery";
@@ -1636,8 +1636,23 @@ export default function PlatformPage() {
     }
     return map;
   }, [platformImageGenFlowSnapshots]);
-  /** 单张封面「重新生成」进行中（显示骨架，避免无反馈） */
-  const [regeneratingCoverSceneId, setRegeneratingCoverSceneId] = useState<string | null>(null);
+  const markCoverGenerationStarted = useCallback((sceneId: string) => {
+    setCoverWaitCarouselEngaged(true);
+    setBatchGeneratingCoverIds((prev) => {
+      const next = new Set(prev);
+      next.add(sceneId);
+      return next;
+    });
+  }, []);
+
+  const markCoverGenerationFinished = useCallback((sceneId: string) => {
+    setBatchGeneratingCoverIds((prev) => {
+      if (!prev.has(sceneId)) return prev;
+      const next = new Set(prev);
+      next.delete(sceneId);
+      return next;
+    });
+  }, []);
   /** sceneId → user_creations.id（免扣补发、履历；刷新页面会丢失本地条目） */
   const [sceneJobIds, setSceneJobIds] = useState<Record<string, string>>({});
   /** 封面成功返回后：规则估计的点击率档位（非实测） */
@@ -3878,15 +3893,14 @@ export default function PlatformPage() {
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
 
   const visibleExecutionCards = useMemo(() => {
-    const seen = new Set<string>();
-    const merged: PlatformContentExecutionCard[] = [];
-    for (const card of [...contentExecutionCards, ...strategicMapSessionExecutionCards]) {
-      const key = normalizeDecisionIntelTopicTitleKey(card.title);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      merged.push(card);
+    const byKey = new Map<string, PlatformContentExecutionCard>();
+    for (const card of contentExecutionCards) {
+      byKey.set(normalizeDecisionIntelTopicTitleKey(card.title), card);
     }
-    return merged;
+    for (const card of strategicMapSessionExecutionCards) {
+      byKey.set(normalizeDecisionIntelTopicTitleKey(card.title), card);
+    }
+    return Array.from(byKey.values());
   }, [contentExecutionCards, strategicMapSessionExecutionCards]);
 
   const visibleExecutionCardsKey = useMemo(
@@ -4134,14 +4148,12 @@ export default function PlatformPage() {
 
   const anyCoverImagePipelineBusy = useMemo(
     () =>
-      regeneratingCoverSceneId !== null ||
       isSequentialCoverBatchGenerating ||
       isSequentialCoverCompositeBundleBatchGenerating ||
       coverCompositeBundleSceneId !== null ||
       batchGeneratingCoverIds.size > 0 ||
       coverSilentRetryIds.size > 0,
     [
-      regeneratingCoverSceneId,
       isSequentialCoverBatchGenerating,
       isSequentialCoverCompositeBundleBatchGenerating,
       coverCompositeBundleSceneId,
@@ -4473,7 +4485,6 @@ export default function PlatformPage() {
     setPendingCompositeSheet(null);
     compositeSheetLivePollCtxRef.current = null;
     setPlatformImageGenFlowSnapshots([]);
-    setRegeneratingCoverSceneId(null);
     setCoverWaitCarouselEngaged(false);
     setCoverLoadRetriedIds(() => new Set());
     setCompositeLoadRetriedKeys(() => new Set());
@@ -4682,6 +4693,80 @@ export default function PlatformPage() {
       t.title.trim(),
     );
   }, [unlockedStrategicReport]);
+
+  const handleStrategicMapRegenerateTopicCopy = useCallback(
+    async (pick: DecisionIntelTopicPick) => {
+      if (!unlockedStrategicReport) {
+        toast.error("请先解锁战略地图");
+        return;
+      }
+      const titleKey = normalizeDecisionIntelTopicTitleKey(pick.title);
+      if (generateDecisionIntelTopicCopyMutation.isPending) return;
+
+      const regenCost = CREDIT_COSTS.decisionIntelTopicExecutionCopyRegenerate;
+      if (
+        !supervisorAccess &&
+        !window.confirm(
+          `将重新生成该选题的执行文案（防护开关）。同一选题首次重新生成免费，之后每次 ${regenCost} 积分。是否继续？`,
+        )
+      ) {
+        return;
+      }
+
+      const isGifted = strategicMapGiftedStructureTitles.some(
+        (t) => normalizeDecisionIntelTopicTitleKey(t) === titleKey,
+      );
+
+      setGeneratingStrategicMapTopicKey(titleKey);
+      try {
+        const res = await generateDecisionIntelTopicCopyMutation.mutateAsync({
+          topic: strategicMapTopic,
+          contentBlueprint: strategicMapBlueprint,
+          platformHint: decisionIntelPlatformHint,
+          pick,
+          regenerate: true,
+        });
+        const mapped = mapStrategicMapBlueprintsToExecutionCards(
+          res.executionBlueprints ?? [],
+          contentExecutionCards.length + strategicMapSessionExecutionCards.length,
+          isGifted
+            ? { isDecisionIntelBonus: true }
+            : { isDecisionIntelPicked: true },
+        );
+        if (mapped.length === 0) {
+          toast.error("未能重新生成执行文案，请稍后重试");
+          return;
+        }
+        setStrategicMapSessionExecutionCards((prev) => {
+          const filtered = prev.filter(
+            (c) => normalizeDecisionIntelTopicTitleKey(c.title) !== titleKey,
+          );
+          return [...filtered, ...mapped];
+        });
+        const charged = Number(res.chargedCredits ?? 0);
+        toast.success(
+          charged > 0
+            ? `已重新生成并更新执行区（扣 ${charged} 积分）`
+            : "已重新生成并更新执行区（本次免费）",
+        );
+        scrollToPlatformExecutionCopy();
+      } finally {
+        setGeneratingStrategicMapTopicKey(null);
+      }
+    },
+    [
+      unlockedStrategicReport,
+      generateDecisionIntelTopicCopyMutation,
+      strategicMapTopic,
+      strategicMapBlueprint,
+      decisionIntelPlatformHint,
+      strategicMapGiftedStructureTitles,
+      contentExecutionCards.length,
+      strategicMapSessionExecutionCards.length,
+      supervisorAccess,
+      scrollToPlatformExecutionCopy,
+    ],
+  );
 
   const scrollToPaidDecisionIntel = useCallback(() => {
     const el = document.getElementById(PLATFORM_SECTION_DECISION_INTEL_ID);
@@ -5639,6 +5724,7 @@ export default function PlatformPage() {
                         giftedStructureTitles={strategicMapGiftedStructureTitles}
                         existingExecutionTitleKeys={existingStrategicExecutionTitleKeys}
                         onGenerateTopicCopy={(pick) => void handleStrategicMapGenerateTopicCopy(pick)}
+                        onRegenerateTopicCopy={(pick) => void handleStrategicMapRegenerateTopicCopy(pick)}
                         generatingTopicCopyKey={generatingStrategicMapTopicKey}
                       />
                     </div>
@@ -6659,7 +6745,7 @@ export default function PlatformPage() {
                           }
                           if (!window.confirm(confirmNote)) return;
                         }
-                        setRegeneratingCoverSceneId(item.id);
+                        markCoverGenerationStarted(item.id);
                         void runThrottledPlatformImageRequest(`single-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
                             topicHook: "",
@@ -6689,10 +6775,10 @@ export default function PlatformPage() {
                             } else {
                               toast.error("单帧生图失败，可稍后在本卡重试或联系支持。");
                             }
-                            setRegeneratingCoverSceneId(null);
+                            markCoverGenerationFinished(item.id);
                           })
                           .catch((err) => {
-                            setRegeneratingCoverSceneId(null);
+                            markCoverGenerationFinished(item.id);
                             toast.error(err.message || "操作失败");
                           });
                       };
@@ -6717,7 +6803,7 @@ export default function PlatformPage() {
                               : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
                           if (!supervisorAccess && !window.confirm(confirmNote)) return;
                         }
-                        setRegeneratingCoverSceneId(item.id);
+                        markCoverGenerationStarted(item.id);
                         void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, () =>
                           runEnqueueTopicImageAndPoll({
                             topicHook: "",
@@ -6751,10 +6837,10 @@ export default function PlatformPage() {
                                 "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
                               );
                             }
-                            setRegeneratingCoverSceneId(null);
+                            markCoverGenerationFinished(item.id);
                           })
                           .catch((err) => {
-                            setRegeneratingCoverSceneId(null);
+                            markCoverGenerationFinished(item.id);
                             toast.error(err.message || "操作失败");
                           });
                       };
@@ -7071,8 +7157,7 @@ export default function PlatformPage() {
                                       isSequentialCompositeBatchGenerating ||
                                       isSequentialCoverCompositeBundleBatchGenerating ||
                                       coverCompositeBundleSceneId !== null ||
-                                      regeneratingCoverSceneId !== null ||
-                                      compositeMutationBusy ||
+                                                                            compositeMutationBusy ||
                                       isDashboardLoading ||
                                       isContentLoading
                                     }
@@ -7086,7 +7171,7 @@ export default function PlatformPage() {
                                   >
                                     <RefreshCw
                                       className={`h-3 w-3 ${
-                                        regeneratingCoverSceneId === item.id
+                                        batchGeneratingCoverIds.has(item.id)
                                           ? "animate-spin text-[#ff4fb8]"
                                           : "text-gray-400 group-hover:text-white"
                                       }`}
@@ -7099,7 +7184,7 @@ export default function PlatformPage() {
                               </div>
                               </div>
                             </div>
-                          ) : (regeneratingCoverSceneId === item.id ||
+                          ) : (batchGeneratingCoverIds.has(item.id) ||
                               coverCompositeBundleSceneId === item.id ||
                               isSequentialCoverBatchGenerating ||
                               batchGeneratingCoverIds.has(item.id) ||
@@ -7110,7 +7195,7 @@ export default function PlatformPage() {
                               <span className="text-xs font-medium tracking-widest text-gray-400 px-3 text-center">
                                 {coverCompositeBundleSceneId === item.id
                                   ? "套装绘制中（封面+2×4 并发）…"
-                                  : regeneratingCoverSceneId === item.id
+                                  : batchGeneratingCoverIds.has(item.id)
                                     ? "单帧重新绘制中..."
                                     : coverSilentRetryIds.has(item.id)
                                       ? "检测到异常，正在自动重试补救..."
@@ -7148,8 +7233,7 @@ export default function PlatformPage() {
                                 isSequentialCoverCompositeBundleBatchGenerating ||
                                 coverCompositeBundleSceneId !== null ||
                                 isSequentialCoverBatchGenerating ||
-                                regeneratingCoverSceneId !== null ||
-                                batchGeneratingCoverIds.has(item.id) ||
+                                                                batchGeneratingCoverIds.has(item.id) ||
                                 coverSilentRetryIds.has(item.id) ||
                                 isDashboardLoading ||
                                 isContentLoading
@@ -7245,8 +7329,7 @@ export default function PlatformPage() {
                                 isSequentialCompositeBatchGenerating ||
                                 isSequentialCoverCompositeBundleBatchGenerating ||
                                 coverCompositeBundleSceneId !== null ||
-                                regeneratingCoverSceneId !== null ||
-                                batchGeneratingCoverIds.has(item.id) ||
+                                                                batchGeneratingCoverIds.has(item.id) ||
                                 coverSilentRetryIds.has(item.id) ||
                                 isDashboardLoading ||
                                 isContentLoading
@@ -7254,14 +7337,14 @@ export default function PlatformPage() {
                               onClick={handleGenerateSingleCoverFooter}
                               className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#ff4fb8]/45 bg-[#ff4fb8]/12 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/22 ${
                                 compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""
-                              } ${regeneratingCoverSceneId === item.id ? "cursor-wait ring-2 ring-[#ff4fb8]/35 opacity-95 [&:disabled]:opacity-95" : ""}`}
+                              } ${batchGeneratingCoverIds.has(item.id) ? "cursor-wait ring-2 ring-[#ff4fb8]/35 opacity-95 [&:disabled]:opacity-95" : ""}`}
                               title={
                                 isEligibleFreeRetry
                                   ? "检测到黑图，本次可走免费补救链路（免扣积分）"
                                   : `仅此选题生成竖版封面单帧 · ${normalCoverCost} 点`
                               }
                             >
-                              {regeneratingCoverSceneId === item.id ? (
+                              {batchGeneratingCoverIds.has(item.id) ? (
                                 <span className="inline-flex items-center gap-1.5">
                                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                                   封面生成中…
