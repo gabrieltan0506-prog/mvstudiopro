@@ -5,6 +5,10 @@
 
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { DEMO_ADVANCED_AI_REPORT_DATA } from "@shared/advancedAIReportDemoData";
+import {
+  normalizeDecisionIntelTopicTitleKey,
+  type DecisionIntelTopicPick,
+} from "@shared/decisionIntelTopicPicks";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
 import { fallbackPlatformHitPotentialRadar } from "@shared/advancedPredictionEngine";
 import { cn } from "@/lib/utils";
@@ -19,6 +23,7 @@ import {
   HeartHandshake,
   LayoutDashboard,
   Lightbulb,
+  Loader2,
   Radio,
   RefreshCcw,
   ScanLine,
@@ -38,6 +43,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+export type { DecisionIntelTopicPick };
+
 export interface PlatformReportDashboardProps {
   data?: AdvancedAIReportData;
   className?: string;
@@ -45,37 +52,59 @@ export interface PlatformReportDashboardProps {
   presentation?: "default" | "trialRead";
   /** 已自动赠送至下方执行区的选题结构标题（通常 2 条） */
   giftedStructureTitles?: string[];
-  /** 点击「生成完整文案」：跳转下方执行选题区 */
-  onGoGenerateCopy?: () => void;
-}
-
-function normalizeTopicTitleKey(title: string): string {
-  return title.replace(/\s+/g, " ").trim().toLowerCase();
+  /** 下方执行区已存在的选题标题（用于显示「已在执行区」） */
+  existingExecutionTitleKeys?: string[];
+  /** 点击「生成完整文案」：扩写并追加至下方执行区 */
+  onGenerateTopicCopy?: (pick: DecisionIntelTopicPick) => void;
+  /** 正在扩写的选题标题 key（normalizeDecisionIntelTopicTitleKey） */
+  generatingTopicCopyKey?: string | null;
 }
 
 function GenerateCopyCtaButton({
-  onClick,
+  pick,
+  onGenerate,
   trial,
   variant = "structure",
+  loading = false,
+  alreadyInExecution = false,
 }: {
-  onClick?: () => void;
+  pick: DecisionIntelTopicPick;
+  onGenerate?: (pick: DecisionIntelTopicPick) => void;
   trial: boolean;
   variant?: "structure" | "personalization";
+  loading?: boolean;
+  alreadyInExecution?: boolean;
 }): ReactElement {
-  if (trial || !onClick) return <></>;
+  if (trial) return <></>;
+
+  if (alreadyInExecution) {
+    return (
+      <div className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-sky-400/35 bg-sky-500/15 px-2 py-1.5 text-[10px] font-bold text-sky-100">
+        ✓ 已在下方执行区
+      </div>
+    );
+  }
+
+  if (!onGenerate) return <></>;
+
   return (
     <button
       type="button"
-      onClick={onClick}
-      className={`mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-[11px] font-bold shadow-md transition hover:brightness-110 ${
+      disabled={loading}
+      onClick={() => onGenerate(pick)}
+      className={`mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-[11px] font-bold shadow-md transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60 ${
         variant === "personalization"
           ? "border-[#f472b6]/55 bg-[linear-gradient(135deg,rgba(244,114,182,0.35),rgba(190,24,93,0.2))] text-[#ffe4f0] hover:bg-[rgba(244,114,182,0.45)]"
           : "border-[#fbbf24]/55 bg-[linear-gradient(135deg,rgba(251,191,36,0.35),rgba(217,119,6,0.22))] text-[#fff7ed] hover:bg-[rgba(251,191,36,0.45)]"
       }`}
     >
-      <FilePenLine size={13} strokeWidth={2.25} aria-hidden />
-      生成完整文案
-      <ArrowDown size={12} className="opacity-85" aria-hidden />
+      {loading ? (
+        <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+      ) : (
+        <FilePenLine size={13} strokeWidth={2.25} aria-hidden />
+      )}
+      {loading ? "文案生成中…" : "生成完整文案"}
+      {!loading ? <ArrowDown size={12} className="opacity-85" aria-hidden /> : null}
     </button>
   );
 }
@@ -157,10 +186,13 @@ export function PlatformReportDashboard({
   className = "",
   presentation = "default",
   giftedStructureTitles = [],
-  onGoGenerateCopy,
+  existingExecutionTitleKeys = [],
+  onGenerateTopicCopy,
+  generatingTopicCopyKey = null,
 }: PlatformReportDashboardProps): ReactElement {
   const trial = presentation === "trialRead";
-  const giftedKeys = new Set(giftedStructureTitles.map(normalizeTopicTitleKey));
+  const giftedKeys = new Set(giftedStructureTitles.map(normalizeDecisionIntelTopicTitleKey));
+  const existingKeys = new Set(existingExecutionTitleKeys.map(normalizeDecisionIntelTopicTitleKey));
   const structureCount = data.topicStructureExamples.length;
   const personalizationCount = data.executionSuggestions.personalization.length;
   const totalDirections = structureCount + personalizationCount;
@@ -426,7 +458,7 @@ export function PlatformReportDashboard({
         </section>
       </div>
 
-      {!trial && onGoGenerateCopy && totalDirections > 0 ? (
+      {!trial && onGenerateTopicCopy && totalDirections > 0 ? (
         <div className="mb-3.5 rounded-xl border-2 border-[#fde047]/40 bg-[linear-gradient(135deg,rgba(253,224,71,0.14),rgba(17,24,39,0.92))] px-3.5 py-3 shadow-[0_8px_28px_rgba(253,224,71,0.12)]">
           <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-[#fde047]">
             <Sparkles size={16} className="shrink-0" aria-hidden />
@@ -439,7 +471,7 @@ export function PlatformReportDashboard({
             </span>
           </p>
           <p className="mt-1.5 text-[11px] leading-relaxed text-amber-100/85">
-            赠送选题仅本次浏览可见；请当场在下方执行卡生成封面与 2×4 分镜。未赠送方向请点击各卡醒目按钮，跳转专属文案区继续扩写。
+            赠送选题仅本次浏览可见。未赠送方向请点击各卡按钮即时扩写至下方执行区，有文案即可与分镜一致批量生成封面。
           </p>
         </div>
       ) : null}
@@ -550,7 +582,7 @@ export function PlatformReportDashboard({
                       契合 {ex.brandMatchFit}
                     </span>
                   </div>
-                  {giftedKeys.has(normalizeTopicTitleKey(ex.title)) ? (
+                  {giftedKeys.has(normalizeDecisionIntelTopicTitleKey(ex.title)) ? (
                     <div className="mt-2 pl-7">
                       <span className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/15 px-2 py-1.5 text-[10px] font-bold text-emerald-100">
                         ✓ 已赠送至下方执行区
@@ -558,7 +590,21 @@ export function PlatformReportDashboard({
                     </div>
                   ) : (
                     <div className="pl-7">
-                      <GenerateCopyCtaButton onClick={onGoGenerateCopy} trial={trial} variant="structure" />
+                      <GenerateCopyCtaButton
+                        pick={{
+                          title: ex.title,
+                          structure: ex.structure,
+                          predictedCtr: ex.predictedCtr,
+                          predictedConversion: ex.predictedConversion,
+                          brandMatchFit: ex.brandMatchFit,
+                          source: "structure",
+                        }}
+                        onGenerate={onGenerateTopicCopy}
+                        trial={trial}
+                        variant="structure"
+                        loading={generatingTopicCopyKey === normalizeDecisionIntelTopicTitleKey(ex.title)}
+                        alreadyInExecution={existingKeys.has(normalizeDecisionIntelTopicTitleKey(ex.title))}
+                      />
                     </div>
                   )}
                 </div>
@@ -650,7 +696,20 @@ export function PlatformReportDashboard({
                       <span className="hidden text-[10px] text-emerald-200/65 md:block">预估播放</span>
                     </div>
                   </div>
-                  <GenerateCopyCtaButton onClick={onGoGenerateCopy} trial={trial} variant="personalization" />
+                  <GenerateCopyCtaButton
+                    pick={{
+                      title: item.topicDirection,
+                      structure:
+                        "痛点切入 → IP 人设强化 → 专业解读 → 行动号召（战略地图 IP 推荐方向，须贴合账号人设与主战场平台）",
+                      brandMatchFit: fit,
+                      source: "personalization",
+                    }}
+                    onGenerate={onGenerateTopicCopy}
+                    trial={trial}
+                    variant="personalization"
+                    loading={generatingTopicCopyKey === normalizeDecisionIntelTopicTitleKey(item.topicDirection)}
+                    alreadyInExecution={existingKeys.has(normalizeDecisionIntelTopicTitleKey(item.topicDirection))}
+                  />
                 </div>
                 );
               })}

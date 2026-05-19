@@ -20,6 +20,7 @@ import {
 import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2LlmMode,
+  resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
 import { storagePut, storageGet } from "./storage";
@@ -72,6 +73,9 @@ import {
   PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE,
   zPlatformImagePromptTranslatorInput,
 } from "./services/geminiPlatformCompositeTranslation.js";
+
+const zPlatformTopicCoverPixelEngine = z.enum(["gpt_image2", "nano_banana_2", "nano_banana_pro"]);
+
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -90,7 +94,10 @@ import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
   getProductPackageDisplayRows,
-  platformCompositeBulkFourSlotCredits,
+  platformBundleCreditsForSlot,
+  platformCoverBundleTotalCredits,
+  platformCoverCompositeBundleCreditsForCompositeKind,
+  platformCompositeBundleTotalCredits,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
@@ -3745,6 +3752,49 @@ export const appRouter = router({
         };
       }),
 
+    /** 战略地图：用户点选单条选题方向，扩写 1 套执行级文案（会话内展示，不入库） */
+    generateDecisionIntelTopicExecutionCopy: protectedProcedure
+      .input(
+        z.object({
+          topic: z.string().max(160).optional(),
+          contentBlueprint: z.unknown().optional(),
+          platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
+          pick: z.object({
+            title: z.string().min(2).max(240),
+            structure: z.string().min(4).max(8000),
+            predictedCtr: z.number().optional(),
+            predictedConversion: z.number().optional(),
+            brandMatchFit: z.number().optional(),
+            source: z.enum(["structure", "personalization"]).optional(),
+          }),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const { generateDecisionIntelTopicBlueprints } = await import(
+          "./services/decisionIntelBonusBlueprints.js"
+        );
+        const topic = (input.topic || "").trim() || "个性化战略选题";
+        const platformHint = input.platformHint ?? "douyin";
+        const contentBlueprint =
+          input.contentBlueprint ??
+          ({
+            summary: topic,
+            source: "platform_strategic_map_pick",
+            userId: ctx.user.id,
+          } as Record<string, unknown>);
+
+        const blueprints = await generateDecisionIntelTopicBlueprints({
+          picks: [input.pick],
+          contentBlueprint,
+          topic,
+          platformHint,
+          idPrefix: "decision-intel-picked",
+          abortSignal: ctx.clientDisconnected,
+        });
+
+        return { executionBlueprints: blueprints };
+      }),
+
     generateVisualReport: publicProcedure
       .input(z.object({
         // Extended to support short-form trend radar: 3d and 7d windows
@@ -4036,7 +4086,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           sceneId: z.string().min(1).max(128),
           /** @deprecated 封面單幀固定 GPT 5.4；此欄位忽略。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
-          /** 管理員／監管：單幀主生圖可選 Vertex Nano Banana 2（官方 API）；`nano_banana_pro` 為舊別名。普通帳戶傳入無效 */
+          /** 監管：豎封像素三選一；普通帳戶傳入無效 */
+          topicCoverPixelEngine: zPlatformTopicCoverPixelEngine.optional(),
+          /** @deprecated 等同 `topicCoverPixelEngine: "nano_banana_2"` */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
@@ -4050,11 +4102,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
-        const coverProEngine =
-          supervisorOpsAllowed &&
-          (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
-            ? ("nano_banana_2" as const)
-            : undefined;
+        const topicCoverPixelEngine = supervisorOpsAllowed
+          ? resolveSupervisorTopicCoverPixelEngineInput({
+              topicCoverPixelEngine: input.topicCoverPixelEngine,
+              coverProEngine: input.coverProEngine,
+            })
+          : undefined;
         const enableTopicCoverDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
@@ -4243,7 +4296,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
-          coverProEngine,
+          coverPixelEngine: topicCoverPixelEngine,
           enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
           drProSecondaryCoverInputs,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
@@ -4266,27 +4319,70 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           sceneId: z.string().min(1).max(128),
           /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          topicCoverPixelEngine: zPlatformTopicCoverPixelEngine.optional(),
+          /** @deprecated 等同 `topicCoverPixelEngine: "nano_banana_2"` */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           /** 管理員／監管：選題封面步驟 0.5 Deep Research Pro；普通帳戶傳入無效 */
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
           /** 可選：第二條選題 sceneId（同用戶快照）· DR-Pro 雙條並行 */
           drProSecondarySceneId: z.string().min(1).max(128).optional(),
-          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
+          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認監管參數（不免扣積分）。 */
           supervisorToken: z.string().max(512).optional(),
+          /** 一键封面套装：40×N 按序分拆扣费 */
+          bulkCoverPack: z
+            .object({
+              packSceneIds: z.array(z.string().min(1).max(128)).min(1).max(24),
+              sequentialSlot: z.number().int().min(0),
+            })
+            .optional(),
+        })
+        .superRefine((data, ctx) => {
+          const pack = data.bulkCoverPack;
+          if (!pack) return;
+          const { packSceneIds, sequentialSlot } = pack;
+          if (sequentialSlot >= packSceneIds.length) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "bulkCoverPack.sequentialSlot 超出 packSceneIds 长度",
+              path: ["bulkCoverPack", "sequentialSlot"],
+            });
+          }
+          if (new Set(packSceneIds).size !== packSceneIds.length) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "bulkCoverPack.packSceneIds 须互不相同",
+              path: ["bulkCoverPack", "packSceneIds"],
+            });
+          }
+          if (packSceneIds[sequentialSlot] !== data.sceneId) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "sceneId 须与 bulkCoverPack.packSceneIds[sequentialSlot] 一致",
+              path: ["sceneId"],
+            });
+          }
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
-        const coverProEngine =
-          supervisorOpsAllowed &&
-          (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
-            ? ("nano_banana_2" as const)
-            : undefined;
+        const topicCoverPixelEngine = supervisorOpsAllowed
+          ? resolveSupervisorTopicCoverPixelEngineInput({
+              topicCoverPixelEngine: input.topicCoverPixelEngine,
+              coverProEngine: input.coverProEngine,
+            })
+          : undefined;
         const enableTopicCoverDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
-        const topicFramePaidCost = CREDIT_COSTS.platformTopicFrameGraphic;
+        const coverPack = input.bulkCoverPack;
+        const topicFramePaidCost = coverPack
+          ? platformBundleCreditsForSlot(
+              platformCoverBundleTotalCredits(coverPack.packSceneIds.length),
+              coverPack.sequentialSlot,
+              coverPack.packSceneIds.length,
+            )
+          : CREDIT_COSTS.platformTopicFrameGraphic;
 
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -4486,7 +4582,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 imagePromptTranslator: "gpt54",
                 isFreeRetry,
                 newJobMetaBase,
-                coverProEngine,
+                topicCoverPixelEngine,
                 enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
                 drProSecondarySceneId: input.drProSecondarySceneId,
               },
@@ -4502,7 +4598,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 同一選題：**豎版封面 + 2×4 分鏡或八格** 一次扣 {@link CREDIT_COSTS.platformTopicCoverAndCompositeBundle}；
+     * 同一選題：**豎版封面 + 2×4 分鏡或八格** 一次扣费（封面 48 + 分镜 60|72，九折）；
      * 異步 worker 內 **封面與 2×4 並行**（`Promise.allSettled`）：封面鏈 GPT 5.4 英文化；2×4 預設 Vertex Flash 英文化（可改 gpt54）。2×4 側強制跳過 DR-Pro，避免與封面鏈重複貴價 Interactions。
      */
     enqueueTopicCoverAndCompositeBundle: protectedProcedure
@@ -4510,6 +4606,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           coverPersonaContext: z.string().max(4000).optional(),
           sceneId: z.string().min(1).max(128),
+          topicCoverPixelEngine: zPlatformTopicCoverPixelEngine.optional(),
+          /** @deprecated 等同 `topicCoverPixelEngine: "nano_banana_2"` */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
           supervisorToken: z.string().max(512).optional(),
@@ -4530,15 +4628,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
-        const coverProEngine =
-          supervisorOpsAllowed &&
-          (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro")
-            ? ("nano_banana_2" as const)
-            : undefined;
+        const topicCoverPixelEngine = supervisorOpsAllowed
+          ? resolveSupervisorTopicCoverPixelEngineInput({
+              topicCoverPixelEngine: input.topicCoverPixelEngine,
+              coverProEngine: input.coverProEngine,
+            })
+          : undefined;
         const enableTopicCoverDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
 
-        const bundleCost = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
+        const bundleCost = platformCoverCompositeBundleCreditsForCompositeKind(input.compositeKind);
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
 
@@ -4599,14 +4698,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               creationIdOut = undefined;
               throw new TRPCError({
                 code: "PAYMENT_REQUIRED",
-                message: `Credits 不足，封面+分鏡套裝需要 ${bundleCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+                message: `Credits 不足，封面+分镜套装（九折）需要 ${bundleCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
               });
             }
             await deductCreditsAmount(
               userId,
               bundleCost,
               "platformTopicCoverAndCompositeBundle",
-              `平台选题套裝·封面+2×4（${bundleCost}点）`,
+              `平台选题套装·封面+2×4（九折 ${bundleCost}点）`,
             );
             await database
               .update(userCreations)
@@ -4618,14 +4717,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (creditsInfo.totalAvailable < bundleCost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，封面+分鏡套裝需要 ${bundleCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，封面+分镜套装（九折）需要 ${bundleCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
           await deductCreditsAmount(
             userId,
             bundleCost,
             "platformTopicCoverAndCompositeBundle",
-            `平台选题套裝·封面+2×4（${bundleCost}点）`,
+            `平台选题套装·封面+2×4（九折 ${bundleCost}点）`,
           );
         }
 
@@ -4677,7 +4776,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               appealHook: resolvedCover.appealHook,
               imagePromptTranslator: "gpt54",
               newJobMetaBase,
-              coverProEngine,
+              topicCoverPixelEngine,
               enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
               compositeTitle: input.compositeTitle,
               compositeScriptContext: input.compositeScriptContext,
@@ -4927,7 +5026,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     /**
      * 平台页：单张原生 2×4 大图 — 双语编导产出英文 prompt → GPT-IMAGE-2 + Vertex 兜底。
      * 单条散买：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
-     * 四选题一键：传 `bulkFourSequentialSlot` + `bulkFourPackSceneIds` 时按套裝整数分拆扣费（四次相加={@link CREDIT_COSTS.platformCompositeBulkFourTopics}）。
+     * 一键套装：传 `bulkCompositePack` 时按 54×选题数 整数分拆扣费。
      */
     generatePlatformCompositeSheet: protectedProcedure
       .input(
@@ -4953,38 +5052,36 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             coverPersonaContext: z.string().max(8000).optional(),
             /** 2×4 出图：GPT-Image-2 主链 vs Vertex Nano Banana 2 主路径（优先于部署变量 PLATFORM_COMPOSITE_SHEET_ENGINE） */
             compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
-            /** 与 `bulkFourPackSceneIds` 同时出现；0..3 对应当前为四条套裝中的第几笔扣费 */
-            bulkFourSequentialSlot: z.number().int().min(0).max(3).optional(),
-            /** 四条选题 sceneId 固定顺序，须与客户端串行顺序一致且互不重复 */
-            bulkFourPackSceneIds: z
-              .tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)])
+            /** 一键分镜/八格套装：54×N 按序分拆扣费 */
+            bulkCompositePack: z
+              .object({
+                packSceneIds: z.array(z.string().min(1).max(128)).min(1).max(24),
+                sequentialSlot: z.number().int().min(0),
+              })
               .optional(),
           })
           .superRefine((data, ctx) => {
-            const hasSlot = data.bulkFourSequentialSlot !== undefined;
-            const hasPack = data.bulkFourPackSceneIds !== undefined;
-            if (hasSlot !== hasPack) {
+            const pack = data.bulkCompositePack;
+            if (!pack) return;
+            const { packSceneIds, sequentialSlot } = pack;
+            if (sequentialSlot >= packSceneIds.length) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: "四条套裝须同时提供 bulkFourSequentialSlot 与 bulkFourPackSceneIds",
-                path: hasSlot ? ["bulkFourPackSceneIds"] : ["bulkFourSequentialSlot"],
-              });
-              return;
-            }
-            if (!hasSlot || !data.bulkFourPackSceneIds) return;
-            const ids = data.bulkFourPackSceneIds;
-            if (new Set(ids).size !== ids.length) {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "四条套裝内 sceneId 须互不相同",
-                path: ["bulkFourPackSceneIds"],
+                message: "bulkCompositePack.sequentialSlot 超出 packSceneIds 长度",
+                path: ["bulkCompositePack", "sequentialSlot"],
               });
             }
-            const slot = data.bulkFourSequentialSlot!;
-            if (ids[slot] !== data.sceneId) {
+            if (new Set(packSceneIds).size !== packSceneIds.length) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: "sceneId 须与 bulkFourPackSceneIds[currentSlot] 一致",
+                message: "bulkCompositePack.packSceneIds 须互不相同",
+                path: ["bulkCompositePack", "packSceneIds"],
+              });
+            }
+            if (packSceneIds[sequentialSlot] !== data.sceneId) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "sceneId 须与 bulkCompositePack.packSceneIds[sequentialSlot] 一致",
                 path: ["sceneId"],
               });
             }
@@ -4998,12 +5095,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
-        const cost =
-          input.bulkFourSequentialSlot !== undefined
-            ? platformCompositeBulkFourSlotCredits(input.bulkFourSequentialSlot)
-            : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-              ? CREDIT_COSTS.platformStoryboardSheet
-              : CREDIT_COSTS.platformXhsDualNote;
+        const compositePack = input.bulkCompositePack;
+        const cost = compositePack
+          ? platformBundleCreditsForSlot(
+              platformCompositeBundleTotalCredits(compositePack.packSceneIds.length),
+              compositePack.sequentialSlot,
+              compositePack.packSceneIds.length,
+            )
+          : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
+            ? CREDIT_COSTS.platformStoryboardSheet
+            : CREDIT_COSTS.platformXhsDualNote;
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -5017,10 +5118,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
-          const bulkTag =
-            input.bulkFourSequentialSlot !== undefined
-              ? ` · 四条2×4套裝第${input.bulkFourSequentialSlot + 1}/4笔`
-              : "";
+          const bulkTag = compositePack
+            ? ` · 分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
+            : "";
           await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
         }
 
