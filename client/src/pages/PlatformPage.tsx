@@ -804,6 +804,125 @@ function executionCardDomId(sceneId: string): string {
   return `execution-card-${encodeURIComponent(sceneId).replace(/%/g, "")}`;
 }
 
+type PlatformContentExecutionCard = {
+  id: string;
+  title: string;
+  hook: string;
+  copywriting: string;
+  production: string;
+  format: string;
+  suitablePlatforms: string[];
+  actionableSteps: string[];
+  detailedScript: string;
+  publishingAdvice: string;
+  executionDetails: {
+    environmentAndWardrobe: string;
+    lightingAndCamera: string;
+    stepByStepScript: string[];
+  };
+  titleVariants: PlatformTitleVariant[];
+  /** 战略地图当次赠送选题（刷新后不再展示） */
+  isDecisionIntelBonus?: boolean;
+};
+
+function mapContentBlueprintToExecutionCard(
+  item: Record<string, unknown>,
+  index: number,
+  opts?: { isDecisionIntelBonus?: boolean },
+): PlatformContentExecutionCard {
+  const format = item.format || item["格式"] || item["内容形式"] || item["形式"] || "";
+  const title = item.title || item["标题"] || item["选题标题"] || "";
+  const hook = item.hook || item.openingHook || item["开头文案钩子"] || item["hook"] || item["开头钩子"] || "";
+  const copywriting =
+    item.copywriting || item.body || item["核心文案方向"] || item["文案"] || item["正文"] || "";
+  const productionRaw =
+    item.graphicPlan ||
+    item.videoPlan ||
+    item["图文怎么排版/视频怎么拍"] ||
+    item["图文排版"] ||
+    item["视频拍摄"] ||
+    item["制作建议"] ||
+    "";
+  const rawPlatforms = item.suitablePlatforms || item["适合平台"] || item["平台"] || [];
+  const suitablePlatforms: string[] = Array.isArray(rawPlatforms)
+    ? rawPlatforms.map((r) => renderSafeText(r))
+    : typeof rawPlatforms === "string" && rawPlatforms.trim()
+      ? rawPlatforms.split(/[,，、/]+/).map((s: string) => s.trim()).filter(Boolean)
+      : [];
+
+  const actionSteps: string[] = Array.isArray(item.actionableSteps)
+    ? item.actionableSteps.map((a: unknown) => renderSafeText(a))
+    : [];
+
+  const execDetails =
+    typeof item.executionDetails === "object" && item.executionDetails !== null
+      ? (item.executionDetails as Record<string, unknown>)
+      : {};
+  const envWardrobe =
+    execDetails.environmentAndWardrobe || execDetails["拍摄环境服装"] || execDetails["环境服装"] || "";
+  const lightCam =
+    execDetails.lightingAndCamera || execDetails["灯光机位"] || execDetails["灯光镜头"] || "";
+
+  let scriptSteps: string[] = [];
+  if (Array.isArray(execDetails.stepByStepScript)) {
+    scriptSteps = execDetails.stepByStepScript.map((s: unknown) => renderSafeText(s));
+  } else if (typeof execDetails.stepByStepScript === "string" && execDetails.stepByStepScript.trim()) {
+    scriptSteps = [execDetails.stepByStepScript];
+  } else if (typeof execDetails.stepByStepScript === "object" && execDetails.stepByStepScript !== null) {
+    scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
+  }
+
+  const titleVariants = resolveExecutionCardTitleVariants(
+    item,
+    String(title),
+    String(hook),
+    String(copywriting),
+    index,
+  );
+  const baseTitle = cleanUserCopy(
+    renderSafeText(
+      titleVariants[0]?.title || title || item.theme || item.titleExample,
+      `内容方案 ${index + 1}`,
+    ),
+    `内容方案 ${index + 1}`,
+  );
+
+  return {
+    id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
+    title: baseTitle,
+    hook: cleanUserCopy(
+      renderSafeText(hook || item.contentHook, "先用一句明确判断开头。"),
+      "先用一句明确判断开头。",
+    ),
+    copywriting: cleanUserCopy(
+      renderSafeText(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
+      "把这条内容写成用户一看就知道你在解决什么问题的版本。",
+    ),
+    production: cleanUserCopy(renderSafeText(productionRaw), ""),
+    format: renderSafeText(format),
+    suitablePlatforms,
+    actionableSteps: actionSteps,
+    detailedScript: renderSafeText(item.detailedScript || ""),
+    publishingAdvice: renderSafeText(item.publishingAdvice || ""),
+    executionDetails: {
+      environmentAndWardrobe: renderSafeText(envWardrobe),
+      lightingAndCamera: renderSafeText(lightCam),
+      stepByStepScript: scriptSteps,
+    },
+    titleVariants,
+    isDecisionIntelBonus: opts?.isDecisionIntelBonus,
+  };
+}
+
+function mapBonusBlueprintsToExecutionCards(blueprints: unknown[]): PlatformContentExecutionCard[] {
+  if (!Array.isArray(blueprints)) return [];
+  return blueprints
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
+    .map((row, index) =>
+      mapContentBlueprintToExecutionCard(row, 4 + index, { isDecisionIntelBonus: true }),
+    );
+}
+
 /** 生图请求速率：滚动窗口长度（毫秒），与上游「每分钟 N 次」配额对齐。 */
 const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
 /**
@@ -1383,6 +1502,10 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
+  /** 战略地图当次赠送的 2 条执行选题（仅内存，刷新后清空） */
+  const [decisionIntelBonusExecutionCards, setDecisionIntelBonusExecutionCards] = useState<
+    PlatformContentExecutionCard[]
+  >([]);
   /** Stage 2：伫列/worker 状态文案（不宣称具体模型已完成，仅描述后台进度） */
   const [contentLoadingText, setContentLoadingText] = useState("等待战略看板就绪…");
   const [stage2Failed, setStage2Failed] = useState(false);
@@ -3302,8 +3425,18 @@ export default function PlatformPage() {
     enabled: isAuthenticated && !!platformDashboard && !!snapshot,
   });
   const generateDecisionIntelMutation = trpc.mvAnalysis.generateDecisionIntelligenceReport.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success("战略地图已解锁，报告已为您存档（未查看也会保留）");
+      const bonus = mapBonusBlueprintsToExecutionCards(
+        (data as { bonusExecutionBlueprints?: unknown[] }).bonusExecutionBlueprints ?? [],
+      );
+      setDecisionIntelBonusExecutionCards(bonus);
+      if (bonus.length > 0) {
+        toast.success(
+          `已赠送 ${bonus.length} 条高契合战略选题文案（仅本次浏览可见，刷新页面后将不再显示，请当场保存或开拍）`,
+          { duration: 8000 },
+        );
+      }
       void decisionIntelLatestQuery.refetch();
       void decisionIntelPricingQuery.refetch();
     },
@@ -3657,7 +3790,7 @@ export default function PlatformPage() {
     }
   }, [platformContent, platformDashboard]);
 
-  const contentExecutionCards = useMemo(() => {
+  const contentExecutionCards = useMemo((): PlatformContentExecutionCard[] => {
     // Prefer Call 3 result, fall back to Call 2
     const blueprintsSource =
       Array.isArray(platformContent?.contentBlueprints) && platformContent!.contentBlueprints.length > 0
@@ -3666,76 +3799,9 @@ export default function PlatformPage() {
         ? platformDashboard!.contentBlueprints
         : null;
     if (blueprintsSource && blueprintsSource.length > 0) {
-      return blueprintsSource.slice(0, 4).map((item: any, index: number) => {
-        const format = item.format || item["格式"] || item["内容形式"] || item["形式"] || "";
-        const title = item.title || item["标题"] || item["选题标题"] || "";
-        const hook = item.hook || item.openingHook || item["开头文案钩子"] || item["hook"] || item["开头钩子"] || "";
-        const copywriting = item.copywriting || item.body || item["核心文案方向"] || item["文案"] || item["正文"] || "";
-        const productionRaw =
-          item.graphicPlan ||
-          item.videoPlan ||
-          item["图文怎么排版/视频怎么拍"] ||
-          item["图文排版"] ||
-          item["视频拍摄"] ||
-          item["制作建议"] ||
-          "";
-        // Normalize suitablePlatforms: Gemini sometimes returns a comma-separated string instead of array
-        const rawPlatforms = item.suitablePlatforms || item["适合平台"] || item["平台"] || [];
-        const suitablePlatforms: string[] = Array.isArray(rawPlatforms)
-          ? rawPlatforms.map((r) => renderSafeText(r))
-          : typeof rawPlatforms === "string" && rawPlatforms.trim()
-          ? rawPlatforms.split(/[,，、/]+/).map((s: string) => s.trim()).filter(Boolean)
-          : [];
-          
-        const actionSteps: string[] = Array.isArray(item.actionableSteps) ? item.actionableSteps.map((a: any) => renderSafeText(a)) : [];
-
-        const execDetails = typeof item.executionDetails === "object" && item.executionDetails !== null ? item.executionDetails : {};
-        const envWardrobe = execDetails.environmentAndWardrobe || execDetails["拍摄环境服装"] || execDetails["环境服装"] || "";
-        const lightCam = execDetails.lightingAndCamera || execDetails["灯光机位"] || execDetails["灯光镜头"] || "";
-        
-        let scriptSteps: string[] = [];
-        if (Array.isArray(execDetails.stepByStepScript)) {
-          scriptSteps = execDetails.stepByStepScript.map((s: any) => renderSafeText(s));
-        } else if (typeof execDetails.stepByStepScript === "string" && execDetails.stepByStepScript.trim()) {
-          scriptSteps = [execDetails.stepByStepScript];
-        } else if (typeof execDetails.stepByStepScript === "object" && execDetails.stepByStepScript !== null) {
-          scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
-        }
-
-        const titleVariants = resolveExecutionCardTitleVariants(
-          item as Record<string, unknown>,
-          String(title),
-          String(hook),
-          String(copywriting),
-          index,
-        );
-        const baseTitle = cleanUserCopy(
-          renderSafeText(
-            titleVariants[0]?.title || title || item.theme || item.titleExample,
-            `内容方案 ${index + 1}`,
-          ),
-          `内容方案 ${index + 1}`,
-        );
-
-        return {
-          id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
-          title: baseTitle,
-          hook: cleanUserCopy(renderSafeText(hook || item.contentHook, "先用一句明确判断开头。"), "先用一句明确判断开头。"),
-          copywriting: cleanUserCopy(renderSafeText(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"), "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
-          production: cleanUserCopy(renderSafeText(productionRaw), ""),
-          format: renderSafeText(format),
-          suitablePlatforms,
-          actionableSteps: actionSteps,
-          detailedScript: renderSafeText(item.detailedScript || ""),
-          publishingAdvice: renderSafeText(item.publishingAdvice || ""),
-          executionDetails: {
-            environmentAndWardrobe: renderSafeText(envWardrobe),
-            lightingAndCamera: renderSafeText(lightCam),
-            stepByStepScript: scriptSteps
-          },
-          titleVariants,
-        };
-      });
+      return blueprintsSource
+        .slice(0, 4)
+        .map((item: Record<string, unknown>, index: number) => mapContentBlueprintToExecutionCard(item, index));
     }
 
     // Once LLM analysis is in flight or complete, refuse snapshot fallbacks to prevent generic text leaking.
@@ -3761,16 +3827,35 @@ export default function PlatformPage() {
         `内容方案 ${index + 1}`,
       );
       return {
-      id: String((item as any).id || (item as any).sceneId || `topic-${index}`),
-      title: baseTitle,
-      hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
-      copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
-      production: "",
-      format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
-      titleVariants,
-    };
+        id: String((item as { id?: string; sceneId?: string }).id || (item as { sceneId?: string }).sceneId || `topic-${index}`),
+        title: baseTitle,
+        hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
+        copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
+        production: "",
+        format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
+        suitablePlatforms: [],
+        actionableSteps: [],
+        detailedScript: "",
+        publishingAdvice: "",
+        executionDetails: {
+          environmentAndWardrobe: "",
+          lightingAndCamera: "",
+          stepByStepScript: [],
+        },
+        titleVariants,
+      };
     });
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
+
+  const visibleExecutionCards = useMemo(
+    () => [...contentExecutionCards, ...decisionIntelBonusExecutionCards],
+    [contentExecutionCards, decisionIntelBonusExecutionCards],
+  );
+
+  const visibleExecutionCardsKey = useMemo(
+    () => visibleExecutionCards.map((c) => c.id).join("|"),
+    [visibleExecutionCards],
+  );
 
   const contentExecutionCardsKey = useMemo(
     () => contentExecutionCards.map((c) => c.id).join("|"),
@@ -3778,7 +3863,7 @@ export default function PlatformPage() {
   );
 
   useEffect(() => {
-    const validIds = new Set(contentExecutionCards.map((row) => row.id));
+    const validIds = new Set(visibleExecutionCards.map((row) => row.id));
     setPlatformStoryboardSheetMap((prev) =>
       Object.fromEntries(Object.entries(prev).filter(([key]) => validIds.has(key))),
     );
@@ -3793,7 +3878,7 @@ export default function PlatformPage() {
       });
       return next;
     });
-  }, [contentExecutionCards, contentExecutionCardsKey]);
+  }, [visibleExecutionCards, visibleExecutionCardsKey]);
 
   const platformTopicCount = contentExecutionCards.length;
   const platformBulkGraphicCost = useMemo(
@@ -4065,7 +4150,7 @@ export default function PlatformPage() {
     };
     const items: StripItem[] = [];
     const pend = pendingCompositeSheet;
-    for (const row of contentExecutionCards) {
+    for (const row of visibleExecutionCards) {
       const id = row.id;
       const title = row.title;
       const sbUrl = platformStoryboardSheetMap[id];
@@ -4118,7 +4203,7 @@ export default function PlatformPage() {
     }
     return items;
   }, [
-    contentExecutionCards,
+    visibleExecutionCards,
     platformStoryboardSheetMap,
     platformXhsNoteMap,
     pendingCompositeSheet,
@@ -6074,7 +6159,7 @@ export default function PlatformPage() {
                         {referenceStoryboardGraphicStrip.map((ref) => {
                           const isXhs = ref.key.includes("xhs-sheet");
                           const compositeRetryKey = `${ref.sceneId}::${isXhs ? "xhs" : "storyboard"}`;
-                          const sourceRow = contentExecutionCards.find((row) => row.id === ref.sceneId);
+                          const sourceRow = visibleExecutionCards.find((row) => row.id === ref.sceneId);
                           const queueSilentCompositeRetry = () => {
                             if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
                             const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
@@ -6194,7 +6279,7 @@ export default function PlatformPage() {
                 {/* 3A：选题卡片 Grid 上方 — IP 维度引导（含底部提示） */}
                 {platformDashboard ? <PlatformIpDimensionGuide /> : null}
 
-                {contentExecutionCards.length > 0 ? (
+                {visibleExecutionCards.length > 0 ? (
                   <div
                     className="mt-4 rounded-xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] px-4 py-3 text-sm leading-relaxed text-[#c8eef9]"
                     role="status"
@@ -6204,27 +6289,37 @@ export default function PlatformPage() {
                     并与出图主句对齐（正文与分镜不改编），竖版封面强调
                     <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套装（
                     {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点/题）或于下方卡片分步购买。
+                    {decisionIntelBonusExecutionCards.length > 0 ? (
+                      <>
+                        {" "}
+                        下方含{" "}
+                        <strong className="text-[#fde047]">
+                          {decisionIntelBonusExecutionCards.length} 条战略地图赠送选题
+                        </strong>
+                        （仅本次浏览可见，刷新后不再显示）。
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
 
                 <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {contentExecutionCards.length > 0 &&
+                  {visibleExecutionCards.length > 0 &&
                   coverWaitCarouselEngaged &&
                   !allTopicCoverImagesReady &&
                   coverGenWaitCarouselItems.some((row) => row.title || row.excerpt.trim()) ? (
                     <CoverGenerationWaitCarousel items={coverGenWaitCarouselItems} itemsKey={coverGenWaitCarouselItemsKey} />
                   ) : null}
-                  {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
+                  {visibleExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
                     <div className="col-span-full flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
                       <Loader2 className="mb-2 h-6 w-6 animate-spin" />
                       正在生成专属选题与配套文案...
                     </div>
-                  ) : contentExecutionCards.length === 0 && platformDashboard ? (
+                  ) : visibleExecutionCards.length === 0 && platformDashboard ? (
                     <div className="col-span-full flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]/70">
                       无对应的选题方向数据
                     </div>
                   ) : (
-                    contentExecutionCards.map((item) => {
+                    visibleExecutionCards.map((item) => {
                       const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
                       const headlineTitle = item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
@@ -6520,8 +6615,22 @@ export default function PlatformPage() {
                       <div
                         key={item.id}
                         id={executionCardDomId(item.id)}
-                        className="group scroll-mt-28 flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5"
+                        className={`group scroll-mt-28 flex flex-col rounded-2xl border bg-white/5 p-5 ${
+                          item.isDecisionIntelBonus
+                            ? "border-[#fde047]/35 ring-1 ring-[#fde047]/20"
+                            : "border-white/10"
+                        }`}
                       >
+                        {item.isDecisionIntelBonus ? (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="mb-3 inline-flex w-fit items-center gap-1.5 rounded-full border border-[#fde047]/40 bg-[#fde047]/10 px-2.5 py-1 text-[11px] font-semibold text-[#fde047]"
+                          >
+                            <Sparkles className="h-3 w-3 shrink-0" aria-hidden />
+                            战略地图赠送 · 仅本次浏览
+                          </motion.div>
+                        ) : null}
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 flex-1 items-start gap-2">
                             {item.format === "图文" ? (
