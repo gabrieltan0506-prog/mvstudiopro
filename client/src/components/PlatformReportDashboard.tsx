@@ -9,10 +9,12 @@ import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize"
 import { fallbackPlatformHitPotentialRadar } from "@shared/advancedPredictionEngine";
 import { cn } from "@/lib/utils";
 import {
+  ArrowDown,
   BarChart3,
   BookOpen,
   Brain,
   Compass,
+  FilePenLine,
   GitCompare,
   HeartHandshake,
   LayoutDashboard,
@@ -41,6 +43,41 @@ export interface PlatformReportDashboardProps {
   className?: string;
   /** 试读：图表与指标保留形态，选题与正文类文案模糊脱敏 */
   presentation?: "default" | "trialRead";
+  /** 已自动赠送至下方执行区的选题结构标题（通常 2 条） */
+  giftedStructureTitles?: string[];
+  /** 点击「生成完整文案」：跳转下方执行选题区 */
+  onGoGenerateCopy?: () => void;
+}
+
+function normalizeTopicTitleKey(title: string): string {
+  return title.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function GenerateCopyCtaButton({
+  onClick,
+  trial,
+  variant = "structure",
+}: {
+  onClick?: () => void;
+  trial: boolean;
+  variant?: "structure" | "personalization";
+}): ReactElement {
+  if (trial || !onClick) return <></>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-[11px] font-bold shadow-md transition hover:brightness-110 ${
+        variant === "personalization"
+          ? "border-[#f472b6]/55 bg-[linear-gradient(135deg,rgba(244,114,182,0.35),rgba(190,24,93,0.2))] text-[#ffe4f0] hover:bg-[rgba(244,114,182,0.45)]"
+          : "border-[#fbbf24]/55 bg-[linear-gradient(135deg,rgba(251,191,36,0.35),rgba(217,119,6,0.22))] text-[#fff7ed] hover:bg-[rgba(251,191,36,0.45)]"
+      }`}
+    >
+      <FilePenLine size={13} strokeWidth={2.25} aria-hidden />
+      生成完整文案
+      <ArrowDown size={12} className="opacity-85" aria-hidden />
+    </button>
+  );
 }
 
 /** 试读打码：模糊 + 轻度渐变遮蔽（不涉及真实用户数据时亦用于对外样张） */
@@ -119,8 +156,16 @@ export function PlatformReportDashboard({
   data = DEMO_ADVANCED_AI_REPORT_DATA,
   className = "",
   presentation = "default",
+  giftedStructureTitles = [],
+  onGoGenerateCopy,
 }: PlatformReportDashboardProps): ReactElement {
   const trial = presentation === "trialRead";
+  const giftedKeys = new Set(giftedStructureTitles.map(normalizeTopicTitleKey));
+  const structureCount = data.topicStructureExamples.length;
+  const personalizationCount = data.executionSuggestions.personalization.length;
+  const totalDirections = structureCount + personalizationCount;
+  const giftedCount = giftedKeys.size;
+  const manualCopyCount = Math.max(0, totalDirections - giftedCount);
   const g = data.globalPredictions;
   const radarData = buildRadarRows(g.hitPotentialRadar);
   const platformKey =
@@ -381,6 +426,24 @@ export function PlatformReportDashboard({
         </section>
       </div>
 
+      {!trial && onGoGenerateCopy && totalDirections > 0 ? (
+        <div className="mb-3.5 rounded-xl border-2 border-[#fde047]/40 bg-[linear-gradient(135deg,rgba(253,224,71,0.14),rgba(17,24,39,0.92))] px-3.5 py-3 shadow-[0_8px_28px_rgba(253,224,71,0.12)]">
+          <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-[#fde047]">
+            <Sparkles size={16} className="shrink-0" aria-hidden />
+            战略地图共 {totalDirections} 个选题方向
+            <span className="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
+              已赠送 {giftedCount} 条至下方执行区
+            </span>
+            <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-50">
+              其余 {manualCopyCount} 条可点「生成完整文案」
+            </span>
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-amber-100/85">
+            赠送选题仅本次浏览可见；请当场在下方执行卡生成封面与 2×4 分镜。未赠送方向请点击各卡醒目按钮，跳转专属文案区继续扩写。
+          </p>
+        </div>
+      ) : null}
+
       {/* 横向第二带：洞察 + 选题实例 + IP */}
       <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 lg:items-stretch">
         <div className="lg:col-span-5">
@@ -487,6 +550,17 @@ export function PlatformReportDashboard({
                       契合 {ex.brandMatchFit}
                     </span>
                   </div>
+                  {giftedKeys.has(normalizeTopicTitleKey(ex.title)) ? (
+                    <div className="mt-2 pl-7">
+                      <span className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/15 px-2 py-1.5 text-[10px] font-bold text-emerald-100">
+                        ✓ 已赠送至下方执行区
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="pl-7">
+                      <GenerateCopyCtaButton onClick={onGoGenerateCopy} trial={trial} variant="structure" />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -576,6 +650,7 @@ export function PlatformReportDashboard({
                       <span className="hidden text-[10px] text-emerald-200/65 md:block">预估播放</span>
                     </div>
                   </div>
+                  <GenerateCopyCtaButton onClick={onGoGenerateCopy} trial={trial} variant="personalization" />
                 </div>
                 );
               })}

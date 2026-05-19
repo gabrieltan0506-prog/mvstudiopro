@@ -41,6 +41,7 @@ import {
   formatDecisionIntelDateRangeZh,
   pickPrimaryDecisionIntelPlatformHint,
 } from "@shared/decisionIntelligencePlatformHint";
+import { selectDecisionIntelBonusTopics } from "@shared/decisionIntelBonusTopics";
 import {
   Activity,
   ArrowLeft,
@@ -2805,7 +2806,7 @@ export default function PlatformPage() {
     generatePlatformCompositeSheetMutation.isPending || compositeAwaitingJobTerminal;
 
   const runSequentialCompositeBatchGeneration = async () => {
-    const cards = contentExecutionCards;
+    const cards = visibleExecutionCards;
     const bulkFourPackSceneIds: [string, string, string, string] | undefined =
       cards.length === 4 ? [cards[0]!.id, cards[1]!.id, cards[2]!.id, cards[3]!.id] : undefined;
     const localOpId = `batch-composite-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3880,33 +3881,33 @@ export default function PlatformPage() {
     });
   }, [visibleExecutionCards, visibleExecutionCardsKey]);
 
-  const platformTopicCount = contentExecutionCards.length;
+  const platformTopicCount = visibleExecutionCards.length;
   const platformBulkGraphicCost = useMemo(
     () => platformTopicCount * CREDIT_COSTS.platformTopicFrameGraphic,
     [platformTopicCount],
   );
   const platformBulkCompositeCost = useMemo(() => {
-    if (contentExecutionCards.length === 4) {
+    if (visibleExecutionCards.length === 4) {
       return CREDIT_COSTS.platformCompositeBulkFourTopics;
     }
     let sum = 0;
-    for (const row of contentExecutionCards) {
+    for (const row of visibleExecutionCards) {
       const isGraphic = row.format === "图文" || row.format === "小红书";
       sum += isGraphic ? CREDIT_COSTS.platformXhsDualNote : CREDIT_COSTS.platformStoryboardSheet;
     }
     return sum;
-  }, [contentExecutionCards]);
+  }, [visibleExecutionCards]);
   /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
   const platformBulkCompositeBreakdown = useMemo(() => {
     let videoLike = 0;
     let graphicLike = 0;
-    for (const row of contentExecutionCards) {
+    for (const row of visibleExecutionCards) {
       const isGraphic = row.format === "图文" || row.format === "小红书";
       if (isGraphic) graphicLike++;
       else videoLike++;
     }
     return { videoLike, graphicLike };
-  }, [contentExecutionCards]);
+  }, [visibleExecutionCards]);
 
   /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四题为套装总价；否则按单条价累加） */
   function onBulkCompositeOneClick() {
@@ -3925,7 +3926,7 @@ export default function PlatformPage() {
   }
 
   async function runSequentialCoverCompositeBundleBatchGeneration() {
-    const cards = contentExecutionCards;
+    const cards = visibleExecutionCards;
     const localOpId = `batch-cover-composite-bundle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setIsSequentialCoverCompositeBundleBatchGenerating(true);
     setPlatformImageGenFlowSnapshots((prev) =>
@@ -4082,7 +4083,7 @@ export default function PlatformPage() {
   }
 
   const coverGenWaitCarouselItems = useMemo((): CoverGenWaitCarouselItem[] => {
-    return contentExecutionCards.slice(0, 4).map((c) => {
+    return visibleExecutionCards.map((c) => {
       const hook = (c.hook || "").replace(/\s+/g, " ").trim();
       const body = (c.copywriting || "").replace(/\s+/g, " ").trim();
       const pick = hook.length >= 48 ? hook : body.length >= 24 ? body : hook || body;
@@ -4095,7 +4096,7 @@ export default function PlatformPage() {
         excerpt,
       };
     });
-  }, [contentExecutionCards]);
+  }, [visibleExecutionCards]);
 
   const coverGenWaitCarouselItemsKey = useMemo(
     () => coverGenWaitCarouselItems.map((row) => row.id).join("|"),
@@ -4121,12 +4122,12 @@ export default function PlatformPage() {
   );
 
   const allTopicCoverImagesReady = useMemo(() => {
-    if (contentExecutionCards.length === 0) return true;
-    return contentExecutionCards.every((row) => {
+    if (visibleExecutionCards.length === 0) return true;
+    return visibleExecutionCards.every((row) => {
       const u = platformImageMap[row.id];
       return typeof u === "string" && u.trim().length > 0 && !platformCoverImageUrlLooksInvalid(u);
     });
-  }, [contentExecutionCards, platformImageMap]);
+  }, [visibleExecutionCards, platformImageMap]);
 
   useEffect(() => {
     if (anyCoverImagePipelineBusy) setCoverWaitCarouselEngaged(true);
@@ -4580,6 +4581,18 @@ export default function PlatformPage() {
     }
   };
 
+  const scrollToPlatformExecutionCopy = useCallback(() => {
+    document.getElementById("platform-stage2-copy")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast.message("请在下方「专属选题与文案」执行卡生成封面、2×4 分镜与图文");
+  }, []);
+
+  const strategicMapGiftedStructureTitles = useMemo(() => {
+    if (!unlockedStrategicReport) return [] as string[];
+    return selectDecisionIntelBonusTopics(unlockedStrategicReport.topicStructureExamples).map((t) =>
+      t.title.trim(),
+    );
+  }, [unlockedStrategicReport]);
+
   const scrollToPaidDecisionIntel = useCallback(() => {
     const el = document.getElementById(PLATFORM_SECTION_DECISION_INTEL_ID);
     if (el) {
@@ -4596,7 +4609,7 @@ export default function PlatformPage() {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("深度追问在报告区下方：请先生成战略看板与报告内容。");
+    toast.message("深度追问在「平台优先级」区块下方：请先生成战略看板与报告内容。");
     document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -5530,7 +5543,12 @@ export default function PlatformPage() {
                 {unlockedStrategicReport ? (
                   <div className="w-full overflow-x-auto overflow-y-visible">
                     <div ref={strategicReportDashboardRef} className="inline-block align-top">
-                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                      <PlatformReportDashboard
+                        data={unlockedStrategicReport}
+                        className="!min-h-0"
+                        giftedStructureTitles={strategicMapGiftedStructureTitles}
+                        onGoGenerateCopy={scrollToPlatformExecutionCopy}
+                      />
                     </div>
                   </div>
                 ) : (
@@ -5874,6 +5892,164 @@ export default function PlatformPage() {
               </div>
             </div>
 
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2 xl:items-start">
+                            <div id={PLATFORM_SECTION_DEEP_QA_ID} className={`scroll-mt-20 ${shellCardClasses("p-6")}`}>
+                              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                                <MessageSquareText className="h-4 w-4 text-[#8cefff]" />
+                                深度追问
+                              </div>
+                              <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
+                                这一轮追问会继续锁定在近 {selectedWindowDays} 天的数据，把结论继续往"选题、形式、节奏、承接动作"推进。点击问题加载到输入框后可以补充或修改，再点击发送。
+                              </p>
+
+                              <div className="mt-5 flex flex-wrap gap-2">
+                                {hotQuestionSuggestions.map((item) => (
+                                  <button
+                                    key={item}
+                                    type="button"
+                                    onClick={() => setQuestion(item)}
+                                    className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
+                                  >
+                                    {item}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
+                                <div className="flex flex-col gap-2">
+                                  <div className="relative">
+                                    <textarea
+                                      value={question}
+                                      onChange={(event) => setQuestion(event.target.value)}
+                                      placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
+                                      className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                                    />
+                                    <div className="absolute right-3 top-3">
+                                      <VoiceInputButton
+                                        onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
+                                        onDebugLog={addVoiceDebug}
+                                        size={28}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 rounded-xl border border-[#6366f1]/40 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(79,70,229,0.08))] px-4 py-3.5 shadow-[0_8px_28px_rgba(99,102,241,0.12)]">
+                                    <p className="text-base font-black tracking-tight text-[#e9d5ff] sm:text-lg">文本支持语音输入</p>
+                                    <p className="mt-1.5 text-sm leading-relaxed text-white/65 sm:text-[15px]">
+                                      点击输入框旁 <span className="font-semibold text-[#c4b5fd]">麦克风</span>
+                                      ，说话即可写入追问内容。推荐使用{" "}
+                                      <span className="rounded-md border border-[#818cf8]/50 bg-[rgba(129,140,248,0.2)] px-1.5 py-0.5 font-semibold text-[#c7d2fe]">
+                                        Chrome、Edge、Safari
+                                      </span>
+                                      。
+                                    </p>
+                                  </div>
+                                  {/* File attachment for multimodal QA */}
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      ref={qaFileInputRef}
+                                      type="file"
+                                      accept="image/*,application/pdf"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) void handleUploadQaFile(f);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => qaFileInputRef.current?.click()}
+                                      disabled={isUploadingQaFile}
+                                      className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs transition disabled:opacity-50 ${
+                                        qaUploadStatus === "success"
+                                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                                          : qaUploadStatus === "error"
+                                            ? "border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                            : "border-white/10 bg-white/5 text-[#c8bfe7] hover:bg-white/10"
+                                      }`}
+                                    >
+                                      {isUploadingQaFile
+                                        ? <><Loader2 className="h-3 w-3 animate-spin" />上传中...</>
+                                        : qaUploadStatus === "success"
+                                          ? <><FileText className="h-3 w-3" />✅ 已上传</>
+                                          : qaUploadStatus === "error"
+                                            ? <><Image className="h-3 w-3" />❌ 上传失败，重试</>
+                                            : <><Image className="h-3 w-3" />上传参考图片/PDF（可选）</>
+                                      }
+                                    </button>
+                                    {qaFileName && qaUploadStatus === "success" && (
+                                      <span className="flex items-center gap-1 text-xs text-emerald-300">
+                                        <FileText className="h-3 w-3" />
+                                        {qaFileName}
+                                        <button
+                                          type="button"
+                                          onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); setQaUploadStatus("idle"); }}
+                                          className="ml-1 text-white/40 hover:text-white/70"
+                                        >×</button>
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleAsk()}
+                                  disabled={isQaLoading || isUploadingQaFile}
+                                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {isQaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+                                  {isQaLoading ? "AI 思考中..." : qaFileUri ? "多模态追问" : "继续追问"}
+                                </button>
+                              </div>
+
+                              {askResult ? (
+                                <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+                                  <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                                    <div className="flex items-center gap-2 text-lg font-bold text-white">
+                                      <MessageSquareText className="h-5 w-5 text-[#8cefff]" />
+                                      {askResult.title}
+                                    </div>
+                                    <div className="mt-4 space-y-4 text-sm leading-8 text-[#d7d0ef]">
+                                      {splitAnswerParagraphs(askResult.answer).map((paragraph, index) => (
+                                        <p key={`${paragraph.slice(0, 24)}-${index}`}>{renderHighlightText(paragraph)}</p>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="space-y-4">
+                                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                                      <div className="text-sm font-semibold text-[#8cefff]">顾问建议</div>
+                                      <div className="mt-3 text-sm leading-7 text-[#d7d0ef]">{askResult.encouragement}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                                      <div className="text-sm font-semibold text-[#ffdd44]">继续往下问</div>
+                                      <div className="mt-3 space-y-2">
+                                        {askResult.nextQuestions.map((item) => (
+                                          <button
+                                            key={item}
+                                            type="button"
+                                            onClick={() => {
+                                              setQuestion(item);
+                                              void handleAsk(item);
+                                            }}
+                                            className="block w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-[#d7d0ef] transition hover:bg-white/10"
+                                          >
+                                            <div className="flex items-start justify-between gap-3">
+                                              <span>{item}</span>
+                                              <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#8cefff]" />
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+              <div className="min-h-0">
+                <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
+              </div>
+            </div>
+
             <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="专属选题与文案状态">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1">
@@ -5973,7 +6149,7 @@ export default function PlatformPage() {
                               toast.error("请先登录");
                               return;
                             }
-                            const scenes = contentExecutionCards.map((row) => ({ id: row.id }));
+                            const scenes = visibleExecutionCards.map((row) => ({ id: row.id }));
                             const discountNote = supervisorAccess
                               ? ""
                               : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面单帧，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
@@ -7093,8 +7269,7 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-              <div className={shellCardClasses("p-6")}>
+            <div className={shellCardClasses("p-6 mt-4")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Rocket className="h-4 w-4 text-[#6fffb0]" />
                   现在就能执行的动作
@@ -7117,162 +7292,6 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <div id={PLATFORM_SECTION_DEEP_QA_ID} className={`scroll-mt-20 ${shellCardClasses("p-6")}`}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <MessageSquareText className="h-4 w-4 text-[#8cefff]" />
-                  深度追问
-                </div>
-                <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
-                  这一轮追问会继续锁定在近 {selectedWindowDays} 天的数据，把结论继续往"选题、形式、节奏、承接动作"推进。点击问题加载到输入框后可以补充或修改，再点击发送。
-                </p>
-
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {hotQuestionSuggestions.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setQuestion(item)}
-                      className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
-                  <div className="flex flex-col gap-2">
-                    <div className="relative">
-                      <textarea
-                        value={question}
-                        onChange={(event) => setQuestion(event.target.value)}
-                        placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
-                        className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                      />
-                      <div className="absolute right-3 top-3">
-                        <VoiceInputButton
-                          onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
-                          onDebugLog={addVoiceDebug}
-                          size={28}
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-3 rounded-xl border border-[#6366f1]/40 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(79,70,229,0.08))] px-4 py-3.5 shadow-[0_8px_28px_rgba(99,102,241,0.12)]">
-                      <p className="text-base font-black tracking-tight text-[#e9d5ff] sm:text-lg">文本支持语音输入</p>
-                      <p className="mt-1.5 text-sm leading-relaxed text-white/65 sm:text-[15px]">
-                        点击输入框旁 <span className="font-semibold text-[#c4b5fd]">麦克风</span>
-                        ，说话即可写入追问内容。推荐使用{" "}
-                        <span className="rounded-md border border-[#818cf8]/50 bg-[rgba(129,140,248,0.2)] px-1.5 py-0.5 font-semibold text-[#c7d2fe]">
-                          Chrome、Edge、Safari
-                        </span>
-                        。
-                      </p>
-                    </div>
-                    {/* File attachment for multimodal QA */}
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={qaFileInputRef}
-                        type="file"
-                        accept="image/*,application/pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void handleUploadQaFile(f);
-                          e.target.value = "";
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => qaFileInputRef.current?.click()}
-                        disabled={isUploadingQaFile}
-                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs transition disabled:opacity-50 ${
-                          qaUploadStatus === "success"
-                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
-                            : qaUploadStatus === "error"
-                              ? "border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
-                              : "border-white/10 bg-white/5 text-[#c8bfe7] hover:bg-white/10"
-                        }`}
-                      >
-                        {isUploadingQaFile
-                          ? <><Loader2 className="h-3 w-3 animate-spin" />上传中...</>
-                          : qaUploadStatus === "success"
-                            ? <><FileText className="h-3 w-3" />✅ 已上传</>
-                            : qaUploadStatus === "error"
-                              ? <><Image className="h-3 w-3" />❌ 上传失败，重试</>
-                              : <><Image className="h-3 w-3" />上传参考图片/PDF（可选）</>
-                        }
-                      </button>
-                      {qaFileName && qaUploadStatus === "success" && (
-                        <span className="flex items-center gap-1 text-xs text-emerald-300">
-                          <FileText className="h-3 w-3" />
-                          {qaFileName}
-                          <button
-                            type="button"
-                            onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); setQaUploadStatus("idle"); }}
-                            className="ml-1 text-white/40 hover:text-white/70"
-                          >×</button>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleAsk()}
-                    disabled={isQaLoading || isUploadingQaFile}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isQaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                    {isQaLoading ? "AI 思考中..." : qaFileUri ? "多模态追问" : "继续追问"}
-                  </button>
-                </div>
-
-                {askResult ? (
-                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                      <div className="flex items-center gap-2 text-lg font-bold text-white">
-                        <MessageSquareText className="h-5 w-5 text-[#8cefff]" />
-                        {askResult.title}
-                      </div>
-                      <div className="mt-4 space-y-4 text-sm leading-8 text-[#d7d0ef]">
-                        {splitAnswerParagraphs(askResult.answer).map((paragraph, index) => (
-                          <p key={`${paragraph.slice(0, 24)}-${index}`}>{renderHighlightText(paragraph)}</p>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                        <div className="text-sm font-semibold text-[#8cefff]">顾问建议</div>
-                        <div className="mt-3 text-sm leading-7 text-[#d7d0ef]">{askResult.encouragement}</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                        <div className="text-sm font-semibold text-[#ffdd44]">继续往下问</div>
-                        <div className="mt-3 space-y-2">
-                          {askResult.nextQuestions.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() => {
-                                setQuestion(item);
-                                void handleAsk(item);
-                              }}
-                              className="block w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-[#d7d0ef] transition hover:bg-white/10"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <span>{item}</span>
-                                <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#8cefff]" />
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            {/* Feature #6c: Trend Report Generator — supervisor bypass credits */}
-            <div className="grid gap-4">
-              <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
-            </div>
             {/* PDF Download — captures current rendered page via Cloud Run Puppeteer */}
             {hasAnalyzed && (
               <div className="mt-4 space-y-3">
