@@ -3597,6 +3597,26 @@ export const appRouter = router({
         const { hashDecisionIntelligenceRequest, runGeminiFlashPipeline } = await import(
           "./services/decisionIntelligenceFlashPipeline.js",
         );
+        const { generateDecisionIntelBonusBlueprints } = await import(
+          "./services/decisionIntelBonusBlueprints.js",
+        );
+
+        const attachBonusBlueprints = async (
+          report: import("@shared/advancedAIReport").AdvancedAIReportData,
+        ): Promise<Record<string, unknown>[]> => {
+          try {
+            return await generateDecisionIntelBonusBlueprints({
+              report,
+              contentBlueprint,
+              topic,
+              platformHint,
+              abortSignal: ctx.clientDisconnected,
+            });
+          } catch (err) {
+            console.warn("[decisionIntel] bonus blueprints skipped:", err);
+            return [];
+          }
+        };
 
         const now = new Date();
         const windowDays = input.windowDays ?? 15;
@@ -3639,12 +3659,14 @@ export const appRouter = router({
             const meta = JSON.parse(cached.metadata) as { report?: import("@shared/advancedAIReport").AdvancedAIReportData };
             if (meta?.report && typeof meta.report === "object") {
               const creditsInfo = await getCredits(ctx.user.id);
+              const bonusExecutionBlueprints = await attachBonusBlueprints(meta.report);
               return {
                 report: meta.report,
                 chargedCredits: 0,
                 creationId: cached.id,
                 totalAvailable: creditsInfo.totalAvailable,
                 fromCache: true as const,
+                bonusExecutionBlueprints,
               };
             }
           } catch {
@@ -3712,12 +3734,14 @@ export const appRouter = router({
         });
 
         const creditsInfo = await getCredits(ctx.user.id);
+        const bonusExecutionBlueprints = await attachBonusBlueprints(enrichedReport);
         return {
           report: enrichedReport,
           chargedCredits: cost,
           creationId,
           totalAvailable: creditsInfo.totalAvailable,
           fromCache: false as const,
+          bonusExecutionBlueprints,
         };
       }),
 
