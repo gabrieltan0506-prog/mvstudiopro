@@ -293,20 +293,22 @@ export function platformCompositeSingleCreditsForFormat(format: string): number 
     : CREDIT_COSTS.platformStoryboardSheet;
 }
 
-/** 一键封面套装合计：40 × 选题数 */
-export function platformCoverBundleTotalCredits(topicCount: number): number {
-  if (!Number.isInteger(topicCount) || topicCount < 1) {
-    throw new RangeError("platformCoverBundleTotalCredits: topicCount must be integer >= 1");
-  }
-  return topicCount * PLATFORM_COVER_BUNDLE_UNIT_CREDITS;
+function normalizePlatformBundleTopicCount(topicCount: number): number {
+  const n = Math.floor(Number(topicCount));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n;
 }
 
-/** 一键分镜/八格套装合计：54 × 选题数 */
+/** 一键封面套装合计：40 × 选题数（无选题时返回 0，供页面初始态展示） */
+export function platformCoverBundleTotalCredits(topicCount: number): number {
+  const n = normalizePlatformBundleTopicCount(topicCount);
+  return n * PLATFORM_COVER_BUNDLE_UNIT_CREDITS;
+}
+
+/** 一键分镜/八格套装合计：54 × 选题数（无选题时返回 0） */
 export function platformCompositeBundleTotalCredits(topicCount: number): number {
-  if (!Number.isInteger(topicCount) || topicCount < 1) {
-    throw new RangeError("platformCompositeBundleTotalCredits: topicCount must be integer >= 1");
-  }
-  return topicCount * PLATFORM_COMPOSITE_BUNDLE_UNIT_CREDITS;
+  const n = normalizePlatformBundleTopicCount(topicCount);
+  return n * PLATFORM_COMPOSITE_BUNDLE_UNIT_CREDITS;
 }
 
 export function platformCoverCompositeBundleCreditsForCompositeKind(
