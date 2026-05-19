@@ -82,6 +82,7 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.createPlatformQAJob",
   "mvAnalysis.downloadPlatformPdf",
   "mvAnalysis.generateDecisionIntelligenceReport",
+  "mvAnalysis.generateDecisionIntelTopicExecutionCopy",
   "ambient.dashboardLive",
   "ambient.dashboardNews",
   "ambient.hybridDashboard",

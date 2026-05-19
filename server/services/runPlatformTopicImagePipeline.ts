@@ -16,6 +16,10 @@ import {
 } from "./platformImageChineseStaging.js";
 import { estimateCoverCtrBand } from "../../shared/platformTitleVariants.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
+import {
+  type PlatformTopicCoverPixelEngineChoice,
+  parsePlatformTopicCoverPixelEngineChoice,
+} from "../config/platformSwitches.js";
 
 /** 與 repository patch 截斷一致，避免單欄位過大 */
 const FLOW_LOG_DB_CAP = 240;
@@ -88,7 +92,9 @@ export type RunPlatformTopicImagePipelineInput = {
   newJobMetaBase: Record<string, unknown>;
   /** 異步 jobs worker 傳 job.id：管線執行中節流寫入 jobs.output.imageGenFlowLog，前端輪詢可見步驟 */
   progressJobId?: string | null;
-  /** 監管：`coverProEngine` 為舊別名時視為強制 NB2；其餘豎封預設 **Nano Banana 2**；`PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 可走 **GPT‑Image‑2**（額度就緒後）；`nbp_only` 為 Pro。 */
+  /** 監管請求：豎封像素引擎（優先於 env）。 */
+  coverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
+  /** @deprecated 舊 job／tRPC 別名；等同 `coverPixelEngine: "nano_banana_2"`。 */
   coverProEngine?: "nano_banana_2" | "nano_banana_pro";
   /**
    * 管理員於 Platform 頁開啟並經 tRPC/job 為 true 時；與環境 `PLATFORM_TOPIC_COVER_DEEP_RESEARCH_PRO` / `PLATFORM_COVER_DEEP_RESEARCH_PRO` **OR**：
@@ -132,7 +138,9 @@ export async function runPlatformTopicImagePipeline(
 ): Promise<RunPlatformTopicImagePipelineResult> {
   const legacyCoverNb2 =
     input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro";
-  const coverPixelEngineOverride = legacyCoverNb2 ? ("nano_banana_2" as const) : undefined;
+  const coverPixelEngineOverride =
+    parsePlatformTopicCoverPixelEngineChoice(input.coverPixelEngine) ??
+    (legacyCoverNb2 ? ("nano_banana_2" as const) : undefined);
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
   void input.imagePromptTranslator;

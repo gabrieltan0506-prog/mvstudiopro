@@ -23,7 +23,14 @@ import type {
   GrowthSnapshot,
   GrowthTitleExecution,
 } from "@shared/growth";
-import { CREDIT_COSTS, platformCompositeBulkFourSlotCredits } from "@shared/plans";
+import {
+  CREDIT_COSTS,
+  PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL,
+  platformCoverBundleTotalCredits,
+  platformCompositeBundleTotalCredits,
+  platformCoverCompositeBulkBundleTotalCredits,
+  platformCoverCompositeBundleCreditsForFormat,
+} from "@shared/plans";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
@@ -41,6 +48,11 @@ import {
   formatDecisionIntelDateRangeZh,
   pickPrimaryDecisionIntelPlatformHint,
 } from "@shared/decisionIntelligencePlatformHint";
+import { selectDecisionIntelBonusTopics } from "@shared/decisionIntelBonusTopics";
+import {
+  normalizeDecisionIntelTopicTitleKey,
+  type DecisionIntelTopicPick,
+} from "@shared/decisionIntelTopicPicks";
 import {
   Activity,
   ArrowLeft,
@@ -823,12 +835,14 @@ type PlatformContentExecutionCard = {
   titleVariants: PlatformTitleVariant[];
   /** 战略地图当次赠送选题（刷新后不再展示） */
   isDecisionIntelBonus?: boolean;
+  /** 战略地图用户点选扩写（刷新后不再展示） */
+  isDecisionIntelPicked?: boolean;
 };
 
 function mapContentBlueprintToExecutionCard(
   item: Record<string, unknown>,
   index: number,
-  opts?: { isDecisionIntelBonus?: boolean },
+  opts?: { isDecisionIntelBonus?: boolean; isDecisionIntelPicked?: boolean },
 ): PlatformContentExecutionCard {
   const format = item.format || item["格式"] || item["内容形式"] || item["形式"] || "";
   const title = item.title || item["标题"] || item["选题标题"] || "";
@@ -911,16 +925,26 @@ function mapContentBlueprintToExecutionCard(
     },
     titleVariants,
     isDecisionIntelBonus: opts?.isDecisionIntelBonus,
+    isDecisionIntelPicked: opts?.isDecisionIntelPicked,
   };
 }
 
-function mapBonusBlueprintsToExecutionCards(blueprints: unknown[]): PlatformContentExecutionCard[] {
+function mapStrategicMapBlueprintsToExecutionCards(
+  blueprints: unknown[],
+  baseIndex: number,
+  flags: { isDecisionIntelBonus?: boolean; isDecisionIntelPicked?: boolean },
+): PlatformContentExecutionCard[] {
   if (!Array.isArray(blueprints)) return [];
   return blueprints
     .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
-    .map((row, index) =>
-      mapContentBlueprintToExecutionCard(row, 4 + index, { isDecisionIntelBonus: true }),
-    );
+    .map((row, index) => mapContentBlueprintToExecutionCard(row, baseIndex + index, flags));
+}
+
+function mapBonusBlueprintsToExecutionCards(
+  blueprints: unknown[],
+  baseIndex = 0,
+): PlatformContentExecutionCard[] {
+  return mapStrategicMapBlueprintsToExecutionCards(blueprints, baseIndex, { isDecisionIntelBonus: true });
 }
 
 /** 生图请求速率：滚动窗口长度（毫秒），与上游「每分钟 N 次」配额对齐。 */
@@ -1502,10 +1526,11 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
-  /** 战略地图当次赠送的 2 条执行选题（仅内存，刷新后清空） */
-  const [decisionIntelBonusExecutionCards, setDecisionIntelBonusExecutionCards] = useState<
+  /** 战略地图会话内额外执行选题：自动赠送 + 用户点选扩写（仅内存，刷新后清空） */
+  const [strategicMapSessionExecutionCards, setStrategicMapSessionExecutionCards] = useState<
     PlatformContentExecutionCard[]
   >([]);
+  const [generatingStrategicMapTopicKey, setGeneratingStrategicMapTopicKey] = useState<string | null>(null);
   /** Stage 2：伫列/worker 状态文案（不宣称具体模型已完成，仅描述后台进度） */
   const [contentLoadingText, setContentLoadingText] = useState("等待战略看板就绪…");
   const [stage2Failed, setStage2Failed] = useState(false);
@@ -2212,6 +2237,8 @@ export default function PlatformPage() {
       pollDebugLabel?: string;
       /** 管理员专用：Vertex Nano Banana 2 主生图（官方 API） */
       coverProEngine?: "nano_banana_2";
+      /** 一键封面套装：40×N 按序分拆扣费 */
+      bulkCoverPack?: { packSceneIds: string[]; sequentialSlot: number };
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
@@ -2231,6 +2258,7 @@ export default function PlatformPage() {
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
+        ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
       });
       setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "cover", inp.sceneId));
       setTopicImageJobPollTrace({
@@ -2505,6 +2533,7 @@ export default function PlatformPage() {
     scenes: Array<{ id: string }>,
     coverPersonaContext: string,
   ) => {
+    const packSceneIds = scenes.map((s) => s.id);
     const localOpId = `batch-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setIsSequentialCoverBatchGenerating(true);
     setPlatformImageGenFlowSnapshots((prev) =>
@@ -2527,7 +2556,8 @@ export default function PlatformPage() {
 
     let successCount = 0;
     const liveLines: string[] = [];
-    for (const scene of scenes) {
+    for (let slotIndex = 0; slotIndex < scenes.length; slotIndex++) {
+      const scene = scenes[slotIndex]!;
       setBatchGeneratingCoverIds((prev) => new Set(prev).add(scene.id));
       liveLines.push(`${new Date().toISOString()}  [客户端] 开始单张生成 · sceneId=${scene.id}`);
       setPlatformImageGenFlowSnapshots((prev) =>
@@ -2556,6 +2586,7 @@ export default function PlatformPage() {
               coverPersonaContext: coverPersonaContext.trim() || undefined,
               sceneId: scene.id,
               pollDebugLabel: `异步逐张批量 · ${scene.id}`,
+              bulkCoverPack: { packSceneIds, sequentialSlot: slotIndex },
             }),
           (waitMs) => {
             liveLines.push(
@@ -2805,9 +2836,8 @@ export default function PlatformPage() {
     generatePlatformCompositeSheetMutation.isPending || compositeAwaitingJobTerminal;
 
   const runSequentialCompositeBatchGeneration = async () => {
-    const cards = contentExecutionCards;
-    const bulkFourPackSceneIds: [string, string, string, string] | undefined =
-      cards.length === 4 ? [cards[0]!.id, cards[1]!.id, cards[2]!.id, cards[3]!.id] : undefined;
+    const cards = visibleExecutionCards;
+    const packSceneIds = cards.map((c) => c.id);
     const localOpId = `batch-composite-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     compositeBatchSilentUiRef.current = true;
     setIsSequentialCompositeBatchGenerating(true);
@@ -2817,11 +2847,7 @@ export default function PlatformPage() {
         kind: "batch_composite_2x4",
         lines: [
           `${new Date().toISOString()}  [客户端] 一键 2×4/八格批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
-          `${new Date().toISOString()}  [等待中] ${
-            cards.length === 4
-              ? `四条套装合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分（4 次均摊）`
-              : "每条依选题格式扣点（短视频→分镜表 · 图文/小红书→八格笔记）"
-          }，单张约 3～5 分钟`,
+          `${new Date().toISOString()}  [等待中] 分镜套装合计 ${platformCompositeBundleTotalCredits(cards.length)} 积分（54×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
         ],
         meta: {
           localOpId,
@@ -2885,9 +2911,7 @@ export default function PlatformPage() {
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                 progressJobId,
                 ...compositeDrProExtras,
-                ...(bulkFourPackSceneIds
-                  ? { bulkFourSequentialSlot: slotIndex, bulkFourPackSceneIds }
-                  : {}),
+                bulkCompositePack: { packSceneIds, sequentialSlot: slotIndex },
                 compositeImageEngine: platformComposite2x4Engine,
               }),
             (waitMs) => {
@@ -3427,10 +3451,12 @@ export default function PlatformPage() {
   const generateDecisionIntelMutation = trpc.mvAnalysis.generateDecisionIntelligenceReport.useMutation({
     onSuccess: (data) => {
       toast.success("战略地图已解锁，报告已为您存档（未查看也会保留）");
-      const bonus = mapBonusBlueprintsToExecutionCards(
-        (data as { bonusExecutionBlueprints?: unknown[] }).bonusExecutionBlueprints ?? [],
-      );
-      setDecisionIntelBonusExecutionCards(bonus);
+      const bonusRaw = (data as { bonusExecutionBlueprints?: unknown[] }).bonusExecutionBlueprints ?? [];
+      const bonus = mapBonusBlueprintsToExecutionCards(bonusRaw);
+      setStrategicMapSessionExecutionCards((prev) => {
+        const keptPicked = prev.filter((c) => c.isDecisionIntelPicked);
+        return [...keptPicked, ...bonus];
+      });
       if (bonus.length > 0) {
         toast.success(
           `已赠送 ${bonus.length} 条高契合战略选题文案（仅本次浏览可见，刷新页面后将不再显示，请当场保存或开拍）`,
@@ -3442,6 +3468,10 @@ export default function PlatformPage() {
     },
     onError: (e) => toast.error(e.message || "解锁失败"),
   });
+  const generateDecisionIntelTopicCopyMutation =
+    trpc.mvAnalysis.generateDecisionIntelTopicExecutionCopy.useMutation({
+      onError: (e) => toast.error(e.message || "战略选题文案扩写失败"),
+    });
   const unlockedStrategicReport = useMemo((): AdvancedAIReportData | null => {
     const fromLatest = decisionIntelLatestQuery.data?.report;
     const fromMut = generateDecisionIntelMutation.data?.report;
@@ -3799,9 +3829,9 @@ export default function PlatformPage() {
         ? platformDashboard!.contentBlueprints
         : null;
     if (blueprintsSource && blueprintsSource.length > 0) {
-      return blueprintsSource
-        .slice(0, 4)
-        .map((item: Record<string, unknown>, index: number) => mapContentBlueprintToExecutionCard(item, index));
+      return blueprintsSource.map((item: Record<string, unknown>, index: number) =>
+        mapContentBlueprintToExecutionCard(item, index),
+      );
     }
 
     // Once LLM analysis is in flight or complete, refuse snapshot fallbacks to prevent generic text leaking.
@@ -3847,10 +3877,17 @@ export default function PlatformPage() {
     });
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
 
-  const visibleExecutionCards = useMemo(
-    () => [...contentExecutionCards, ...decisionIntelBonusExecutionCards],
-    [contentExecutionCards, decisionIntelBonusExecutionCards],
-  );
+  const visibleExecutionCards = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: PlatformContentExecutionCard[] = [];
+    for (const card of [...contentExecutionCards, ...strategicMapSessionExecutionCards]) {
+      const key = normalizeDecisionIntelTopicTitleKey(card.title);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(card);
+    }
+    return merged;
+  }, [contentExecutionCards, strategicMapSessionExecutionCards]);
 
   const visibleExecutionCardsKey = useMemo(
     () => visibleExecutionCards.map((c) => c.id).join("|"),
@@ -3880,33 +3917,30 @@ export default function PlatformPage() {
     });
   }, [visibleExecutionCards, visibleExecutionCardsKey]);
 
-  const platformTopicCount = contentExecutionCards.length;
+  const platformTopicCount = visibleExecutionCards.length;
   const platformBulkGraphicCost = useMemo(
-    () => platformTopicCount * CREDIT_COSTS.platformTopicFrameGraphic,
+    () => platformCoverBundleTotalCredits(platformTopicCount),
     [platformTopicCount],
   );
-  const platformBulkCompositeCost = useMemo(() => {
-    if (contentExecutionCards.length === 4) {
-      return CREDIT_COSTS.platformCompositeBulkFourTopics;
-    }
-    let sum = 0;
-    for (const row of contentExecutionCards) {
-      const isGraphic = row.format === "图文" || row.format === "小红书";
-      sum += isGraphic ? CREDIT_COSTS.platformXhsDualNote : CREDIT_COSTS.platformStoryboardSheet;
-    }
-    return sum;
-  }, [contentExecutionCards]);
+  const platformBulkCompositeCost = useMemo(
+    () => platformCompositeBundleTotalCredits(platformTopicCount),
+    [platformTopicCount],
+  );
+  const platformBulkCoverCompositeCost = useMemo(
+    () => platformCoverCompositeBulkBundleTotalCredits(visibleExecutionCards),
+    [visibleExecutionCards],
+  );
   /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
   const platformBulkCompositeBreakdown = useMemo(() => {
     let videoLike = 0;
     let graphicLike = 0;
-    for (const row of contentExecutionCards) {
+    for (const row of visibleExecutionCards) {
       const isGraphic = row.format === "图文" || row.format === "小红书";
       if (isGraphic) graphicLike++;
       else videoLike++;
     }
     return { videoLike, graphicLike };
-  }, [contentExecutionCards]);
+  }, [visibleExecutionCards]);
 
   /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四题为套装总价；否则按单条价累加） */
   function onBulkCompositeOneClick() {
@@ -3914,18 +3948,15 @@ export default function PlatformPage() {
       toast.error("请先登录");
       return;
     }
-    const bulkFourDeductions = [0, 1, 2, 3].map((i) => platformCompositeBulkFourSlotCredits(i)).join("、");
     const note = supervisorAccess
       ? ""
-      : platformTopicCount === 4
-        ? `将为 4 个选题依次各生成一张 2×4 分镜或小红书八格图文。**四条套装合计 ${CREDIT_COSTS.platformCompositeBulkFourTopics} 积分**（4 次扣费分别为 ${bulkFourDeductions} 点）。每条约 3～5 分钟。是否继续？`
-        : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。单条计价：短视频向 ${CREDIT_COSTS.platformStoryboardSheet} 积分/条，图文/小红书 ${CREDIT_COSTS.platformXhsDualNote} 积分/条；当前共 ${platformBulkCompositeBreakdown.videoLike} 条短视频向、${platformBulkCompositeBreakdown.graphicLike} 条图文/小红书向，合计 ${platformBulkCompositeCost} 积分。每条约 3～5 分钟。是否继续？`;
+      : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。套装价 **54×${platformTopicCount}=${platformBulkCompositeCost} 积分**${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（散买单条短视频 ${CREDIT_COSTS.platformStoryboardSheet}、图文/小红书 ${CREDIT_COSTS.platformXhsDualNote}）。每条约 3～5 分钟。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCompositeBatchGeneration();
   }
 
   async function runSequentialCoverCompositeBundleBatchGeneration() {
-    const cards = contentExecutionCards;
+    const cards = visibleExecutionCards;
     const localOpId = `batch-cover-composite-bundle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setIsSequentialCoverCompositeBundleBatchGenerating(true);
     setPlatformImageGenFlowSnapshots((prev) =>
@@ -3933,7 +3964,7 @@ export default function PlatformPage() {
         at: new Date().toISOString(),
         kind: "batch_cover_composite_bundle",
         lines: [
-          `${new Date().toISOString()}  [客户端] 选题套装已发起 · topicCount=${cards.length} · 每条 ${CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 积分 · worker 内封面与 2×4 并发`,
+          `${new Date().toISOString()}  [客户端] 选题套装已发起 · topicCount=${cards.length} · 封面+分镜九折按条计价 · worker 内封面与 2×4 并发`,
           `${new Date().toISOString()}  [等待中] 客户端逐题串行 · 单题常需约 3～5 分钟`,
         ],
         meta: {
@@ -4073,16 +4104,15 @@ export default function PlatformPage() {
       toast.error("请先登录");
       return;
     }
-    const per = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
     const note = supervisorAccess
       ? ""
-      : `将为 ${platformTopicCount} 个选题依次生成封面 + 2×4/八格，每题 ${per} 积分，是否继续？`;
+      : `将为 ${platformTopicCount} 个选题依次生成封面 + 2×4/八格，合计 ${platformBulkCoverCompositeCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（按每条体裁：封面 48 + 分镜 60/72 后打九折）。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCoverCompositeBundleBatchGeneration();
   }
 
   const coverGenWaitCarouselItems = useMemo((): CoverGenWaitCarouselItem[] => {
-    return contentExecutionCards.slice(0, 4).map((c) => {
+    return visibleExecutionCards.map((c) => {
       const hook = (c.hook || "").replace(/\s+/g, " ").trim();
       const body = (c.copywriting || "").replace(/\s+/g, " ").trim();
       const pick = hook.length >= 48 ? hook : body.length >= 24 ? body : hook || body;
@@ -4095,7 +4125,7 @@ export default function PlatformPage() {
         excerpt,
       };
     });
-  }, [contentExecutionCards]);
+  }, [visibleExecutionCards]);
 
   const coverGenWaitCarouselItemsKey = useMemo(
     () => coverGenWaitCarouselItems.map((row) => row.id).join("|"),
@@ -4121,12 +4151,12 @@ export default function PlatformPage() {
   );
 
   const allTopicCoverImagesReady = useMemo(() => {
-    if (contentExecutionCards.length === 0) return true;
-    return contentExecutionCards.every((row) => {
+    if (visibleExecutionCards.length === 0) return true;
+    return visibleExecutionCards.every((row) => {
       const u = platformImageMap[row.id];
       return typeof u === "string" && u.trim().length > 0 && !platformCoverImageUrlLooksInvalid(u);
     });
-  }, [contentExecutionCards, platformImageMap]);
+  }, [visibleExecutionCards, platformImageMap]);
 
   useEffect(() => {
     if (anyCoverImagePipelineBusy) setCoverWaitCarouselEngaged(true);
@@ -4580,6 +4610,79 @@ export default function PlatformPage() {
     }
   };
 
+  const scrollToPlatformExecutionCopy = useCallback(() => {
+    document.getElementById("platform-stage2-copy")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast.message("请在下方「专属选题与文案」执行卡生成封面、2×4 分镜与图文");
+  }, []);
+
+  const strategicMapSessionBonusCount = useMemo(
+    () => strategicMapSessionExecutionCards.filter((c) => c.isDecisionIntelBonus).length,
+    [strategicMapSessionExecutionCards],
+  );
+
+  const existingStrategicExecutionTitleKeys = useMemo(
+    () => visibleExecutionCards.map((c) => c.title),
+    [visibleExecutionCards],
+  );
+
+  const handleStrategicMapGenerateTopicCopy = useCallback(
+    async (pick: DecisionIntelTopicPick) => {
+      if (!unlockedStrategicReport) {
+        toast.error("请先解锁战略地图");
+        return;
+      }
+      const titleKey = normalizeDecisionIntelTopicTitleKey(pick.title);
+      if (existingStrategicExecutionTitleKeys.some((t) => normalizeDecisionIntelTopicTitleKey(t) === titleKey)) {
+        toast.message("该选题已在下方执行区，可直接生封面与分镜");
+        scrollToPlatformExecutionCopy();
+        return;
+      }
+      if (generateDecisionIntelTopicCopyMutation.isPending) return;
+
+      setGeneratingStrategicMapTopicKey(titleKey);
+      try {
+        const res = await generateDecisionIntelTopicCopyMutation.mutateAsync({
+          topic: strategicMapTopic,
+          contentBlueprint: strategicMapBlueprint,
+          platformHint: decisionIntelPlatformHint,
+          pick,
+        });
+        const mapped = mapStrategicMapBlueprintsToExecutionCards(
+          res.executionBlueprints ?? [],
+          contentExecutionCards.length + strategicMapSessionExecutionCards.length,
+          { isDecisionIntelPicked: true },
+        );
+        if (mapped.length === 0) {
+          toast.error("未能生成执行文案，请稍后重试");
+          return;
+        }
+        setStrategicMapSessionExecutionCards((prev) => [...prev, ...mapped]);
+        toast.success("已扩写并加入下方执行区");
+        scrollToPlatformExecutionCopy();
+      } finally {
+        setGeneratingStrategicMapTopicKey(null);
+      }
+    },
+    [
+      unlockedStrategicReport,
+      existingStrategicExecutionTitleKeys,
+      generateDecisionIntelTopicCopyMutation,
+      strategicMapTopic,
+      strategicMapBlueprint,
+      decisionIntelPlatformHint,
+      contentExecutionCards.length,
+      strategicMapSessionExecutionCards.length,
+      scrollToPlatformExecutionCopy,
+    ],
+  );
+
+  const strategicMapGiftedStructureTitles = useMemo(() => {
+    if (!unlockedStrategicReport) return [] as string[];
+    return selectDecisionIntelBonusTopics(unlockedStrategicReport.topicStructureExamples).map((t) =>
+      t.title.trim(),
+    );
+  }, [unlockedStrategicReport]);
+
   const scrollToPaidDecisionIntel = useCallback(() => {
     const el = document.getElementById(PLATFORM_SECTION_DECISION_INTEL_ID);
     if (el) {
@@ -4596,7 +4699,7 @@ export default function PlatformPage() {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("深度追问在报告区下方：请先生成战略看板与报告内容。");
+    toast.message("深度追问在「平台优先级」区块下方：请先生成战略看板与报告内容。");
     document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -5530,7 +5633,14 @@ export default function PlatformPage() {
                 {unlockedStrategicReport ? (
                   <div className="w-full overflow-x-auto overflow-y-visible">
                     <div ref={strategicReportDashboardRef} className="inline-block align-top">
-                      <PlatformReportDashboard data={unlockedStrategicReport} className="!min-h-0" />
+                      <PlatformReportDashboard
+                        data={unlockedStrategicReport}
+                        className="!min-h-0"
+                        giftedStructureTitles={strategicMapGiftedStructureTitles}
+                        existingExecutionTitleKeys={existingStrategicExecutionTitleKeys}
+                        onGenerateTopicCopy={(pick) => void handleStrategicMapGenerateTopicCopy(pick)}
+                        generatingTopicCopyKey={generatingStrategicMapTopicKey}
+                      />
                     </div>
                   </div>
                 ) : (
@@ -5874,6 +5984,164 @@ export default function PlatformPage() {
               </div>
             </div>
 
+
+            <div className="mt-6 grid gap-4 xl:grid-cols-2 xl:items-start">
+                            <div id={PLATFORM_SECTION_DEEP_QA_ID} className={`scroll-mt-20 ${shellCardClasses("p-6")}`}>
+                              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                                <MessageSquareText className="h-4 w-4 text-[#8cefff]" />
+                                深度追问
+                              </div>
+                              <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
+                                这一轮追问会继续锁定在近 {selectedWindowDays} 天的数据，把结论继续往"选题、形式、节奏、承接动作"推进。点击问题加载到输入框后可以补充或修改，再点击发送。
+                              </p>
+
+                              <div className="mt-5 flex flex-wrap gap-2">
+                                {hotQuestionSuggestions.map((item) => (
+                                  <button
+                                    key={item}
+                                    type="button"
+                                    onClick={() => setQuestion(item)}
+                                    className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
+                                  >
+                                    {item}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
+                                <div className="flex flex-col gap-2">
+                                  <div className="relative">
+                                    <textarea
+                                      value={question}
+                                      onChange={(event) => setQuestion(event.target.value)}
+                                      placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
+                                      className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                                    />
+                                    <div className="absolute right-3 top-3">
+                                      <VoiceInputButton
+                                        onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
+                                        onDebugLog={addVoiceDebug}
+                                        size={28}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 rounded-xl border border-[#6366f1]/40 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(79,70,229,0.08))] px-4 py-3.5 shadow-[0_8px_28px_rgba(99,102,241,0.12)]">
+                                    <p className="text-base font-black tracking-tight text-[#e9d5ff] sm:text-lg">文本支持语音输入</p>
+                                    <p className="mt-1.5 text-sm leading-relaxed text-white/65 sm:text-[15px]">
+                                      点击输入框旁 <span className="font-semibold text-[#c4b5fd]">麦克风</span>
+                                      ，说话即可写入追问内容。推荐使用{" "}
+                                      <span className="rounded-md border border-[#818cf8]/50 bg-[rgba(129,140,248,0.2)] px-1.5 py-0.5 font-semibold text-[#c7d2fe]">
+                                        Chrome、Edge、Safari
+                                      </span>
+                                      。
+                                    </p>
+                                  </div>
+                                  {/* File attachment for multimodal QA */}
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      ref={qaFileInputRef}
+                                      type="file"
+                                      accept="image/*,application/pdf"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) void handleUploadQaFile(f);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => qaFileInputRef.current?.click()}
+                                      disabled={isUploadingQaFile}
+                                      className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs transition disabled:opacity-50 ${
+                                        qaUploadStatus === "success"
+                                          ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                                          : qaUploadStatus === "error"
+                                            ? "border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                            : "border-white/10 bg-white/5 text-[#c8bfe7] hover:bg-white/10"
+                                      }`}
+                                    >
+                                      {isUploadingQaFile
+                                        ? <><Loader2 className="h-3 w-3 animate-spin" />上传中...</>
+                                        : qaUploadStatus === "success"
+                                          ? <><FileText className="h-3 w-3" />✅ 已上传</>
+                                          : qaUploadStatus === "error"
+                                            ? <><Image className="h-3 w-3" />❌ 上传失败，重试</>
+                                            : <><Image className="h-3 w-3" />上传参考图片/PDF（可选）</>
+                                      }
+                                    </button>
+                                    {qaFileName && qaUploadStatus === "success" && (
+                                      <span className="flex items-center gap-1 text-xs text-emerald-300">
+                                        <FileText className="h-3 w-3" />
+                                        {qaFileName}
+                                        <button
+                                          type="button"
+                                          onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); setQaUploadStatus("idle"); }}
+                                          className="ml-1 text-white/40 hover:text-white/70"
+                                        >×</button>
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleAsk()}
+                                  disabled={isQaLoading || isUploadingQaFile}
+                                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {isQaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+                                  {isQaLoading ? "AI 思考中..." : qaFileUri ? "多模态追问" : "继续追问"}
+                                </button>
+                              </div>
+
+                              {askResult ? (
+                                <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+                                  <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                                    <div className="flex items-center gap-2 text-lg font-bold text-white">
+                                      <MessageSquareText className="h-5 w-5 text-[#8cefff]" />
+                                      {askResult.title}
+                                    </div>
+                                    <div className="mt-4 space-y-4 text-sm leading-8 text-[#d7d0ef]">
+                                      {splitAnswerParagraphs(askResult.answer).map((paragraph, index) => (
+                                        <p key={`${paragraph.slice(0, 24)}-${index}`}>{renderHighlightText(paragraph)}</p>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="space-y-4">
+                                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                                      <div className="text-sm font-semibold text-[#8cefff]">顾问建议</div>
+                                      <div className="mt-3 text-sm leading-7 text-[#d7d0ef]">{askResult.encouragement}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                                      <div className="text-sm font-semibold text-[#ffdd44]">继续往下问</div>
+                                      <div className="mt-3 space-y-2">
+                                        {askResult.nextQuestions.map((item) => (
+                                          <button
+                                            key={item}
+                                            type="button"
+                                            onClick={() => {
+                                              setQuestion(item);
+                                              void handleAsk(item);
+                                            }}
+                                            className="block w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-[#d7d0ef] transition hover:bg-white/10"
+                                          >
+                                            <div className="flex items-start justify-between gap-3">
+                                              <span>{item}</span>
+                                              <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#8cefff]" />
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+              <div className="min-h-0">
+                <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
+              </div>
+            </div>
+
             <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="专属选题与文案状态">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1">
@@ -5973,10 +6241,10 @@ export default function PlatformPage() {
                               toast.error("请先登录");
                               return;
                             }
-                            const scenes = contentExecutionCards.map((row) => ({ id: row.id }));
+                            const scenes = visibleExecutionCards.map((row) => ({ id: row.id }));
                             const discountNote = supervisorAccess
                               ? ""
-                              : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面单帧，共消耗 ${platformBulkGraphicCost} 积分，是否继续？`;
+                              : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面（套装 40×${platformTopicCount}=${platformBulkGraphicCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}；散买单张 ${CREDIT_COSTS.platformTopicFrameGraphic} 积分）。是否继续？`;
                             if (!supervisorAccess && !window.confirm(discountNote)) return;
                             void runSequentialCoverBatchGeneration(
                               scenes,
@@ -5990,7 +6258,9 @@ export default function PlatformPage() {
                           ) : (
                             <Sparkles className="h-4 w-4" />
                           )}
-                          {isSequentialCoverBatchGenerating ? "生成中…" : "一键生成封面套装"}
+                          {isSequentialCoverBatchGenerating
+                            ? "生成中…"
+                            : `一键生成封面套装 · ${platformBulkGraphicCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                         </button>
                         <button
                           type="button"
@@ -6013,7 +6283,9 @@ export default function PlatformPage() {
                           ) : (
                             <Layers className="h-4 w-4" />
                           )}
-                          {isSequentialCompositeBatchGenerating ? "生成中…" : "一键生成分镜套装"}
+                          {isSequentialCompositeBatchGenerating
+                            ? "生成中…"
+                            : `一键生成分镜套装 · ${platformBulkCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                         </button>
                         <button
                           type="button"
@@ -6036,7 +6308,9 @@ export default function PlatformPage() {
                           ) : (
                             <Package className="h-4 w-4" />
                           )}
-                          {isSequentialCoverCompositeBundleBatchGenerating ? "生成中…" : "一键生成封面加分镜"}
+                          {isSequentialCoverCompositeBundleBatchGenerating
+                            ? "生成中…"
+                            : `一键生成封面加分镜 · ${platformBulkCoverCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                         </button>
                         <button
                           type="button"
@@ -6287,16 +6561,19 @@ export default function PlatformPage() {
                     已启用<strong className="text-white">选题与封面一体化优化</strong>
                     ：后台会为每条方案<strong className="text-white">择优主标题</strong>
                     并与出图主句对齐（正文与分镜不改编），竖版封面强调
-                    <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套装（
-                    {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点/题）或于下方卡片分步购买。
-                    {decisionIntelBonusExecutionCards.length > 0 ? (
+                    <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套装（封面+分镜按体裁九折，见上方批量按钮
+                    {PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}）或于下方卡片分步购买。
+                    {strategicMapSessionExecutionCards.length > 0 ? (
                       <>
                         {" "}
                         下方含{" "}
                         <strong className="text-[#fde047]">
-                          {decisionIntelBonusExecutionCards.length} 条战略地图赠送选题
+                          {strategicMapSessionExecutionCards.length} 条战略地图扩写选题
                         </strong>
-                        （仅本次浏览可见，刷新后不再显示）。
+                        {strategicMapSessionBonusCount > 0
+                          ? `（其中 ${strategicMapSessionBonusCount} 条为赠送，仅本次浏览可见，刷新后不再显示）`
+                          : "（仅本次浏览可见，刷新后不再显示）"}
+                        。
                       </>
                     ) : null}
                   </div>
@@ -6340,7 +6617,9 @@ export default function PlatformPage() {
                       const compositePhaseHint =
                         compositePendingUxHints[`${item.id}::${compositeKind}`] ??
                         "英文 prompt → Vertex Nano Banana 2（宽幅）· 合计常需 3～5 分钟，请勿中途刷新";
-                      const bundleCost = CREDIT_COSTS.platformTopicCoverAndCompositeBundle;
+                      const bundleCost = platformCoverCompositeBundleCreditsForFormat(item.format);
+                      const bundleRetailSum =
+                        CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;
                       const isThisBundleLoading = coverCompositeBundleSceneId === item.id;
                       const currentImageUrl = platformImageMap[item.id] || "";
                       const isBlackImageOrTimeout =
@@ -6561,7 +6840,7 @@ export default function PlatformPage() {
                         if (
                           !supervisorAccess &&
                           !window.confirm(
-                            `将消耗 ${bundleCost} 积分，为本选题并发生成竖版封面与${compositeLabel}（封面 + 2×4 一体套装固定打包价）。是否继续？`,
+                            `将消耗 ${bundleCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}，为本选题并发生成竖版封面与${compositeLabel}（封面 48 + 分镜 ${compositeCost}，散买合计 ${bundleRetailSum}）。是否继续？`,
                           )
                         )
                           return;
@@ -6618,7 +6897,9 @@ export default function PlatformPage() {
                         className={`group scroll-mt-28 flex flex-col rounded-2xl border bg-white/5 p-5 ${
                           item.isDecisionIntelBonus
                             ? "border-[#fde047]/35 ring-1 ring-[#fde047]/20"
-                            : "border-white/10"
+                            : item.isDecisionIntelPicked
+                              ? "border-[#f472b6]/35 ring-1 ring-[#f472b6]/20"
+                              : "border-white/10"
                         }`}
                       >
                         {item.isDecisionIntelBonus ? (
@@ -6629,6 +6910,15 @@ export default function PlatformPage() {
                           >
                             <Sparkles className="h-3 w-3 shrink-0" aria-hidden />
                             战略地图赠送 · 仅本次浏览
+                          </motion.div>
+                        ) : item.isDecisionIntelPicked ? (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="mb-3 inline-flex w-fit items-center gap-1.5 rounded-full border border-[#f472b6]/40 bg-[#f472b6]/10 px-2.5 py-1 text-[11px] font-semibold text-[#fbcfe8]"
+                          >
+                            <Sparkles className="h-3 w-3 shrink-0" aria-hidden />
+                            战略地图点选 · 仅本次浏览
                           </motion.div>
                         ) : null}
                         <div className="flex items-start justify-between gap-3">
@@ -6844,8 +7134,7 @@ export default function PlatformPage() {
                               Nano Banana 2
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 推荐一键套装 {CREDIT_COSTS.platformTopicCoverAndCompositeBundle} 点（竖版封面 + 本条 2×4 固定打包价；若分步购买约{" "}
-                              {CREDIT_COSTS.platformTopicFrameGraphic + compositeCost} 点）· 本条仅 2×4：{compositeCost}{" "}
+                              · 推荐一键套装 {bundleCost} 点{PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（竖版封面 + 本条 2×4；散买约 {bundleRetailSum} 点）· 本条仅 2×4：{compositeCost}{" "}
                               点（{isGraphicFormat ? "图文/小红书八格" : "短视频分镜"}）
                             </span>
                           </div>
@@ -6878,7 +7167,7 @@ export default function PlatformPage() {
                               ) : (
                                 <>
                                   <Package className="h-3.5 w-3.5 shrink-0" />
-                                  {`一键套装 · ${bundleCost} 点`}
+                                  {`一键套装 · ${bundleCost} 点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                                 </>
                               )}
                             </button>
@@ -7093,8 +7382,7 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-              <div className={shellCardClasses("p-6")}>
+            <div className={shellCardClasses("p-6 mt-4")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Rocket className="h-4 w-4 text-[#6fffb0]" />
                   现在就能执行的动作
@@ -7117,162 +7405,6 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <div id={PLATFORM_SECTION_DEEP_QA_ID} className={`scroll-mt-20 ${shellCardClasses("p-6")}`}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <MessageSquareText className="h-4 w-4 text-[#8cefff]" />
-                  深度追问
-                </div>
-                <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
-                  这一轮追问会继续锁定在近 {selectedWindowDays} 天的数据，把结论继续往"选题、形式、节奏、承接动作"推进。点击问题加载到输入框后可以补充或修改，再点击发送。
-                </p>
-
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {hotQuestionSuggestions.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => setQuestion(item)}
-                      className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
-                  <div className="flex flex-col gap-2">
-                    <div className="relative">
-                      <textarea
-                        value={question}
-                        onChange={(event) => setQuestion(event.target.value)}
-                        placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
-                        className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                      />
-                      <div className="absolute right-3 top-3">
-                        <VoiceInputButton
-                          onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
-                          onDebugLog={addVoiceDebug}
-                          size={28}
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-3 rounded-xl border border-[#6366f1]/40 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(79,70,229,0.08))] px-4 py-3.5 shadow-[0_8px_28px_rgba(99,102,241,0.12)]">
-                      <p className="text-base font-black tracking-tight text-[#e9d5ff] sm:text-lg">文本支持语音输入</p>
-                      <p className="mt-1.5 text-sm leading-relaxed text-white/65 sm:text-[15px]">
-                        点击输入框旁 <span className="font-semibold text-[#c4b5fd]">麦克风</span>
-                        ，说话即可写入追问内容。推荐使用{" "}
-                        <span className="rounded-md border border-[#818cf8]/50 bg-[rgba(129,140,248,0.2)] px-1.5 py-0.5 font-semibold text-[#c7d2fe]">
-                          Chrome、Edge、Safari
-                        </span>
-                        。
-                      </p>
-                    </div>
-                    {/* File attachment for multimodal QA */}
-                    <div className="flex items-center gap-2">
-                      <input
-                        ref={qaFileInputRef}
-                        type="file"
-                        accept="image/*,application/pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void handleUploadQaFile(f);
-                          e.target.value = "";
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => qaFileInputRef.current?.click()}
-                        disabled={isUploadingQaFile}
-                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs transition disabled:opacity-50 ${
-                          qaUploadStatus === "success"
-                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
-                            : qaUploadStatus === "error"
-                              ? "border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
-                              : "border-white/10 bg-white/5 text-[#c8bfe7] hover:bg-white/10"
-                        }`}
-                      >
-                        {isUploadingQaFile
-                          ? <><Loader2 className="h-3 w-3 animate-spin" />上传中...</>
-                          : qaUploadStatus === "success"
-                            ? <><FileText className="h-3 w-3" />✅ 已上传</>
-                            : qaUploadStatus === "error"
-                              ? <><Image className="h-3 w-3" />❌ 上传失败，重试</>
-                              : <><Image className="h-3 w-3" />上传参考图片/PDF（可选）</>
-                        }
-                      </button>
-                      {qaFileName && qaUploadStatus === "success" && (
-                        <span className="flex items-center gap-1 text-xs text-emerald-300">
-                          <FileText className="h-3 w-3" />
-                          {qaFileName}
-                          <button
-                            type="button"
-                            onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); setQaUploadStatus("idle"); }}
-                            className="ml-1 text-white/40 hover:text-white/70"
-                          >×</button>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleAsk()}
-                    disabled={isQaLoading || isUploadingQaFile}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isQaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                    {isQaLoading ? "AI 思考中..." : qaFileUri ? "多模态追问" : "继续追问"}
-                  </button>
-                </div>
-
-                {askResult ? (
-                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                      <div className="flex items-center gap-2 text-lg font-bold text-white">
-                        <MessageSquareText className="h-5 w-5 text-[#8cefff]" />
-                        {askResult.title}
-                      </div>
-                      <div className="mt-4 space-y-4 text-sm leading-8 text-[#d7d0ef]">
-                        {splitAnswerParagraphs(askResult.answer).map((paragraph, index) => (
-                          <p key={`${paragraph.slice(0, 24)}-${index}`}>{renderHighlightText(paragraph)}</p>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                        <div className="text-sm font-semibold text-[#8cefff]">顾问建议</div>
-                        <div className="mt-3 text-sm leading-7 text-[#d7d0ef]">{askResult.encouragement}</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                        <div className="text-sm font-semibold text-[#ffdd44]">继续往下问</div>
-                        <div className="mt-3 space-y-2">
-                          {askResult.nextQuestions.map((item) => (
-                            <button
-                              key={item}
-                              type="button"
-                              onClick={() => {
-                                setQuestion(item);
-                                void handleAsk(item);
-                              }}
-                              className="block w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-[#d7d0ef] transition hover:bg-white/10"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <span>{item}</span>
-                                <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#8cefff]" />
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            {/* Feature #6c: Trend Report Generator — supervisor bypass credits */}
-            <div className="grid gap-4">
-              <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
-            </div>
             {/* PDF Download — captures current rendered page via Cloud Run Puppeteer */}
             {hasAnalyzed && (
               <div className="mt-4 space-y-3">

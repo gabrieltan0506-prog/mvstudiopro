@@ -301,15 +301,21 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "短视频向 2×4 分镜主表 60 cr/次（kind: storyboard_sheet_*）· 非图文笔记八格" },
   {
     product: "平台数据分析",
-    subFeature: "选题套裝（封面 + 2×4 分镜或八格 · 单条）",
-    credits: CREDIT_COSTS.platformTopicCoverAndCompositeBundle,
-    note: "同一選題单条套裝 388 cr（封面+2×4）；2×4 侧按体裁走 60 或 72",
+    subFeature: "选题套装（封面 + 2×4 · 单条）",
+    credits: CREDIT_COSTS.platformTopicFrameGraphic,
+    note: "（48+60|72）×九折/条；散买封面 48 + 分镜 60/72",
   },
   {
     product: "平台数据分析",
-    subFeature: "2×4 合成四条套裝（一键四选题）",
-    credits: CREDIT_COSTS.platformCompositeBulkFourTopics,
-    note: "合计 238 点；四次 generatePlatformCompositeSheet 均摊整数扣费（与单条 60/72 散买区分）",
+    subFeature: "一键封面套装",
+    credits: 40,
+    note: "40×选题数（九折优惠）；散买单张封面 48",
+  },
+  {
+    product: "平台数据分析",
+    subFeature: "一键分镜/八格套装",
+    credits: 54,
+    note: "54×选题数（九折优惠）；散买单条 60/72",
   },
   { product: "平台数据分析", subFeature: "小红书图文参考（2×4 八格）", credits: CREDIT_COSTS.platformXhsDualNote, note: "图文笔记 2×4 八格 72 cr/次（kind: xiaohongshu_dual_note）· 非分镜主表" },
   {

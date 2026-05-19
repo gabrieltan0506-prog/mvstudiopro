@@ -259,10 +259,10 @@ export const CREDIT_COSTS = {
   /** 图文笔记·小红书 2×4 八格 **72**（`xiaohongshu_dual_note`，非分镜主表） */
   platformXhsDualNote: 72,
   /**
-   * 平台页：**同一选题**一键「竖版封面 + 2×4 分镜或八格图文」套装（异步 job 内 **串行非同步** 两阶段生图 · 单次扣费）
+   * @deprecated 单条封面+分镜请用 {@link platformCoverCompositeBundleCreditsForFormat} 动态九折价；保留键供旧数据/文档兼容。
    */
   platformTopicCoverAndCompositeBundle: 388,
-  /** 平台页：四选题仅 2×4/八格一键套装总价（服务端按序 4 笔整数分拆扣费，合计=此值；单条散买仍为 60/72） */
+  /** @deprecated 批量 2×4 请用 {@link platformCompositeBundleTotalCredits}（54×选题数）；保留键供旧数据/文档兼容。 */
   platformCompositeBulkFourTopics: 238,
   /** 平台页增值：个性化战略地图／决策智库报告，之后每次原价 */
   decisionIntelligenceReport: 200,
@@ -272,15 +272,96 @@ export const CREDIT_COSTS = {
   platformStage2Copywriting: 60,
 } as const;
 
-/** 四条 2×4 套装总价按序分拆到 4 次扣费（整数，四次相加等于 {@link CREDIT_COSTS.platformCompositeBulkFourTopics}） */
-export function platformCompositeBulkFourSlotCredits(slotIndex: number): number {
-  const total = CREDIT_COSTS.platformCompositeBulkFourTopics;
-  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex > 3) {
-    throw new RangeError("platformCompositeBulkFourSlotCredits: slotIndex must be integer 0..3");
+/** 一键套装·九折文案（按钮/说明统一后缀） */
+export const PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL = "（九折优惠）";
+
+/** 封面套装单价（散买 {@link CREDIT_COSTS.platformTopicFrameGraphic} 为 48） */
+export const PLATFORM_COVER_BUNDLE_UNIT_CREDITS = 40;
+
+/** 2×4/八格套装单价（散买短视频 60 · 图文/小红书 72） */
+export const PLATFORM_COMPOSITE_BUNDLE_UNIT_CREDITS = 54;
+
+export const PLATFORM_BUNDLE_NINE_DISCOUNT = 0.9;
+
+export function platformIsGraphicTopicFormat(format: string): boolean {
+  return format === "图文" || format === "小红书";
+}
+
+export function platformCompositeSingleCreditsForFormat(format: string): number {
+  return platformIsGraphicTopicFormat(format)
+    ? CREDIT_COSTS.platformXhsDualNote
+    : CREDIT_COSTS.platformStoryboardSheet;
+}
+
+/** 一键封面套装合计：40 × 选题数 */
+export function platformCoverBundleTotalCredits(topicCount: number): number {
+  if (!Number.isInteger(topicCount) || topicCount < 1) {
+    throw new RangeError("platformCoverBundleTotalCredits: topicCount must be integer >= 1");
   }
-  const base = Math.floor(total / 4);
-  const rem = total - base * 4;
+  return topicCount * PLATFORM_COVER_BUNDLE_UNIT_CREDITS;
+}
+
+/** 一键分镜/八格套装合计：54 × 选题数 */
+export function platformCompositeBundleTotalCredits(topicCount: number): number {
+  if (!Number.isInteger(topicCount) || topicCount < 1) {
+    throw new RangeError("platformCompositeBundleTotalCredits: topicCount must be integer >= 1");
+  }
+  return topicCount * PLATFORM_COMPOSITE_BUNDLE_UNIT_CREDITS;
+}
+
+export function platformCoverCompositeBundleCreditsForCompositeKind(
+  kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
+): number {
+  return platformCoverCompositeBundleCreditsForFormat(
+    kind === "xiaohongshu_dual_note" ? "小红书" : "短视频",
+  );
+}
+
+/** 单条「封面+分镜」套装：（48 + 60|72）× 九折 */
+export function platformCoverCompositeBundleCreditsForFormat(format: string): number {
+  const cover = CREDIT_COSTS.platformTopicFrameGraphic;
+  const composite = platformCompositeSingleCreditsForFormat(format);
+  return Math.round((cover + composite) * PLATFORM_BUNDLE_NINE_DISCOUNT);
+}
+
+/** 批量「封面+分镜」套装合计（按每条体裁分别九折后相加） */
+export function platformCoverCompositeBulkBundleTotalCredits(
+  topics: ReadonlyArray<{ format: string }>,
+): number {
+  let sum = 0;
+  for (const t of topics) {
+    sum += platformCoverCompositeBundleCreditsForFormat(t.format);
+  }
+  return sum;
+}
+
+/** 套装总价按序整数分拆到 N 次扣费（各次相加等于 totalCredits） */
+export function platformBundleCreditsForSlot(
+  totalCredits: number,
+  slotIndex: number,
+  topicCount: number,
+): number {
+  if (!Number.isInteger(totalCredits) || totalCredits < 0) {
+    throw new RangeError("platformBundleCreditsForSlot: totalCredits must be non-negative integer");
+  }
+  if (!Number.isInteger(topicCount) || topicCount < 1) {
+    throw new RangeError("platformBundleCreditsForSlot: topicCount must be integer >= 1");
+  }
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= topicCount) {
+    throw new RangeError("platformBundleCreditsForSlot: slotIndex out of range");
+  }
+  const base = Math.floor(totalCredits / topicCount);
+  const rem = totalCredits - base * topicCount;
   return base + (slotIndex < rem ? 1 : 0);
+}
+
+/** @deprecated 请用 {@link platformBundleCreditsForSlot} + {@link platformCompositeBundleTotalCredits} */
+export function platformCompositeBulkFourSlotCredits(slotIndex: number): number {
+  return platformBundleCreditsForSlot(
+    platformCompositeBundleTotalCredits(4),
+    slotIndex,
+    4,
+  );
 }
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */

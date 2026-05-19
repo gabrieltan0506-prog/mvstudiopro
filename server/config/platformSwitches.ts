@@ -78,6 +78,27 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
  */
 export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "nano_banana_pro";
 
+export function parsePlatformTopicCoverPixelEngineChoice(
+  v: unknown,
+): PlatformTopicCoverPixelEngineChoice | undefined {
+  const s = String(v ?? "").trim();
+  if (s === "gpt_image2" || s === "nano_banana_2" || s === "nano_banana_pro") return s;
+  return undefined;
+}
+
+/** 監管入參：`topicCoverPixelEngine` 優先；舊 `coverProEngine` 別名仍映射為 `nano_banana_2`。 */
+export function resolveSupervisorTopicCoverPixelEngineInput(input: {
+  topicCoverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
+  coverProEngine?: "nano_banana_2" | "nano_banana_pro";
+}): PlatformTopicCoverPixelEngineChoice | undefined {
+  const pick = parsePlatformTopicCoverPixelEngineChoice(input.topicCoverPixelEngine);
+  if (pick) return pick;
+  if (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro") {
+    return "nano_banana_2";
+  }
+  return undefined;
+}
+
 /**
  * 選題 **單幀豎封** env 預設像素（無請求覆寫 {@link PlatformTopicCoverPixelEngineChoice} 時）。
  *
