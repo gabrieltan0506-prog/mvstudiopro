@@ -3759,6 +3759,8 @@ export const appRouter = router({
           topic: z.string().max(160).optional(),
           contentBlueprint: z.unknown().optional(),
           platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
+          /** true：防护性重生成（同选题首次免费，之后扣 decisionIntelTopicExecutionCopyRegenerate） */
+          regenerate: z.boolean().optional(),
           pick: z.object({
             title: z.string().min(2).max(240),
             structure: z.string().min(4).max(8000),
@@ -3773,6 +3775,10 @@ export const appRouter = router({
         const { generateDecisionIntelTopicBlueprints } = await import(
           "./services/decisionIntelBonusBlueprints.js"
         );
+        const {
+          decisionIntelTopicRegenDescriptionMarker,
+          normalizeDecisionIntelTopicTitleKey,
+        } = await import("../shared/decisionIntelTopicPicks.js");
         const topic = (input.topic || "").trim() || "个性化战略选题";
         const platformHint = input.platformHint ?? "douyin";
         const contentBlueprint =
@@ -3783,16 +3789,63 @@ export const appRouter = router({
             userId: ctx.user.id,
           } as Record<string, unknown>);
 
+        const titleKey = normalizeDecisionIntelTopicTitleKey(input.pick.title);
+        let chargedCredits = 0;
+        let regenerateOrdinal = 0;
+
+        if (input.regenerate) {
+          const database = await db.getDb();
+          if (!database) {
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "數據庫不可用" });
+          }
+          const { creditTransactions } = await import("../drizzle/schema.js");
+          const { and, eq, count, sql } = await import("drizzle-orm");
+          const marker = decisionIntelTopicRegenDescriptionMarker(titleKey);
+          const [countRow] = await database
+            .select({ c: count() })
+            .from(creditTransactions)
+            .where(
+              and(
+                eq(creditTransactions.userId, ctx.user.id),
+                eq(creditTransactions.action, "decisionIntelTopicCopyRegen"),
+                sql`${creditTransactions.description} LIKE ${`%${marker}%`}`,
+              ),
+            );
+          regenerateOrdinal = Number(countRow?.c ?? 0) + 1;
+          const cost =
+            regenerateOrdinal <= 1 ? 0 : CREDIT_COSTS.decisionIntelTopicExecutionCopyRegenerate;
+          if (cost > 0) {
+            await deductCreditsAmount(
+              ctx.user.id,
+              cost,
+              "decisionIntelTopicCopyRegen",
+              `战略地图选题文案重生成 · ${input.pick.title.slice(0, 48)} · ${marker}`,
+            );
+            chargedCredits = cost;
+          } else {
+            const balance = await getOrCreateBalance(ctx.user.id);
+            await database.insert(creditTransactions).values({
+              userId: ctx.user.id,
+              amount: 0,
+              type: "debit",
+              source: "usage",
+              action: "decisionIntelTopicCopyRegen",
+              description: `战略地图选题文案重生成（首次免费）· ${input.pick.title.slice(0, 48)} · ${marker}`,
+              balanceAfter: balance.balance,
+            });
+          }
+        }
+
         const blueprints = await generateDecisionIntelTopicBlueprints({
           picks: [input.pick],
           contentBlueprint,
           topic,
           platformHint,
-          idPrefix: "decision-intel-picked",
+          idPrefix: input.regenerate ? "decision-intel-regen" : "decision-intel-picked",
           abortSignal: ctx.clientDisconnected,
         });
 
-        return { executionBlueprints: blueprints };
+        return { executionBlueprints: blueprints, chargedCredits, regenerateOrdinal };
       }),
 
     generateVisualReport: publicProcedure

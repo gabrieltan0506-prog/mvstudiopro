@@ -270,6 +270,8 @@ export const CREDIT_COSTS = {
   decisionIntelligenceReportFirst: 150,
   /** 平台页：全案流程之专属选题与长文案／分镜稿（platform_build_content · 任务入队时扣费） */
   platformStage2Copywriting: 60,
+  /** 战略地图：同一选题第二次起「重新生成文案」 */
+  decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
 
 /** 一键套装·九折文案（按钮/说明统一后缀） */

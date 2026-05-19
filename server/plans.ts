@@ -274,6 +274,7 @@ export const CREDIT_COSTS = {
   decisionIntelligenceReportFirst: 150,
   /** 平台页 Stage 2：專屬選題與長文案（入隊時扣費；失敗不退積分，與其他 LLM 任務一致） */
   platformStage2Copywriting: 60,
+  decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
 
 export interface CreditFeatureBreakdownRow {

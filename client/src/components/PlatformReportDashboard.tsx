@@ -56,58 +56,92 @@ export interface PlatformReportDashboardProps {
   existingExecutionTitleKeys?: string[];
   /** 点击「生成完整文案」：扩写并追加至下方执行区 */
   onGenerateTopicCopy?: (pick: DecisionIntelTopicPick) => void;
-  /** 正在扩写的选题标题 key（normalizeDecisionIntelTopicTitleKey） */
+  /** 已在执行区 / 已赠送：防护性「重新生成文案」（首免、同选题再次扣点） */
+  onRegenerateTopicCopy?: (pick: DecisionIntelTopicPick) => void;
+  /** 正在扩写或重生成的选题标题 key（normalizeDecisionIntelTopicTitleKey） */
   generatingTopicCopyKey?: string | null;
 }
 
-function GenerateCopyCtaButton({
+function TopicExecutionCopyActions({
   pick,
   onGenerate,
+  onRegenerate,
   trial,
   variant = "structure",
   loading = false,
   alreadyInExecution = false,
+  isGifted = false,
 }: {
   pick: DecisionIntelTopicPick;
   onGenerate?: (pick: DecisionIntelTopicPick) => void;
+  onRegenerate?: (pick: DecisionIntelTopicPick) => void;
   trial: boolean;
   variant?: "structure" | "personalization";
   loading?: boolean;
   alreadyInExecution?: boolean;
+  isGifted?: boolean;
 }): ReactElement {
   if (trial) return <></>;
 
-  if (alreadyInExecution) {
-    return (
-      <div className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-sky-400/35 bg-sky-500/15 px-2 py-1.5 text-[10px] font-bold text-sky-100">
-        ✓ 已在下方执行区
-      </div>
-    );
-  }
+  const showRegenerate = (alreadyInExecution || isGifted) && Boolean(onRegenerate);
+  const showGenerate = !alreadyInExecution && !isGifted && Boolean(onGenerate);
 
-  if (!onGenerate) return <></>;
+  if (!showRegenerate && !showGenerate) return <></>;
+
+  const primaryClass =
+    variant === "personalization"
+      ? "border-[#f472b6]/55 bg-[linear-gradient(135deg,rgba(244,114,182,0.35),rgba(190,24,93,0.2))] text-[#ffe4f0] hover:bg-[rgba(244,114,182,0.45)]"
+      : "border-[#fbbf24]/55 bg-[linear-gradient(135deg,rgba(251,191,36,0.35),rgba(217,119,6,0.22))] text-[#fff7ed] hover:bg-[rgba(251,191,36,0.45)]";
+
+  const regenClass = "border-sky-400/45 bg-sky-500/12 text-sky-50 hover:bg-sky-500/22";
 
   return (
-    <button
-      type="button"
-      disabled={loading}
-      onClick={() => onGenerate(pick)}
-      className={`mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-[11px] font-bold shadow-md transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60 ${
-        variant === "personalization"
-          ? "border-[#f472b6]/55 bg-[linear-gradient(135deg,rgba(244,114,182,0.35),rgba(190,24,93,0.2))] text-[#ffe4f0] hover:bg-[rgba(244,114,182,0.45)]"
-          : "border-[#fbbf24]/55 bg-[linear-gradient(135deg,rgba(251,191,36,0.35),rgba(217,119,6,0.22))] text-[#fff7ed] hover:bg-[rgba(251,191,36,0.45)]"
-      }`}
-    >
-      {loading ? (
-        <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
-      ) : (
-        <FilePenLine size={13} strokeWidth={2.25} aria-hidden />
-      )}
-      {loading ? "文案生成中…" : "生成完整文案"}
-      {!loading ? <ArrowDown size={12} className="opacity-85" aria-hidden /> : null}
-    </button>
+    <div className="mt-2 space-y-1.5 pl-7">
+      {isGifted ? (
+        <div className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/15 px-2 py-1.5 text-[10px] font-bold text-emerald-100">
+          ✓ 已赠送至下方执行区
+        </div>
+      ) : alreadyInExecution ? (
+        <div className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-sky-400/35 bg-sky-500/15 px-2 py-1.5 text-[10px] font-bold text-sky-100">
+          ✓ 已在下方执行区
+        </div>
+      ) : null}
+      {showGenerate ? (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => onGenerate?.(pick)}
+          className={`inline-flex w-full items-center justify-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-[11px] font-bold shadow-md transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60 ${primaryClass}`}
+        >
+          {loading ? (
+            <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+          ) : (
+            <FilePenLine size={13} strokeWidth={2.25} aria-hidden />
+          )}
+          {loading ? "文案生成中…" : "生成完整文案"}
+          {!loading ? <ArrowDown size={12} className="opacity-85" aria-hidden /> : null}
+        </button>
+      ) : null}
+      {showRegenerate ? (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => onRegenerate?.(pick)}
+          className={`inline-flex w-full items-center justify-center gap-1.5 rounded-lg border-2 px-2.5 py-2 text-[11px] font-bold shadow-md transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60 ${regenClass}`}
+          title="若刷新或关页导致未看到文案，可重新生成；同选题首次重生成免费，再次扣 20 积分"
+        >
+          {loading ? (
+            <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+          ) : (
+            <RefreshCcw size={13} strokeWidth={2.25} aria-hidden />
+          )}
+          {loading ? "重新生成中…" : "重新生成文案"}
+        </button>
+      ) : null}
+    </div>
   );
 }
+
 
 /** 试读打码：模糊 + 轻度渐变遮蔽（不涉及真实用户数据时亦用于对外样张） */
 function TrialReadSensitive({
@@ -188,6 +222,7 @@ export function PlatformReportDashboard({
   giftedStructureTitles = [],
   existingExecutionTitleKeys = [],
   onGenerateTopicCopy,
+  onRegenerateTopicCopy,
   generatingTopicCopyKey = null,
 }: PlatformReportDashboardProps): ReactElement {
   const trial = presentation === "trialRead";
@@ -582,15 +617,7 @@ export function PlatformReportDashboard({
                       契合 {ex.brandMatchFit}
                     </span>
                   </div>
-                  {giftedKeys.has(normalizeDecisionIntelTopicTitleKey(ex.title)) ? (
-                    <div className="mt-2 pl-7">
-                      <span className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-500/15 px-2 py-1.5 text-[10px] font-bold text-emerald-100">
-                        ✓ 已赠送至下方执行区
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="pl-7">
-                      <GenerateCopyCtaButton
+                  <TopicExecutionCopyActions
                         pick={{
                           title: ex.title,
                           structure: ex.structure,
@@ -600,13 +627,13 @@ export function PlatformReportDashboard({
                           source: "structure",
                         }}
                         onGenerate={onGenerateTopicCopy}
+                        onRegenerate={onRegenerateTopicCopy}
                         trial={trial}
                         variant="structure"
                         loading={generatingTopicCopyKey === normalizeDecisionIntelTopicTitleKey(ex.title)}
                         alreadyInExecution={existingKeys.has(normalizeDecisionIntelTopicTitleKey(ex.title))}
+                        isGifted={giftedKeys.has(normalizeDecisionIntelTopicTitleKey(ex.title))}
                       />
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -696,7 +723,7 @@ export function PlatformReportDashboard({
                       <span className="hidden text-[10px] text-emerald-200/65 md:block">预估播放</span>
                     </div>
                   </div>
-                  <GenerateCopyCtaButton
+                  <TopicExecutionCopyActions
                     pick={{
                       title: item.topicDirection,
                       structure:
@@ -705,6 +732,7 @@ export function PlatformReportDashboard({
                       source: "personalization",
                     }}
                     onGenerate={onGenerateTopicCopy}
+                    onRegenerate={onRegenerateTopicCopy}
                     trial={trial}
                     variant="personalization"
                     loading={generatingTopicCopyKey === normalizeDecisionIntelTopicTitleKey(item.topicDirection)}
