@@ -6,8 +6,8 @@
 import { createHash } from "node:crypto";
 
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
-import { extractJsonString, invokeLLM } from "../_core/llm";
-import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
+import { extractJsonString } from "../_core/llm";
+import { callGemini35FlashCopywriting } from "./gemini35FlashRuntime.js";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -64,7 +64,6 @@ async function flashCallAnalysisEngine(params: {
   base: AdvancedAIReportData;
   abortSignal?: AbortSignal;
 }): Promise<CallAOutput> {
-  const modelName = resolveGrowthCampExtractorModel();
   const system = `你是一位顶级的商业战略顾问与数据分析师。
 你的任务是根据提供的「内容蓝图」与「大盘预测数据」，撰写出 4 条「核心洞察 (Core Insights)」。
 【语气】
@@ -80,19 +79,13 @@ async function flashCallAnalysisEngine(params: {
 
 请给出 4 条战略洞察。每条 content 约 50～90 字；metricsText 简要呼应快照中的数量级（勿与快照矛盾），且禁止写「模拟」或「pp」。`;
 
-  const response = await invokeLLM({
-    model: "flash",
-    provider: "vertex",
-    modelName,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    response_format: { type: "json_object" },
-    maxTokens: 4096,
+  const raw = await callGemini35FlashCopywriting({
+    taskSystemInstruction: system,
+    userText: user,
+    responseMimeType: "application/json",
+    maxOutputTokens: 4096,
     abortSignal: params.abortSignal,
   });
-  const raw = String(response.choices[0]?.message?.content ?? "{}");
   return JSON.parse(extractJsonString(raw)) as CallAOutput;
 }
 
@@ -103,7 +96,6 @@ async function flashCallCreativeEngine(params: {
   base: AdvancedAIReportData;
   abortSignal?: AbortSignal;
 }): Promise<CallBOutput> {
-  const modelName = resolveGrowthCampExtractorModel();
   const platformLabel = PLATFORM_LABEL[params.platformHint] || params.platformHint;
   const ids = params.base.executionSuggestions.mabVariants.map((v) => v.id).join(", ");
   const system = `你是深谙抖音、小红书、B 站等平台的资深内容操盘手。
@@ -124,19 +116,13 @@ async function flashCallCreativeEngine(params: {
 2) personalization：3 个延伸个性化选题方向（topicDirection）。
 3) topicStructureExamples：4 组 title + structure。`;
 
-  const response = await invokeLLM({
-    model: "flash",
-    provider: "vertex",
-    modelName,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    response_format: { type: "json_object" },
-    maxTokens: 4096,
+  const raw = await callGemini35FlashCopywriting({
+    taskSystemInstruction: system,
+    userText: user,
+    responseMimeType: "application/json",
+    maxOutputTokens: 4096,
     abortSignal: params.abortSignal,
   });
-  const raw = String(response.choices[0]?.message?.content ?? "{}");
   return JSON.parse(extractJsonString(raw)) as CallBOutput;
 }
 

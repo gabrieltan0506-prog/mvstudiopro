@@ -6,8 +6,8 @@ import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import type { DecisionIntelTopicPick } from "@shared/decisionIntelTopicPicks";
 import { selectDecisionIntelBonusTopics } from "@shared/decisionIntelBonusTopics";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
-import { extractJsonString, invokeLLM } from "../_core/llm";
-import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
+import { extractJsonString } from "../_core/llm";
+import { callGemini35FlashCopywriting } from "./gemini35FlashRuntime.js";
 
 function blueprintJsonForPrompt(contentBlueprint: unknown, maxChars = 10_000): string {
   try {
@@ -58,7 +58,6 @@ export async function generateDecisionIntelTopicBlueprints(params: {
     platformLabelMap[params.platformHint as keyof typeof platformLabelMap] ?? params.platformHint;
 
   const topicsBlock = picksToPromptBlock(picks);
-  const modelName = resolveGrowthCampExtractorModel();
   const system = `你是资深内容策划，负责把「战略地图选题结构」扩写为可立刻开拍的执行方案。
 【规则】
 - 只输出一个 JSON 对象，键名 contentBlueprints，数组长度必须恰好等于输入选题条数（${picks.length}）。
@@ -74,20 +73,13 @@ export async function generateDecisionIntelTopicBlueprints(params: {
 
 ${topicsBlock}`;
 
-  const response = await invokeLLM({
-    model: "flash",
-    provider: "vertex",
-    modelName,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    response_format: { type: "json_object" },
-    maxTokens: 8192,
+  const raw = await callGemini35FlashCopywriting({
+    taskSystemInstruction: system,
+    userText: user,
+    responseMimeType: "application/json",
+    maxOutputTokens: 8192,
     abortSignal: params.abortSignal,
   });
-
-  const raw = String(response.choices[0]?.message?.content ?? "{}");
   let parsed: BonusBlueprintOutput;
   try {
     parsed = JSON.parse(extractJsonString(raw)) as BonusBlueprintOutput;

@@ -1,8 +1,9 @@
 /**
  * Vertex IAM **`locations/global`** `generateContent`（與 {@link ../../api/google.ts} `vertexTranslate` 一致）：
- * **gemini-3-flash-preview** · `VERTEX_PROJECT_ID` + `getVertexAccessToken`（非 Consumer `GEMINI_API_KEY`）。
+ * **gemini-3.5-flash**（默认）· `VERTEX_PROJECT_ID` + `getVertexAccessToken`（非 Consumer `GEMINI_API_KEY`）。
  */
 import { getVertexAccessToken } from "../utils/vertex.js";
+import { resolveGemini35FlashModelName } from "./gemini35FlashRuntime.js";
 
 function s(v: unknown): string {
   if (v == null) return "";
@@ -41,11 +42,12 @@ export async function vertexGemini3FlashGenerateContent(
   if (!projectId) throw new Error("missing_VERTEX_PROJECT_ID");
 
   const token = await getVertexAccessToken();
-  const model = "gemini-3-flash-preview";
+  const model = resolveGemini35FlashModelName();
   const bodyStr = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: cfg?.temperature ?? 0.4,
+      temperature: cfg?.temperature ?? 0.8,
+      topP: 0.9,
       maxOutputTokens: cfg?.maxOutputTokens ?? 8192,
     },
   });

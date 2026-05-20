@@ -1,6 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
+import {
+  DEFAULT_GEMINI_35_FLASH_MODEL,
+  GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
+  resolveGemini35FlashModelName,
+} from "./gemini35FlashRuntime.js";
 import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled, isPlatformImageOpenAiAllowed } from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
@@ -134,18 +139,24 @@ export function resolveVertexFlashTranslationLocation(): string {
   return loc || "global";
 }
 
-/** 預設 Vertex Flash 翻譯模型 ID（**2×4／分鏡／八格 composite**）。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = "gemini-3-flash-preview";
+/** 預設 Vertex Flash 翻譯模型 ID（**2×4／分鏡／八格 composite** 与竖封封面）。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = DEFAULT_GEMINI_35_FLASH_MODEL;
 
 export function resolveVertexFlashTranslationModelName(): string {
-  return String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL).trim();
+  return (
+    String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || "").trim() ||
+    resolveGemini35FlashModelName()
+  );
 }
 
-/** **選題豎封封面**英文化：預設 **Gemini 2.5 Pro**（與 2×4 的 Flash 分離）。可 `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` 覆寫。 */
-export const DEFAULT_VERTEX_COVER_TRANSLATION_MODEL = "gemini-2.5-pro";
+/** **選題豎封封面**英文化：与 composite 统一 **Gemini 3.5 Flash**。可 `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` 覆寫。 */
+export const DEFAULT_VERTEX_COVER_TRANSLATION_MODEL = DEFAULT_GEMINI_35_FLASH_MODEL;
 
 export function resolveVertexCoverTranslationModelName(): string {
-  return String(process.env.VERTEX_GEMINI_COVER_TRANSLATION_MODEL || DEFAULT_VERTEX_COVER_TRANSLATION_MODEL).trim();
+  return (
+    String(process.env.VERTEX_GEMINI_COVER_TRANSLATION_MODEL || "").trim() ||
+    resolveGemini35FlashModelName()
+  );
 }
 
 /**
@@ -193,7 +204,7 @@ export function resolveVertexCoverTranslationMaxOutputTokens(): number {
 
 /**
  * Vertex Flash 英文化溫度（可 `VERTEX_FLASH_TRANSLATION_TEMPERATURE` 覆寫，0～2）。
- * 預設 **0.8**（與 Gemini 2.5 Pro 文本生成溫標對齊；長英文 image prompt 仍可由 JSON 契約收束）。
+ * 預設 **0.7**（生图提示词：艺术性与结构精准的黄金交叉）。
  */
 export function resolveVertexFlashTranslationTemperature(): number {
   const raw = process.env.VERTEX_FLASH_TRANSLATION_TEMPERATURE;
@@ -201,7 +212,20 @@ export function resolveVertexFlashTranslationTemperature(): number {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0 && n <= 2) return n;
   }
-  return 0.8;
+  return 0.7;
+}
+
+/**
+ * Vertex Flash 英文化 **Top-P**（可 `VERTEX_FLASH_TRANSLATION_TOP_P` 覆寫，0～1）。
+ * 預設 **0.9**。
+ */
+export function resolveVertexFlashTranslationTopP(): number {
+  const raw = process.env.VERTEX_FLASH_TRANSLATION_TOP_P;
+  if (raw != null && String(raw).trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0 && n <= 1) return n;
+  }
+  return 0.9;
 }
 
 /**
@@ -373,6 +397,7 @@ export function platformImageTranslationVertexJsonSystemInstruction(
 ): string {
   if (profile === "topic_cover") {
     return [
+      GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
       GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
       "You are also an **elite prompt engineer** and **poetic visual artist**: when elevating the brief into English, prefer **elegant, cinematic vocabulary**—motivated light (chiaroscuro, rim light, luminescent haze), mood (ethereal, melancholic, triumphant), and **tactile textures**—**after** layout, grid, and on-image **Simplified-Chinese** specs are already explicit.",
       "你是頂級中英雙語編導，也是頂級視覺提示詞導演；英文聲口須與上段莎士比亞式編導身份一致（可長可短，以忠實還原為準）。",
@@ -386,6 +411,7 @@ export function platformImageTranslationVertexJsonSystemInstruction(
     ].join("\n");
   }
   return [
+    GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
     PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
     "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不建議壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
@@ -777,9 +803,9 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 
 /**
  * Vertex AI 英文化：`responseMimeType: application/json`。
- * - **豎封封面**（`pipeline: topic_cover`）：預設 **Gemini 2.5 Pro**（{@link resolveVertexCoverTranslationModelName}）。
- * - **2×4／分鏡／八格**（composite）：預設 **Gemini 3 Flash Preview**（{@link resolveVertexFlashTranslationModelName}）。
- * **豎封** `temperature` / `topP` / `maxOutputTokens` 見 {@link resolveVertexCoverTranslationTemperature}、{@link resolveVertexCoverTranslationTopP}、{@link resolveVertexCoverTranslationMaxOutputTokens}（預設 **0.7** · **0.9** · **32K**）；**不**對 **2.5 Pro** 送 `thinkingConfig`（避免部分 Vertex 組合 400）。**composite** 見 Flash 溫度／token，並併用 {@link resolveVertexFlashThinkingConfigForSdk}（Gemini 3）。
+ * - **豎封封面**（`pipeline: topic_cover`）：**Gemini 3.5 Flash**（{@link resolveVertexCoverTranslationModelName}）。
+ * - **2×4／分鏡／八格**（composite）：**Gemini 3.5 Flash**（{@link resolveVertexFlashTranslationModelName}）。
+ * **豎封** `temperature` / `topP` / `maxOutputTokens` 見 {@link resolveVertexCoverTranslationTemperature}、{@link resolveVertexCoverTranslationTopP}、{@link resolveVertexCoverTranslationMaxOutputTokens}（預設 **0.7** · **0.9** · **32K**）；**composite** 见 Flash 溫度／topP，并併用 {@link resolveVertexFlashThinkingConfigForSdk}（Gemini 3.5 · HIGH）。**不附 googleSearch**。
  * **最多 3 次**：第 1 次立即；若異常或無有效 prompt → 等 **3s** 再第 2 次；仍失敗 → 等 **6s** 再第 3 次。
  * **三次仍失敗** → 若 {@link isPlatformImageOpenAiAllowed} 為真則 **fallback {@link callGemini3_1_Pro_AiStudio}（OpenAI）**；否則直接拋錯（省 OpenAI 額度）。
  */
@@ -810,10 +836,10 @@ export async function callVertexGeminiFlashTranslation(
   }
 
   const ctxPipe = opts?.pipelineStatCtx?.pipeline;
-  const useGemini25ProModel = ctxPipe === "topic_cover";
+  const isTopicCover = ctxPipe === "topic_cover";
 
   const profile = resolveTranslationProfile(opts?.pipelineStatCtx);
-  const model = useGemini25ProModel
+  const model = isTopicCover
     ? resolveVertexCoverTranslationModelName()
     : resolveVertexFlashTranslationModelName();
   const location = resolveVertexFlashTranslationLocation();
@@ -824,25 +850,21 @@ export async function callVertexGeminiFlashTranslation(
     flowLog,
     `── Vertex 英文化開始 ── project=${project} · location=${location} · model=${model} · ctxPipeline=${ctxPipe ?? "n/a"} · profile=${profile} · auth=${authMode}`,
   );
-  const flashTemp = useGemini25ProModel
+  const flashTemp = isTopicCover
     ? resolveVertexCoverTranslationTemperature()
     : resolveVertexFlashTranslationTemperature();
-  const coverTopP = resolveVertexCoverTranslationTopP();
+  const flashTopP = isTopicCover ? resolveVertexCoverTranslationTopP() : resolveVertexFlashTranslationTopP();
   const vertexThinking = resolveVertexFlashThinkingConfigForSdk();
-  const flashMaxOut = useGemini25ProModel
+  const flashMaxOut = isTopicCover
     ? resolveVertexCoverTranslationMaxOutputTokens()
     : resolveVertexFlashTranslationMaxOutputTokens();
   appendVertexFlashDebug(
     flowLog,
-    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · topP=${
-      useGemini25ProModel ? coverTopP : 0.95
-    } · thinkingConfig=${
-      useGemini25ProModel
-        ? "(2.5 Pro 豎封不送)"
-        : (vertexThinking as { thinkingConfig?: unknown }).thinkingConfig
-          ? JSON.stringify((vertexThinking as { thinkingConfig?: unknown }).thinkingConfig)
-          : "(未設定)"
-    } · task 約 ${task.length} 字`,
+    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · topP=${flashTopP} · thinkingConfig=${
+      (vertexThinking as { thinkingConfig?: unknown }).thinkingConfig
+        ? JSON.stringify((vertexThinking as { thinkingConfig?: unknown }).thinkingConfig)
+        : "(未設定)"
+    } · tools=[] · task 約 ${task.length} 字`,
   );
 
   /** `topic_cover` 與 5/11 晚輕量 system 一致；`composite` 為網格執行優先。 */
@@ -862,9 +884,10 @@ export async function callVertexGeminiFlashTranslation(
       systemInstruction,
       responseMimeType: "application/json" as const,
       temperature: flashTemp,
-      topP: useGemini25ProModel ? coverTopP : 0.95,
+      topP: flashTopP,
       maxOutputTokens: flashMaxOut,
-      ...(useGemini25ProModel ? {} : vertexThinking),
+      tools: [] as [],
+      ...vertexThinking,
     };
     const response = await ai.models.generateContent({
       model,

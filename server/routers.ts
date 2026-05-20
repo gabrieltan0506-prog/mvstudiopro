@@ -3753,7 +3753,7 @@ export const appRouter = router({
             dateRange,
             chargedCredits: cost,
             dataRetention: "user_ledger_advanced_decision_report",
-            flashModel: "gemini-3-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
+            flashModel: "gemini-3.5-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
           },
           creditsUsed: cost,
           plan,

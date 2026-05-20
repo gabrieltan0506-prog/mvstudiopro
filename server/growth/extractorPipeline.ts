@@ -1,8 +1,8 @@
 import type { GrowthCampModel } from "@shared/growth";
 
 export function resolveGrowthCampExtractorModel() {
-  return String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "gemini-3-flash-preview").trim()
-    || "gemini-3-flash-preview";
+  return String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "gemini-3.5-flash").trim()
+    || "gemini-3.5-flash";
 }
 
 /**
