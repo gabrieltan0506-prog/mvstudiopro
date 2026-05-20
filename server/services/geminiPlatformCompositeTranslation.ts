@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 import {
+  callGemini35FlashImageTranslation,
   DEFAULT_GEMINI_35_FLASH_MODEL,
   GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
   resolveGemini35FlashModelName,
@@ -802,7 +803,7 @@ export async function runGemini31ProPreviewText(userTask: string): Promise<strin
 }
 
 /**
- * Vertex AI 英文化：`responseMimeType: application/json`。
+ * **Gemini API** 英文化（`GEMINI_API_KEY`）：`responseMimeType: application/json`。
  * - **豎封封面**（`pipeline: topic_cover`）：**Gemini 3.5 Flash**（{@link resolveVertexCoverTranslationModelName}）。
  * - **2×4／分鏡／八格**（composite）：**Gemini 3.5 Flash**（{@link resolveVertexFlashTranslationModelName}）。
  * **豎封** `temperature` / `topP` / `maxOutputTokens` 見 {@link resolveVertexCoverTranslationTemperature}、{@link resolveVertexCoverTranslationTopP}、{@link resolveVertexCoverTranslationMaxOutputTokens}（預設 **0.7** · **0.9** · **32K**）；**composite** 见 Flash 溫度／topP，并併用 {@link resolveVertexFlashThinkingConfigForSdk}（Gemini 3.5 · HIGH）。**不附 googleSearch**。
@@ -824,15 +825,7 @@ export async function callVertexGeminiFlashTranslation(
   const task = String(translationTask || "").trim();
   if (!task) {
     appendVertexFlashDebug(flowLog, `輸入 task 為空 → 中止`);
-    throw new Error("Vertex 英文化：上游 task 为空");
-  }
-
-  let project: string;
-  try {
-    project = resolveVertexProjectIdForGenAi();
-  } catch (e) {
-    appendVertexFlashDebug(flowLog, `resolveVertexProjectId 失敗: ${formatErrForVertexDebug(e)}`);
-    throw e instanceof Error ? e : new Error(String(e));
+    throw new Error("Gemini API 英文化：上游 task 为空");
   }
 
   const ctxPipe = opts?.pipelineStatCtx?.pipeline;
@@ -842,77 +835,36 @@ export async function callVertexGeminiFlashTranslation(
   const model = isTopicCover
     ? resolveVertexCoverTranslationModelName()
     : resolveVertexFlashTranslationModelName();
-  const location = resolveVertexFlashTranslationLocation();
-  const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
-  const authMode = authOpts ? "GOOGLE_APPLICATION_CREDENTIALS_JSON(service_account)" : "ADC/運行環境默認憑證";
 
   appendVertexFlashDebug(
     flowLog,
-    `── Vertex 英文化開始 ── project=${project} · location=${location} · model=${model} · ctxPipeline=${ctxPipe ?? "n/a"} · profile=${profile} · auth=${authMode}`,
+    `── Gemini API 英文化開始 ── model=${model} · ctxPipeline=${ctxPipe ?? "n/a"} · profile=${profile} · auth=GEMINI_API_KEY`,
   );
   const flashTemp = isTopicCover
     ? resolveVertexCoverTranslationTemperature()
     : resolveVertexFlashTranslationTemperature();
   const flashTopP = isTopicCover ? resolveVertexCoverTranslationTopP() : resolveVertexFlashTranslationTopP();
-  const vertexThinking = resolveVertexFlashThinkingConfigForSdk();
   const flashMaxOut = isTopicCover
     ? resolveVertexCoverTranslationMaxOutputTokens()
     : resolveVertexFlashTranslationMaxOutputTokens();
   appendVertexFlashDebug(
     flowLog,
-    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · topP=${flashTopP} · thinkingConfig=${
-      (vertexThinking as { thinkingConfig?: unknown }).thinkingConfig
-        ? JSON.stringify((vertexThinking as { thinkingConfig?: unknown }).thinkingConfig)
-        : "(未設定)"
-    } · tools=[] · task 約 ${task.length} 字`,
+    `請求參數 · responseMimeType=application/json · maxOutputTokens=${flashMaxOut} · temperature=${flashTemp} · topP=${flashTopP} · thinking=HIGH · tools=[] · task 約 ${task.length} 字`,
   );
 
   /** `topic_cover` 與 5/11 晚輕量 system 一致；`composite` 為網格執行優先。 */
   const systemInstruction = platformImageTranslationVertexJsonSystemInstruction(profile);
 
-  appendVertexFlashDebug(flowLog, `new GoogleGenAI({ vertexai: true }) …`);
-  const ai = new GoogleGenAI({
-    vertexai: true,
-    project,
-    location,
-    ...(authOpts ? { googleAuthOptions: authOpts } : {}),
-  });
-
   const runFlashAttempt = async (): Promise<string> => {
-    appendVertexFlashDebug(flowLog, `調用 ai.models.generateContent({ model }) …`);
-    const genConfig = {
+    appendVertexFlashDebug(flowLog, `調用 Gemini API generateContent({ model: ${model} }) …`);
+    const raw = await callGemini35FlashImageTranslation({
       systemInstruction,
-      responseMimeType: "application/json" as const,
+      userText: `请返回 JSON：{"prompt":"..."}。\n${task}`,
+      modelName: model,
       temperature: flashTemp,
       topP: flashTopP,
       maxOutputTokens: flashMaxOut,
-      tools: [] as [],
-      ...vertexThinking,
-    };
-    const response = await ai.models.generateContent({
-      model,
-      contents: `请返回 JSON：{"prompt":"..."}。\n${task}`,
-      config: genConfig as any,
     });
-
-    type GenContentDebug = {
-      text?: string;
-      candidates?: Array<{ finishReason?: string; safetyRatings?: unknown }>;
-      usageMetadata?: unknown;
-    };
-    const respAny = response as unknown as GenContentDebug;
-    const finishReason = respAny?.candidates?.[0]?.finishReason ?? null;
-    const safety = respAny?.candidates?.[0]?.safetyRatings;
-    const usage = respAny.usageMetadata;
-    appendVertexFlashDebug(
-      flowLog,
-      `generateContent 已返回 · finishReason=${finishReason ?? "n/a"} · usageMetadata=${usage != null ? JSON.stringify(usage).slice(0, 220) : "n/a"}`,
-    );
-    if (safety != null) {
-      appendVertexFlashDebug(flowLog, `safetyRatings(摘要)=${JSON.stringify(safety).slice(0, 280)}`);
-    }
-
-    const raw = String(response.text ?? "").trim();
     appendVertexFlashDebug(
       flowLog,
       `response.text 長度=${raw.length}${raw ? ` · 頭 120 字: ${raw.replace(/\s+/g, " ").slice(0, 120)}` : ""}`,

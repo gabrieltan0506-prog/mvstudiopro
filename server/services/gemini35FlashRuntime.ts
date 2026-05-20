@@ -1,6 +1,7 @@
 /**
- * Gemini 3.5 Flash · 文案生成（googleSearch + HIGH thinking）与生图提示词英文化（无工具 + HIGH thinking）。
- * 统一 Vertex `@google/genai` 客户端与模型 ID 解析。
+ * Gemini 3.5 Flash · 统一走 **Gemini API**（`GEMINI_API_KEY` + `@google/genai`），**不走 Vertex IAM**。
+ * - 文案：googleSearch + HIGH thinking（0.8 / 0.9）
+ * - 生图英文化：无工具 + HIGH thinking（0.7 / 0.9）
  */
 import { GoogleGenAI } from "@google/genai";
 
@@ -11,6 +12,7 @@ export function resolveGemini35FlashModelName(): string {
   const fromEnv =
     String(process.env.GEMINI_35_FLASH_MODEL || "").trim() ||
     String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "").trim() ||
+    String(process.env.GEMINI_FLASH_TRANSLATION_MODEL || "").trim() ||
     String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || "").trim() ||
     String(process.env.VERTEX_GEMINI_COVER_TRANSLATION_MODEL || "").trim();
   return fromEnv || DEFAULT_GEMINI_35_FLASH_MODEL;
@@ -19,6 +21,18 @@ export function resolveGemini35FlashModelName(): string {
 /** Stage2 专属文案（`buildPlatformContent`）；可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写。 */
 export function resolvePlatformStage2GeminiModel(): string {
   return String(process.env.PLATFORM_STAGE2_GEMINI_MODEL || "").trim() || resolveGemini35FlashModelName();
+}
+
+export function requireGeminiApiKey(): string {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+  return apiKey;
+}
+
+export function buildGeminiApiClient(): GoogleGenAI {
+  return new GoogleGenAI({ apiKey: requireGeminiApiKey() });
 }
 
 /** 爆款文案：知识 + 情绪；配合 googleSearch 保事实准确。 */
@@ -36,57 +50,6 @@ STRICT REQUIREMENTS:
 1. Tone & Style: Use elegant, cinematic, and evocative vocabulary.
 2. Elements: Explicitly describe lighting (e.g., chiaroscuro, volumetric), mood (e.g., ethereal, melancholic), textures, and camera angles (e.g., extreme wide shot, hyper-realistic).
 3. Do not explain your response. Output ONLY the English image prompt. Make it rich, comma-separated or beautifully structured for an image generator (like Imagen 4 Ultra or Midjourney).`;
-
-function resolveVertexProjectIdForGenAi(): string {
-  const p = String(
-    process.env.GCP_PROJECT_ID ||
-      process.env.VERTEX_PROJECT_ID ||
-      process.env.GOOGLE_CLOUD_PROJECT ||
-      "",
-  ).trim();
-  if (!p) throw new Error("missing GCP project for Vertex GenAI");
-  return p;
-}
-
-function resolveVertexFlashTranslationLocation(): string {
-  const loc = String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_LOCATION || "global").trim();
-  return loc || "global";
-}
-
-function buildGoogleGenAiAuthOptionsFromEnv():
-  | { credentials: { client_email: string; private_key: string } }
-  | undefined {
-  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-  if (!raw || raw === "{}") return undefined;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const email = parsed.client_email;
-    const pk = parsed.private_key;
-    if (typeof email === "string" && typeof pk === "string") {
-      return {
-        credentials: {
-          client_email: email,
-          private_key: pk.replace(/\\n/g, "\n"),
-        },
-      };
-    }
-  } catch (e) {
-    console.warn("[gemini35Flash] 解析 GOOGLE_APPLICATION_CREDENTIALS_JSON 失败:", e);
-  }
-  return undefined;
-}
-
-function buildVertexGenAiClient(): GoogleGenAI {
-  const project = resolveVertexProjectIdForGenAi();
-  const location = resolveVertexFlashTranslationLocation();
-  const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
-  return new GoogleGenAI({
-    vertexai: true,
-    project,
-    location,
-    ...(authOpts ? { googleAuthOptions: authOpts } : {}),
-  });
-}
 
 function readCopywritingTemperature(): number {
   const raw = process.env.GEMINI_35_FLASH_COPYWRITING_TEMPERATURE;
@@ -106,7 +69,7 @@ function readCopywritingTopP(): number {
   return 0.9;
 }
 
-function readImageTranslationTemperature(): number {
+export function readImageTranslationTemperature(): number {
   const raw = process.env.GEMINI_35_FLASH_IMAGE_TRANSLATION_TEMPERATURE;
   if (raw != null && String(raw).trim() !== "") {
     const n = Number(raw);
@@ -115,7 +78,7 @@ function readImageTranslationTemperature(): number {
   return 0.7;
 }
 
-function readImageTranslationTopP(): number {
+export function readImageTranslationTopP(): number {
   const raw = process.env.GEMINI_35_FLASH_IMAGE_TRANSLATION_TOP_P;
   if (raw != null && String(raw).trim() !== "") {
     const n = Number(raw);
@@ -130,8 +93,38 @@ function readThinkingLevel(): string {
   return allowed.has(raw) ? raw : "HIGH";
 }
 
+function readThinkingConfigForSdk(): {
+  thinkingConfig?: { thinkingLevel: string; includeThoughts: boolean };
+} {
+  const raw = String(process.env.GEMINI_35_FLASH_THINKING_LEVEL ?? "HIGH").trim().toUpperCase();
+  if (!raw || raw === "OFF" || raw === "NONE" || raw === "FALSE" || raw === "0") {
+    return {};
+  }
+  const allowed = new Set(["MINIMAL", "LOW", "MEDIUM", "HIGH"]);
+  const level = allowed.has(raw) ? raw : "HIGH";
+  return { thinkingConfig: { thinkingLevel: level, includeThoughts: false } };
+}
+
+async function generateGeminiApiContent(params: {
+  model: string;
+  userText: string;
+  config: Record<string, unknown>;
+}): Promise<string> {
+  const ai = buildGeminiApiClient();
+  const response = await ai.models.generateContent({
+    model: params.model,
+    contents: [{ role: "user", parts: [{ text: params.userText }] }],
+    config: params.config as any,
+  });
+  const text = String((response as { text?: string })?.text ?? "").trim();
+  if (!text) {
+    throw new Error(`Gemini API 无文本产出（model=${params.model}）`);
+  }
+  return text;
+}
+
 /**
- * 文案生成：temperature 0.8 · topP 0.9 · thinking HIGH · googleSearch。
+ * 文案生成（Gemini API）：temperature 0.8 · topP 0.9 · thinking HIGH · googleSearch。
  */
 export async function callGemini35FlashCopywriting(params: {
   taskSystemInstruction: string;
@@ -140,43 +133,60 @@ export async function callGemini35FlashCopywriting(params: {
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
-  /** 覆写模型 ID；Stage 2 传 {@link resolvePlatformStage2GeminiModel}。 */
   modelName?: string;
   abortSignal?: AbortSignal;
 }): Promise<string> {
-  const ai = buildVertexGenAiClient();
+  void params.abortSignal;
   const model = String(params.modelName || "").trim() || resolveGemini35FlashModelName();
   const systemInstruction = `${GEMINI_35_FLASH_COPYWRITING_SYSTEM}\n\n${params.taskSystemInstruction}`.trim();
-  const config = {
+  const baseConfig = {
     systemInstruction,
     temperature: params.temperature ?? readCopywritingTemperature(),
     topP: params.topP ?? readCopywritingTopP(),
-    thinkingConfig: { thinkingLevel: readThinkingLevel(), includeThoughts: false },
-    tools: [{ googleSearch: {} }],
+    ...readThinkingConfigForSdk(),
     ...(params.responseMimeType ? { responseMimeType: params.responseMimeType } : {}),
     ...(params.maxOutputTokens ? { maxOutputTokens: params.maxOutputTokens } : { maxOutputTokens: 8192 }),
   };
 
-  let response;
   try {
-    response = await ai.models.generateContent({
+    return await generateGeminiApiContent({
       model,
-      contents: [{ role: "user", parts: [{ text: params.userText }] }],
-      config: config as any,
+      userText: params.userText,
+      config: { ...baseConfig, tools: [{ googleSearch: {} }] },
     });
   } catch (e) {
     console.warn("[gemini35Flash] copywriting googleSearch 降级:", (e as Error)?.message?.slice(0, 200));
-    const { tools: _tools, ...configNoSearch } = config;
-    response = await ai.models.generateContent({
+    return generateGeminiApiContent({
       model,
-      contents: [{ role: "user", parts: [{ text: params.userText }] }],
-      config: configNoSearch as any,
+      userText: params.userText,
+      config: baseConfig,
     });
   }
+}
 
-  const text = String((response as { text?: string })?.text ?? "").trim();
-  if (!text) {
-    throw new Error(`gemini-3.5-flash 文案生成无文本产出（model=${model}）`);
-  }
-  return text;
+/**
+ * 生图英文化（Gemini API）：temperature 0.7 · topP 0.9 · thinking HIGH · 无 googleSearch。
+ */
+export async function callGemini35FlashImageTranslation(params: {
+  systemInstruction: string;
+  userText: string;
+  modelName?: string;
+  temperature?: number;
+  topP?: number;
+  maxOutputTokens?: number;
+}): Promise<string> {
+  const model = String(params.modelName || "").trim() || resolveGemini35FlashModelName();
+  return generateGeminiApiContent({
+    model,
+    userText: params.userText,
+    config: {
+      systemInstruction: params.systemInstruction,
+      responseMimeType: "application/json",
+      temperature: params.temperature ?? readImageTranslationTemperature(),
+      topP: params.topP ?? readImageTranslationTopP(),
+      maxOutputTokens: params.maxOutputTokens ?? 32768,
+      tools: [],
+      ...readThinkingConfigForSdk(),
+    },
+  });
 }

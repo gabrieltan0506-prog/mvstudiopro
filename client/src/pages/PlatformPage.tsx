@@ -4629,7 +4629,7 @@ export default function PlatformPage() {
     }
     setQuestion(finalQuestion);
     setIsQaLoading(true);
-    // Dispatch async QA Job — Vertex 3.1 Pro Preview answers in background
+    // Dispatch async QA Job — Gemini API · gemini-3.5-flash answers in background
     // If a file was uploaded, pass fileUri + fileMimeType for multimodal analysis
     try {
       const { jobId } = await createPlatformQAJobMutation.mutateAsync({
@@ -5096,7 +5096,7 @@ export default function PlatformPage() {
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-white/55">
                     仅 administrator（admin / supervisor）或 supervisor 入口可见；一般用户不会看到此区，且后端会忽略未授权的线路参数。预设{" "}
-                    <span className="font-semibold text-[#8cefff]">Vertex · gemini-3.5-flash</span>；OpenAI 需帐户额度。
+                    <span className="font-semibold text-[#8cefff]">Gemini API · gemini-3.5-flash</span>；OpenAI 需帐户额度。
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
@@ -5108,7 +5108,7 @@ export default function PlatformPage() {
                           : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
                       }`}
                     >
-                      Gemini 3.5 Flash（Vertex）
+                      Gemini 3.5 Flash（Gemini API）
                     </button>
                     <button
                       type="button"

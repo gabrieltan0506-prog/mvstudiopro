@@ -28,7 +28,7 @@ import {
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
-import { invokeLLM, extractJsonString } from "../_core/llm";
+import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
 import { resolveWatermark } from "../services/tier-provider-routing.js";
 import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
@@ -772,7 +772,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
  *   第 2 阶段：vertex / gemini-3.1-pro-preview，校准趋势信号与平台看板
  *
  * platform_qa：
- *   vertex / gemini-3.1-pro-preview，多模态追问；如有 fileUri 则附带文档
+ *   Gemini API / gemini-3.5-flash；纯文本走 callGemini35FlashCopywriting；有 fileUri 时 invokeLLM(gemini) 多模态
  *   finally：始终清理 GCS 临时文件
  */
 async function processPlatformJob(
@@ -907,9 +907,31 @@ async function processPlatformJob(
       const windowDays = Number(params.windowDays || 15);
       const snapshot = (params.snapshot || {}) as Record<string, unknown>;
       const fileUri = typeof params.fileUri === "string" ? params.fileUri : undefined;
-      const fileMimeType = typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
+      const fileMimeTypeRaw =
+        typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
+      const allowedFileMimes = [
+        "audio/mpeg",
+        "audio/wav",
+        "application/pdf",
+        "audio/mp4",
+        "video/mp4",
+        "video/quicktime",
+      ] as const satisfies readonly NonNullable<FileContent["file_url"]["mime_type"]>[];
+      const fileMimeType: NonNullable<FileContent["file_url"]["mime_type"]> = (
+        allowedFileMimes as readonly string[]
+      ).includes(fileMimeTypeRaw)
+        ? (fileMimeTypeRaw as NonNullable<FileContent["file_url"]["mime_type"]>)
+        : fileMimeTypeRaw.startsWith("video/")
+          ? "video/mp4"
+          : fileMimeTypeRaw.startsWith("audio/")
+            ? "audio/mpeg"
+            : "application/pdf";
 
       try {
+        const { callGemini35FlashCopywriting, resolveGemini35FlashModelName } = await import(
+          "../services/gemini35FlashRuntime.js"
+        );
+        const qaModel = resolveGemini35FlashModelName();
         const systemPrompt = "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
         const contextPayload = JSON.stringify({
           windowDays,
@@ -918,26 +940,33 @@ async function processPlatformJob(
           snapshot,
         });
 
-        const userContent: any = fileUri
-          ? [
-              { type: "text", text: contextPayload },
-              { type: "file_url", file_url: { url: fileUri, mime_type: fileMimeType } },
-            ]
-          : contextPayload;
-
-        const qaResponse = await invokeLLM({
-          provider: "vertex",
-          modelName: "gemini-3.1-pro-preview",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContent },
-          ],
-        });
-
-        const answerText = String(qaResponse.choices[0]?.message?.content || "");
+        let answerText: string;
+        if (fileUri) {
+          const userContent = [
+            { type: "text" as const, text: contextPayload },
+            { type: "file_url" as const, file_url: { url: fileUri, mime_type: fileMimeType } },
+          ];
+          const qaResponse = await invokeLLM({
+            provider: "gemini",
+            modelName: qaModel,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userContent },
+            ],
+          });
+          answerText = String(qaResponse.choices[0]?.message?.content || "");
+        } else {
+          answerText = await callGemini35FlashCopywriting({
+            taskSystemInstruction: systemPrompt,
+            userText: contextPayload,
+            responseMimeType: "text/plain",
+            maxOutputTokens: 8192,
+            modelName: qaModel,
+          });
+        }
 
         return {
-          provider: "vertex",
+          provider: "gemini",
           output: {
             result: {
               title: question.slice(0, 40) || "追问回答",
