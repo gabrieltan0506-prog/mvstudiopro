@@ -947,6 +947,20 @@ function mapBonusBlueprintsToExecutionCards(
   return mapStrategicMapBlueprintsToExecutionCards(blueprints, baseIndex, { isDecisionIntelBonus: true });
 }
 
+/** 封面 enqueue 仅认 DB 快照 sceneId；将会话执行卡写回快照所需的最小字段。 */
+function executionCardToSnapshotBlueprint(card: PlatformContentExecutionCard): Record<string, unknown> {
+  return {
+    id: card.id,
+    sceneId: card.id,
+    title: card.title,
+    hook: card.hook,
+    copywriting: card.copywriting,
+    format: card.format,
+    executionDetails: card.executionDetails,
+    titleVariants: card.titleVariants,
+  };
+}
+
 /** 生图请求速率：滚动窗口长度（毫秒），与上游「每分钟 N 次」配额对齐。 */
 const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
 /**
@@ -2050,6 +2064,8 @@ export default function PlatformPage() {
   }, [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
+  const syncPlatformExecutionBlueprintsSnapshotMutation =
+    trpc.mvAnalysis.syncPlatformExecutionBlueprintsSnapshot.useMutation();
   const enqueueTopicCoverAndCompositeBundleMutation =
     trpc.mvAnalysis.enqueueTopicCoverAndCompositeBundle.useMutation();
 
@@ -3930,6 +3946,26 @@ export default function PlatformPage() {
       return next;
     });
   }, [visibleExecutionCards, visibleExecutionCardsKey]);
+
+  const executionSnapshotSyncKeyRef = useRef("");
+  useEffect(() => {
+    if (!isAuthenticated || visibleExecutionCards.length === 0) return;
+    const key = visibleExecutionCardsKey;
+    if (executionSnapshotSyncKeyRef.current === key) return;
+    executionSnapshotSyncKeyRef.current = key;
+    const blueprints = visibleExecutionCards.map(executionCardToSnapshotBlueprint);
+    void syncPlatformExecutionBlueprintsSnapshotMutation
+      .mutateAsync({ contentBlueprints: blueprints })
+      .catch((err) => {
+        executionSnapshotSyncKeyRef.current = "";
+        console.warn("[platform] execution snapshot sync failed:", err);
+      });
+  }, [
+    isAuthenticated,
+    visibleExecutionCards,
+    visibleExecutionCardsKey,
+    syncPlatformExecutionBlueprintsSnapshotMutation,
+  ]);
 
   const platformTopicCount = visibleExecutionCards.length;
   const platformBulkGraphicCost = useMemo(
@@ -6332,10 +6368,23 @@ export default function PlatformPage() {
                               ? ""
                               : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面（套装 40×${platformTopicCount}=${platformBulkGraphicCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}；散买单张 ${CREDIT_COSTS.platformTopicFrameGraphic} 积分）。是否继续？`;
                             if (!supervisorAccess && !window.confirm(discountNote)) return;
-                            void runSequentialCoverBatchGeneration(
-                              scenes,
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
-                            );
+                            void (async () => {
+                              try {
+                                await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                                  contentBlueprints: visibleExecutionCards.map(
+                                    executionCardToSnapshotBlueprint,
+                                  ),
+                                });
+                                await runSequentialCoverBatchGeneration(
+                                  scenes,
+                                  buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                                );
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof Error ? err.message : "封面套装发起失败",
+                                );
+                              }
+                            })();
                           }}
                           className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full border-2 border-[#ff4fb8]/55 bg-[#ff4fb8]/10 px-8 py-2.5 text-sm font-bold text-[#ff9fe0] shadow-md transition hover:bg-[#ff4fb8]/18 hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
                         >
@@ -6746,8 +6795,11 @@ export default function PlatformPage() {
                           if (!window.confirm(confirmNote)) return;
                         }
                         markCoverGenerationStarted(item.id);
-                        void runThrottledPlatformImageRequest(`single-cover:${item.id}`, () =>
-                          runEnqueueTopicImageAndPoll({
+                        void runThrottledPlatformImageRequest(`single-cover:${item.id}`, async () => {
+                          await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                            contentBlueprints: [executionCardToSnapshotBlueprint(item)],
+                          });
+                          return runEnqueueTopicImageAndPoll({
                             topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
                             coverPersonaContext:
@@ -6755,8 +6807,8 @@ export default function PlatformPage() {
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
                             pollDebugLabel: `单张选题封面 · ${item.id}`,
-                          }),
-                        )
+                          });
+                        })
                           .then((res) => {
                             const finalUrl =
                               res.imageUrl ?? (res as { url?: string | null }).url ?? null;
@@ -6804,8 +6856,11 @@ export default function PlatformPage() {
                           if (!supervisorAccess && !window.confirm(confirmNote)) return;
                         }
                         markCoverGenerationStarted(item.id);
-                        void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, () =>
-                          runEnqueueTopicImageAndPoll({
+                        void runThrottledPlatformImageRequest(`manual-cover:${item.id}`, async () => {
+                          await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                            contentBlueprints: [executionCardToSnapshotBlueprint(item)],
+                          });
+                          return runEnqueueTopicImageAndPoll({
                             topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
                             coverPersonaContext:
@@ -6813,8 +6868,8 @@ export default function PlatformPage() {
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
                             pollDebugLabel: `手动重生成 · ${item.id}`,
-                          }),
-                        )
+                          });
+                        })
                           .then((res) => {
                             const finalUrl =
                               res.imageUrl ?? (res as { url?: string | null }).url ?? null;
@@ -7157,7 +7212,7 @@ export default function PlatformPage() {
                                       isSequentialCompositeBatchGenerating ||
                                       isSequentialCoverCompositeBundleBatchGenerating ||
                                       coverCompositeBundleSceneId !== null ||
-                                                                            compositeMutationBusy ||
+                                      batchGeneratingCoverIds.has(item.id) ||
                                       isDashboardLoading ||
                                       isContentLoading
                                     }
@@ -7324,20 +7379,19 @@ export default function PlatformPage() {
                               type="button"
                               disabled={
                                 !isAuthenticated ||
-                                compositeMutationBusy ||
                                 isSequentialCoverBatchGenerating ||
                                 isSequentialCompositeBatchGenerating ||
                                 isSequentialCoverCompositeBundleBatchGenerating ||
                                 coverCompositeBundleSceneId !== null ||
-                                                                batchGeneratingCoverIds.has(item.id) ||
+                                batchGeneratingCoverIds.has(item.id) ||
                                 coverSilentRetryIds.has(item.id) ||
                                 isDashboardLoading ||
                                 isContentLoading
                               }
                               onClick={handleGenerateSingleCoverFooter}
                               className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#ff4fb8]/45 bg-[#ff4fb8]/12 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/22 ${
-                                compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""
-                              } ${batchGeneratingCoverIds.has(item.id) ? "cursor-wait ring-2 ring-[#ff4fb8]/35 opacity-95 [&:disabled]:opacity-95" : ""}`}
+                                batchGeneratingCoverIds.has(item.id) ? "cursor-wait ring-2 ring-[#ff4fb8]/35 opacity-95 [&:disabled]:opacity-95" : ""
+                              }`}
                               title={
                                 isEligibleFreeRetry
                                   ? "检测到黑图，本次可走免费补救链路（免扣积分）"
