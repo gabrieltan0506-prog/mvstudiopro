@@ -8,6 +8,39 @@ import { GoogleGenAI } from "@google/genai";
 /** 平台默认：Gemini 3.5 Flash（可用 GEMINI_35_FLASH_MODEL 覆写）。 */
 export const DEFAULT_GEMINI_35_FLASH_MODEL = "gemini-3.5-flash";
 
+/** 文案生成默认输出上限（64K）。可用 `GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` 覆写（4096～65536）。 */
+export const GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS = 65536;
+
+/** 生图英文化默认输出上限（32K）。可用 `GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS` 覆写（4096～65536）。 */
+export const GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS = 32768;
+
+function clampMaxOutputTokens(n: number, fallback: number): number {
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(65536, Math.max(4096, Math.floor(n)));
+}
+
+export function resolveGemini35FlashCopywritingMaxOutputTokens(override?: number): number {
+  if (override != null && Number.isFinite(override) && override > 0) {
+    return clampMaxOutputTokens(override, GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS);
+  }
+  const raw = process.env.GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS;
+  if (raw != null && String(raw).trim() !== "") {
+    return clampMaxOutputTokens(Number(raw), GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS);
+  }
+  return GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS;
+}
+
+export function resolveGemini35FlashImageTranslationMaxOutputTokens(override?: number): number {
+  if (override != null && Number.isFinite(override) && override > 0) {
+    return clampMaxOutputTokens(override, GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS);
+  }
+  const raw = process.env.GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS;
+  if (raw != null && String(raw).trim() !== "") {
+    return clampMaxOutputTokens(Number(raw), GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS);
+  }
+  return GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS;
+}
+
 export function resolveGemini35FlashModelName(): string {
   const fromEnv =
     String(process.env.GEMINI_35_FLASH_MODEL || "").trim() ||
@@ -145,7 +178,7 @@ export async function callGemini35FlashCopywriting(params: {
     topP: params.topP ?? readCopywritingTopP(),
     ...readThinkingConfigForSdk(),
     ...(params.responseMimeType ? { responseMimeType: params.responseMimeType } : {}),
-    ...(params.maxOutputTokens ? { maxOutputTokens: params.maxOutputTokens } : { maxOutputTokens: 8192 }),
+    maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(params.maxOutputTokens),
   };
 
   try {
@@ -184,7 +217,7 @@ export async function callGemini35FlashImageTranslation(params: {
       responseMimeType: "application/json",
       temperature: params.temperature ?? readImageTranslationTemperature(),
       topP: params.topP ?? readImageTranslationTopP(),
-      maxOutputTokens: params.maxOutputTokens ?? 32768,
+      maxOutputTokens: resolveGemini35FlashImageTranslationMaxOutputTokens(params.maxOutputTokens),
       tools: [],
       ...readThinkingConfigForSdk(),
     },

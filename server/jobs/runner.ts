@@ -928,9 +928,12 @@ async function processPlatformJob(
             : "application/pdf";
 
       try {
-        const { callGemini35FlashCopywriting, resolveGemini35FlashModelName } = await import(
-          "../services/gemini35FlashRuntime.js"
-        );
+        const {
+          callGemini35FlashCopywriting,
+          resolveGemini35FlashModelName,
+          resolveGemini35FlashCopywritingMaxOutputTokens,
+        } = await import("../services/gemini35FlashRuntime.js");
+        const qaMaxOut = resolveGemini35FlashCopywritingMaxOutputTokens();
         const qaModel = resolveGemini35FlashModelName();
         const systemPrompt = "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
         const contextPayload = JSON.stringify({
@@ -949,6 +952,7 @@ async function processPlatformJob(
           const qaResponse = await invokeLLM({
             provider: "gemini",
             modelName: qaModel,
+            max_tokens: qaMaxOut,
             messages: [
               { role: "system", content: systemPrompt },
               { role: "user", content: userContent },
@@ -960,7 +964,7 @@ async function processPlatformJob(
             taskSystemInstruction: systemPrompt,
             userText: contextPayload,
             responseMimeType: "text/plain",
-            maxOutputTokens: 8192,
+            maxOutputTokens: qaMaxOut,
             modelName: qaModel,
           });
         }

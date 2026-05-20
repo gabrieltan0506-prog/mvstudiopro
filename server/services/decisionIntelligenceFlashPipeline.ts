@@ -83,7 +83,6 @@ async function flashCallAnalysisEngine(params: {
     taskSystemInstruction: system,
     userText: user,
     responseMimeType: "application/json",
-    maxOutputTokens: 4096,
     abortSignal: params.abortSignal,
   });
   return JSON.parse(extractJsonString(raw)) as CallAOutput;
@@ -120,7 +119,6 @@ async function flashCallCreativeEngine(params: {
     taskSystemInstruction: system,
     userText: user,
     responseMimeType: "application/json",
-    maxOutputTokens: 4096,
     abortSignal: params.abortSignal,
   });
   return JSON.parse(extractJsonString(raw)) as CallBOutput;

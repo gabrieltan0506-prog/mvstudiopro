@@ -25,6 +25,8 @@ import {
 } from "./config/platformSwitches.js";
 import {
   callGemini35FlashCopywriting,
+  GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS,
+  resolveGemini35FlashCopywritingMaxOutputTokens,
   resolvePlatformStage2GeminiModel,
 } from "./services/gemini35FlashRuntime.js";
 import { storagePut, storageGet } from "./storage";
@@ -992,6 +994,9 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
   return out;
 }
 
+/** Stage2 文案 / 分镜：场景须生动具体，供 system prompt 复用。 */
+const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生动化】文案、分镜、executionDetails.environmentAndWardrobe 中的拍摄场景须**具体、可拍、能打动用户**；鼓励跨场域轮换，**包括但不局限于**例如：博物馆、户外旅行、知名景区、游泳池、网球场、音乐厅、饭店餐厅、路边大排档、商场、超市、咖啡日常消费场景、医院诊间、实验室、健身房、街景夜市、天台、市集、会展展厅、演播舞台、城市地标、自然风光等（仅为示例，可据人设与选题再拓展）。场景须有画面感与情绪张力，让读者感到「想去那里 / 想点开看」；须与人设（职业、身份、兴趣、爱好、专长）合理互证，禁止无依据时多条选题扎堆书房、客厅、书桌等同质布景。`;
+
 export async function buildPlatformContent(params: {
   snapshot: any;
   platformMenu: any;
@@ -1212,7 +1217,7 @@ export async function buildPlatformContent(params: {
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
-5.多场景热点与生动选题（Versatile & Vivid Scenes / Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**站得住脚的热门切口**；要求在**场景与叙事场域上生动、可区分**，鼓励在室内外、公共与私人、工作与生活、城市与自然等之间轮换，**避免**无依据时多条选题扎堆书房、客厅、书桌等同质布景。热点梗**可参考但必须改写**，使之贴合用户的**职业、身份、兴趣、爱好、专长**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
+5.多场景热点与生动选题（Versatile & Vivid Scenes / Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**站得住脚的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**可参考但必须改写**，使之贴合用户的**职业、身份、兴趣、爱好、专长**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
 【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。必须恰好 **5** 条。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
 【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
@@ -1230,7 +1235,7 @@ export async function buildPlatformContent(params: {
    - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
-	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；无正文依据时**避免** 5 条方案集体扎堆书房、客厅、书桌等同质布景；**第 5 条（维度 5）**须在视觉与场域上与前几段方案明显区隔。
+	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**须在视觉与场域上与前几段方案明显区隔。
      【强制脚本排版规则 — 必须严格遵守，不得简化】：
      ▸ 如果 format 为「短视频」（抖音/B站/快手）：必须使用精确时间轴格式，每段必须包含「视觉描述」与「口播文案」，例如：
        "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
@@ -1243,7 +1248,7 @@ export async function buildPlatformContent(params: {
 	       "[正文区] 完整文案+平台搜索关键词，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - executionDetails（执行细节，必须极度具体）：
-     * environmentAndWardrobe（拍摄环境 + 服装道具描述，例如："白色诊室背景，穿白大褂，手持医学影像片"）
+     * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色西装，手持文物复刻件对照讲解"）
      * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光"）
      * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】直接说出核心判断：……","【3-15秒】展示具体案例：……","【15-25秒】给出行动建议：……"]）
 
@@ -1291,7 +1296,7 @@ export async function buildPlatformContent(params: {
 
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
-4. 必须极度详细、有落地感，不要泛泛而谈。文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，禁止硬套。${personaConstraint}
+4. 必须极度详细、有落地感，不要泛泛而谈。${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，禁止硬套。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
@@ -3106,7 +3111,7 @@ export const appRouter = router({
 2. 第一段必须先给出明确判断，不要先铺垫，不要两边都说。
 3. answer 必须明显分成三个部分：结论、为什么、下一步怎么做。可以用自然段，不要写成模板编号。
 4. 如果用户问“从哪些平台入手”“怎么实现商业价值”这类问题，必须明确给出优先顺序、适合承接的商业方向，以及短期不建议投入的方向。
-5. 如果问题涉及选题、文案、图文、视频、脚本、拍法，你必须写出具体方案，至少覆盖：题目方向、开头怎么说、结构怎么排、视频怎么拍或图文怎么写。
+5. 如果问题涉及选题、文案、图文、视频、脚本、拍法，你必须写出具体方案，至少覆盖：题目方向、开头怎么说、结构怎么排、视频怎么拍或图文怎么写；拍摄场景须生动具体（包括但不局限于博物馆、户外旅行、知名景区、泳池、球场、音乐厅、饭店餐厅、路边大排档等，须贴合此人设），能打动用户、有画面感。
 6. 如果 snapshot 里已经有 titleExecutions、creationAssist、monetizationStrategies、decisionFramework，要优先把这些证据翻译成“这个用户现在就能执行”的动作，而不是继续抽象分析。
 7. 变现路径只能保留和这个用户身份、内容方向、平台表达直接相关的 1 到 3 条。不要把带货、课程、咨询、社群、品牌合作全部列一遍。
 8. 如果用户背景是专业身份和文化审美内容的结合，就优先写与信任、解释力、审美内容承接有关的路径，而不是默认带货。
@@ -3153,7 +3158,7 @@ export const appRouter = router({
             taskSystemInstruction: followUpSystem,
             userText: followUpUser,
             responseMimeType: "application/json",
-            maxOutputTokens: 8192,
+            maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
             modelName: followUpModel,
           });
           let parsedFollowUpRaw: unknown;
