@@ -3,6 +3,7 @@ import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
 import {
   callGemini35FlashImageTranslation,
+  GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS,
   DEFAULT_GEMINI_35_FLASH_MODEL,
   GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
   resolveGemini35FlashModelName,
@@ -257,7 +258,7 @@ export function resolveVertexFlashThinkingConfigForSdk(): {
  * 合法範圍 **4096～65536**（非數字或超出範圍時回退預設）。
  */
 export function resolveVertexFlashTranslationMaxOutputTokens(): number {
-  const fallback = 32768;
+  const fallback = GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS;
   const raw = process.env.VERTEX_FLASH_TRANSLATION_MAX_TOKENS;
   if (raw != null && String(raw).trim() !== "") {
     const n = Math.floor(Number(raw));

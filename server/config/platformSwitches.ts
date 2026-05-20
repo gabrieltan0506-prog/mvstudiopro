@@ -1,5 +1,6 @@
 /**
  * 默认：Creator Growth **Stage 2 文案** 与 **生图英文化** 均 = **`gemini-3.5-flash` · Gemini API**（`GEMINI_API_KEY`，见 gemini35FlashRuntime）；非 Vertex IAM。**平台图 = GCS**。
+ * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS`）、英文化 **32K**（`GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS`）。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。OpenAI 文案：設 `PLATFORM_STAGE2_LLM=openai`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *

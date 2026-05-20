@@ -62,6 +62,7 @@ export async function generateDecisionIntelTopicBlueprints(params: {
 【规则】
 - 只输出一个 JSON 对象，键名 contentBlueprints，数组长度必须恰好等于输入选题条数（${picks.length}）。
 - 每条须含：title、format（「短视频」或「图文」）、hook（≥30字）、copywriting（≥180字）、suitablePlatforms（字符串数组）、actionableSteps（≥3条）、detailedScript（≥280字）、publishingAdvice、executionDetails（含 environmentAndWardrobe、lightingAndCamera、stepByStepScript 数组≥4步）。
+- 【场景生动化】文案与分镜中的拍摄场景须具体、可拍、能打动用户；包括但不局限于例如博物馆、户外旅行、知名景区、游泳池、网球场、音乐厅、饭店餐厅、路边大排档、商场、街景、自然风光等（可据人设拓展）；禁止多条扎堆书房、客厅等同质布景。
 - 须严格延续输入标题与结构骨架的主线，不得偏题；语气专业、可拍、简体中文。
 - 禁止 markdown 代码块；第一个字符必须是 {。`;
 
@@ -77,7 +78,6 @@ ${topicsBlock}`;
     taskSystemInstruction: system,
     userText: user,
     responseMimeType: "application/json",
-    maxOutputTokens: 8192,
     abortSignal: params.abortSignal,
   });
   let parsed: BonusBlueprintOutput;
