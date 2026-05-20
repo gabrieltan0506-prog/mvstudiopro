@@ -1,5 +1,5 @@
 /**
- * 默认：Creator Growth **Stage 2 文案 / 平台分析 Stage 2** = **`gemini-3.1-pro-preview`**；**选题竖封英文化** = **`gemini-2.5-pro`**（`VERTEX_GEMINI_COVER_TRANSLATION_MODEL`）。**平台图 = GCS**。
+ * 默认：Creator Growth **Stage 2 文案** 与 **生图英文化** 均 = **`gemini-3.5-flash` · Gemini API**（`GEMINI_API_KEY`，见 gemini35FlashRuntime）；非 Vertex IAM。**平台图 = GCS**。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。OpenAI 文案：設 `PLATFORM_STAGE2_LLM=openai`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *
@@ -269,6 +269,7 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
     primary === "vertex" ||
     primary === "google" ||
     primary === "gemini" ||
+    primary === "gemini_api" ||
     primary === "vertex_ai" ||
     primary === "gcp"
   ) {
@@ -291,13 +292,13 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
     return "openai";
   }
 
-  /** 未顯式指定時預設 Vertex（Gemini）；OpenAI 僅在 env 或管理員 {@link buildPlatformContent} 覆寫時使用。 */
+  /** 未顯式指定時預設 Gemini API（3.5 Flash）；`vertex`/`gemini` env 值均走此路，非 Vertex IAM。 */
   return "vertex";
 }
 
 /**
- * Creator Growth **Stage 2 長文**專用模型（`buildPlatformContent`）。  
- * 計費上 gpt‑5.5 輸入/輸出約為 gpt‑5.4 的兩倍，故 **英文化 / condense 仍預設 gpt‑5.4**（見 geminiPlatformCompositeTranslation）。
+ * Creator Growth **Stage 2 / 战略看板 / 深度追问** 預設 **Gemini 3.5 Flash · Gemini API**（`GEMINI_API_KEY`，見 {@link resolvePlatformStage2GeminiModel}）。  
+ * OpenAI 路線仍用 gpt‑5.5（`PLATFORM_STAGE2_OPENAI_MODEL`）；英文化見 gemini35FlashRuntime。
  */
 export function getPlatformStage2OpenAiModel(): string {
   if (isPlatformWeekendGcpEscape()) return "gpt-5.5";

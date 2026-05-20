@@ -681,8 +681,14 @@ function isGemini25ProModel(modelName: string) {
   return true;
 }
 
+/** Gemini 3.5 Flash 文本（如 gemini-3.5-flash） */
+function isGemini35FlashModel(modelName: string) {
+  return /gemini-3\.5[-_]?flash/i.test(String(modelName || ""));
+}
+
 /** Gemini 3 Flash 文本（如 gemini-3-flash-preview；不含 gemini-3.1*、不含 image 生图 ID） */
 function isGemini3FlashTextModel(modelName: string) {
+  if (isGemini35FlashModel(modelName)) return true;
   const m = String(modelName || "").toLowerCase();
   if (!m.includes("flash") || m.includes("image")) return false;
   if (/gemini-3\.1/i.test(m)) return false;
@@ -750,6 +756,17 @@ function buildGeminiGenerationConfig(
     config.thinkingConfig = {
       includeThoughts: false,
       thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_25_THINKING_LEVEL", "HIGH"),
+    };
+    return config;
+  }
+
+  if (isGemini35FlashModel(modelName)) {
+    config.temperature =
+      temperature ?? readNumberEnv("VERTEX_GEMINI_35_FLASH_TEMPERATURE") ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TEMPERATURE") ?? 0.8;
+    config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_35_FLASH_TOP_P") ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TOP_P") ?? 0.9;
+    config.thinkingConfig = {
+      includeThoughts: false,
+      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_35_FLASH_THINKING_LEVEL", "HIGH"),
     };
     return config;
   }

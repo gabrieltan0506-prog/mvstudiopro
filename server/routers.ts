@@ -23,6 +23,10 @@ import {
   resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
+import {
+  callGemini35FlashCopywriting,
+  resolvePlatformStage2GeminiModel,
+} from "./services/gemini35FlashRuntime.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -483,8 +487,8 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
   return Math.min(65536, Math.floor(raw));
 })();
 
-/** Stage 2 取樣溫度（Vertex/Gemini 生效；GPT‑5 系 OpenAI 可能忽略 temperature，見 llm.ts）。 */
-const STAGE2_LLM_TEMPERATURE = 0.9;
+/** Stage 2 取樣溫度（Gemini 3.5 Flash 文案；GPT‑5 系 OpenAI 可能忽略 temperature，見 llm.ts）。 */
+const STAGE2_LLM_TEMPERATURE = 0.8;
 
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
 // platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
@@ -701,15 +705,7 @@ async function buildPlatformDashboard(params: {
     ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。platformMenu 中的第一顺位必须是与知识型/审美型内容适配度最高的平台（通常是小红书或B站），而非纯流量平台。`
     : "";
 
-  const response = await invokeLLM({
-    // Upgraded to Vertex 3.1 Pro Preview for richer dashboard analysis
-    provider: "vertex",
-    modelName: "gemini-3.1-pro-preview",
-    abortSignal: params.abortSignal,
-    messages: [
-      {
-        role: "system",
-        content: `你是一位资深内容商业顾问，帮创作者判断平台优先级和商业化切入点。
+  const dashboardSystemInstruction = `你是一位资深内容商业顾问，帮创作者判断平台优先级和商业化切入点。
 
 请根据用户背景和近 ${params.windowDays} 天平台数据，生成平台决策看板（轻量版，不包含长文案）。
 
@@ -752,14 +748,11 @@ async function buildPlatformDashboard(params: {
 【绝对警告 — JSON 输出规范】：
 请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
 输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
-字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`,
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
+字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`;
+
+  const dashboardUserPayload = JSON.stringify({
           context: params.context || "",
           windowDays: params.windowDays,
-          // Trimmed to reduce Vertex output token pressure
           platforms: params.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
             platform: item.platform,
             displayName: item.displayName,
@@ -796,13 +789,21 @@ async function buildPlatformDashboard(params: {
             itemCount: item.itemCount,
             hotTitles: item.hotTitles.slice(0, 4),
           })),
-        }),
-      },
-    ],
+        });
+
+  const dashboardModel = resolvePlatformStage2GeminiModel();
+  const rawContent = await callGemini35FlashCopywriting({
+    taskSystemInstruction: dashboardSystemInstruction,
+    userText: dashboardUserPayload,
+    responseMimeType: "application/json",
+    maxOutputTokens: 65536,
+    temperature: 0.8,
+    topP: 0.9,
+    modelName: dashboardModel,
+    abortSignal: params.abortSignal,
   });
 
   // Phase 0-C: Robust JSON extraction — greedy bracket extraction, then fence strip fallback
-  const rawContent = extractFirstChoicePlainText(response);
   // Step 1: greedy bracket extraction — find the outermost { … } block in the raw output
   // This is the most reliable method when Gemini adds preamble/postamble text
   const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
@@ -1002,7 +1003,7 @@ export async function buildPlatformContent(params: {
   /** Stage 1 戰略看板清洗摘要（標題／文案／分鏡種子）；由 worker 或同步路由注入 */
   stage1Handoff?: ReturnType<typeof buildStage1StrategicHandoffForStage2> | null;
   /**
-   * 單次請求覆寫 Stage2 線路（Vertex Gemini 3.1 Pro vs OpenAI GPT‑5.5）。
+   * 單次請求覆寫 Stage2 線路（Vertex **Gemini 3.5 Flash** vs OpenAI GPT‑5.5）。
    * 未傳時沿用 {@link resolvePlatformStage2LlmMode}（Fly env 等）。
    */
   stage2LlmModeOverride?: PlatformStage2LlmMode | null;
@@ -1311,6 +1312,7 @@ export async function buildPlatformContent(params: {
   console.log("[buildPlatformContent] Stage2 LLM", {
     stage2LlmMode,
     stage2LlmModeSource: diagnostics.stage2LlmModeSource,
+    geminiApiModel: stage2LlmMode === "vertex" ? resolvePlatformStage2GeminiModel() : null,
     openaiModel: stage2LlmMode === "openai" ? getPlatformStage2OpenAiModel() : null,
   });
 
@@ -1408,52 +1410,62 @@ export async function buildPlatformContent(params: {
     }
   } else {
     diagnostics.platformStage2OpenAiModel = null;
+    const stage2GeminiModel = resolvePlatformStage2GeminiModel();
+    diagnostics.platformStage2GeminiModel = stage2GeminiModel;
+    const stage2SystemInstruction = String(
+      structuredStage2Messages.find((m) => m.role === "system")?.content ?? "",
+    );
+    const stage2UserText = String(
+      structuredStage2Messages.find((m) => m.role === "user")?.content ?? "",
+    );
+
     try {
-      response = await invokeLLM({
-        provider: "vertex",
-        modelName: "gemini-3.1-pro-preview",
-        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+      const rawContent = await callGemini35FlashCopywriting({
+        taskSystemInstruction: stage2SystemInstruction,
+        userText: stage2UserText,
+        responseMimeType: "application/json",
+        maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
         temperature: STAGE2_LLM_TEMPERATURE,
-        response_format: { type: "json_object" },
-        messages: structuredStage2Messages,
+        topP: 0.9,
+        modelName: stage2GeminiModel,
         abortSignal: params.abortSignal,
       });
-      llmPath = "vertex+json_object";
-    } catch (vertexJsonErr) {
-      vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
-      console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
+      response = {
+        id: `stage2-${Date.now()}`,
+        created: Date.now(),
+        model: stage2GeminiModel,
+        provider: "gemini",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: rawContent },
+            finish_reason: null,
+          },
+        ],
+      };
+      llmPath = "gemini-api+gemini35flash+json_object";
+    } catch (geminiPrimaryErr) {
+      vertexJsonErrMsg =
+        geminiPrimaryErr instanceof Error ? geminiPrimaryErr.message : String(geminiPrimaryErr);
+      console.warn("[buildPlatformContent] gemini-api+json_object failed:", geminiPrimaryErr);
       try {
         response = await invokeLLM({
-          provider: "vertex",
-          modelName: "gemini-3.1-pro-preview",
+          provider: "gemini",
+          modelName: stage2GeminiModel,
           max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
           temperature: STAGE2_LLM_TEMPERATURE,
+          topP: 0.9,
+          response_format: { type: "json_object" },
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
         });
-        llmPath = "vertex_plain";
-      } catch (vertexPlainErr) {
-        vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
-        console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
-        try {
-          response = await invokeLLM({
-            provider: "gemini",
-            modelName: "gemini-3.1-pro-preview",
-            max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-            temperature: STAGE2_LLM_TEMPERATURE,
-            response_format: { type: "json_object" },
-            messages: structuredStage2Messages,
-            abortSignal: params.abortSignal,
-          });
-          llmPath = "gemini+json_object";
-        } catch (geminiErr) {
-          geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-          diagnostics.llmPath = llmPath || "vertex_chain_all_failed";
-          diagnostics.vertexJsonError = vertexJsonErrMsg;
-          diagnostics.vertexPlainError = vertexPlainErrMsg;
-          diagnostics.geminiJsonError = geminiErrMsg;
-          throw geminiErr;
-        }
+        llmPath = "gemini-api+invokeLLM+json_object";
+      } catch (geminiErr) {
+        geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+        diagnostics.llmPath = llmPath || "gemini_api_chain_failed";
+        diagnostics.vertexJsonError = vertexJsonErrMsg;
+        diagnostics.geminiJsonError = geminiErrMsg;
+        throw geminiErr;
       }
     }
   }
@@ -1469,10 +1481,14 @@ export async function buildPlatformContent(params: {
     const openaiModel = typeof diagnostics.platformStage2OpenAiModel === "string" ? diagnostics.platformStage2OpenAiModel : "";
 
     if (stage2LlmMode === "vertex") {
+      const stage2Model =
+        typeof diagnostics.platformStage2GeminiModel === "string"
+          ? diagnostics.platformStage2GeminiModel
+          : resolvePlatformStage2GeminiModel();
       steps.push({
         id: "2-v",
-        title: "Gemini 結構化輸出（Vertex 單階呼叫）",
-        model: "gemini-3.1-pro-preview",
+        title: "Gemini 3.5 Flash 結構化輸出（Gemini API 單階呼叫）",
+        model: stage2Model,
         status: "✅ 已完成",
       });
     } else {
@@ -3075,19 +3091,13 @@ export const appRouter = router({
             await deductCredits(
               ctx.user.id,
               "platformTrendFollowUp",
-              `平台趋势续分析 (${input.windowDays}天 / Gemini 3.1 Pro)`,
+              `平台趋势续分析 (${input.windowDays}天 / Gemini 3.5 Flash)`,
             );
           }
         }
+        const followUpModel = resolvePlatformStage2GeminiModel();
         try {
-          const response = await invokeLLM({
-            // Vertex 3.1 Pro Preview for platform follow-up QA
-            provider: "vertex",
-            modelName: "gemini-3.1-pro-preview",
-            messages: [
-              {
-                role: "system",
-                content: `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
+          const followUpSystem = `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
 
 你的任务是基于用户当前选中的平台趋势看板，回答后续追问。
 
@@ -3106,15 +3116,12 @@ export const appRouter = router({
 12. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
 13. encouragement 必须是一句短的执行提醒，不要像客服安慰。
 14. nextQuestions 要像真人顾问会继续往下问的具体问题，最多 4 个。
-15. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
-              },
-              {
-                role: "user",
-                content: JSON.stringify({
+15. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`;
+
+          const followUpUser = JSON.stringify({
                   windowDays: input.windowDays,
                   context: input.context || "",
                   question: input.question,
-                  // Phase 1-C: Slim snapshot to reduce Gemini token usage for follow-up calls
                   snapshot: {
                     overview: input.snapshot.overview,
                     platformSnapshots: input.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
@@ -3140,12 +3147,15 @@ export const appRouter = router({
                       brief: input.snapshot.creationAssist.brief,
                     },
                   },
-                }),
-              },
-            ],
+                });
+
+          const rawFollowUpContent = await callGemini35FlashCopywriting({
+            taskSystemInstruction: followUpSystem,
+            userText: followUpUser,
+            responseMimeType: "application/json",
+            maxOutputTokens: 8192,
+            modelName: followUpModel,
           });
-          // Gemini sometimes wraps JSON in ```json``` fences — extract robustly
-          const rawFollowUpContent = String(response.choices[0]?.message?.content || "{}");
           let parsedFollowUpRaw: unknown;
           try {
             parsedFollowUpRaw = JSON.parse(rawFollowUpContent);
@@ -3163,7 +3173,8 @@ export const appRouter = router({
             result: parsed,
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
-              modelName: "gemini-2.5-pro",
+              modelName: followUpModel,
+              provider: "gemini-api",
               windowDays: input.windowDays,
               fallbackUsed: false,
             },
@@ -3175,7 +3186,8 @@ export const appRouter = router({
             result: buildPlatformFollowUpFallback(input),
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
-              modelName: "gemini-2.5-pro",
+              modelName: followUpModel,
+              provider: "gemini-api",
               windowDays: input.windowDays,
               fallbackUsed: true,
               error: error instanceof Error ? error.message : String(error),
@@ -3281,7 +3293,7 @@ export const appRouter = router({
           id: jobId,
           userId: "public",
           type: "platform",
-          provider: "vertex",
+          provider: "gemini",
           input: {
             action: "platform_qa",
             params: {
@@ -3753,7 +3765,7 @@ export const appRouter = router({
             dateRange,
             chargedCredits: cost,
             dataRetention: "user_ledger_advanced_decision_report",
-            flashModel: "gemini-3-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
+            flashModel: "gemini-3.5-flash-via-GROWTH_CAMP_EXTRACTOR_MODEL",
           },
           creditsUsed: cost,
           plan,
@@ -5613,7 +5625,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           strategicDashboard: z.record(z.string(), z.any()).optional(),
           /**
            * 僅 {@link resolvePlatformSupervisorOpsAllowed} 為真時生效，否則忽略（防一般使用者改線路）。
-           * Vertex = gemini-3.1-pro-preview；OpenAI = PLATFORM_STAGE2_OPENAI_MODEL（預設 gpt-5.5）。
+           * Vertex = gemini-3.5-flash（{@link resolvePlatformStage2GeminiModel}）；OpenAI = PLATFORM_STAGE2_OPENAI_MODEL（預設 gpt-5.5）。
            */
           stage2LlmMode: z.enum(["vertex", "openai"]).optional(),
           supervisorToken: z.string().max(512).optional(),
