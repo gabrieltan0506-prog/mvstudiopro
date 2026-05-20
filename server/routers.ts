@@ -23,6 +23,10 @@ import {
   resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
+import {
+  callGemini35FlashCopywriting,
+  resolvePlatformStage2GeminiModel,
+} from "./services/gemini35FlashRuntime.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -483,8 +487,8 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
   return Math.min(65536, Math.floor(raw));
 })();
 
-/** Stage 2 取樣溫度（Vertex/Gemini 生效；GPT‑5 系 OpenAI 可能忽略 temperature，見 llm.ts）。 */
-const STAGE2_LLM_TEMPERATURE = 0.9;
+/** Stage 2 取樣溫度（Gemini 3.5 Flash 文案；GPT‑5 系 OpenAI 可能忽略 temperature，見 llm.ts）。 */
+const STAGE2_LLM_TEMPERATURE = 0.8;
 
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
 // platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
@@ -1002,7 +1006,7 @@ export async function buildPlatformContent(params: {
   /** Stage 1 戰略看板清洗摘要（標題／文案／分鏡種子）；由 worker 或同步路由注入 */
   stage1Handoff?: ReturnType<typeof buildStage1StrategicHandoffForStage2> | null;
   /**
-   * 單次請求覆寫 Stage2 線路（Vertex Gemini 3.1 Pro vs OpenAI GPT‑5.5）。
+   * 單次請求覆寫 Stage2 線路（Vertex **Gemini 3.5 Flash** vs OpenAI GPT‑5.5）。
    * 未傳時沿用 {@link resolvePlatformStage2LlmMode}（Fly env 等）。
    */
   stage2LlmModeOverride?: PlatformStage2LlmMode | null;
@@ -1311,6 +1315,7 @@ export async function buildPlatformContent(params: {
   console.log("[buildPlatformContent] Stage2 LLM", {
     stage2LlmMode,
     stage2LlmModeSource: diagnostics.stage2LlmModeSource,
+    geminiModel: stage2LlmMode === "vertex" ? resolvePlatformStage2GeminiModel() : null,
     openaiModel: stage2LlmMode === "openai" ? getPlatformStage2OpenAiModel() : null,
   });
 
@@ -1408,44 +1413,69 @@ export async function buildPlatformContent(params: {
     }
   } else {
     diagnostics.platformStage2OpenAiModel = null;
+    const stage2GeminiModel = resolvePlatformStage2GeminiModel();
+    diagnostics.platformStage2GeminiModel = stage2GeminiModel;
+    const stage2SystemInstruction = String(
+      structuredStage2Messages.find((m) => m.role === "system")?.content ?? "",
+    );
+    const stage2UserText = String(
+      structuredStage2Messages.find((m) => m.role === "user")?.content ?? "",
+    );
+
     try {
-      response = await invokeLLM({
-        provider: "vertex",
-        modelName: "gemini-3.1-pro-preview",
-        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+      const rawContent = await callGemini35FlashCopywriting({
+        taskSystemInstruction: stage2SystemInstruction,
+        userText: stage2UserText,
+        responseMimeType: "application/json",
+        maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
         temperature: STAGE2_LLM_TEMPERATURE,
-        response_format: { type: "json_object" },
-        messages: structuredStage2Messages,
+        topP: 0.9,
+        modelName: stage2GeminiModel,
         abortSignal: params.abortSignal,
       });
-      llmPath = "vertex+json_object";
+      response = {
+        id: `stage2-${Date.now()}`,
+        created: Date.now(),
+        model: stage2GeminiModel,
+        provider: "vertex",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: rawContent },
+            finish_reason: null,
+          },
+        ],
+      };
+      llmPath = "vertex+gemini35flash+json_object";
     } catch (vertexJsonErr) {
       vertexJsonErrMsg = vertexJsonErr instanceof Error ? vertexJsonErr.message : String(vertexJsonErr);
-      console.warn("[buildPlatformContent] vertex+json_object failed:", vertexJsonErr);
+      console.warn("[buildPlatformContent] gemini35flash+json_object failed:", vertexJsonErr);
       try {
         response = await invokeLLM({
           provider: "vertex",
-          modelName: "gemini-3.1-pro-preview",
+          modelName: stage2GeminiModel,
           max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
           temperature: STAGE2_LLM_TEMPERATURE,
+          topP: 0.9,
           messages: structuredStage2Messages,
           abortSignal: params.abortSignal,
         });
-        llmPath = "vertex_plain";
+        llmPath = "vertex_plain+gemini35flash";
       } catch (vertexPlainErr) {
         vertexPlainErrMsg = vertexPlainErr instanceof Error ? vertexPlainErr.message : String(vertexPlainErr);
         console.warn("[buildPlatformContent] vertex plain retry failed:", vertexPlainErr);
         try {
           response = await invokeLLM({
             provider: "gemini",
-            modelName: "gemini-3.1-pro-preview",
+            modelName: stage2GeminiModel,
             max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
             temperature: STAGE2_LLM_TEMPERATURE,
+            topP: 0.9,
             response_format: { type: "json_object" },
             messages: structuredStage2Messages,
             abortSignal: params.abortSignal,
           });
-          llmPath = "gemini+json_object";
+          llmPath = "gemini+json_object+gemini35flash";
         } catch (geminiErr) {
           geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
           diagnostics.llmPath = llmPath || "vertex_chain_all_failed";
@@ -1469,10 +1499,14 @@ export async function buildPlatformContent(params: {
     const openaiModel = typeof diagnostics.platformStage2OpenAiModel === "string" ? diagnostics.platformStage2OpenAiModel : "";
 
     if (stage2LlmMode === "vertex") {
+      const stage2Model =
+        typeof diagnostics.platformStage2GeminiModel === "string"
+          ? diagnostics.platformStage2GeminiModel
+          : resolvePlatformStage2GeminiModel();
       steps.push({
         id: "2-v",
-        title: "Gemini 結構化輸出（Vertex 單階呼叫）",
-        model: "gemini-3.1-pro-preview",
+        title: "Gemini 3.5 Flash 結構化輸出（Vertex 單階呼叫）",
+        model: stage2Model,
         status: "✅ 已完成",
       });
     } else {
@@ -5613,7 +5647,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           strategicDashboard: z.record(z.string(), z.any()).optional(),
           /**
            * 僅 {@link resolvePlatformSupervisorOpsAllowed} 為真時生效，否則忽略（防一般使用者改線路）。
-           * Vertex = gemini-3.1-pro-preview；OpenAI = PLATFORM_STAGE2_OPENAI_MODEL（預設 gpt-5.5）。
+           * Vertex = gemini-3.5-flash（{@link resolvePlatformStage2GeminiModel}）；OpenAI = PLATFORM_STAGE2_OPENAI_MODEL（預設 gpt-5.5）。
            */
           stage2LlmMode: z.enum(["vertex", "openai"]).optional(),
           supervisorToken: z.string().max(512).optional(),

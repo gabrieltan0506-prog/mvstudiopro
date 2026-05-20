@@ -16,6 +16,11 @@ export function resolveGemini35FlashModelName(): string {
   return fromEnv || DEFAULT_GEMINI_35_FLASH_MODEL;
 }
 
+/** Stage2 专属文案（`buildPlatformContent`）；可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写。 */
+export function resolvePlatformStage2GeminiModel(): string {
+  return String(process.env.PLATFORM_STAGE2_GEMINI_MODEL || "").trim() || resolveGemini35FlashModelName();
+}
+
 /** 爆款文案：知识 + 情绪；配合 googleSearch 保事实准确。 */
 export const GEMINI_35_FLASH_COPYWRITING_SYSTEM = `你是一位顶尖的专栏作家与新媒体内容总监。
 你的任务是写出优美、生动且浅显易懂的文案。
@@ -133,15 +138,19 @@ export async function callGemini35FlashCopywriting(params: {
   userText: string;
   responseMimeType?: "application/json" | "text/plain";
   maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  /** 覆写模型 ID；Stage 2 传 {@link resolvePlatformStage2GeminiModel}。 */
+  modelName?: string;
   abortSignal?: AbortSignal;
 }): Promise<string> {
   const ai = buildVertexGenAiClient();
-  const model = resolveGemini35FlashModelName();
+  const model = String(params.modelName || "").trim() || resolveGemini35FlashModelName();
   const systemInstruction = `${GEMINI_35_FLASH_COPYWRITING_SYSTEM}\n\n${params.taskSystemInstruction}`.trim();
   const config = {
     systemInstruction,
-    temperature: readCopywritingTemperature(),
-    topP: readCopywritingTopP(),
+    temperature: params.temperature ?? readCopywritingTemperature(),
+    topP: params.topP ?? readCopywritingTopP(),
     thinkingConfig: { thinkingLevel: readThinkingLevel(), includeThoughts: false },
     tools: [{ googleSearch: {} }],
     ...(params.responseMimeType ? { responseMimeType: params.responseMimeType } : {}),
