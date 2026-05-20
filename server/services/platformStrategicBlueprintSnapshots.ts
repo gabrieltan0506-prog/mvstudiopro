@@ -65,16 +65,10 @@ function readFormat(raw: Record<string, unknown>): string {
   return String(raw.format ?? raw["格式"] ?? raw["内容形式"] ?? raw["形式"] ?? "").trim();
 }
 
-export function enrichBlueprintsForSnapshot(
-  contentBlueprints: unknown[],
-  windowDays: number,
-  requestedPlatforms: string[],
-): {
-  windowDays: number;
-  platformsKey: string;
-  enriched: EnrichedBlueprintSnapshot[];
-} {
-  const platformsKey = Array.from(new Set(requestedPlatforms.filter(Boolean))).sort().join(",");
+/** 与 bulkCoverPack.packSceneIds 上限一致；封面依赖快照 sceneId，须覆盖全部执行卡。 */
+export const PLATFORM_SNAPSHOT_MAX_BLUEPRINTS = 48;
+
+export function buildEnrichedBlueprintSnapshots(contentBlueprints: unknown[]): EnrichedBlueprintSnapshot[] {
   const list = Array.isArray(contentBlueprints) ? contentBlueprints : [];
   const enriched: EnrichedBlueprintSnapshot[] = [];
   let idx = 0;
@@ -102,7 +96,111 @@ export function enrichBlueprintsForSnapshot(
     });
     idx += 1;
   }
-  return { windowDays, platformsKey, enriched: enriched.slice(0, 8) };
+  return enriched;
+}
+
+export function enrichBlueprintsForSnapshot(
+  contentBlueprints: unknown[],
+  windowDays: number,
+  requestedPlatforms: string[],
+): {
+  windowDays: number;
+  platformsKey: string;
+  enriched: EnrichedBlueprintSnapshot[];
+} {
+  const platformsKey = Array.from(new Set(requestedPlatforms.filter(Boolean))).sort().join(",");
+  const enriched = buildEnrichedBlueprintSnapshots(contentBlueprints).slice(0, PLATFORM_SNAPSHOT_MAX_BLUEPRINTS);
+  return { windowDays, platformsKey, enriched };
+}
+
+/**
+ * 将战略地图扩写 / 赠送等会话选题合并进用户最新快照（按 sceneId 覆盖）。
+ * 封面 enqueue 仅认 DB 快照，不写入则「仅封面」会 PRECONDITION_FAILED（表现为第 6+ 张无进度）。
+ */
+export async function upsertPlatformBlueprintSnapshotEntries(params: {
+  userId: number;
+  contentBlueprints: unknown[];
+}): Promise<void> {
+  const incoming = buildEnrichedBlueprintSnapshots(params.contentBlueprints);
+  if (incoming.length === 0) return;
+
+  const database = await db.getDb();
+  if (!database) return;
+
+  let rows: {
+    id: number;
+    windowDays: number;
+    platformsKey: string | null;
+    contextSnippet: string | null;
+    blueprintsJson: string | null;
+  }[];
+  try {
+    rows = await database
+      .select({
+        id: platformStrategicBlueprintSnapshots.id,
+        windowDays: platformStrategicBlueprintSnapshots.windowDays,
+        platformsKey: platformStrategicBlueprintSnapshots.platformsKey,
+        contextSnippet: platformStrategicBlueprintSnapshots.contextSnippet,
+        blueprintsJson: platformStrategicBlueprintSnapshots.blueprintsJson,
+      })
+      .from(platformStrategicBlueprintSnapshots)
+      .where(eq(platformStrategicBlueprintSnapshots.userId, params.userId))
+      .orderBy(desc(platformStrategicBlueprintSnapshots.updatedAt))
+      .limit(1);
+  } catch (e) {
+    console.warn(
+      "[upsertPlatformBlueprintSnapshotEntries] read:",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+    return;
+  }
+
+  const mergedByScene = new Map<string, EnrichedBlueprintSnapshot>();
+  const row = rows[0];
+  if (row?.blueprintsJson) {
+    try {
+      const parsed = JSON.parse(row.blueprintsJson) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== "object") continue;
+          const r = item as EnrichedBlueprintSnapshot;
+          const sid = String(r.sceneId || "").trim();
+          if (sid) mergedByScene.set(sid, r);
+        }
+      }
+    } catch {
+      /* 损坏快照由 incoming 重建 */
+    }
+  }
+  for (const item of incoming) {
+    mergedByScene.set(item.sceneId, item);
+  }
+  const merged = Array.from(mergedByScene.values()).slice(0, PLATFORM_SNAPSHOT_MAX_BLUEPRINTS);
+  const blueprintsJson = JSON.stringify(merged);
+  const now = new Date();
+
+  try {
+    if (row) {
+      await database
+        .update(platformStrategicBlueprintSnapshots)
+        .set({ blueprintsJson, updatedAt: now })
+        .where(eq(platformStrategicBlueprintSnapshots.id, row.id));
+    } else {
+      await database.insert(platformStrategicBlueprintSnapshots).values({
+        userId: params.userId,
+        windowDays: 15,
+        platformsKey: "",
+        contextSnippet: "",
+        blueprintsJson,
+        updatedAt: now,
+      });
+    }
+  } catch (e) {
+    console.warn(
+      "[upsertPlatformBlueprintSnapshotEntries] write:",
+      e instanceof Error ? e.message.slice(0, 240) : e,
+    );
+  }
 }
 
 export async function savePlatformStrategicBlueprintSnapshot(params: {

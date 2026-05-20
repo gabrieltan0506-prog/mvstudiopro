@@ -3608,17 +3608,37 @@ export const appRouter = router({
           "./services/decisionIntelBonusBlueprints.js",
         );
 
+        const persistExecutionBlueprintsToSnapshot = async (blueprints: Record<string, unknown>[]) => {
+          if (blueprints.length === 0) return;
+          try {
+            const { upsertPlatformBlueprintSnapshotEntries } = await import(
+              "./services/platformStrategicBlueprintSnapshots.js"
+            );
+            await upsertPlatformBlueprintSnapshotEntries({
+              userId: ctx.user.id,
+              contentBlueprints: blueprints,
+            });
+          } catch (err) {
+            console.warn(
+              "[decisionIntel] snapshot upsert skipped:",
+              err instanceof Error ? err.message.slice(0, 200) : err,
+            );
+          }
+        };
+
         const attachBonusBlueprints = async (
           report: import("@shared/advancedAIReport").AdvancedAIReportData,
         ): Promise<Record<string, unknown>[]> => {
           try {
-            return await generateDecisionIntelBonusBlueprints({
+            const bonus = await generateDecisionIntelBonusBlueprints({
               report,
               contentBlueprint,
               topic,
               platformHint,
               abortSignal: ctx.clientDisconnected,
             });
+            await persistExecutionBlueprintsToSnapshot(bonus);
+            return bonus;
           } catch (err) {
             console.warn("[decisionIntel] bonus blueprints skipped:", err);
             return [];
@@ -3845,7 +3865,35 @@ export const appRouter = router({
           abortSignal: ctx.clientDisconnected,
         });
 
+        if (blueprints.length > 0) {
+          const { upsertPlatformBlueprintSnapshotEntries } = await import(
+            "./services/platformStrategicBlueprintSnapshots.js"
+          );
+          await upsertPlatformBlueprintSnapshotEntries({
+            userId: ctx.user.id,
+            contentBlueprints: blueprints,
+          });
+        }
+
         return { executionBlueprints: blueprints, chargedCredits, regenerateOrdinal };
+      }),
+
+    /** 将会话内全部执行卡合并进 DB 快照，供封面 enqueue 解析 sceneId（刷新后战略地图卡亦需同步）。 */
+    syncPlatformExecutionBlueprintsSnapshot: protectedProcedure
+      .input(
+        z.object({
+          contentBlueprints: z.array(z.unknown()).min(1).max(48),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const { upsertPlatformBlueprintSnapshotEntries } = await import(
+          "./services/platformStrategicBlueprintSnapshots.js"
+        );
+        await upsertPlatformBlueprintSnapshotEntries({
+          userId: ctx.user.id,
+          contentBlueprints: input.contentBlueprints,
+        });
+        return { ok: true as const, count: input.contentBlueprints.length };
       }),
 
     generateVisualReport: publicProcedure
