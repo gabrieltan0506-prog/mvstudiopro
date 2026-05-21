@@ -25,6 +25,7 @@
     "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
     "growth:migrate-split-gzip": "tsx scripts/migrate-growth-store-split-gzip.ts",
     "ambient:ping-gemini": "tsx scripts/ping-dashboard-gemini-models.mts",
+    "gemini:monitor": "tsx scripts/gemini-monitor.ts",
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
     "ambient:fetch-images:refresh": "node scripts/fetch-ambient-images.mjs --refresh",
     "ambient:fetch-images:daily": "node scripts/fetch-ambient-images.mjs --max-age-hours=24",
