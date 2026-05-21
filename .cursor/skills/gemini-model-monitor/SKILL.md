@@ -25,7 +25,8 @@ pnpm run gemini:monitor
 3. 将终端完整输出摘要给用户：
    - 若出现 `🚨🚨🚨 [重大发现]`：列出解封的 model id，提醒可测 TestLab Gemini Omni。
    - 若出现 `💤 监控报告`：说明 omni/veo 尚未开放，并列出前 5 个可用模型。
-   - 若 `GEMINI_API_KEY` 缺失：提示在 `.env.local` 配置。
+   - 日志含 `🔑 [凭据] Fly · mvstudiopro` 表示已用生产 secret。
+   - 若失败：确认本机已安装 `fly` CLI 且已 `fly auth login`；或设 `GEMINI_MONITOR_SKIP_FLY=1` 仅用本地 key。
 
 4. 退出码：`0` 正常无警报；`2` 发现 omni/veo；`1` 配置或连线失败。
 
@@ -33,7 +34,10 @@ pnpm run gemini:monitor
 
 | 变量 | 说明 |
 |------|------|
-| `GEMINI_API_KEY` | 必填 |
+| `GEMINI_API_KEY` | Fly 不可用时回退；支持 `AIza` / `AQ.` |
+| `GEMINI_MONITOR_FLY_APP` | Fly app，默认 `mvstudiopro` |
+| `GEMINI_MONITOR_SKIP_FLY` | `1` = 不读 Fly，仅用本地 |
+| `GEMINI_MONITOR_PREFER_LOCAL` | `1` = 同 SKIP_FLY |
 | `GEMINI_MONITOR_KEYWORDS` | 默认 `omni,veo` |
 | `GEMINI_MONITOR_WEBHOOK_URL` | 发现新模型时 POST JSON 通知 |
 
