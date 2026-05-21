@@ -13,6 +13,21 @@ export type GeminiModelInspectionResult = {
   error?: string;
 };
 
+export function normalizeGeminiApiKeyFromEnv(raw?: string): string {
+  const key = String(raw || process.env.GEMINI_API_KEY || "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "");
+  if (!key || !key.startsWith("AIza") || key.length < 30) {
+    throw new Error("GEMINI_API_KEY 无效（应以 AIza 开头，长度 ≥ 30）");
+  }
+  for (const ch of key) {
+    if (ch.charCodeAt(0) > 255) {
+      throw new Error("GEMINI_API_KEY 含非 ASCII 字符，请检查 .env.local 是否误贴中文或注释");
+    }
+  }
+  return key;
+}
+
 export function resolveGeminiMonitorKeywords(): string[] {
   const raw = String(process.env.GEMINI_MONITOR_KEYWORDS || "omni,veo").trim();
   return raw
@@ -60,7 +75,22 @@ export async function runModelInspectionPipeline(options?: {
     if (!options?.quiet) console.log(line);
   };
 
-  const apiKey = String(options?.apiKey || process.env.GEMINI_API_KEY || "").trim();
+  let apiKey = "";
+  try {
+    apiKey = normalizeGeminiApiKeyFromEnv(options?.apiKey);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!options?.quiet) console.error(`❌ [核心错误] ${msg}`);
+    return {
+      ok: false,
+      totalModels: 0,
+      availableModelIds: [],
+      caughtModels: [],
+      monitorKeywords: resolveGeminiMonitorKeywords(),
+      alert: false,
+      error: msg,
+    };
+  }
   if (!apiKey) {
     const msg = "未侦测到环境变量 GEMINI_API_KEY，监控终止。";
     if (!options?.quiet) console.error(`❌ [核心错误] ${msg}`);
