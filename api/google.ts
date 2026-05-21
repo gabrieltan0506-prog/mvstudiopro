@@ -3,6 +3,12 @@ import { put } from "@vercel/blob";
 import { getVertexAccessToken } from "../server/utils/vertex";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "../server/services/gcs";
+import {
+  pollOmniVideoGeneration,
+  resolveOmniVideoModel,
+  startOmniVideoGeneration,
+  type OmniVideoResolution,
+} from "../server/services/geminiOmniVertexVideo";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -21,6 +27,8 @@ export const config = {
  * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
+ * - op=omniVideoCreate (Gemini Omni · Vertex generateVideos)
+ * - op=omniVideoTask   (Gemini Omni polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
  *
  * Env:
@@ -599,6 +607,101 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
 
       return res.status(200).json({ ok:true, status, videoUrl: videoUrl || null, materialized, raw:r.json });
+    }
+
+    // ---------------- Gemini Omni (Vertex · generateVideos) ----------------
+    if (op === "omniVideoCreate") {
+      if (req.method !== "POST") return res.status(400).json({ ok: false, error: "method_not_allowed" });
+      const prompt = s(b.prompt || q.prompt || "").trim();
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
+
+      const durationRaw = Number(b.durationSeconds || b.duration || 30);
+      const resolution = s(b.resolution || "4K").toUpperCase() === "2K" ? "2K" : "4K";
+      const aspectRatio = s(b.aspectRatio || "16:9") === "9:16" ? "9:16" : "16:9";
+
+      try {
+        const started = await startOmniVideoGeneration({
+          prompt,
+          audioPrompt: s(b.audioPrompt || b.audio_prompt || ""),
+          imageUrl: imageUrl || undefined,
+          durationSeconds: durationRaw,
+          aspectRatio,
+          resolution: resolution as OmniVideoResolution,
+        });
+        return res.status(200).json({
+          ok: true,
+          provider: "omni",
+          model: started.model,
+          location: started.location,
+          taskId: started.taskId,
+          durationSeconds: started.durationSeconds,
+          resolution: started.resolution,
+          aspectRatio: started.aspectRatio,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: "omni_video_create_failed",
+          message: error?.message || String(error),
+          model: resolveOmniVideoModel(),
+        });
+      }
+    }
+
+    if (op === "omniVideoTask") {
+      const taskId = s(q.taskId || b.taskId || "").trim();
+      if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
+
+      try {
+        const polled = await pollOmniVideoGeneration(taskId);
+        let videoUrl = "";
+        let materialized = false;
+
+        if (polled.done && !polled.failed) {
+          if (polled.videoBytes) {
+            const uploaded = await materializeGeneratedVideo(taskId, {
+              response: { generatedVideos: [{ video: { videoBytes: polled.videoBytes, mimeType: polled.mimeType } }] },
+            }).catch(() => ({ videoUrl: "", materialized: false }));
+            videoUrl = uploaded.videoUrl || "";
+            materialized = Boolean(uploaded.materialized);
+          } else if (polled.videoUri) {
+            const download = await fetch(polled.videoUri);
+            if (download.ok) {
+              const buf = Buffer.from(await download.arrayBuffer());
+              const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
+              if (token && buf.length) {
+                const safeTaskId = taskId.split("/").pop() || `omni-${Date.now()}`;
+                const blob = await put(`videos/${Date.now()}-${safeTaskId}.mp4`, buf, {
+                  access: "public",
+                  token,
+                  contentType: polled.mimeType,
+                });
+                videoUrl = buildBlobMediaUrlFromPath(String(blob.pathname || ""));
+                materialized = true;
+              } else {
+                videoUrl = polled.videoUri;
+              }
+            } else {
+              videoUrl = polled.videoUri;
+            }
+          }
+        }
+
+        return res.status(200).json({
+          ok: true,
+          status: polled.status,
+          videoUrl: videoUrl || null,
+          materialized,
+          error: polled.failed ? polled.error : undefined,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: "omni_video_poll_failed",
+          message: error?.message || String(error),
+        });
+      }
     }
 
     // ---------------- translateForVeo (中文音效/台词 → Veo 原生英文指令) ----------------
