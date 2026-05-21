@@ -2,7 +2,7 @@
  * TestLab · Gemini Omni 全模态视频（@google/genai generateVideos）
  * - 仅使用 Gemini API Key (GEMINI_API_KEY)
  * - 移除了 Vertex AI 调用 Gemini Omni 的方式
- * - 移除了不支持的 fps 属性
+ * - 移除了不支持的 fps、generateAudio 属性（预览端点仅纯视频）
  * 模型默认 gemini-omni-flash-preview。
  */
 import { GoogleGenAI, ThinkingLevel, type GenerateVideosOperation } from "@google/genai";
@@ -14,7 +14,6 @@ export type OmniVideoAuthMode = "vertex" | "gemini_api";
 
 export type OmniVideoCreateInput = {
   prompt: string;
-  audioPrompt?: string;
   imageUrl?: string;
   durationSeconds?: number;
   aspectRatio?: "16:9" | "9:16";
@@ -46,13 +45,6 @@ function normalizeResolution(raw: string | undefined): OmniVideoResolution {
   return v === "2K" ? "2K" : "4K";
 }
 
-function buildCombinedPrompt(prompt: string, audioPrompt?: string) {
-  const visual = String(prompt || "").trim();
-  const audio = String(audioPrompt || "").trim();
-  if (!audio) return visual;
-  return `${visual}\n\n[Native audio direction]: ${audio}`;
-}
-
 type OmniGenerateParams = {
   model: string;
   source: { prompt: string; image?: { imageBytes: string; mimeType: string } };
@@ -64,7 +56,7 @@ function buildOmniGenerateParams(input: OmniVideoCreateInput): OmniGenerateParam
   const durationSeconds = normalizeDurationSeconds(input.durationSeconds);
   const resolution = normalizeResolution(input.resolution);
   const aspectRatio = input.aspectRatio === "9:16" ? "9:16" : "16:9";
-  const prompt = buildCombinedPrompt(input.prompt, input.audioPrompt);
+  const prompt = String(input.prompt || "").trim();
 
   const source: OmniGenerateParams["source"] = { prompt };
 
@@ -76,7 +68,6 @@ function buildOmniGenerateParams(input: OmniVideoCreateInput): OmniGenerateParam
       aspectRatio,
       resolution,
       durationSeconds,
-      generateAudio: true,
       enhancePrompt: true,
       thinkingConfig: {
         includeThoughts: false,
