@@ -9,6 +9,7 @@ import {
   stopGrowthTrendLiveBackfillWorker,
 } from "./trendBackfill";
 import {
+  ensureGrowthStoreSplitGzipLayout,
   readTrendSchedulerState,
   mergeTrendCollections,
   readGrowthRuntimeControl,
@@ -102,7 +103,7 @@ async function refreshRuntimeModeOverride() {
 }
 function isStorageFullError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
-  return /\bENOSPC\b|no space left on device/i.test(message);
+  return /\bENOSPC\b|no space left on device|Invalid string length|growth_store_json_too_large/i.test(message);
 }
 
 function withJitter(baseMs: number) {
@@ -575,6 +576,10 @@ export async function bootstrapGrowthTrendScheduler() {
       console.warn("[growth.history] reconcile on bootstrap failed:", error);
     });
   }
+
+  await ensureGrowthStoreSplitGzipLayout().catch((error) => {
+    console.warn("[growth.store] split+gzip bootstrap migration failed:", error);
+  });
 
   const scheduler = await readTrendSchedulerState();
   if (!hasAnyForcedBurstConfig()) {

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -151,6 +152,7 @@ type TrendStoreFile = {
   backfillLive?: TrendBackfillProgress;
   backfillHistory?: TrendBackfillProgress;
   mailDigest?: TrendMailDigestState;
+  truthSource?: "platform-current" | "derived-platforms" | "current-json";
 };
 
 type TrendStoreRuntimeMeta = {
@@ -319,10 +321,21 @@ async function downloadColdStoreAsset(assetName: string, cacheRelativePath: stri
   return cachePath;
 }
 
-async function readJsonWithGzipFallback<T>(localPath: string, assetName: string, cacheRelativePath: string): Promise<T | null> {
+async function readLocalJsonOrGzip<T>(plainPath: string): Promise<T | null> {
+  const gzPath = `${plainPath}.gz`;
   try {
-    return JSON.parse(await fs.readFile(localPath, "utf8")) as T;
+    const raw = await fs.readFile(gzPath);
+    return JSON.parse(gunzipSync(raw).toString("utf8")) as T;
   } catch {}
+  try {
+    return JSON.parse(await fs.readFile(plainPath, "utf8")) as T;
+  } catch {}
+  return null;
+}
+
+async function readJsonWithGzipFallback<T>(localPath: string, assetName: string, cacheRelativePath: string): Promise<T | null> {
+  const local = await readLocalJsonOrGzip<T>(localPath);
+  if (local) return local;
   const downloaded = await downloadColdStoreAsset(assetName, cacheRelativePath);
   if (!downloaded) return null;
   try {
@@ -718,25 +731,24 @@ async function updateHistoryFromCollections(
   }
 }
 
+function resolveArchiveJsonPlainPath(filePath: string) {
+  if (filePath.endsWith(".json.gz")) return filePath.slice(0, -3);
+  if (filePath.endsWith(".gz")) return filePath.replace(/\.gz$/, "");
+  return filePath;
+}
+
 async function readArchiveCollectionItems(entry: TrendArchiveEntry): Promise<TrendItem[]> {
-  try {
-    const raw = await fs.readFile(entry.file, "utf8");
-    const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
-    return Array.isArray(parsed.items) ? parsed.items : [];
-  } catch {
-    const relativePath = resolveArchiveRelativePath(entry.file);
-    const [dirName] = relativePath.split("/");
-    if (!dirName) return [];
-    const archiveDir = await ensureOffloadedArchiveDir(dirName);
-    if (!archiveDir) return [];
-    try {
-      const raw = await fs.readFile(path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", relativePath), "utf8");
-      const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
-      return Array.isArray(parsed.items) ? parsed.items : [];
-    } catch {
-      return [];
-    }
-  }
+  const plainPath = resolveArchiveJsonPlainPath(entry.file);
+  const parsed = await readLocalJsonOrGzip<Partial<PlatformTrendCollection>>(plainPath);
+  if (parsed?.items?.length) return parsed.items;
+  const relativePath = resolveArchiveRelativePath(entry.file);
+  const [dirName] = relativePath.split("/");
+  if (!dirName) return [];
+  const archiveDir = await ensureOffloadedArchiveDir(dirName);
+  if (!archiveDir) return [];
+  const localPlain = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", relativePath);
+  const localParsed = await readLocalJsonOrGzip<Partial<PlatformTrendCollection>>(localPlain);
+  return Array.isArray(localParsed?.items) ? localParsed.items : [];
 }
 
 async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null> {
@@ -837,8 +849,8 @@ async function readPlatformCurrentManifest(): Promise<PlatformCurrentManifest | 
 async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
   const parsed = await readJsonWithGzipFallback<PlatformCurrentTruthFile>(
     getPlatformCurrentTruthFile(platform),
-    `platform-current-${platform}.json.gz`,
-    path.join("platform-current", `${platform}.json.gz`),
+    `platform-current-${platform}.current.json.gz`,
+    `platform-current-${platform}.current.json.gz`,
   );
   if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
   return parsed;
@@ -859,7 +871,10 @@ async function runFlyCat(command: string): Promise<string | null> {
 }
 
 async function readFlyPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
-  const raw = await runFlyCat(`cat /data/growth/platform-current/${platform}.current.json`);
+  let raw = await runFlyCat(`sh -lc 'gzip -dfc /data/growth/platform-current/${platform}.current.json.gz 2>/dev/null || true'`);
+  if (!raw) {
+    raw = await runFlyCat(`cat /data/growth/platform-current/${platform}.current.json`);
+  }
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as PlatformCurrentTruthFile;
@@ -874,7 +889,18 @@ async function readFlyTrendStoreFile(): Promise<TrendStoreFile | null> {
   const raw = await runFlyCat("cat /data/growth/current.json");
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as TrendStoreFile;
+    const parsed = JSON.parse(raw) as TrendStoreFile;
+    if (!storeNeedsCollectionHydration(parsed)) return parsed;
+    const collections = { ...(parsed.collections || {}) };
+    for (const platform of growthPlatformValues) {
+      const stub = collections[platform];
+      if (!stub) continue;
+      if ((stub.items?.length || 0) > 0) continue;
+      if (!(stub.notes || []).some((note) => String(note).includes("items_externalized:"))) continue;
+      const truth = await readFlyPlatformCurrentTruthFile(platform);
+      if (truth?.collection) collections[platform] = truth.collection;
+    }
+    return { ...parsed, collections };
   } catch {
     return null;
   }
@@ -1134,10 +1160,88 @@ export async function resetTrendRuntimeForDeploy(deployId: string) {
   return true;
 }
 
-async function writeJsonAtomic(filePath: string, value: unknown) {
+function buildSlimTrendStore(store: TrendStoreFile): TrendStoreFile {
+  const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = {};
+  for (const platform of growthPlatformValues) {
+    const collection = store.collections?.[platform];
+    if (!collection) continue;
+    collections[platform] = {
+      ...collection,
+      items: [],
+      notes: [
+        ...(collection.notes || []),
+        `items_externalized:platform-current/${platform}.current.json.gz`,
+      ],
+    };
+  }
+  return {
+    ...store,
+    collections,
+    truthSource: "platform-current",
+  };
+}
+
+function storeNeedsCollectionHydration(store: TrendStoreFile) {
+  return growthPlatformValues.some((platform) => {
+    const collection = store.collections?.[platform];
+    if (!collection) return false;
+    return (collection.notes || []).some((note) => String(note).includes("items_externalized:"));
+  });
+}
+
+async function hydrateTrendStoreCollections(store: TrendStoreFile): Promise<TrendStoreFile> {
+  if (!storeNeedsCollectionHydration(store)) return store;
+  const collections = { ...(store.collections || {}) };
+  let changed = false;
+  for (const platform of growthPlatformValues) {
+    const stub = collections[platform];
+    if (!stub) continue;
+    const externalized = (stub.notes || []).some((note) => String(note).includes("items_externalized:"));
+    if (!externalized) continue;
+    if ((stub.items?.length || 0) > 0) continue;
+    const truth = await readPlatformCurrentTruthFile(platform);
+    if (truth?.collection) {
+      collections[platform] = truth.collection;
+      changed = true;
+    }
+  }
+  return changed ? { ...store, collections } : store;
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown, options?: { compact?: boolean }) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
-  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf8");
+  let payload: string;
+  try {
+    payload = options?.compact ? JSON.stringify(value) : JSON.stringify(value, null, 2);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof RangeError || /Invalid string length/i.test(message)) {
+      throw new Error(
+        `growth_store_json_too_large: ${path.basename(filePath)} (${message}). 全量应写入 platform-current/*.current.json.gz，勿在 current.json 内嵌 items。`,
+      );
+    }
+    throw error;
+  }
+  await fs.writeFile(tempPath, payload, "utf8");
   await fs.rename(tempPath, filePath);
+}
+
+async function writeJsonGzipAtomic(plainPath: string, value: unknown) {
+  const gzPath = `${plainPath}.gz`;
+  const tempPath = `${gzPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
+  let payload: Buffer;
+  try {
+    payload = gzipSync(Buffer.from(JSON.stringify(value), "utf8"), { level: 6 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof RangeError || /Invalid string length/i.test(message)) {
+      throw new Error(`growth_store_json_too_large: ${path.basename(gzPath)} (${message})`);
+    }
+    throw error;
+  }
+  await fs.writeFile(tempPath, payload);
+  await fs.rename(tempPath, gzPath);
+  await fs.rm(plainPath, { force: true }).catch(() => {});
 }
 
 export async function readTrendStore(options?: { preferDerivedFiles?: boolean; preferFlyLive?: boolean }): Promise<TrendStoreFile> {
@@ -1157,7 +1261,7 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean; p
   const current = await readRawStoreFile(STORE_FILE);
   if (current) {
     const meta = await readRuntimeMeta();
-    return {
+    const hydrated = await hydrateTrendStoreCollections({
       ...current,
       updatedAt: meta.updatedAt || current.updatedAt,
       scheduler: meta.scheduler || current.scheduler || {},
@@ -1165,7 +1269,8 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean; p
       backfillLive: meta.backfillLive || current.backfillLive,
       backfillHistory: meta.backfillHistory || current.backfillHistory,
       mailDigest: meta.mailDigest || current.mailDigest,
-    };
+    });
+    return hydrated;
   }
 
   const legacy = await readRawStoreFile(LEGACY_STORE_FILE);
@@ -1422,7 +1527,7 @@ async function writeStore(
       }
     }
   }
-  await writeJsonAtomic(STORE_FILE, next);
+  await writeJsonAtomic(STORE_FILE, buildSlimTrendStore(next), { compact: true });
   await Promise.all([
     writeRuntimeSegment(
       RUNTIME_SCHEDULER_FILE,
@@ -1453,7 +1558,7 @@ async function writeStore(
   await writeJsonAtomic(HISTORY_SUMMARY_FILE, next.history || createEmptyHistoryState());
   await refreshTrendDebugSummary(next);
   if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
-    await writeJsonAtomic(LEGACY_STORE_FILE, next);
+    await writeJsonAtomic(LEGACY_STORE_FILE, buildSlimTrendStore(next), { compact: true });
   }
   if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
     return next;
@@ -1472,24 +1577,12 @@ async function writeStore(
       if (!collection || isRecoveredCollectionSource(collection.source)) {
         await fs.rm(platformFile, { force: true });
         await fs.rm(truthFile, { force: true });
+        await fs.rm(`${truthFile}.gz`, { force: true });
         await fs.rm(bucketDir, { recursive: true, force: true });
         return;
       }
-      await fs.writeFile(
-        platformFile,
-        JSON.stringify(
-          {
-            updatedAt: next.updatedAt,
-            platform,
-            collection,
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
       const historySummary = next.history?.platforms?.[platform];
-      await writeJsonAtomic(truthFile, {
+      await writeJsonGzipAtomic(truthFile, {
         updatedAt: next.updatedAt,
         truthSource: "platform-current",
         platform,
@@ -1497,38 +1590,37 @@ async function writeStore(
         history: historySummary,
       } satisfies PlatformCurrentTruthFile);
       platformManifest.platforms[platform] = {
-        file: truthFile,
+        file: `${truthFile}.gz`,
         currentTotal: collection.items.length,
         archivedTotal: historySummary?.archivedItems || 0,
       };
-      await fs.mkdir(bucketDir, { recursive: true });
-      const buckets = Object.entries(
-        collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
-          const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
-          (acc[bucket] ||= []).push(item);
-          return acc;
-        }, {}),
-      );
-      await Promise.all(
-        buckets.map(async ([bucket, items]) => {
-          await fs.writeFile(
-            path.join(bucketDir, `${bucket}.json`),
-            JSON.stringify(
-              {
-                updatedAt: next.updatedAt,
-                platform,
-                bucket,
-                source: collection.source,
-                collectedAt: collection.collectedAt,
-                items,
-              },
-              null,
-              2,
-            ),
-            "utf8",
-          );
-        }),
-      );
+      if (!IS_FLY_VOLUME_STORE) {
+        await writeJsonGzipAtomic(platformFile, {
+          updatedAt: next.updatedAt,
+          platform,
+          collection,
+        });
+        await fs.mkdir(bucketDir, { recursive: true });
+        const buckets = Object.entries(
+          collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
+            const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
+            (acc[bucket] ||= []).push(item);
+            return acc;
+          }, {}),
+        );
+        await Promise.all(
+          buckets.map(async ([bucket, items]) => {
+            await writeJsonGzipAtomic(path.join(bucketDir, `${bucket}.json`), {
+              updatedAt: next.updatedAt,
+              platform,
+              bucket,
+              source: collection.source,
+              collectedAt: collection.collectedAt,
+              items,
+            });
+          }),
+        );
+      }
     }),
   );
   await writeJsonAtomic(PLATFORM_CURRENT_MANIFEST_FILE, platformManifest);
@@ -1569,15 +1661,16 @@ function mergeCollection(
     else addedCount += 1;
   }
   const mergedItems = dedupeTrendItems(current?.items || [], incoming.items || []);
+  const mergedCollection: PlatformTrendCollection = {
+    ...incoming,
+    notes: Array.from(new Set([...(current?.notes || []), ...(incoming.notes || [])])),
+    items: mergedItems,
+    collectedAt: incoming.collectedAt,
+    windowDays: Math.max(current?.windowDays || 0, incoming.windowDays || 0),
+  };
   return {
-    collection: {
-      ...incoming,
-      notes: Array.from(new Set([...(current?.notes || []), ...(incoming.notes || [])])),
-      items: mergedItems,
-      collectedAt: incoming.collectedAt,
-      windowDays: Math.max(current?.windowDays || 0, incoming.windowDays || 0),
-    },
-    dedupedCount: mergedItems.length,
+    collection: mergedCollection,
+    dedupedCount: mergedCollection.items.length,
     addedCount,
     mergedCount,
   };
@@ -1602,7 +1695,7 @@ async function archiveCollection(
   const fileName = `${platform}-${bucketPreview}-${bucketHash}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
   const absoluteFile = path.join(ARCHIVE_DIR, datePrefix, fileName);
   await fs.mkdir(path.dirname(absoluteFile), { recursive: true });
-  await fs.writeFile(absoluteFile, JSON.stringify(collection, null, 2), "utf8");
+  await writeJsonGzipAtomic(absoluteFile, collection);
   return {
     platform,
     bucket,
@@ -1619,8 +1712,207 @@ async function archiveCollection(
     targetPerRun: collection.stats?.targetPerRun,
     referenceMinItems: collection.stats?.referenceMinItems,
     referenceMaxItems: collection.stats?.referenceMaxItems,
-    file: absoluteFile,
+    file: `${absoluteFile}.gz`,
   };
+}
+
+export type GrowthStoreMigrationReport = {
+  migrated: boolean;
+  dryRun: boolean;
+  reasons: string[];
+  platformsRewritten: GrowthPlatform[];
+  archivesGzipped: number;
+  currentJsonBytesBefore?: number;
+  currentJsonBytesAfter?: number;
+};
+
+async function readTrendStoreForMigration(): Promise<TrendStoreFile> {
+  const [meta, archiveIndex, history, platformTruth] = await Promise.all([
+    readRuntimeMeta(),
+    readArchiveIndexFile(),
+    readHistorySummaryFile(),
+    readPlatformCurrentTruthStoreFile(),
+  ]);
+  const raw = await readRawStoreFile(STORE_FILE);
+  const shell: TrendStoreFile = platformTruth || raw || createEmptyStore();
+  const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = { ...(shell.collections || {}) };
+  for (const platform of growthPlatformValues) {
+    const truth = await readPlatformCurrentTruthFile(platform);
+    if (truth?.collection?.items?.length) {
+      collections[platform] = truth.collection;
+      continue;
+    }
+    const rawCollection = raw?.collections?.[platform];
+    if (rawCollection?.items?.length) {
+      collections[platform] = rawCollection;
+      continue;
+    }
+    if (collections[platform] && !(collections[platform]?.items?.length)) {
+      delete collections[platform];
+    }
+  }
+  return {
+    ...shell,
+    updatedAt: meta.updatedAt || shell.updatedAt || nowShanghaiIso(),
+    collections,
+    scheduler: meta.scheduler || shell.scheduler || {},
+    archiveIndex: archiveIndex.length ? archiveIndex : (shell.archiveIndex || []),
+    history: history || shell.history || createEmptyHistoryState(),
+    backfill: meta.backfill || shell.backfill,
+    backfillLive: meta.backfillLive || shell.backfillLive,
+    backfillHistory: meta.backfillHistory || shell.backfillHistory,
+    mailDigest: meta.mailDigest || shell.mailDigest,
+  };
+}
+
+export async function detectGrowthStoreMigrationNeeds() {
+  const reasons: string[] = [];
+  try {
+    const stat = await fs.stat(STORE_FILE);
+    if (stat.size > 80 * 1024 * 1024) {
+      reasons.push(`current.json:${Math.round(stat.size / 1024 / 1024)}MB`);
+    }
+  } catch {}
+  const raw = await readLocalJsonOrGzip<Partial<TrendStoreFile>>(STORE_FILE);
+  if (raw?.collections) {
+    for (const platform of growthPlatformValues) {
+      const collection = raw.collections[platform];
+      if ((collection?.items?.length || 0) > 0
+        && !(collection?.notes || []).some((note) => String(note).includes("items_externalized:"))) {
+        reasons.push(`embedded_items:${platform}`);
+      }
+    }
+  }
+  for (const platform of growthPlatformValues) {
+    const plain = getPlatformCurrentTruthFile(platform);
+    const gz = `${plain}.gz`;
+    let hasPlain = false;
+    let hasGzip = false;
+    try {
+      await fs.access(plain);
+      hasPlain = true;
+    } catch {}
+    try {
+      await fs.access(gz);
+      hasGzip = true;
+    } catch {}
+    if (hasPlain && !hasGzip) reasons.push(`plain_truth:${platform}`);
+    if (hasPlain && hasGzip) reasons.push(`orphan_plain_truth:${platform}`);
+    if (!hasPlain && !hasGzip) {
+      const embedded = raw?.collections?.[platform];
+      if ((embedded?.items?.length || 0) > 0) reasons.push(`missing_truth:${platform}`);
+    }
+  }
+  const archiveIndex = await readArchiveIndexFile();
+  const plainArchives = archiveIndex.filter((entry) =>
+    entry.file.endsWith(".json") && !entry.file.endsWith(".json.gz"),
+  ).length;
+  if (plainArchives > 0) reasons.push(`plain_archives:${plainArchives}`);
+  return { needed: reasons.length > 0, reasons };
+}
+
+export async function migrateGrowthStoreSplitGzipLayout(options?: {
+  dryRun?: boolean;
+  migrateArchives?: boolean | "batch";
+  archiveBatchLimit?: number;
+}): Promise<GrowthStoreMigrationReport> {
+  const dryRun = Boolean(options?.dryRun);
+  const { needed, reasons } = await detectGrowthStoreMigrationNeeds();
+  const shouldMigrateArchives = options?.migrateArchives === true
+    || options?.migrateArchives === "batch"
+    || (options?.migrateArchives == null && reasons.some((reason) => reason.startsWith("plain_archives:")));
+  if (!needed && !shouldMigrateArchives) {
+    return { migrated: false, dryRun, reasons: [], platformsRewritten: [], archivesGzipped: 0 };
+  }
+
+  let currentJsonBytesBefore = 0;
+  try {
+    currentJsonBytesBefore = (await fs.stat(STORE_FILE)).size;
+  } catch {}
+
+  const store = await readTrendStoreForMigration();
+  const platformsRewritten = growthPlatformValues.filter((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
+
+  if (!dryRun) {
+    await writeStore(store, {
+      allowLowerTotals: true,
+      writeDerivedPlatformFiles: true,
+      writeLegacyMirror: SHOULD_WRITE_LEGACY_MIRROR,
+    });
+  }
+
+  let archivesGzipped = 0;
+  const archiveBatchLimit = options?.archiveBatchLimit
+    ?? (options?.migrateArchives === "batch"
+      ? Math.max(1, Number(process.env.GROWTH_ARCHIVE_MIGRATE_BATCH || 200) || 200)
+      : Number.POSITIVE_INFINITY);
+
+  if (shouldMigrateArchives) {
+    const archiveIndex = await readArchiveIndexFile();
+    const updatedIndex = [...archiveIndex];
+    let indexChanged = false;
+    for (let index = 0; index < updatedIndex.length && archivesGzipped < archiveBatchLimit; index += 1) {
+      const entry = updatedIndex[index];
+      if (!entry?.file || entry.file.endsWith(".json.gz")) continue;
+      if (!entry.file.endsWith(".json")) continue;
+      const gzPath = `${entry.file}.gz`;
+      try {
+        await fs.access(gzPath);
+        if (entry.file !== gzPath) {
+          updatedIndex[index] = { ...entry, file: gzPath };
+          indexChanged = true;
+        }
+        continue;
+      } catch {}
+      if (dryRun) {
+        archivesGzipped += 1;
+        continue;
+      }
+      const collection = await readLocalJsonOrGzip<PlatformTrendCollection>(entry.file);
+      if (!collection) continue;
+      await writeJsonGzipAtomic(entry.file, collection);
+      updatedIndex[index] = { ...entry, file: gzPath };
+      archivesGzipped += 1;
+      indexChanged = true;
+    }
+    if (!dryRun && indexChanged) {
+      await writeJsonAtomic(ARCHIVE_INDEX_FILE, {
+        updatedAt: nowShanghaiIso(),
+        archiveIndex: updatedIndex,
+      });
+    }
+  }
+
+  let currentJsonBytesAfter = 0;
+  if (!dryRun) {
+    try {
+      currentJsonBytesAfter = (await fs.stat(STORE_FILE)).size;
+    } catch {}
+  }
+
+  return {
+    migrated: !dryRun,
+    dryRun,
+    reasons,
+    platformsRewritten,
+    archivesGzipped,
+    currentJsonBytesBefore,
+    currentJsonBytesAfter,
+  };
+}
+
+export async function ensureGrowthStoreSplitGzipLayout() {
+  if (/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_STORE_LAYOUT_MIGRATE || "").trim())) {
+    return { skipped: true as const };
+  }
+  const { needed } = await detectGrowthStoreMigrationNeeds();
+  if (!needed) return { skipped: false as const, migrated: false };
+  const report = await migrateGrowthStoreSplitGzipLayout({
+    migrateArchives: process.env.GROWTH_MIGRATE_ARCHIVES_ON_BOOT === "1" ? "batch" : false,
+    archiveBatchLimit: Math.max(1, Number(process.env.GROWTH_ARCHIVE_MIGRATE_BATCH || 100) || 100),
+  });
+  console.warn("[growth.store] split+gzip migration", JSON.stringify(report));
+  return report;
 }
 
 export async function writeTrendStore(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
@@ -1635,7 +1927,7 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
 }
 
 export async function rebuildTrendDerivedFilesFromCurrentStore() {
-  const current = await readTrendStore();
+  const current = await readTrendStoreForMigration();
   return writeStore(current, {
     writeDerivedPlatformFiles: true,
     writeLegacyMirror: false,
