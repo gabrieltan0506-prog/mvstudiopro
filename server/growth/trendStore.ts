@@ -731,25 +731,24 @@ async function updateHistoryFromCollections(
   }
 }
 
+function resolveArchiveJsonPlainPath(filePath: string) {
+  if (filePath.endsWith(".json.gz")) return filePath.slice(0, -3);
+  if (filePath.endsWith(".gz")) return filePath.replace(/\.gz$/, "");
+  return filePath;
+}
+
 async function readArchiveCollectionItems(entry: TrendArchiveEntry): Promise<TrendItem[]> {
-  try {
-    const raw = await fs.readFile(entry.file, "utf8");
-    const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
-    return Array.isArray(parsed.items) ? parsed.items : [];
-  } catch {
-    const relativePath = resolveArchiveRelativePath(entry.file);
-    const [dirName] = relativePath.split("/");
-    if (!dirName) return [];
-    const archiveDir = await ensureOffloadedArchiveDir(dirName);
-    if (!archiveDir) return [];
-    try {
-      const raw = await fs.readFile(path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", relativePath), "utf8");
-      const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
-      return Array.isArray(parsed.items) ? parsed.items : [];
-    } catch {
-      return [];
-    }
-  }
+  const plainPath = resolveArchiveJsonPlainPath(entry.file);
+  const parsed = await readLocalJsonOrGzip<Partial<PlatformTrendCollection>>(plainPath);
+  if (parsed?.items?.length) return parsed.items;
+  const relativePath = resolveArchiveRelativePath(entry.file);
+  const [dirName] = relativePath.split("/");
+  if (!dirName) return [];
+  const archiveDir = await ensureOffloadedArchiveDir(dirName);
+  if (!archiveDir) return [];
+  const localPlain = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", relativePath);
+  const localParsed = await readLocalJsonOrGzip<Partial<PlatformTrendCollection>>(localPlain);
+  return Array.isArray(localParsed?.items) ? localParsed.items : [];
 }
 
 async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null> {
@@ -1696,7 +1695,7 @@ async function archiveCollection(
   const fileName = `${platform}-${bucketPreview}-${bucketHash}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
   const absoluteFile = path.join(ARCHIVE_DIR, datePrefix, fileName);
   await fs.mkdir(path.dirname(absoluteFile), { recursive: true });
-  await fs.writeFile(absoluteFile, JSON.stringify(collection, null, 2), "utf8");
+  await writeJsonGzipAtomic(absoluteFile, collection);
   return {
     platform,
     bucket,
@@ -1713,8 +1712,207 @@ async function archiveCollection(
     targetPerRun: collection.stats?.targetPerRun,
     referenceMinItems: collection.stats?.referenceMinItems,
     referenceMaxItems: collection.stats?.referenceMaxItems,
-    file: absoluteFile,
+    file: `${absoluteFile}.gz`,
   };
+}
+
+export type GrowthStoreMigrationReport = {
+  migrated: boolean;
+  dryRun: boolean;
+  reasons: string[];
+  platformsRewritten: GrowthPlatform[];
+  archivesGzipped: number;
+  currentJsonBytesBefore?: number;
+  currentJsonBytesAfter?: number;
+};
+
+async function readTrendStoreForMigration(): Promise<TrendStoreFile> {
+  const [meta, archiveIndex, history, platformTruth] = await Promise.all([
+    readRuntimeMeta(),
+    readArchiveIndexFile(),
+    readHistorySummaryFile(),
+    readPlatformCurrentTruthStoreFile(),
+  ]);
+  const raw = await readRawStoreFile(STORE_FILE);
+  const shell: TrendStoreFile = platformTruth || raw || createEmptyStore();
+  const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = { ...(shell.collections || {}) };
+  for (const platform of growthPlatformValues) {
+    const truth = await readPlatformCurrentTruthFile(platform);
+    if (truth?.collection?.items?.length) {
+      collections[platform] = truth.collection;
+      continue;
+    }
+    const rawCollection = raw?.collections?.[platform];
+    if (rawCollection?.items?.length) {
+      collections[platform] = rawCollection;
+      continue;
+    }
+    if (collections[platform] && !(collections[platform]?.items?.length)) {
+      delete collections[platform];
+    }
+  }
+  return {
+    ...shell,
+    updatedAt: meta.updatedAt || shell.updatedAt || nowShanghaiIso(),
+    collections,
+    scheduler: meta.scheduler || shell.scheduler || {},
+    archiveIndex: archiveIndex.length ? archiveIndex : (shell.archiveIndex || []),
+    history: history || shell.history || createEmptyHistoryState(),
+    backfill: meta.backfill || shell.backfill,
+    backfillLive: meta.backfillLive || shell.backfillLive,
+    backfillHistory: meta.backfillHistory || shell.backfillHistory,
+    mailDigest: meta.mailDigest || shell.mailDigest,
+  };
+}
+
+export async function detectGrowthStoreMigrationNeeds() {
+  const reasons: string[] = [];
+  try {
+    const stat = await fs.stat(STORE_FILE);
+    if (stat.size > 80 * 1024 * 1024) {
+      reasons.push(`current.json:${Math.round(stat.size / 1024 / 1024)}MB`);
+    }
+  } catch {}
+  const raw = await readLocalJsonOrGzip<Partial<TrendStoreFile>>(STORE_FILE);
+  if (raw?.collections) {
+    for (const platform of growthPlatformValues) {
+      const collection = raw.collections[platform];
+      if ((collection?.items?.length || 0) > 0
+        && !(collection?.notes || []).some((note) => String(note).includes("items_externalized:"))) {
+        reasons.push(`embedded_items:${platform}`);
+      }
+    }
+  }
+  for (const platform of growthPlatformValues) {
+    const plain = getPlatformCurrentTruthFile(platform);
+    const gz = `${plain}.gz`;
+    let hasPlain = false;
+    let hasGzip = false;
+    try {
+      await fs.access(plain);
+      hasPlain = true;
+    } catch {}
+    try {
+      await fs.access(gz);
+      hasGzip = true;
+    } catch {}
+    if (hasPlain && !hasGzip) reasons.push(`plain_truth:${platform}`);
+    if (hasPlain && hasGzip) reasons.push(`orphan_plain_truth:${platform}`);
+    if (!hasPlain && !hasGzip) {
+      const embedded = raw?.collections?.[platform];
+      if ((embedded?.items?.length || 0) > 0) reasons.push(`missing_truth:${platform}`);
+    }
+  }
+  const archiveIndex = await readArchiveIndexFile();
+  const plainArchives = archiveIndex.filter((entry) =>
+    entry.file.endsWith(".json") && !entry.file.endsWith(".json.gz"),
+  ).length;
+  if (plainArchives > 0) reasons.push(`plain_archives:${plainArchives}`);
+  return { needed: reasons.length > 0, reasons };
+}
+
+export async function migrateGrowthStoreSplitGzipLayout(options?: {
+  dryRun?: boolean;
+  migrateArchives?: boolean | "batch";
+  archiveBatchLimit?: number;
+}): Promise<GrowthStoreMigrationReport> {
+  const dryRun = Boolean(options?.dryRun);
+  const { needed, reasons } = await detectGrowthStoreMigrationNeeds();
+  const shouldMigrateArchives = options?.migrateArchives === true
+    || options?.migrateArchives === "batch"
+    || (options?.migrateArchives == null && reasons.some((reason) => reason.startsWith("plain_archives:")));
+  if (!needed && !shouldMigrateArchives) {
+    return { migrated: false, dryRun, reasons: [], platformsRewritten: [], archivesGzipped: 0 };
+  }
+
+  let currentJsonBytesBefore = 0;
+  try {
+    currentJsonBytesBefore = (await fs.stat(STORE_FILE)).size;
+  } catch {}
+
+  const store = await readTrendStoreForMigration();
+  const platformsRewritten = growthPlatformValues.filter((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
+
+  if (!dryRun) {
+    await writeStore(store, {
+      allowLowerTotals: true,
+      writeDerivedPlatformFiles: true,
+      writeLegacyMirror: SHOULD_WRITE_LEGACY_MIRROR,
+    });
+  }
+
+  let archivesGzipped = 0;
+  const archiveBatchLimit = options?.archiveBatchLimit
+    ?? (options?.migrateArchives === "batch"
+      ? Math.max(1, Number(process.env.GROWTH_ARCHIVE_MIGRATE_BATCH || 200) || 200)
+      : Number.POSITIVE_INFINITY);
+
+  if (shouldMigrateArchives) {
+    const archiveIndex = await readArchiveIndexFile();
+    const updatedIndex = [...archiveIndex];
+    let indexChanged = false;
+    for (let index = 0; index < updatedIndex.length && archivesGzipped < archiveBatchLimit; index += 1) {
+      const entry = updatedIndex[index];
+      if (!entry?.file || entry.file.endsWith(".json.gz")) continue;
+      if (!entry.file.endsWith(".json")) continue;
+      const gzPath = `${entry.file}.gz`;
+      try {
+        await fs.access(gzPath);
+        if (entry.file !== gzPath) {
+          updatedIndex[index] = { ...entry, file: gzPath };
+          indexChanged = true;
+        }
+        continue;
+      } catch {}
+      if (dryRun) {
+        archivesGzipped += 1;
+        continue;
+      }
+      const collection = await readLocalJsonOrGzip<PlatformTrendCollection>(entry.file);
+      if (!collection) continue;
+      await writeJsonGzipAtomic(entry.file, collection);
+      updatedIndex[index] = { ...entry, file: gzPath };
+      archivesGzipped += 1;
+      indexChanged = true;
+    }
+    if (!dryRun && indexChanged) {
+      await writeJsonAtomic(ARCHIVE_INDEX_FILE, {
+        updatedAt: nowShanghaiIso(),
+        archiveIndex: updatedIndex,
+      });
+    }
+  }
+
+  let currentJsonBytesAfter = 0;
+  if (!dryRun) {
+    try {
+      currentJsonBytesAfter = (await fs.stat(STORE_FILE)).size;
+    } catch {}
+  }
+
+  return {
+    migrated: !dryRun,
+    dryRun,
+    reasons,
+    platformsRewritten,
+    archivesGzipped,
+    currentJsonBytesBefore,
+    currentJsonBytesAfter,
+  };
+}
+
+export async function ensureGrowthStoreSplitGzipLayout() {
+  if (/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_STORE_LAYOUT_MIGRATE || "").trim())) {
+    return { skipped: true as const };
+  }
+  const { needed } = await detectGrowthStoreMigrationNeeds();
+  if (!needed) return { skipped: false as const, migrated: false };
+  const report = await migrateGrowthStoreSplitGzipLayout({
+    migrateArchives: process.env.GROWTH_MIGRATE_ARCHIVES_ON_BOOT === "1" ? "batch" : false,
+    archiveBatchLimit: Math.max(1, Number(process.env.GROWTH_ARCHIVE_MIGRATE_BATCH || 100) || 100),
+  });
+  console.warn("[growth.store] split+gzip migration", JSON.stringify(report));
+  return report;
 }
 
 export async function writeTrendStore(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
@@ -1729,7 +1927,7 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
 }
 
 export async function rebuildTrendDerivedFilesFromCurrentStore() {
-  const current = await readTrendStore();
+  const current = await readTrendStoreForMigration();
   return writeStore(current, {
     writeDerivedPlatformFiles: true,
     writeLegacyMirror: false,

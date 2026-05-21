@@ -9,6 +9,7 @@ import {
   stopGrowthTrendLiveBackfillWorker,
 } from "./trendBackfill";
 import {
+  ensureGrowthStoreSplitGzipLayout,
   readTrendSchedulerState,
   mergeTrendCollections,
   readGrowthRuntimeControl,
@@ -575,6 +576,10 @@ export async function bootstrapGrowthTrendScheduler() {
       console.warn("[growth.history] reconcile on bootstrap failed:", error);
     });
   }
+
+  await ensureGrowthStoreSplitGzipLayout().catch((error) => {
+    console.warn("[growth.store] split+gzip bootstrap migration failed:", error);
+  });
 
   const scheduler = await readTrendSchedulerState();
   if (!hasAnyForcedBurstConfig()) {

@@ -23,6 +23,7 @@
     "growth:fetch-status": "node scripts/fetch-growth-status.mjs",
     "growth:verify-monotonic": "node scripts/verify-growth-monotonic.mjs",
     "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
+    "growth:migrate-split-gzip": "tsx scripts/migrate-growth-store-split-gzip.ts",
     "ambient:ping-gemini": "tsx scripts/ping-dashboard-gemini-models.mts",
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
     "ambient:fetch-images:refresh": "node scripts/fetch-ambient-images.mjs --refresh",
