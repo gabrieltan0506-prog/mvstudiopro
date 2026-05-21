@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getGrowthTrendStats, reconcileTrendHistoryState } from "../server/growth/trendStore";
+import {
+  getGrowthTrendStats,
+  migrateGrowthStoreSplitGzipLayout,
+  reconcileTrendHistoryState,
+} from "../server/growth/trendStore";
 
 const DEFAULT_STORE_DIR = path.resolve(process.env.GROWTH_STORE_DIR || path.join(process.cwd(), ".cache", "growth"));
 const LEGACY_FILE = path.resolve(process.env.GROWTH_LEGACY_STORE_FILE || path.join(path.dirname(DEFAULT_STORE_DIR), "growth-trends.json"));
@@ -40,11 +44,16 @@ async function main() {
 
   await fs.mkdir(DEFAULT_STORE_DIR, { recursive: true });
 
-  for (const relativeDir of ["archive", "history-ledger"]) {
+  for (const relativeDir of ["archive", "history-ledger", "platform-current"]) {
     const sourceDir = path.join(snapshotDir, relativeDir);
     if (await pathExists(sourceDir)) {
       await copyDir(sourceDir, path.join(DEFAULT_STORE_DIR, relativeDir));
     }
+  }
+
+  const platformManifest = path.join(snapshotDir, "platform-current-manifest.json");
+  if (await pathExists(platformManifest)) {
+    await fs.copyFile(platformManifest, path.join(DEFAULT_STORE_DIR, "platform-current-manifest.json"));
   }
 
   const restoredStore = {
@@ -63,10 +72,14 @@ async function main() {
   await fs.writeFile(LEGACY_FILE, JSON.stringify(restoredStore, null, 2), "utf8");
 
   await reconcileTrendHistoryState({ force: true });
+  const migration = await migrateGrowthStoreSplitGzipLayout({
+    migrateArchives: process.argv.includes("--archives"),
+  });
   const stats = await getGrowthTrendStats();
   console.log(JSON.stringify({
     success: true,
     snapshotDir,
+    migration,
     totals: stats.totals,
     platforms: stats.platforms.map((item) => ({
       platform: item.platform,

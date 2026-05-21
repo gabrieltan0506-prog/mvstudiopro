@@ -1,10 +1,17 @@
 # Growth Storage Repair and Prevention (2026-03-21)
 
 ## Current live data paths on Fly
-- `/data/growth/current.json`: live working set
+- `/data/growth/current.json`: index + scheduler/archive metadata (no embedded `items`)
+- `/data/growth/platform-current/{platform}.current.json.gz`: per-platform live truth (gzip)
+- `/data/growth/platform-current-manifest.json`: manifest pointing at truth files
 - `/data/growth/runtime-meta.json`: scheduler/backfill/mail runtime state
 - `/data/growth/history-ledger/*.json`: historical aggregate ledger per platform
-- `/data/growth/archive/<YYYY-MM-DD>/*.json`: cold archive shards
+- `/data/growth/archive/<YYYY-MM-DD>/*.json.gz`: cold archive shards (gzip)
+
+## One-time / boot migration
+- `pnpm run growth:migrate-split-gzip` — dry-run: add `--dry-run`; archive batch: `--archives-batch`
+- Deploy boot runs `ensureGrowthStoreSplitGzipLayout()` unless `GROWTH_DISABLE_STORE_LAYOUT_MIGRATE=1`
+- Optional archive batch on boot: `GROWTH_MIGRATE_ARCHIVES_ON_BOOT=1` + `GROWTH_ARCHIVE_MIGRATE_BATCH=200`
 
 ## What filled the disk
 The Fly volume was filled by archive shards and export/backup leftovers, not by `current.json` itself.

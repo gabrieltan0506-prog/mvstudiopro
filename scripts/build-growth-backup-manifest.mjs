@@ -18,7 +18,13 @@ async function readJsonIfExists(filePath, fallback) {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
   } catch {
-    return fallback;
+    try {
+      const { gunzipSync } = await import("node:zlib");
+      const raw = await fs.readFile(`${filePath}.gz`);
+      return JSON.parse(gunzipSync(raw).toString("utf8"));
+    } catch {
+      return fallback;
+    }
   }
 }
 
@@ -40,14 +46,16 @@ async function main() {
   const historySummary = await readJsonIfExists(path.join(storeDir, "history-summary.json"), null);
   const runtimeMeta = await readJsonIfExists(path.join(storeDir, "runtime-meta.json"), {});
   const currentStore = await readJsonIfExists(path.join(storeDir, "current.json"), {});
+  const platformCurrentManifest = await readJsonIfExists(path.join(storeDir, "platform-current-manifest.json"), null);
   const archiveIndex = await readJsonIfExists(path.join(storeDir, "archive-index.json"), []);
 
   const platforms = Object.fromEntries(
     PLATFORM_ORDER.map((platform) => {
       const debugRow = debugSummary?.platforms?.[platform];
       const historyRow = historySummary?.platforms?.[platform] || currentStore?.history?.platforms?.[platform];
+      const manifestRow = platformCurrentManifest?.platforms?.[platform];
       const currentCollection = currentStore?.collections?.[platform];
-      const currentTotal = number(debugRow?.currentTotal ?? currentCollection?.items?.length);
+      const currentTotal = number(debugRow?.currentTotal ?? manifestRow?.currentTotal ?? currentCollection?.items?.length);
       const archivedTotal = number(debugRow?.archivedTotal ?? historyRow?.archivedItems);
       return [platform, { currentTotal, archivedTotal }];
     }),
@@ -67,13 +75,24 @@ async function main() {
         ]),
       ),
     ),
+    platformCurrent: Object.fromEntries(
+      await Promise.all(
+        PLATFORM_ORDER.map(async (platform) => [
+          platform,
+          Math.max(
+            await statIfExists(path.join(storeDir, "platform-current", `${platform}.current.json.gz`)),
+            await statIfExists(path.join(storeDir, "platform-current", `${platform}.current.json`)),
+          ),
+        ]),
+      ),
+    ),
   };
 
   const manifest = {
     createdAt: new Date().toISOString(),
     storeDir,
     truthSource: {
-      current: debugSummary ? "growth-debug-summary.json" : "current.json",
+      current: platformCurrentManifest ? "platform-current-manifest.json" : (debugSummary ? "growth-debug-summary.json" : "current.json"),
       archived: historySummary ? "history-summary.json" : "current.json.history",
     },
     updatedAt: runtimeMeta?.updatedAt || currentStore?.updatedAt || debugSummary?.updatedAt || null,
