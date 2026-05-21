@@ -269,6 +269,8 @@ const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_B
 const BACKFILL_PLATFORMS = new Set<GrowthPlatform>(
   growthPlatformValues.filter((platform): platform is GrowthPlatform => platform !== "weixin_channels"),
 );
+/** platform-current 拆文件 + gzip 读写适用的全部采集平台（含视频号，与 growthPlatformValues 一致） */
+const GROWTH_STORE_PLATFORM_VALUES: GrowthPlatform[] = [...growthPlatformValues];
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
@@ -892,7 +894,7 @@ async function readFlyTrendStoreFile(): Promise<TrendStoreFile | null> {
     const parsed = JSON.parse(raw) as TrendStoreFile;
     if (!storeNeedsCollectionHydration(parsed)) return parsed;
     const collections = { ...(parsed.collections || {}) };
-    for (const platform of growthPlatformValues) {
+    for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
       const stub = collections[platform];
       if (!stub) continue;
       if ((stub.items?.length || 0) > 0) continue;
@@ -914,21 +916,19 @@ async function readPlatformCurrentTruthStoreFile(): Promise<TrendStoreFile | nul
     readGrowthDebugSummary(),
     readPlatformCurrentManifest(),
   ]);
-  if (!manifest?.platforms || !Object.keys(manifest.platforms).length) return null;
   const truthEntries = await Promise.all(
-    growthPlatformValues.map(async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const),
+    GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const),
   );
-  const availableEntries = truthEntries.filter(([, entry]) => Boolean(entry));
-  if (!availableEntries.length) return null;
-  const requiredPlatforms = growthPlatformValues.filter(
-    (platform) => Number(summary?.platforms?.[platform]?.currentTotal || 0) > 0,
-  );
-  const availablePlatforms = new Set(availableEntries.map(([platform]) => platform));
-  if (requiredPlatforms.some((platform) => !availablePlatforms.has(platform))) return null;
-  if ((summary?.totals.archivedItems || 0) > 0 && !history) return null;
+  const availableEntries = truthEntries.filter(([, entry]) => Boolean(entry)) as Array<
+    [GrowthPlatform, PlatformCurrentTruthFile]
+  >;
+  if (!availableEntries.length && !manifest?.platforms) return null;
   const collections = Object.fromEntries(
-    availableEntries.map(([platform, entry]) => [platform, entry!.collection]),
+    availableEntries.map(([platform, entry]) => [platform, entry.collection]),
   ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+  await fillStoreCollectionsFromFallback(collections);
+  if (!hasAnyLiveCollectionItems(collections)) return null;
+  if ((summary?.totals.archivedItems || 0) > 0 && !history && !archiveIndex.length) return null;
   const historyPlatforms: Partial<Record<GrowthPlatform, TrendHistoryPlatformSummary>> = {
     ...(history?.platforms || {}),
   };
@@ -936,12 +936,12 @@ async function readPlatformCurrentTruthStoreFile(): Promise<TrendStoreFile | nul
     if (entry?.history) historyPlatforms[platform] = entry.history;
   }
   return {
-    updatedAt: meta.updatedAt || manifest.updatedAt || nowShanghaiIso(),
+    updatedAt: meta.updatedAt || manifest?.updatedAt || nowShanghaiIso(),
     collections,
     scheduler: meta.scheduler || {},
     archiveIndex,
     history: {
-      updatedAt: history?.updatedAt || manifest.updatedAt || nowShanghaiIso(),
+      updatedAt: history?.updatedAt || manifest?.updatedAt || nowShanghaiIso(),
       source: "ledger",
       platforms: historyPlatforms,
     },
@@ -960,27 +960,19 @@ async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
     readGrowthDebugSummary(),
   ]);
   const collectionsEntries = await Promise.all(
-    growthPlatformValues.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
+    GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
   );
-  const hasDerivedCollections = collectionsEntries.some(([, collection]) => Boolean(collection));
-  if (!hasDerivedCollections) return null;
-  const requiredPlatforms = growthPlatformValues.filter(
-    (platform) => Number(summary?.platforms?.[platform]?.currentTotal || 0) > 0,
-  );
-  const availablePlatforms = new Set(
-    collectionsEntries.filter(([, collection]) => Boolean(collection)).map(([platform]) => platform),
-  );
-  if (requiredPlatforms.some((platform) => !availablePlatforms.has(platform))) {
-    return null;
-  }
+  const collections = Object.fromEntries(
+    collectionsEntries.filter(([, collection]) => Boolean(collection?.items?.length)),
+  ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+  await fillStoreCollectionsFromFallback(collections);
+  if (!hasAnyLiveCollectionItems(collections)) return null;
   if ((summary?.totals.archivedItems || 0) > 0 && (!archiveIndex.length || !history)) {
     return null;
   }
   return {
     updatedAt: meta.updatedAt || nowShanghaiIso(),
-    collections: Object.fromEntries(
-      collectionsEntries.filter(([, collection]) => Boolean(collection)),
-    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+    collections,
     scheduler: meta.scheduler || {},
     archiveIndex,
     history: history || createEmptyHistoryState(),
@@ -1160,9 +1152,39 @@ export async function resetTrendRuntimeForDeploy(deployId: string) {
   return true;
 }
 
+async function fillStoreCollectionsFromFallback(
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+  options?: { platforms?: GrowthPlatform[]; current?: TrendStoreFile | null },
+) {
+  const raw = options?.current ?? await readRawStoreFile(STORE_FILE);
+  const targets = options?.platforms ?? GROWTH_STORE_PLATFORM_VALUES;
+  for (const platform of targets) {
+    if ((collections[platform]?.items?.length || 0) > 0) continue;
+    const truth = await readPlatformCurrentTruthFile(platform);
+    if (truth?.collection?.items?.length) {
+      collections[platform] = truth.collection;
+      continue;
+    }
+    const stub = raw?.collections?.[platform];
+    if (stub?.items?.length) {
+      collections[platform] = stub;
+      continue;
+    }
+    const derived = await readPlatformCollectionFile(platform);
+    if (derived?.items?.length) {
+      collections[platform] = derived;
+    }
+  }
+  return collections;
+}
+
+function hasAnyLiveCollectionItems(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
+  return GROWTH_STORE_PLATFORM_VALUES.some((platform) => (collections[platform]?.items?.length || 0) > 0);
+}
+
 function buildSlimTrendStore(store: TrendStoreFile): TrendStoreFile {
   const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = {};
-  for (const platform of growthPlatformValues) {
+  for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
     const collection = store.collections?.[platform];
     if (!collection) continue;
     collections[platform] = {
@@ -1182,7 +1204,7 @@ function buildSlimTrendStore(store: TrendStoreFile): TrendStoreFile {
 }
 
 function storeNeedsCollectionHydration(store: TrendStoreFile) {
-  return growthPlatformValues.some((platform) => {
+  return GROWTH_STORE_PLATFORM_VALUES.some((platform) => {
     const collection = store.collections?.[platform];
     if (!collection) return false;
     return (collection.notes || []).some((note) => String(note).includes("items_externalized:"));
@@ -1193,7 +1215,7 @@ async function hydrateTrendStoreCollections(store: TrendStoreFile): Promise<Tren
   if (!storeNeedsCollectionHydration(store)) return store;
   const collections = { ...(store.collections || {}) };
   let changed = false;
-  for (const platform of growthPlatformValues) {
+  for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
     const stub = collections[platform];
     if (!stub) continue;
     const externalized = (stub.notes || []).some((note) => String(note).includes("items_externalized:"));
@@ -1348,9 +1370,14 @@ export async function readTrendStoreForPlatforms(
       truthEntries.filter(([, entry]) => Boolean(entry)).map(([platform, entry]) => [platform, entry!.collection]),
     ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
     if (Object.keys(truthCollections).length) {
+      await fillStoreCollectionsFromFallback(truthCollections, { platforms: uniquePlatforms });
       return {
         updatedAt: meta.updatedAt || nowShanghaiIso(),
-        collections: truthCollections,
+        collections: Object.fromEntries(
+          uniquePlatforms
+            .map((platform) => [platform, truthCollections[platform]] as const)
+            .filter(([, collection]) => Boolean(collection)),
+        ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
         scheduler: meta.scheduler || {},
         archiveIndex: [],
         history: history || createEmptyHistoryState(),
@@ -1368,9 +1395,14 @@ export async function readTrendStoreForPlatforms(
       derivedEntries.filter(([, collection]) => Boolean(collection)).map(([platform, collection]) => [platform, collection!]),
     ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
     if (Object.keys(derivedCollections).length) {
+      await fillStoreCollectionsFromFallback(derivedCollections, { platforms: uniquePlatforms });
       return {
         updatedAt: meta.updatedAt || nowShanghaiIso(),
-        collections: derivedCollections,
+        collections: Object.fromEntries(
+          uniquePlatforms
+            .map((platform) => [platform, derivedCollections[platform]] as const)
+            .filter(([, collection]) => Boolean(collection)),
+        ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
         scheduler: meta.scheduler || {},
         archiveIndex: [],
         history: history || createEmptyHistoryState(),
@@ -1569,7 +1601,7 @@ async function writeStore(
     platforms: {},
   };
   await Promise.all(
-    growthPlatformValues.map(async (platform) => {
+    GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => {
       const collection = next.collections?.[platform];
       const platformFile = path.join(PLATFORM_DIR, `${platform}.json`);
       const bucketDir = path.join(PLATFORM_DIR, platform);
@@ -1594,12 +1626,12 @@ async function writeStore(
         currentTotal: collection.items.length,
         archivedTotal: historySummary?.archivedItems || 0,
       };
+      await writeJsonGzipAtomic(platformFile, {
+        updatedAt: next.updatedAt,
+        platform,
+        collection,
+      });
       if (!IS_FLY_VOLUME_STORE) {
-        await writeJsonGzipAtomic(platformFile, {
-          updatedAt: next.updatedAt,
-          platform,
-          collection,
-        });
         await fs.mkdir(bucketDir, { recursive: true });
         const buckets = Object.entries(
           collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
@@ -1736,7 +1768,7 @@ async function readTrendStoreForMigration(): Promise<TrendStoreFile> {
   const raw = await readRawStoreFile(STORE_FILE);
   const shell: TrendStoreFile = platformTruth || raw || createEmptyStore();
   const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = { ...(shell.collections || {}) };
-  for (const platform of growthPlatformValues) {
+  for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
     const truth = await readPlatformCurrentTruthFile(platform);
     if (truth?.collection?.items?.length) {
       collections[platform] = truth.collection;
@@ -1775,7 +1807,7 @@ export async function detectGrowthStoreMigrationNeeds() {
   } catch {}
   const raw = await readLocalJsonOrGzip<Partial<TrendStoreFile>>(STORE_FILE);
   if (raw?.collections) {
-    for (const platform of growthPlatformValues) {
+    for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
       const collection = raw.collections[platform];
       if ((collection?.items?.length || 0) > 0
         && !(collection?.notes || []).some((note) => String(note).includes("items_externalized:"))) {
@@ -1783,7 +1815,7 @@ export async function detectGrowthStoreMigrationNeeds() {
       }
     }
   }
-  for (const platform of growthPlatformValues) {
+  for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
     const plain = getPlatformCurrentTruthFile(platform);
     const gz = `${plain}.gz`;
     let hasPlain = false;
@@ -1831,7 +1863,7 @@ export async function migrateGrowthStoreSplitGzipLayout(options?: {
   } catch {}
 
   const store = await readTrendStoreForMigration();
-  const platformsRewritten = growthPlatformValues.filter((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
+  const platformsRewritten = GROWTH_STORE_PLATFORM_VALUES.filter((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
 
   if (!dryRun) {
     await writeStore(store, {

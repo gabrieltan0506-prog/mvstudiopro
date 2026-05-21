@@ -10,7 +10,7 @@ if (!baseStorePath || !remoteStorePath || !csvDir || !outputPath) {
   process.exit(1);
 }
 
-const PLATFORM_ORDER = ["douyin", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
+const PLATFORM_ORDER = ["douyin", "weixin_channels", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
 
 function text(value) {
   return String(value || "").trim();

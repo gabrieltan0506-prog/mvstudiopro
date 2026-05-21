@@ -12,7 +12,8 @@ if (!storeDirArg || !outputPathArg) {
 
 const storeDir = path.resolve(storeDirArg);
 const outputPath = path.resolve(outputPathArg);
-const PLATFORM_ORDER = ["douyin", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
+/** 与 shared/growth growthPlatformValues 保持一致（含视频号） */
+const PLATFORM_ORDER = ["douyin", "weixin_channels", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
 
 async function readJsonIfExists(filePath, fallback) {
   try {
