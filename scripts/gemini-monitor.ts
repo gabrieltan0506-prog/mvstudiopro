@@ -1,5 +1,6 @@
 /**
- * Gemini 模型白名单探针（读取 .env.local / .env 的 GEMINI_API_KEY）
+ * Gemini 模型白名单探针
+ * 凭据：默认优先 Fly secret（fly ssh printenv），失败再用 .env.local / .env
  * 用法：pnpm run gemini:monitor
  */
 import { config } from "dotenv";

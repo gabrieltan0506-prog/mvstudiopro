@@ -1,10 +1,18 @@
 /**
- * Gemini API 模型白名单探针：监测 omni / veo 等关键字是否已对当前 GEMINI_API_KEY 开放。
+ * Gemini API 模型白名单探针：监测 omni / veo 等关键字是否已对 GEMINI_API_KEY 开放。
+ * 默认优先从 Fly 生产 secret 读取（fly ssh printenv），失败再回退本地 .env。
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { GoogleGenAI } from "@google/genai";
+
+const execFileAsync = promisify(execFile);
+
+export type GeminiApiKeySource = "fly" | "env" | "explicit";
 
 export type GeminiModelInspectionResult = {
   ok: boolean;
+  keySource?: GeminiApiKeySource;
   totalModels: number;
   availableModelIds: string[];
   caughtModels: string[];
@@ -13,19 +21,90 @@ export type GeminiModelInspectionResult = {
   error?: string;
 };
 
-export function normalizeGeminiApiKeyFromEnv(raw?: string): string {
-  const key = String(raw || process.env.GEMINI_API_KEY || "")
+/** 接受 Google AI Studio（AIza）与 Fly 常用（AQ.）格式 */
+export function normalizeGeminiApiKey(raw: string): string {
+  const key = String(raw || "")
     .trim()
     .replace(/^['"]|['"]$/g, "");
-  if (!key || !key.startsWith("AIza") || key.length < 30) {
-    throw new Error("GEMINI_API_KEY 无效（应以 AIza 开头，长度 ≥ 30）");
+  if (!key || key.length < 20) {
+    throw new Error("GEMINI_API_KEY 无效（长度过短）");
+  }
+  if (!/^(AIza|AQ\.)/.test(key)) {
+    throw new Error("GEMINI_API_KEY 无效（应以 AIza 或 AQ. 开头）");
   }
   for (const ch of key) {
     if (ch.charCodeAt(0) > 255) {
-      throw new Error("GEMINI_API_KEY 含非 ASCII 字符，请检查 .env.local 是否误贴中文或注释");
+      throw new Error("GEMINI_API_KEY 含非 ASCII 字符，请检查是否误贴中文或注释");
     }
   }
   return key;
+}
+
+export function normalizeGeminiApiKeyFromEnv(raw?: string): string {
+  return normalizeGeminiApiKey(String(raw || process.env.GEMINI_API_KEY || ""));
+}
+
+export function resolveGeminiMonitorFlyApp(): string {
+  return String(process.env.GEMINI_MONITOR_FLY_APP || process.env.FLY_APP || "mvstudiopro").trim() || "mvstudiopro";
+}
+
+function parseFlyPrintenvOutput(stdout: string): string {
+  const lines = String(stdout || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !l.startsWith("Connecting to"));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (/^(AIza|AQ\.)/.test(line) && line.length >= 20) return line;
+  }
+  return "";
+}
+
+/** 经 fly ssh 读取生产机上的 GEMINI_API_KEY（与 Fly secret 一致） */
+export async function fetchGeminiApiKeyFromFlySecret(app?: string): Promise<string | null> {
+  if (String(process.env.GEMINI_MONITOR_SKIP_FLY || "").trim() === "1") return null;
+  const flyApp = app || resolveGeminiMonitorFlyApp();
+  try {
+    const { stdout } = await execFileAsync(
+      "fly",
+      ["ssh", "console", "-a", flyApp, "-C", "printenv GEMINI_API_KEY"],
+      { timeout: 120_000, maxBuffer: 1024 * 1024 },
+    );
+    const key = parseFlyPrintenvOutput(String(stdout || ""));
+    return key || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 解析监测用 API Key：默认 Fly 优先，再本地 env。
+ * GEMINI_MONITOR_PREFER_LOCAL=1 时仅用本地。
+ */
+export async function resolveGeminiApiKeyForMonitor(options?: {
+  apiKey?: string;
+  preferFly?: boolean;
+}): Promise<{ key: string; source: GeminiApiKeySource }> {
+  if (options?.apiKey?.trim()) {
+    return { key: normalizeGeminiApiKey(options.apiKey), source: "explicit" };
+  }
+
+  const preferLocal = String(process.env.GEMINI_MONITOR_PREFER_LOCAL || "").trim() === "1";
+  const preferFly = options?.preferFly !== false && !preferLocal;
+
+  if (preferFly) {
+    const flyKey = await fetchGeminiApiKeyFromFlySecret();
+    if (flyKey) {
+      try {
+        return { key: normalizeGeminiApiKey(flyKey), source: "fly" };
+      } catch {
+        /* 继续回退本地 */
+      }
+    }
+  }
+
+  return { key: normalizeGeminiApiKeyFromEnv(), source: "env" };
 }
 
 export function resolveGeminiMonitorKeywords(): string[] {
@@ -70,19 +149,30 @@ export async function runModelInspectionPipeline(options?: {
   apiKey?: string;
   keywords?: string[];
   quiet?: boolean;
+  preferFly?: boolean;
 }): Promise<GeminiModelInspectionResult> {
   const log = (line: string) => {
     if (!options?.quiet) console.log(line);
   };
 
   let apiKey = "";
+  let keySource: GeminiApiKeySource = "env";
   try {
-    apiKey = normalizeGeminiApiKeyFromEnv(options?.apiKey);
+    const resolved = await resolveGeminiApiKeyForMonitor({
+      apiKey: options?.apiKey,
+      preferFly: options?.preferFly,
+    });
+    apiKey = resolved.key;
+    keySource = resolved.source;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (!options?.quiet) console.error(`❌ [核心错误] ${msg}`);
+    if (!options?.quiet) {
+      console.error(`❌ [核心错误] ${msg}`);
+      console.error("   提示：默认优先 Fly secret；可设 GEMINI_MONITOR_SKIP_FLY=1 仅用本地 .env");
+    }
     return {
       ok: false,
+      keySource,
       totalModels: 0,
       availableModelIds: [],
       caughtModels: [],
@@ -91,19 +181,14 @@ export async function runModelInspectionPipeline(options?: {
       error: msg,
     };
   }
-  if (!apiKey) {
-    const msg = "未侦测到环境变量 GEMINI_API_KEY，监控终止。";
-    if (!options?.quiet) console.error(`❌ [核心错误] ${msg}`);
-    return {
-      ok: false,
-      totalModels: 0,
-      availableModelIds: [],
-      caughtModels: [],
-      monitorKeywords: resolveGeminiMonitorKeywords(),
-      alert: false,
-      error: msg,
-    };
-  }
+
+  const sourceLabel =
+    keySource === "fly"
+      ? `Fly · ${resolveGeminiMonitorFlyApp()}`
+      : keySource === "explicit"
+        ? "显式传入"
+        : "本地 .env";
+  log(`🔑 [凭据] ${sourceLabel} · 前缀 ${apiKey.slice(0, 6)}…`);
 
   const monitorKeywords = (options?.keywords || resolveGeminiMonitorKeywords()).map((k) =>
     k.toLowerCase(),
@@ -120,6 +205,7 @@ export async function runModelInspectionPipeline(options?: {
       log("⚠️ 警告：成功连线但回传模型清单为空，请检查金钥状态。");
       return {
         ok: true,
+        keySource,
         totalModels: 0,
         availableModelIds: [],
         caughtModels: [],
@@ -141,13 +227,14 @@ export async function runModelInspectionPipeline(options?: {
       log("\n💡 提示：请立刻部署 Omni / Veo 顶配影片流水线，并在 TestLab 验证 generateVideos。");
       await notifyWebhook(caughtModels, availableModelIds);
     } else {
-      log("\n💤 监控报告：Omni/Veo 影片模型目前尚未对此 API Key 开放。");
+      log("\n💤 监控报告：关键字（omni/veo）未命中任何模型 ID。");
       log("📌 当前可用之主力模型摘要（前 5 项）：");
       availableModelIds.slice(0, 5).forEach((modelId) => log(`  - ${modelId}`));
     }
 
     return {
       ok: true,
+      keySource,
       totalModels: availableModelIds.length,
       availableModelIds,
       caughtModels,
@@ -161,6 +248,7 @@ export async function runModelInspectionPipeline(options?: {
     }
     return {
       ok: false,
+      keySource,
       totalModels: 0,
       availableModelIds: [],
       caughtModels: [],
