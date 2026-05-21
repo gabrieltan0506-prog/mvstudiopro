@@ -234,7 +234,6 @@ export default function TestLab() {
   const [omniDurationSeconds, setOmniDurationSeconds] = useState<30 | 60>(30);
   /** Gemini Omni：2K / 4K */
   const [omniResolution, setOmniResolution] = useState<"2K" | "4K">("4K");
-  const [omniAudioPrompt, setOmniAudioPrompt] = useState("");
   const [omniAuthMode, setOmniAuthMode] = useState<"vertex" | "gemini_api" | "">("");
   /** Seedance 时长（秒，4–15，与 fal Seedance 一致） */
   const [seedanceDuration, setSeedanceDuration] = useState("10");
@@ -478,7 +477,6 @@ export default function TestLab() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt,
-            audioPrompt: omniAudioPrompt.trim() || undefined,
             imageUrl: inputImage || undefined,
             durationSeconds: omniDurationSeconds,
             aspectRatio,
@@ -1383,26 +1381,8 @@ export default function TestLab() {
           </div>
 
           {videoProvider === "omni" ? (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>原生音效指令（可选，英文更佳）</div>
-              <textarea
-                value={omniAudioPrompt}
-                onChange={(e) => setOmniAudioPrompt(e.target.value)}
-                placeholder="e.g. Heavy rain on umbrella, distant cello, vintage jazz crackle…"
-                rows={3}
-                style={{
-                  width: "100%",
-                  padding: 10,
-                  borderRadius: 10,
-                  background: "#111",
-                  color: "white",
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  resize: "vertical",
-                }}
-              />
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}>
-                GEMINI_API_KEY · gemini-omni-flash-preview（无 fps，原生帧率）；参考图可选。
-              </div>
+            <div style={{ marginTop: 12, fontSize: 12, opacity: 0.65 }}>
+              GEMINI_API_KEY · gemini-omni-flash-preview（纯视频；预览端点暂不支持音效 / generateAudio）；参考图可选。
             </div>
           ) : null}
 
