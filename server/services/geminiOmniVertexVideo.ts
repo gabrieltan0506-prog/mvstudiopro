@@ -1,12 +1,15 @@
 /**
- * TestLab · Gemini Omni 全模态视频（Vertex AI + @google/genai generateVideos）
- * 模型默认 gemini-omni-flash-preview，机房默认 us-central1。
+ * TestLab · Gemini Omni 全模态视频（@google/genai generateVideos）
+ * - 优先 Vertex IAM（location 默认 global）
+ * - Vertex 失败时 fallback 至 GEMINI_API_KEY（Consumer Gemini API）
+ * 模型默认 gemini-omni-flash-preview（可通过 VERTEX_OMNI_VIDEO_MODEL 覆盖）。
  */
 import { GoogleGenAI, ThinkingLevel, type GenerateVideosOperation } from "@google/genai";
 import { fetchRemoteAssetAsBase64 } from "./vertexMedia";
 
 export type OmniVideoResolution = "2K" | "4K";
 export type OmniVideoDurationSeconds = 30 | 60;
+export type OmniVideoAuthMode = "vertex" | "gemini_api";
 
 export type OmniVideoCreateInput = {
   prompt: string;
@@ -22,7 +25,7 @@ export function resolveOmniVideoModel() {
 }
 
 export function resolveOmniVideoLocation() {
-  return String(process.env.VERTEX_OMNI_VIDEO_LOCATION || "us-central1").trim() || "us-central1";
+  return String(process.env.VERTEX_OMNI_VIDEO_LOCATION || "global").trim() || "global";
 }
 
 function resolveVertexProjectId() {
@@ -31,6 +34,21 @@ function resolveVertexProjectId() {
   ).trim();
   if (!project) throw new Error("missing_GCP_PROJECT_ID_or_VERTEX_PROJECT_ID");
   return project;
+}
+
+export function canUseVertexOmni(): boolean {
+  const project = String(
+    process.env.GCP_PROJECT_ID || process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || "",
+  ).trim();
+  if (project) return true;
+  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
+  return Boolean(raw && raw !== "{}");
+}
+
+function resolveGeminiApiKey(): string {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
+  return apiKey;
 }
 
 function buildGoogleGenAiAuthOptionsFromEnv():
@@ -61,6 +79,10 @@ export function buildVertexOmniGenAiClient() {
   });
 }
 
+export function buildGeminiApiOmniClient() {
+  return new GoogleGenAI({ apiKey: resolveGeminiApiKey() });
+}
+
 function normalizeDurationSeconds(raw: number | undefined): OmniVideoDurationSeconds {
   const n = Number(raw);
   if (n >= 55) return 60;
@@ -79,25 +101,22 @@ function buildCombinedPrompt(prompt: string, audioPrompt?: string) {
   return `${visual}\n\n[Native audio direction]: ${audio}`;
 }
 
-export async function startOmniVideoGeneration(input: OmniVideoCreateInput) {
-  const ai = buildVertexOmniGenAiClient();
+type OmniGenerateParams = {
+  model: string;
+  source: { prompt: string; image?: { imageBytes: string; mimeType: string } };
+  config: Parameters<GoogleGenAI["models"]["generateVideos"]>[0]["config"];
+};
+
+function buildOmniGenerateParams(input: OmniVideoCreateInput): OmniGenerateParams {
   const model = resolveOmniVideoModel();
-  const location = resolveOmniVideoLocation();
   const durationSeconds = normalizeDurationSeconds(input.durationSeconds);
   const resolution = normalizeResolution(input.resolution);
   const aspectRatio = input.aspectRatio === "9:16" ? "9:16" : "16:9";
   const prompt = buildCombinedPrompt(input.prompt, input.audioPrompt);
 
-  const source: { prompt: string; image?: { imageBytes: string; mimeType: string } } = { prompt };
-  if (input.imageUrl?.trim()) {
-    const image = await fetchRemoteAssetAsBase64(input.imageUrl.trim());
-    source.image = {
-      imageBytes: image.base64,
-      mimeType: image.mimeType,
-    };
-  }
+  const source: OmniGenerateParams["source"] = { prompt };
 
-  const operation = await ai.models.generateVideos({
+  return {
     model,
     source,
     config: {
@@ -112,25 +131,110 @@ export async function startOmniVideoGeneration(input: OmniVideoCreateInput) {
         includeThoughts: false,
         thinkingLevel: ThinkingLevel.HIGH,
       },
-    } as Parameters<typeof ai.models.generateVideos>[0]["config"],
-  });
-
-  const taskId = String(operation.name || "").trim();
-  if (!taskId) throw new Error("omni_video_missing_operation_name");
-
-  return {
-    model,
-    location,
-    taskId,
-    durationSeconds,
-    resolution,
-    aspectRatio,
-    operation,
+    } as OmniGenerateParams["config"],
   };
 }
 
-export async function pollOmniVideoGeneration(taskId: string) {
-  const ai = buildVertexOmniGenAiClient();
+async function attachImageToSource(
+  source: OmniGenerateParams["source"],
+  imageUrl?: string,
+) {
+  if (!imageUrl?.trim()) return;
+  const image = await fetchRemoteAssetAsBase64(imageUrl.trim());
+  source.image = {
+    imageBytes: image.base64,
+    mimeType: image.mimeType,
+  };
+}
+
+async function invokeGenerateVideos(ai: GoogleGenAI, params: OmniGenerateParams) {
+  return ai.models.generateVideos({
+    model: params.model,
+    source: params.source,
+    config: params.config,
+  });
+}
+
+function extractImmediateVideo(operation: GenerateVideosOperation) {
+  const video = operation.response?.generatedVideos?.[0]?.video;
+  if (!video) return null;
+  const videoBytes = String(video.videoBytes || "").trim();
+  const videoUri = String(video.uri || "").trim();
+  if (!videoBytes && !videoUri) return null;
+  return {
+    videoBytes,
+    videoUri,
+    mimeType: String(video.mimeType || "video/mp4").trim() || "video/mp4",
+  };
+}
+
+async function startWithClient(
+  ai: GoogleGenAI,
+  input: OmniVideoCreateInput,
+  authMode: OmniVideoAuthMode,
+  location: string,
+) {
+  const params = buildOmniGenerateParams(input);
+  await attachImageToSource(params.source, input.imageUrl);
+
+  const operation = await invokeGenerateVideos(ai, params);
+  const immediate = Boolean(operation.done) ? extractImmediateVideo(operation) : null;
+  const taskId = String(operation.name || "").trim();
+
+  if (!taskId && !immediate) {
+    throw new Error("omni_video_missing_operation_name");
+  }
+
+  return {
+    model: params.model,
+    location,
+    authMode,
+    taskId: taskId || "",
+    durationSeconds: normalizeDurationSeconds(input.durationSeconds),
+    resolution: normalizeResolution(input.resolution),
+    aspectRatio: input.aspectRatio === "9:16" ? "9:16" : "16:9",
+    operation,
+    immediate,
+  };
+}
+
+export async function startOmniVideoGeneration(input: OmniVideoCreateInput) {
+  const location = resolveOmniVideoLocation();
+  const vertexErrors: string[] = [];
+
+  if (canUseVertexOmni()) {
+    try {
+      return await startWithClient(buildVertexOmniGenAiClient(), input, "vertex", location);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      vertexErrors.push(msg);
+      console.warn("[omni-video] Vertex 不可用，改 GEMINI_API_KEY:", msg);
+    }
+  }
+
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    const hint = vertexErrors.length ? vertexErrors.join("; ") : "missing_vertex_and_GEMINI_API_KEY";
+    throw new Error(hint);
+  }
+
+  return startWithClient(buildGeminiApiOmniClient(), input, "gemini_api", "gemini-api");
+}
+
+export async function pollOmniVideoGeneration(
+  taskId: string,
+  opts?: { authMode?: OmniVideoAuthMode },
+) {
+  const authMode = opts?.authMode;
+  const ai =
+    authMode === "gemini_api"
+      ? buildGeminiApiOmniClient()
+      : authMode === "vertex"
+        ? buildVertexOmniGenAiClient()
+        : canUseVertexOmni()
+          ? buildVertexOmniGenAiClient()
+          : buildGeminiApiOmniClient();
+
   const operation = await ai.operations.getVideosOperation({
     operation: { name: taskId } as GenerateVideosOperation,
   });
