@@ -629,15 +629,36 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           aspectRatio,
           resolution: resolution as OmniVideoResolution,
         });
+        let videoUrl = "";
+        let materialized = false;
+        if (started.immediate) {
+          if (started.immediate.videoBytes) {
+            const uploaded = await materializeGeneratedVideo(started.taskId, {
+              response: {
+                generatedVideos: [
+                  { video: { videoBytes: started.immediate.videoBytes, mimeType: started.immediate.mimeType } },
+                ],
+              },
+            }).catch(() => ({ videoUrl: "", materialized: false }));
+            videoUrl = uploaded.videoUrl || "";
+            materialized = Boolean(uploaded.materialized);
+          } else if (started.immediate.videoUri) {
+            videoUrl = started.immediate.videoUri;
+          }
+        }
+
         return res.status(200).json({
           ok: true,
           provider: "omni",
+          authMode: started.authMode,
           model: started.model,
           location: started.location,
           taskId: started.taskId,
           durationSeconds: started.durationSeconds,
           resolution: started.resolution,
           aspectRatio: started.aspectRatio,
+          videoUrl: videoUrl || null,
+          materialized,
         });
       } catch (error: any) {
         return res.status(502).json({
@@ -652,9 +673,12 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     if (op === "omniVideoTask") {
       const taskId = s(q.taskId || b.taskId || "").trim();
       if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
+      const authModeRaw = s(q.authMode || b.authMode || "").trim();
+      const authMode =
+        authModeRaw === "gemini_api" ? ("gemini_api" as const) : authModeRaw === "vertex" ? ("vertex" as const) : undefined;
 
       try {
-        const polled = await pollOmniVideoGeneration(taskId);
+        const polled = await pollOmniVideoGeneration(taskId, { authMode });
         let videoUrl = "";
         let materialized = false;
 
