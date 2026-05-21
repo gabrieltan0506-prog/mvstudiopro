@@ -623,7 +623,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       try {
         const started = await startOmniVideoGeneration({
           prompt,
-          audioPrompt: s(b.audioPrompt || b.audio_prompt || ""),
           imageUrl: imageUrl || undefined,
           durationSeconds: durationRaw,
           aspectRatio,
