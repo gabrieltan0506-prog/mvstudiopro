@@ -227,9 +227,14 @@ export default function TestLab() {
   const [editedImageUrl, setEditedImageUrl] = useState("");
 
   // Video
-  const [videoProvider, setVideoProvider] = useState<"google" | "kling" | "seedance">("google");
+  const [videoProvider, setVideoProvider] = useState<"google" | "omni" | "kling" | "seedance">("google");
   const [veoMode, setVeoMode] = useState<VeoMode>("pro");
   const [veoResolution, setVeoResolution] = useState("720p");
+  /** Gemini Omni（Vertex）：30s / 60s */
+  const [omniDurationSeconds, setOmniDurationSeconds] = useState<30 | 60>(30);
+  /** Gemini Omni：2K / 4K */
+  const [omniResolution, setOmniResolution] = useState<"2K" | "4K">("4K");
+  const [omniAudioPrompt, setOmniAudioPrompt] = useState("");
   /** Seedance 时长（秒，4–15，与 fal Seedance 一致） */
   const [seedanceDuration, setSeedanceDuration] = useState("10");
   const [klingVideoMode, setKlingVideoMode] = useState<KlingVideoMode>("pro");
@@ -464,7 +469,60 @@ export default function TestLab() {
 
     try {
       const inputImage = imageUrl || refImageUrl;
-      if (!inputImage) throw new Error("missing_reference_image");
+      if (!inputImage && videoProvider !== "omni") throw new Error("missing_reference_image");
+
+      if (videoProvider === "omni") {
+        const create = await fetchJsonish("/api/google?op=omniVideoCreate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            audioPrompt: omniAudioPrompt.trim() || undefined,
+            imageUrl: inputImage || undefined,
+            durationSeconds: omniDurationSeconds,
+            aspectRatio,
+            resolution: omniResolution,
+          }),
+        });
+        last = create;
+        setDebug({ ok: create.ok, action: "video:omni:create", ...snapshotHttpForDebug(create) });
+
+        const taskId = String(create?.json?.taskId || "");
+        if (!create.ok || !taskId) throw new Error("omni_video_create_failed");
+
+        setVideoTaskId(taskId);
+
+        const pollMax = omniDurationSeconds >= 60 && omniResolution === "4K" ? 240 : 160;
+        const pollIntervalMs = omniDurationSeconds >= 60 ? 5000 : 3500;
+
+        for (let i = 0; i < pollMax && !stopRef.current; i++) {
+          const poll = await fetchJsonish(
+            `/api/google?op=omniVideoTask&taskId=${encodeURIComponent(taskId)}`
+          );
+          last = poll;
+          setDebug({
+            ok: poll.ok,
+            action: "video:omni:poll",
+            attempt: i + 1,
+            taskId,
+            durationSeconds: omniDurationSeconds,
+            resolution: omniResolution,
+            ...snapshotHttpForDebug(poll),
+          });
+
+          const status = String(poll?.json?.status || "");
+          const url = String(poll?.json?.videoUrl || "");
+
+          if (url) {
+            setVideoUrl(url);
+            return;
+          }
+          if (status.toLowerCase() === "failed") throw new Error("omni_video_task_failed");
+          await sleep(pollIntervalMs);
+        }
+
+        throw new Error("omni_video_timeout");
+      }
 
       if (videoProvider === "google") {
         const provider = veoMode === "rapid" ? "rapid" : "pro";
@@ -1205,16 +1263,42 @@ export default function TestLab() {
               <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>引擎</div>
               <select
                 value={videoProvider}
-                onChange={(e) => setVideoProvider(e.target.value as "google" | "kling" | "seedance")}
+                onChange={(e) => setVideoProvider(e.target.value as "google" | "omni" | "kling" | "seedance")}
                 style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
               >
                 <option value="google">Google Veo</option>
+                <option value="omni">Gemini Omni (Vertex)</option>
                 <option value="seedance">Seedance 2.9 (fal)</option>
                 <option value="kling">Kling Video</option>
               </select>
             </div>
 
-            {videoProvider === "google" ? (
+            {videoProvider === "omni" ? (
+              <>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>时长</div>
+                  <select
+                    value={String(omniDurationSeconds)}
+                    onChange={(e) => setOmniDurationSeconds(Number(e.target.value) >= 55 ? 60 : 30)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="30">30 秒</option>
+                    <option value="60">60 秒</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>画质</div>
+                  <select
+                    value={omniResolution}
+                    onChange={(e) => setOmniResolution(e.target.value === "2K" ? "2K" : "4K")}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                  </select>
+                </div>
+              </>
+            ) : videoProvider === "google" ? (
               <>
                 <div>
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
@@ -1283,8 +1367,32 @@ export default function TestLab() {
             )}
           </div>
 
+          {videoProvider === "omni" ? (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>原生音效指令（可选，英文更佳）</div>
+              <textarea
+                value={omniAudioPrompt}
+                onChange={(e) => setOmniAudioPrompt(e.target.value)}
+                placeholder="e.g. Heavy rain on umbrella, distant cello, vintage jazz crackle…"
+                rows={3}
+                style={{
+                  width: "100%",
+                  padding: 10,
+                  borderRadius: 10,
+                  background: "#111",
+                  color: "white",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  resize: "vertical",
+                }}
+              />
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}>
+                Vertex · gemini-omni-flash-preview · us-central1；参考图可选（纯文生视频亦可）。
+              </div>
+            </div>
+          ) : null}
+
           <div style={{ marginTop: 12, opacity: 0.8 }}>
-            当前参考图：{refImageUrl ? <code>{refImageUrl}</code> : "未上传，也未从图像生成结果中设置"}
+            当前参考图：{refImageUrl || imageUrl ? <code>{refImageUrl || imageUrl}</code> : videoProvider === "omni" ? "无（纯提示词生成）" : "未上传，也未从图像生成结果中设置"}
           </div>
 
           <button
