@@ -102,7 +102,7 @@ async function refreshRuntimeModeOverride() {
 }
 function isStorageFullError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
-  return /\bENOSPC\b|no space left on device/i.test(message);
+  return /\bENOSPC\b|no space left on device|Invalid string length|growth_store_json_too_large/i.test(message);
 }
 
 function withJitter(baseMs: number) {
