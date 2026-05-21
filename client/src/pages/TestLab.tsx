@@ -235,6 +235,7 @@ export default function TestLab() {
   /** Gemini Omni：2K / 4K */
   const [omniResolution, setOmniResolution] = useState<"2K" | "4K">("4K");
   const [omniAudioPrompt, setOmniAudioPrompt] = useState("");
+  const [omniAuthMode, setOmniAuthMode] = useState<"vertex" | "gemini_api" | "">("");
   /** Seedance 时长（秒，4–15，与 fal Seedance 一致） */
   const [seedanceDuration, setSeedanceDuration] = useState("10");
   const [klingVideoMode, setKlingVideoMode] = useState<KlingVideoMode>("pro");
@@ -490,14 +491,28 @@ export default function TestLab() {
         const taskId = String(create?.json?.taskId || "");
         if (!create.ok || !taskId) throw new Error("omni_video_create_failed");
 
+        const authMode = String(create?.json?.authMode || "");
+        if (authMode === "vertex" || authMode === "gemini_api") setOmniAuthMode(authMode);
+
+        const immediateUrl = String(create?.json?.videoUrl || "");
+        if (immediateUrl) {
+          setVideoTaskId(taskId);
+          setVideoUrl(immediateUrl);
+          return;
+        }
+
         setVideoTaskId(taskId);
 
         const pollMax = omniDurationSeconds >= 60 && omniResolution === "4K" ? 240 : 160;
         const pollIntervalMs = omniDurationSeconds >= 60 ? 5000 : 3500;
+        const authQ =
+          authMode === "vertex" || authMode === "gemini_api"
+            ? `&authMode=${encodeURIComponent(authMode)}`
+            : "";
 
         for (let i = 0; i < pollMax && !stopRef.current; i++) {
           const poll = await fetchJsonish(
-            `/api/google?op=omniVideoTask&taskId=${encodeURIComponent(taskId)}`
+            `/api/google?op=omniVideoTask&taskId=${encodeURIComponent(taskId)}${authQ}`
           );
           last = poll;
           setDebug({
@@ -1386,7 +1401,7 @@ export default function TestLab() {
                 }}
               />
               <div style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}>
-                Vertex · gemini-omni-flash-preview · us-central1；参考图可选（纯文生视频亦可）。
+                Vertex global（失败自动 fallback GEMINI_API_KEY）· gemini-omni-flash-preview；参考图可选。
               </div>
             </div>
           ) : null}
