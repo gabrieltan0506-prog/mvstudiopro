@@ -1401,7 +1401,7 @@ export default function TestLab() {
                 }}
               />
               <div style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}>
-                Vertex global（失败自动 fallback GEMINI_API_KEY）· gemini-omni-flash-preview；参考图可选。
+                GEMINI_API_KEY · gemini-omni-flash-preview（无 fps，原生帧率）；参考图可选。
               </div>
             </div>
           ) : null}

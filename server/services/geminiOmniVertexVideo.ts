@@ -1,8 +1,9 @@
 /**
  * TestLab · Gemini Omni 全模态视频（@google/genai generateVideos）
- * - 优先 Vertex IAM（location 默认 global）
- * - Vertex 失败时 fallback 至 GEMINI_API_KEY（Consumer Gemini API）
- * 模型默认 gemini-omni-flash-preview（可通过 VERTEX_OMNI_VIDEO_MODEL 覆盖）。
+ * - 仅使用 Gemini API Key (GEMINI_API_KEY)
+ * - 移除了 Vertex AI 调用 Gemini Omni 的方式
+ * - 移除了不支持的 fps 属性
+ * 模型默认 gemini-omni-flash-preview。
  */
 import { GoogleGenAI, ThinkingLevel, type GenerateVideosOperation } from "@google/genai";
 import { fetchRemoteAssetAsBase64 } from "./vertexMedia";
@@ -24,59 +25,10 @@ export function resolveOmniVideoModel() {
   return String(process.env.VERTEX_OMNI_VIDEO_MODEL || "gemini-omni-flash-preview").trim();
 }
 
-export function resolveOmniVideoLocation() {
-  return String(process.env.VERTEX_OMNI_VIDEO_LOCATION || "global").trim() || "global";
-}
-
-function resolveVertexProjectId() {
-  const project = String(
-    process.env.GCP_PROJECT_ID || process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || "",
-  ).trim();
-  if (!project) throw new Error("missing_GCP_PROJECT_ID_or_VERTEX_PROJECT_ID");
-  return project;
-}
-
-export function canUseVertexOmni(): boolean {
-  const project = String(
-    process.env.GCP_PROJECT_ID || process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || "",
-  ).trim();
-  if (project) return true;
-  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-  return Boolean(raw && raw !== "{}");
-}
-
 function resolveGeminiApiKey(): string {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
   return apiKey;
-}
-
-function buildGoogleGenAiAuthOptionsFromEnv():
-  | { credentials: { client_email: string; private_key: string } }
-  | undefined {
-  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-  if (!raw || raw === "{}") return undefined;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const email = parsed.client_email;
-    const pk = parsed.private_key;
-    if (typeof email === "string" && typeof pk === "string") {
-      return { credentials: { client_email: email, private_key: pk.replace(/\\n/g, "\n") } };
-    }
-  } catch {
-    /* ignore */
-  }
-  return undefined;
-}
-
-export function buildVertexOmniGenAiClient() {
-  const authOpts = buildGoogleGenAiAuthOptionsFromEnv();
-  return new GoogleGenAI({
-    vertexai: true,
-    project: resolveVertexProjectId(),
-    location: resolveOmniVideoLocation(),
-    ...(authOpts ? { googleAuthOptions: authOpts } : {}),
-  });
 }
 
 export function buildGeminiApiOmniClient() {
@@ -124,7 +76,6 @@ function buildOmniGenerateParams(input: OmniVideoCreateInput): OmniGenerateParam
       aspectRatio,
       resolution,
       durationSeconds,
-      fps: 30,
       generateAudio: true,
       enhancePrompt: true,
       thinkingConfig: {
@@ -168,12 +119,13 @@ function extractImmediateVideo(operation: GenerateVideosOperation) {
   };
 }
 
-async function startWithClient(
-  ai: GoogleGenAI,
-  input: OmniVideoCreateInput,
-  authMode: OmniVideoAuthMode,
-  location: string,
-) {
+export async function startOmniVideoGeneration(input: OmniVideoCreateInput) {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("missing_GEMINI_API_KEY");
+  }
+
+  const ai = buildGeminiApiOmniClient();
   const params = buildOmniGenerateParams(input);
   await attachImageToSource(params.source, input.imageUrl);
 
@@ -187,8 +139,8 @@ async function startWithClient(
 
   return {
     model: params.model,
-    location,
-    authMode,
+    location: "gemini-api",
+    authMode: "gemini_api" as const,
     taskId: taskId || "",
     durationSeconds: normalizeDurationSeconds(input.durationSeconds),
     resolution: normalizeResolution(input.resolution),
@@ -198,42 +150,11 @@ async function startWithClient(
   };
 }
 
-export async function startOmniVideoGeneration(input: OmniVideoCreateInput) {
-  const location = resolveOmniVideoLocation();
-  const vertexErrors: string[] = [];
-
-  if (canUseVertexOmni()) {
-    try {
-      return await startWithClient(buildVertexOmniGenAiClient(), input, "vertex", location);
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      vertexErrors.push(msg);
-      console.warn("[omni-video] Vertex 不可用，改 GEMINI_API_KEY:", msg);
-    }
-  }
-
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) {
-    const hint = vertexErrors.length ? vertexErrors.join("; ") : "missing_vertex_and_GEMINI_API_KEY";
-    throw new Error(hint);
-  }
-
-  return startWithClient(buildGeminiApiOmniClient(), input, "gemini_api", "gemini-api");
-}
-
 export async function pollOmniVideoGeneration(
   taskId: string,
   opts?: { authMode?: OmniVideoAuthMode },
 ) {
-  const authMode = opts?.authMode;
-  const ai =
-    authMode === "gemini_api"
-      ? buildGeminiApiOmniClient()
-      : authMode === "vertex"
-        ? buildVertexOmniGenAiClient()
-        : canUseVertexOmni()
-          ? buildVertexOmniGenAiClient()
-          : buildGeminiApiOmniClient();
+  const ai = buildGeminiApiOmniClient();
 
   const operation = await ai.operations.getVideosOperation({
     operation: { name: taskId } as GenerateVideosOperation,

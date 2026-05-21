@@ -609,7 +609,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok:true, status, videoUrl: videoUrl || null, materialized, raw:r.json });
     }
 
-    // ---------------- Gemini Omni (Vertex · generateVideos) ----------------
+    // ---------------- Gemini Omni (GEMINI_API_KEY · generateVideos) ----------------
     if (op === "omniVideoCreate") {
       if (req.method !== "POST") return res.status(400).json({ ok: false, error: "method_not_allowed" });
       const prompt = s(b.prompt || q.prompt || "").trim();
