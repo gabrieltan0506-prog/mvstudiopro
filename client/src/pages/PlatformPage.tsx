@@ -13,8 +13,8 @@ import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
-import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
+import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -103,7 +103,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
-import PlatformTopicCoverDrProGpt54DebugPanel from "@/components/PlatformTopicCoverDrProGpt54DebugPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
@@ -207,24 +206,6 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
 function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
   const raw = typeof url === "string" ? url.trim().toLowerCase() : "";
   return !raw || raw.includes("timeout") || raw.includes("error");
-}
-
-/**
- * 新任务入队时不要清空 Debug（否则第二张、第二次生成会先出现「DR Pro 整栏被清掉」直到轮询有数据）。
- * 在上一笔日志后追加分割提示与占位行；首轮 poll 拿到 imageGenFlowLog 后仍会整份替换为服务端日志。
- */
-function appendTopicCoverDebugNewJobBanner(
-  prev: string[],
-  kind: "cover" | "bundle" | "composite2x4",
-  sceneHint: string,
-): string[] {
-  const ts = new Date().toISOString();
-  const tail = sceneHint.trim().replace(/\s+/g, " ").slice(0, 80);
-  const label = kind === "bundle" ? "套装" : kind === "composite2x4" ? "2×4/八格" : "封面";
-  const banner = `${ts}  [客户端] ─── 新任务：${label}${tail ? ` · ${tail}` : ""} ───`;
-  const hold = `${ts}  [步骤0.5·DR-Pro] （客户端）等待服务端本轮日志（上方可对照上一笔；下一则服务端行写入后本区会切换为本轮完整流水）`;
-  if (prev.length === 0) return [hold];
-  return [...prev, banner, hold];
 }
 
 const WINDOW_OPTIONS = [
@@ -1558,18 +1539,8 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
-  /** Debug：选题封面管线 `imageGenFlowLog`（轮询中与完成后保留，对照 DR-Pro → GPT 5.4） */
-  const [topicCoverPipelineFlowLogDebug, setTopicCoverPipelineFlowLogDebug] = useState<string[]>([]);
   /** Debug：2×4 分镜 / 八格图文 合成 job（含 progressJobId、轮询次数） */
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
-  const topicCoverDebugPollCaption = useMemo(() => {
-    const label = topicImageJobPollTrace?.label ?? compositeJobPollTrace?.label;
-    const step = topicImageJobPollTrace?.currentStep ?? compositeJobPollTrace?.currentStep;
-    const jid = topicImageJobPollTrace?.jobId ?? compositeJobPollTrace?.jobId;
-    const head = label && step ? `${label} · ${step}` : label || step || "";
-    if (!jid?.trim()) return head || undefined;
-    return head ? `${head} · job ${jid}` : `job ${jid}`;
-  }, [topicImageJobPollTrace, compositeJobPollTrace]);
   /** Stage 2：有 platformContent 物件但选题与变现皆 0 条 — 假成功，须与真完成区分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
@@ -2103,7 +2074,6 @@ export default function PlatformPage() {
         ...(supervisorToken ? { supervisorToken } : {}),
         compositeImageEngine: platformComposite2x4Engine,
       });
-      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "bundle", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2119,7 +2089,6 @@ export default function PlatformPage() {
           onPoll: ({ attempt, output }) => {
             const out = output as { imageGenFlowLog?: string[] } | undefined;
             const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
-            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
             const tail =
               flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
@@ -2150,7 +2119,6 @@ export default function PlatformPage() {
         const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
           ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
           : [];
-        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
         setTopicImageJobPollTrace((prev) => {
           if (!prev || prev.jobId !== jobId) return prev;
           let lines = prev.lines;
@@ -2199,7 +2167,6 @@ export default function PlatformPage() {
       }
       const o = raw as Record<string, unknown>;
       const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
-      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
       const compositeImageUrl = String(o.compositeImageUrl ?? "").trim() || null;
@@ -2291,7 +2258,6 @@ export default function PlatformPage() {
         ...(supervisorToken ? { supervisorToken } : {}),
         ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
       });
-      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "cover", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2307,7 +2273,6 @@ export default function PlatformPage() {
           onPoll: ({ attempt, output }) => {
             const out = output as { imageGenFlowLog?: string[] } | undefined;
             const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
-            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
             const tail =
               flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
@@ -2338,7 +2303,6 @@ export default function PlatformPage() {
         const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
           ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
           : [];
-        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
         setTopicImageJobPollTrace((prev) => {
           if (!prev || prev.jobId !== jobId) return prev;
           let lines = prev.lines;
@@ -2381,7 +2345,6 @@ export default function PlatformPage() {
       }
       const o = raw as Record<string, unknown>;
       const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
-      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
       /** job output 若仅缺 success（序列化/进度合并），有 URL 也应写入 platformImageMap */
@@ -2718,13 +2681,6 @@ export default function PlatformPage() {
       const compositeDbgLabel =
         input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
-        setTopicCoverPipelineFlowLogDebug((p) =>
-          appendTopicCoverDebugNewJobBanner(
-            p,
-            "composite2x4",
-            `${input.sceneId} ${String(input.title ?? "").slice(0, 60)}`,
-          ),
-        );
         setCompositeJobPollTrace({
           jobId: pid,
           label: compositeDbgLabel,
@@ -2763,9 +2719,6 @@ export default function PlatformPage() {
       const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
         ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
         : [];
-      if (serverLines.length > 0) {
-        setTopicCoverPipelineFlowLogDebug(serverLines);
-      }
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
       ];
@@ -2900,7 +2853,7 @@ export default function PlatformPage() {
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
         const supervisorTok = getSupervisorTrpcToken();
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-        const compositeDrProExtras = {
+        const compositeSupervisorExtras = {
           ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
             ? { enableTopicCoverDeepResearchPro: true as const }
             : {}),
@@ -2941,7 +2894,7 @@ export default function PlatformPage() {
                 ...optionalBoundCreationRecordId(),
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                 progressJobId,
-                ...compositeDrProExtras,
+                ...compositeSupervisorExtras,
                 bulkCompositePack: { packSceneIds, sequentialSlot: slotIndex },
                 compositeImageEngine: platformComposite2x4Engine,
               }),
@@ -2991,7 +2944,6 @@ export default function PlatformPage() {
                   const flow = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)
                     ? ((output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
                     : [];
-                  if (flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
                 },
               });
               const jo = j.output as { compositeImageUrl?: string; imageGenFlowLog?: string[] } | undefined;
@@ -3085,9 +3037,6 @@ export default function PlatformPage() {
         const n = compositeLivePollAttemptRef.current;
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
         const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
-        if (log.length > 0) {
-          setTopicCoverPipelineFlowLogDebug([...log]);
-        }
         const ts = new Date().toISOString();
         const last = log.length > 0 ? String(log[log.length - 1]) : "";
 
@@ -5492,21 +5441,6 @@ export default function PlatformPage() {
               ) : null}
 
               {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
-              {debugMode &&
-              (topicCoverPipelineFlowLogDebug.length > 0 ||
-                topicImageJobPollTrace ||
-                (compositeJobPollTrace && compositeMutationBusy)) ? (
-                <div className="mt-4">
-                  <PlatformTopicCoverDrProGpt54DebugPanel
-                    lines={topicCoverPipelineFlowLogDebug}
-                    pollLabel={topicCoverDebugPollCaption}
-                    jobRunning={Boolean(
-                      (topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus) ||
-                        (compositeJobPollTrace && compositeMutationBusy),
-                    )}
-                  />
-                </div>
-              ) : null}
             </div>
           </section>
         ) : null}
@@ -5943,21 +5877,6 @@ export default function PlatformPage() {
                   )}
                 </div>
                 {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
-              {debugMode &&
-              (topicCoverPipelineFlowLogDebug.length > 0 ||
-                topicImageJobPollTrace ||
-                (compositeJobPollTrace && compositeMutationBusy)) ? (
-                <div className="mt-4">
-                  <PlatformTopicCoverDrProGpt54DebugPanel
-                    lines={topicCoverPipelineFlowLogDebug}
-                    pollLabel={topicCoverDebugPollCaption}
-                    jobRunning={Boolean(
-                      (topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus) ||
-                        (compositeJobPollTrace && compositeMutationBusy),
-                    )}
-                  />
-                </div>
-              ) : null}
               </div>
             ) : null}
 
@@ -6574,7 +6493,7 @@ export default function PlatformPage() {
                             const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
                             const supervisorTok = getSupervisorTrpcToken();
                             const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-                            const compositeDrProExtras = {
+                            const compositeSupervisorExtras = {
                               ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                 ? { enableTopicCoverDeepResearchPro: true as const }
                                 : {}),
@@ -6604,7 +6523,7 @@ export default function PlatformPage() {
                               ...optionalBoundCreationRecordId(),
                               imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                               progressJobId: newPlatformCompositeProgressJobId(),
-                              ...compositeDrProExtras,
+                              ...compositeSupervisorExtras,
                               compositeImageEngine: platformComposite2x4Engine,
                             });
                           };
@@ -7332,13 +7251,13 @@ export default function PlatformPage() {
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const supervisorTok = getSupervisorTrpcToken();
                                 const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-                                const compositeDrProExtras = {
-                                  ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
-                                    ? { enableTopicCoverDeepResearchPro: true as const }
-                                    : {}),
-                                  ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-                                  ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
-                                };
+                            const compositeSupervisorExtras = {
+                              ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
+                                ? { enableTopicCoverDeepResearchPro: true as const }
+                                : {}),
+                              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                              ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+                            };
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
@@ -7349,7 +7268,7 @@ export default function PlatformPage() {
                                     ...optionalBoundCreationRecordId(),
                                     imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                                     progressJobId: newPlatformCompositeProgressJobId(),
-                                    ...compositeDrProExtras,
+                                    ...compositeSupervisorExtras,
                                     compositeImageEngine: platformComposite2x4Engine,
                                   }),
                                 ).catch(() => {});
