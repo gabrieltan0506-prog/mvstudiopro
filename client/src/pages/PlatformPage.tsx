@@ -368,7 +368,82 @@ type ClientJobPollTrace = {
   terminalStatus?: string;
   /** 进行中：仅保留一行「当前步骤」，不把整段 imageGenFlowLog / 轮询流水刷进面板 */
   currentStep?: string;
+  /** 英文化 / 模型翻译阶段轮询次数（由 imageGenFlowLog 阶段推断） */
+  translationPollCount?: number;
+  /** 封面·分镜像素生成阶段轮询次数 */
+  imageGenPollCount?: number;
+  translationStep?: string;
+  imageGenStep?: string;
 };
+
+function isTranslationFlowLine(line: string): boolean {
+  return /英文化|GPT54|GPT 5\.4|Gemini.*Flash|翻译|Vertex.*Flash|extractChineseVisualBrief|\[GPT54·翻译\]|骨架·中文视觉/i.test(
+    line,
+  );
+}
+
+function isImageGenFlowLine(line: string): boolean {
+  return /GPT-IMAGE|生图|出图|封面·像素|2×4·|fal|OhMyGPT|EvoLink|Nano Banana|FAL·|像素\]|compositeImageUrl|Vertex.*image|gpt_image2/i.test(
+    line,
+  );
+}
+
+function splitPollCountsFromFlow(
+  attempt: number,
+  flow: string[],
+  label?: string,
+): Pick<
+  ClientJobPollTrace,
+  "translationPollCount" | "imageGenPollCount" | "translationStep" | "imageGenStep"
+> {
+  const transLines = flow.filter(isTranslationFlowLine);
+  const imgLines = flow.filter(isImageGenFlowLine);
+  const trimTail = (s: string) => String(s || "").replace(/\s+/g, " ").slice(0, 140);
+  const lastTrans = transLines.length ? trimTail(transLines[transLines.length - 1]!) : undefined;
+  const lastImg = imgLines.length ? trimTail(imgLines[imgLines.length - 1]!) : undefined;
+  const compositeOnly = /2×4|八格|分镜/.test(String(label || ""));
+
+  if (transLines.length === 0 && (imgLines.length > 0 || compositeOnly)) {
+    const tail = lastImg || (flow.length ? trimTail(flow[flow.length - 1]!) : undefined);
+    return {
+      translationPollCount: 0,
+      imageGenPollCount: attempt,
+      translationStep: undefined,
+      imageGenStep: tail,
+    };
+  }
+  if (imgLines.length === 0) {
+    return {
+      translationPollCount: attempt,
+      imageGenPollCount: 0,
+      translationStep: lastTrans,
+      imageGenStep: undefined,
+    };
+  }
+  const firstImgIdx = flow.findIndex(isImageGenFlowLine);
+  const transPhasePolls = Math.max(1, Math.min(attempt, firstImgIdx >= 0 ? firstImgIdx + 1 : 1));
+  return {
+    translationPollCount: transPhasePolls,
+    imageGenPollCount: Math.max(0, attempt - transPhasePolls),
+    translationStep: lastTrans,
+    imageGenStep: lastImg,
+  };
+}
+
+function applyFlowLogToPollTrace(
+  prev: ClientJobPollTrace,
+  attempt: number,
+  flow: string[],
+): ClientJobPollTrace {
+  const split = splitPollCountsFromFlow(attempt, flow, prev.label);
+  const phaseStep = split.imageGenStep || split.translationStep;
+  return {
+    ...prev,
+    pollCount: attempt,
+    ...split,
+    currentStep: phaseStep ? `第 ${attempt} 次 · ${phaseStep}` : `轮询 · ${attempt} 次`,
+  };
+}
 
 function pickActiveStage2SubStepOneLine(contentDebug: Record<string, unknown> | null | undefined): string | null {
   const bp = contentDebug?.buildPlatformContent as
@@ -2035,41 +2110,101 @@ export default function PlatformPage() {
   );
 
   const flyJobsPollDebugPanel = useMemo(() => {
-    const traces = [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace].filter(
+    const imageTraces = [topicImageJobPollTrace, compositeJobPollTrace].filter(
       Boolean,
     ) as ClientJobPollTrace[];
-    if (traces.length === 0) return null;
+    const hasContent = Boolean(contentJobPollTrace);
+    if (imageTraces.length === 0 && !hasContent) return null;
 
-    const totalPolls = traces.reduce((sum, t) => sum + t.pollCount, 0);
-    const showFailureLog = traces.some((t) => {
-      if (t.lines.length === 0) return false;
-      if (t.terminalStatus === "failed" || t.terminalStatus === "client_error") return true;
-      if (t.terminalStatus === "succeeded")
-        return t.lines.some((ln) => /无有效|无 output|异常|失败|✗/i.test(ln));
-      return true;
-    });
-
-    const overviewText = traces
-      .map((t) => {
+    const renderTraceRows = (
+      traces: ClientJobPollTrace[],
+      pick: (t: ClientJobPollTrace) => { count: number; step?: string },
+    ) =>
+      traces.map((t) => {
+        const { count, step } = pick(t);
         const tail = t.terminalStatus ? `终态 ${t.terminalStatus}` : "进行中";
-        return `${t.label} · jobId=${t.jobId} · ${t.pollCount} 次 · ${tail}`;
-      })
-      .join("  ·  ");
+        return `${t.label} · jobId=${t.jobId} · ${count} 次 · ${step ? `${step} · ` : ""}${tail}`;
+      });
+
+    const translationTotal = imageTraces.reduce(
+      (sum, t) => sum + (t.translationPollCount ?? (t.pollCount > 0 ? t.pollCount : 0)),
+      0,
+    );
+    const imageGenTotal = imageTraces.reduce(
+      (sum, t) => sum + (t.imageGenPollCount ?? (t.pollCount > 0 ? t.pollCount : 0)),
+      0,
+    );
+    const translationOverview = renderTraceRows(imageTraces, (t) => ({
+      count: t.translationPollCount ?? 0,
+      step: t.translationStep,
+    }));
+    const imageGenOverview = renderTraceRows(imageTraces, (t) => ({
+      count: t.imageGenPollCount ?? t.pollCount,
+      step: t.imageGenStep || t.currentStep,
+    }));
+
+    const showFailureLog = [...imageTraces, ...(contentJobPollTrace ? [contentJobPollTrace] : [])].some(
+      (t) => {
+        if (t.lines.length === 0) return false;
+        if (t.terminalStatus === "failed" || t.terminalStatus === "client_error") return true;
+        if (t.terminalStatus === "succeeded")
+          return t.lines.some((ln) => /无有效|无 output|异常|失败|✗/i.test(ln));
+        return true;
+      },
+    );
 
     return (
-      <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.05)] p-4">
+      <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.05)] p-4 space-y-4">
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">Fly Jobs · 轮询</div>
-        <p className="mt-2 text-[11px] leading-relaxed text-[#d7d0ef]">
-          合计轮询 <span className="font-semibold text-white tabular-nums">{totalPolls}</span> 次
-          <span className="text-gray-500">
-            ｜每行均含 <span className="text-gray-300">jobId</span>（可复制到 Fly 日志或 <code className="text-gray-400">GET /api/jobs/&lt;id&gt;</code>）
-          </span>
-          <span className="text-gray-500"> · Stage 2 文案／封面／2×4 合成各一行；失败时下方展开完整流水</span>
+        <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
+          英文化与生图分开展示；每行均含 <span className="text-gray-300">jobId</span>（可复制到 Fly 日志或{" "}
+          <code className="text-gray-400">GET /api/jobs/&lt;id&gt;</code>）
         </p>
-        <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">{overviewText}</p>
+
+        {imageTraces.length > 0 ? (
+          <div className="rounded-xl border border-[#c4b5fd]/25 bg-[rgba(99,102,241,0.08)] p-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#c4b5fd]">
+              英文化 · 模型翻译
+            </div>
+            <p className="mt-1 text-[11px] text-[#d7d0ef]">
+              合计轮询{" "}
+              <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次（GPT 5.4 →
+              Gemini Flash 等）
+            </p>
+            <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
+              {translationOverview.join("  ·  ")}
+            </p>
+          </div>
+        ) : null}
+
+        {imageTraces.length > 0 ? (
+          <div className="rounded-xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#8cefff]">
+              生图 · 封面与分镜
+            </div>
+            <p className="mt-1 text-[11px] text-[#d7d0ef]">
+              合计轮询 <span className="font-semibold tabular-nums text-white">{imageGenTotal}</span> 次（GPT-IMAGE-2
+              / EvoLink / NB2 等）
+            </p>
+            <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
+              {imageGenOverview.join("  ·  ")}
+            </p>
+          </div>
+        ) : null}
+
+        {contentJobPollTrace ? (
+          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-400">Stage 2 · 专属文案</div>
+            <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
+              {contentJobPollTrace.label} · jobId={contentJobPollTrace.jobId} · {contentJobPollTrace.pollCount} 次 ·{" "}
+              {contentJobPollTrace.terminalStatus ? `终态 ${contentJobPollTrace.terminalStatus}` : "进行中"}
+            </p>
+          </div>
+        ) : null}
+
         {showFailureLog ? (
-          <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
-            {traces
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
+            {[...imageTraces, ...(contentJobPollTrace ? [contentJobPollTrace] : [])]
               .filter((t) => t.lines.length > 0)
               .map((t) => `── ${t.label} · ${t.jobId} ──\n${t.lines.join("\n")}`)
               .join("\n\n")}
@@ -2322,11 +2457,7 @@ export default function PlatformPage() {
               flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
               prev && prev.jobId === jobId
-                ? {
-                    ...prev,
-                    pollCount: attempt,
-                    currentStep: tail ? `第 ${attempt} 次 · ${tail}` : `轮询 · ${attempt} 次`,
-                  }
+                ? applyFlowLogToPollTrace(prev, attempt, flow ?? [])
                 : prev,
             );
           },
@@ -2707,6 +2838,115 @@ export default function PlatformPage() {
     toast.success(`已生成 ${successCount}/${scenes.length} 张图文封面单帧（共消耗 ${platformBulkGraphicCost} 点）`);
   };
 
+  const updateCompositeFlowSnapshotFromPoll = useCallback(
+    (
+      ctx: NonNullable<typeof compositeSheetLivePollCtxRef.current>,
+      attempt: number,
+      status: string,
+      log: string[],
+    ) => {
+      const ts = new Date().toISOString();
+      const last = log.length > 0 ? String(log[log.length - 1]) : "";
+      setPlatformImageGenFlowSnapshots((prev) => {
+        const opId = ctx.localOpId;
+        const existing = prev.find(
+          (p) => String(p.meta?.localOpId || "").trim() === opId && p.kind === "composite_2x4",
+        );
+        const kept =
+          existing?.lines?.filter((ln) => !/\[实时进度\] HTTP \d+ 次 · status=/.test(ln)) ?? [];
+        const baseLines =
+          kept.length > 0
+            ? kept
+            : buildCompositeImageGenPendingLines({
+                kind: ctx.kind,
+                sceneId: ctx.sceneId,
+                title: (ctx.title || "（未命名）").slice(0, 240),
+                progressJobId: ctx.jobId,
+              });
+        const lines = [...baseLines, `${ts}  [实时进度] HTTP ${attempt} 次 · status=${status}`];
+        const priorMeta =
+          existing?.meta && typeof existing.meta === "object" ? { ...existing.meta } : {};
+        return upsertPlatformImageFlowSnapshot(prev, {
+          at: ts,
+          kind: "composite_2x4",
+          lines,
+          meta: {
+            ...priorMeta,
+            localOpId: opId,
+            apiKind: ctx.kind,
+            sceneId: ctx.sceneId,
+            title: ctx.title.slice(0, 80),
+            pending: status === "running" || status === "queued",
+            liveProgressJobId: ctx.jobId,
+            liveCompositeFlowTail: last,
+            serverFlowLogEntries: log.length,
+          },
+        });
+      });
+    },
+    [],
+  );
+
+  const pollCompositeProgressJob = useCallback(
+    async (ctx: NonNullable<typeof compositeSheetLivePollCtxRef.current>) => {
+      try {
+        const j = await pollJobUntilTerminal(ctx.jobId, {
+          intervalMs: compositeSheetLivePollIntervalMs,
+          maxWaitMs: 28 * 60_000,
+          adaptiveBackoffAfterAttempts: 36,
+          maxIntervalMs: 8000,
+          onPoll: ({ attempt, output, status }) => {
+            const log = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)
+              ? ((output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
+              : [];
+            setCompositeJobPollTrace((prev) =>
+              prev && prev.jobId === ctx.jobId ? applyFlowLogToPollTrace(prev, attempt, log) : prev,
+            );
+            updateCompositeFlowSnapshotFromPoll(ctx, attempt, status, log);
+          },
+        });
+        const out = j.output as
+          | { compositeImageUrl?: string; imageGenFlowLog?: string[]; error?: string }
+          | undefined;
+        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
+        setCompositeJobPollTrace((prev) =>
+          prev && prev.jobId === ctx.jobId
+            ? {
+                ...applyFlowLogToPollTrace(prev, Math.max(prev.pollCount, 1), log),
+                terminalStatus: j.status,
+                currentStep: j.status === "succeeded" ? "终态 succeeded" : "终态 failed",
+              }
+            : prev,
+        );
+        if (j.status === "succeeded" && out?.compositeImageUrl) {
+          if (ctx.kind === "storyboard_sheet_portrait" || ctx.kind === "storyboard_sheet_landscape") {
+            setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: out.compositeImageUrl! }));
+          } else {
+            setPlatformXhsNoteMap((p) => ({ ...p, [ctx.sceneId]: out.compositeImageUrl! }));
+          }
+          if (!compositeBatchSilentUiRef.current) {
+            toast.success("2×4 合成成功（异步轮询）");
+          }
+        } else if (j.status === "failed") {
+          if (!compositeBatchSilentUiRef.current) {
+            toast.error(`2×4 合成失败: ${out?.error || j.error || "未知错误"}`);
+          }
+        }
+      } catch {
+        setCompositeJobPollTrace((prev) =>
+          prev && prev.jobId === ctx.jobId
+            ? { ...prev, terminalStatus: "client_error", currentStep: "客户端轮询异常" }
+            : prev,
+        );
+      } finally {
+        setCompositeAwaitingJobTerminal(false);
+        setPendingCompositeSheet(null);
+        compositeSheetLivePollCtxRef.current = null;
+      }
+    },
+    [compositeSheetLivePollIntervalMs, updateCompositeFlowSnapshotFromPoll],
+  );
+
   const generatePlatformCompositeSheetMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
     onMutate: (input) => {
       setPendingCompositeSheet({ sceneId: input.sceneId, kind: input.kind });
@@ -2806,6 +3046,10 @@ export default function PlatformPage() {
         }
       } else if ((res as any).isAsync) {
         setCompositeAwaitingJobTerminal(true);
+        const pollCtx = compositeSheetLivePollCtxRef.current;
+        if (pollCtx?.jobId) {
+          void pollCompositeProgressJob(pollCtx);
+        }
       }
     },
     onError: (error, variables, ctx) => {
@@ -2854,10 +3098,20 @@ export default function PlatformPage() {
       if (asyncWaiting) {
         return;
       }
+      setCompositeJobPollTrace((prev) =>
+        prev
+          ? {
+              ...prev,
+              pollCount: Math.max(prev.pollCount, 1),
+              imageGenPollCount: Math.max(prev.imageGenPollCount ?? 0, 1),
+              terminalStatus: "succeeded",
+              currentStep: "终态 succeeded（同步返回）",
+            }
+          : null,
+      );
       setCompositeAwaitingJobTerminal(false);
       setPendingCompositeSheet(null);
       compositeSheetLivePollCtxRef.current = null;
-      setCompositeJobPollTrace(null);
     },
   });
 
@@ -2980,19 +3234,44 @@ export default function PlatformPage() {
             );
             setCompositeAwaitingJobTerminal(false);
             try {
+              const batchCompositeDbgLabel =
+                compositeKind === "xiaohongshu_dual_note"
+                  ? "图文笔记 · 2×4 八格合成"
+                  : "分镜图 · 2×4 宽幅合成";
               const j = await pollJobUntilTerminal(pollJobId, {
                 intervalMs: compositeSheetLivePollIntervalMs,
                 maxWaitMs: 18 * 60_000,
                 adaptiveBackoffAfterAttempts: 36,
                 maxIntervalMs: 8000,
-                onPoll: ({ output }) => {
+                onPoll: ({ attempt, output }) => {
                   const flow = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)
                     ? ((output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
                     : [];
+                  setCompositeJobPollTrace((prev) => {
+                    const base =
+                      prev && prev.jobId === pollJobId
+                        ? prev
+                        : {
+                            jobId: pollJobId,
+                            label: batchCompositeDbgLabel,
+                            lines: [],
+                            pollCount: 0,
+                          };
+                    return applyFlowLogToPollTrace(base, attempt, flow);
+                  });
                 },
               });
               const jo = j.output as { compositeImageUrl?: string; imageGenFlowLog?: string[] } | undefined;
               const flowTail = Array.isArray(jo?.imageGenFlowLog) ? jo!.imageGenFlowLog! : [];
+              setCompositeJobPollTrace((prev) =>
+                prev && prev.jobId === pollJobId
+                  ? {
+                      ...applyFlowLogToPollTrace(prev, Math.max(prev.pollCount, 1), flowTail),
+                      terminalStatus: j.status,
+                      currentStep: j.status === "succeeded" ? "终态 succeeded" : "终态 failed",
+                    }
+                  : prev,
+              );
               if (flowTail.length > 0) {
                 liveLines.push(`${new Date().toISOString()}  [当前步骤] ${flowTail[flowTail.length - 1]}`);
               }
@@ -3024,7 +3303,6 @@ export default function PlatformPage() {
               setCompositeAwaitingJobTerminal(false);
               compositeSheetLivePollCtxRef.current = null;
               setPendingCompositeSheet(null);
-              setCompositeJobPollTrace(null);
             }
           } else if (out) {
             successCount += 1;
@@ -3064,126 +3342,6 @@ export default function PlatformPage() {
       );
     }
   };
-
-  useEffect(() => {
-    /** 批量 2×4 在 runSequentialCompositeBatchGeneration 内已用 pollJobUntilTerminal 等每题完成；跳过此处，避免 compositeSheetLivePollCtxRef 单槽被覆盖只轮询最后一题（易 404 / 不落图） */
-    if (isSequentialCompositeBatchGenerating) return;
-    const keepPolling =
-      generatePlatformCompositeSheetMutation.isPending || compositeAwaitingJobTerminal;
-    if (!keepPolling) return;
-    const ctx = compositeSheetLivePollCtxRef.current;
-    if (!ctx?.jobId) return;
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      try {
-        const j = await getJob(ctx.jobId);
-        compositeLivePollAttemptRef.current += 1;
-        const n = compositeLivePollAttemptRef.current;
-        const out = j.output as { imageGenFlowLog?: string[] } | undefined;
-        const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
-        const ts = new Date().toISOString();
-        const last = log.length > 0 ? String(log[log.length - 1]) : "";
-
-        setCompositeJobPollTrace((prev) => {
-          if (!prev || prev.jobId !== ctx.jobId) return prev;
-          const step = last
-            .replace(/\s+/g, " ")
-            .slice(0, 140);
-          return {
-            ...prev,
-            pollCount: n,
-            currentStep: step ? `第 ${n} 次 · ${step}` : `轮询 · ${n} 次`,
-          };
-        });
-
-        setPlatformImageGenFlowSnapshots((prev) => {
-          const opId = ctx.localOpId;
-          const existing = prev.find(
-            (p) => String(p.meta?.localOpId || "").trim() === opId && p.kind === "composite_2x4",
-          );
-          const kept =
-            existing?.lines?.filter((ln) => !/\[实时进度\] HTTP \d+ 次 · status=/.test(ln)) ?? [];
-          const baseLines =
-            kept.length > 0
-              ? kept
-              : buildCompositeImageGenPendingLines({
-                  kind: ctx.kind,
-                  sceneId: ctx.sceneId,
-                  title: (ctx.title || "（未命名）").slice(0, 240),
-                  progressJobId: ctx.jobId,
-                });
-          const lines = [...baseLines, `${ts}  [实时进度] HTTP ${n} 次 · status=${j.status}`];
-          const priorMeta =
-            existing?.meta && typeof existing.meta === "object" ? { ...existing.meta } : {};
-          return upsertPlatformImageFlowSnapshot(prev, {
-            at: ts,
-            kind: "composite_2x4",
-            lines,
-            meta: {
-              ...priorMeta,
-              localOpId: opId,
-              apiKind: ctx.kind,
-              sceneId: ctx.sceneId,
-              title: ctx.title.slice(0, 80),
-              pending: j.status === "running" || j.status === "queued",
-              liveProgressJobId: ctx.jobId,
-              liveCompositeFlowTail: last,
-              serverFlowLogEntries: log.length,
-            },
-          });
-        });
-
-        if (j.status === "succeeded" || j.status === "failed") {
-          cancelled = true;
-          setCompositeAwaitingJobTerminal(false);
-          setPendingCompositeSheet(null);
-          compositeSheetLivePollCtxRef.current = null;
-          setCompositeJobPollTrace((prev) =>
-            prev && prev.jobId === ctx.jobId
-              ? {
-                  ...prev,
-                  pollCount: n,
-                  terminalStatus: j.status,
-                  currentStep: j.status === "succeeded" ? "终态 succeeded" : "终态 failed",
-                }
-              : prev,
-          );
-          // 完成时如果带有图，立刻赋予画面（JobsRepo 终态为 succeeded，不是 completed）
-          if (j.status === "succeeded" && out && (out as any).compositeImageUrl) {
-            if (ctx.kind === "storyboard_sheet_portrait" || ctx.kind === "storyboard_sheet_landscape") {
-              setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: (out as any).compositeImageUrl! }));
-            } else {
-              setPlatformXhsNoteMap((p) => ({ ...p, [ctx.sceneId]: (out as any).compositeImageUrl! }));
-            }
-            if (!compositeBatchSilentUiRef.current) {
-               toast.success("2x4 合成成功 (非同步返回)");
-            }
-          }
-          if (j.status === "failed") {
-            const errorReason = (out as any)?.error || "未知错误";
-            if (!compositeBatchSilentUiRef.current) {
-              toast.error(`2x4 合成失败: ${errorReason}`);
-            }
-          }
-        }
-
-      } catch {
-        /* 下一拍重试 */
-      }
-    };
-    void tick();
-    const id = window.setInterval(tick, compositeSheetLivePollIntervalMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [
-    generatePlatformCompositeSheetMutation.isPending,
-    compositeAwaitingJobTerminal,
-    compositeSheetLivePollIntervalMs,
-    isSequentialCompositeBatchGenerating,
-  ]);
 
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
   const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();

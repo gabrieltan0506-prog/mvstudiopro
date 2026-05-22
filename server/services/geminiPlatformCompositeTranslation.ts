@@ -375,7 +375,7 @@ export const PLATFORM_IMAGE_TRANSLATOR_BASE_EN = `${GPT_IMAGE2_EXECUTION_PRIORIT
  * 選題豎封：**強烈建議**依題材生成**多變、生動**且可執行的場景（寫入送往 GPT-IMAGE-2 的英文 prompt）。
  * 與 {@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}、{@link buildPlatformTopicReferenceGeminiTask} 同步引用，避免各題同套一個書房模板。
  */
-export const PLATFORM_COVER_SCENE_VERSATILITY_EN = `It is **strictly required** to generate **versatile, vivid, and metaphorically accurate** scenes for **cover-art / feed-cover** design: **concretely** stage each prompt with distinct environments that adapt to the underlying emotional and conceptual tone—rotate indoor vs outdoor, epic nature vs brutalist urban, clinical/lab vs bustling transit, minimalist studio color-fields vs highly textured real locations. **Different Hooks MUST feel like entirely different visual universes**. Never default to repetitive "study room" or "living room/sofa" clichés unless explicitly dictated by the Context. Maintain premium editorial lighting and a rigorous visual hierarchy where the focal beat remains undefeated.`;
+export const PLATFORM_COVER_SCENE_VERSATILITY_EN = `It is **strongly recommended** to generate **versatile, vivid, and metaphorically accurate** scenes for **cover-art / feed-cover** design: **concretely** stage each prompt with distinct environments that adapt to the underlying emotional and conceptual tone—rotate indoor vs outdoor, epic nature vs brutalist urban, clinical/lab vs bustling transit, minimalist studio color-fields vs highly textured real locations. **Different Hooks should feel like entirely different visual universes**. **Not recommended:** defaulting to repetitive "study room" or "living room/sofa" clichés unless explicitly dictated by the Context. **Lighting palette:** prefer premium editorial lighting with clear hierarchy; **not recommended:** defaulting the whole frame to heavy dark-gold / low-key gloom when the hook or context does not call for it—**daylight, soft overcast, and balanced mid-tones are equally valid** when they fit the story. Maintain a rigorous visual hierarchy where the focal beat remains undefeated.`;
 
 
 /**
@@ -383,10 +383,10 @@ export const PLATFORM_COVER_SCENE_VERSATILITY_EN = `It is **strictly required** 
  */
 export const PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN = [
   "**选题信息流单张竖封（9:16·顶级概念缩略图）—三轨身份一致：** 你是中英双语 **封面级视觉艺术总监**；输出的 JSON **`prompt`** 仅为 **GPT-IMAGE-2** 可执行的 **英文**；**格数、横竖比例严守原文，不建议擅自改轨。**",
-  "**竖封美学软边界（图标层必达；其余服从高级审美）：** **【第一优先·美学目标】Premium Editorial / 顶级概念视觉**：整体优先收敛为高端质感——光影可信（key/fill/rim）、主次绝对分明、留白有意境、低饱和主色配极少精准亮色点缀；图标**强烈建议**自然融入环境，与光色和谐，**严禁**廉价底板或粗暴边框。**（1）** **质感**：倾向 **photoreal editorial / 电影级静拍**，光型有逻辑，**摒弃**廉价泛光与劣质3D感；**（2）** **场景（多元·隐喻·破界）**：**必须**与正文语境同步多元化；**室内与户外**皆可作为隐喻载体，**严禁**长期刻板集中在书房、书架、或**庸常的客厅沙发**。优先采用与 Hook 张力匹配的场域（如极限地貌、极简展厅、精密实验室、抽象光影空间等）；**跨主题批次时，强烈建议**英文 `prompt` 写明**截然不同且极具设计感**的场景，语义对齐「" +
+  "**竖封美学软边界（图标层强烈推荐；其余服从高级审美）：** **【第一优先·美学目标】Premium Editorial / 顶级概念视觉**：整体优先收敛为高端质感——光影可信（key/fill/rim）、主次绝对分明、留白有意境、低饱和主色配极少精准亮色点缀；**色调上强烈建议**根据 Hook 与正文语境选择明/暗与色温，**不推荐**无依据默认整幅暗色或 dark-gold 低照度；图标**强烈建议**自然融入环境，与光色和谐，**不推荐**廉价底板或粗暴边框。**（1）** **质感**：倾向 **photoreal editorial / 电影级静拍**，光型有逻辑，**尽量避免**廉价泛光与劣质3D感；**（2）** **场景（多元·隐喻·破界）**：**强烈建议**与正文语境同步多元化；**室内与户外**皆可作为隐喻载体，**不推荐**长期刻板集中在书房、书架、或**庸常的客厅沙发**。优先采用与 Hook 张力匹配的场域（如极限地貌、极简展厅、精密实验室、抽象光影空间等）；**跨主题批次时，强烈建议**英文 `prompt` 写明**截然不同且极具设计感**的场景，语义对齐「" +
     PLATFORM_COVER_SCENE_VERSATILITY_EN +
-    "」。前中后景需分层，用具象符号呼应 Hook；**（3）** **图标隐喻层（必达）**：画内**必须**有 **2～4 个** 与 Hook 强语义对齐的**极简线稿或高级符号**，配 **短简中辅标**（4–8字），从属主标，**严禁**喧宾夺主或做成杂乱教程；**（4）** **构图与冲击力**：排版克制，对比强烈，在缩略图尺度必须具备**压倒性的主视觉权重与高级审美**。",
-  "**三轨一致性：** **Vertex / OpenAI / 兜底模型** 意图共用；措辞可异，但**严禁**破坏指定的画幅框架与视觉层级。",
+    "」。前中后景需分层，用具象符号呼应 Hook；**（3）** **图标隐喻层（强烈推荐）**：画内**强烈建议**有 **2～4 个** 与 Hook 强语义对齐的**极简线稿或高级符号**，配 **短简中辅标**（4–8字），从属主标，**不推荐**喧宾夺主或做成杂乱教程；**（4）** **构图与冲击力**：排版克制，对比强烈，在缩略图尺度**推荐**具备**压倒性的主视觉权重与高级审美**。",
+  "**三轨一致性：** **Vertex / OpenAI / 兜底模型** 意图共用；措辞可异，但**不推荐**破坏指定的画幅框架与视觉层级。",
 ].join("\n");
 
 /**
@@ -417,7 +417,7 @@ export function platformImageTranslationVertexJsonSystemInstruction(
     PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
     "你是頂級中英雙語編導：**產出 JSON 內英文 prompt，唯一消費方是 GPT-IMAGE-2**；Vertex / Gemini 路徑僅為「參照翻譯與壓縮」，不建議壓過可執行版式。",
     "把上游任務落成 **JSON 里的英文 prompt**；**优先** tags / 短語，必要時用 **編號短句** 锁主体、光、留白、簡中字。**篇幅不限**，以一次生圖成功為準。",
-    "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；避免只有文采而沒有布局。",
+      "在滿足上游**版式軌道**（單封 / 多分鏡條 / 2×4 網格等）的前提下發揮光影；**色調上强烈建议**随 Hook 与正文选择明/暗，**不推荐**无依据默认整幅暗色或 dark-gold 低照度；避免只有文采而沒有布局。",
     PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
     "必須返回合法 JSON：{\"prompt\":\"...\"}；prompt 內只含英文生圖指令，不建議使用 markdown、不建議附加解釋。",
     "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格數、閱讀順序與格線硬信息。**電影 2×4 分鏡主表**頂欄僅 **內容總結**，每格內 **分鏡主題描述** 與表 **景別/運鏡/畫面內容/台詞與音效**；單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多格分鏡，除非任務明確要求。",
@@ -568,7 +568,7 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
           "若偏封面用途：尽量留下 **标题可视化的设色/字级/对比意图**、**能引起好奇的视觉钩子詞**（动作瞬间、對撞关系、未完叙事）以及 **内文关键场景**（可转译为画面的空间、道具、光线），并**务必**留下 **2～4 个可入画的具象图标题材**（与 Hook、正文关键词**一一对应**，供下游**必出**线稿小图标+简中辅标，忌泛泛符号）。",
           "保留：情绪底色、高级光影、场景倾向、镜头气质、排版张力；若文中有**职业、身份、专长**等人设线索，须提炼为**可被拍摄的高级视觉符号**，拒绝泛化。",
           "若正文主題明顯與餐食、烹飪無關，不必主動引入廚房、食譜表等構圖；若brief里有食物叙事再保留即可。",
-          "场景提炼：**必须**让场景服务于词义隐喻并极度多元化；**室内外无界**。**严禁**无脑固化在书房、满架书本或**重复的客厅沙发区**；保留与题材精神高度吻合的**具体场所词**（例如：极简美术馆、废墟、自然旷野、精密空间等）。**多选题时**必须在骨架中植入**截然不同、具象且高级**的场景锚点。",
+          "场景提炼：**强烈建议**让场景服务于词义隐喻并极度多元化；**室内外无界**。**不推荐**无脑固化在书房、满架书本或**重复的客厅沙发区**；保留与题材精神高度吻合的**具体场所词**（例如：极简美术馆、废墟、自然旷野、精密空间等）。**多选题时****强烈建议**在骨架中植入**截然不同、具象且高级**的场景锚点。",
           "请返回 JSON 对象，仅含一个键 brief，例如：{\"brief\":\"...\"}；brief 不建议留空。",
         ].join("\n"),
       },
@@ -658,9 +658,9 @@ CRITICAL PIPELINE (DO NOT SKIP):
 Read the Chinese report title and publication hints, then output ONLY ONE final English prompt string for GPT-IMAGE-2.
 
 MANDATORY RULES FOR YOUR OUTPUT PROMPT:
-1. START EXACTLY WITH: "Luxury dark-gold Harvard Business Review style magazine cover, 9:16 vertical portrait, cinematic editorial photography, dramatic lighting, premium dark gold palette, masterpiece print quality."
+1. START WITH a **premium editorial magazine cover** opener tailored to the Chinese title mood—**9:16 vertical portrait**, cinematic editorial photography, masterpiece print quality. **Strongly recommended palette:** let the title/context drive light and color (daylight, soft overcast, warm interior, or restrained dark-gold **only when the brief supports it**). **Not recommended:** defaulting every cover to heavy dark-gold / low-key gloom without narrative reason.
 2. SCENE: Describe layout, lighting, textures, and luxury materials in vivid English only for non-text regions.
-3. CRITICAL TYPOGRAPHY (SIMPLIFIED CHINESE ONLY): You MUST include this exact requirement: "All masthead lines, hero headline, and every readable word on the cover MUST be in Simplified Chinese only (no Traditional Chinese). Bake the following Chinese string as the main cover headline, large and legible: 「${title}」. Optional tiny corner line in English may show only the masthead date token: ${input.englishMonthYear}. If any secondary Chinese tagline is needed, use Simplified Chinese (e.g. 战略情报)."
+3. CRITICAL TYPOGRAPHY (SIMPLIFIED CHINESE ONLY): **Strongly recommended** to include this requirement: "All masthead lines, hero headline, and every readable word on the cover should be in Simplified Chinese only (no Traditional Chinese). Bake the following Chinese string as the main cover headline, large and legible: 「${title}」. Optional tiny corner line in English may show only the masthead date token: ${input.englishMonthYear}. If any secondary Chinese tagline is needed, use Simplified Chinese (e.g. 战略情报)."
 4. Add publication context in English for the model only: "Chinese publication calendar note: ${input.chinesePublicationDate}."
 5. OUTPUT: Output ONLY the English prompt string. No explanations.
 
@@ -682,8 +682,8 @@ CRITICAL PIPELINE (DO NOT SKIP):
 Output ONLY ONE English prompt for GPT-IMAGE-2.
 
 MANDATORY RULES:
-1. START EXACTLY WITH: "Luxury strategic intelligence chapter poster, 9:16 vertical, cinematic editorial, dark gold and ink palette, museum-grade lighting."
-2. Describe visual scene in English; all prominent typography on the poster MUST be Simplified Chinese only. Hero title must include exactly: 「${t}」.
+1. START WITH a **premium strategic intelligence chapter poster**, **9:16 vertical**, cinematic editorial, museum-grade lighting. **Palette:** follow the Chinese passage—**recommended** varied light (daylight / soft interior / selective dark accent) rather than default dark-gold and ink for every poster.
+2. Describe visual scene in English; all prominent typography on the poster **should be** Simplified Chinese only. Hero title **strongly recommended** to include exactly: 「${t}」.
 3. Summarize supporting context from the Chinese passage into English visual staging cues only (do not paste the Chinese paragraph as unreadable microtext). Chinese passage for your analysis:\n${c}
 4. OUTPUT: English prompt only, no chitchat.
 `.trim();
@@ -721,10 +721,10 @@ export function buildPlatformTopicBatchSceneSoftHintBlock(h: PlatformTopicBatchS
   const fourTopicsLine =
     total === 4
       ? "**目前为四个选题，即四种截然不同的空间隐喻（四张封面各一景）；勿四张同源套路。**"
-      : `**本批共 ${total} 条选题，必须生成 ${total} 种截然不同的空间隐喻。**`;
+      : `**本批共 ${total} 条选题，**强烈建议**生成 ${total} 种截然不同的空间隐喻。**`;
   return (
-    `【同一批次·场景空间与隐喻调度】**核心原则：破除同质化，每题一景**。不同选题必须根据其核心情绪，自动匹配**完全不同**的视觉气质与空间维度。**强硬避让**书房/书桌/客厅等千篇一律的廉价套路。${fourTopicsLine}` +
-    `本条为批次中 **第 ${k} / ${total} 条**。**强烈建议**主场景优先以「${axis}」作为破题起点；空间举例**包括但不限于**：宏大自然、城市肌理、交通枢纽、艺术展馆、极简商业空间、废墟或抽象概念置景等。必须远看有力量，近看有细节。**最高指令**：若正文**明确**指定场景，则以正文的深层隐喻为准。`
+    `【同一批次·场景空间与隐喻调度】**核心原则：破除同质化，每题一景**。不同选题**强烈建议**根据其核心情绪，自动匹配**完全不同**的视觉气质与空间维度。**尽量避免**书房/书桌/客厅等千篇一律的廉价套路。${fourTopicsLine}` +
+    `本条为批次中 **第 ${k} / ${total} 条**。**强烈建议**主场景优先以「${axis}」作为破题起点；空间举例**包括但不限于**：宏大自然、城市肌理、交通枢纽、艺术展馆、极简商业空间、废墟或抽象概念置景等。**推荐**远看有力量，近看有细节。**优先参考**：若正文**明确**指定场景，则以正文的深层隐喻为准。`
   );
 }
 
@@ -743,7 +743,7 @@ export function buildPlatformTopicReferenceGeminiTask(input: {
   const personaBlock =
     personaRaw.length > 0
       ? `
-【单帧出镜 · 身份隐喻与美学锚定】（英文 tags 须将创作者的精神气质转化为极具张力的视觉符号；**严禁画地为牢**，**室内外空间无界**，彻底摒弃刻板的书房、书桌或反覆出现的庸常客厅；场景、光影、材质必须绝对服务于 **情绪张力、文化语境与人文关怀**，优先寻找更深层、更有设计价值的隐喻，拒绝空泛元素的机械堆砌；画面须具备顶级视觉冲击与专业艺术气质；单帧封面适用）
+【单帧出镜 · 身份隐喻与美学锚定】（英文 tags 须将创作者的精神气质转化为极具张力的视觉符号；**不推荐画地为牢**，**室内外空间无界**，**尽量避免**刻板的书房、书桌或反覆出现的庸常客厅；场景、光影、材质**强烈建议**服务于 **情绪张力、文化语境与人文关怀**，优先寻找更深层、更有设计价值的隐喻，**不推荐**空泛元素的机械堆砌；**色调上不推荐**无依据默认整幅暗色；画面**推荐**具备顶级视觉冲击与专业艺术气质；单帧封面适用）
 ${personaRaw}
 
 `.trim() + "\n\n"
