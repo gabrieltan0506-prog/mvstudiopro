@@ -8,7 +8,15 @@ import {
   GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
   resolveGemini35FlashModelName,
 } from "./gemini35FlashRuntime.js";
-import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled, isPlatformImageOpenAiAllowed, resolveGpt54CoverTranslationReasoningEffort } from "../config/platformSwitches.js";
+import {
+  isPlatformWeekendGcpEscape,
+  isPlatformWeekendSurvivalModeEnabled,
+  isPlatformImageOpenAiAllowed,
+  resolveGpt54CompositeTranslationMaxOutputTokens,
+  resolveGpt54CompositeTranslationReasoningEffort,
+  resolveGpt54CoverTranslationMaxOutputTokens,
+  resolveGpt54CoverTranslationReasoningEffort,
+} from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   logSheetChineseStagingBeforeTranslate,
@@ -991,7 +999,7 @@ export async function translatePlatformTopicCoverToEnglish(
   const taskChars = task.length;
   appendGpt54TranslationDebug(
     flowLog,
-    `[封面·英文化·配置] 引擎=${coverTranslationEngineDebugLabel(translator)} · 上游 task=${taskChars} 字 · strictNoFallback=是`,
+    `[封面·英文化·配置] 引擎=${coverTranslationEngineDebugLabel(translator)} · 上游 task=${taskChars} 字 · reasoning=high · max_tokens=65536 · strictNoFallback=是`,
   );
   return callGemini31ProForImagePrompt(task, {
     translator,
@@ -1097,13 +1105,16 @@ export async function callGemini3_1_Pro_AiStudio(
   const skipVertexFallback = Boolean(opts?.skipVertexFallback);
   const compositeTranslationStrict = Boolean(opts?.compositeTranslationStrict);
   const translationProfile = resolveTranslationProfile(statCtx);
+  const isCoverProfile = translationProfile === "topic_cover";
   /** 模型名環境決定：**gpt‑5.4、gpt‑5.5** 等皆走此路—選題信息流單封身份與 **{@link PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN}** 及 Gemini 3 Flash **一致**。Stage 2 見 {@link getPlatformStage2OpenAiModel} */
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
-  const gpt54MaxOut = Math.min(
-    65_536,
-    Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 16_384),
-  );
+  const gpt54MaxOut = isCoverProfile
+    ? resolveGpt54CoverTranslationMaxOutputTokens()
+    : resolveGpt54CompositeTranslationMaxOutputTokens();
+  const gpt54ReasoningEffort = isCoverProfile
+    ? resolveGpt54CoverTranslationReasoningEffort()
+    : resolveGpt54CompositeTranslationReasoningEffort();
   const taskChars = String(prompt || "").length;
 
   const gpt54SystemContent =
@@ -1132,10 +1143,10 @@ export async function callGemini3_1_Pro_AiStudio(
     attempt: number,
   ): Promise<{ out: string; emptyReasonLine: string | null }> => {
     const a = `第${attempt}/3轮`;
-    const coverReasoningEffort = resolveGpt54CoverTranslationReasoningEffort();
+    const t0 = Date.now();
     appendGpt54TranslationDebug(
       flowLog,
-      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=${gpt54MaxOut} · reasoning_effort=${coverReasoningEffort} · response_format=json_object · 上游 task 约 ${taskChars} 字`,
+      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=${gpt54MaxOut} · reasoning_effort=${gpt54ReasoningEffort} · profile=${translationProfile} · response_format=json_object · 上游 task 约 ${taskChars} 字`,
     );
     const primaryResponse = await invokeLLM({
       provider: "openai",
@@ -1143,7 +1154,7 @@ export async function callGemini3_1_Pro_AiStudio(
       modelName,
       response_format: { type: "json_object" },
       max_tokens: gpt54MaxOut,
-      reasoningEffort: coverReasoningEffort,
+      reasoningEffort: gpt54ReasoningEffort,
       messages: [
         {
           role: "system",
@@ -1247,6 +1258,12 @@ export async function callGemini3_1_Pro_AiStudio(
       appendGpt54TranslationDebug(flowLog, oneLine);
       return { out: "", emptyReasonLine: `${a} · ${why}` };
     }
+
+    const elapsedMs = Date.now() - t0;
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[英文化·完成] pipeline=${statCtx?.pipeline ?? translationProfile} · model=${modelName} · reasoning_effort=${gpt54ReasoningEffort} · 上游=${taskChars}字 · 英文=${out.length}字 · 耗时=${elapsedMs}ms · max_tokens=${gpt54MaxOut}`,
+    );
 
     return { out, emptyReasonLine: null };
   };
@@ -1358,10 +1375,8 @@ export async function translateBundleCoverAndCompositeEnglishPair(options: {
 
   const modelName =
     process.env.OPENAI_GPT54_MODEL?.trim() || process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() || "gpt-5.4";
-  const gpt54MaxOut = Math.min(
-    65_536,
-    Math.max(4096, Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS) || 16_384),
-  );
+  const gpt54MaxOut = resolveGpt54CoverTranslationMaxOutputTokens();
+  const bundleReasoningEffort = resolveGpt54CoverTranslationReasoningEffort();
 
   const userBody = `同一選題、兩個生圖交付物（不建議當成兩則無關選題）。
 
@@ -1380,9 +1395,10 @@ ${options.compositeTranslationTask}
     attempt: number,
   ): Promise<{ coverEn: string; compositeEn: string } | null> => {
     const a = `第${attempt}/3轮·套裝併翻`;
+    const t0 = Date.now();
     appendGpt54TranslationDebug(
       flowLog,
-      `${a} · invokeLLM · modelName=${modelName} · max_tokens=${gpt54MaxOut} · json cover_prompt+composite_prompt`,
+      `${a} · invokeLLM · modelName=${modelName} · max_tokens=${gpt54MaxOut} · reasoning_effort=${bundleReasoningEffort} · json cover_prompt+composite_prompt`,
     );
     const primaryResponse = await invokeLLM({
       provider: "openai",
@@ -1390,6 +1406,7 @@ ${options.compositeTranslationTask}
       modelName,
       response_format: { type: "json_object" },
       max_tokens: gpt54MaxOut,
+      reasoningEffort: bundleReasoningEffort,
       messages: [
         {
           role: "system",
@@ -1466,6 +1483,11 @@ ${options.compositeTranslationTask}
       );
       return null;
     }
+    const elapsedMs = Date.now() - t0;
+    appendGpt54TranslationDebug(
+      flowLog,
+      `[英文化·完成] pipeline=topic_cover_composite_bundle · model=${modelName} · reasoning_effort=${bundleReasoningEffort} · 上游=${coverChars + compChars}字 · 英文=${coverEn.length + compositeEn.length}字 · cover=${coverEn.length}字 · composite=${compositeEn.length}字 · 耗时=${elapsedMs}ms · max_tokens=${gpt54MaxOut}`,
+    );
     appendGpt54TranslationDebug(
       flowLog,
       `${a} · 成功 · cover≈${coverEn.length} · composite≈${compositeEn.length}`,
@@ -1661,7 +1683,7 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
 
   appendGpt54TranslationDebug(
     flowLog,
-    `[2×4·英文化·配置] 引擎=GPT 5.4（OpenAI · strict · 无 Flash 兜底）· task≈${task.length} 字`,
+    `[2×4·英文化·配置] 引擎=GPT 5.4（OpenAI · strict · reasoning=medium · max_tokens=32768）· task≈${task.length} 字`,
   );
   return callGemini31ProForImagePrompt(task, {
     ...gptImgBridgeOpts("gpt54"),

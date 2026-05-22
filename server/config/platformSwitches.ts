@@ -1,6 +1,6 @@
 /**
  * 默认：Creator Growth **Stage 1 战略看板** 与 **Stage 2 文案** = **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）；**封面英文化** = **GPT‑5.4**（`OPENAI_GPT54_MODEL`）。**平台图 = GCS**。
- * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）、英文化 **32K**（`GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS` / `GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS`）。
+ * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）；**封面英文化 64K**（`GPT54_COVER_TRANSLATION_MAX_OUTPUT_TOKENS`）；**2×4 英文化 32K**（`GPT54_COMPOSITE_TRANSLATION_MAX_OUTPUT_TOKENS`）。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *
@@ -323,7 +323,7 @@ export function resolvePlatformStage2OpenAiReasoningEffort():
   return "low";
 }
 
-/** 封面英文化 GPT‑5.4 JSON：默认 **low**（留 completion 给 prompt 正文，减少空回复）。 */
+/** 封面英文化 GPT‑5.4 JSON：默认 **high**（竖封需更充分推理）。 */
 export function resolveGpt54CoverTranslationReasoningEffort():
   | "none"
   | "minimal"
@@ -334,7 +334,37 @@ export function resolveGpt54CoverTranslationReasoningEffort():
   const raw = norm(process.env.GPT54_COVER_TRANSLATION_REASONING_EFFORT);
   const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
   if (allowed.has(raw)) return raw as ReturnType<typeof resolveGpt54CoverTranslationReasoningEffort>;
-  return "low";
+  return "high";
+}
+
+/** 2×4 / 八格英文化 GPT‑5.4 JSON：默认 **medium**。 */
+export function resolveGpt54CompositeTranslationReasoningEffort():
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh" {
+  const raw = norm(process.env.GPT54_COMPOSITE_TRANSLATION_REASONING_EFFORT);
+  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  if (allowed.has(raw)) return raw as ReturnType<typeof resolveGpt54CompositeTranslationReasoningEffort>;
+  return "medium";
+}
+
+/** 封面英文化 max_output_tokens：默认 **65536**（64K）。 */
+export function resolveGpt54CoverTranslationMaxOutputTokens(): number {
+  const raw = Number(process.env.GPT54_COVER_TRANSLATION_MAX_OUTPUT_TOKENS);
+  if (Number.isFinite(raw) && raw >= 4096) return Math.min(65_536, Math.floor(raw));
+  const legacy = Number(process.env.GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS);
+  if (Number.isFinite(legacy) && legacy >= 4096) return Math.min(65_536, Math.floor(legacy));
+  return 65_536;
+}
+
+/** 2×4 / 八格英文化 max_output_tokens：默认 **32768**（32K）。 */
+export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
+  const raw = Number(process.env.GPT54_COMPOSITE_TRANSLATION_MAX_OUTPUT_TOKENS);
+  if (Number.isFinite(raw) && raw >= 4096) return Math.min(65_536, Math.floor(raw));
+  return 32_768;
 }
 
 /**
