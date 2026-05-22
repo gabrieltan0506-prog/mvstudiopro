@@ -177,10 +177,9 @@ export type PlatformCompositeSheetImageEngine = "gpt_image2" | "nano_banana_2";
 export const PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT: PlatformCompositeSheetImageEngine = "nano_banana_2";
 
 /**
- * **`true`**：平台頁 2×4／八格**一律** Nano Banana 2，忽略請求與環境中的 `gpt_image2`（暫停 GPT‑Image‑2）。
- * 恢復 GPT‑Image‑2 時改為 `false` 並重新部署。
+ * **`false`（当前）**：尊重 UI / 请求中的 `compositeImageEngine`（`gpt_image2` | `nano_banana_2`）。
  */
-export const PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED = true;
+export const PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED = false;
 
 export function resolvePlatformCompositeSheetImageEngine(
   requested?: PlatformCompositeSheetImageEngine | null,

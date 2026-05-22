@@ -3801,7 +3801,7 @@ export const appRouter = router({
           dateRange,
           contentBlueprint,
           platformData: { platform: platformHint },
-          thinkingLevel: "HIGH",
+          thinkingLevel: "MEDIUM",
           windowDays,
         });
 
@@ -3816,7 +3816,7 @@ export const appRouter = router({
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.startsWith("DECISION_INTEL_FLASH_ALL_FAILED")) {
+          if (msg.startsWith("DECISION_INTEL_GPT55_ALL_FAILED") || msg.startsWith("DECISION_INTEL_FLASH_ALL_FAILED")) {
             throw new TRPCError({
               code: "SERVICE_UNAVAILABLE",
               message: "智库文案扩写暂时不可用，请稍后重试（未扣点）。",
@@ -4943,7 +4943,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
 
         void input.imagePromptTranslator;
-        const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
+        const imagePromptTranslatorForComposite = "gpt54" as const;
 
         const jobId = nanoid(16);
         await createJobRecord({
@@ -5281,7 +5281,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const enableCompositeDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         void input.imagePromptTranslator;
-        const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
+        const imagePromptTranslatorForComposite = "gpt54" as const;
         const compositePack = input.bulkCompositePack;
         const cost = compositePack
           ? platformBundleCreditsForSlot(

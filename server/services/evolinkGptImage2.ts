@@ -8,7 +8,8 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
 
 const EVOLINK_BASE = String(process.env.EVOLINK_API_BASE || "https://api.evolink.ai").replace(/\/$/, "");
 const EVOLINK_MODEL = "gpt-image-2" as const;
-const EVOLINK_QUALITY = String(process.env.EVOLINK_GPT_IMAGE2_QUALITY || "medium").trim() || "medium";
+/** EvoLink 默认 quality；请求方可传 `quality` 覆写（如 2×4 宽幅固定 low）。 */
+const EVOLINK_DEFAULT_QUALITY = String(process.env.EVOLINK_GPT_IMAGE2_QUALITY || "medium").trim() || "medium";
 const EVOLINK_RESOLUTION = String(process.env.EVOLINK_GPT_IMAGE2_RESOLUTION || "2K").trim() || "2K";
 /** 与 OhMyGPT 主路径一致：竖封 1024×1536、横版 1536×1024（显式像素；resolution 在此模式下由 EvoLink 按像素预算分档）。 */
 export const EVOLINK_GPT_IMAGE2_PORTRAIT_SIZE = "1024x1536" as const;
@@ -43,13 +44,13 @@ function resolveEvolinkSize(aspectRatio: "9:16" | "16:9", explicitSize?: string)
 }
 
 /** 显式 WxH 时 EvoLink 忽略 resolution；比例模式才传 resolution（默认 2K）。 */
-function buildEvolinkRequestBody(prompt: string, size: string): Record<string, unknown> {
+function buildEvolinkRequestBody(prompt: string, size: string, quality: string): Record<string, unknown> {
   const isRatio = size.includes(":");
   const body: Record<string, unknown> = {
     model: EVOLINK_MODEL,
     prompt,
     size,
-    quality: EVOLINK_QUALITY,
+    quality,
     n: 1,
   };
   if (isRatio) {
@@ -156,6 +157,8 @@ export async function postEvolinkGptImage2AndUpload(
     aspectRatio?: "9:16" | "16:9";
     size?: string;
     flowLog?: string[];
+    /** 覆写 EvoLink quality；未传则用 EVOLINK_GPT_IMAGE2_QUALITY（默认 medium） */
+    quality?: string;
   } = {},
 ): Promise<string | null> {
   const L = opts.flowLog;
@@ -167,6 +170,7 @@ export async function postEvolinkGptImage2AndUpload(
 
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveEvolinkSize(aspectRatio, opts.size);
+  const quality = String(opts.quality || EVOLINK_DEFAULT_QUALITY).trim() || EVOLINK_DEFAULT_QUALITY;
   const promptTrimmed = String(prompt || "").trim();
   if (!promptTrimmed) {
     appendImageFlowLog(L, "[GPT-IMAGE-2·EvoLink] prompt 为空，跳过");
@@ -175,7 +179,7 @@ export async function postEvolinkGptImage2AndUpload(
 
   appendImageFlowLog(
     L,
-    `[GPT-IMAGE-2·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · size=${size} · quality=${EVOLINK_QUALITY}${size.includes(":") ? ` · resolution=${EVOLINK_RESOLUTION}` : ""}`,
+    `[GPT-IMAGE-2·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · size=${size} · quality=${quality}${size.includes(":") ? ` · resolution=${EVOLINK_RESOLUTION}` : ""}`,
   );
 
   try {
@@ -185,7 +189,7 @@ export async function postEvolinkGptImage2AndUpload(
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(buildEvolinkRequestBody(promptTrimmed, size)),
+      body: JSON.stringify(buildEvolinkRequestBody(promptTrimmed, size, quality)),
       signal: AbortSignal.timeout(60_000),
     });
     const createJson = (await createRes.json().catch(() => ({}))) as EvolinkTaskDetail & {

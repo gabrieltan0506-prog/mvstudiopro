@@ -7,7 +7,7 @@ import type { DecisionIntelTopicPick } from "@shared/decisionIntelTopicPicks";
 import { selectDecisionIntelBonusTopics } from "@shared/decisionIntelBonusTopics";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
 import { extractJsonString } from "../_core/llm";
-import { callGemini35FlashCopywriting } from "./gemini35FlashRuntime.js";
+import { callDecisionIntelGpt55StructuredJson } from "./decisionIntelGpt55Copywriting.js";
 
 function blueprintJsonForPrompt(contentBlueprint: unknown, maxChars = 10_000): string {
   try {
@@ -74,10 +74,9 @@ export async function generateDecisionIntelTopicBlueprints(params: {
 
 ${topicsBlock}`;
 
-  const raw = await callGemini35FlashCopywriting({
+  const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,
     userText: user,
-    responseMimeType: "application/json",
     abortSignal: params.abortSignal,
   });
   let parsed: BonusBlueprintOutput;

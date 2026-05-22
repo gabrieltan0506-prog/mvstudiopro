@@ -179,7 +179,7 @@ export const CREDIT_COSTS = {
   // ─── 创作者成长营 / 平台趋势 / 大师级视频基地（与 server/plans 数值一致，供前端定价展示与扣费逻辑共用）─
   growthCampGrowth: 40,
   growthCampRemix: 50,
-  platformTrend: 150,
+  platformTrend: 50,
   platformTrendFollowUp: 18,
   workflowNodes: 20,
   workflowScript: 0,

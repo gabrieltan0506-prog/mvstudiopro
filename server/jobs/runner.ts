@@ -1307,7 +1307,7 @@ async function processPlatformJob(
       const compositeScriptContext = String(params.compositeScriptContext ?? "").trim();
       const compositeExecutionDetails =
         typeof params.compositeExecutionDetails === "string" ? params.compositeExecutionDetails.trim() : undefined;
-      const imagePromptTranslator = "vertex_gemini_3_flash_preview" as const;
+      const imagePromptTranslator = "gpt54" as const;
 
       const rawCompDr = (params as { enableCompositeDeepResearchPro?: unknown }).enableCompositeDeepResearchPro;
       const enableCompositeDeepResearchProAdmin = rawCompDr === true;
