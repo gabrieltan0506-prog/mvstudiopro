@@ -1,5 +1,5 @@
 /**
- * 决策智库 · 双轨 Gemini Flash 扩写（与 {@link ../../shared/advancedPredictionEngine.ts} 数字壳解耦）。
+ * 决策智库 · 双轨 GPT‑5.5 扩写（与 {@link ../../shared/advancedPredictionEngine.ts} 数字壳解耦）。
  * Call A：核心洞察；Call B：赛马标题、个性化方向、选题结构。并行 + allSettled，双 reject 则抛错。
  */
 
@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { extractJsonString } from "../_core/llm";
-import { callGemini35FlashCopywriting } from "./gemini35FlashRuntime.js";
+import { callDecisionIntelGpt55StructuredJson } from "./decisionIntelGpt55Copywriting.js";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -58,7 +58,7 @@ type CallBOutput = {
   topicStructureExamples?: Array<{ title?: string; structure?: string }>;
 };
 
-async function flashCallAnalysisEngine(params: {
+async function gpt55CallAnalysisEngine(params: {
   topic: string;
   contentBlueprint: unknown;
   base: AdvancedAIReportData;
@@ -79,16 +79,15 @@ async function flashCallAnalysisEngine(params: {
 
 请给出 4 条战略洞察。每条 content 约 50～90 字；metricsText 简要呼应快照中的数量级（勿与快照矛盾），且禁止写「模拟」或「pp」。`;
 
-  const raw = await callGemini35FlashCopywriting({
+  const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,
     userText: user,
-    responseMimeType: "application/json",
     abortSignal: params.abortSignal,
   });
   return JSON.parse(extractJsonString(raw)) as CallAOutput;
 }
 
-async function flashCallCreativeEngine(params: {
+async function gpt55CallCreativeEngine(params: {
   topic: string;
   contentBlueprint: unknown;
   platformHint: string;
@@ -115,10 +114,9 @@ async function flashCallCreativeEngine(params: {
 2) personalization：3 个延伸个性化选题方向（topicDirection）。
 3) topicStructureExamples：4 组 title + structure。`;
 
-  const raw = await callGemini35FlashCopywriting({
+  const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,
     userText: user,
-    responseMimeType: "application/json",
     abortSignal: params.abortSignal,
   });
   return JSON.parse(extractJsonString(raw)) as CallBOutput;
@@ -205,10 +203,10 @@ export async function runGeminiFlashPipeline(params: {
   const { base, contentBlueprint, platformHint, topic, abortSignal } = params;
 
   const callA = async (): Promise<CallAOutput> => {
-    return flashCallAnalysisEngine({ topic, contentBlueprint, base, abortSignal });
+    return gpt55CallAnalysisEngine({ topic, contentBlueprint, base, abortSignal });
   };
   const callB = async (): Promise<CallBOutput> => {
-    return flashCallCreativeEngine({ topic, contentBlueprint, platformHint, base, abortSignal });
+    return gpt55CallCreativeEngine({ topic, contentBlueprint, platformHint, base, abortSignal });
   };
 
   const [settledA, settledB] = await Promise.allSettled([callA(), callB()]);
@@ -216,7 +214,7 @@ export async function runGeminiFlashPipeline(params: {
   if (settledA.status === "rejected" && settledB.status === "rejected") {
     const msgA = settledA.reason instanceof Error ? settledA.reason.message : String(settledA.reason);
     const msgB = settledB.reason instanceof Error ? settledB.reason.message : String(settledB.reason);
-    throw new Error(`DECISION_INTEL_FLASH_ALL_FAILED: A=${msgA}; B=${msgB}`);
+    throw new Error(`DECISION_INTEL_GPT55_ALL_FAILED: A=${msgA}; B=${msgB}`);
   }
 
   let parsedA: CallAOutput | null = null;
@@ -245,7 +243,7 @@ export async function runGeminiFlashPipeline(params: {
   /** 两路都没带回可 merge 的结构时，与「双 reject」同等：不应扣点。 */
   if (!parsedA && !parsedB) {
     throw new Error(
-      `DECISION_INTEL_FLASH_ALL_FAILED: no_usable_json (A=${settledA.status}, B=${settledB.status})`,
+      `DECISION_INTEL_GPT55_ALL_FAILED: no_usable_json (A=${settledA.status}, B=${settledB.status})`,
     );
   }
 

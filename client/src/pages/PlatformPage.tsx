@@ -13,8 +13,8 @@ import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
-import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
+import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -103,15 +103,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
-import PlatformTopicCoverDrProGpt54DebugPanel from "@/components/PlatformTopicCoverDrProGpt54DebugPanel";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 
-/** 2×4 分镜／小红书八格 **英文化** 固定 Vertex Gemini 3 Flash（与服端一致；不含 GPT 5.4 翻译）。竖版封面单帧仍走 GPT 5.4。 */
-const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "vertex_gemini_3_flash_preview";
+/** 2×4 分镜／小红书八格 **英文化**：默认 **GPT 5.4**（Gemini 3.5 Flash 兜底）；竖版封面单帧仍走 GPT 5.4。 */
+const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "gpt54";
 
 /** 管理员／监管：单帧封面主生图是否走 Vertex Nano Banana 2（官方 API） */
 const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
@@ -122,16 +121,71 @@ const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBanan
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
-/** 监管／内部：Stage 2 专属文案 LLM（一般用户不可见、也不可绕过改线路） */
+/** 全用户：Stage 1 战略看板 + Stage 2 专属文案 LLM（localStorage 记忆） */
+const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
+/** @deprecated 监管旧键；读取时 fallback */
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
-type PlatformStage2SupervisorCopyEngine = "vertex" | "openai";
+type PlatformCopyLlmEngine = "vertex" | "openai";
 
-function parseStage2SupervisorCopyEngineLs(raw: string | null): PlatformStage2SupervisorCopyEngine {
-  return raw === "openai" ? "openai" : "vertex";
+function parsePlatformCopyLlmEngineLs(raw: string | null): PlatformCopyLlmEngine {
+  return raw === "vertex" ? "vertex" : "openai";
+}
+
+function readPlatformCopyLlmEngineFromLs(): PlatformCopyLlmEngine {
+  if (typeof window === "undefined") return "openai";
+  try {
+    const primary = window.localStorage.getItem(PLATFORM_COPY_LLM_ENGINE_LS_KEY);
+    if (primary != null) return parsePlatformCopyLlmEngineLs(primary);
+    const legacy = window.localStorage.getItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY);
+    if (legacy != null) return parsePlatformCopyLlmEngineLs(legacy);
+  } catch {
+    /* ignore */
+  }
+  return "openai";
 }
 
 function parseComposite2x4EngineLs(raw: string | null): PlatformComposite2x4ImageEngine {
   return raw === "nano_banana_2" ? "nano_banana_2" : "gpt_image2";
+}
+
+function CompositeImageEngineToggle(props: {
+  value: PlatformComposite2x4ImageEngine;
+  onChange: (next: PlatformComposite2x4ImageEngine) => void;
+  hintClassName?: string;
+}) {
+  const { value, onChange, hintClassName } = props;
+  return (
+    <div className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">分镜 2×4 出图引擎</span>
+      <div className="inline-flex rounded-lg border border-white/15 bg-black/40 p-0.5">
+        <button
+          type="button"
+          onClick={() => onChange("gpt_image2")}
+          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
+            value === "gpt_image2"
+              ? "bg-white/15 text-white shadow-sm"
+              : "text-gray-400 hover:text-white"
+          }`}
+        >
+          GPT‑Image‑2
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("nano_banana_2")}
+          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
+            value === "nano_banana_2"
+              ? "bg-emerald-500/25 text-emerald-100 shadow-sm"
+              : "text-gray-400 hover:text-emerald-100/90"
+          }`}
+        >
+          Nano Banana 2
+        </button>
+      </div>
+      <p className={hintClassName ?? "max-w-[20rem] text-[10px] leading-snug text-gray-500"}>
+        作用于 2×4 分镜与小红书八格；英文化链路不变。NB2 需 Vertex / GCP 可用。
+      </p>
+    </div>
+  );
 }
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
@@ -207,24 +261,6 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
 function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
   const raw = typeof url === "string" ? url.trim().toLowerCase() : "";
   return !raw || raw.includes("timeout") || raw.includes("error");
-}
-
-/**
- * 新任务入队时不要清空 Debug（否则第二张、第二次生成会先出现「DR Pro 整栏被清掉」直到轮询有数据）。
- * 在上一笔日志后追加分割提示与占位行；首轮 poll 拿到 imageGenFlowLog 后仍会整份替换为服务端日志。
- */
-function appendTopicCoverDebugNewJobBanner(
-  prev: string[],
-  kind: "cover" | "bundle" | "composite2x4",
-  sceneHint: string,
-): string[] {
-  const ts = new Date().toISOString();
-  const tail = sceneHint.trim().replace(/\s+/g, " ").slice(0, 80);
-  const label = kind === "bundle" ? "套装" : kind === "composite2x4" ? "2×4/八格" : "封面";
-  const banner = `${ts}  [客户端] ─── 新任务：${label}${tail ? ` · ${tail}` : ""} ───`;
-  const hold = `${ts}  [步骤0.5·DR-Pro] （客户端）等待服务端本轮日志（上方可对照上一笔；下一则服务端行写入后本区会切换为本轮完整流水）`;
-  if (prev.length === 0) return [hold];
-  return [...prev, banner, hold];
 }
 
 const WINDOW_OPTIONS = [
@@ -691,14 +727,14 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
+/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
 function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
-  if (ps) parts.push(`【内容身份】${ps.slice(0, 600)}`);
+  if (ps) parts.push(`【精神气质与内容身份】${ps.slice(0, 600)}`);
   if (isIpProfileReady(ipProfile)) {
     parts.push(
-      `【IP 基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌：${ipProfile.taboos.trim()}` : ""}`,
+      `【IP 视觉与商业基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌（绝对避让）：${ipProfile.taboos.trim()}` : ""}`,
     );
   }
   return parts.join("\n").trim().slice(0, 3800);
@@ -1079,7 +1115,7 @@ function buildCompositeImageGenPendingLines(input: {
 }): string[] {
   const ts = new Date().toISOString();
   const trLine =
-    "2×4／八格英文化：仅 Vertex Gemini 3 Flash Preview（最多 3 次重试；不含 GPT 5.4 英文化）。生存模式由服端覆写。";
+    "2×4／八格英文化：默认 GPT 5.4（最多 3 次）→ Gemini 3.5 Flash 兜底；生存模式由服端覆写。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"
@@ -1514,23 +1550,17 @@ export default function PlatformPage() {
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
-  const [stage2SupervisorCopyEngine, setStage2SupervisorCopyEngine] = useState<PlatformStage2SupervisorCopyEngine>(() => {
-    if (typeof window === "undefined") return "vertex";
-    try {
-      return parseStage2SupervisorCopyEngineLs(window.localStorage.getItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY));
-    } catch {
-      return "vertex";
-    }
-  });
+  const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
+    readPlatformCopyLlmEngineFromLs(),
+  );
 
   useEffect(() => {
-    if (!canConfigureStage2CopyEngine) return;
     try {
-      window.localStorage.setItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY, stage2SupervisorCopyEngine);
+      window.localStorage.setItem(PLATFORM_COPY_LLM_ENGINE_LS_KEY, platformCopyLlmEngine);
     } catch {
       /* ignore */
     }
-  }, [canConfigureStage2CopyEngine, stage2SupervisorCopyEngine]);
+  }, [platformCopyLlmEngine]);
 
   // Separate state for dashboard — populated by the second call after snapshot loads
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
@@ -1558,18 +1588,8 @@ export default function PlatformPage() {
   const [contentJobPollTrace, setContentJobPollTrace] = useState<ClientJobPollTrace | null>(null);
   /** Debug：最近一次封面单帧 job 的轮询（新任务会覆盖） */
   const [topicImageJobPollTrace, setTopicImageJobPollTrace] = useState<ClientJobPollTrace | null>(null);
-  /** Debug：选题封面管线 `imageGenFlowLog`（轮询中与完成后保留，对照 DR-Pro → GPT 5.4） */
-  const [topicCoverPipelineFlowLogDebug, setTopicCoverPipelineFlowLogDebug] = useState<string[]>([]);
   /** Debug：2×4 分镜 / 八格图文 合成 job（含 progressJobId、轮询次数） */
   const [compositeJobPollTrace, setCompositeJobPollTrace] = useState<ClientJobPollTrace | null>(null);
-  const topicCoverDebugPollCaption = useMemo(() => {
-    const label = topicImageJobPollTrace?.label ?? compositeJobPollTrace?.label;
-    const step = topicImageJobPollTrace?.currentStep ?? compositeJobPollTrace?.currentStep;
-    const jid = topicImageJobPollTrace?.jobId ?? compositeJobPollTrace?.jobId;
-    const head = label && step ? `${label} · ${step}` : label || step || "";
-    if (!jid?.trim()) return head || undefined;
-    return head ? `${head} · job ${jid}` : `job ${jid}`;
-  }, [topicImageJobPollTrace, compositeJobPollTrace]);
   /** Stage 2：有 platformContent 物件但选题与变现皆 0 条 — 假成功，须与真完成区分 */
   const stage2EmptyPayload = useMemo(() => {
     if (!platformContent) return false;
@@ -1902,12 +1922,8 @@ export default function PlatformPage() {
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
           strategicDashboard: dash as unknown as Record<string, unknown>,
-          ...(canConfigureStage2CopyEngine
-            ? {
-                stage2LlmMode: stage2SupervisorCopyEngine,
-                ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-              }
-            : {}),
+          stage2LlmMode: platformCopyLlmEngine,
+          ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
         });
         setContentJobPollTrace({
           jobId,
@@ -1936,7 +1952,7 @@ export default function PlatformPage() {
         setIsContentLoading(false);
       }
     },
-    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, canConfigureStage2CopyEngine, stage2SupervisorCopyEngine],
+    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine],
   );
 
   /** 用户确认后入队 Stage 2（后端立即扣积分）并轮询直至完成 */
@@ -2103,7 +2119,6 @@ export default function PlatformPage() {
         ...(supervisorToken ? { supervisorToken } : {}),
         compositeImageEngine: platformComposite2x4Engine,
       });
-      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "bundle", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2119,7 +2134,6 @@ export default function PlatformPage() {
           onPoll: ({ attempt, output }) => {
             const out = output as { imageGenFlowLog?: string[] } | undefined;
             const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
-            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
             const tail =
               flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
@@ -2150,7 +2164,6 @@ export default function PlatformPage() {
         const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
           ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
           : [];
-        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
         setTopicImageJobPollTrace((prev) => {
           if (!prev || prev.jobId !== jobId) return prev;
           let lines = prev.lines;
@@ -2199,7 +2212,6 @@ export default function PlatformPage() {
       }
       const o = raw as Record<string, unknown>;
       const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
-      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
       const compositeImageUrl = String(o.compositeImageUrl ?? "").trim() || null;
@@ -2291,7 +2303,6 @@ export default function PlatformPage() {
         ...(supervisorToken ? { supervisorToken } : {}),
         ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
       });
-      setTopicCoverPipelineFlowLogDebug((p) => appendTopicCoverDebugNewJobBanner(p, "cover", inp.sceneId));
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -2307,7 +2318,6 @@ export default function PlatformPage() {
           onPoll: ({ attempt, output }) => {
             const out = output as { imageGenFlowLog?: string[] } | undefined;
             const flow = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : null;
-            if (flow && flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
             const tail =
               flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
@@ -2338,7 +2348,6 @@ export default function PlatformPage() {
         const flow = Array.isArray((j.output as { imageGenFlowLog?: string[] } | undefined)?.imageGenFlowLog)
           ? ((j.output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
           : [];
-        if (flow.length > 0) setTopicCoverPipelineFlowLogDebug(flow);
         setTopicImageJobPollTrace((prev) => {
           if (!prev || prev.jobId !== jobId) return prev;
           let lines = prev.lines;
@@ -2381,7 +2390,6 @@ export default function PlatformPage() {
       }
       const o = raw as Record<string, unknown>;
       const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
-      if (finalFlowLog.length > 0) setTopicCoverPipelineFlowLogDebug(finalFlowLog);
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
       /** job output 若仅缺 success（序列化/进度合并），有 URL 也应写入 platformImageMap */
@@ -2718,13 +2726,6 @@ export default function PlatformPage() {
       const compositeDbgLabel =
         input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
-        setTopicCoverPipelineFlowLogDebug((p) =>
-          appendTopicCoverDebugNewJobBanner(
-            p,
-            "composite2x4",
-            `${input.sceneId} ${String(input.title ?? "").slice(0, 60)}`,
-          ),
-        );
         setCompositeJobPollTrace({
           jobId: pid,
           label: compositeDbgLabel,
@@ -2763,9 +2764,6 @@ export default function PlatformPage() {
       const serverLines = Array.isArray((res as { imageGenFlowLog?: string[] }).imageGenFlowLog)
         ? ((res as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
         : [];
-      if (serverLines.length > 0) {
-        setTopicCoverPipelineFlowLogDebug(serverLines);
-      }
       const headerLines = [
         `${ts}  [客户端] 2×4/图文合成 · 请求完成 · kind=${variables.kind} · sceneId=${variables.sceneId} · imageUrl=${res.imageUrl ? "已返回" : "无"}`,
       ];
@@ -2900,7 +2898,7 @@ export default function PlatformPage() {
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
         const supervisorTok = getSupervisorTrpcToken();
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-        const compositeDrProExtras = {
+        const compositeSupervisorExtras = {
           ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
             ? { enableTopicCoverDeepResearchPro: true as const }
             : {}),
@@ -2941,7 +2939,7 @@ export default function PlatformPage() {
                 ...optionalBoundCreationRecordId(),
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                 progressJobId,
-                ...compositeDrProExtras,
+                ...compositeSupervisorExtras,
                 bulkCompositePack: { packSceneIds, sequentialSlot: slotIndex },
                 compositeImageEngine: platformComposite2x4Engine,
               }),
@@ -2991,7 +2989,6 @@ export default function PlatformPage() {
                   const flow = Array.isArray((output as { imageGenFlowLog?: string[] })?.imageGenFlowLog)
                     ? ((output as { imageGenFlowLog?: string[] }).imageGenFlowLog ?? [])
                     : [];
-                  if (flow.length > 0) setTopicCoverPipelineFlowLogDebug([...flow]);
                 },
               });
               const jo = j.output as { compositeImageUrl?: string; imageGenFlowLog?: string[] } | undefined;
@@ -3085,9 +3082,6 @@ export default function PlatformPage() {
         const n = compositeLivePollAttemptRef.current;
         const out = j.output as { imageGenFlowLog?: string[] } | undefined;
         const log = Array.isArray(out?.imageGenFlowLog) ? out.imageGenFlowLog : [];
-        if (log.length > 0) {
-          setTopicCoverPipelineFlowLogDebug([...log]);
-        }
         const ts = new Date().toISOString();
         const last = log.length > 0 ? String(log[log.length - 1]) : "";
 
@@ -4551,6 +4545,7 @@ export default function PlatformPage() {
         context: capturedJudgment || undefined,
         windowDays: selectedWindowDays,
         snapshotSummary: snap as any,
+        copyLlmMode: platformCopyLlmEngine,
       });
 
       if (!dashResult.platformDashboard) {
@@ -4653,6 +4648,7 @@ export default function PlatformPage() {
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshot,
+        copyLlmMode: platformCopyLlmEngine,
       });
     }
   };
@@ -4948,7 +4944,7 @@ export default function PlatformPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-base font-bold text-white md:text-lg">平台趋势分析</span>
                         <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fef08a]">
-                          {CREDIT_COSTS.platformStage2Copywriting} 积分起
+                          {CREDIT_COSTS.platformTrend} 积分/次
                         </span>
                       </div>
                       <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">全案入队读取窗口样本、热点与平台信号</p>
@@ -5088,40 +5084,47 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              {canConfigureStage2CopyEngine ? (
-                <div className="rounded-[26px] border border-amber-500/30 bg-[linear-gradient(180deg,rgba(120,53,15,0.14),rgba(28,16,60,0.5))] p-5">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-                    <ShieldCheck className="h-4 w-4 shrink-0 text-amber-300" aria-hidden />
-                    监管专用 · 专属文案后台模型（Stage 2）
+              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">文案生成模型（Stage 1 + Stage 2）</div>
+                    <p className="mt-1 text-xs leading-relaxed text-white/55">
+                      战略看板与专属选题文案共用此设置；默认{" "}
+                      <span className="font-semibold text-amber-100">GPT‑5.5</span>，可切换{" "}
+                      <span className="font-semibold text-[#8cefff]">Gemini 3.5 Flash</span>（需配置 GEMINI_API_KEY）。
+                    </p>
                   </div>
-                  <p className="mt-2 text-xs leading-relaxed text-white/55">
-                    仅 administrator（admin / supervisor）或 supervisor 入口可见；一般用户不会看到此区，且后端会忽略未授权的线路参数。预设{" "}
-                    <span className="font-semibold text-[#8cefff]">Gemini API · gemini-3.5-flash</span>；OpenAI 需帐户额度。
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => setStage2SupervisorCopyEngine("vertex")}
+                      onClick={() => setPlatformCopyLlmEngine("openai")}
                       className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                        stage2SupervisorCopyEngine === "vertex"
-                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
-                      }`}
-                    >
-                      Gemini 3.5 Flash（Gemini API）
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStage2SupervisorCopyEngine("openai")}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                        stage2SupervisorCopyEngine === "openai"
+                        platformCopyLlmEngine === "openai"
                           ? "border-amber-400/50 bg-[rgba(251,191,36,0.12)] text-amber-100"
                           : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
                       }`}
                     >
                       GPT‑5.5（OpenAI）
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlatformCopyLlmEngine("vertex")}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                        platformCopyLlmEngine === "vertex"
+                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
+                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                      }`}
+                    >
+                      Gemini 3.5 Flash
+                    </button>
                   </div>
+                </div>
+              </div>
+
+              {canConfigureStage2CopyEngine ? (
+                <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
+                  监管提示：上方「文案生成模型」已对所有登录用户生效；Stage 2 入队参数为{" "}
+                  <span className="font-mono text-amber-100/80">stage2LlmMode={platformCopyLlmEngine}</span>。
                 </div>
               ) : null}
 
@@ -5492,21 +5495,6 @@ export default function PlatformPage() {
               ) : null}
 
               {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
-              {debugMode &&
-              (topicCoverPipelineFlowLogDebug.length > 0 ||
-                topicImageJobPollTrace ||
-                (compositeJobPollTrace && compositeMutationBusy)) ? (
-                <div className="mt-4">
-                  <PlatformTopicCoverDrProGpt54DebugPanel
-                    lines={topicCoverPipelineFlowLogDebug}
-                    pollLabel={topicCoverDebugPollCaption}
-                    jobRunning={Boolean(
-                      (topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus) ||
-                        (compositeJobPollTrace && compositeMutationBusy),
-                    )}
-                  />
-                </div>
-              ) : null}
             </div>
           </section>
         ) : null}
@@ -5548,7 +5536,7 @@ export default function PlatformPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-bold text-white">平台趋势分析</span>
                       <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2 py-0.5 text-[10px] font-semibold text-[#fef08a]">
-                        {CREDIT_COSTS.platformStage2Copywriting} 积分起
+                        {CREDIT_COSTS.platformTrend} 积分/次
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">全案入队读取窗口样本、热点与平台信号</p>
@@ -5943,21 +5931,6 @@ export default function PlatformPage() {
                   )}
                 </div>
                 {flyJobsPollDebugPanel ? <div className="mt-4">{flyJobsPollDebugPanel}</div> : null}
-              {debugMode &&
-              (topicCoverPipelineFlowLogDebug.length > 0 ||
-                topicImageJobPollTrace ||
-                (compositeJobPollTrace && compositeMutationBusy)) ? (
-                <div className="mt-4">
-                  <PlatformTopicCoverDrProGpt54DebugPanel
-                    lines={topicCoverPipelineFlowLogDebug}
-                    pollLabel={topicCoverDebugPollCaption}
-                    jobRunning={Boolean(
-                      (topicImageJobPollTrace && !topicImageJobPollTrace.terminalStatus) ||
-                        (compositeJobPollTrace && compositeMutationBusy),
-                    )}
-                  />
-                </div>
-              ) : null}
               </div>
             ) : null}
 
@@ -6343,8 +6316,13 @@ export default function PlatformPage() {
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成分镜套装、一键生成封面加分镜。</p>
                     </div>
-                    {platformTopicCount > 0 ? (
-                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
+                    <CompositeImageEngineToggle
+                      value={platformComposite2x4Engine}
+                      onChange={setPlatformComposite2x4Engine}
+                    />
+                  </div>
+                  {platformTopicCount > 0 ? (
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
                         <button
                           type="button"
                           disabled={
@@ -6478,16 +6456,16 @@ export default function PlatformPage() {
                       <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
                         <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
                           <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
-                          2×4 合成 · 英文化（固定 Vertex）
+                          2×4 合成 · 英文化（GPT 5.4 → Flash）
                         </div>
                         <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
                           <strong className="text-[#5eead4]">2×4 分镜主表</strong>与
                           <strong className="text-[#5eead4]">小红书 2×4 八格</strong>
-                          宽幅合成的英文化<strong className="text-gray-300">固定</strong>走{" "}
-                          <strong className="text-gray-200">Vertex · Gemini 3 Flash Preview</strong>（最多 3
-                          次重试；<strong className="text-gray-300">英文化阶段</strong>不再回退 OpenAI GPT
-                          5.4）。竖版<strong className="text-gray-400">封面单帧</strong>仍沿用 GPT 5.4 英文化 →
-                          GPT-IMAGE-2。若部署开启生存模式，服务端仍可能强制 OpenAI 英文化。
+                          宽幅合成英文化默认走{" "}
+                          <strong className="text-gray-200">GPT 5.4</strong>（最多 3 次）→{" "}
+                          <strong className="text-gray-200">Gemini 3.5 Flash</strong> 兜底。竖版
+                          <strong className="text-gray-400">封面单帧</strong>仍沿用 GPT 5.4 英文化 →
+                          GPT-IMAGE-2。若部署开启生存模式，服务端仍优先 GPT 5.4。
                         </p>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
                           调参与配额：
@@ -6526,38 +6504,11 @@ export default function PlatformPage() {
                           2×4 分镜 · 小红书 2×4 八格图文 画廊
                         </h3>
                       </div>
-                      <div className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
-                        <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
-                          2×4 出图引擎
-                        </span>
-                        <div className="inline-flex rounded-lg border border-white/15 bg-black/40 p-0.5">
-                          <button
-                            type="button"
-                            onClick={() => setPlatformComposite2x4Engine("gpt_image2")}
-                            className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
-                              platformComposite2x4Engine === "gpt_image2"
-                                ? "bg-white/15 text-white shadow-sm"
-                                : "text-gray-400 hover:text-white"
-                            }`}
-                          >
-                            GPT‑Image‑2
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPlatformComposite2x4Engine("nano_banana_2")}
-                            className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
-                              platformComposite2x4Engine === "nano_banana_2"
-                                ? "bg-emerald-500/25 text-emerald-100 shadow-sm"
-                                : "text-gray-400 hover:text-emerald-100/90"
-                            }`}
-                          >
-                            Nano Banana 2
-                          </button>
-                        </div>
-                        <p className="max-w-[20rem] text-[10px] leading-snug text-gray-500">
-                          NB2 需 Vertex / 未触 GCP 避险；与上方「封面 NB2」开关无关。
-                        </p>
-                      </div>
+                      <CompositeImageEngineToggle
+                        value={platformComposite2x4Engine}
+                        onChange={setPlatformComposite2x4Engine}
+                        hintClassName="max-w-[20rem] text-[10px] leading-snug text-gray-500"
+                      />
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
@@ -6574,7 +6525,7 @@ export default function PlatformPage() {
                             const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
                             const supervisorTok = getSupervisorTrpcToken();
                             const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-                            const compositeDrProExtras = {
+                            const compositeSupervisorExtras = {
                               ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                 ? { enableTopicCoverDeepResearchPro: true as const }
                                 : {}),
@@ -6604,7 +6555,7 @@ export default function PlatformPage() {
                               ...optionalBoundCreationRecordId(),
                               imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                               progressJobId: newPlatformCompositeProgressJobId(),
-                              ...compositeDrProExtras,
+                              ...compositeSupervisorExtras,
                               compositeImageEngine: platformComposite2x4Engine,
                             });
                           };
@@ -6751,7 +6702,7 @@ export default function PlatformPage() {
                         pendingCompositeSheet?.kind === compositeKind;
                       const compositePhaseHint =
                         compositePendingUxHints[`${item.id}::${compositeKind}`] ??
-                        "英文 prompt → Vertex Nano Banana 2（宽幅）· 合计常需 3～5 分钟，请勿中途刷新";
+                        "英文 prompt → GPT 5.4 英文化 → 出图 · 合计常需 3～5 分钟，请勿中途刷新";
                       const bundleCost = platformCoverCompositeBundleCreditsForFormat(item.format);
                       const bundleRetailSum =
                         CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;
@@ -7332,13 +7283,13 @@ export default function PlatformPage() {
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const supervisorTok = getSupervisorTrpcToken();
                                 const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-                                const compositeDrProExtras = {
-                                  ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
-                                    ? { enableTopicCoverDeepResearchPro: true as const }
-                                    : {}),
-                                  ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-                                  ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
-                                };
+                            const compositeSupervisorExtras = {
+                              ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
+                                ? { enableTopicCoverDeepResearchPro: true as const }
+                                : {}),
+                              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                              ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+                            };
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
@@ -7349,7 +7300,7 @@ export default function PlatformPage() {
                                     ...optionalBoundCreationRecordId(),
                                     imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                                     progressJobId: newPlatformCompositeProgressJobId(),
-                                    ...compositeDrProExtras,
+                                    ...compositeSupervisorExtras,
                                     compositeImageEngine: platformComposite2x4Engine,
                                   }),
                                 ).catch(() => {});
@@ -7417,9 +7368,8 @@ export default function PlatformPage() {
                     })
                   )}
                 </div>
-                </div>
               </div>
-                </div>
+              </div>
               </div>
 
               <div className={shellCardClasses("p-6")}>

@@ -8,6 +8,7 @@ import {
   Sparkles,
   BarChart2,
 } from "lucide-react";
+import { CREDIT_COSTS } from "@shared/plans";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { VisualReportTemplate, type VisualReportData } from "./VisualReportTemplate";
@@ -122,7 +123,7 @@ export default function ReportGeneratorPanel({ supervisorAccess, personaContext 
   };
 
   const isLoading = generateMutation.isPending;
-  const CREDITS = 5;
+  const trendAnalysisCredits = CREDIT_COSTS.platformTrend;
 
   return (
     <div className="rounded-[28px] border border-white/10 bg-[rgba(14,9,32,0.88)] shadow-[0_18px_80px_rgba(0,0,0,0.28)] backdrop-blur p-6">
@@ -140,7 +141,7 @@ export default function ReportGeneratorPanel({ supervisorAccess, personaContext 
         </div>
         {!supervisorAccess && (
           <div className="ml-auto rounded-full border border-[#ffdd44]/20 bg-[rgba(255,221,68,0.08)] px-3 py-1 text-xs text-[#ffdd44]">
-            扣除 {CREDITS} 积分
+            扣除 {trendAnalysisCredits} 积分
           </div>
         )}
         {supervisorAccess && (
@@ -244,7 +245,7 @@ export default function ReportGeneratorPanel({ supervisorAccess, personaContext 
           ) : (
             <>
               <Sparkles className="h-4 w-4" />
-              生成精美图文报表{!supervisorAccess ? ` (扣除 ${CREDITS} 积分)` : ""}
+              生成精美图文报表{!supervisorAccess ? ` (扣除 ${trendAnalysisCredits} 积分)` : ""}
             </>
           )}
         </button>

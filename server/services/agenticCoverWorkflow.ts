@@ -102,7 +102,7 @@ export function buildCoverTaskInputFromPipeline(params: {
 }): CoverTaskInput {
   const topicTitle = String(params.topicHook || "").trim().slice(0, 300);
   const baseCopywriting = [
-    String(params.coverPersonaContext || "").trim() ? `【身份锚点】\n${String(params.coverPersonaContext).trim()}` : "",
+    String(params.coverPersonaContext || "").trim() ? `【身份美学锚点】\n${String(params.coverPersonaContext).trim()}` : "",
     String(params.context || "").trim(),
   ]
     .filter(Boolean)
@@ -156,13 +156,13 @@ export async function runAgenticCoverStrategist(
     });
 
     const systemInstruction = [
-      `你是顶级 ${input.format} 信息流「封面视觉总监」（抖音/小红书式竖封缩略图）；须用租户「职业、身份、兴趣、爱好、专长」等人设各维解释画面逻辑，禁止只写泛化博主风。`,
-      `若搜索工具不可用，仍凭专业知识输出；不建議编造不实外部链接标题。`,
-      `仅输出合法 JSON，三键：` +
-        `"coverHeadline"（≤12 字简体钩子大字）、` +
-        `"rawImagePrompt"（**简体中文**生图企划：主体·隐喻·布光·镜头语言·材质色温，可多段编号；**封面場景宜與文案一併多元化**，**室內與戶外**皆可作參考，不建議無依據時過度集中在書房書桌書架或反覆客廳沙發電視牆；可寫街景自然、公共／醫療／工業室內、棚拍色片等）、` +
-        `"designRationale"（≤200 字 CTR 逻辑）。`,
-      `不建議使用 Markdown、不建議在 JSON 外附加文字。`,
+      `你是拥有顶级审美与隐喻转译能力的 ${input.format} 信息流「封面视觉艺术总监」（抖音/小红书式竖封缩略图）。你必须将租户的「职业、身份、专长」提炼为高级的视觉思想，拒绝廉价复杂的模板感，禁止泛化博主风。`,
+      `即使无外部检索，也须凭顶尖专业直觉进行概念设计；不建议编造虚假外部链接。`,
+      `仅输出合法 JSON，包含三键：` +
+        `"coverHeadline"（≤12字简体大字，必须绝对突出，一击致命）、` +
+        `"rawImagePrompt"（**简体中文**概念企划：包含核心隐喻·视觉层级·电影级布光·构图张力·色彩系统。**场景必须自适应词义并极度多元化**，**室内外皆可**，强硬拒绝无脑依赖书房书桌或重复客厅沙发；可大胆调用宏大自然、工业废墟、精密室内或极简棚拍等）、` +
+        `"designRationale"（≤200字，阐述隐喻逻辑与CTR视觉冲击力来源）。`,
+      `不建议使用 Markdown、不建议在 JSON 外附加文字。`,
     ].join("");
 
     const userText = [

@@ -1954,15 +1954,15 @@ ${job.topic}
     const ipProfile = job.ipProfile;
     const STRATEGIC_IP_PRESET = ipProfile
       ? `
-【全局战略预设 · 企业 IP 基因】
+【全局战略推演 · 品牌美学与商业基因】
 企业身份：${ipProfile.industry} | 核心优势：${ipProfile.advantage}
-目标受众：${ipProfile.audience}${ipProfile.taboos ? ` | 品牌禁忌：${ipProfile.taboos}` : ""}
-核心转化锚点：${ipProfile.flagship}
+目标受众：${ipProfile.audience}${ipProfile.taboos ? ` | 品牌绝对禁忌：${ipProfile.taboos}` : ""}
+核心转化图腾（旗舰交付）：${ipProfile.flagship}
 
-【战略纪律】
-请基于上述基因重构大众热点。80% 篇幅必须聚焦于高客单转化路径、合规与定价战略；
-所有举例、产品矩阵、漏斗设计都要围绕「${ipProfile.flagship}」这一旗舰交付反向倒推；
-${ipProfile.taboos ? `严禁触碰品牌禁忌：${ipProfile.taboos}；` : ""}避免将分析降维到大众化、价格战、流量采买等低端打法。
+【战略与美学纪律】
+请基于上述基因重构大众热点。80% 篇幅必须极度克制地聚焦于高客单转化、合规与顶级品牌定调；
+所有举例、产品矩阵与视觉漏斗，必须像众星捧月般围绕「${ipProfile.flagship}」这一旗舰交付展开；
+${ipProfile.taboos ? `严禁触碰品牌禁忌：${ipProfile.taboos}；` : ""}坚决剥离廉价感，拒绝降维到大众化、价格战、粗暴流量采买等低端语境，保持战略与输出的顶级专业感。
 `.trim()
       : "";
 

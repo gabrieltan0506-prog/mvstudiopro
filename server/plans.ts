@@ -181,7 +181,7 @@ export const CREDIT_COSTS = {
   growthCampGrowthMusic: 10,    // 成长营·配乐生成（GROWTH）：10 cr
   growthCampRemix: 60,          // 二创分析（REMIX）：60 cr
   growthCampRemixMusic: 8,      // 二创·配乐生成（REMIX）：8 cr
-  platformTrend: 150,           // 平台数据分析（主看板）：150 cr（GPT-image-2 等成本上调 · 3×）
+  platformTrend: 50,            // 平台数据分析（主看板 / 趋势分析）：50 cr / 次
   platformTrendFollowUp: 18,    // 平台趋势·趋势数据续分析：正式包每日首次免费，之后 18 cr（3×）
   platformRefImage: 36,         // 平台趋势·生成参考图：36 cr/张（3×）
   platformRefImageUpscale2x: 108, // 参考图高清放大 2×：108 cr（3×）

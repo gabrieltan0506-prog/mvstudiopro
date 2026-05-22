@@ -10,6 +10,10 @@ import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
 import {
+  readTopicCoverDeepResearchProFromLs,
+  writeTopicCoverDeepResearchProToLs,
+} from "@/lib/platformCoverDrProLs";
+import {
   clipToGeneratedSong,
   downloadGeneratedMusicToFile,
   getMusicClipsFromJobPayload,
@@ -1602,6 +1606,7 @@ export default function MVAnalysisPage() {
 
   // 竞品分析调研
   const [showResearch, setShowResearch] = useState(false);
+  const [topicCoverDrProEnabled, setTopicCoverDrProEnabled] = useState(() => readTopicCoverDeepResearchProFromLs());
   const [researchPlatform, setResearchPlatform] = useState<"douyin" | "kuaishou" | "xiaohongshu" | "bilibili">("douyin");
   const [researchInput, setResearchInput] = useState("");
   const [researchResult, setResearchResult] = useState<any>(null);
@@ -3106,6 +3111,25 @@ export default function MVAnalysisPage() {
                 <blockquote className="border-l-2 border-[#a78bfa]/40 pl-3 italic text-white/50">「不要用你的体力，去挑战对手的数据力。」</blockquote>
               </div>
             )}
+
+            {supervisorAccess ? (
+              <label className="mb-5 flex cursor-pointer items-start gap-2.5 rounded-xl border border-violet-400/35 bg-violet-950/30 px-3 py-2.5 text-left text-[11px] leading-snug text-violet-50/95 shadow-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-violet-400/60 accent-violet-400"
+                  checked={topicCoverDrProEnabled}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setTopicCoverDrProEnabled(on);
+                    writeTopicCoverDeepResearchProToLs(on);
+                  }}
+                />
+                <span>
+                  <span className="font-bold text-violet-200">监管 · 平台封面/2×4 Deep Research Pro（步骤 0.5）</span>
+                  ：开关写入本机 localStorage；平台顾问页生图时读取（不在平台页展示 DR 调试面板）。默认关闭。
+                </span>
+              </label>
+            ) : null}
 
             <div className="mb-4 flex flex-wrap gap-2">
               {(["douyin", "kuaishou", "xiaohongshu", "bilibili"] as const).map((p) => {

@@ -489,8 +489,52 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
   return Math.min(65536, Math.floor(raw));
 })();
 
-/** Stage 2 取樣溫度（Gemini 3.5 Flash 文案；GPT‑5 系 OpenAI 可能忽略 temperature，見 llm.ts）。 */
+/** Stage 1 / Stage 2 取樣溫度（GPT‑5 系 OpenAI 可能忽略 temperature，见 llm.ts）。 */
 const STAGE2_LLM_TEMPERATURE = 0.8;
+
+/** 解析单次请求的 Stage 1 / Stage 2 文案线路（UI 可传 vertex=Gemini 3.5 Flash · openai=GPT‑5.5）。 */
+function resolvePlatformCopyLlmMode(input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
+  if (input === "vertex" || input === "openai") return input;
+  return resolvePlatformStage2LlmMode();
+}
+
+/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（Gemini 3.5 Flash 或 GPT‑5.5）。 */
+async function invokePlatformStructuredCopyLlm(options: {
+  copyLlmMode: PlatformStage2LlmMode;
+  systemInstruction: string;
+  userText: string;
+  abortSignal?: AbortSignal;
+}): Promise<string> {
+  if (options.copyLlmMode === "openai") {
+    const modelName = getPlatformStage2OpenAiModel();
+    const response = await invokeLLM({
+      provider: "openai",
+      modelName,
+      max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+      temperature: STAGE2_LLM_TEMPERATURE,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: options.systemInstruction },
+        { role: "user", content: options.userText },
+      ],
+      abortSignal: options.abortSignal,
+    });
+    return extractFirstChoicePlainText(response);
+  }
+  const geminiModel = resolvePlatformStage2GeminiModel();
+  return callGemini35FlashCopywriting({
+    taskSystemInstruction: options.systemInstruction,
+    userText: options.userText,
+    responseMimeType: "application/json",
+    maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+    temperature: STAGE2_LLM_TEMPERATURE,
+    topP: 0.9,
+    modelName: geminiModel,
+    abortSignal: options.abortSignal,
+  });
+}
+
+const zPlatformCopyLlmModeInput = z.enum(["vertex", "openai"]).optional();
 
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting。
 // platformMenu 與 @shared/growth 的 growthPlatformMenuItemSchema 對齊；referenceAccounts / trafficBoosters 強制為陣列，由 Prompt 保證格式。
@@ -589,6 +633,8 @@ async function buildPlatformDashboard(params: {
   store: Awaited<ReturnType<typeof readTrendStore>>;
   windowDays: number;
   abortSignal?: AbortSignal;
+  /** UI / 请求覆写：vertex=Gemini 3.5 Flash · openai=GPT‑5.5 */
+  copyLlmMode?: PlatformStage2LlmMode | null;
 }) {
   const getPlatformDecisionWindowDays = (platform: string): number => {
     if (platform === "douyin" || platform === "kuaishou") return 5;
@@ -793,15 +839,11 @@ async function buildPlatformDashboard(params: {
           })),
         });
 
-  const dashboardModel = resolvePlatformStage2GeminiModel();
-  const rawContent = await callGemini35FlashCopywriting({
-    taskSystemInstruction: dashboardSystemInstruction,
+  const copyLlmMode = resolvePlatformCopyLlmMode(params.copyLlmMode);
+  const rawContent = await invokePlatformStructuredCopyLlm({
+    copyLlmMode,
+    systemInstruction: dashboardSystemInstruction,
     userText: dashboardUserPayload,
-    responseMimeType: "application/json",
-    maxOutputTokens: 65536,
-    temperature: 0.8,
-    topP: 0.9,
-    modelName: dashboardModel,
     abortSignal: params.abortSignal,
   });
 
@@ -995,7 +1037,7 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
 }
 
 /** Stage2 文案 / 分镜：场景须生动具体，供 system prompt 复用。 */
-const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生动化】文案、分镜、executionDetails.environmentAndWardrobe 中的拍摄场景须**具体、可拍、能打动用户**；鼓励跨场域轮换，**包括但不局限于**例如：博物馆、户外旅行、知名景区、游泳池、网球场、音乐厅、饭店餐厅、路边大排档、商场、超市、咖啡日常消费场景、医院诊间、实验室、健身房、街景夜市、天台、市集、会展展厅、演播舞台、城市地标、自然风光等（仅为示例，可据人设与选题再拓展）。场景须有画面感与情绪张力，让读者感到「想去那里 / 想点开看」；须与人设（职业、身份、兴趣、爱好、专长）合理互证，禁止无依据时多条选题扎堆书房、客厅、书桌等同质布景。`;
+const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学】文案、分镜中的拍摄场景必须**具体、可拍、且充满心理张力**；鼓励跨越空间壁垒，**包括但不局限于**：沉浸式美术馆、极地旷野、精密实验室、废墟工业风、极简商业体、烟火市集、高空天台等。场景必须具备电影级的画面感，让读者产生强烈的代入感；必须与人设（职业、身份、专长）的深层气质合理互证。严禁机械套用刻板布景，强硬拒绝多选题扎堆在书房、客厅、书桌等同质化且毫无美感的空间。`;
 
 export async function buildPlatformContent(params: {
   snapshot: any;
@@ -1217,7 +1259,7 @@ export async function buildPlatformContent(params: {
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
-5.多场景热点与生动选题（Versatile & Vivid Scenes / Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**站得住脚的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**可参考但必须改写**，使之贴合用户的**职业、身份、兴趣、爱好、专长**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
+5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**必须经过解构与重塑**，使其完全臣服于用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
 【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。必须恰好 **5** 条。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
 【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
@@ -1321,7 +1363,7 @@ export async function buildPlatformContent(params: {
     openaiModel: stage2LlmMode === "openai" ? getPlatformStage2OpenAiModel() : null,
   });
 
-  /** Stage 2：`PLATFORM_STAGE2_LLM` 一鍵 OpenAI（GPT‑5.5）或 Vertex/Gemini 鏈。 */
+  /** Stage 2：默认 OpenAI GPT‑5.5；`PLATFORM_STAGE2_LLM=vertex` 走 Gemini API 退路。 */
   let response: Awaited<ReturnType<typeof invokeLLM>> | undefined;
   let vertexJsonErrMsg: string | null = null;
   let vertexPlainErrMsg: string | null = null;
@@ -3063,6 +3105,7 @@ export const appRouter = router({
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         snapshot: growthSnapshotSchema,
+        copyLlmMode: zPlatformCopyLlmModeInput,
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user?.id) {
@@ -3093,14 +3136,21 @@ export const appRouter = router({
             isFreeThisTime = !todayRecord;
           }
           if (!isFreeThisTime) {
+            const followUpCopyMode = resolvePlatformCopyLlmMode(input.copyLlmMode);
+            const followUpBillingLabel =
+              followUpCopyMode === "openai" ? "GPT 5.5" : "Gemini 3.5 Flash";
             await deductCredits(
               ctx.user.id,
               "platformTrendFollowUp",
-              `平台趋势续分析 (${input.windowDays}天 / Gemini 3.5 Flash)`,
+              `平台趋势续分析 (${input.windowDays}天 / ${followUpBillingLabel})`,
             );
           }
         }
-        const followUpModel = resolvePlatformStage2GeminiModel();
+        const followUpCopyLlmMode = resolvePlatformCopyLlmMode(input.copyLlmMode);
+        const followUpModel =
+          followUpCopyLlmMode === "openai"
+            ? getPlatformStage2OpenAiModel()
+            : resolvePlatformStage2GeminiModel();
         try {
           const followUpSystem = `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
 
@@ -3154,13 +3204,31 @@ export const appRouter = router({
                   },
                 });
 
-          const rawFollowUpContent = await callGemini35FlashCopywriting({
-            taskSystemInstruction: followUpSystem,
-            userText: followUpUser,
-            responseMimeType: "application/json",
-            maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-            modelName: followUpModel,
-          });
+          const followUpResponse =
+            followUpCopyLlmMode === "openai"
+              ? await invokeLLM({
+                  provider: "openai",
+                  modelName: getPlatformStage2OpenAiModel(),
+                  max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+                  temperature: STAGE2_LLM_TEMPERATURE,
+                  response_format: { type: "json_object" },
+                  messages: [
+                    { role: "system", content: followUpSystem },
+                    { role: "user", content: followUpUser },
+                  ],
+                })
+              : null;
+          const rawFollowUpContent =
+            followUpResponse != null
+              ? extractFirstChoicePlainText(followUpResponse)
+              : await callGemini35FlashCopywriting({
+                  taskSystemInstruction: followUpSystem,
+                  userText: followUpUser,
+                  responseMimeType: "application/json",
+                  maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+                  modelName: resolvePlatformStage2GeminiModel(),
+                });
+
           let parsedFollowUpRaw: unknown;
           try {
             parsedFollowUpRaw = JSON.parse(rawFollowUpContent);
@@ -3179,7 +3247,8 @@ export const appRouter = router({
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModel,
-              provider: "gemini-api",
+              provider: followUpCopyLlmMode === "openai" ? "openai" : "gemini-api",
+              copyLlmMode: followUpCopyLlmMode,
               windowDays: input.windowDays,
               fallbackUsed: false,
             },
@@ -3192,7 +3261,8 @@ export const appRouter = router({
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModel,
-              provider: "gemini-api",
+              provider: followUpCopyLlmMode === "openai" ? "openai" : "gemini-api",
+              copyLlmMode: followUpCopyLlmMode,
               windowDays: input.windowDays,
               fallbackUsed: true,
               error: error instanceof Error ? error.message : String(error),
@@ -3731,7 +3801,7 @@ export const appRouter = router({
           dateRange,
           contentBlueprint,
           platformData: { platform: platformHint },
-          thinkingLevel: "HIGH",
+          thinkingLevel: "MEDIUM",
           windowDays,
         });
 
@@ -3746,7 +3816,7 @@ export const appRouter = router({
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.startsWith("DECISION_INTEL_FLASH_ALL_FAILED")) {
+          if (msg.startsWith("DECISION_INTEL_GPT55_ALL_FAILED") || msg.startsWith("DECISION_INTEL_FLASH_ALL_FAILED")) {
             throw new TRPCError({
               code: "SERVICE_UNAVAILABLE",
               message: "智库文案扩写暂时不可用，请稍后重试（未扣点）。",
@@ -4873,7 +4943,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const enrichedContext = mergeCoverContextWithDbHint(resolvedCover.context, coverHistoryHint);
 
         void input.imagePromptTranslator;
-        const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
+        const imagePromptTranslatorForComposite = "gpt54" as const;
 
         const jobId = nanoid(16);
         await createJobRecord({
@@ -4989,8 +5059,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const {
           buildPlatformTopicReferenceGeminiTask,
           extractChineseVisualBrief,
-          resolveVertexCoverTranslationModelName,
-          translatePlatformTopicCoverToEnglishVertexOnly,
+          translatePlatformTopicCoverToEnglishGpt54,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
@@ -4998,7 +5067,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendImageFlowLog,
         } = await import("./services/proxyImageService.js");
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        const coverTranslatorLogLabel = `Vertex · ${resolveVertexCoverTranslationModelName()}（英文化，无 OpenAI）`;
+        const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
         /** 逐張串行：降低同題多張對 Vertex 生圖的尖峰失敗率。 */
         const pool = 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 串行（并发=1）· 单价=${costPerImage}点`;
@@ -5046,11 +5115,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           appendImageFlowLog(
             flowLog,
-            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ ${coverTranslatorLogLabel} → Vertex Nano Banana 2 9:16 · 无二次兜底`,
+            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ ${coverTranslatorLogLabel} → 豎封像素引擎（預設 GPT‑Image‑2 / NB2）`,
           );
           appendImageFlowLog(
             flowLog,
-            `说明: 豎封英文化僅 Vertex（預設 Gemini 2.5 Pro）；出图僅 NB2；不調 OpenAI、無版式二次生圖`,
+            `说明: 豎封英文化 GPT 5.4；出图依 PLATFORM_TOPIC_COVER_PIXEL_ENGINE / 监管覆写`,
           );
           let url: string | null = null;
           let fallbackUsed = false;
@@ -5068,7 +5137,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
             });
             appendImageFlowLog(flowLog, `[步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`);
-            const englishPrompt = await translatePlatformTopicCoverToEnglishVertexOnly(geminiTask, flowLog);
+            const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(geminiTask, flowLog);
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             const trimmedEn = String(englishPrompt || "").trim();
             if (!trimmedEn) {
@@ -5212,7 +5281,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const enableCompositeDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         void input.imagePromptTranslator;
-        const imagePromptTranslatorForComposite = "vertex_gemini_3_flash_preview" as const;
+        const imagePromptTranslatorForComposite = "gpt54" as const;
         const compositePack = input.bulkCompositePack;
         const cost = compositePack
           ? platformBundleCreditsForSlot(
@@ -5551,6 +5620,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         requestedPlatforms: z.array(z.string()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
+        copyLlmMode: zPlatformCopyLlmModeInput,
       }))
       .mutation(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || []);
@@ -5577,6 +5647,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               store,
               windowDays: selectedWindowDays,
               abortSignal: ctx.clientDisconnected,
+              copyLlmMode: input.copyLlmMode,
             }),
             new Promise<null>((resolve) => setTimeout(() => {
               console.warn(`[platform.getPlatformDashboard] 平台看板生成超时，已等待 ${DASHBOARD_TIMEOUT_MS}ms，返回空结果`);
@@ -5629,19 +5700,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           /** Stage 1 完整戰略看板：後端清洗為 stage1StrategicHandoff 再併入 Stage 2 提示 */
           strategicDashboard: z.record(z.string(), z.any()).optional(),
           /**
-           * 僅 {@link resolvePlatformSupervisorOpsAllowed} 為真時生效，否則忽略（防一般使用者改線路）。
-           * Vertex = gemini-3.5-flash（{@link resolvePlatformStage2GeminiModel}）；OpenAI = PLATFORM_STAGE2_OPENAI_MODEL（預設 gpt-5.5）。
+           * Stage 1 / Stage 2 文案线路：`vertex`=Gemini 3.5 Flash · `openai`=GPT‑5.5（默认）。
            */
-          stage2LlmMode: z.enum(["vertex", "openai"]).optional(),
+          stage2LlmMode: zPlatformCopyLlmModeInput,
           supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const supervisorStage2Ops = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
         const stage2LlmModeForJob =
-          supervisorStage2Ops && (input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai")
+          input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai"
             ? input.stage2LlmMode
             : undefined;
         if (!isAdminUser) {
@@ -5689,7 +5758,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         platformMenu: z.array(z.any()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
         strategicDashboard: z.record(z.string(), z.any()).optional(),
-        stage2LlmMode: z.enum(["vertex", "openai"]).optional(),
+        stage2LlmMode: zPlatformCopyLlmModeInput,
         supervisorToken: z.string().max(512).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -5739,9 +5808,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input.snapshotSummary,
           );
 
-          const supervisorStage2Ops = resolvePlatformSupervisorOpsAllowed(ctx.user ?? { role: null }, input.supervisorToken);
           const stage2LlmModeOverride =
-            supervisorStage2Ops && (input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai")
+            input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai"
               ? input.stage2LlmMode
               : undefined;
 

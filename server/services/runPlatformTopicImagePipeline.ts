@@ -152,10 +152,9 @@ export async function runPlatformTopicImagePipeline(
   const {
     buildPlatformTopicReferenceGeminiTask,
     extractChineseVisualBrief,
-    resolveVertexCoverTranslationModelName,
-    translatePlatformTopicCoverToEnglishVertexOnly,
+    translatePlatformTopicCoverToEnglishGpt54,
   } = await import("./geminiPlatformCompositeTranslation.js");
-  const coverTranslatorLogLabel = `Vertex · ${resolveVertexCoverTranslationModelName()}（英文化，无 OpenAI）`;
+  const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
   const {
     buildCoverTaskInputFromPipeline,
     isPlatformCoverAgenticBrainEnabled,
@@ -186,7 +185,7 @@ export async function runPlatformTopicImagePipeline(
       `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [主路径] Vertex 英文化 → 豎封像素（${coverPixelEngineOverride ?? "預設：Nano Banana 2；可設 PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2（GPT‑Image‑2）或 nbp_only（Pro）"}）· 无版式二次生圖`,
+      `${platformFlowLogTimestamp()}  [主路径] GPT 5.4 英文化 → 豎封像素（${coverPixelEngineOverride ?? "預設：EvoLink/GPT‑Image‑2（有 EVOLINK_API_KEY）或 Nano Banana 2"}）· 无版式二次生圖`,
     );
 
     if (trendBrief) {
@@ -281,11 +280,11 @@ export async function runPlatformTopicImagePipeline(
 
     if (runCoverDrPro) {
       topicImageCondenseLog.push(
-        `${platformFlowLogTimestamp()}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/Vertex 英文化（步骤1 及以下）`,
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/GPT 5.4 英文化（步骤1 及以下）`,
       );
     } else {
       topicImageCondenseLog.push(
-        `${platformFlowLogTimestamp()}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/Vertex 英文化`,
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/GPT 5.4 英文化`,
       );
     }
 
@@ -320,7 +319,7 @@ export async function runPlatformTopicImagePipeline(
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`,
         );
-        const englishPrompt = await translatePlatformTopicCoverToEnglishVertexOnly(
+        const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(
           geminiTask,
           topicImageCondenseLog,
         );

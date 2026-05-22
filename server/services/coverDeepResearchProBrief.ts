@@ -90,14 +90,14 @@ function clipBrief(text: string, maxChars: number): string {
   return `${t.slice(0, maxChars)}\n…(truncated)`;
 }
 
-const DR_AGENT_INVOCATION_COMMON = `【調用方式】你是 Google Deep Research **Agent**（非單輪 chat 模型）；允許聯網輔證，但**最終只能輸出本指令要求的成品段落**。
-【時間節奏】本輪以平台輪詢預算為硬上限（通常約十分鐘內）；請在時限內**高效率**整合並交付，無須冗長；下游另有 **GPT 5.4** 負責英文化与收斂，你這裡只做**輕量編導優化**，不是最終像素產出。
-【輸出語言】正文僅簡體中文；不建議整段英文；不建議 JSON；不建議 markdown 代碼欄。
-【聯網邊界】僅用於**同一選題語境**的輕量補強；不建議換成無關話題與無關爆款案例。`.trim();
+const DR_AGENT_INVOCATION_COMMON = `【调度法则】你是 Google Deep Research **Agent**（非单轮大模型）；允许联网获取灵感，但**最终必须收敛为本指令要求的精准视觉思想**。
+【节奏控制】本轮受平台轮询预算严格限制（约10分钟）；请在时限内**极速且克制**地交付，拒绝无意义的堆砌；下游有 **GPT 5.4** 负责最终像素级提示词重塑，你只需完成**骨架级的美学与编导定向**。
+【输出规范】正文仅简体中文；不建议整段英文、JSON或Markdown代码栏。
+【联网边界】仅限于**同一选题语境**下的深层隐喻补强，严禁偏离主题。`.trim();
 
 function drProductOneLiner(product: DrBriefProduct): string {
   if (product === "platform_cover") {
-    return "【本輪對象】豎版 9:16 信息流封面——補強可作畫的構圖/主體/光影/留白與簡中主標層級；**封面與文案場景宜多元化**（**室內、戶外**皆可參考），不建議無據時過度集中在書房書桌或反覆客廳沙發區。";
+    return "【本轮对象】竖版 9:16 信息流概念封面——提炼并补强画面中最具冲击力的构图、隐喻主体、高级光影、留白意境与简中主标层级；**场景空间必须打破常规且极度多元**（**室内外皆可**），严禁无据时堕入书房书桌或刻板客厅沙发的视觉贫乏。";
   }
   if (product === "composite_storyboard") {
     return "【本輪對象】橫版 2×4 電影感分鏡主表——補強八格的叙事情緒與畫面任務（不建議輸出製片表或 JSON）。";

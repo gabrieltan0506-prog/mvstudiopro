@@ -1,7 +1,7 @@
 /**
- * 默认：Creator Growth **Stage 2 文案** 与 **生图英文化** 均 = **`gemini-3.5-flash` · Gemini API**（`GEMINI_API_KEY`，见 gemini35FlashRuntime）；非 Vertex IAM。**平台图 = GCS**。
- * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS`）、英文化 **32K**（`GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS`）。
- * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。OpenAI 文案：設 `PLATFORM_STAGE2_LLM=openai`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
+ * 默认：Creator Growth **Stage 1 战略看板** 与 **Stage 2 文案** = **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）；**封面英文化** = **GPT‑5.4**（`OPENAI_GPT54_MODEL`）。**平台图 = GCS**。
+ * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）、英文化 **32K**（`GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS` / `GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS`）。
+ * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
@@ -74,8 +74,8 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 /**
  * 監管／請求：**選題豎封** 像素引擎（**優先於**下方 env {@link resolvePlatformTopicCoverPixelEngine}）。
  *
- * **`gpt_image2`：** OhMyGPT / fal **GPT‑Image‑2** 整段主鏈**程式保留、未刪除**（額度／充值就緒後可啟用）。**目前未設 env 時預設仍走 Vertex Nano Banana 2**，無需額外 API 時維持現狀即可。
- * 啟用豎封 GPT‑Image‑2：部署設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2`（或 `gpt-image-2` / `ohmygpt` 等別名，見 {@link resolvePlatformTopicCoverPixelEngine}），或由請求傳 `coverPixelEngine: "gpt_image2"`（待前端接入）。
+ * **`gpt_image2`：** **EvoLink** `gpt-image-2`（需 `EVOLINK_API_KEY`）→ OhMyGPT / fal 退路。**部署 EvoLink 密钥后默认竖封走 GPT‑Image‑2**（见 {@link resolvePlatformTopicCoverPixelEngine}）。
+ * 显式启用：设 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2`（或 `gpt-image-2` 等别名），或请求传 `coverPixelEngine: "gpt_image2"`。
  */
 export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "nano_banana_pro";
 
@@ -103,8 +103,8 @@ export function resolveSupervisorTopicCoverPixelEngineInput(input: {
 /**
  * 選題 **單幀豎封** env 預設像素（無請求覆寫 {@link PlatformTopicCoverPixelEngineChoice} 時）。
  *
- * - **`gpt_image2_only`**：**GPT‑Image‑2**（OhMyGPT → fal；**保留供額度恢復後使用**，非預設）。
- * - **`nb2_only`（程式預設·當前主線）**：Vertex **Nano Banana 2** · 9:16 · 2K。
+ * - **`gpt_image2_only`**：**EvoLink GPT‑Image‑2**（`EVOLINK_API_KEY` 存在且未显式设 env 时的**默认**）→ OhMyGPT → fal。
+ * - **`nb2_only`**：Vertex **Nano Banana 2** · 9:16 · 2K（无 EvoLink 密钥时的默认）。
  * - **`nbp_only`**：Vertex **Nano Banana Pro**（`generatePlatformTopicCoverNanoBananaProImage`）。
  * - 歷史 **Imagen / `auto` / `dual`**：視為 **`nb2_only`**（不再走 Imagen）。
  *
@@ -155,7 +155,10 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
   ) {
     return "nb2_only";
   }
-  /** 未顯式設定：預設 Nano Banana 2（豎封）。 */
+  /** 未显式设定：有 EvoLink 密钥则默认 GPT-Image-2 竖封；否则 Nano Banana 2。 */
+  if (String(process.env.EVOLINK_API_KEY || "").trim()) {
+    return "gpt_image2_only";
+  }
   return "nb2_only";
 }
 
@@ -174,10 +177,9 @@ export type PlatformCompositeSheetImageEngine = "gpt_image2" | "nano_banana_2";
 export const PLATFORM_COMPOSITE_SHEET_ENGINE_DEFAULT: PlatformCompositeSheetImageEngine = "nano_banana_2";
 
 /**
- * **`true`**：平台頁 2×4／八格**一律** Nano Banana 2，忽略請求與環境中的 `gpt_image2`（暫停 GPT‑Image‑2）。
- * 恢復 GPT‑Image‑2 時改為 `false` 並重新部署。
+ * **`false`（当前）**：尊重 UI / 请求中的 `compositeImageEngine`（`gpt_image2` | `nano_banana_2`）。
  */
-export const PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED = true;
+export const PLATFORM_COMPOSITE_SHEET_GPT_IMAGE2_TEMPORARILY_DISABLED = false;
 
 export function resolvePlatformCompositeSheetImageEngine(
   requested?: PlatformCompositeSheetImageEngine | null,
@@ -293,13 +295,13 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
     return "openai";
   }
 
-  /** 未顯式指定時預設 Gemini API（3.5 Flash）；`vertex`/`gemini` env 值均走此路，非 Vertex IAM。 */
-  return "vertex";
+  /** 未显式指定时默认 OpenAI GPT‑5.5；`vertex`/`gemini` env 值走 Gemini API 退路。 */
+  return "openai";
 }
 
 /**
- * Creator Growth **Stage 2 / 战略看板 / 深度追问** 預設 **Gemini 3.5 Flash · Gemini API**（`GEMINI_API_KEY`，見 {@link resolvePlatformStage2GeminiModel}）。  
- * OpenAI 路線仍用 gpt‑5.5（`PLATFORM_STAGE2_OPENAI_MODEL`）；英文化見 gemini35FlashRuntime。
+ * Creator Growth **Stage 1 / Stage 2 / 战略看板 / 深度追问** 預設 **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）。  
+ * Gemini 3.5 Flash 退路：`PLATFORM_STAGE2_LLM=vertex`；英文化见 geminiPlatformCompositeTranslation（封面 GPT‑5.4）。
  */
 export function getPlatformStage2OpenAiModel(): string {
   if (isPlatformWeekendGcpEscape()) return "gpt-5.5";
