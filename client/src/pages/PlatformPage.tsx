@@ -691,14 +691,14 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
+/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
 function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
-  if (ps) parts.push(`【内容身份】${ps.slice(0, 600)}`);
+  if (ps) parts.push(`【精神气质与内容身份】${ps.slice(0, 600)}`);
   if (isIpProfileReady(ipProfile)) {
     parts.push(
-      `【IP 基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌：${ipProfile.taboos.trim()}` : ""}`,
+      `【IP 视觉与商业基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌（绝对避让）：${ipProfile.taboos.trim()}` : ""}`,
     );
   }
   return parts.join("\n").trim().slice(0, 3800);

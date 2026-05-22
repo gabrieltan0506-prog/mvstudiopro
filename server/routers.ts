@@ -995,7 +995,7 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
 }
 
 /** Stage2 文案 / 分镜：场景须生动具体，供 system prompt 复用。 */
-const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生动化】文案、分镜、executionDetails.environmentAndWardrobe 中的拍摄场景须**具体、可拍、能打动用户**；鼓励跨场域轮换，**包括但不局限于**例如：博物馆、户外旅行、知名景区、游泳池、网球场、音乐厅、饭店餐厅、路边大排档、商场、超市、咖啡日常消费场景、医院诊间、实验室、健身房、街景夜市、天台、市集、会展展厅、演播舞台、城市地标、自然风光等（仅为示例，可据人设与选题再拓展）。场景须有画面感与情绪张力，让读者感到「想去那里 / 想点开看」；须与人设（职业、身份、兴趣、爱好、专长）合理互证，禁止无依据时多条选题扎堆书房、客厅、书桌等同质布景。`;
+const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学】文案、分镜中的拍摄场景必须**具体、可拍、且充满心理张力**；鼓励跨越空间壁垒，**包括但不局限于**：沉浸式美术馆、极地旷野、精密实验室、废墟工业风、极简商业体、烟火市集、高空天台等。场景必须具备电影级的画面感，让读者产生强烈的代入感；必须与人设（职业、身份、专长）的深层气质合理互证。严禁机械套用刻板布景，强硬拒绝多选题扎堆在书房、客厅、书桌等同质化且毫无美感的空间。`;
 
 export async function buildPlatformContent(params: {
   snapshot: any;
@@ -1217,7 +1217,7 @@ export async function buildPlatformContent(params: {
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
-5.多场景热点与生动选题（Versatile & Vivid Scenes / Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**站得住脚的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**可参考但必须改写**，使之贴合用户的**职业、身份、兴趣、爱好、专长**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
+5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**必须经过解构与重塑**，使其完全臣服于用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
 【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。必须恰好 **5** 条。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
 【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
