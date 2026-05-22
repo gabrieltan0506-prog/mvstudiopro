@@ -74,8 +74,8 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 /**
  * 監管／請求：**選題豎封** 像素引擎（**優先於**下方 env {@link resolvePlatformTopicCoverPixelEngine}）。
  *
- * **`gpt_image2`：** OhMyGPT / fal **GPT‑Image‑2** 整段主鏈**程式保留、未刪除**（額度／充值就緒後可啟用）。**目前未設 env 時預設仍走 Vertex Nano Banana 2**，無需額外 API 時維持現狀即可。
- * 啟用豎封 GPT‑Image‑2：部署設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2`（或 `gpt-image-2` / `ohmygpt` 等別名，見 {@link resolvePlatformTopicCoverPixelEngine}），或由請求傳 `coverPixelEngine: "gpt_image2"`（待前端接入）。
+ * **`gpt_image2`：** **EvoLink** `gpt-image-2`（需 `EVOLINK_API_KEY`）→ OhMyGPT / fal 退路。**部署 EvoLink 密钥后默认竖封走 GPT‑Image‑2**（见 {@link resolvePlatformTopicCoverPixelEngine}）。
+ * 显式启用：设 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2`（或 `gpt-image-2` 等别名），或请求传 `coverPixelEngine: "gpt_image2"`。
  */
 export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "nano_banana_pro";
 
@@ -103,8 +103,8 @@ export function resolveSupervisorTopicCoverPixelEngineInput(input: {
 /**
  * 選題 **單幀豎封** env 預設像素（無請求覆寫 {@link PlatformTopicCoverPixelEngineChoice} 時）。
  *
- * - **`gpt_image2_only`**：**GPT‑Image‑2**（OhMyGPT → fal；**保留供額度恢復後使用**，非預設）。
- * - **`nb2_only`（程式預設·當前主線）**：Vertex **Nano Banana 2** · 9:16 · 2K。
+ * - **`gpt_image2_only`**：**EvoLink GPT‑Image‑2**（`EVOLINK_API_KEY` 存在且未显式设 env 时的**默认**）→ OhMyGPT → fal。
+ * - **`nb2_only`**：Vertex **Nano Banana 2** · 9:16 · 2K（无 EvoLink 密钥时的默认）。
  * - **`nbp_only`**：Vertex **Nano Banana Pro**（`generatePlatformTopicCoverNanoBananaProImage`）。
  * - 歷史 **Imagen / `auto` / `dual`**：視為 **`nb2_only`**（不再走 Imagen）。
  *
@@ -155,7 +155,10 @@ export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelE
   ) {
     return "nb2_only";
   }
-  /** 未顯式設定：預設 Nano Banana 2（豎封）。 */
+  /** 未显式设定：有 EvoLink 密钥则默认 GPT-Image-2 竖封；否则 Nano Banana 2。 */
+  if (String(process.env.EVOLINK_API_KEY || "").trim()) {
+    return "gpt_image2_only";
+  }
   return "nb2_only";
 }
 

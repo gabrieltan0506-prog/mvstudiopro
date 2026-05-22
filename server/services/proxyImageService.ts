@@ -22,6 +22,7 @@ import {
 } from "./platformTopicCoverPrompt.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
+import { isEvolinkGptImage2Configured, postEvolinkGptImage2AndUpload } from "./evolinkGptImage2.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -881,7 +882,8 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面像素：**預設 Vertex Nano Banana 2**；**GPT‑Image‑2（OhMyGPT / fal）主鏈程式保留**，額度／充值就緒後設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 或請求 `coverPixelEngine=gpt_image2` 即可沿用，無需改碼。
+ * 單幀封面像素：**預設** 有 `EVOLINK_API_KEY` 時走 **EvoLink GPT‑Image‑2**（`gpt_image2_only`）；否則 Vertex Nano Banana 2。
+ * 設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 或請求 `coverPixelEngine=gpt_image2` 強制 GPT‑Image‑2（EvoLink → OhMyGPT → fal → NB2）。
  * **Nano Banana Pro**：`PLATFORM_TOPIC_COVER_PIXEL_ENGINE=nbp_only` 或請求 `nano_banana_pro`。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
@@ -905,7 +907,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   if (pick === "gpt_image2") {
     appendImageFlowLog(
       L,
-      `${platformFlowLogTimestamp()}  [封面·像素] 请求=gpt_image2 · OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
+      `${platformFlowLogTimestamp()}  [封面·像素] 请求=gpt_image2 · EvoLink / OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
     );
     return generateGptImage2FromRawEnglishPrompt({
       englishPrompt: raw,
@@ -943,7 +945,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   if (engine === "gpt_image2_only") {
     appendImageFlowLog(
       L,
-      `${platformFlowLogTimestamp()}  [封面·像素] env=gpt_image2_only · OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
+      `${platformFlowLogTimestamp()}  [封面·像素] env=gpt_image2_only · EvoLink / OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
     );
     return generateGptImage2FromRawEnglishPrompt({
       englishPrompt: raw,
@@ -1024,6 +1026,23 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
   const prompt = appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
+
+  if (isEvolinkGptImage2Configured()) {
+    appendImageFlowLog(
+      L,
+      `[单帧主路径] EvoLink GPT-IMAGE-2 · ${options.aspectRatio} · size=${sizes[0]} · quality=medium · 英文 prompt 约 ${prompt.length} 字`,
+    );
+    const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
+      aspectRatio: options.aspectRatio,
+      size: sizes[0],
+      flowLog: L,
+    });
+    if (fromEvolink) {
+      appendImageFlowLog(L, "[单帧主路径] EvoLink GPT-IMAGE-2 成功，已落库");
+      return fromEvolink;
+    }
+    appendImageFlowLog(L, "[单帧主路径] EvoLink 无图 → 改走 OhMyGPT / fal / Vertex 退路");
+  }
 
   appendImageFlowLog(
     L,
