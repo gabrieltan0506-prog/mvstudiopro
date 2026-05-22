@@ -772,7 +772,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
  *   第 2 阶段：vertex / gemini-3.1-pro-preview，校准趋势信号与平台看板
  *
  * platform_qa：
- *   Gemini API / gemini-3.5-flash；纯文本走 callGemini35FlashCopywriting；有 fileUri 时 invokeLLM(gemini) 多模态
+ *   **OpenAI GPT‑5.5**（与深度追问同步路径）；纯文本 JSON。有 fileUri 时暂保留 Gemini 多模态读附件。
  *   finally：始终清理 GCS 临时文件
  */
 async function processPlatformJob(
@@ -928,23 +928,31 @@ async function processPlatformJob(
             : "application/pdf";
 
       try {
-        const {
-          callGemini35FlashCopywriting,
-          resolveGemini35FlashModelName,
-          resolveGemini35FlashCopywritingMaxOutputTokens,
-        } = await import("../services/gemini35FlashRuntime.js");
-        const qaMaxOut = resolveGemini35FlashCopywritingMaxOutputTokens();
-        const qaModel = resolveGemini35FlashModelName();
-        const systemPrompt = "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
-        const contextPayload = JSON.stringify({
-          windowDays,
-          context,
-          question,
-          snapshot,
-        });
+        let parsedResult: {
+          title: string;
+          answer: string;
+          encouragement: string;
+          nextQuestions: string[];
+        };
+        let provider: string;
+        let modelName: string;
 
-        let answerText: string;
         if (fileUri) {
+          const {
+            callGemini35FlashCopywriting,
+            resolveGemini35FlashModelName,
+            resolveGemini35FlashCopywritingMaxOutputTokens,
+          } = await import("../services/gemini35FlashRuntime.js");
+          const qaMaxOut = resolveGemini35FlashCopywritingMaxOutputTokens();
+          const qaModel = resolveGemini35FlashModelName();
+          const systemPrompt =
+            "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
+          const contextPayload = JSON.stringify({
+            windowDays,
+            context,
+            question,
+            snapshot,
+          });
           const userContent = [
             { type: "text" as const, text: contextPayload },
             { type: "file_url" as const, file_url: { url: fileUri, mime_type: fileMimeType } },
@@ -958,25 +966,57 @@ async function processPlatformJob(
               { role: "user", content: userContent },
             ],
           });
-          answerText = String(qaResponse.choices[0]?.message?.content || "");
+          const answerText = String(qaResponse.choices[0]?.message?.content || "");
+          parsedResult = {
+            title: question.slice(0, 40) || "追问回答",
+            answer: answerText,
+            encouragement: "",
+            nextQuestions: [],
+          };
+          provider = "gemini-api";
+          modelName = `${qaModel} · multimodal附件`;
         } else {
-          answerText = await callGemini35FlashCopywriting({
-            taskSystemInstruction: systemPrompt,
-            userText: contextPayload,
-            responseMimeType: "text/plain",
-            maxOutputTokens: qaMaxOut,
-            modelName: qaModel,
+          const { invokePlatformFollowUpGpt55 } = await import("../services/platformFollowUpLlm.js");
+          const { raw, modelName: usedModel } = await invokePlatformFollowUpGpt55({
+            windowDays,
+            context,
+            question,
+            snapshot: snapshot as Parameters<typeof invokePlatformFollowUpGpt55>[0]["snapshot"],
           });
+          let parsed: Record<string, unknown> = {};
+          try {
+            parsed = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            const match = raw.match(/```(?:json)?\s*([\s\S]+?)```/);
+            try {
+              parsed = match ? (JSON.parse(match[1].trim()) as Record<string, unknown>) : {};
+            } catch {
+              parsed = {};
+            }
+          }
+          parsedResult = {
+            title: String(parsed.title || question.slice(0, 40) || "追问回答"),
+            answer: String(parsed.answer || raw || ""),
+            encouragement: String(parsed.encouragement || ""),
+            nextQuestions: Array.isArray(parsed.nextQuestions)
+              ? parsed.nextQuestions.map((x) => String(x))
+              : [],
+          };
+          provider = "openai";
+          modelName = usedModel;
         }
 
         return {
-          provider: "gemini",
+          provider,
           output: {
-            result: {
-              title: question.slice(0, 40) || "追问回答",
-              answer: answerText,
-              encouragement: "",
-              nextQuestions: [],
+            result: parsedResult,
+            debug: {
+              route: "platform_qa",
+              modelName,
+              provider,
+              copyLlmMode: fileUri ? "vertex" : "openai",
+              windowDays,
+              multimodalFile: Boolean(fileUri),
             },
             completedAt: new Date().toISOString(),
           },

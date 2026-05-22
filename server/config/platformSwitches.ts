@@ -309,6 +309,34 @@ export function getPlatformStage2OpenAiModel(): string {
   return m || "gpt-5.5";
 }
 
+/** Stage 2 文案 GPT‑5 系推理强度：默认 **low**（更生动；medium 易偏模板腔）。 */
+export function resolvePlatformStage2OpenAiReasoningEffort():
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh" {
+  const raw = norm(process.env.PLATFORM_STAGE2_OPENAI_REASONING_EFFORT);
+  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
+  return "low";
+}
+
+/** 封面英文化 GPT‑5.4 JSON：默认 **low**（留 completion 给 prompt 正文，减少空回复）。 */
+export function resolveGpt54CoverTranslationReasoningEffort():
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh" {
+  const raw = norm(process.env.GPT54_COVER_TRANSLATION_REASONING_EFFORT);
+  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  if (allowed.has(raw)) return raw as ReturnType<typeof resolveGpt54CoverTranslationReasoningEffort>;
+  return "low";
+}
+
 /**
  * Stage 2 OpenAI **第二階** JSON 封裝：預設 gpt‑5.4（成本較低），可用 `PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL` / `OPENAI_GPT54_MODEL` 覆蓋。
  */

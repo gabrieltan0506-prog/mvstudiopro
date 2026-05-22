@@ -20,6 +20,7 @@ import {
 import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2LlmMode,
+  resolvePlatformStage2OpenAiReasoningEffort,
   resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
@@ -112,6 +113,7 @@ import { executeProviderFallback } from "./services/provider-manager";
 import { createGcsSignedUploadUrl, uploadBufferToGcs, resolvePdfExportBucketName } from "./services/gcs";
 import { fetchPdfBufferFromWorker, getPdfWorkerFetchTimeoutMs } from "./services/pdfWorkerClient";
 import { buildStage1StrategicHandoffForStage2 } from "./services/stage1StrategicHandoff.js";
+import { invokePlatformFollowUpGpt55 } from "./services/platformFollowUpLlm.js";
 import {
   createJob as createJobRecord,
   getJobById,
@@ -492,10 +494,9 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
 /** Stage 1 / Stage 2 取樣溫度（GPT‑5 系 OpenAI 可能忽略 temperature，见 llm.ts）。 */
 const STAGE2_LLM_TEMPERATURE = 0.8;
 
-/** 解析单次请求的 Stage 1 / Stage 2 文案线路（UI 可传 vertex=Gemini 3.5 Flash · openai=GPT‑5.5）。 */
-function resolvePlatformCopyLlmMode(input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
-  if (input === "vertex" || input === "openai") return input;
-  return resolvePlatformStage2LlmMode();
+/** Stage 1 / Stage 2 / 深度追问：固定 OpenAI GPT‑5.5（忽略 env `PLATFORM_STAGE2_LLM=vertex` 与 UI 历史选项）。 */
+function resolvePlatformCopyLlmMode(_input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
+  return "openai";
 }
 
 /** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（Gemini 3.5 Flash 或 GPT‑5.5）。 */
@@ -507,12 +508,14 @@ async function invokePlatformStructuredCopyLlm(options: {
 }): Promise<string> {
   if (options.copyLlmMode === "openai") {
     const modelName = getPlatformStage2OpenAiModel();
+    const reasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
     const response = await invokeLLM({
       provider: "openai",
       modelName,
       max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
       temperature: STAGE2_LLM_TEMPERATURE,
       response_format: { type: "json_object" },
+      reasoningEffort,
       messages: [
         { role: "system", content: options.systemInstruction },
         { role: "user", content: options.userText },
@@ -1037,7 +1040,13 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
 }
 
 /** Stage2 文案 / 分镜：场景须生动具体，供 system prompt 复用。 */
-const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学】文案、分镜中的拍摄场景必须**具体、可拍、且充满心理张力**；鼓励跨越空间壁垒，**包括但不局限于**：沉浸式美术馆、极地旷野、精密实验室、废墟工业风、极简商业体、烟火市集、高空天台等。场景必须具备电影级的画面感，让读者产生强烈的代入感；必须与人设（职业、身份、专长）的深层气质合理互证。严禁机械套用刻板布景，强硬拒绝多选题扎堆在书房、客厅、书桌等同质化且毫无美感的空间。`;
+const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学·软边界】**强烈建议**文案与分镜选用**具体、可拍、有心理张力**的场景——博物馆侧光、极地旷野、精密实验室、废墟工业风、烟火市集、高空天台、泳池边、球场、路边大排档等皆可；**优先**让读者「看见画面、感到情绪」，并与本人设（职业、身份、专长）互证。**不推荐**五套方案扎堆同一套书房/客厅/书桌模板，除非人设或选题明确需要。`;
+
+/** Stage2 口吻：减轻「合规顾问模板腔」。 */
+const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人直接开拍/开写**的稿子，不是给风控看的合规摘要。
+- **像成熟顾问对创作者当面说话**：有判断、有温度、有意外感；hook 与 copywriting **优先**用口语、具体物件、可感知的动作与反差，**避免**「首先…其次…综上所述」公文笔触。
+- **每条方案应有辨识度**：五条的标题、场景、情绪基调 **建议明显不同**（不要五条同一结构换词）。
+- **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。`;
 
 export async function buildPlatformContent(params: {
   snapshot: any;
@@ -1237,13 +1246,15 @@ export async function buildPlatformContent(params: {
         role: "system",
         content: `你是一个顶级的个人IP商业文案顾问。
 
+${PLATFORM_STAGE2_VOICE_GUIDANCE}
+
 根据已生成的平台方向与用户背景数据，请为这位创作者制定深度内容的执行蓝图与商业变现路径。
 
-【人设口径】此处「人设 / Persona / IP」均指可获知信息下尽量还原的真实创作者画像；选题、脚本、变现须能用**职业、身份、兴趣、爱好、专长**等多维解释。禁止把人设写成泛化「创作者」「博主」。热点与高互动样本仅作结构与节奏参考，**必须改写**为贴合本人设的事实与口气，禁止硬套无关热梗。
+【人设口径】此处「人设 / Persona / IP」均指可获知信息下尽量还原的真实创作者画像；选题、脚本、变现须能用**职业、身份、兴趣、爱好、专长**等多维解释。**不建议**把人设写成泛化「创作者」「博主」。热点与高互动样本仅作结构与节奏参考，**须改写**为贴合本人设的事实与口气，**不建议**硬套无关热梗。
 
-【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。你必须在此基础上产出 **5 条**更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但不得偏离人设与 headline/subheadline/persona 主线；若种子不足 5 条，可补充新选题但必须与同一真实人设一致。
+【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。请在此基础上产出 **5 条**更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但**不建议**偏离人设与 headline/subheadline/persona 主线；若种子不足 5 条，可补充新选题但须与同一真实人设一致。
 
-【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，必须重写）：
+【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，须重写）：
 - "电商带货" / "带货" / "橱窗"
 - "先做一轮轻量验证" / "先做轻量验证" / "轻量验证"
 - "开头先给结果" / "视频开头先给判断，中段给例子，结尾给行动引导"
@@ -1251,45 +1262,45 @@ export async function buildPlatformContent(params: {
 - "制作身份名片" / "锁定文化符号" / "设计轻量级产品"
 - 任何泛化建议，不针对此用户具体人设维度（职业、身份、兴趣、爱好、专长等），或仅使用空泛「创作者」「博主」套话
 
-严格要求：
-必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
+输出要求：
+须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：你必须为该平台精确生成 **5** 个深度内容方案（**少于 5 个将导致系统拒收**）。请严格结合 ipContextBinding，依序从以下**五个维度**各发散**一个**独特选题（每条对应一个维度，顺序不可乱）：
+【核心数量与维度指令】：须为该平台精确生成 **5** 个深度内容方案（**少于 5 个将导致系统拒收**）。请结合 ipContextBinding，依序从以下**五个维度**各发散**一个**独特选题（每条对应一个维度，顺序不可乱）：
 1.核心专业洞察(Professional Insight)
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
-5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**必须经过解构与重塑**，使其完全臣服于用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，禁止为凑热点而脱钩。
-【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。必须恰好 **5** 条。
-【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，必须优先读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，禁止混成同一判断。
-【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。你必须：
+5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**建议经解构与重塑**，使其贴合用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，**不建议**为凑热点而脱钩。
+【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。须恰好 **5** 条。
+【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，**优先**读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，**不建议**混成同一判断。
+【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。请：
 (1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——**适配该用户本人设（职业、身份、兴趣、爱好、专长）**，而非泛化稿；热点结构须**改写**落地到本人设；
-(2) 优先借鉴切口、句式节奏与信息密度，**禁止**字面抄袭 sample 标题或洗稿；
+(2) **优先**借鉴切口、句式节奏与信息密度，**不建议**字面抄袭 sample 标题或洗稿；
 (3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
-请绝对忠于当前用户的真实行业背景与人设各维，绝不允许套用任何无关的专业标签。
+请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
-1. contentBlueprints：必须恰好包含 **5** 个具体可执行的内容方案，并与上方 **5** 个维度一一对应（第 1 条对应维度 1，依此类推，第 5 条对应维度 5）。每个方案必须包含：
-   - title（选题标题，必须是具体的，不是抽象的）
+1. contentBlueprints：须恰好包含 **5** 个具体可执行的内容方案，并与上方 **5** 个维度一一对应（第 1 条对应维度 1，依此类推，第 5 条对应维度 5）。每个方案须包含：
+   - title（选题标题，**建议**具体、有画面感，避免抽象空话）
    - format（内容形式：短视频 / 图文）
-   - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
-   - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
+   - hook（开头文案钩子，**建议**是一句具体的、能让用户停下来的话——可带反问、具体物件或反常识）
+   - copywriting（核心文案方向，**建议**包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都建议给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文；**口吻宜生动，避免公文笔触**）
    - suitablePlatforms（适合发哪些平台，字符串数组）
-   - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
-	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**须在视觉与场域上与前几段方案明显区隔。
-     【强制脚本排版规则 — 必须严格遵守，不得简化】：
-     ▸ 如果 format 为「短视频」（抖音/B站/快手）：必须使用精确时间轴格式，每段必须包含「视觉描述」与「口播文案」，例如：
+   - actionableSteps（落地三步曲：**建议**给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
+	   - detailedScript（详细的拍摄脚本或大纲，**建议**保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**建议在视觉与场域上与前几段方案明显区隔。
+     【脚本排版·建议格式（可灵活，勿牺牲可读性）】：
+     ▸ 如果 format 为「短视频」（抖音/B站/快手）：**建议**用时间轴分段，每段含「视觉描述」与「口播文案」，例如：
        "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
        "[00:05-00:20] 视觉：切换古籍《黄帝内经》特写页。文案：两千年前的古人早就告诉你..."
        "[00:20-00:45] 视觉：心脏神经示意图动画。文案：心脏里有一个「第二大脑」..."
-     ▸ 如果 format 为「图文」（小红书）：必须分封面+内页格式，例如：
+     ▸ 如果 format 为「图文」（小红书）：**建议**分封面+内页格式，例如：
        "[封面设计] 大标题：古代治心病就靠这3件事。视觉：高质感茶席+心电图拼接图。"
        "[图2-图4 痛点引入] 文案：你总是睡不好、心悸？其实古人早就有答案..."
        "[图5-图6 核心内容] 分步列出3个要点..."
 	       "[正文区] 完整文案+平台搜索关键词，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
-   - executionDetails（执行细节，必须极度具体）：
+   - executionDetails（执行细节，**建议**极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色西装，手持文物复刻件对照讲解"）
      * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光"）
      * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】直接说出核心判断：……","【3-15秒】展示具体案例：……","【15-25秒】给出行动建议：……"]）
@@ -1336,9 +1347,9 @@ export async function buildPlatformContent(params: {
 请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
 输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
 
-3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
+3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，**建议**极度具体的「物理级微小行动」。**不建议**写「制作身份名片」、「锁定文化符号」这类空泛顾问废话。**建议**具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
-4. 必须极度详细、有落地感，不要泛泛而谈。${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，禁止硬套。${personaConstraint}
+4. **建议**详细、有落地感，避免泛泛而谈。${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，**不建议**硬套。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
@@ -1349,18 +1360,14 @@ export async function buildPlatformContent(params: {
       },
   ];
 
-  const stage2LlmMode =
-    params.stage2LlmModeOverride === "openai" || params.stage2LlmModeOverride === "vertex"
-      ? params.stage2LlmModeOverride
-      : resolvePlatformStage2LlmMode();
+  const stage2LlmMode: PlatformStage2LlmMode = "openai";
   diagnostics.stage2LlmMode = stage2LlmMode;
-  diagnostics.stage2LlmModeSource =
-    params.stage2LlmModeOverride === "openai" || params.stage2LlmModeOverride === "vertex" ? "request" : "env";
+  diagnostics.stage2LlmModeSource = "fixed_gpt55";
   console.log("[buildPlatformContent] Stage2 LLM", {
     stage2LlmMode,
     stage2LlmModeSource: diagnostics.stage2LlmModeSource,
-    geminiApiModel: stage2LlmMode === "vertex" ? resolvePlatformStage2GeminiModel() : null,
-    openaiModel: stage2LlmMode === "openai" ? getPlatformStage2OpenAiModel() : null,
+    geminiApiModel: null,
+    openaiModel: getPlatformStage2OpenAiModel(),
   });
 
   /** Stage 2：默认 OpenAI GPT‑5.5；`PLATFORM_STAGE2_LLM=vertex` 走 Gemini API 退路。 */
@@ -1374,7 +1381,9 @@ export async function buildPlatformContent(params: {
 
   if (stage2LlmMode === "openai") {
     const openaiCreativeModel = getPlatformStage2OpenAiModel();
+    const stage2ReasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
     diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
+    diagnostics.platformStage2OpenAiReasoningEffort = stage2ReasoningEffort;
 
     type OpenAiEffort = NonNullable<Parameters<typeof invokeLLM>[0]["reasoningEffort"]>;
 
@@ -1387,7 +1396,7 @@ export async function buildPlatformContent(params: {
         response_format: { type: "json_object" },
         messages: structuredStage2Messages,
         abortSignal: params.abortSignal,
-        ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+        reasoningEffort: effort ?? stage2ReasoningEffort,
       });
 
     const invokeOpenAiPlain = (effort?: OpenAiEffort) =>
@@ -1398,7 +1407,7 @@ export async function buildPlatformContent(params: {
         temperature: STAGE2_LLM_TEMPERATURE,
         messages: structuredStage2Messages,
         abortSignal: params.abortSignal,
-        ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+        reasoningEffort: effort ?? stage2ReasoningEffort,
       });
 
     const assistantTextTrimmed = (r: Awaited<ReturnType<typeof invokeLLM>>) =>
@@ -1526,26 +1535,12 @@ export async function buildPlatformContent(params: {
     type Stage2DebugSubStep = { id: string; title: string; model: string; status: string };
     const steps: Stage2DebugSubStep[] = [];
     const openaiModel = typeof diagnostics.platformStage2OpenAiModel === "string" ? diagnostics.platformStage2OpenAiModel : "";
-
-    if (stage2LlmMode === "vertex") {
-      const stage2Model =
-        typeof diagnostics.platformStage2GeminiModel === "string"
-          ? diagnostics.platformStage2GeminiModel
-          : resolvePlatformStage2GeminiModel();
-      steps.push({
-        id: "2-v",
-        title: "Gemini 3.5 Flash 結構化輸出（Gemini API 單階呼叫）",
-        model: stage2Model,
-        status: "✅ 已完成",
-      });
-    } else {
-      steps.push({
-        id: "2-o",
-        title: "OpenAI 單次呼叫（推理與正文一次完成 → JSON）",
-        model: openaiModel || "—",
-        status: "✅ 已完成",
-      });
-    }
+    steps.push({
+      id: "2-o",
+      title: "OpenAI 單次呼叫（推理與正文一次完成 → JSON）",
+      model: openaiModel || "—",
+      status: "✅ 已完成",
+    });
 
     diagnostics.stage2SubSteps = steps;
     diagnostics.stage2SubStepsSummary = steps
@@ -3136,98 +3131,23 @@ export const appRouter = router({
             isFreeThisTime = !todayRecord;
           }
           if (!isFreeThisTime) {
-            const followUpCopyMode = resolvePlatformCopyLlmMode(input.copyLlmMode);
-            const followUpBillingLabel =
-              followUpCopyMode === "openai" ? "GPT 5.5" : "Gemini 3.5 Flash";
             await deductCredits(
               ctx.user.id,
               "platformTrendFollowUp",
-              `平台趋势续分析 (${input.windowDays}天 / ${followUpBillingLabel})`,
+              `平台趋势续分析 (${input.windowDays}天 / GPT 5.5)`,
             );
           }
         }
-        const followUpCopyLlmMode = resolvePlatformCopyLlmMode(input.copyLlmMode);
-        const followUpModel =
-          followUpCopyLlmMode === "openai"
-            ? getPlatformStage2OpenAiModel()
-            : resolvePlatformStage2GeminiModel();
+        const followUpCopyLlmMode: PlatformStage2LlmMode = "openai";
+        const followUpModel = getPlatformStage2OpenAiModel();
         try {
-          const followUpSystem = `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
-
-你的任务是基于用户当前选中的平台趋势看板，回答后续追问。
-
-要求：
-1. 回答必须专业，但语气要有温度，像一个成熟顾问在帮用户梳理方向。
-2. 第一段必须先给出明确判断，不要先铺垫，不要两边都说。
-3. answer 必须明显分成三个部分：结论、为什么、下一步怎么做。可以用自然段，不要写成模板编号。
-4. 如果用户问“从哪些平台入手”“怎么实现商业价值”这类问题，必须明确给出优先顺序、适合承接的商业方向，以及短期不建议投入的方向。
-5. 如果问题涉及选题、文案、图文、视频、脚本、拍法，你必须写出具体方案，至少覆盖：题目方向、开头怎么说、结构怎么排、视频怎么拍或图文怎么写；拍摄场景须生动具体（包括但不局限于博物馆、户外旅行、知名景区、泳池、球场、音乐厅、饭店餐厅、路边大排档等，须贴合此人设），能打动用户、有画面感。
-6. 如果 snapshot 里已经有 titleExecutions、creationAssist、monetizationStrategies、decisionFramework，要优先把这些证据翻译成“这个用户现在就能执行”的动作，而不是继续抽象分析。
-7. 变现路径只能保留和这个用户身份、内容方向、平台表达直接相关的 1 到 3 条。不要把带货、课程、咨询、社群、品牌合作全部列一遍。
-8. 如果用户背景是专业身份和文化审美内容的结合，就优先写与信任、解释力、审美内容承接有关的路径，而不是默认带货。
-9. 不要泄露后台工程逻辑，不要出现 fallback、live sample、historical、verify、数据库、覆盖率、补位、主链、样本裂缝 这类内部词。
-10. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
-11. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
-12. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
-13. encouragement 必须是一句短的执行提醒，不要像客服安慰。
-14. nextQuestions 要像真人顾问会继续往下问的具体问题，最多 4 个。
-15. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`;
-
-          const followUpUser = JSON.stringify({
-                  windowDays: input.windowDays,
-                  context: input.context || "",
-                  question: input.question,
-                  snapshot: {
-                    overview: input.snapshot.overview,
-                    platformSnapshots: input.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
-                      platform: item.platform,
-                      displayName: item.displayName,
-                      audienceFitScore: item.audienceFitScore,
-                      momentumScore: item.momentumScore,
-                      summary: item.summary,
-                      fitLabel: item.fitLabel,
-                    })),
-                    platformRecommendations: input.snapshot.platformRecommendations.slice(0, 3),
-                    topicLibrary: input.snapshot.topicLibrary.slice(0, 5),
-                    businessInsights: input.snapshot.businessInsights.slice(0, 3),
-                    growthPlan: input.snapshot.growthPlan.slice(0, 2),
-                    titleExecutions: input.snapshot.titleExecutions.slice(0, 3),
-                    monetizationStrategies: input.snapshot.monetizationStrategies.slice(0, 2),
-                    decisionFramework: {
-                      mainPath: input.snapshot.decisionFramework.mainPath,
-                      validationPlan: input.snapshot.decisionFramework.validationPlan.slice(0, 2),
-                      assetAdaptation: input.snapshot.decisionFramework.assetAdaptation,
-                    },
-                    creationAssist: {
-                      brief: input.snapshot.creationAssist.brief,
-                    },
-                  },
-                });
-
-          const followUpResponse =
-            followUpCopyLlmMode === "openai"
-              ? await invokeLLM({
-                  provider: "openai",
-                  modelName: getPlatformStage2OpenAiModel(),
-                  max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-                  temperature: STAGE2_LLM_TEMPERATURE,
-                  response_format: { type: "json_object" },
-                  messages: [
-                    { role: "system", content: followUpSystem },
-                    { role: "user", content: followUpUser },
-                  ],
-                })
-              : null;
-          const rawFollowUpContent =
-            followUpResponse != null
-              ? extractFirstChoicePlainText(followUpResponse)
-              : await callGemini35FlashCopywriting({
-                  taskSystemInstruction: followUpSystem,
-                  userText: followUpUser,
-                  responseMimeType: "application/json",
-                  maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-                  modelName: resolvePlatformStage2GeminiModel(),
-                });
+          const { raw: rawFollowUpContent, modelName: followUpModelUsed } =
+            await invokePlatformFollowUpGpt55({
+              windowDays: input.windowDays,
+              context: input.context || "",
+              question: input.question,
+              snapshot: input.snapshot,
+            });
 
           let parsedFollowUpRaw: unknown;
           try {
@@ -3246,8 +3166,8 @@ export const appRouter = router({
             result: parsed,
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
-              modelName: followUpModel,
-              provider: followUpCopyLlmMode === "openai" ? "openai" : "gemini-api",
+              modelName: followUpModelUsed || followUpModel,
+              provider: "openai",
               copyLlmMode: followUpCopyLlmMode,
               windowDays: input.windowDays,
               fallbackUsed: false,
@@ -3261,7 +3181,7 @@ export const appRouter = router({
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModel,
-              provider: followUpCopyLlmMode === "openai" ? "openai" : "gemini-api",
+              provider: "openai",
               copyLlmMode: followUpCopyLlmMode,
               windowDays: input.windowDays,
               fallbackUsed: true,
@@ -3368,7 +3288,7 @@ export const appRouter = router({
           id: jobId,
           userId: "public",
           type: "platform",
-          provider: "gemini",
+          provider: "openai",
           input: {
             action: "platform_qa",
             params: {
