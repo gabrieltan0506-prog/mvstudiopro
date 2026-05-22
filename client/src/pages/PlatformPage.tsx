@@ -121,12 +121,27 @@ const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBanan
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
-/** 监管／内部：Stage 2 专属文案 LLM（一般用户不可见、也不可绕过改线路） */
+/** 全用户：Stage 1 战略看板 + Stage 2 专属文案 LLM（localStorage 记忆） */
+const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
+/** @deprecated 监管旧键；读取时 fallback */
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
-type PlatformStage2SupervisorCopyEngine = "vertex" | "openai";
+type PlatformCopyLlmEngine = "vertex" | "openai";
 
-function parseStage2SupervisorCopyEngineLs(raw: string | null): PlatformStage2SupervisorCopyEngine {
-  return raw === "openai" ? "openai" : "vertex";
+function parsePlatformCopyLlmEngineLs(raw: string | null): PlatformCopyLlmEngine {
+  return raw === "vertex" ? "vertex" : "openai";
+}
+
+function readPlatformCopyLlmEngineFromLs(): PlatformCopyLlmEngine {
+  if (typeof window === "undefined") return "openai";
+  try {
+    const primary = window.localStorage.getItem(PLATFORM_COPY_LLM_ENGINE_LS_KEY);
+    if (primary != null) return parsePlatformCopyLlmEngineLs(primary);
+    const legacy = window.localStorage.getItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY);
+    if (legacy != null) return parsePlatformCopyLlmEngineLs(legacy);
+  } catch {
+    /* ignore */
+  }
+  return "openai";
 }
 
 function parseComposite2x4EngineLs(raw: string | null): PlatformComposite2x4ImageEngine {
@@ -1495,23 +1510,17 @@ export default function PlatformPage() {
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
-  const [stage2SupervisorCopyEngine, setStage2SupervisorCopyEngine] = useState<PlatformStage2SupervisorCopyEngine>(() => {
-    if (typeof window === "undefined") return "vertex";
-    try {
-      return parseStage2SupervisorCopyEngineLs(window.localStorage.getItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY));
-    } catch {
-      return "vertex";
-    }
-  });
+  const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
+    readPlatformCopyLlmEngineFromLs(),
+  );
 
   useEffect(() => {
-    if (!canConfigureStage2CopyEngine) return;
     try {
-      window.localStorage.setItem(PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY, stage2SupervisorCopyEngine);
+      window.localStorage.setItem(PLATFORM_COPY_LLM_ENGINE_LS_KEY, platformCopyLlmEngine);
     } catch {
       /* ignore */
     }
-  }, [canConfigureStage2CopyEngine, stage2SupervisorCopyEngine]);
+  }, [platformCopyLlmEngine]);
 
   // Separate state for dashboard — populated by the second call after snapshot loads
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
@@ -1873,12 +1882,8 @@ export default function PlatformPage() {
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
           strategicDashboard: dash as unknown as Record<string, unknown>,
-          ...(canConfigureStage2CopyEngine
-            ? {
-                stage2LlmMode: stage2SupervisorCopyEngine,
-                ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-              }
-            : {}),
+          stage2LlmMode: platformCopyLlmEngine,
+          ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
         });
         setContentJobPollTrace({
           jobId,
@@ -1907,7 +1912,7 @@ export default function PlatformPage() {
         setIsContentLoading(false);
       }
     },
-    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, canConfigureStage2CopyEngine, stage2SupervisorCopyEngine],
+    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine],
   );
 
   /** 用户确认后入队 Stage 2（后端立即扣积分）并轮询直至完成 */
@@ -4500,6 +4505,7 @@ export default function PlatformPage() {
         context: capturedJudgment || undefined,
         windowDays: selectedWindowDays,
         snapshotSummary: snap as any,
+        copyLlmMode: platformCopyLlmEngine,
       });
 
       if (!dashResult.platformDashboard) {
@@ -4602,6 +4608,7 @@ export default function PlatformPage() {
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshot,
+        copyLlmMode: platformCopyLlmEngine,
       });
     }
   };
@@ -5037,40 +5044,47 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              {canConfigureStage2CopyEngine ? (
-                <div className="rounded-[26px] border border-amber-500/30 bg-[linear-gradient(180deg,rgba(120,53,15,0.14),rgba(28,16,60,0.5))] p-5">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-                    <ShieldCheck className="h-4 w-4 shrink-0 text-amber-300" aria-hidden />
-                    监管专用 · 专属文案后台模型（Stage 2）
+              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">文案生成模型（Stage 1 + Stage 2）</div>
+                    <p className="mt-1 text-xs leading-relaxed text-white/55">
+                      战略看板与专属选题文案共用此设置；默认{" "}
+                      <span className="font-semibold text-amber-100">GPT‑5.5</span>，可切换{" "}
+                      <span className="font-semibold text-[#8cefff]">Gemini 3.5 Flash</span>（需配置 GEMINI_API_KEY）。
+                    </p>
                   </div>
-                  <p className="mt-2 text-xs leading-relaxed text-white/55">
-                    仅 administrator（admin / supervisor）或 supervisor 入口可见；一般用户不会看到此区，且后端会忽略未授权的线路参数。预设{" "}
-                    <span className="font-semibold text-[#8cefff]">Gemini API · gemini-3.5-flash</span>；OpenAI 需帐户额度。
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => setStage2SupervisorCopyEngine("vertex")}
+                      onClick={() => setPlatformCopyLlmEngine("openai")}
                       className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                        stage2SupervisorCopyEngine === "vertex"
-                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
-                      }`}
-                    >
-                      Gemini 3.5 Flash（Gemini API）
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStage2SupervisorCopyEngine("openai")}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                        stage2SupervisorCopyEngine === "openai"
+                        platformCopyLlmEngine === "openai"
                           ? "border-amber-400/50 bg-[rgba(251,191,36,0.12)] text-amber-100"
                           : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
                       }`}
                     >
                       GPT‑5.5（OpenAI）
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlatformCopyLlmEngine("vertex")}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                        platformCopyLlmEngine === "vertex"
+                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
+                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                      }`}
+                    >
+                      Gemini 3.5 Flash
+                    </button>
                   </div>
+                </div>
+              </div>
+
+              {canConfigureStage2CopyEngine ? (
+                <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
+                  监管提示：上方「文案生成模型」已对所有登录用户生效；Stage 2 入队参数为{" "}
+                  <span className="font-mono text-amber-100/80">stage2LlmMode={platformCopyLlmEngine}</span>。
                 </div>
               ) : null}
 

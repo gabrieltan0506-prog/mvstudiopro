@@ -1,7 +1,7 @@
 /**
- * 默认：Creator Growth **Stage 2 文案** 与 **生图英文化** 均 = **`gemini-3.5-flash` · Gemini API**（`GEMINI_API_KEY`，见 gemini35FlashRuntime）；非 Vertex IAM。**平台图 = GCS**。
- * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS`）、英文化 **32K**（`GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS`）。
- * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。OpenAI 文案：設 `PLATFORM_STAGE2_LLM=openai`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
+ * 默认：Creator Growth **Stage 1 战略看板** 与 **Stage 2 文案** = **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）；**封面英文化** = **GPT‑5.4**（`OPENAI_GPT54_MODEL`）。**平台图 = GCS**。
+ * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）、英文化 **32K**（`GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS` / `GPT54_PLATFORM_IMAGE_TRANSLATION_MAX_TOKENS`）。
+ * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
@@ -296,13 +296,13 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
     return "openai";
   }
 
-  /** 未顯式指定時預設 Gemini API（3.5 Flash）；`vertex`/`gemini` env 值均走此路，非 Vertex IAM。 */
-  return "vertex";
+  /** 未显式指定时默认 OpenAI GPT‑5.5；`vertex`/`gemini` env 值走 Gemini API 退路。 */
+  return "openai";
 }
 
 /**
- * Creator Growth **Stage 2 / 战略看板 / 深度追问** 預設 **Gemini 3.5 Flash · Gemini API**（`GEMINI_API_KEY`，見 {@link resolvePlatformStage2GeminiModel}）。  
- * OpenAI 路線仍用 gpt‑5.5（`PLATFORM_STAGE2_OPENAI_MODEL`）；英文化見 gemini35FlashRuntime。
+ * Creator Growth **Stage 1 / Stage 2 / 战略看板 / 深度追问** 預設 **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）。  
+ * Gemini 3.5 Flash 退路：`PLATFORM_STAGE2_LLM=vertex`；英文化见 geminiPlatformCompositeTranslation（封面 GPT‑5.4）。
  */
 export function getPlatformStage2OpenAiModel(): string {
   if (isPlatformWeekendGcpEscape()) return "gpt-5.5";

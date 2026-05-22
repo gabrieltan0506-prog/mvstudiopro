@@ -74,7 +74,7 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
  * **平台主路径固定兩檔**：豎版 **1024×1536**、橫版 **1536×1024**（皆為 16 的倍數）；不再传 `auto`、`1024×1024` 等後備。
  */
 /** gpt-image-2 請求體：`output_format: png` 避免 JPEG 重壓縮；落盤後仍寫 GCS/Fly。 */
-const GPT_IMAGE2_API_QUALITY = "high" as const;
+const GPT_IMAGE2_API_QUALITY = "medium" as const;
 const GPT_IMAGE2_OUTPUT_FORMAT = "png" as const;
 /** 豎版：僅 **1024×1536**（與 OpenAI 白名單一致，2:3） */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536"] as const;

@@ -950,9 +950,21 @@ export async function callVertexGeminiFlashTranslation(
 }
 
 /**
- * 選題 **豎封**英文化：**先** {@link resolveVertexCoverTranslationModelName}（預設 **gemini-2.5-pro**）**單次**；
- * 失敗則 **Gemini 3 Flash Preview**（`topic_cover_flash`，同源豎封 JSON 契約）最多 **3** 次間隔重試；
- * **不**回退 OpenAI（`afterFlashFailure=throw`；且預設 {@link isPlatformImageOpenAiAllowed} 為關）。
+ * 選題 **豎封**英文化：**GPT 5.4**（OpenAI，`callGemini31ProForImagePrompt` · `translator=gpt54`）。
+ */
+export async function translatePlatformTopicCoverToEnglishGpt54(
+  translationTask: string,
+  flowLog?: string[],
+): Promise<string> {
+  return callGemini31ProForImagePrompt(translationTask, {
+    translator: "gpt54",
+    flowLog,
+    pipelineStatCtx: { pipeline: "topic_cover" },
+  });
+}
+
+/**
+ * @deprecated 選題豎封已改走 {@link translatePlatformTopicCoverToEnglishGpt54}；保留 Vertex 退路供监管 A/B。
  */
 export async function translatePlatformTopicCoverToEnglishVertexOnly(
   translationTask: string,
