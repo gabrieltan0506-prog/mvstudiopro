@@ -360,6 +360,16 @@ type ProcessingStepCard = {
 };
 
 /** Debug：单次 Fly job 在前端的入队与轮询步骤 */
+type TranslationCompleteStats = {
+  pipeline?: string;
+  model?: string;
+  reasoningEffort?: string;
+  upstreamChars?: number;
+  englishChars?: number;
+  elapsedMs?: number;
+  maxTokens?: number;
+};
+
 type ClientJobPollTrace = {
   jobId: string;
   label: string;
@@ -374,10 +384,54 @@ type ClientJobPollTrace = {
   imageGenPollCount?: number;
   translationStep?: string;
   imageGenStep?: string;
+  /** 最近一次英文化完成统计（来自 imageGenFlowLog `[英文化·完成]`） */
+  translationComplete?: TranslationCompleteStats;
 };
 
+function parseTranslationCompleteFromFlow(flow: string[]): TranslationCompleteStats | null {
+  for (let i = flow.length - 1; i >= 0; i--) {
+    const line = flow[i] ?? "";
+    if (!/\[英文化·完成\]/.test(line)) continue;
+    const pipeline = line.match(/pipeline=([^\s·]+)/)?.[1];
+    const model = line.match(/model=([^\s·]+)/)?.[1];
+    const reasoningEffort = line.match(/reasoning_effort=([^\s·]+)/)?.[1];
+    const upstreamChars = Number(line.match(/上游=(\d+)字/)?.[1]);
+    const englishChars = Number(line.match(/英文=(\d+)字/)?.[1]);
+    const elapsedMs = Number(line.match(/耗时=(\d+)ms/)?.[1]);
+    const maxTokens = Number(line.match(/max_tokens=(\d+)/)?.[1]);
+    return {
+      pipeline,
+      model,
+      reasoningEffort,
+      upstreamChars: Number.isFinite(upstreamChars) ? upstreamChars : undefined,
+      englishChars: Number.isFinite(englishChars) ? englishChars : undefined,
+      elapsedMs: Number.isFinite(elapsedMs) ? elapsedMs : undefined,
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
+    };
+  }
+  return null;
+}
+
+function formatTranslationCompleteStats(stats: TranslationCompleteStats): string {
+  const parts: string[] = [];
+  if (stats.model) parts.push(`模型 ${stats.model}`);
+  if (stats.reasoningEffort) parts.push(`reasoning=${stats.reasoningEffort}`);
+  if (stats.upstreamChars != null && stats.englishChars != null) {
+    parts.push(`上游 ${stats.upstreamChars} 字 → 英文 ${stats.englishChars} 字`);
+  } else if (stats.englishChars != null) {
+    parts.push(`英文 ${stats.englishChars} 字`);
+  }
+  if (stats.elapsedMs != null) {
+    const sec = stats.elapsedMs >= 1000 ? `${(stats.elapsedMs / 1000).toFixed(1)}s` : `${stats.elapsedMs}ms`;
+    parts.push(`耗时 ${sec}`);
+  }
+  if (stats.maxTokens != null) parts.push(`max_tokens=${stats.maxTokens}`);
+  if (stats.pipeline) parts.push(`pipeline=${stats.pipeline}`);
+  return parts.join(" · ");
+}
+
 function isTranslationFlowLine(line: string): boolean {
-  return /英文化|GPT54|GPT 5\.4|Gemini.*Flash|翻译|Vertex.*Flash|extractChineseVisualBrief|\[GPT54·翻译\]|骨架·中文视觉/i.test(
+  return /英文化|GPT54|GPT 5\.4|Gemini.*Flash|翻译|Vertex.*Flash|extractChineseVisualBrief|\[GPT54·翻译\]|\[英文化·完成\]|骨架·中文视觉/i.test(
     line,
   );
 }
@@ -437,10 +491,12 @@ function applyFlowLogToPollTrace(
 ): ClientJobPollTrace {
   const split = splitPollCountsFromFlow(attempt, flow, prev.label);
   const phaseStep = split.imageGenStep || split.translationStep;
+  const translationComplete = parseTranslationCompleteFromFlow(flow) ?? prev.translationComplete;
   return {
     ...prev,
     pollCount: attempt,
     ...split,
+    translationComplete,
     currentStep: phaseStep ? `第 ${attempt} 次 · ${phaseStep}` : `轮询 · ${attempt} 次`,
   };
 }
@@ -2140,6 +2196,14 @@ export default function PlatformPage() {
       count: t.translationPollCount ?? 0,
       step: t.translationStep,
     }));
+    const translationStatsRows = imageTraces
+      .map((t) => {
+        if (!t.translationComplete) return null;
+        const summary = formatTranslationCompleteStats(t.translationComplete);
+        if (!summary) return null;
+        return `${t.label} · ${summary}`;
+      })
+      .filter(Boolean) as string[];
     const imageGenOverview = renderTraceRows(imageTraces, (t) => ({
       count: t.imageGenPollCount ?? t.pollCount,
       step: t.imageGenStep || t.currentStep,
@@ -2170,9 +2234,20 @@ export default function PlatformPage() {
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
               合计轮询{" "}
-              <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次（GPT 5.4 →
-              Gemini Flash 等）
+              <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次（GPT 5.4 strict）
             </p>
+            {translationStatsRows.length > 0 ? (
+              <div className="mt-2 space-y-1.5 rounded-lg border border-[#c4b5fd]/20 bg-black/20 px-2.5 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#e9d5ff]">
+                  翻译完成统计
+                </div>
+                {translationStatsRows.map((row) => (
+                  <p key={row} className="break-words text-[10px] leading-relaxed text-[#f5f3ff]">
+                    {row}
+                  </p>
+                ))}
+              </div>
+            ) : null}
             <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
               {translationOverview.join("  ·  ")}
             </p>
@@ -5251,7 +5326,7 @@ export default function PlatformPage() {
                   <div>
                     <div className="text-sm font-semibold text-white">封面英文化</div>
                     <p className="mt-1 text-xs leading-relaxed text-white/55">
-                      竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（strict · 无 Flash 兜底）。
+                      竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（reasoning=high · max_tokens=64K · strict · 无 Flash 兜底）。
                     </p>
                   </div>
                   <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
@@ -6616,8 +6691,8 @@ export default function PlatformPage() {
                           <strong className="text-[#5eead4]">2×4 分镜主表</strong>与
                           <strong className="text-[#5eead4]">小红书 2×4 八格</strong>
                           宽幅合成英文化固定走{" "}
-                          <strong className="text-gray-200">GPT 5.4</strong>（最多 3 次 · strict · 无 Flash 兜底）。竖版
-                          <strong className="text-gray-400">封面单帧</strong>同样固定 GPT 5.4 英文化。
+                          <strong className="text-gray-200">GPT 5.4</strong>（reasoning=medium · max_tokens=32K · strict · 无 Flash 兜底）。竖版
+                          <strong className="text-gray-400">封面单帧</strong>固定 GPT 5.4（reasoning=high · max_tokens=64K）。
                         </p>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
                           调参与配额：
