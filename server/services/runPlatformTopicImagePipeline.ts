@@ -143,7 +143,6 @@ export async function runPlatformTopicImagePipeline(
     (legacyCoverNb2 ? ("nano_banana_2" as const) : undefined);
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
-  void input.imagePromptTranslator;
   const isGraphic = input.format === "图文";
   const creationIdOut = input.creationIdOut ?? undefined;
   const database = await db.getDb();
@@ -152,9 +151,12 @@ export async function runPlatformTopicImagePipeline(
   const {
     buildPlatformTopicReferenceGeminiTask,
     extractChineseVisualBrief,
-    translatePlatformTopicCoverToEnglishGpt54,
+    translatePlatformTopicCoverToEnglish,
+    coverTranslationEngineDebugLabel,
+    resolveCoverImagePromptTranslator,
   } = await import("./geminiPlatformCompositeTranslation.js");
-  const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
+  const coverTranslator = resolveCoverImagePromptTranslator(input.imagePromptTranslator);
+  const coverTranslatorLogLabel = coverTranslationEngineDebugLabel(coverTranslator);
   const {
     buildCoverTaskInputFromPipeline,
     isPlatformCoverAgenticBrainEnabled,
@@ -319,9 +321,10 @@ export async function runPlatformTopicImagePipeline(
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`,
         );
-        const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(
+        const englishPrompt = await translatePlatformTopicCoverToEnglish(
           geminiTask,
           topicImageCondenseLog,
+          coverTranslator,
         );
         topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
         const trimmedEn = String(englishPrompt || "").trim();

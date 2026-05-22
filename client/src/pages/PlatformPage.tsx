@@ -123,6 +123,8 @@ type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
 /** 全用户：Stage 1 战略看板 + Stage 2 专属文案 LLM（localStorage 记忆） */
 const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
+/** 全用户：竖版封面 **英文化** 模型（GPT 5.4 或 Gemini 3.5 Flash，无交叉兜底） */
+const PLATFORM_COVER_TRANSLATION_ENGINE_LS_KEY = "mvstudiopro.platform.coverTranslationEngine.v1";
 /** @deprecated 监管旧键；读取时 fallback */
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
@@ -142,6 +144,104 @@ function readPlatformCopyLlmEngineFromLs(): PlatformCopyLlmEngine {
     /* ignore */
   }
   return "openai";
+}
+
+function parseCoverTranslationEngineLs(raw: string | null): PlatformImagePromptTranslator {
+  return raw === "vertex_gemini_3_flash_preview" ? "vertex_gemini_3_flash_preview" : "gpt54";
+}
+
+function readCoverTranslationEngineFromLs(): PlatformImagePromptTranslator {
+  if (typeof window === "undefined") return "gpt54";
+  try {
+    const v = window.localStorage.getItem(PLATFORM_COVER_TRANSLATION_ENGINE_LS_KEY);
+    if (v != null) return parseCoverTranslationEngineLs(v);
+  } catch {
+    /* ignore */
+  }
+  return "gpt54";
+}
+
+function coverTranslationEngineUiLabel(engine: PlatformImagePromptTranslator): string {
+  return engine === "vertex_gemini_3_flash_preview" ? "Gemini 3.5 Flash" : "GPT 5.4";
+}
+
+function copyLlmEngineUiLabel(engine: PlatformCopyLlmEngine): string {
+  return engine === "vertex" ? "Gemini 3.5 Flash" : "GPT‑5.5";
+}
+
+/** 从 imageGenFlowLog 提取封面英文化实际模型与字符数（Debug 面板用） */
+function parseCoverTranslationDebugFromFlow(flow: string[]): {
+  engineLabel?: string;
+  inputChars?: number;
+  outputChars?: number;
+  stepLines: string[];
+} {
+  const stepLines = flow.filter((ln) => /\[(步骤|封面·|GPT54|Flash·|统计|主路径|管线|Gemini API)/i.test(ln));
+  let engineLabel: string | undefined;
+  let inputChars: number | undefined;
+  let outputChars: number | undefined;
+  for (const ln of flow) {
+    const cfg = ln.match(/\[封面·英文化·配置\].*引擎=([^·]+(?:·[^·]+)*?) · 上游 task=(\d+) 字/);
+    if (cfg) {
+      engineLabel = cfg[1]!.trim();
+      inputChars = Number(cfg[2]);
+    }
+    const done = ln.match(/\[封面·英文化·完成\].*实际引擎=([^·]+(?:·[^·]+)*?) · 英文 prompt=(\d+) 字符/);
+    if (done) {
+      engineLabel = done[1]!.trim();
+      outputChars = Number(done[2]);
+    }
+    const gptModel = ln.match(/modelName=([^\s·]+)/);
+    if (!engineLabel && gptModel) engineLabel = `GPT · ${gptModel[1]}`;
+    const flashModel = ln.match(/Gemini API 英文化開始.*model=([^\s·]+)/);
+    if (!engineLabel && flashModel) engineLabel = `Gemini · ${flashModel[1]}`;
+    const stat = ln.match(/englishPrompt=(\d+) chars/);
+    if (stat) outputChars = Number(stat[1]);
+  }
+  return { engineLabel, inputChars, outputChars, stepLines };
+}
+
+/** Stage 2 文案 debug：实际模型与 token（来自 job debug.buildPlatformContent） */
+function formatStage2ModelDebugLines(debug: Record<string, unknown> | null | undefined): string[] {
+  if (!debug || typeof debug !== "object") return [];
+  const bpc =
+    debug.buildPlatformContent && typeof debug.buildPlatformContent === "object"
+      ? (debug.buildPlatformContent as Record<string, unknown>)
+      : debug;
+  const lines: string[] = [];
+  const mode = String(bpc.stage2LlmMode ?? debug.stage2LlmMode ?? "").trim();
+  if (mode === "vertex") {
+    const m = String(bpc.platformStage2GeminiModel ?? "Gemini 3.5 Flash").trim();
+    lines.push(`文案引擎: Gemini 3.5 Flash · 实际模型 ${m}`);
+  } else if (mode === "openai") {
+    const m = String(bpc.platformStage2OpenAiModel ?? "GPT-5.5").trim();
+    lines.push(`文案引擎: GPT‑5.5（OpenAI）· 实际模型 ${m}`);
+  }
+  const summary = bpc.stage2SubStepsSummary ?? debug.stage2SubStepsSummary;
+  if (typeof summary === "string" && summary.trim()) lines.push(summary.trim());
+  const usage = (bpc.usage ?? debug.usage) as
+    | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+    | undefined;
+  if (usage && typeof usage === "object") {
+    lines.push(
+      `tokens: prompt=${usage.prompt_tokens ?? "?"} · completion=${usage.completion_tokens ?? "?"} · total=${usage.total_tokens ?? "?"}`,
+    );
+  }
+  const llmPath = bpc.llmPath ?? debug.llmPath;
+  if (typeof llmPath === "string" && llmPath.trim()) lines.push(`llmPath: ${llmPath.trim()}`);
+  return lines;
+}
+
+function mergeFlowIntoPollTraceLines(prevLines: string[], flow: string[] | null | undefined): string[] {
+  if (!flow || flow.length === 0) return prevLines;
+  let lines = prevLines;
+  for (const row of flow) {
+    const s = String(row || "").trim();
+    if (!s) continue;
+    if (lines.some((ln) => ln === s)) continue;
+    lines = appendPollDebugLine(lines, s);
+  }
+  return lines;
 }
 
 function parseComposite2x4EngineLs(raw: string | null): PlatformComposite2x4ImageEngine {
@@ -1628,6 +1728,8 @@ export default function PlatformPage() {
   const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
     readPlatformCopyLlmEngineFromLs(),
   );
+  const [platformCoverTranslationEngine, setPlatformCoverTranslationEngine] =
+    useState<PlatformImagePromptTranslator>(() => readCoverTranslationEngineFromLs());
 
   useEffect(() => {
     try {
@@ -1636,6 +1738,13 @@ export default function PlatformPage() {
       /* ignore */
     }
   }, [platformCopyLlmEngine]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLATFORM_COVER_TRANSLATION_ENGINE_LS_KEY, platformCoverTranslationEngine);
+    } catch {
+      /* ignore */
+    }
+  }, [platformCoverTranslationEngine]);
 
   // Separate state for dashboard — populated by the second call after snapshot loads
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
@@ -1820,9 +1929,24 @@ export default function PlatformPage() {
       onPoll: ({ attempt, status, output }) => {
         setContentJobPollTrace((prev) =>
           prev && prev.jobId === jobId
-            ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次` }
+            ? { ...prev, pollCount: attempt, currentStep: `轮询 · ${attempt} 次 · ${status}` }
             : prev,
         );
+        const dbg =
+          output && typeof output === "object" && !Array.isArray(output)
+            ? ((output as Record<string, unknown>).debug as Record<string, unknown> | undefined)
+            : undefined;
+        const stageLines = formatStage2ModelDebugLines(dbg);
+        if (stageLines.length > 0) {
+          setContentJobPollTrace((prev) => {
+            if (!prev || prev.jobId !== jobId) return prev;
+            let lines = prev.lines;
+            for (const ln of stageLines) {
+              if (!lines.includes(ln)) lines = appendPollDebugLine(lines, ln);
+            }
+            return { ...prev, lines };
+          });
+        }
         if (status === "queued") {
           setContentLoadingText("任务排队中，请稍候…");
         } else if (status === "running") {
@@ -1929,11 +2053,15 @@ export default function PlatformPage() {
           prev && prev.jobId === jobId
             ? {
                 ...prev,
-                lines: appendPollDebugLine(
-                  prev.lines,
-                  snippet
-                    ? `${new Date().toISOString()} Stage 2 任务成功但 0 条选题 · 摘要: ${snippet}`
-                    : `${new Date().toISOString()} Stage 2 任务成功但 0 条选题（无 buildPlatformContent 摘要）`,
+                terminalStatus: j.status,
+                lines: mergeFlowIntoPollTraceLines(
+                  appendPollDebugLine(
+                    prev.lines,
+                    snippet
+                      ? `${new Date().toISOString()} Stage 2 任务成功但 0 条选题 · 摘要: ${snippet}`
+                      : `${new Date().toISOString()} Stage 2 任务成功但 0 条选题（无 buildPlatformContent 摘要）`,
+                  ),
+                  formatStage2ModelDebugLines(res.debug as Record<string, unknown>),
                 ),
               }
             : prev,
@@ -1942,7 +2070,19 @@ export default function PlatformPage() {
           "专属文案没有生成有效选题（0 条）。请展开下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
         );
       } else {
-        setContentJobPollTrace(null);
+        setContentJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: j.status,
+                currentStep: "终态 succeeded",
+                lines: mergeFlowIntoPollTraceLines(
+                  prev.lines,
+                  formatStage2ModelDebugLines(res.debug as Record<string, unknown>),
+                ),
+              }
+            : prev,
+        );
         setContentDebug(null);
       }
       setPlatformContent(res.platformContent as any);
@@ -2003,7 +2143,9 @@ export default function PlatformPage() {
         setContentJobPollTrace({
           jobId,
           label: "Stage 2 · platform_build_content",
-          lines: [],
+          lines: [
+            `${new Date().toISOString()} 已入队 · 文案模型=${copyLlmEngineUiLabel(platformCopyLlmEngine)}`,
+          ],
           pollCount: 0,
           currentStep: "已入队，等待轮询…",
         });
@@ -2143,34 +2285,50 @@ export default function PlatformPage() {
       step: t.imageGenStep || t.currentStep,
     }));
 
-    const showFailureLog = [...imageTraces, ...(contentJobPollTrace ? [contentJobPollTrace] : [])].some(
-      (t) => {
-        if (t.lines.length === 0) return false;
-        if (t.terminalStatus === "failed" || t.terminalStatus === "client_error") return true;
-        if (t.terminalStatus === "succeeded")
-          return t.lines.some((ln) => /无有效|无 output|异常|失败|✗/i.test(ln));
-        return true;
-      },
+    const coverFlowDebug =
+      topicImageJobPollTrace && topicImageJobPollTrace.lines.length > 0
+        ? parseCoverTranslationDebugFromFlow(topicImageJobPollTrace.lines)
+        : null;
+
+    const showStepLog = [...imageTraces, ...(contentJobPollTrace ? [contentJobPollTrace] : [])].some(
+      (t) => t.lines.length > 0,
     );
 
     return (
       <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.05)] p-4 space-y-4">
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">Fly Jobs · 轮询</div>
         <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
-          英文化与生图分开展示；每行均含 <span className="text-gray-300">jobId</span>（可复制到 Fly 日志或{" "}
-          <code className="text-gray-400">GET /api/jobs/&lt;id&gt;</code>）
+          展示<strong className="text-white">实际调用</strong>的模型与逐步流水（含翻译字符数）；每行含{" "}
+          <span className="text-gray-300">jobId</span> 可复制到 Fly 日志。
         </p>
 
         {imageTraces.length > 0 ? (
           <div className="rounded-xl border border-[#c4b5fd]/25 bg-[rgba(99,102,241,0.08)] p-3">
             <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#c4b5fd]">
-              英文化 · 模型翻译
+              英文化 · 封面翻译
             </div>
-            <p className="mt-1 text-[11px] text-[#d7d0ef]">
-              合计轮询{" "}
-              <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次（GPT 5.4 →
-              Gemini Flash 等）
-            </p>
+            {coverFlowDebug?.engineLabel ? (
+              <p className="mt-1 text-[11px] text-[#e9d5ff]">
+                实际引擎：<span className="font-semibold text-white">{coverFlowDebug.engineLabel}</span>
+                {coverFlowDebug.inputChars != null ? (
+                  <>
+                    {" "}
+                    · 上游 <span className="tabular-nums">{coverFlowDebug.inputChars}</span> 字
+                  </>
+                ) : null}
+                {coverFlowDebug.outputChars != null ? (
+                  <>
+                    {" "}
+                    · 英文 prompt <span className="tabular-nums">{coverFlowDebug.outputChars}</span> 字符
+                  </>
+                ) : null}
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-[#d7d0ef]">
+                合计 HTTP 轮询{" "}
+                <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次
+              </p>
+            )}
             <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
               {translationOverview.join("  ·  ")}
             </p>
@@ -2183,8 +2341,7 @@ export default function PlatformPage() {
               生图 · 封面与分镜
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
-              合计轮询 <span className="font-semibold tabular-nums text-white">{imageGenTotal}</span> 次（GPT-IMAGE-2
-              / EvoLink / NB2 等）
+              合计 HTTP 轮询 <span className="font-semibold tabular-nums text-white">{imageGenTotal}</span> 次
             </p>
             <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
               {imageGenOverview.join("  ·  ")}
@@ -2199,10 +2356,15 @@ export default function PlatformPage() {
               {contentJobPollTrace.label} · jobId={contentJobPollTrace.jobId} · {contentJobPollTrace.pollCount} 次 ·{" "}
               {contentJobPollTrace.terminalStatus ? `终态 ${contentJobPollTrace.terminalStatus}` : "进行中"}
             </p>
+            {contentJobPollTrace.lines.length > 0 ? (
+              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-gray-300">
+                {contentJobPollTrace.lines.join("\n")}
+              </pre>
+            ) : null}
           </div>
         ) : null}
 
-        {showFailureLog ? (
+        {showStepLog ? (
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words border-t border-white/10 pt-3 text-[10px] leading-5 text-[#c9c0e6]">
             {[...imageTraces, ...(contentJobPollTrace ? [contentJobPollTrace] : [])]
               .filter((t) => t.lines.length > 0)
@@ -2428,8 +2590,8 @@ export default function PlatformPage() {
         coverPersonaContext: inp.coverPersonaContext,
         failedJobId: inp.failedJobId,
         sceneId: inp.sceneId,
-        /** 封面 topic 管线；与下方 2×4 合成英文化开关无关。 */
-        imagePromptTranslator: "gpt54",
+        /** 封面 topic 管线；与 2×4 合成英文化开关无关。 */
+        imagePromptTranslator: platformCoverTranslationEngine,
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
@@ -2441,7 +2603,9 @@ export default function PlatformPage() {
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: [],
+        lines: [
+          `${new Date().toISOString()} 已入队 · 封面英文化=${coverTranslationEngineUiLabel(platformCoverTranslationEngine)}`,
+        ],
         pollCount: 0,
         currentStep: "已入队…",
       });
@@ -2457,7 +2621,10 @@ export default function PlatformPage() {
               flow && flow.length > 0 ? String(flow[flow.length - 1]!).replace(/\s+/g, " ").slice(0, 140) : "";
             setTopicImageJobPollTrace((prev) =>
               prev && prev.jobId === jobId
-                ? applyFlowLogToPollTrace(prev, attempt, flow ?? [])
+                ? {
+                    ...applyFlowLogToPollTrace(prev, attempt, flow ?? []),
+                    lines: mergeFlowIntoPollTraceLines(prev.lines, flow),
+                  }
                 : prev,
             );
           },
@@ -2533,7 +2700,16 @@ export default function PlatformPage() {
         setPlatformCoverCtrBySceneId((prev) => ({ ...prev, [inp.sceneId]: coverClickEstimate }));
       }
       if (success) {
-        setTopicImageJobPollTrace(null);
+        setTopicImageJobPollTrace((prev) =>
+          prev && prev.jobId === jobId
+            ? {
+                ...prev,
+                terminalStatus: "succeeded",
+                currentStep: "终态 succeeded",
+                lines: mergeFlowIntoPollTraceLines(prev.lines, finalFlowLog),
+              }
+            : prev,
+        );
       } else {
         setTopicImageJobPollTrace((prev) =>
           prev && prev.jobId === jobId
@@ -2557,7 +2733,7 @@ export default function PlatformPage() {
         coverClickEstimate,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs, platformCoverTranslationEngine],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -5245,11 +5421,44 @@ export default function PlatformPage() {
               <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
+                    <div className="text-sm font-semibold text-white">封面英文化模型</div>
+                    <p className="mt-1 text-xs leading-relaxed text-white/55">
+                      竖版封面翻译<strong className="text-white/80">仅走所选模型</strong>，失败即停，不自动切换兜底。
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPlatformCoverTranslationEngine("gpt54")}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                        platformCoverTranslationEngine === "gpt54"
+                          ? "border-amber-400/50 bg-[rgba(251,191,36,0.12)] text-amber-100"
+                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                      }`}
+                    >
+                      GPT 5.4
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlatformCoverTranslationEngine("vertex_gemini_3_flash_preview")}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                        platformCoverTranslationEngine === "vertex_gemini_3_flash_preview"
+                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
+                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                      }`}
+                    >
+                      Gemini 3.5 Flash
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
                     <div className="text-sm font-semibold text-white">文案生成模型（Stage 1 + Stage 2）</div>
                     <p className="mt-1 text-xs leading-relaxed text-white/55">
-                      战略看板与专属选题文案共用此设置；默认{" "}
-                      <span className="font-semibold text-amber-100">GPT‑5.5</span>，可切换{" "}
-                      <span className="font-semibold text-[#8cefff]">Gemini 3.5 Flash</span>（需配置 GEMINI_API_KEY）。
+                      战略看板与专属选题文案共用此设置；Debug 面板会显示实际模型与 token。
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">

@@ -4272,7 +4272,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           failedJobId: z.string().max(32).optional(),
           /** 單幀封面必須綁定選題 ID，以便從 DB 快照載入並優化文案 */
           sceneId: z.string().min(1).max(128),
-          /** @deprecated 封面單幀固定 GPT 5.4；此欄位忽略。 */
+          /** 封面英文化：GPT 5.4 或 Gemini 3.5 Flash（无交叉兜底） */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           /** 監管：豎封像素三選一；普通帳戶傳入無效 */
           topicCoverPixelEngine: zPlatformTopicCoverPixelEngine.optional(),
@@ -4464,7 +4464,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           platformsKeyCsv: resolvedCover.snapshotPlatformsKey ?? "",
           preferFlyLive: preferFlyLiveTrend,
         });
-        void input.imagePromptTranslator;
+        const { resolveCoverImagePromptTranslator } = await import(
+          "./services/geminiPlatformCompositeTranslation.js"
+        );
+        const coverImagePromptTranslator = resolveCoverImagePromptTranslator(input.imagePromptTranslator);
         let drProSecondaryCoverInputs: { topicHook: string; context: string } | undefined;
         const sid2 = String(input.drProSecondarySceneId ?? "").trim();
         if (sid2 && sid2 !== sid) {
@@ -4481,6 +4484,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverPersonaContext: input.coverPersonaContext,
           sceneId: input.sceneId,
           appealHook: resolvedCover.appealHook,
+          imagePromptTranslator: coverImagePromptTranslator,
           creationIdOut,
           isFreeRetry,
           newJobMetaBase,
@@ -4505,7 +4509,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverPersonaContext: z.string().max(4000).optional(),
           failedJobId: z.string().max(32).optional(),
           sceneId: z.string().min(1).max(128),
-          /** @deprecated 封面固定 GPT 5.4；入隊後寫入 job 時強制 gpt54。 */
+          /** @deprecated 忽略；封面英文化由 UI 指定 GPT 5.4 或 Gemini 3.5 Flash。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           topicCoverPixelEngine: zPlatformTopicCoverPixelEngine.optional(),
           /** @deprecated 等同 `topicCoverPixelEngine: "nano_banana_2"` */
@@ -4751,6 +4755,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
           }
         }
+        const { resolveCoverImagePromptTranslator } = await import(
+          "./services/geminiPlatformCompositeTranslation.js"
+        );
+        const coverImagePromptTranslator = resolveCoverImagePromptTranslator(input.imagePromptTranslator);
         try {
           await createJobRecord({
             id: jobId,
@@ -4767,7 +4775,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 coverPersonaContext: input.coverPersonaContext,
                 sceneId: input.sceneId,
                 appealHook: resolvedCover.appealHook,
-                imagePromptTranslator: "gpt54",
+                imagePromptTranslator: coverImagePromptTranslator,
                 isFreeRetry,
                 newJobMetaBase,
                 topicCoverPixelEngine,
@@ -4989,7 +4997,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           platformType: z.enum(["video", "graphic"]),
           /** 与单张 generateTopicImage.coverPersonaContext 一致，批量时复用同一人设 */
           coverPersonaContext: z.string().max(4000).optional(),
-          /** @deprecated 批量封面固定 GPT 5.4；此欄位忽略。 */
+          /** @deprecated 批量封面英文化由 UI 指定；默认 GPT 5.4。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           scenes: z
             .array(
@@ -5009,7 +5017,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const batchCoverPersona = String(input.coverPersonaContext || "").trim();
-        void input.imagePromptTranslator;
+        const { resolveCoverImagePromptTranslator } = await import(
+          "./services/geminiPlatformCompositeTranslation.js"
+        );
+        const coverImagePromptTranslator = resolveCoverImagePromptTranslator(input.imagePromptTranslator);
 
         const isVideo = input.platformType === "video";
         const costPerImage = isVideo ? CREDIT_COSTS.platformTopicFrameVideo : CREDIT_COSTS.platformTopicFrameGraphic;
@@ -5059,7 +5070,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const {
           buildPlatformTopicReferenceGeminiTask,
           extractChineseVisualBrief,
-          translatePlatformTopicCoverToEnglishGpt54,
+          translatePlatformTopicCoverToEnglish,
+          coverTranslationEngineDebugLabel,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
@@ -5067,7 +5079,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendImageFlowLog,
         } = await import("./services/proxyImageService.js");
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
+        const coverTranslatorLogLabel = coverTranslationEngineDebugLabel(coverImagePromptTranslator);
         /** 逐張串行：降低同題多張對 Vertex 生圖的尖峰失敗率。 */
         const pool = 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 串行（并发=1）· 单价=${costPerImage}点`;
@@ -5137,7 +5149,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
             });
             appendImageFlowLog(flowLog, `[步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`);
-            const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(geminiTask, flowLog);
+            const englishPrompt = await translatePlatformTopicCoverToEnglish(
+              geminiTask,
+              flowLog,
+              coverImagePromptTranslator,
+            );
             appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
             const trimmedEn = String(englishPrompt || "").trim();
             if (!trimmedEn) {

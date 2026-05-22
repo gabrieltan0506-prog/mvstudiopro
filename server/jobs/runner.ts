@@ -1186,6 +1186,17 @@ async function processPlatformJob(
         typeof rawBatchIdx === "number" && typeof rawBatchTot === "number" && rawBatchTot >= 2
           ? { slotIndex: Math.max(0, Math.floor(rawBatchIdx)), slotTotal: Math.floor(rawBatchTot) }
           : undefined;
+      const rawTranslator = (params as { imagePromptTranslator?: unknown }).imagePromptTranslator;
+      const { resolveCoverImagePromptTranslator } = await import(
+        "../services/geminiPlatformCompositeTranslation.js"
+      );
+      const imagePromptTranslator = resolveCoverImagePromptTranslator(
+        rawTranslator === "vertex_gemini_3_flash_preview"
+          ? "vertex_gemini_3_flash_preview"
+          : rawTranslator === "gpt54"
+            ? "gpt54"
+            : undefined,
+      );
       const result = await runPlatformTopicImagePipeline({
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1193,7 +1204,7 @@ async function processPlatformJob(
         coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
         sceneId: typeof params.sceneId === "string" ? params.sceneId : undefined,
         appealHook: appealHookOut,
-        imagePromptTranslator: "gpt54",
+        imagePromptTranslator,
         creationIdOut,
         isFreeRetry: Boolean(params.isFreeRetry),
         newJobMetaBase,
