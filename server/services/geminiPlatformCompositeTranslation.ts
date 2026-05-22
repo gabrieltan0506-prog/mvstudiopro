@@ -8,7 +8,7 @@ import {
   GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN,
   resolveGemini35FlashModelName,
 } from "./gemini35FlashRuntime.js";
-import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled, isPlatformImageOpenAiAllowed } from "../config/platformSwitches.js";
+import { isPlatformWeekendGcpEscape, isPlatformWeekendSurvivalModeEnabled, isPlatformImageOpenAiAllowed, resolveGpt54CoverTranslationReasoningEffort } from "../config/platformSwitches.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import {
   logSheetChineseStagingBeforeTranslate,
@@ -405,7 +405,7 @@ export function platformImageTranslationVertexJsonSystemInstruction(
       "你是頂級中英雙語編導，也是頂級視覺提示詞導演；英文聲口須與上段莎士比亞式編導身份一致（可長可短，以忠實還原為準）。",
       "把上游任務落成 **JSON 里的英文 prompt**，供 GPT-IMAGE-2 使用；**优先** tags / 短語，**篇幅不限**，以版式與主體一次說清、利於生圖成功為準。",
       "必須返回合法 JSON，且含字串欄位 **prompt**（唯一下游消費欄位，內容僅為英文生圖指令）。可選 **thought_process**（簡述藝術取捨）；不建議使用 markdown。示例：{\"thought_process\":\"...\",\"prompt\":\"...\"}",
-      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**【第一優先·軟性】premium cover design：** 英文 `prompt` **優先**寫出 **premium editorial feed cover** 氣質—受控留白、可信光型、低飽和主色 + 極少亮色點綴；圖標**優先**融入同一光照、**彷彿浮在**實景上，**建議圖標自然融入背景，無可見硬邊框**，**不建議**默認為每枚圖標加實色圓／方塊／藥丸襯底（除非任務明確要 UI／貼紙促銷感）。**選題豎封（圖標層仍必達）**：英文 `prompt` **必須**寫明 GPT-IMAGE-2 繪製 **2～4 個極簡線稿小圖標**（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標須**生動扣題**；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標，**不建議**整張僅大字而**略去**圖標層。",
+      "須含 masterpiece、8k；寫清情緒、燈光、場景、主體；網格類任務（2×2 / 2×4）須保留格線硬信息。單張 9:16 封面**宜**偏單一主視覺，避免**無意**寫成多分鏡，除非任務明確要求。**【第一優先·軟性】premium cover design：** 英文 `prompt` **優先**寫出 **premium editorial feed cover** 氣質—受控留白、可信光型、低飽和主色 + 極少亮色點綴；圖標**優先**融入同一光照、**彷彿浮在**實景上，**建議圖標自然融入背景，無可見硬邊框**，**不建議**默認為每枚圖標加實色圓／方塊／藥丸襯底（除非任務明確要 UI／貼紙促銷感）。**選題豎封（圖標層·強烈建議）**：英文 `prompt` **建議**寫明 GPT-IMAGE-2 繪製 **2～4 個** 極簡線稿小圖標（形體·位置·與 Hook／正文語義的對應），各附 **短簡中輔標**；圖標**建議**生動扣題；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；圖標層從屬主標，**不建議**整張僅大字而**略去**圖標層。",
       "若上游封面/科普正文未出現食物，**可不必**以廚房、食譜表、食材格為主場景。",
       "**【人设口径】** 若上游含身份美学锚点或职业、身份、兴趣、爱好、专长等线索（含【单帧出镜 · 身份隐喻与美学锚定】块），英文 `prompt` 中人物气质、服饰与场景须与之互证；仍以版式与可读为先。",
       "**場景多元化：** 英文 prompt 須與文案場景**同步多元化**；**室內、戶外**皆可作參考，**不建議**無正文依據時過度集中在書房、書桌、書架牆、閱讀角、咖啡廳**僅讀書套路**或**典型客廳、沙發電視牆**；優先寫出與 Hook／題材匹配的**具體場所**（**例如包括但不限於**：旅遊景點、商場、超市、咖啡廳、博物館，及街景自然、公共／工業／醫療室內、棚拍抽象景等）。",
@@ -949,6 +949,58 @@ export async function callVertexGeminiFlashTranslation(
   });
 }
 
+/** 封面英文化：固定 **GPT 5.4**（忽略 UI 历史 Flash 选项）。 */
+export function resolveCoverImagePromptTranslator(
+  _raw?: PlatformImagePromptTranslator | null,
+): PlatformImagePromptTranslator {
+  return "gpt54";
+}
+
+/** 2×4 分镜 / 八格英文化：固定 **GPT 5.4**（strict · 无 Flash 兜底）。 */
+export function resolveCompositeImagePromptTranslator(
+  _raw?: PlatformImagePromptTranslator | null,
+): PlatformImagePromptTranslator {
+  return "gpt54";
+}
+
+/** Debug 流水：封面英文化实际引擎标签（无兜底）。 */
+export function coverTranslationEngineDebugLabel(
+  translator: PlatformImagePromptTranslator,
+): string {
+  if (translator === "vertex_gemini_3_flash_preview") {
+    const model = resolveVertexCoverTranslationModelName();
+    return `Gemini 3.5 Flash（${model} · 无 GPT 兜底）`;
+  }
+  const modelName =
+    process.env.OPENAI_GPT54_MODEL?.trim() ||
+    process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() ||
+    "gpt-5.4";
+  return `GPT 5.4（OpenAI · ${modelName} · 无 Flash 兜底）`;
+}
+
+/**
+ * 選題 **豎封**英文化：由 UI 指定 **GPT 5.4** 或 **Gemini 3.5 Flash**；**严格模式，失败即停，不交叉兜底**。
+ */
+export async function translatePlatformTopicCoverToEnglish(
+  translationTask: string,
+  flowLog: string[] | undefined,
+  translatorInput?: PlatformImagePromptTranslator | null,
+): Promise<string> {
+  const translator = resolveCoverImagePromptTranslator(translatorInput);
+  const task = String(translationTask || "").trim();
+  const taskChars = task.length;
+  appendGpt54TranslationDebug(
+    flowLog,
+    `[封面·英文化·配置] 引擎=${coverTranslationEngineDebugLabel(translator)} · 上游 task=${taskChars} 字 · strictNoFallback=是`,
+  );
+  return callGemini31ProForImagePrompt(task, {
+    translator,
+    flowLog,
+    pipelineStatCtx: { pipeline: "topic_cover" },
+    strictNoFallback: true,
+  });
+}
+
 /**
  * 選題 **豎封**英文化：**GPT 5.4**（OpenAI，`callGemini31ProForImagePrompt` · `translator=gpt54`）。
  */
@@ -1021,7 +1073,20 @@ export async function callGemini3_1_Pro_AiStudio(
   statCtx?: Gpt54PlatformImagePromptStatCtx,
   opts?: { skipVertexFallback?: boolean; compositeTranslationStrict?: boolean },
 ): Promise<string> {
-  if (!isPlatformImageOpenAiAllowed()) {
+  const isTopicCoverPipeline = statCtx?.pipeline === "topic_cover";
+  const hasOpenAiKey = Boolean(String(process.env.OPENAI_API_KEY || "").trim());
+  const allowCoverOpenAi =
+    isPlatformImageOpenAiAllowed() || (isTopicCoverPipeline && hasOpenAiKey);
+  if (!allowCoverOpenAi) {
+    if (isTopicCoverPipeline) {
+      appendGpt54TranslationDebug(
+        flowLog,
+        "[封面·英文化] OpenAI 未启用 · 已选择 GPT 5.4 · 中止（无 Flash 兜底）",
+      );
+      throw new Error(
+        "封面英文化：已选择 GPT 5.4，但服务端未启用 OpenAI（需 PLATFORM_IMAGE_ALLOW_OPENAI=1 或配置 OPENAI_API_KEY）",
+      );
+    }
     appendGpt54TranslationDebug(flowLog, "[英文化] OpenAI 未啟用 · 改走 Vertex（設 PLATFORM_IMAGE_ALLOW_OPENAI=1 可恢復 GPT）");
     return callVertexGeminiFlashTranslation(prompt, flowLog, {
       pipelineStatCtx: statCtx,
@@ -1045,15 +1110,9 @@ export async function callGemini3_1_Pro_AiStudio(
     translationProfile === "topic_cover"
       ? [
           GPT54_SHAKESPEAREAN_PROMPT_DIRECTOR_EN,
-          "你是一位双语视觉编导：把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。",
-          "**优先** comma-separated tags / 短語；需要时用更长英文把版式、主体、简中标题要求说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
-          "版式信息（2×2、2×4、9:16 单封面等）必须与上游一致，不建議擅自改格数或把单封面写成多格，除非任务明确要求。",
-          "须含 masterpiece 与 8k；情绪、灯光、场景、主体与服饰、标题语言（简中大字等）按需写入。",
-          "**選題豎封必達：** 英文 prompt **必須**寫明畫內 **2～4 個** 線稿小圖標 + 各 **短簡中輔標**，圖標須**生動對齊** Hook 與正文要點；並寫清 **美觀排版**（主從·留白·對齊）與 **強縮略圖衝擊力**（對比·光型·色面）；**不建議**僅有大字或略去圖標層。",
-          "**場景：** **建議**封面與文案場景多元化；**室內、戶外**皆可作參考。**不建議**無正文依據時過度集中在書房、書桌、書架牆或**典型客廳、沙發電視牆**；英文須寫出與 Hook 匹配的**具體場所或置景**（街景自然、公共／醫療／工業室內、棚拍色片等）。",
-          PLATFORM_COVER_SCENE_VERSATILITY_EN,
-          "请返回合法 JSON：{\"prompt\":\"...\"}；不建議附加解釋、不建議使用 markdown。",
-          "若上游是封面/科普而正文未出现食物，**可不必**以廚房、食譜表、食材格為主場景。",
+          PLATFORM_TOPIC_FEED_COVER_TRANSLATOR_RULE_CN,
+          "把上游任务收成 **一条** 可直接给 GPT-IMAGE-2 的 **英文** 生图指令（JSON 的 prompt 字段）。**优先** comma-separated tags / 短语；需要时用更长英文把版式、主体、简中标题、场景隐喻说清楚。**不设字符上限**，以一次生图能忠实执行任务为第一优先级。",
+          "请返回合法 JSON：{\"prompt\":\"...\"}；不建议附加解释、不建议使用 markdown。",
         ].join("\n")
       : [
           PLATFORM_IMAGE_TRANSLATOR_BASE_EN,
@@ -1073,9 +1132,10 @@ export async function callGemini3_1_Pro_AiStudio(
     attempt: number,
   ): Promise<{ out: string; emptyReasonLine: string | null }> => {
     const a = `第${attempt}/3轮`;
+    const coverReasoningEffort = resolveGpt54CoverTranslationReasoningEffort();
     appendGpt54TranslationDebug(
       flowLog,
-      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=${gpt54MaxOut} · response_format=json_object · 上游 task 约 ${taskChars} 字`,
+      `${a} · 请求前 · invokeLLM(openai/gpt54) · modelName=${modelName} · max_tokens=${gpt54MaxOut} · reasoning_effort=${coverReasoningEffort} · response_format=json_object · 上游 task 约 ${taskChars} 字`,
     );
     const primaryResponse = await invokeLLM({
       provider: "openai",
@@ -1083,6 +1143,7 @@ export async function callGemini3_1_Pro_AiStudio(
       modelName,
       response_format: { type: "json_object" },
       max_tokens: gpt54MaxOut,
+      reasoningEffort: coverReasoningEffort,
       messages: [
         {
           role: "system",
@@ -1440,10 +1501,15 @@ export async function callGemini31ProForImagePrompt(
     translator?: PlatformImagePromptTranslator;
     flowLog?: string[];
     pipelineStatCtx?: Gpt54PlatformImagePromptStatCtx;
+    /** 封面 / 2×4 英文化：GPT↔Flash 不交叉兜底 */
+    strictNoFallback?: boolean;
   },
 ): Promise<string> {
   const requested: PlatformImagePromptTranslator = options?.translator ?? "gpt54";
-  const billingEscape = isPlatformWeekendGcpEscape();
+  const statCtx = options?.pipelineStatCtx;
+  const isTopicCover = statCtx?.pipeline === "topic_cover";
+  const strictNoFallback = Boolean(options?.strictNoFallback) || isTopicCover;
+  const billingEscape = isPlatformWeekendGcpEscape() && !strictNoFallback;
   const translator: PlatformImagePromptTranslator = billingEscape ? "gpt54" : requested;
   const flowLog = options?.flowLog;
   if (billingEscape && requested === "vertex_gemini_3_flash_preview") {
@@ -1452,22 +1518,40 @@ export async function callGemini31ProForImagePrompt(
       "[GCP避險] 英文化已從 Vertex 探索強制改為 GPT 5.4 路徑（避免調用 Vertex Flash）",
     );
   }
-  const vertexModel = resolveVertexFlashTranslationModelName();
+  const vertexModel = isTopicCover
+    ? resolveVertexCoverTranslationModelName()
+    : resolveVertexFlashTranslationModelName();
   const vertexLoc = resolveVertexFlashTranslationLocation();
+  const openAiModelName =
+    process.env.OPENAI_GPT54_MODEL?.trim() ||
+    process.env.OPENAI_PLATFORM_IMAGE_TRANSLATION_MODEL?.trim() ||
+    "gpt-5.4";
   const label =
     translator === "vertex_gemini_3_flash_preview"
-      ? `Vertex @google/genai · ${vertexModel} · ${vertexLoc}（JSON）`
-      : "GPT 5.4（OpenAI）";
+      ? `Gemini 3.5 Flash · ${vertexModel} · ${vertexLoc}`
+      : `GPT 5.4 · OpenAI · ${openAiModelName}`;
   try {
-    const statCtx = options?.pipelineStatCtx;
     const raw =
       translator === "vertex_gemini_3_flash_preview"
-        ? await callVertexGemini31ProForImagePrompt(translationTask, flowLog, { pipelineStatCtx: statCtx })
-        : await callGemini3_1_Pro_AiStudio(translationTask, flowLog, statCtx);
+        ? await callVertexGeminiFlashTranslation(translationTask, flowLog, {
+            pipelineStatCtx: statCtx,
+            afterFlashFailure: strictNoFallback ? "throw" : undefined,
+            compositeTranslationStrict: !isTopicCover,
+          })
+        : await callGemini3_1_Pro_AiStudio(translationTask, flowLog, statCtx, {
+            skipVertexFallback: strictNoFallback,
+            compositeTranslationStrict: statCtx?.pipeline === "composite_sheet" || strictNoFallback,
+          });
     const out = stripGeminiModelOutput(raw);
     if (!out) {
       appendGpt54TranslationDebug(flowLog, `[GPT54·崩溃原因] stripGeminiModelOutput 后为空 · label=${label}`);
       throw new Error("[GPT54·崩溃原因] strip 后为空");
+    }
+    if (isTopicCover) {
+      appendGpt54TranslationDebug(
+        flowLog,
+        `[封面·英文化·完成] 实际引擎=${label} · 英文 prompt=${out.length} 字符`,
+      );
     }
     return out;
   } catch (error: unknown) {
@@ -1541,10 +1625,6 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     flowLog,
     pipelineStatCtx: compositeStatCtx,
   });
-  const compositeFlashOpts = {
-    compositeTranslationStrict: true as const,
-    pipelineStatCtx: compositeStatCtx,
-  };
   const isStoryboard = kind === "storyboard_sheet_landscape";
   appendVertexFlashDebug(
     flowLog,
@@ -1568,57 +1648,23 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     scriptContextChars: String(options.scriptContext || "").length,
   });
 
-  if (isPlatformWeekendSurvivalModeEnabled()) {
-    if (!isPlatformImageOpenAiAllowed()) {
-      appendVertexFlashDebug(
-        flowLog,
-        "[生存模式] OpenAI 未啟用 · 改 Vertex Gemini 3.5 Flash ×3 · compositeTranslationStrict",
-      );
-      return callVertexGeminiFlashTranslation(task, flowLog, {
-        ...compositeFlashOpts,
-        afterFlashFailure: "throw",
-      });
-    }
-    appendVertexFlashDebug(
+  if (options.engine === "gemini31flash" || options.translator === "vertex_gemini_3_flash_preview") {
+    appendGpt54TranslationDebug(
       flowLog,
-      "[生存模式] 強制 OpenAI GPT 5.4 英文化（忽略 engine / translator 選項）· Flash 兜底",
+      `[2×4·英文化·配置] 已忽略 engine/translator=${options.engine ?? options.translator ?? "n/a"} · 固定 GPT 5.4 · strictNoFallback=是`,
     );
-    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
   }
 
-  if (options.engine === "gemini31flash") {
-    if (isPlatformWeekendGcpEscape()) {
-      if (!isPlatformImageOpenAiAllowed()) {
-        appendVertexFlashDebug(
-          flowLog,
-          "[GCP避險] OpenAI 未啟用 · engine=gemini31flash 仍走 Vertex Flash",
-        );
-        return callVertexGeminiFlashTranslation(task, flowLog, {
-          ...compositeFlashOpts,
-          afterFlashFailure: "throw",
-        });
-      }
-      appendVertexFlashDebug(
-        flowLog,
-        "[GCP避險] engine=gemini31flash 已改走 GPT 5.4（跳过 Vertex Flash）",
-      );
-      return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
-    }
-    console.log(
-      `[platformComposite] engine=gemini31flash → Vertex ${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`,
-    );
-    return callVertexGeminiFlashTranslation(task, flowLog, compositeFlashOpts);
-  }
-  if (options.engine === "gpt54") {
-    console.log("[platformComposite] engine=gpt54 → GPT 5.4");
-    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
+  if (isPlatformWeekendSurvivalModeEnabled()) {
+    appendGpt54TranslationDebug(flowLog, "[生存模式] 2×4 英文化仍固定 GPT 5.4 · strict · 无 Flash 兜底");
   }
 
-  if (options.translator === "gpt54") {
-    appendVertexFlashDebug(flowLog, "[相容] translator=gpt54 → 先 GPT 5.4 英文化（非預設路徑）");
-    return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
-  }
-
-  appendVertexFlashDebug(flowLog, "[預設] GPT 5.4 ×3 → Gemini 3.5 Flash ×3 fallback");
-  return callGemini31ProForImagePrompt(task, gptImgBridgeOpts("gpt54"));
+  appendGpt54TranslationDebug(
+    flowLog,
+    `[2×4·英文化·配置] 引擎=GPT 5.4（OpenAI · strict · 无 Flash 兜底）· task≈${task.length} 字`,
+  );
+  return callGemini31ProForImagePrompt(task, {
+    ...gptImgBridgeOpts("gpt54"),
+    strictNoFallback: true,
+  });
 }

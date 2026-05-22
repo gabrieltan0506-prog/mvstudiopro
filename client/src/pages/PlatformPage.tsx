@@ -1997,13 +1997,15 @@ export default function PlatformPage() {
           platformMenu: dash.platformMenu || [],
           snapshotSummary,
           strategicDashboard: dash as unknown as Record<string, unknown>,
-          stage2LlmMode: platformCopyLlmEngine,
+          stage2LlmMode: "openai" as const,
           ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
         });
         setContentJobPollTrace({
           jobId,
           label: "Stage 2 · platform_build_content",
-          lines: [],
+          lines: [
+            `${new Date().toISOString()} 已入队 · 文案模型=GPT‑5.5`,
+          ],
           pollCount: 0,
           currentStep: "已入队，等待轮询…",
         });
@@ -2428,8 +2430,8 @@ export default function PlatformPage() {
         coverPersonaContext: inp.coverPersonaContext,
         failedJobId: inp.failedJobId,
         sceneId: inp.sceneId,
-        /** 封面 topic 管线；与下方 2×4 合成英文化开关无关。 */
-        imagePromptTranslator: "gpt54",
+        /** 封面 topic 管线；与 2×4 合成英文化开关无关。 */
+        imagePromptTranslator: "gpt54" as const,
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
@@ -2441,7 +2443,9 @@ export default function PlatformPage() {
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
-        lines: [],
+        lines: [
+          `${new Date().toISOString()} 已入队 · 封面英文化=GPT 5.4`,
+        ],
         pollCount: 0,
         currentStep: "已入队…",
       });
@@ -4703,7 +4707,7 @@ export default function PlatformPage() {
         context: capturedJudgment || undefined,
         windowDays: selectedWindowDays,
         snapshotSummary: snap as any,
-        copyLlmMode: platformCopyLlmEngine,
+        copyLlmMode: "openai" as const,
       });
 
       if (!dashResult.platformDashboard) {
@@ -4782,7 +4786,7 @@ export default function PlatformPage() {
     }
     setQuestion(finalQuestion);
     setIsQaLoading(true);
-    // Dispatch async QA Job — Gemini API · gemini-3.5-flash answers in background
+    // Dispatch async QA Job — GPT‑5.5 answers in background（与 askPlatformFollowUp 同路径）
     // If a file was uploaded, pass fileUri + fileMimeType for multimodal analysis
     try {
       const { jobId } = await createPlatformQAJobMutation.mutateAsync({
@@ -4806,7 +4810,7 @@ export default function PlatformPage() {
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshot,
-        copyLlmMode: platformCopyLlmEngine,
+        copyLlmMode: "openai" as const,
       });
     }
   };
@@ -5245,44 +5249,36 @@ export default function PlatformPage() {
               <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-white">文案生成模型（Stage 1 + Stage 2）</div>
+                    <div className="text-sm font-semibold text-white">封面英文化</div>
                     <p className="mt-1 text-xs leading-relaxed text-white/55">
-                      战略看板与专属选题文案共用此设置；默认{" "}
-                      <span className="font-semibold text-amber-100">GPT‑5.5</span>，可切换{" "}
-                      <span className="font-semibold text-[#8cefff]">Gemini 3.5 Flash</span>（需配置 GEMINI_API_KEY）。
+                      竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（strict · 无 Flash 兜底）。
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPlatformCopyLlmEngine("openai")}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                        platformCopyLlmEngine === "openai"
-                          ? "border-amber-400/50 bg-[rgba(251,191,36,0.12)] text-amber-100"
-                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
-                      }`}
-                    >
-                      GPT‑5.5（OpenAI）
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPlatformCopyLlmEngine("vertex")}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                        platformCopyLlmEngine === "vertex"
-                          ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                          : "border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
-                      }`}
-                    >
-                      Gemini 3.5 Flash
-                    </button>
+                  <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
+                    GPT 5.4
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">文案模型（Stage 1 + Stage 2 + 深度追问）</div>
+                    <p className="mt-1 text-xs leading-relaxed text-white/55">
+                      战略看板、专属选题文案与<strong className="text-white/80">深度追问</strong>固定走{" "}
+                      <strong className="text-white/80">GPT‑5.5</strong>；Debug 会显示实际模型与 token。
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
+                    GPT‑5.5
                   </div>
                 </div>
               </div>
 
               {canConfigureStage2CopyEngine ? (
                 <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
-                  监管提示：上方「文案生成模型」已对所有登录用户生效；Stage 2 入队参数为{" "}
-                  <span className="font-mono text-amber-100/80">stage2LlmMode={platformCopyLlmEngine}</span>。
+                  监管提示：文案与深度追问已固定 <span className="font-mono text-amber-100/80">openai / GPT‑5.5</span>
+                  ；封面与 2×4 英文化固定 GPT 5.4。
                 </div>
               ) : null}
 
@@ -6614,16 +6610,14 @@ export default function PlatformPage() {
                       <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
                         <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
                           <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
-                          2×4 合成 · 英文化（GPT 5.4 → Flash）
+                          2×4 合成 · 英文化（GPT 5.4 strict）
                         </div>
                         <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
                           <strong className="text-[#5eead4]">2×4 分镜主表</strong>与
                           <strong className="text-[#5eead4]">小红书 2×4 八格</strong>
-                          宽幅合成英文化默认走{" "}
-                          <strong className="text-gray-200">GPT 5.4</strong>（最多 3 次）→{" "}
-                          <strong className="text-gray-200">Gemini 3.5 Flash</strong> 兜底。竖版
-                          <strong className="text-gray-400">封面单帧</strong>仍沿用 GPT 5.4 英文化 →
-                          GPT-IMAGE-2。若部署开启生存模式，服务端仍优先 GPT 5.4。
+                          宽幅合成英文化固定走{" "}
+                          <strong className="text-gray-200">GPT 5.4</strong>（最多 3 次 · strict · 无 Flash 兜底）。竖版
+                          <strong className="text-gray-400">封面单帧</strong>同样固定 GPT 5.4 英文化。
                         </p>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
                           调参与配额：

@@ -1254,9 +1254,9 @@ export async function generatePlatformCompositeSheetImage(options: {
   const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
     L,
-    survival
-      ? `[2×4·英文化机制] **生存模式已开启**（環境變數 PLATFORM_WEEKEND_SURVIVAL_MODE）：英文化 **GPT 5.4**（最多 3 轮）→ **Gemini 3.5 Flash** 兜底；另有 **GCP 避险** 时亦可能压制 Vertex。`
-      : `[2×4·英文化机制] **默认** **GPT 5.4** 英文化最多 3 轮 → **Gemini 3.5 Flash** 兜底（maxOutputTokens 不变）。**生存模式**（PLATFORM_WEEKEND_SURVIVAL_MODE）下仍优先 GPT 5.4。GCP 避险时亦可能压制 Vertex。`,
+    `[2×4·英文化机制] **固定 GPT 5.4**（OpenAI · 最多 3 轮 · strict · **无 Flash 兜底**）${
+      survival ? " · 生存模式已开启（仍仅 GPT 5.4）" : ""
+    }`,
   );
   appendImageFlowLog(
     L,
@@ -1266,16 +1266,13 @@ export async function generatePlatformCompositeSheetImage(options: {
     L,
     `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
-  const vertexRef = `${resolveVertexFlashTranslationModelName()} · ${resolveVertexFlashTranslationLocation()}`;
   appendImageFlowLog(
     L,
     `[2×4·流程总览] 分镜图/八格全链路（出图=${
       compositeImageEngine === "nano_banana_2"
         ? "**Nano Banana 2 主路径**（略过 GPT‑Image‑2；请求 `compositeImageEngine=gpt_image2` 或部署 `PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2` 可恢复）"
         : "**OhMyGPT→fal GPT‑Image‑2** → 可选 NB2 兜底"
-    }；英文化=**仅** Vertex Flash；Vertex=${vertexRef}${
-      survival ? " · **生存模式：英文化实际为 GPT 5.4 · strict**" : ""
-    }）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（Vertex Flash，见 [Vertex·Flash]）→ ④ 像素锁 → ⑤ 送生图`,
+    }；英文化=**GPT 5.4** strict）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（GPT 5.4，见 [GPT54·英文化]）→ ④ 像素锁 → ⑤ 送生图`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1345,9 +1342,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     );
     appendImageFlowLog(
       L,
-      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· ${
-        survival ? "**生存模式：英文化 GPT 5.4 → Flash 兜底**" : "**GPT 5.4 → Gemini 3.5 Flash 兜底**"
-      } …`,
+      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· **GPT 5.4 strict（无 Flash 兜底）** …`,
     );
 
     try {
