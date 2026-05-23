@@ -999,7 +999,7 @@ export async function translatePlatformTopicCoverToEnglish(
   const taskChars = task.length;
   appendGpt54TranslationDebug(
     flowLog,
-    `[封面·英文化·配置] 引擎=${coverTranslationEngineDebugLabel(translator)} · 上游 task=${taskChars} 字 · reasoning=high · max_tokens=65536 · strictNoFallback=是`,
+    `[封面·英文化·配置] 引擎=${coverTranslationEngineDebugLabel(translator)} · 上游 task=${taskChars} 字 · reasoning=medium · max_tokens=65536 · strictNoFallback=是`,
   );
   return callGemini31ProForImagePrompt(task, {
     translator,
