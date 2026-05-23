@@ -309,7 +309,7 @@ export function getPlatformStage2OpenAiModel(): string {
   return m || "gpt-5.5";
 }
 
-/** Stage 2 文案 GPT‑5 系推理强度：默认 **low**（更生动；medium 易偏模板腔）。 */
+/** Stage 1 / Stage 2 文案 GPT‑5.5 推理强度：默认 **medium**。 */
 export function resolvePlatformStage2OpenAiReasoningEffort():
   | "none"
   | "minimal"
@@ -320,10 +320,10 @@ export function resolvePlatformStage2OpenAiReasoningEffort():
   const raw = norm(process.env.PLATFORM_STAGE2_OPENAI_REASONING_EFFORT);
   const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
   if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
-  return "low";
+  return "medium";
 }
 
-/** 封面英文化 GPT‑5.4 JSON：默认 **high**（竖封需更充分推理）。 */
+/** 封面英文化 GPT‑5.4 JSON：默认 **medium**。 */
 export function resolveGpt54CoverTranslationReasoningEffort():
   | "none"
   | "minimal"
@@ -334,7 +334,7 @@ export function resolveGpt54CoverTranslationReasoningEffort():
   const raw = norm(process.env.GPT54_COVER_TRANSLATION_REASONING_EFFORT);
   const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
   if (allowed.has(raw)) return raw as ReturnType<typeof resolveGpt54CoverTranslationReasoningEffort>;
-  return "high";
+  return "medium";
 }
 
 /** 2×4 / 八格英文化 GPT‑5.4 JSON：默认 **medium**。 */
