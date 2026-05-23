@@ -5326,7 +5326,7 @@ export default function PlatformPage() {
                   <div>
                     <div className="text-sm font-semibold text-white">封面英文化</div>
                     <p className="mt-1 text-xs leading-relaxed text-white/55">
-                      竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（reasoning=high · max_tokens=64K · strict · 无 Flash 兜底）。
+                      竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（reasoning=medium · max_tokens=64K · strict · 无 Flash 兜底）。
                     </p>
                   </div>
                   <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
@@ -6692,7 +6692,7 @@ export default function PlatformPage() {
                           <strong className="text-[#5eead4]">小红书 2×4 八格</strong>
                           宽幅合成英文化固定走{" "}
                           <strong className="text-gray-200">GPT 5.4</strong>（reasoning=medium · max_tokens=32K · strict · 无 Flash 兜底）。竖版
-                          <strong className="text-gray-400">封面单帧</strong>固定 GPT 5.4（reasoning=high · max_tokens=64K）。
+                          <strong className="text-gray-400">封面单帧</strong>固定 GPT 5.4（reasoning=medium · max_tokens=64K）。
                         </p>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
                           调参与配额：
