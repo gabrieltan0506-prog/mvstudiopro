@@ -7,6 +7,8 @@ import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import PlatformConversionScriptsPanel from "@/components/PlatformConversionScriptsPanel";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import type { PlatformDeepPositioningBrief, PlatformPositioningTurn } from "@shared/platformPositioningDiscovery";
+import { mergePlatformContextWithDeepPositioning } from "@shared/platformPositioningDiscovery";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
@@ -1638,6 +1640,21 @@ export default function PlatformPage() {
   const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
+  /** 深度定位访谈：快照 → 反问 → 简报 → Stage1/2 */
+  const [positioningTurns, setPositioningTurns] = useState<PlatformPositioningTurn[]>([]);
+  const [positioningResonance, setPositioningResonance] = useState("");
+  const [positioningQuestions, setPositioningQuestions] = useState<string[]>([]);
+  const [positioningAnswerInput, setPositioningAnswerInput] = useState("");
+  const [isPositioningLoading, setIsPositioningLoading] = useState(false);
+  const [deepPositioningBrief, setDeepPositioningBrief] = useState<PlatformDeepPositioningBrief | null>(null);
+  const [positioningSourcePrompt, setPositioningSourcePrompt] = useState("");
+  const [positioningSnapshotSummary, setPositioningSnapshotSummary] = useState<Record<string, unknown> | null>(null);
+  const [positioningDataSnapshotPreview, setPositioningDataSnapshotPreview] = useState("");
+  const [isSnapshotLoading, setIsSnapshotLoading] = useState(false);
+  const mergedPlatformContext = useMemo(
+    () => mergePlatformContextWithDeepPositioning(focusPrompt, deepPositioningBrief),
+    [focusPrompt, deepPositioningBrief],
+  );
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
   const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -2112,12 +2129,19 @@ export default function PlatformPage() {
     ) {
       return;
     }
-    await enqueueAndPollExclusiveContent(platformDashboard, inp.snapshotSummary, inp.windowDays);
-  }, [platformDashboard, enqueueAndPollExclusiveContent]);
+    await enqueueAndPollExclusiveContent(
+      platformDashboard,
+      inp.snapshotSummary,
+      inp.windowDays,
+      mergedPlatformContext || focusPrompt,
+    );
+  }, [platformDashboard, enqueueAndPollExclusiveContent, mergedPlatformContext, focusPrompt]);
 
   const retryStage2Content = useCallback(async () => {
     await startStage2ContentGeneration();
   }, [startStage2ContentGeneration]);
+
+  const positioningInterviewMutation = trpc.mvAnalysis.runPlatformPositioningInterview.useMutation();
 
   // Stage 1 Mutation: 战略看板（除 handleAnalyze 外通常不单独触发；成功时不保留 debug，仅失败时保留）
   const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
@@ -4727,113 +4751,253 @@ export default function PlatformPage() {
     return () => window.clearInterval(timer);
   }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
-  const handleAnalyze = async () => {
-    // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
-    if (!isIpProfileReady(ipProfile)) {
-      setShowIpModal(true);
-      toast.message("启动战略推演前，请先载入企业专属 IP 基因");
-      return;
-    }
-
-    const cost = CREDIT_COSTS.platformStage2Copywriting;
-    if (
-      !window.confirm(
-        `【平台全案分析】将基于四平台实时样本与你的 IP 背景，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
-          `专属文案任务入队时扣除 ${cost} 积分；全程约数分钟，请勿关闭页面。是否开始？`,
-      )
-    ) {
-      return;
-    }
-
-    /** 本輪 Stage1/2 使用此字串（與輸入框內容一致即可；不再自動清空輸入框）。 */
-    const capturedJudgment = String(focusPrompt || "").trim();
-
-    platformAnalysisEpochRef.current += 1;
-    void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-
-    setAskResult(null);
-    setPlatformDashboard(null);
-    setDashboardDebug(null);
-    setIsDashboardLoading(false);
-    setPlatformContent(null);
-    setContentDebug(null);
-    setIsContentLoading(false);
-    setStage2Failed(false);
-    setContentJobError(null);
-    setContentJobPollTrace(null);
-    setElapsedTime(0);
-    setRotatingCardIndex(0);
-    setPlatformImageMap({});
-    setPlatformStoryboardSheetMap({});
-    setPlatformXhsNoteMap({});
-    setSceneJobIds({});
-    setPendingCompositeSheet(null);
-    compositeSheetLivePollCtxRef.current = null;
-    setPlatformImageGenFlowSnapshots([]);
-    setCoverWaitCarouselEngaged(false);
-    setCoverLoadRetriedIds(() => new Set());
-    setCompositeLoadRetriedKeys(() => new Set());
-    setCoverSilentRetryIds(() => new Set());
-    setBatchGeneratingCoverIds(() => new Set());
-    setIsSequentialCoverBatchGenerating(false);
-    setTopicImageJobPollTrace(null);
-    setCompositeJobPollTrace(null);
-    coverImageCacheBustTriedRef.current = new Set();
-
-    void trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport.invalidate();
-    void trpcUtils.mvAnalysis.getDecisionIntelligencePricing.invalidate();
-    generateDecisionIntelMutation.reset();
-
-    const result = await growthSnapshotQuery.refetch();
-    if (!result.data?.snapshot) {
-      toast.error("平台分析暂时没有返回结果");
-      return;
-    }
-    setHasAnalyzed(true);
-    toast.success("快照已就绪，正在生成战略看板与专属文案…");
-
-    const snap = result.data.snapshot;
-    const snapSummary = snap as Record<string, unknown>;
-    setIsDashboardLoading(true);
-    try {
-      const dashResult = await getPlatformDashboardMutation.mutateAsync({
-        context: capturedJudgment || undefined,
-        windowDays: selectedWindowDays,
-        snapshotSummary: snap as any,
-        copyLlmMode: "openai" as const,
-      });
-
-      if (!dashResult.platformDashboard) {
-        console.warn("[PlatformPage] Stage 1 AI 解析失败:", dashResult.debug?.error);
-        toast.error(
-          `战略看板生成失败：AI 数据格式异常，请重试 (${String((dashResult.debug as { error?: unknown })?.error ?? "未知")})`,
-        );
+  const runFullPlatformAnalysis = useCallback(
+    async (capturedJudgment: string, cachedSnapshot?: Record<string, unknown> | null) => {
+      const cost = CREDIT_COSTS.platformStage2Copywriting;
+      if (
+        !window.confirm(
+          `【平台全案分析】将基于四平台实时样本与你的深度定位简报，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
+            `专属文案任务入队时扣除 ${cost} 积分；全程约数分钟，请勿关闭页面。是否开始？`,
+        )
+      ) {
         return;
       }
 
-      const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
-      setPlatformDashboard(dash);
-      setContentJobError(null);
-      setStage2Failed(false);
+      platformAnalysisEpochRef.current += 1;
+      void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
+      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+
+      setAskResult(null);
+      setPlatformDashboard(null);
+      setDashboardDebug(null);
+      setIsDashboardLoading(false);
       setPlatformContent(null);
       setContentDebug(null);
-      lastStage2InputRef.current = {
-        snapshotSummary: snapSummary,
-        windowDays: selectedWindowDays,
-      };
-      setIsDashboardLoading(false);
+      setIsContentLoading(false);
+      setStage2Failed(false);
+      setContentJobError(null);
+      setContentJobPollTrace(null);
+      setElapsedTime(0);
+      setRotatingCardIndex(0);
+      setPlatformImageMap({});
+      setPlatformStoryboardSheetMap({});
+      setPlatformXhsNoteMap({});
+      setSceneJobIds({});
+      setPendingCompositeSheet(null);
+      compositeSheetLivePollCtxRef.current = null;
+      setPlatformImageGenFlowSnapshots([]);
+      setCoverWaitCarouselEngaged(false);
+      setCoverLoadRetriedIds(() => new Set());
+      setCompositeLoadRetriedKeys(() => new Set());
+      setCoverSilentRetryIds(() => new Set());
+      setBatchGeneratingCoverIds(() => new Set());
+      setIsSequentialCoverBatchGenerating(false);
+      setTopicImageJobPollTrace(null);
+      setCompositeJobPollTrace(null);
+      coverImageCacheBustTriedRef.current = new Set();
 
-      await enqueueAndPollExclusiveContent(dash, snapSummary, selectedWindowDays, capturedJudgment);
-    } catch (e) {
-      console.warn("[PlatformPage] handleAnalyze chain error:", e);
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!String(msg).includes("文案生成失败")) {
-        toast.error(`分析中断：${msg}`);
+      void trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport.invalidate();
+      void trpcUtils.mvAnalysis.getDecisionIntelligencePricing.invalidate();
+      generateDecisionIntelMutation.reset();
+
+      const result = cachedSnapshot
+        ? { data: { snapshot: cachedSnapshot } }
+        : await growthSnapshotQuery.refetch();
+      if (!result.data?.snapshot) {
+        toast.error("平台分析暂时没有返回结果");
+        return;
       }
+      setHasAnalyzed(true);
+      toast.success("深度定位已完成，正在生成战略看板与专属文案…");
+
+      const snap = result.data.snapshot;
+      const snapSummary = snap as Record<string, unknown>;
+      setIsDashboardLoading(true);
+      try {
+        const dashResult = await getPlatformDashboardMutation.mutateAsync({
+          context: capturedJudgment || undefined,
+          windowDays: selectedWindowDays,
+          snapshotSummary: snap as any,
+          copyLlmMode: "openai" as const,
+        });
+
+        if (!dashResult.platformDashboard) {
+          console.warn("[PlatformPage] Stage 1 AI 解析失败:", dashResult.debug?.error);
+          toast.error(
+            `战略看板生成失败：AI 数据格式异常，请重试 (${String((dashResult.debug as { error?: unknown })?.error ?? "未知")})`,
+          );
+          return;
+        }
+
+        const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
+        setPlatformDashboard(dash);
+        setContentJobError(null);
+        setStage2Failed(false);
+        setPlatformContent(null);
+        setContentDebug(null);
+        lastStage2InputRef.current = {
+          snapshotSummary: snapSummary,
+          windowDays: selectedWindowDays,
+        };
+        setIsDashboardLoading(false);
+
+        await enqueueAndPollExclusiveContent(dash, snapSummary, selectedWindowDays, capturedJudgment);
+      } catch (e) {
+        console.warn("[PlatformPage] runFullPlatformAnalysis error:", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!String(msg).includes("文案生成失败")) {
+          toast.error(`分析中断：${msg}`);
+        }
+      } finally {
+        setIsDashboardLoading(false);
+      }
+    },
+    [
+      enqueueAndPollExclusiveContent,
+      generateDecisionIntelMutation,
+      getPlatformDashboardMutation,
+      growthSnapshotQuery,
+      queryClient,
+      selectedWindowDays,
+      trpcUtils.mvAnalysis.getDecisionIntelligencePricing,
+      trpcUtils.mvAnalysis.getGrowthSnapshot,
+      trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport,
+    ],
+  );
+
+  const ensurePositioningDataSnapshot = useCallback(async (): Promise<Record<string, unknown> | null> => {
+    if (positioningSnapshotSummary) return positioningSnapshotSummary;
+    setIsSnapshotLoading(true);
+    try {
+      const result = await growthSnapshotQuery.refetch();
+      const snap = result.data?.snapshot as Record<string, unknown> | undefined;
+      if (snap) {
+        setPositioningSnapshotSummary(snap);
+        return snap;
+      }
+      toast.error("四平台数据快照尚未就绪，请稍后再试");
+      return null;
     } finally {
-      setIsDashboardLoading(false);
+      setIsSnapshotLoading(false);
     }
+  }, [growthSnapshotQuery, positioningSnapshotSummary]);
+
+  const runPositioningInterviewStep = useCallback(
+    async (latestAnswer?: string, snapshotOverride?: Record<string, unknown> | null) => {
+      const prompt = String(focusPrompt || "").trim();
+      if (!prompt) {
+        toast.error("请先输入你这轮最想判断什么");
+        return;
+      }
+      setIsPositioningLoading(true);
+      try {
+        const snap =
+          snapshotOverride ??
+          positioningSnapshotSummary ??
+          (await ensurePositioningDataSnapshot());
+        if (!snap) return;
+
+        let turnsToSend = [...positioningTurns];
+        const answerText = latestAnswer?.trim() || "";
+        if (answerText && positioningQuestions.length > 0) {
+          const openIdx = turnsToSend.findIndex((t) => !t.answer?.trim());
+          if (openIdx >= 0) {
+            turnsToSend[openIdx] = { ...turnsToSend[openIdx], answer: answerText };
+          } else {
+            turnsToSend.push({ questions: positioningQuestions, answer: answerText });
+          }
+        }
+
+        const res = await positioningInterviewMutation.mutateAsync({
+          initialPrompt: prompt,
+          turns: turnsToSend,
+          latestAnswer: answerText || undefined,
+          windowDays: selectedWindowDays,
+          snapshotSummary: snap,
+        });
+        const { result } = res;
+        if (result.dataSnapshotPreview) {
+          setPositioningDataSnapshotPreview(result.dataSnapshotPreview);
+        }
+        if (result.resonance) setPositioningResonance(result.resonance);
+        if (result.status === "continue") {
+          const qs = result.questions.slice(0, 2);
+          setPositioningQuestions(qs);
+          setPositioningTurns([...turnsToSend, { questions: qs }]);
+          setPositioningAnswerInput("");
+          toast.message("请回答下方深度定位问题");
+          return;
+        }
+        if (result.status === "ready" && result.deepPositioningBrief) {
+          setDeepPositioningBrief(result.deepPositioningBrief);
+          setPositioningSourcePrompt(prompt);
+          setPositioningQuestions([]);
+          setPositioningAnswerInput("");
+          setPositioningTurns(turnsToSend);
+          toast.success("深度定位已整理，正在生成看板与选题文案…");
+          const merged = mergePlatformContextWithDeepPositioning(prompt, result.deepPositioningBrief);
+          await runFullPlatformAnalysis(merged, snap);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(msg || "深度定位访谈失败");
+      } finally {
+        setIsPositioningLoading(false);
+      }
+    },
+    [
+      ensurePositioningDataSnapshot,
+      focusPrompt,
+      positioningInterviewMutation,
+      positioningQuestions,
+      positioningSnapshotSummary,
+      positioningTurns,
+      runFullPlatformAnalysis,
+      selectedWindowDays,
+    ],
+  );
+
+  const handleSubmitPositioningAnswer = useCallback(() => {
+    const ans = positioningAnswerInput.trim();
+    if (!ans) {
+      toast.error("请先回答当前问题");
+      return;
+    }
+    void runPositioningInterviewStep(ans);
+  }, [positioningAnswerInput, runPositioningInterviewStep]);
+
+  const handleAnalyze = async () => {
+    const prompt = String(focusPrompt || "").trim();
+    if (!prompt) {
+      toast.error("请先输入你这轮最想判断什么");
+      return;
+    }
+
+    const briefReady = deepPositioningBrief && positioningSourcePrompt === prompt;
+
+    if (briefReady) {
+      await runFullPlatformAnalysis(mergedPlatformContext, positioningSnapshotSummary);
+      return;
+    }
+
+    if (positioningQuestions.length > 0) {
+      toast.message("请先回答下方问题并点「提交回答」；反问完成前不会进入看板与文案");
+      return;
+    }
+
+    setPositioningTurns([]);
+    setPositioningResonance("");
+    setPositioningQuestions([]);
+    setDeepPositioningBrief(null);
+    setPositioningDataSnapshotPreview("");
+    setPositioningSnapshotSummary(null);
+
+    toast.message("正在读取四平台数据快照…");
+    const snap = await ensurePositioningDataSnapshot();
+    if (!snap) return;
+
+    toast.message("数据快照已就绪，AI 将结合热点立刻反问…");
+    await runPositioningInterviewStep(undefined, snap);
   };
 
   const handleUploadQaFile = useCallback(async (file: File) => {
@@ -5273,7 +5437,38 @@ export default function PlatformPage() {
                 ))}
               </div>
 
-              {/* IP 基因库入口（已填则显示战略锚点摘要 + 编辑按钮；未填则提示载入） */}
+              {/* 深度定位简报（反问完成后才进入 Stage1/2） */}
+              <div
+                className={`mt-5 w-full rounded-2xl border px-5 py-4 text-left ${
+                  deepPositioningBrief
+                    ? "border-[#49e6ff]/35 bg-[linear-gradient(135deg,rgba(73,230,255,0.12),rgba(125,115,255,0.08))]"
+                    : "border-[#6366F1]/30 bg-[rgba(99,102,241,0.06)]"
+                }`}
+              >
+                <div className="text-[11px] uppercase tracking-[0.22em] text-[#8cefff] mb-1">
+                  {deepPositioningBrief ? "深度定位与获客方案（已整理 · 即将/已进入 Stage1/2）" : "深度定位 · 先读快照再反问 · 再生成看板与文案"}
+                </div>
+                {deepPositioningBrief ? (
+                  <div className="text-[13px] leading-6 text-white/90 space-y-1">
+                    <div>{deepPositioningBrief.positioningOneLiner}</div>
+                    <div className="text-white/65">
+                      独特方案：{deepPositioningBrief.uniqueSolution.slice(0, 120)}
+                      {deepPositioningBrief.uniqueSolution.length > 120 ? "…" : ""}
+                    </div>
+                    {deepPositioningBrief.hookStrategy?.conversionDirection ? (
+                      <div className="text-[#fef08a] text-[12px]">
+                        转化方向：{deepPositioningBrief.hookStrategy.conversionDirection}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="text-[13px] leading-6 text-white/75">
+                    点击「开始全案分析」后：① 载入四平台数据快照 → ② AI 结合热点反问 → ③ 整理定位简报 → ④ 才启动 Stage 1 看板与 Stage 2 专属文案（含各平台千人千面成交话术）。
+                  </div>
+                )}
+              </div>
+
+              {/* IP 基因库入口（可选补充；不再阻断全案分析） */}
               <button
                 type="button"
                 onClick={() => setShowIpModal(true)}
@@ -5407,15 +5602,69 @@ export default function PlatformPage() {
                     。
                   </p>
                 </div>
+                {(positioningQuestions.length > 0 || positioningResonance || positioningDataSnapshotPreview) && !deepPositioningBrief ? (
+                  <div className="mt-4 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.06)] p-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8cefff]">
+                      定位获客 · 数据快照 + 深度反问
+                    </div>
+                    {positioningDataSnapshotPreview ? (
+                      <p className="mt-2 text-[11px] leading-5 text-white/45 line-clamp-3 font-mono">
+                        {positioningDataSnapshotPreview}
+                      </p>
+                    ) : null}
+                    {positioningResonance ? (
+                      <p className="mt-2 text-sm leading-7 text-white/80">{positioningResonance}</p>
+                    ) : null}
+                    {positioningQuestions.map((q, i) => (
+                      <p key={i} className="mt-2 text-sm font-medium leading-7 text-white">
+                        {i + 1}. {q}
+                      </p>
+                    ))}
+                    {positioningQuestions.length > 0 ? (
+                      <>
+                        <textarea
+                          value={positioningAnswerInput}
+                          onChange={(e) => setPositioningAnswerInput(e.target.value)}
+                          placeholder="用你的话回答（尽量具体，避免套话）…"
+                          className="mt-3 min-h-[96px] w-full rounded-xl border border-white/10 bg-[#0c061e] px-3 py-2 text-sm leading-7 text-white outline-none focus:border-[#49e6ff]/35"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleSubmitPositioningAnswer()}
+                          disabled={isPositioningLoading}
+                          className="mt-3 inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.12)] px-4 py-2 text-xs font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.2)] disabled:opacity-50"
+                        >
+                          {isPositioningLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          提交回答
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3">
                   <button
                     type="button"
                     onClick={() => void handleAnalyze()}
-                    disabled={growthSnapshotQuery.isFetching}
+                    disabled={
+                      growthSnapshotQuery.isFetching ||
+                      isPositioningLoading ||
+                      isSnapshotLoading ||
+                      (positioningQuestions.length > 0 && !deepPositioningBrief)
+                    }
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    开始全案分析
+                    {growthSnapshotQuery.isFetching || isPositioningLoading || isSnapshotLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    {isSnapshotLoading
+                      ? "读取数据快照…"
+                      : deepPositioningBrief
+                        ? "重新全案分析"
+                        : positioningQuestions.length > 0
+                          ? "请先提交下方回答"
+                          : "开始全案分析"}
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
@@ -5440,7 +5689,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-2 max-w-xl text-[11px] leading-5 text-white/38">
-                  点击后会<strong className="text-white/80">自动接续</strong>生成专属选题与长文案／分镜稿；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>，金额即右侧标示。
+                  流程：<strong className="text-white/80">快照 → 深度反问 → 定位简报 → Stage1 看板 → Stage2 文案</strong>。扣款在 Stage2 入队时（右侧积分）。反问未完成不会启动看板与文案。
                   {hasAnalyzed ? (
                     <>
                       {" "}
@@ -7655,7 +7904,11 @@ export default function PlatformPage() {
               <PlatformConversionScriptsPanel
                 scripts={platformConversionScripts}
                 isLoading={isContentLoading && platformConversionScripts.length === 0}
-                personaHint={cleanUserCopy(platformDashboard?.personaSummary || "", "").slice(0, 120) || undefined}
+                personaHint={
+                  deepPositioningBrief?.positioningOneLiner?.slice(0, 120) ||
+                  cleanUserCopy(platformDashboard?.personaSummary || "", "").slice(0, 120) ||
+                  undefined
+                }
               />
             </div>
 

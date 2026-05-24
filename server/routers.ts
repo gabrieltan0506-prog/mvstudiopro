@@ -113,6 +113,12 @@ import { executeProviderFallback } from "./services/provider-manager";
 import { createGcsSignedUploadUrl, uploadBufferToGcs, resolvePdfExportBucketName } from "./services/gcs";
 import { fetchPdfBufferFromWorker, getPdfWorkerFetchTimeoutMs } from "./services/pdfWorkerClient";
 import { buildStage1StrategicHandoffForStage2 } from "./services/stage1StrategicHandoff.js";
+import { runPlatformPositioningInterview } from "./services/platformDeepPositioningInterview.js";
+import { buildPlatformPositioningDataSnapshotBrief } from "./services/platformPositioningDataSnapshot.js";
+import {
+  platformPositioningTurnSchema,
+  platformDeepPositioningBriefSchema,
+} from "../shared/platformPositioningDiscovery.js";
 import { invokePlatformFollowUpGpt55 } from "./services/platformFollowUpLlm.js";
 import {
   createJob as createJobRecord,
@@ -5570,6 +5576,56 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "扉页生成失败（生图服务不可用）" });
         }
         return { ok: true as const, totalCost: 0 as const, results, isTrial };
+      }),
+
+    /** 定位获客六步法 · 深度定位访谈（快照 → 反问 → 简报 → 再 Stage1/2） */
+    runPlatformPositioningInterview: publicProcedure
+      .input(
+        z.object({
+          initialPrompt: z.string().min(3).max(4000),
+          turns: z.array(platformPositioningTurnSchema).default([]),
+          latestAnswer: z.string().max(4000).optional(),
+          windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+          snapshotSummary: z.record(z.string(), z.any()).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const { brief: dataSnapshotBrief, hasLiveData } = await buildPlatformPositioningDataSnapshotBrief({
+            userPrompt: input.initialPrompt,
+            windowDays: input.windowDays ?? 30,
+            snapshotSummary: input.snapshotSummary ?? null,
+          });
+          const { response, modelUsed } = await runPlatformPositioningInterview({
+            initialPrompt: input.initialPrompt,
+            turns: input.turns,
+            latestAnswer: input.latestAnswer,
+            dataSnapshotBrief,
+            abortSignal: ctx.clientDisconnected,
+          });
+          if (response.status === "ready" && response.deepPositioningBrief) {
+            platformDeepPositioningBriefSchema.parse(response.deepPositioningBrief);
+          }
+          return {
+            success: true as const,
+            result: response,
+            debug: {
+              route: "mvAnalysis.runPlatformPositioningInterview",
+              modelName: modelUsed,
+              round: response.round,
+              status: response.status,
+              hasLiveData,
+              dataSnapshotBriefChars: dataSnapshotBrief.length,
+            },
+          };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.warn("[platform.runPlatformPositioningInterview]", msg);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: msg || "深度定位访谈失败，请稍后重试",
+          });
+        }
       }),
 
     getPlatformDashboard: publicProcedure
