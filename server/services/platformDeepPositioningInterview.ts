@@ -40,6 +40,15 @@ function buildFallbackBrief(initialPrompt: string): PlatformDeepPositioningBrief
     painPointSummary: "目标用户尚未被精准描述，需结合窗口数据保守推断",
     targetSubgroups: [],
     recommendedPlatforms: ["xiaohongshu", "douyin"],
+    primaryPlatform: "xiaohongshu",
+    primaryTrack: "待结合数据快照细化",
+    contentFormatRecommendation: "mixed",
+    topicDirections: [],
+    hookStrategy: {
+      principles: ["强相关", "门槛低", "有承接"],
+      conversionDirection: "评论关键词领取资料或预约咨询",
+      fulfillmentNote: "24 小时内回复评论",
+    },
     acquisitionOptimizationNotes: "先完成一轮真实用户访谈以校准人群画像",
     topicSeeds: [],
   };
@@ -48,8 +57,9 @@ function buildFallbackBrief(initialPrompt: string): PlatformDeepPositioningBrief
 export async function runPlatformPositioningInterview(opts: {
   initialPrompt: string;
   turns: PlatformPositioningTurn[];
-  /** 最新一轮用户回答（首轮可为空，表示刚提交 prompt） */
   latestAnswer?: string;
+  /** 四平台数据快照文本（含 trendStore + 抖音指数） */
+  dataSnapshotBrief: string;
   abortSignal?: AbortSignal;
 }): Promise<{
   response: ReturnType<typeof platformPositioningInterviewResponseSchema.parse>;
@@ -68,7 +78,8 @@ export async function runPlatformPositioningInterview(opts: {
     turns[turns.length - 1] = { ...last, answer: latestAnswer };
   }
 
-  const round = turns.filter((t) => t.answer?.trim()).length + 1;
+  const answeredRounds = turns.filter((t) => t.answer?.trim()).length;
+  const round = answeredRounds + 1;
 
   const historyBlock = turns
     .map((t, i) => {
@@ -78,14 +89,22 @@ export async function runPlatformPositioningInterview(opts: {
     })
     .join("\n\n");
 
+  const isFirstRound = answeredRounds === 0 && !latestAnswer;
+
   const userText = [
+    opts.dataSnapshotBrief,
     `【用户初始 prompt】\n${initialPrompt}`,
-    historyBlock ? `【已完成的访谈】\n${historyBlock}` : "【已完成的访谈】\n（尚无，请立刻基于初始 prompt 反问 1-2 个最关键问题）",
-    latestAnswer && turns.length === 0
-      ? `【用户补充】\n${latestAnswer}`
-      : "",
+    historyBlock
+      ? `【已完成的访谈】\n${historyBlock}`
+      : "【已完成的访谈】\n（尚无 — 请**立刻**结合上方数据快照与 prompt 反问 1-2 个最关键问题）",
+    latestAnswer && turns.length === 0 ? `【用户补充】\n${latestAnswer}` : "",
     `【当前轮次】${round}`,
-    round >= 6 ? "信息应已足够，若可输出完整深度定位简报请 status=ready。" : "",
+    isFirstRound
+      ? "首轮必须引用数据快照中的至少 1 条具体信号（平台标题/指数词）来组织反问。"
+      : "",
+    answeredRounds >= 4
+      ? "信息应已足够；请输出 status=ready 与完整 deepPositioningBrief（含平台/赛道/选题方向/钩子/转化）。"
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -101,29 +120,40 @@ export async function runPlatformPositioningInterview(opts: {
   const parsedRaw = extractJsonObject(raw);
   const parsed = platformPositioningInterviewResponseSchema.safeParse(parsedRaw);
 
+  const snapshotPreview = opts.dataSnapshotBrief.slice(0, 600);
+
   if (parsed.success) {
-    if (parsed.data.status === "continue" && parsed.data.questions.length === 0) {
+    const data = parsed.data;
+    if (data.status === "continue" && data.questions.length === 0) {
       return {
         response: {
           status: "continue",
-          round: parsed.data.round || round,
-          resonance: parsed.data.resonance || "我需要再确认几个关键点。",
-          questions: ["你目前最想优先服务的，是哪一类具体的人？他们最典型的日常困境是什么？"],
+          round: data.round || round,
+          resonance: data.resonance || "我看了四平台数据快照，需要再确认几个关键点。",
+          questions: [
+            "快照里近期有几个与你方向接近的热点切口——你更擅长稳定产出「出镜短视频」还是「图文笔记」？",
+            "如果只能先打一条赛道，你最想优先验证哪一类具体人群的付费意愿？",
+          ],
+          dataSnapshotPreview: snapshotPreview,
         },
         modelUsed: "gemini-3.5-flash",
       };
     }
-    return { response: parsed.data, modelUsed: "gemini-3.5-flash" };
+    return {
+      response: { ...data, dataSnapshotPreview: data.dataSnapshotPreview || snapshotPreview },
+      modelUsed: "gemini-3.5-flash",
+    };
   }
 
-  if (round >= 3) {
+  if (answeredRounds >= 3) {
     return {
       response: {
         status: "ready",
         round,
-        resonance: "信息已够，我先帮你整理一版深度定位。",
+        resonance: "信息已够，我先帮你整理一版深度定位与获客简报。",
         questions: [],
         deepPositioningBrief: buildFallbackBrief(initialPrompt),
+        dataSnapshotPreview: snapshotPreview,
       },
       modelUsed: "gemini-3.5-flash-fallback",
     };
@@ -133,11 +163,12 @@ export async function runPlatformPositioningInterview(opts: {
     response: {
       status: "continue",
       round,
-      resonance: "我先从你最熟悉的场景问起。",
+      resonance: "结合数据快照，我先从你最熟悉的场景问起。",
       questions: [
-        "你过去 3 年最常帮别人解决的具体问题是什么？哪怕免费做过也算。",
-        "如果只能选一类人服务，谁最急、也最愿意为这个结果付钱？",
+        "快照里近期有几个热点切口——你目前最想优先服务的具体人群是谁？他们的典型困境是什么？",
+        "你能稳定产出哪种形态：出镜短视频、图文笔记，还是长视频讲透？",
       ],
+      dataSnapshotPreview: snapshotPreview,
     },
     modelUsed: "gemini-3.5-flash-fallback",
   };

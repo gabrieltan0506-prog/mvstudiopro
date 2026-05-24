@@ -76,6 +76,7 @@ import {
   extractKeywordHintsFromContext,
 } from "./services/douyinIndexBriefFromStore.js";
 import { runPlatformPositioningInterview } from "./services/platformDeepPositioningInterview.js";
+import { buildPlatformPositioningDataSnapshotBrief } from "./services/platformPositioningDataSnapshot.js";
 import {
   platformPositioningTurnSchema,
   platformDeepPositioningBriefSchema,
@@ -761,7 +762,7 @@ async function buildPlatformDashboard(params: {
   const personaContextLine = params.context
     ? `\n\n用户背景与深度定位（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 1200)}`
     : "";
-  const sixStepsBlock = `\n\n${buildPositioningSixStepsPromptBlock()}\n\n若 context 含「深度定位简报」，Stage1 看板须显式对齐：一句话定位、Top1 人群、推荐平台顺序、痛点与独特方案；platformMenu 推荐理由须引用这些字段，禁止泛平台废话。`;
+  const sixStepsBlock = `\n\n${buildPositioningSixStepsPromptBlock()}\n\n若 context 含「深度定位与获客简报」，Stage1 看板须显式对齐：一句话定位、Top1 人群、首选平台/赛道、选题方向（痛点×热点）、图文/视频形态建议；platformMenu 须给出 primaryTrack、内容形态与 nextMove（含钩子承接方向），禁止泛平台废话。`;
   // If context mentions medical/doctor or culture/art, add hard constraint against generic monetization
   // Support both Simplified and Traditional Chinese in persona detection
   const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
@@ -1289,7 +1290,7 @@ export async function buildPlatformContent(params: {
           platformCopyDirectionSearchBrief: copyDirectionSearch.brief || null,
           /** 抖音创作者指数 · trendStore 信号 */
           douyinIndexBrief: douyinIndexBrief || null,
-          /** 定位获客六步法 · 第一部分框架 */
+          /** 定位获客六步法 · 完整框架（含选题/内容/钩子） */
           positioningSixStepsFramework: buildPositioningSixStepsPromptBlock(),
         });
 
@@ -1331,9 +1332,13 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 (3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
-【爆款文章 · 平台选题文案方向数据库】：user JSON 中 platformCopyDirectionDatabase 含各平台资料库（违规词黑名单、A/B 词库、结构模板库、本周选题包、候选池、学员资料库）及标题技巧 / 爆款词 / 文案模板 / 工作流程。contentBlueprints 须优先从「候选池 + 本周选题包」与深度定位（context 内简报）交叉选题，标题须组合「标题技巧 + 爆款词」，结构须匹配对应平台 copyTemplates；违规词黑名单一律禁用。若存在 platformCopyDirectionSearchBrief（Google 搜索实时摘要）与 douyinIndexBrief（抖音指数信号），须与资料库合并使用，搜不到的部分保守处理，禁止编造数据。
+【定位获客六步法 · 选题与钩子约束】：须对齐 positioningSixStepsFramework 与 context 中的深度定位简报——
+- 第 3 条 contentBlueprint 须直击 Top1 人群痛点（痛点×热点公式）；
+- 第 1 条体现独特解决方案与首选 platform/赛道；
+- 每条 contentBlueprints 的 hook、copywriting 末尾、publishingAdvice 须含**下钩子**：强相关 + 门槛低 + 有承接（评论关键词 / 资料 / 咨询等），区分图文 vs 视频承接话术；
+- 优先采用「内容即钩子」（故事+证明+承接）高级形态，禁止与正文无关的硬广钩子。
 
-【定位获客六步法 · 选题约束】：须对齐 positioningSixStepsFramework 与 context 中的深度定位简报——第 3 条 contentBlueprint 须直击 Top1 人群痛点；第 1 条体现独特解决方案；平台与呈现形式须匹配 recommendedPlatforms（若有）。
+【爆款文章 · 平台选题文案方向数据库】：user JSON 中 platformCopyDirectionDatabase 含各平台资料库（违规词黑名单、A/B 词库、结构模板库、本周选题包、候选池、学员资料库）及标题技巧 / 爆款词 / 文案模板 / 工作流程。contentBlueprints 须优先从「候选池 + 本周选题包」与深度定位（context 内简报）交叉选题，标题须组合「标题技巧 + 爆款词」，结构须匹配对应平台 copyTemplates；违规词黑名单一律禁用。若存在 platformCopyDirectionSearchBrief（Google 搜索实时摘要）与 douyinIndexBrief（抖音指数信号），须与资料库合并使用，搜不到的部分保守处理，禁止编造数据。
 
 请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
@@ -3254,14 +3259,22 @@ export const appRouter = router({
           initialPrompt: z.string().min(3).max(4000),
           turns: z.array(platformPositioningTurnSchema).default([]),
           latestAnswer: z.string().max(4000).optional(),
+          windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+          snapshotSummary: z.record(z.string(), z.any()).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         try {
+          const { brief: dataSnapshotBrief, hasLiveData } = await buildPlatformPositioningDataSnapshotBrief({
+            userPrompt: input.initialPrompt,
+            windowDays: input.windowDays ?? 30,
+            snapshotSummary: input.snapshotSummary ?? null,
+          });
           const { response, modelUsed } = await runPlatformPositioningInterview({
             initialPrompt: input.initialPrompt,
             turns: input.turns,
             latestAnswer: input.latestAnswer,
+            dataSnapshotBrief,
             abortSignal: ctx.clientDisconnected,
           });
           if (response.status === "ready" && response.deepPositioningBrief) {
@@ -3275,6 +3288,8 @@ export const appRouter = router({
               modelName: modelUsed,
               round: response.round,
               status: response.status,
+              hasLiveData,
+              dataSnapshotBriefChars: dataSnapshotBrief.length,
             },
           };
         } catch (error) {
