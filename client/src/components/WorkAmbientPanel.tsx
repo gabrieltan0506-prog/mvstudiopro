@@ -9,6 +9,8 @@ import "./work-ambient-scene.css";
 import { GlobalMascotAssistant } from "@/components/GlobalMascotAssistant";
 import { useAmbientScene } from "@/components/AmbientSceneProvider";
 import { AmbientLocationPicker } from "@/components/AmbientLocationPicker";
+import { AmapTrafficMap } from "@/components/AmapTrafficMap";
+import { isRoughlyMainlandChina } from "@/lib/amapGeo";
 
 function AmbientMediaCard({
   urls,
@@ -196,6 +198,12 @@ export default function WorkAmbientPanel() {
       minute: "2-digit",
     });
 
+  const showTrafficMap =
+    geo != null &&
+    Number.isFinite(geo.lat) &&
+    Number.isFinite(geo.lon) &&
+    isRoughlyMainlandChina(geo.lat, geo.lon);
+
   return (
     <>
       <div className="mb-6 space-y-4 text-white">
@@ -274,6 +282,7 @@ export default function WorkAmbientPanel() {
           <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200/95">
             即时路况（高德）
           </div>
+          {showTrafficMap ? <AmapTrafficMap lat={geo!.lat} lon={geo!.lon} /> : null}
           {(!geoAttemptDone || dash.isLoading) ? (
             <p className="mt-3 text-white/50">载入中…</p>
           ) : dash.data?.traffic ? (
