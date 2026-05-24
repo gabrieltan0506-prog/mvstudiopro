@@ -68,6 +68,9 @@ import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
+import { buildPlatformCopyDirectionPromptBlock } from "./content/platformCopyDirectionDatabase.js";
+import { enrichPlatformCopyDirectionWithGoogleSearch } from "./services/platformCopyDirectionSearch.js";
+import type { GrowthPlatform } from "@shared/growth";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1221,6 +1224,31 @@ export async function buildPlatformContent(params: {
     ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。`
     : "";
 
+  const copyDirectionPlatforms = (
+    params.requestedPlatforms.filter((p) =>
+      ["xiaohongshu", "douyin", "bilibili", "kuaishou"].includes(String(p)),
+    ) as GrowthPlatform[]
+  );
+  const copyDirectionPlatformList: GrowthPlatform[] =
+    copyDirectionPlatforms.length > 0
+      ? copyDirectionPlatforms
+      : (["xiaohongshu", "douyin", "bilibili", "kuaishou"] as GrowthPlatform[]);
+  const platformCopyDirectionDatabase = buildPlatformCopyDirectionPromptBlock({
+    platforms: copyDirectionPlatformList,
+    userContext: params.context,
+  });
+  const copyDirectionSearch = await enrichPlatformCopyDirectionWithGoogleSearch({
+    platforms: copyDirectionPlatformList,
+    userContext: params.context,
+    abortSignal: params.abortSignal,
+  });
+  diagnostics.platformCopyDirectionGoogleSearch = copyDirectionSearch.usedGoogleSearch;
+  if (copyDirectionSearch.error) {
+    diagnostics.platformCopyDirectionSearchError = copyDirectionSearch.error;
+  }
+  diagnostics.platformCopyDirectionDatabaseChars = platformCopyDirectionDatabase.length;
+  diagnostics.platformCopyDirectionSearchBriefChars = copyDirectionSearch.brief.length;
+
   const stage2UserJsonString = JSON.stringify({
           context: params.context || "",
           windowDays: params.windowDays,
@@ -1239,6 +1267,10 @@ export async function buildPlatformContent(params: {
           stage1StrategicHandoff: handoff,
           ipContextBinding:
             "当前用户真实人设（职业、身份、兴趣、爱好、专长等，见 context 与用户 JSON 快照），必须据此生成恰好 5 条、五个内容维度各一的 contentBlueprints。泛化、与此人设脱钩或仅用「创作者」「博主」等空壳表述的内容将被拒收。",
+          /** 爆款文章 · 平台选题文案方向数据库（小红书 / 抖音 / B站 / 快手） */
+          platformCopyDirectionDatabase,
+          /** Gemini googleSearch 实时检索摘要（候选池 / 标题灵感） */
+          platformCopyDirectionSearchBrief: copyDirectionSearch.brief || null,
         });
 
   const structuredStage2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
@@ -1278,6 +1310,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 (2) **优先**借鉴切口、句式节奏与信息密度，**不建议**字面抄袭 sample 标题或洗稿；
 (3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
+
+【爆款文章 · 平台选题文案方向数据库】：user JSON 中 platformCopyDirectionDatabase 含各平台资料库（违规词黑名单、A/B 词库、结构模板库、本周选题包、候选池、学员资料库）及标题技巧 / 爆款词 / 文案模板 / 工作流程。contentBlueprints 须优先从「候选池 + 本周选题包」与人设交叉选题，标题须组合「标题技巧 + 爆款词」，结构须匹配对应平台 copyTemplates；违规词黑名单一律禁用。若存在 platformCopyDirectionSearchBrief（Google 搜索实时摘要），须与资料库合并使用，搜不到的部分保守处理，禁止编造数据。
 
 请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
