@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
+import { buildTrustAndCapabilitiesCombinedBlock } from "@shared/platformTrustAndAiCapabilities";
 import { extractJsonString } from "../_core/llm";
 import { callDecisionIntelGpt55StructuredJson } from "./decisionIntelGpt55Copywriting.js";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
@@ -66,6 +67,9 @@ async function gpt55CallAnalysisEngine(params: {
 }): Promise<CallAOutput> {
   const system = `你是一位顶级的商业战略顾问与数据分析师。
 你的任务是根据提供的「内容蓝图」与「大盘预测数据」，撰写出 4 条「核心洞察 (Core Insights)」。
+【战略全景 · 信任优先】
+${buildTrustAndCapabilitiesCombinedBlock()}
+四条 coreInsights 须分别呼应：四有信任（共鸣/方法/案例/保障）与 AI 四能力（数据/内容/思考/产品）中的不同维度，并与内容蓝图中的深度定位、平台赛道一致。
 【语气】
 - 专业、客观；输出简体中文为主。
 - 严禁「保证」「绝对能达到」等字眼；改用「预期具备潜力」「结合历史窗口样本」等。
@@ -98,6 +102,9 @@ async function gpt55CallCreativeEngine(params: {
   const ids = params.base.executionSuggestions.mabVariants.map((v) => v.id).join(", ");
   const system = `你是深谙抖音、小红书、B 站等平台的资深内容操盘手。
 根据内容蓝图产出高吸引力的赛马标题、延伸选题与内容结构。
+【战略全景 · 与信任体系联动】
+${buildTrustAndCapabilitiesCombinedBlock()}
+mabVariants / personalization / topicStructureExamples 须体现：痛点×热点选题、图文/视频钩子差异、四有信任与四能力中的至少 2 项。
 【规则】
 - 只负责文字；不计算分数、概率、CTR 小数。
 - 只输出一个 JSON，字段：mabVariants、personalization、topicStructureExamples。

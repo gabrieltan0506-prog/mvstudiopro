@@ -71,6 +71,7 @@ import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementV
 import { buildPlatformCopyDirectionPromptBlock } from "./content/platformCopyDirectionDatabase.js";
 import { enrichPlatformCopyDirectionWithGoogleSearch } from "./services/platformCopyDirectionSearch.js";
 import { buildPositioningSixStepsPromptBlock } from "./content/positioningAcquisitionSixSteps.js";
+import { buildTrustAndCapabilitiesCombinedBlock } from "../shared/platformTrustAndAiCapabilities.js";
 import {
   buildDouyinIndexBriefFromStore,
   extractKeywordHintsFromContext,
@@ -1337,6 +1338,9 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 - 第 1 条体现独特解决方案与首选 platform/赛道；
 - 每条 contentBlueprints 的 hook、copywriting 末尾、publishingAdvice 须含**下钩子**：强相关 + 门槛低 + 有承接（评论关键词 / 资料 / 咨询等），区分图文 vs 视频承接话术；
 - 优先采用「内容即钩子」（故事+证明+承接）高级形态，禁止与正文无关的硬广钩子。
+
+${buildTrustAndCapabilitiesCombinedBlock()}
+- 文案须体现四有信任（共鸣/方法/案例/保障）与 AI 四能力（数据/内容/思考/产品）；战略全景图将与此深度联动。
 
 【爆款文章 · 平台选题文案方向数据库】：user JSON 中 platformCopyDirectionDatabase 含各平台资料库（违规词黑名单、A/B 词库、结构模板库、本周选题包、候选池、学员资料库）及标题技巧 / 爆款词 / 文案模板 / 工作流程。contentBlueprints 须优先从「候选池 + 本周选题包」与深度定位（context 内简报）交叉选题，标题须组合「标题技巧 + 爆款词」，结构须匹配对应平台 copyTemplates；违规词黑名单一律禁用。若存在 platformCopyDirectionSearchBrief（Google 搜索实时摘要）与 douyinIndexBrief（抖音指数信号），须与资料库合并使用，搜不到的部分保守处理，禁止编造数据。
 

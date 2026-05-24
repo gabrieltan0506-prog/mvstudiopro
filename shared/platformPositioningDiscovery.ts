@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+export const platformTrustSystemSchema = z.object({
+  resonance: z.string(),
+  methodology: z.string(),
+  caseProof: z.string(),
+  guarantee: z.string(),
+  journeyNote: z.string().optional(),
+});
+
+export const platformFourAiCapabilitiesSchema = z.object({
+  dataAbility: z.string(),
+  contentAbility: z.string(),
+  thinkingAbility: z.string(),
+  productAbility: z.string(),
+});
+
 export const platformPositioningTurnSchema = z.object({
   questions: z.array(z.string()),
   answer: z.string().optional(),
@@ -68,6 +83,10 @@ export const platformDeepPositioningBriefSchema = z.object({
   topicDirections: z.array(platformTopicDirectionSchema).default([]),
   hookStrategy: platformHookStrategySchema.optional(),
   platformTrackDecision: platformTrackDecisionSchema.optional(),
+  /** 四有信任体系（转化优先，与战略全景深度联动） */
+  trustSystem: platformTrustSystemSchema.optional(),
+  /** AI 超能力 · 四种核心能力 */
+  fourAiCapabilities: platformFourAiCapabilitiesSchema.optional(),
 });
 
 export const platformPositioningInterviewResponseSchema = z.object({
@@ -134,6 +153,24 @@ export function mergePlatformContextWithDeepPositioning(
         ]
           .filter(Boolean)
           .join("\n")
+      : "",
+    brief.trustSystem
+      ? [
+          `四有信任体系：`,
+          `有共鸣：${brief.trustSystem.resonance}`,
+          `有方法：${brief.trustSystem.methodology}`,
+          `有案例：${brief.trustSystem.caseProof}`,
+          `有保障：${brief.trustSystem.guarantee}`,
+        ].join("\n")
+      : "",
+    brief.fourAiCapabilities
+      ? [
+          `AI 四能力落地：`,
+          `数据能力：${brief.fourAiCapabilities.dataAbility}`,
+          `内容能力：${brief.fourAiCapabilities.contentAbility}`,
+          `思考能力：${brief.fourAiCapabilities.thinkingAbility}`,
+          `产品能力：${brief.fourAiCapabilities.productAbility}`,
+        ].join("\n")
       : "",
     brief.acquisitionOptimizationNotes ? `获客优化要点：${brief.acquisitionOptimizationNotes}` : "",
     brief.resourceLeverageFormula ? `借力公式：${brief.resourceLeverageFormula}` : "",

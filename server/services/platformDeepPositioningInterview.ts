@@ -49,6 +49,18 @@ function buildFallbackBrief(initialPrompt: string): PlatformDeepPositioningBrief
       conversionDirection: "评论关键词领取资料或预约咨询",
       fulfillmentNote: "24 小时内回复评论",
     },
+    trustSystem: {
+      resonance: "先对齐目标用户最具体的焦虑场景",
+      methodology: "用可执行的步骤/清单交付方法论",
+      caseProof: "用真实或合成案例展示前后对比",
+      guarantee: "低门槛试用/答疑降低首次付费阻力",
+    },
+    fourAiCapabilities: {
+      dataAbility: "结合平台快照与指数信号支撑选题",
+      contentAbility: "爆款结构+钩子承接一体化",
+      thinkingAbility: "深度定位洞察驱动优先级",
+      productAbility: "钩子指向可交付资料/咨询/工具",
+    },
     acquisitionOptimizationNotes: "先完成一轮真实用户访谈以校准人群画像",
     topicSeeds: [],
   };

@@ -8,6 +8,7 @@ import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLocked
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import type { PlatformDeepPositioningBrief, PlatformPositioningTurn } from "@shared/platformPositioningDiscovery";
 import { mergePlatformContextWithDeepPositioning } from "@shared/platformPositioningDiscovery";
+import { buildVisualTrustAndCapabilitiesContext } from "@shared/platformTrustAndAiCapabilities";
 import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
@@ -859,24 +860,17 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将深度定位简报 + 仪表盘「精神气质与内容身份」注入封面生图链 */
+/** 将深度定位简报 + 四有信任 + AI 四能力注入封面/分镜视觉链 */
 function buildCoverPersonaContextForImageGen(
   personaSummary: string,
   deepBrief: PlatformDeepPositioningBrief | null,
 ): string {
-  const parts: string[] = [];
-  const ps = String(personaSummary || "").trim();
-  if (ps) parts.push(`【精神气质与内容身份】${ps.slice(0, 600)}`);
-  if (deepBrief) {
-    parts.push(
-      `【深度定位】${deepBrief.positioningOneLiner}；独特方案：${String(deepBrief.uniqueSolution || "").slice(0, 280)}；核心痛点：${String(deepBrief.painPointSummary || "").slice(0, 280)}`,
-    );
-  }
-  return parts.join("\n").trim().slice(0, 3800);
+  return buildVisualTrustAndCapabilitiesContext(personaSummary, deepBrief);
 }
 
 /** 供分镜表 / 小红书 2×4 八格图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
-function buildPlatformSheetScriptContext(item: {
+function buildPlatformSheetScriptContext(
+  item: {
   title: string;
   hook: string;
   copywriting: string;
@@ -889,7 +883,9 @@ function buildPlatformSheetScriptContext(item: {
     lightingAndCamera?: string;
     stepByStepScript?: string[];
   };
-}): string {
+},
+  visualTrustContext?: string,
+): string {
   const parts: string[] = [];
   parts.push(`【选题】${item.title}`);
   if (item.hook) parts.push(`【钩子】${item.hook}`);
@@ -906,6 +902,8 @@ function buildPlatformSheetScriptContext(item: {
   }
   if (item.detailedScript) parts.push(`【详细脚本】${item.detailedScript}`);
   if (item.publishingAdvice) parts.push(`【发布建议】${item.publishingAdvice}`);
+  const trust = String(visualTrustContext || "").trim();
+  if (trust) parts.push(`【四有信任 · AI四能力 · 视觉锚点】\n${trust.slice(0, 3500)}`);
   return parts.join("\n\n").slice(0, 12000);
 }
 
@@ -3286,7 +3284,7 @@ export default function PlatformPage() {
               generatePlatformCompositeSheetMutation.mutateAsync({
                 sceneId: item.id,
                 title: headlineTitle,
-                scriptContext: buildPlatformSheetScriptContext(item as any),
+                scriptContext: buildPlatformSheetScriptContext(item as any, coverPersona),
                 kind: compositeKind,
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 ...optionalBoundCreationRecordId(),
@@ -3666,8 +3664,15 @@ export default function PlatformPage() {
       /** Stage 2 专属文案／选题结构 — 决策智库仅在写入完成后开放，一并纳入分析 */
       stage2ContentBlueprints: platformContent?.contentBlueprints?.slice(0, 8),
       stage2MonetizationLanes: platformContent?.monetizationLanes?.slice(0, 8),
+      /** 深度定位 + 四有信任 + AI 四能力 — 战略全景深度联动 */
+      deepPositioningBrief: deepPositioningBrief ?? undefined,
+      trustSystem: deepPositioningBrief?.trustSystem,
+      fourAiCapabilities: deepPositioningBrief?.fourAiCapabilities,
+      platformTrackDecision: deepPositioningBrief?.platformTrackDecision,
+      hookStrategy: deepPositioningBrief?.hookStrategy,
+      mergedPlatformContext: mergedPlatformContext.slice(0, 5000),
     }),
-    [platformDashboard, snapshot, platformContent],
+    [platformDashboard, snapshot, platformContent, deepPositioningBrief, mergedPlatformContext],
   );
 
   /** 全案专属文案（Stage 2）成功落地后才允许示意预览与扣点生成；价格查询不受此限。 */
@@ -4309,7 +4314,7 @@ export default function PlatformPage() {
                 coverPersonaContext: coverPersona || undefined,
                 headlineTitle,
                 compositeKind,
-                scriptContext: buildPlatformSheetScriptContext(item as any),
+                scriptContext: buildPlatformSheetScriptContext(item as any, coverPersona),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 pollDebugLabel: `套装批量 · ${item.id}`,
               }),
@@ -5347,7 +5352,7 @@ export default function PlatformPage() {
                           智库加购
                         </span>
                       </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">专属文案就绪后可解锁一页可视化决策地图</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">专属文案就绪后解锁；与四有信任体系、AI 四能力及深度定位简报深度联动</p>
                     </div>
                   </button>
                   <button
@@ -5402,7 +5407,7 @@ export default function PlatformPage() {
                 }`}
               >
                 <div className="text-[11px] uppercase tracking-[0.22em] text-[#8cefff] mb-1">
-                  {deepPositioningBrief ? "深度定位与获客方案（已整理）" : "深度定位 · 先读数据快照，再立刻反问"}
+                  {deepPositioningBrief ? "深度定位与获客方案（已整理）" : "深度定位 · 四有信任优先 · 先读快照再反问"}
                 </div>
                 {deepPositioningBrief ? (
                   <div className="text-[13px] leading-6 text-white/90 space-y-1">
@@ -5431,10 +5436,21 @@ export default function PlatformPage() {
                         转化：{deepPositioningBrief.hookStrategy.conversionDirection}
                       </div>
                     ) : null}
+                    {deepPositioningBrief.trustSystem ? (
+                      <div className="text-white/55 text-[12px]">
+                        四有信任：{deepPositioningBrief.trustSystem.resonance.slice(0, 80)}
+                        {deepPositioningBrief.trustSystem.resonance.length > 80 ? "…" : ""}
+                      </div>
+                    ) : null}
+                    {deepPositioningBrief.fourAiCapabilities ? (
+                      <div className="text-[#a5f3fc] text-[12px]">
+                        四能力：数据 · 内容 · 思考 · 产品（已注入文案/封面/分镜/战略全景）
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="text-[13px] leading-6 text-white/75">
-                    点击「开始全案分析」后，系统先载入四平台数据快照（含抖音指数），AI 结合热点与你的 prompt 立刻反问；整理平台、赛道、选题方向、图文/视频钩子与转化路径后，再生成 Stage1 看板与专属选题文案。
+                    点击「开始全案分析」后，系统先载入四平台数据快照，结合四有信任体系与 AI 四能力（数据/内容/思考/产品）立刻反问；整理平台、赛道、选题、钩子与转化后，生成 Stage1/2 与战略全景图（深度联动）。
                   </div>
                 )}
               </div>
@@ -6965,7 +6981,7 @@ export default function PlatformPage() {
                             generatePlatformCompositeSheetMutation.mutate({
                               sceneId: sourceRow.id,
                               title: sourceRow.title,
-                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any),
+                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any, coverPersona),
                               kind: compositeKind,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               ...optionalBoundCreationRecordId(),
@@ -7360,7 +7376,7 @@ export default function PlatformPage() {
                             coverPersonaContext: coverPersona || undefined,
                             headlineTitle,
                             compositeKind,
-                            scriptContext: buildPlatformSheetScriptContext(item as any),
+                            scriptContext: buildPlatformSheetScriptContext(item as any, coverPersona),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                             pollDebugLabel: `套装单卡 · ${item.id}`,
                           }),
@@ -7710,7 +7726,7 @@ export default function PlatformPage() {
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
                                     title: headlineTitle,
-                                    scriptContext: buildPlatformSheetScriptContext(item as any),
+                                    scriptContext: buildPlatformSheetScriptContext(item as any, coverPersona),
                                     kind: compositeKind,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     ...optionalBoundCreationRecordId(),

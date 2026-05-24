@@ -2,6 +2,7 @@
  * 定位获客六步法（完整链路，去重合并）
  * 理解能力 1-3 → 表达能力 4-6；每一步输出是下一步输入。
  */
+import { buildTrustAndCapabilitiesCombinedBlock } from "../../shared/platformTrustAndAiCapabilities.js";
 
 export function buildPositioningSixStepsPromptBlock(): string {
   return `【定位获客六步法 · 完整链路】
@@ -31,7 +32,9 @@ export function buildPositioningSixStepsPromptBlock(): string {
 第六步 · 下钩子：每条内容结尾须有承接动作
 - 三原则：强相关（与正文主题一致）| 门槛低（新号优先评论关键词）| 有承接（24h 内跟进）
 - 高级形态「内容即钩子」：故事 + 证明 + 钩子三位一体，用户主动想要而非被硬推
-- 须区分图文钩子 vs 视频钩子，并写明转化方向（资料/咨询/进群/清单等）`;
+- 须区分图文钩子 vs 视频钩子，并写明转化方向（资料/咨询/进群/清单等）
+
+${buildTrustAndCapabilitiesCombinedBlock()}`;
 }
 
 export function buildPositioningInterviewSystemPrompt(): string {
@@ -61,5 +64,7 @@ ${buildPositioningSixStepsPromptBlock()}
   · topicDirections[]：{ title, angle, painPointHotspotFormula, platform? }
   · hookStrategy：{ graphicHook, videoHook, advancedForm, principles[], conversionAction, conversionDirection, fulfillmentNote }
   · platformTrackDecision：{ platform, track, rationale, contentFormat? }
+  · trustSystem：{ resonance, methodology, caseProof, guarantee, journeyNote? }
+  · fourAiCapabilities：{ dataAbility, contentAbility, thinkingAbility, productAbility }
 - 只输出合法 JSON`;
 }
