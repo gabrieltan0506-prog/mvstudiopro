@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
+import PlatformConversionScriptsPanel from "@/components/PlatformConversionScriptsPanel";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -15,6 +16,10 @@ import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/
 import { trpc } from "@/lib/trpc";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
+import {
+  normalizeConversionScriptRow,
+  type PlatformBasicConversionScript,
+} from "@shared/platformConversionScripts";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -1698,7 +1703,11 @@ export default function PlatformPage() {
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   // Call 3 state — content blueprints and monetization
-  const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
+  const [platformContent, setPlatformContent] = useState<{
+    contentBlueprints: PlatformDashboard["contentBlueprints"];
+    monetizationLanes: PlatformDashboard["monetizationLanes"];
+    platformConversionScripts?: PlatformBasicConversionScript[];
+  } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
   /** 战略地图会话内额外执行选题：自动赠送 + 用户点选扩写（仅内存，刷新后清空） */
@@ -4081,6 +4090,16 @@ export default function PlatformPage() {
       return [];
     }
   }, [platformContent, platformDashboard]);
+
+  const platformConversionScripts = useMemo((): PlatformBasicConversionScript[] => {
+    const raw = (platformContent as { platformConversionScripts?: unknown[] } | null)?.platformConversionScripts;
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw
+        .map((row) => normalizeConversionScriptRow(row))
+        .filter((row): row is PlatformBasicConversionScript => row != null);
+    }
+    return [];
+  }, [platformContent]);
 
   const contentExecutionCards = useMemo((): PlatformContentExecutionCard[] => {
     // Prefer Call 3 result, fall back to Call 2
@@ -7632,6 +7651,12 @@ export default function PlatformPage() {
                   )}
                 </div>
               </div>
+
+              <PlatformConversionScriptsPanel
+                scripts={platformConversionScripts}
+                isLoading={isContentLoading && platformConversionScripts.length === 0}
+                personaHint={cleanUserCopy(platformDashboard?.personaSummary || "", "").slice(0, 120) || undefined}
+              />
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">

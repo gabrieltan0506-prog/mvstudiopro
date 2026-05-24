@@ -150,6 +150,10 @@ import {
   growthTitleExecutionSchema,
 } from "@shared/growth";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
+import {
+  buildPlatformBasicConversionScriptPromptBlock,
+  normalizeConversionScriptRow,
+} from "@shared/platformConversionScripts";
 import { formatShanghaiDateZh, getShanghaiVisualReportWindows, nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
@@ -937,6 +941,25 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
       out.content_blueprints ?? out.plans ?? out.videos;
     if (Array.isArray(alias)) out.contentBlueprints = alias;
   }
+  // platformConversionScripts
+  if (!Array.isArray(out.platformConversionScripts)) {
+    const alias =
+      out.conversionScripts ??
+      out.platform_closing_scripts ??
+      out.closingScripts ??
+      out["平台成交话术"];
+    if (Array.isArray(alias)) out.platformConversionScripts = alias;
+  }
+  if (out.platformConversionScripts != null && !Array.isArray(out.platformConversionScripts)) {
+    out.platformConversionScripts =
+      typeof out.platformConversionScripts === "object" ? [out.platformConversionScripts] : [];
+  }
+  if (Array.isArray(out.platformConversionScripts)) {
+    out.platformConversionScripts = (out.platformConversionScripts as unknown[])
+      .map((row) => normalizeConversionScriptRow(row))
+      .filter(Boolean);
+  }
+
   // monetizationLanes
   if (!Array.isArray(out.monetizationLanes)) {
     const alias =
@@ -1312,6 +1335,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
    - revenueModes（具体变现方式数组）
    - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
 
+${buildPlatformBasicConversionScriptPromptBlock()}
+
 【强制 JSON Key 名称锁定 — 一字不差！】
 你的输出 JSON 必须且只能使用以下 Key 名称，不得发明新字段名（如不能用 businessPaths、lanes、blueprints 等）：
 {
@@ -1340,6 +1365,19 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       "revenueModes": ["具体变现方式1", "具体变现方式2"],
       "firstValidation": "第一步的具体行动"
     }
+  ],
+  "platformConversionScripts": [
+    {
+      "platform": "xiaohongshu",
+      "platformLabel": "小红书",
+      "targetAudience": "具体目标人群（禁止泛化）",
+      "audiencePain": "未说出口的潜在表达",
+      "usageScene": "笔记结尾/私信首句",
+      "trustDoorFocus": "有共鸣",
+      "personalAnchor": "仅适用于本创作者的一句话锚点（含职业/交付/场景细节）",
+      "basicClosingScript": "50-120字千人千面基础成交话术",
+      "lightGuarantee": "与本交付绑定的降险一句"
+    }
   ]
 }
 
@@ -1352,7 +1390,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 4. **建议**详细、有落地感，避免泛泛而谈。${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，**不建议**硬套。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
-字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
+字段为：contentBlueprints, monetizationLanes, platformConversionScripts（各平台千人千面基础成交话术，禁止套话模板）。`,
       },
       {
         role: "user",
