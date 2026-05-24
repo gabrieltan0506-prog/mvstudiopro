@@ -24,6 +24,8 @@ function copyDirectionGoogleSearchEnabled(): boolean {
 export async function enrichPlatformCopyDirectionWithGoogleSearch(opts: {
   platforms: GrowthPlatform[];
   userContext?: string;
+  /** trendStore 抖音创作者指数摘要 */
+  douyinIndexBrief?: string;
   abortSignal?: AbortSignal;
 }): Promise<{ brief: string; usedGoogleSearch: boolean; error?: string }> {
   if (!copyDirectionGoogleSearchEnabled()) {
@@ -55,7 +57,11 @@ export async function enrichPlatformCopyDirectionWithGoogleSearch(opts: {
 - 各平台 2 条标题示例（遵守 15 字内、含核心关键词、可组合标题技巧与爆款词）
 禁止编造具体数据；搜不到则写「暂无可靠公开信号」并给保守方向。`;
 
-  const userText = `${dbBlock}\n\n请搜索并输出上述结构，优先服务账号人设，不要脱离 context 硬套健身模板。`;
+  const douyinBlock = opts.douyinIndexBrief?.trim()
+    ? `\n\n${opts.douyinIndexBrief.trim()}\n（Google 搜索须与抖音指数信号交叉验证；指数仅为采集信号，禁止编造具体数值）`
+    : "";
+
+  const userText = `${dbBlock}${douyinBlock}\n\n请搜索并输出上述结构，优先服务用户深度定位与人设（见 context），不要脱离 context 硬套健身模板。选题须对齐定位获客六步法：人群痛点、独特方案、平台选择。`;
 
   try {
     const brief = await callGemini35FlashCopywriting({

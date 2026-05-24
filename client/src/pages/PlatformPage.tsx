@@ -6,7 +6,8 @@ import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
-import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
+import type { PlatformDeepPositioningBrief, PlatformPositioningTurn } from "@shared/platformPositioningDiscovery";
+import { mergePlatformContextWithDeepPositioning } from "@shared/platformPositioningDiscovery";
 import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
@@ -858,14 +859,17 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
-function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
+/** 将深度定位简报 + 仪表盘「精神气质与内容身份」注入封面生图链 */
+function buildCoverPersonaContextForImageGen(
+  personaSummary: string,
+  deepBrief: PlatformDeepPositioningBrief | null,
+): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
   if (ps) parts.push(`【精神气质与内容身份】${ps.slice(0, 600)}`);
-  if (isIpProfileReady(ipProfile)) {
+  if (deepBrief) {
     parts.push(
-      `【IP 视觉与商业基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌（绝对避让）：${ipProfile.taboos.trim()}` : ""}`,
+      `【深度定位】${deepBrief.positioningOneLiner}；独特方案：${String(deepBrief.uniqueSolution || "").slice(0, 280)}；核心痛点：${String(deepBrief.painPointSummary || "").slice(0, 280)}`,
     );
   }
   return parts.join("\n").trim().slice(0, 3800);
@@ -1633,6 +1637,18 @@ export default function PlatformPage() {
   const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
+  /** 深度定位访谈轮次与简报（替代企业 IP 基因 gate） */
+  const [positioningTurns, setPositioningTurns] = useState<PlatformPositioningTurn[]>([]);
+  const [positioningResonance, setPositioningResonance] = useState("");
+  const [positioningQuestions, setPositioningQuestions] = useState<string[]>([]);
+  const [positioningAnswerInput, setPositioningAnswerInput] = useState("");
+  const [isPositioningLoading, setIsPositioningLoading] = useState(false);
+  const [deepPositioningBrief, setDeepPositioningBrief] = useState<PlatformDeepPositioningBrief | null>(null);
+  const [positioningSourcePrompt, setPositioningSourcePrompt] = useState("");
+  const mergedPlatformContext = useMemo(
+    () => mergePlatformContextWithDeepPositioning(focusPrompt, deepPositioningBrief),
+    [focusPrompt, deepPositioningBrief],
+  );
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
   const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -1846,7 +1862,7 @@ export default function PlatformPage() {
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
-      context: focusPrompt || undefined,
+      context: mergedPlatformContext || undefined,
       modelName: "gemini-3.1-pro-preview",
       requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
       analysis: EMPTY_ANALYSIS,
@@ -1864,6 +1880,7 @@ export default function PlatformPage() {
   );
 
   const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
+  const positioningInterviewMutation = trpc.mvAnalysis.runPlatformPositioningInterview.useMutation();
 
   /** Fly worker 回传后解析 platformContent（轮询与错误处理集中一处，供初次与重试共用） */
   const runStage2FromJobId = useCallback(async (jobId: string) => {
@@ -2046,7 +2063,7 @@ export default function PlatformPage() {
         const ctxForJob =
           capturedJudgment !== undefined
             ? String(capturedJudgment).trim() || undefined
-            : focusPrompt.trim() || undefined;
+            : mergedPlatformContext.trim() || undefined;
         const { jobId } = await enqueuePlatformContentJobMutation.mutateAsync({
           context: ctxForJob,
           windowDays,
@@ -2085,7 +2102,7 @@ export default function PlatformPage() {
         setIsContentLoading(false);
       }
     },
-    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine],
+    [mergedPlatformContext, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine],
   );
 
   /** 用户确认后入队 Stage 2（后端立即扣积分）并轮询直至完成 */
@@ -3230,7 +3247,7 @@ export default function PlatformPage() {
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
         const supervisorTok = getSupervisorTrpcToken();
-        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim();
         const compositeSupervisorExtras = {
           ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
             ? { enableTopicCoverDeepResearchPro: true as const }
@@ -3474,13 +3491,6 @@ export default function PlatformPage() {
     },
     onError: (err) => { setIsDownloadingPdf(false); toast.error(err.message || "PDF 导出失败"); },
   });
-
-  // ── B 端 IP 基因库（拦截弹窗，共享组件 IpProfileModal）─────────────────────
-  // 落地需求：handleAnalyze 启动前必须先填齐 IP 护城河 + 高客单锚点，
-  // 否则弹「靛青色」拦截弹窗，强制用户校准战略预设。
-  // ipProfile 同步写 localStorage(`ipProfile.v1`)，GodView 一键深潜也会读它注入 prompt。
-  const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
-  const [showIpModal, setShowIpModal] = useState(false);
 
   const [qaJobId, setQaJobId] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
@@ -4264,7 +4274,7 @@ export default function PlatformPage() {
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
-        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim();
         liveLines.push(
           `${new Date().toISOString()}  [客户端] 开始套装 · sceneId=${item.id} · compositeKind=${compositeKind}`,
         );
@@ -4708,26 +4718,16 @@ export default function PlatformPage() {
     return () => window.clearInterval(timer);
   }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
-  const handleAnalyze = async () => {
-    // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
-    if (!isIpProfileReady(ipProfile)) {
-      setShowIpModal(true);
-      toast.message("启动战略推演前，请先载入企业专属 IP 基因");
-      return;
-    }
-
+  const runFullPlatformAnalysis = useCallback(async (capturedJudgment: string) => {
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `【平台全案分析】将基于四平台实时样本与你的 IP 背景，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
+        `【平台全案分析】将基于四平台实时样本与你的深度定位，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
           `专属文案任务入队时扣除 ${cost} 积分；全程约数分钟，请勿关闭页面。是否开始？`,
       )
     ) {
       return;
     }
-
-    /** 本輪 Stage1/2 使用此字串（與輸入框內容一致即可；不再自動清空輸入框）。 */
-    const capturedJudgment = String(focusPrompt || "").trim();
 
     platformAnalysisEpochRef.current += 1;
     void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
@@ -4815,6 +4815,109 @@ export default function PlatformPage() {
     } finally {
       setIsDashboardLoading(false);
     }
+  }, [
+    enqueueAndPollExclusiveContent,
+    generateDecisionIntelMutation,
+    getPlatformDashboardMutation,
+    growthSnapshotQuery,
+    queryClient,
+    selectedWindowDays,
+    trpcUtils.mvAnalysis.getDecisionIntelligencePricing,
+    trpcUtils.mvAnalysis.getGrowthSnapshot,
+    trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport,
+  ]);
+
+  const runPositioningInterviewStep = useCallback(
+    async (latestAnswer?: string) => {
+      const prompt = String(focusPrompt || "").trim();
+      if (!prompt) {
+        toast.error("请先输入你这轮最想判断什么");
+        return;
+      }
+      setIsPositioningLoading(true);
+      try {
+        let turnsToSend = [...positioningTurns];
+        const answerText = latestAnswer?.trim() || "";
+        if (answerText && positioningQuestions.length > 0) {
+          const openIdx = turnsToSend.findIndex((t) => !t.answer?.trim());
+          if (openIdx >= 0) {
+            turnsToSend[openIdx] = { ...turnsToSend[openIdx], answer: answerText };
+          } else {
+            turnsToSend.push({ questions: positioningQuestions, answer: answerText });
+          }
+        }
+
+        const res = await positioningInterviewMutation.mutateAsync({
+          initialPrompt: prompt,
+          turns: turnsToSend,
+          latestAnswer: answerText || undefined,
+        });
+        const { result } = res;
+        if (result.resonance) setPositioningResonance(result.resonance);
+        if (result.status === "continue") {
+          const qs = result.questions.slice(0, 2);
+          setPositioningQuestions(qs);
+          setPositioningTurns([...turnsToSend, { questions: qs }]);
+          setPositioningAnswerInput("");
+          toast.message("请回答下方深度定位问题");
+          return;
+        }
+        if (result.status === "ready" && result.deepPositioningBrief) {
+          setDeepPositioningBrief(result.deepPositioningBrief);
+          setPositioningSourcePrompt(prompt);
+          setPositioningQuestions([]);
+          setPositioningAnswerInput("");
+          setPositioningTurns(turnsToSend);
+          toast.success("深度定位已整理完成，正在进入全案分析…");
+          const merged = mergePlatformContextWithDeepPositioning(prompt, result.deepPositioningBrief);
+          await runFullPlatformAnalysis(merged);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(msg || "深度定位访谈失败");
+      } finally {
+        setIsPositioningLoading(false);
+      }
+    },
+    [
+      focusPrompt,
+      positioningInterviewMutation,
+      positioningQuestions,
+      positioningTurns,
+      runFullPlatformAnalysis,
+    ],
+  );
+
+  const handleSubmitPositioningAnswer = useCallback(() => {
+    const ans = positioningAnswerInput.trim();
+    if (!ans) {
+      toast.error("请先回答当前问题");
+      return;
+    }
+    void runPositioningInterviewStep(ans);
+  }, [positioningAnswerInput, runPositioningInterviewStep]);
+
+  const handleAnalyze = async () => {
+    const prompt = String(focusPrompt || "").trim();
+    if (!prompt) {
+      toast.error("请先输入你这轮最想判断什么");
+      return;
+    }
+
+    const briefReady =
+      deepPositioningBrief &&
+      positioningSourcePrompt === prompt;
+
+    if (briefReady) {
+      await runFullPlatformAnalysis(mergedPlatformContext);
+      return;
+    }
+
+    setPositioningTurns([]);
+    setPositioningResonance("");
+    setPositioningQuestions([]);
+    setDeepPositioningBrief(null);
+    await runPositioningInterviewStep();
   };
 
   const handleUploadQaFile = useCallback(async (file: File) => {
@@ -4866,7 +4969,7 @@ export default function PlatformPage() {
     try {
       const { jobId } = await createPlatformQAJobMutation.mutateAsync({
         question: finalQuestion,
-        context: focusPrompt || undefined,
+        context: mergedPlatformContext || undefined,
         windowDays: selectedWindowDays,
         snapshot: snapshot as any,
         fileUri: qaFileUri || undefined,
@@ -4882,7 +4985,7 @@ export default function PlatformPage() {
       // Fallback to synchronous askPlatformFollowUp if job creation fails
       await askPlatformFollowUpMutation.mutateAsync({
         question: finalQuestion,
-        context: focusPrompt || undefined,
+        context: mergedPlatformContext || undefined,
         windowDays: selectedWindowDays,
         snapshot,
         copyLlmMode: "openai" as const,
@@ -5098,14 +5201,6 @@ export default function PlatformPage() {
     <div className="min-h-screen bg-transparent text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
 
-      {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
-      <IpProfileModal
-        open={showIpModal}
-        value={ipProfile}
-        onChange={setIpProfile}
-        onClose={() => setShowIpModal(false)}
-      />
-
       <div className="mx-auto max-w-[min(1920px,100%)] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <button
@@ -5254,40 +5349,36 @@ export default function PlatformPage() {
                 ))}
               </div>
 
-              {/* IP 基因库入口（已填则显示战略锚点摘要 + 编辑按钮；未填则提示载入） */}
-              <button
-                type="button"
-                onClick={() => setShowIpModal(true)}
-                className={`mt-5 w-full rounded-2xl border px-5 py-4 text-left transition ${
-                  isIpProfileReady(ipProfile)
-                    ? "border-[#6366F1]/40 bg-[linear-gradient(135deg,rgba(79,70,229,0.18),rgba(99,102,241,0.10))] hover:border-[#818CF8]/60"
-                    : "border-[#FCD34D]/30 bg-[rgba(252,211,77,0.06)] hover:border-[#FCD34D]/60 animate-[pulseHighlight_2.4s_ease-in-out_infinite]"
+              {/* 深度定位简报（定位获客六步法 · 第一部分） */}
+              <div
+                className={`mt-5 w-full rounded-2xl border px-5 py-4 text-left ${
+                  deepPositioningBrief
+                    ? "border-[#49e6ff]/35 bg-[linear-gradient(135deg,rgba(73,230,255,0.12),rgba(125,115,255,0.08))]"
+                    : "border-[#6366F1]/30 bg-[rgba(99,102,241,0.06)]"
                 }`}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[#A5B4FC] mb-1">
-                      {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
-                    </div>
-                    {isIpProfileReady(ipProfile) ? (
-                      <div className="text-[13px] leading-6 text-white truncate">
-                        <span className="text-[#A5B4FC]">{ipProfile.industry}</span>
-                        <span className="mx-2 text-white/30">·</span>
-                        <span className="text-white/85">{ipProfile.advantage}</span>
-                        <span className="mx-2 text-white/30">·</span>
-                        <span className="text-[#FCD34D]">{ipProfile.flagship}</span>
-                      </div>
-                    ) : (
-                      <div className="text-[13px] leading-6 text-white/85">
-                        点此校准护城河 / 高客单锚点 → AI 推演会在 80% 篇幅锁定你的转化路径
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-xs font-semibold text-[#A5B4FC] whitespace-nowrap">
-                    {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
-                  </div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-[#8cefff] mb-1">
+                  {deepPositioningBrief ? "深度定位（已整理）" : "深度定位 · 提交 prompt 后立即反问"}
                 </div>
-              </button>
+                {deepPositioningBrief ? (
+                  <div className="text-[13px] leading-6 text-white/90 space-y-1">
+                    <div>{deepPositioningBrief.positioningOneLiner}</div>
+                    <div className="text-white/65">
+                      独特方案：{deepPositioningBrief.uniqueSolution.slice(0, 120)}
+                      {deepPositioningBrief.uniqueSolution.length > 120 ? "…" : ""}
+                    </div>
+                    {deepPositioningBrief.recommendedPlatforms.length > 0 ? (
+                      <div className="text-[#c4b5fd]">
+                        推荐平台：{deepPositioningBrief.recommendedPlatforms.join(" · ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="text-[13px] leading-6 text-white/75">
+                    点击「开始全案分析」后，AI 会先按定位获客六步法（找定位 / 定人群 / 选平台）追问 1-2 个问题，整理痛点与独特方案，再结合抖音指数与 Google 热点生成 Stage1 看板与专属选题文案。
+                  </div>
+                )}
+              </div>
             </div>
 
             <div id={PLATFORM_SECTION_TREND_RUN_ID} className="scroll-mt-20 grid gap-4">
@@ -5388,19 +5479,53 @@ export default function PlatformPage() {
                     。
                   </p>
                 </div>
+                {(positioningQuestions.length > 0 || positioningResonance) && !deepPositioningBrief ? (
+                  <div className="mt-4 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.06)] p-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8cefff]">
+                      定位获客 · 深度追问
+                    </div>
+                    {positioningResonance ? (
+                      <p className="mt-2 text-sm leading-7 text-white/80">{positioningResonance}</p>
+                    ) : null}
+                    {positioningQuestions.map((q, i) => (
+                      <p key={i} className="mt-2 text-sm font-medium leading-7 text-white">
+                        {i + 1}. {q}
+                      </p>
+                    ))}
+                    {positioningQuestions.length > 0 ? (
+                      <>
+                        <textarea
+                          value={positioningAnswerInput}
+                          onChange={(e) => setPositioningAnswerInput(e.target.value)}
+                          placeholder="用你的话回答（支持语音输入上方主 prompt 框）…"
+                          className="mt-3 min-h-[96px] w-full rounded-xl border border-white/10 bg-[#0c061e] px-3 py-2 text-sm leading-7 text-white outline-none focus:border-[#49e6ff]/35"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleSubmitPositioningAnswer()}
+                          disabled={isPositioningLoading}
+                          className="mt-3 inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.12)] px-4 py-2 text-xs font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.2)] disabled:opacity-50"
+                        >
+                          {isPositioningLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                          提交回答
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3">
                   <button
                     type="button"
                     onClick={() => void handleAnalyze()}
-                    disabled={growthSnapshotQuery.isFetching}
+                    disabled={growthSnapshotQuery.isFetching || isPositioningLoading}
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    开始全案分析
+                    {growthSnapshotQuery.isFetching || isPositioningLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {deepPositioningBrief ? "开始全案分析" : positioningQuestions.length > 0 ? "继续深度定位" : "开始全案分析"}
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
-                    title="已含专属选题与长文案／分镜稿；任务入队时扣除右侧积分（与通用聊天不同，结合当前窗口样本与 IP 基因）"
+                    title="已含深度定位访谈、专属选题与长文案／分镜稿；任务入队时扣除右侧积分"
                   >
                     {CREDIT_COSTS.platformStage2Copywriting} 积分
                   </span>
@@ -6584,7 +6709,7 @@ export default function PlatformPage() {
                                 });
                                 await runSequentialCoverBatchGeneration(
                                   scenes,
-                                  buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                                  buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief),
                                 );
                               } catch (err) {
                                 toast.error(
@@ -6751,7 +6876,7 @@ export default function PlatformPage() {
                             if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
                             const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
                             const supervisorTok = getSupervisorTrpcToken();
-                            const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                            const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim();
                             const compositeSupervisorExtras = {
                               ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                 ? { enableTopicCoverDeepResearchPro: true as const }
@@ -6981,7 +7106,7 @@ export default function PlatformPage() {
                             topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
                             coverPersonaContext:
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
+                              buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
                             pollDebugLabel: `单张选题封面 · ${item.id}`,
@@ -7042,7 +7167,7 @@ export default function PlatformPage() {
                             topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
                             coverPersonaContext:
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
+                              buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
                             pollDebugLabel: `手动重生成 · ${item.id}`,
@@ -7118,7 +7243,7 @@ export default function PlatformPage() {
                             topicHook: "",
                             format: isGraphicCover ? "图文" : "短视频",
                             coverPersonaContext:
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
+                              buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim() || undefined,
                             failedJobId: freeRetryJobId,
                             sceneId: item.id,
                             pollDebugLabel: `静默加载失败补发 · ${item.id}`,
@@ -7164,7 +7289,7 @@ export default function PlatformPage() {
                         )
                           return;
                         setCoverCompositeBundleSceneId(item.id);
-                        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                        const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim();
                         void runThrottledPlatformImageRequest(`single-bundle:${item.id}`, () =>
                           runEnqueueTopicCoverCompositeBundleAndPoll({
                             sceneId: item.id,
@@ -7509,7 +7634,7 @@ export default function PlatformPage() {
                                   : `将消耗 ${compositeCost} 积分，主路径 GPT-IMAGE-2，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const supervisorTok = getSupervisorTrpcToken();
-                                const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+                                const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, deepPositioningBrief).trim();
                             const compositeSupervisorExtras = {
                               ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                 ? { enableTopicCoverDeepResearchPro: true as const }

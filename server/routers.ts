@@ -70,6 +70,16 @@ import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
 import { buildPlatformCopyDirectionPromptBlock } from "./content/platformCopyDirectionDatabase.js";
 import { enrichPlatformCopyDirectionWithGoogleSearch } from "./services/platformCopyDirectionSearch.js";
+import { buildPositioningSixStepsPromptBlock } from "./content/positioningAcquisitionSixSteps.js";
+import {
+  buildDouyinIndexBriefFromStore,
+  extractKeywordHintsFromContext,
+} from "./services/douyinIndexBriefFromStore.js";
+import { runPlatformPositioningInterview } from "./services/platformDeepPositioningInterview.js";
+import {
+  platformPositioningTurnSchema,
+  platformDeepPositioningBriefSchema,
+} from "../shared/platformPositioningDiscovery.js";
 import type { GrowthPlatform } from "@shared/growth";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
@@ -749,8 +759,9 @@ async function buildPlatformDashboard(params: {
 
   // Phase 1-A: Persona-bound context hint injected into system prompt
   const personaContextLine = params.context
-    ? `\n\n用户背景补充（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 300)}`
+    ? `\n\n用户背景与深度定位（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 1200)}`
     : "";
+  const sixStepsBlock = `\n\n${buildPositioningSixStepsPromptBlock()}\n\n若 context 含「深度定位简报」，Stage1 看板须显式对齐：一句话定位、Top1 人群、推荐平台顺序、痛点与独特方案；platformMenu 推荐理由须引用这些字段，禁止泛平台废话。`;
   // If context mentions medical/doctor or culture/art, add hard constraint against generic monetization
   // Support both Simplified and Traditional Chinese in persona detection
   const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
@@ -795,7 +806,7 @@ async function buildPlatformDashboard(params: {
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向（须说明如何经人设各维——职业、身份、兴趣、爱好、专长——改写落地，禁止纯泛热榜）；actionCards：3 个立刻能做的动作。
    【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
 5. conversationStarters：3 个让用户愿意继续追问的问题。
-6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答"为什么这条路更适合你"时必须深度剖析，禁止出现"电商带货"等泛泛而谈词汇。${personaContextLine}${personaConstraint}
+6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答"为什么这条路更适合你"时必须深度剖析，禁止出现"电商带货"等泛泛而谈词汇。${personaContextLine}${personaConstraint}${sixStepsBlock}
 
 注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
 
@@ -1237,9 +1248,14 @@ export async function buildPlatformContent(params: {
     platforms: copyDirectionPlatformList,
     userContext: params.context,
   });
+  const douyinIndexBrief = buildDouyinIndexBriefFromStore(params.store, {
+    keywordHints: extractKeywordHintsFromContext(params.context || ""),
+  });
+  diagnostics.douyinIndexBriefChars = douyinIndexBrief.length;
   const copyDirectionSearch = await enrichPlatformCopyDirectionWithGoogleSearch({
     platforms: copyDirectionPlatformList,
     userContext: params.context,
+    douyinIndexBrief,
     abortSignal: params.abortSignal,
   });
   diagnostics.platformCopyDirectionGoogleSearch = copyDirectionSearch.usedGoogleSearch;
@@ -1271,6 +1287,10 @@ export async function buildPlatformContent(params: {
           platformCopyDirectionDatabase,
           /** Gemini googleSearch 实时检索摘要（候选池 / 标题灵感） */
           platformCopyDirectionSearchBrief: copyDirectionSearch.brief || null,
+          /** 抖音创作者指数 · trendStore 信号 */
+          douyinIndexBrief: douyinIndexBrief || null,
+          /** 定位获客六步法 · 第一部分框架 */
+          positioningSixStepsFramework: buildPositioningSixStepsPromptBlock(),
         });
 
   const structuredStage2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
@@ -1311,7 +1331,9 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 (3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
-【爆款文章 · 平台选题文案方向数据库】：user JSON 中 platformCopyDirectionDatabase 含各平台资料库（违规词黑名单、A/B 词库、结构模板库、本周选题包、候选池、学员资料库）及标题技巧 / 爆款词 / 文案模板 / 工作流程。contentBlueprints 须优先从「候选池 + 本周选题包」与人设交叉选题，标题须组合「标题技巧 + 爆款词」，结构须匹配对应平台 copyTemplates；违规词黑名单一律禁用。若存在 platformCopyDirectionSearchBrief（Google 搜索实时摘要），须与资料库合并使用，搜不到的部分保守处理，禁止编造数据。
+【爆款文章 · 平台选题文案方向数据库】：user JSON 中 platformCopyDirectionDatabase 含各平台资料库（违规词黑名单、A/B 词库、结构模板库、本周选题包、候选池、学员资料库）及标题技巧 / 爆款词 / 文案模板 / 工作流程。contentBlueprints 须优先从「候选池 + 本周选题包」与深度定位（context 内简报）交叉选题，标题须组合「标题技巧 + 爆款词」，结构须匹配对应平台 copyTemplates；违规词黑名单一律禁用。若存在 platformCopyDirectionSearchBrief（Google 搜索实时摘要）与 douyinIndexBrief（抖音指数信号），须与资料库合并使用，搜不到的部分保守处理，禁止编造数据。
+
+【定位获客六步法 · 选题约束】：须对齐 positioningSixStepsFramework 与 context 中的深度定位简报——第 3 条 contentBlueprint 须直击 Top1 人群痛点；第 1 条体现独特解决方案；平台与呈现形式须匹配 recommendedPlatforms（若有）。
 
 请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
@@ -3222,6 +3244,46 @@ export const appRouter = router({
               error: error instanceof Error ? error.message : String(error),
             },
           };
+        }
+      }),
+
+    /** 定位获客六步法 · 深度定位访谈（用户 prompt 后立即反问，整理简报供 Stage1/2） */
+    runPlatformPositioningInterview: publicProcedure
+      .input(
+        z.object({
+          initialPrompt: z.string().min(3).max(4000),
+          turns: z.array(platformPositioningTurnSchema).default([]),
+          latestAnswer: z.string().max(4000).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        try {
+          const { response, modelUsed } = await runPlatformPositioningInterview({
+            initialPrompt: input.initialPrompt,
+            turns: input.turns,
+            latestAnswer: input.latestAnswer,
+            abortSignal: ctx.clientDisconnected,
+          });
+          if (response.status === "ready" && response.deepPositioningBrief) {
+            platformDeepPositioningBriefSchema.parse(response.deepPositioningBrief);
+          }
+          return {
+            success: true as const,
+            result: response,
+            debug: {
+              route: "mvAnalysis.runPlatformPositioningInterview",
+              modelName: modelUsed,
+              round: response.round,
+              status: response.status,
+            },
+          };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.warn("[platform.runPlatformPositioningInterview]", msg);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: msg || "深度定位访谈失败，请稍后重试",
+          });
         }
       }),
 
