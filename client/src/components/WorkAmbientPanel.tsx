@@ -272,7 +272,7 @@ export default function WorkAmbientPanel() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="min-h-[180px] rounded-2xl border border-white/12 bg-slate-950/55 p-5 text-sm leading-relaxed text-white/78 shadow-lg backdrop-blur-md">
           <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200/95">
-            即时路况（Gemini）
+            即时路况（高德）
           </div>
           {(!geoAttemptDone || dash.isLoading) ? (
             <p className="mt-3 text-white/50">载入中…</p>

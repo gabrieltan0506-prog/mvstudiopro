@@ -2377,7 +2377,7 @@ export const appRouter = router({
       }),
   }),
 
-  /** 時間 / 天氣 / 路況 / 即時新聞（免登入；新聞約 30 分鐘、天氣路況約 10 分鐘節流） */
+  /** 時間 / 天氣 / 路況（高德）/ 即時新聞（Gemini）；免登入；新聞約 30 分鐘、天氣路況約 10 分鐘節流 */
   ambient: router({
     /** 天氣 + 路況 + 時間（建議前端 10 分鐘 refetch） */
     dashboardLive: publicProcedure
