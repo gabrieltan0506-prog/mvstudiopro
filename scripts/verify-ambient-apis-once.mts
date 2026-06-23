@@ -1,5 +1,5 @@
 /**
- * 一次性驗證：Open‑Meteo、OpenWeather（若有 key）、高德路況（若有 key）、Gemini 新聞模型
+ * 一次性驗證：Open‑Meteo、OpenWeather（若有 key）、Gemini（dashboard 用模型）
  * 執行：npx tsx scripts/verify-ambient-apis-once.mts
  * 不會將任何 secret 印到 stdout。
  */
@@ -9,7 +9,6 @@ dotenv.config({ path: ".env" });
 dotenv.config({ path: ".env.local", override: true });
 
 const TAIPEI = { lat: 25.033, lon: 121.565 };
-const SHANGHAI = { lat: 31.2304, lon: 121.4737 };
 
 function ok(name: string, detail: string) {
   console.log(`[OK] ${name}: ${detail}`);
@@ -59,33 +58,7 @@ async function main() {
     }
   }
 
-  // 3) 高德路況（圓形區域；僅在 AMAP_WEB_SERVICE_KEY 存在時）
-  const amapKey = String(process.env.AMAP_WEB_SERVICE_KEY || process.env.AMAP_API_KEY || "").trim();
-  if (!amapKey) {
-    skip("高德路況", "未設定 AMAP_WEB_SERVICE_KEY");
-  } else {
-    try {
-      const location = `${SHANGHAI.lon},${SHANGHAI.lat}`;
-      const url =
-        `https://restapi.amap.com/v3/traffic/status/circle?location=${location}` +
-        `&radius=1500&extensions=base&output=JSON&key=${encodeURIComponent(amapKey)}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-      if (!res.ok) {
-        bad("高德路況", `HTTP ${res.status}`);
-      } else {
-        const j = (await res.json()) as { status?: string; info?: string; trafficinfo?: { description?: string } };
-        if (String(j.status) !== "1") {
-          bad("高德路況", String(j.info || "API 返回失败"));
-        } else {
-          ok("高德路況", String(j.trafficinfo?.description || "请求成功").slice(0, 80));
-        }
-      }
-    } catch (e) {
-      bad("高德路況", (e as Error).message);
-    }
-  }
-
-  // 4) Gemini 新聞模型（與 hybridDashboardEngine 相同套件）
+  // 3) Gemini（與 hybridDashboardEngine 相同套件）
   const geminiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!geminiKey) {
     bad("Gemini", "未設定 GEMINI_API_KEY");
@@ -93,7 +66,7 @@ async function main() {
   }
 
   const model =
-    String(process.env.GEMINI_DASHBOARD_NEWS_MODEL || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
+    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
 
   try {
     const { GoogleGenAI } = await import("@google/genai");
