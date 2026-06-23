@@ -7,10 +7,6 @@ import fs from "fs/promises";
 import path from "path";
 import { PDF_FORMATTING_PROMPT_SUFFIX } from "./pdfFormattingPrompt";
 import {
-  buildDeepResearchMaxTrustAgentBlock,
-  buildDeepResearchMaxTrustReportChapter,
-} from "../../shared/deepResearchTrustFramework.js";
-import {
   registerActiveJob,
   unregisterActiveJob,
   heartbeatActiveJob,
@@ -436,8 +432,8 @@ const STRICT_BUSINESS_PROMPT = `
   ⑧ 附录（数据来源清单 + 不确定性清单 + 术语表）
 `.trim();
 
-/** Deep Research Max（Interactions API）强制附加 PDF 友好 Markdown 契约 + B 端防跑偏权重 + 四有信任 Agent 深潜 */
-const DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION_BASE}\n\n${STRICT_BUSINESS_PROMPT}\n\n${buildDeepResearchMaxTrustAgentBlock()}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
+/** Deep Research Max（Interactions API）强制附加 PDF 友好 Markdown 契约 + B 端防跑偏权重 */
+const DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION_BASE}\n\n${STRICT_BUSINESS_PROMPT}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
 
 /**
  * Markdown 清洗：修补 deep-research / gemini-3.1-pro 常见排版瑕疵，
@@ -1845,8 +1841,6 @@ ${job.topic}
 13. AI 内容工具对该赛道的实际冲击（2025-2026）：即梦 / 可灵 / 剪映 AI 等工具对创作门槛、内容量级、平台流量分发的影响数据；AI 创作者与纯人工创作者的算法待遇差异与平台政策
 14. IP 化路径与版权资产：头部账号从内容账号升级为 IP 资产的关键节点、版权化 / 衍生品化 / 跨媒介授权的典型案例与收益量级，以及当前该赛道 IP 授权市场的估值逻辑
 
-15. 【四有信任深潜 · Max Agent 必答】针对课题目标人群，执行「AI 用户洞察 Agent」三步（主题归类→挖潜在表达→写共鸣钩子），并给出四道门完整信任旅程与预先布置的保障体系（详见全局系统指令中的四有信任模块）
-
 【格式】
 请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
 
@@ -2061,8 +2055,6 @@ ${historyContext}
 - 给出一句话品牌口号（中文 16 字内）
 - 给出 90 天里程碑表（粉丝数 / 私域用户 / 变现金额 / 内容资产 / 商业验证）
 
-${buildDeepResearchMaxTrustReportChapter()}
-
 要求：每个数字必须直接源自上方「外部接地数据」或「用户基线」。语言克制专业，避免任何空话与煽动。每个章节末尾必须有一段不少于 80 字的「执行风险提醒」。`
       : `你是国际顶尖商学院战略顾问 + 国内外主流媒体平台资深运营专家 + 顶级 IP 操盘手 + 行业数据分析师组成的「商业智库团队」。请输出一份字数严格控制在 5500-7000 字、表格 5-6 张的精简版商务白皮书《${dateStr} 战略半月刊》。
 
@@ -2107,10 +2099,8 @@ ${job.topic}
 # 七、核武级总结
 - 3 条由数据驱动的核心洞察 + 一句话品牌口号 + 90 天三大里程碑（粉丝 / 私域 / 变现金额）
 
-${buildDeepResearchMaxTrustReportChapter()}
-
 要求：
-1. 总字数严格控制在 5500-7000 字之间，**超过 7500 字视为不合格**（四有信任专章可额外计入，总上限 9000 字）
+1. 总字数严格控制在 5500-7000 字之间，**超过 7500 字视为不合格**
 2. 每个数字直接源自上方「外部接地数据」或「用户基线」
 3. 每章末尾 40-60 字的「执行风险提醒」（半月刊的精简版要求，比尊享版短一半）
 4. 五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）必须全部覆盖，不得遗漏其中任何一个`;

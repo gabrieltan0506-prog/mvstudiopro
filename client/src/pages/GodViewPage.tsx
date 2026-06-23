@@ -619,12 +619,7 @@ export default function GodViewPage() {
                   flexWrap: "wrap",
                 }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 900, color: "#7a5410" }}>Deep Research Pro · 竞品四有信任（60 点/次）</div>
-                  <div style={{ fontSize: 11, color: "rgba(122,84,16,0.65)", marginTop: 4, lineHeight: 1.45 }}>
-                    约 30 秒 · 表面/潜在表达 + 四道门审计 + 共鸣钩子 · 完整 Agent 洞察请用下方 Max 深潜
-                  </div>
-                </div>
+                <div style={{ fontSize: 13, fontWeight: 900, color: "#7a5410" }}>四平台竞品调研（60 点/次）</div>
                 <button
                   type="button"
                   onClick={() => navigate("/research")}
@@ -709,7 +704,7 @@ export default function GodViewPage() {
               👑 高阶 Agent 场景
             </h3>
             <span style={{ fontSize: isMobile ? 12 : 11, color: "rgba(122,84,16,0.55)" }}>
-              Deep Research Max · 计划→审批→深潜 · 含四有信任 Agent 洞察专章
+              计划→审批→深潜，支持图片 / PDF / 语音输入
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
@@ -722,7 +717,7 @@ export default function GodViewPage() {
               },
               {
                 title: "竞品 / 赛道雷达",
-                desc: "Max Agent 深潜：用户洞察三步（归类→挖潜在→写钩子）+ 四道门信任旅程 + 预先布置保障",
+                desc: "对标账号长时间深潜分析，输出可作为「降维打击弹药」的高密度报告",
                 href: "/agent/competitor-radar",
                 icon: "📡",
               },

@@ -8,10 +8,6 @@
 import fs from "fs/promises";
 import path from "path";
 import type { ResearchPipelineDebugStep } from "../../shared/researchPipelineDebugMarker.js";
-import {
-  buildCompetitorResearchProStage1TrustBlock,
-  buildCompetitorResearchProStage2TrustBlock,
-} from "../../shared/deepResearchTrustFramework.js";
 import { readTrendStoreForPlatforms } from "../growth/trendStore";
 import { describeVertexGemini31ProRouting } from "./vertexGemini31ProGlobal.js";
 
@@ -127,24 +123,6 @@ export interface ResearchScene {
   bgmPrompt: string;
 }
 
-export type TrustDoorAudit = {
-  score?: number;
-  note?: string;
-};
-
-export type ResearchTrustQuickScan = {
-  surfaceVsLatent?: Array<{ surface?: string; latent?: string; evidence?: string }>;
-  fourDoorsAudit?: {
-    resonance?: TrustDoorAudit;
-    methodology?: TrustDoorAudit;
-    caseProof?: TrustDoorAudit;
-    guarantee?: TrustDoorAudit;
-  };
-  trustThresholdHint?: string;
-  writingContrast?: { ordinary?: string; resonant?: string };
-  resonanceHooks?: string[];
-};
-
 export interface ResearchStrategy {
   overallStrategy?: string;
   scenes?: ResearchScene[];
@@ -153,8 +131,6 @@ export interface ResearchStrategy {
   visuals?: { colorPalette?: string[]; typography?: string; layoutGuide?: string };
   publishStrategy?: string;
   growthPlan30Days?: string;
-  /** 四有信任 · Pro 快速扫描（Stage 2 JSON） */
-  trustQuickScan?: ResearchTrustQuickScan;
   platform?: string;
   platformLabel?: string;
   generatedAt?: string;
@@ -309,14 +285,11 @@ export async function runResearch(
 2. 视觉风格特征（色调、排版、封面设计模式）
 3. 受众画像与算法适配特征
 4. 高频词汇与标签矩阵
-5. 四有信任快速层：表面表达 vs 潜在表达、四道门强弱、语料来源信号、普通 vs 共鸣写法倾向
-
-${buildCompetitorResearchProStage1TrustBlock()}
 ${platformContext}
 
 竞品数据：${competitorData}
 
-输出格式：JSON，字段：hookLogic, visualStyle, audienceProfile, keywordMatrix, topPatterns, trustSignals（含 surfaceVsLatent, fourDoorsScores, corpusSources, writingStyleBias）`,
+输出格式：JSON，字段：hookLogic, visualStyle, audienceProfile, keywordMatrix, topPatterns`,
     );
     console.log(`[researchService] Stage 1 完成，字符数: ${stage1Raw.length}`);
     push("stage1_scan", "ok", `完成 · ${stage1Raw.length} 字符`);
@@ -360,13 +333,11 @@ ${platformContext}
   "growthPlan30Days": "分阶段30天行动清单"
 }
 
-${buildCompetitorResearchProStage2TrustBlock()}
-
 核心要求（必须严格遵守）：
 - audioPrompt 与 bgmPrompt 必须完全分离，audioPrompt 只包含角色人声+动作音效，bgmPrompt 只包含背景音乐战略
 - 每个场景 audioPrompt 需含具体可朗读的台词文本，以确保 Veo 能实现精准对口型
 - 每个场景 bgmPrompt 需含 BPM 数字、曲风关键词、情绪弧线，确保 Suno 可直接使用
-- scenes 数组生成 3 到 5 个场景；copywriting 开场须用共鸣写法（先处境后方案），呼应 trustQuickScan.resonanceHooks
+- scenes 数组生成 3 到 5 个场景
 - visualPrompt 必须为英文生图提示词
 - 优先使用平台实时高频标签和热词
 - 严格 JSON 格式，不要输出 JSON 之外的任何内容`,

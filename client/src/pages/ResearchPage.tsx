@@ -296,7 +296,7 @@ export default function ResearchPage() {
             <h1 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: 0 }}>竞品与对标分析</h1>
           </div>
           <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 14, margin: 0 }}>
-            Deep Research Pro · 双引擎快速扫描 + 四有信任处方 · 约 30 秒输出降维打击方案
+            双引擎驱动 · 底层流量扫描 + 战略处方生成 · 30秒内输出降维打击方案
           </p>
         </div>
 
@@ -316,8 +316,6 @@ export default function ResearchPage() {
           <div style={{ marginBottom: 24, padding: "20px 20px", background: "rgba(249,115,22,0.04)", border: "1px solid rgba(249,115,22,0.15)", borderRadius: 12, fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.8 }}>
             <p style={{ color: "#fb923c", fontWeight: 700, marginBottom: 8 }}>📘 操作流程</p>
             <p>① 选择平台 → ② 粘贴竞品文案/标题/逐字稿（5000字以内）→ ③ 点击执行（扣除60点）→ ④ 等待约30秒获取处方</p>
-            <p style={{ marginTop: 8, color: "#fb923c", fontWeight: 700 }}>🎯 四有信任 · Pro 快速层</p>
-            <p>自动扫描竞品「表面表达 vs 潜在表达」、四道门强弱（共鸣/方法/案例/保障）、3 条共鸣钩子，并生成先讲处境、后讲方案的脚本处方。深度用户洞察 Agent 三步（归类→挖潜在→写钩子）请使用上帝视角 Deep Research Max。</p>
             <p style={{ marginTop: 8, color: "#fb923c", fontWeight: 700 }}>💡 专家语录</p>
             <p style={{ fontStyle: "italic" }}>「不要用你的体力，去挑战对手的数据力。」</p>
           </div>
@@ -430,10 +428,6 @@ export default function ResearchPage() {
                       {result.overallStrategy || result.positioning}
                     </p>
                   </div>
-                )}
-
-                {result.trustQuickScan && (
-                  <TrustQuickScanCard scan={result.trustQuickScan} />
                 )}
 
                 {/* ── 多场景分镜制片台（新格式 scenes） ── */}
@@ -1117,77 +1111,6 @@ function ScriptImageCard({ index, script, platform, platformLabel }: {
               )}
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TrustQuickScanCard({ scan }: { scan: Record<string, any> }) {
-  const doors = scan.fourDoorsAudit || {};
-  const doorLabels: Record<string, string> = {
-    resonance: "有共鸣",
-    methodology: "有方法",
-    caseProof: "有案例",
-    guarantee: "有保障",
-  };
-  return (
-    <div style={{ background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 16, padding: "20px 24px" }}>
-      <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#fb923c", textTransform: "uppercase", marginBottom: 12 }}>
-        🎯 四有信任 · Pro 快速扫描
-      </p>
-      {Array.isArray(scan.surfaceVsLatent) && scan.surfaceVsLatent.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.55)", marginBottom: 8 }}>表面表达 → 潜在表达</p>
-          {scan.surfaceVsLatent.slice(0, 5).map((row: any, i: number) => (
-            <p key={i} style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", lineHeight: 1.7, margin: "0 0 6px" }}>
-              「{row.surface}」→ <span style={{ color: "#fdba74" }}>{row.latent}</span>
-            </p>
-          ))}
-        </div>
-      )}
-      {Object.keys(doorLabels).some((k) => doors[k]) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-          {Object.entries(doorLabels).map(([key, label]) => {
-            const d = doors[key];
-            if (!d) return null;
-            return (
-              <div key={key} style={{ flex: "1 1 120px", background: "rgba(0,0,0,0.25)", borderRadius: 10, padding: "10px 12px" }}>
-                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", margin: "0 0 4px" }}>{label}</p>
-                <p style={{ fontSize: 18, fontWeight: 800, color: "#fb923c", margin: 0 }}>{d.score ?? "—"}<span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.35)" }}>/10</span></p>
-                {d.note && <p style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", margin: "6px 0 0", lineHeight: 1.5 }}>{d.note}</p>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {scan.trustThresholdHint && (
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.7, margin: "0 0 12px" }}>
-          <strong style={{ color: "#fdba74" }}>信任临界点：</strong>{scan.trustThresholdHint}
-        </p>
-      )}
-      {scan.writingContrast && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-          {scan.writingContrast.ordinary && (
-            <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: 10 }}>
-              <p style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", margin: "0 0 4px" }}>普通写法</p>
-              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", margin: 0, lineHeight: 1.6 }}>{scan.writingContrast.ordinary}</p>
-            </div>
-          )}
-          {scan.writingContrast.resonant && (
-            <div style={{ background: "rgba(249,115,22,0.08)", borderRadius: 8, padding: 10 }}>
-              <p style={{ fontSize: 10, color: "#fb923c", margin: "0 0 4px" }}>共鸣写法</p>
-              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", margin: 0, lineHeight: 1.6 }}>{scan.writingContrast.resonant}</p>
-            </div>
-          )}
-        </div>
-      )}
-      {Array.isArray(scan.resonanceHooks) && scan.resonanceHooks.length > 0 && (
-        <div>
-          <p style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.55)", marginBottom: 6 }}>共鸣钩子（可直接做开头）</p>
-          {scan.resonanceHooks.map((hook: string, i: number) => (
-            <p key={i} style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.7, margin: "0 0 4px" }}>· {hook}</p>
-          ))}
         </div>
       )}
     </div>
