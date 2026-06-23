@@ -1,14 +1,13 @@
 /**
  * 混合式即時資訊聚合：天氣／路況約 10 分鐘節流；即時新聞由 Gemini（**Vertex 優先** · Google Search Grounding）產出並約 30 分鐘節流。
  *
- * **Vertex 預設（可分模省成本）**
- * - **路況**：`gemini-3-flash-preview`（低延遲＋搜尋；可 `GEMINI_DASHBOARD_VERTEX_TRAFFIC_MODEL` 覆寫）
- * - **新聞**：`gemini-3-flash-preview`（與路況對齊，避免 2.5 在部分區域 grounding 回空；可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 覆寫）
- * - 共用兜底：`GEMINI_DASHBOARD_VERTEX_MODEL`（僅在對應專用 env 未設時代入該路）
+ * **路況**：高德 Web 服務「交通態勢」API（`AMAP_WEB_SERVICE_KEY`）；圓形／指定道路查詢，約 2 分鐘更新。
+ * **新聞 Vertex 預設**：`gemini-3-flash-preview`（可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 覆寫）
+ * - 共用兜底：`GEMINI_DASHBOARD_VERTEX_MODEL`（僅在 NEWS 專用 env 未設時代入）
  * - `GEMINI_DASHBOARD_USE_VERTEX=0` → 強制 Consumer **GEMINI_API_KEY**
  *
- * **Consumer 降級**：`GEMINI_DASHBOARD_TRAFFIC_MODEL`、`GEMINI_DASHBOARD_NEWS_MODEL`（預設皆 gemini-2.5-flash；Vertex 成功時仍以上方 3 Flash Preview 為主）。
- * 兩路並行時搜尋呼叫經 **序列化鎖**。
+ * **Consumer 降級（新聞）**：`GEMINI_DASHBOARD_NEWS_MODEL`（預設 gemini-2.5-flash）。
+ * 新聞搜尋與其它 dashboard 呼叫經 **序列化鎖**。
  */
 
 import { GoogleGenAI } from "@google/genai";
@@ -57,14 +56,14 @@ export interface HybridDashboardData {
 const LIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 const NEWS_CACHE_TTL_MS = 30 * 60 * 1000;
 
-/** Vertex：路況預設 3 Flash Preview；新聞與路況對齊同款，避免部分區域／專案未開 2.5 Flash 時「路況正常、新聞整包報錯」 */
-const DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL = "gemini-3-flash-preview";
-/** 見 {@link DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL}；可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 單獨覆寫 */
+/** Vertex 新聞預設 3 Flash Preview；可 `GEMINI_DASHBOARD_VERTEX_NEWS_MODEL` 單獨覆寫 */
 const DEFAULT_VERTEX_DASHBOARD_NEWS_MODEL = "gemini-3-flash-preview";
 
-/** Consumer API（AI Studio）降級；模型可獨立於 Vertex（預設 2.5-flash）。 */
-const DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL = "gemini-2.5-flash";
+/** Consumer API（AI Studio）新聞降級；預設 2.5-flash。 */
 const DEFAULT_GEMINI_DASHBOARD_NEWS_MODEL = "gemini-2.5-flash";
+
+const DEFAULT_AMAP_TRAFFIC_RADIUS_M = 2000;
+const DEFAULT_AMAP_TRAFFIC_LEVEL = 4;
 
 function dashboardVertexDisabled(): boolean {
   const v = String(process.env.GEMINI_DASHBOARD_USE_VERTEX ?? "").trim().toLowerCase();
@@ -81,26 +80,11 @@ function canUseVertexDashboard(): boolean {
   }
 }
 
-function resolveVertexDashboardTrafficModel(): string {
-  return (
-    String(process.env.GEMINI_DASHBOARD_VERTEX_TRAFFIC_MODEL || "").trim() ||
-    String(process.env.GEMINI_DASHBOARD_VERTEX_MODEL || "").trim() ||
-    DEFAULT_VERTEX_DASHBOARD_TRAFFIC_MODEL
-  );
-}
-
 function resolveVertexDashboardNewsModel(): string {
   return (
     String(process.env.GEMINI_DASHBOARD_VERTEX_NEWS_MODEL || "").trim() ||
     String(process.env.GEMINI_DASHBOARD_VERTEX_MODEL || "").trim() ||
     DEFAULT_VERTEX_DASHBOARD_NEWS_MODEL
-  );
-}
-
-function resolveConsumerTrafficModel(): string {
-  return (
-    String(process.env.GEMINI_DASHBOARD_TRAFFIC_MODEL || DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL).trim() ||
-    DEFAULT_GEMINI_DASHBOARD_TRAFFIC_MODEL
   );
 }
 
@@ -398,62 +382,6 @@ async function fetchAmbientNewsRssFallbackBundle(): Promise<AmbientNewsBundle> {
   return { domestic, international };
 }
 
-function safeParseTrafficJson(raw: string): HybridDashboardData["traffic"] {
-  const fallback: HybridDashboardData["traffic"] = {
-    summary: "路況資料暫時無法解析",
-    congestedAreas: [],
-  };
-  const t = raw.trim();
-  if (!t) return { ...fallback, summary: "路況資料暫時無法取得" };
-  try {
-    const o = JSON.parse(t) as { summary?: string; congestedAreas?: string[] };
-    return {
-      summary: String(o.summary || "").trim() || fallback.summary,
-      congestedAreas: Array.isArray(o.congestedAreas) ? o.congestedAreas.map(String) : [],
-    };
-  } catch {
-    const m = t.match(/\{[\s\S]*"summary"[\s\S]*\}/);
-    if (m) {
-      try {
-        const o = JSON.parse(m[0]) as { summary?: string; congestedAreas?: string[] };
-        return {
-          summary: String(o.summary || "").trim() || fallback.summary,
-          congestedAreas: Array.isArray(o.congestedAreas) ? o.congestedAreas.map(String) : [],
-        };
-      } catch {
-        /* ignore */
-      }
-    }
-    return { ...fallback, summary: t.slice(0, 200) };
-  }
-}
-
-async function fetchTrafficViaGemini(locationLabel: string): Promise<HybridDashboardData["traffic"]> {
-  const systemInstruction =
-    "你是交通資訊助理。請用 Google 搜尋查詢使用者給定區域的「即時路況」與「擁堵路段」（若搜尋不可用則依常識給出保守說明並註明不確定）。" +
-    "僅輸出合法 JSON：{\"summary\":\"一句話繁體中文總結\",\"congestedAreas\":[\"路段1\",\"路段2\"]}。" +
-    "congestedAreas 最多 5 條，沒有則為空陣列。";
-
-  const userText = `請查詢【${locationLabel}】現在的即時路況與主要擁堵區段。`;
-
-  const baseCfg: Record<string, unknown> = {
-    systemInstruction,
-    responseMimeType: "application/json",
-    temperature: 0.3,
-    maxOutputTokens: 4096,
-  };
-
-  const text = await generateDashboardTextWithGoogleSearch({
-    userText,
-    baseCfg,
-    vertexModel: resolveVertexDashboardTrafficModel(),
-    consumerModel: resolveConsumerTrafficModel(),
-    logTag: "hybridDashboard",
-  });
-
-  return safeParseTrafficJson(text);
-}
-
 /** 福建平潭一帶常與台灣西側 bbox 重疊，排除以免路況／新聞被誤標為台灣。 */
 function isPingtanFujianApprox(lat: number, lon: number): boolean {
   return lat >= 25.12 && lat <= 25.68 && lon >= 119.52 && lon <= 119.99;
@@ -484,28 +412,206 @@ function isRoughlyMainlandChina(lat: number, lon: number): boolean {
   return true;
 }
 
-/** 路況搜尋用：在座標基礎上給可搜關鍵字，避免只丟經緯度導致摘要空泛 */
-function trafficSearchLabelFromCoords(lat: number, lon: number): string | null {
-  if (isRoughlyTaiwanIsland(lat, lon)) {
-    return "台灣西部國道與主要都會區快速道路、市區幹道即時路況";
+const AMAP_TRAFFIC_STATUS_ZH: Record<number, string> = {
+  0: "未知",
+  1: "畅通",
+  2: "缓行",
+  3: "拥堵",
+  4: "严重拥堵",
+};
+
+function amapTrafficStatusLabel(raw: unknown): string {
+  const n = Number(raw);
+  return AMAP_TRAFFIC_STATUS_ZH[n] ?? "未知";
+}
+
+function resolveAmapWebServiceKey(): string {
+  return String(process.env.AMAP_WEB_SERVICE_KEY || process.env.AMAP_API_KEY || "").trim();
+}
+
+function resolveAmapTrafficRadius(): number {
+  const n = Number(process.env.AMAP_TRAFFIC_RADIUS || DEFAULT_AMAP_TRAFFIC_RADIUS_M);
+  if (!Number.isFinite(n)) return DEFAULT_AMAP_TRAFFIC_RADIUS_M;
+  return Math.min(5000, Math.max(200, Math.round(n)));
+}
+
+function resolveAmapTrafficLevel(): number {
+  const n = Number(process.env.AMAP_TRAFFIC_LEVEL || DEFAULT_AMAP_TRAFFIC_LEVEL);
+  if (!Number.isFinite(n)) return DEFAULT_AMAP_TRAFFIC_LEVEL;
+  return Math.min(6, Math.max(1, Math.round(n)));
+}
+
+/** WGS-84（浏览器 GPS）→ GCJ-02（高德坐标系）；仅在中国大陆偏移。 */
+function wgs84ToGcj02(lat: number, lon: number): { lat: number; lon: number } {
+  const pi = Math.PI;
+  const a = 6378245.0;
+  const ee = 0.006693421622965943;
+  const outOfChina = lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271;
+  if (outOfChina) return { lat, lon };
+
+  const transformLat = (x: number, y: number) => {
+    let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+    ret += ((20.0 * Math.sin(6.0 * x * pi) + 20.0 * Math.sin(2.0 * x * pi)) * 2.0) / 3.0;
+    ret += ((20.0 * Math.sin(y * pi) + 40.0 * Math.sin((y / 3.0) * pi)) * 2.0) / 3.0;
+    ret += ((160.0 * Math.sin((y / 12.0) * pi) + 320 * Math.sin((y * pi) / 30.0)) * 2.0) / 3.0;
+    return ret;
+  };
+  const transformLon = (x: number, y: number) => {
+    let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+    ret += ((20.0 * Math.sin(6.0 * x * pi) + 20.0 * Math.sin(2.0 * x * pi)) * 2.0) / 3.0;
+    ret += ((20.0 * Math.sin(x * pi) + 40.0 * Math.sin((x / 3.0) * pi)) * 2.0) / 3.0;
+    ret += ((150.0 * Math.sin((x / 12.0) * pi) + 300.0 * Math.sin((x / 30.0) * pi)) * 2.0) / 3.0;
+    return ret;
+  };
+
+  let dLat = transformLat(lon - 105.0, lat - 35.0);
+  let dLon = transformLon(lon - 105.0, lat - 35.0);
+  const radLat = (lat / 180.0) * pi;
+  let magic = Math.sin(radLat);
+  magic = 1 - ee * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / (((a * (1 - ee)) / (magic * sqrtMagic)) * pi);
+  dLon = (dLon * 180.0) / ((a / sqrtMagic) * Math.cos(radLat) * pi);
+  return { lat: lat + dLat, lon: lon + dLon };
+}
+
+type AmapTrafficRoad = {
+  name?: string;
+  status?: string | number;
+  direction?: string;
+  speed?: string | number;
+};
+
+type AmapTrafficResponse = {
+  status?: string;
+  info?: string;
+  infocode?: string;
+  trafficinfo?: {
+    description?: string;
+    evaluation?: {
+      expedite?: string;
+      congested?: string;
+      blocked?: string;
+      unknown?: string;
+      status?: string | number;
+      description?: string;
+    };
+    roads?: AmapTrafficRoad[];
+  };
+};
+
+function mapAmapTrafficResponse(data: AmapTrafficResponse): HybridDashboardData["traffic"] {
+  if (String(data.status) !== "1") {
+    const info = String(data.info || "请求失败").trim();
+    throw new Error(`amap_traffic_${info}`);
   }
-  if (isRoughlyHongKong(lat, lon)) {
-    return "香港島、九龍與新界主要幹道即時路況";
+
+  const ti = data.trafficinfo;
+  const ev = ti?.evaluation;
+  const overall = amapTrafficStatusLabel(ev?.status);
+  const desc = String(ti?.description || ev?.description || "").trim();
+  const parts: string[] = [];
+  if (desc) parts.push(desc);
+  if (ev?.expedite != null || ev?.congested != null || ev?.blocked != null) {
+    parts.push(
+      `畅通 ${ev?.expedite ?? "—"}%，缓行 ${ev?.congested ?? "—"}%，拥堵 ${ev?.blocked ?? "—"}%`,
+    );
   }
-  if (isRoughlyMacau(lat, lon)) {
-    return "澳門半島與離島主幹道即時路況";
+  if (parts.length === 0) parts.push(`周边路况：${overall}`);
+  else parts.unshift(`周边路况：${overall}`);
+
+  const congestedAreas = (Array.isArray(ti?.roads) ? ti!.roads! : [])
+    .filter((r) => {
+      const s = Number(r?.status);
+      return s === 3 || s === 4;
+    })
+    .slice(0, 5)
+    .map((r) => {
+      const name = String(r?.name || "未知道路").trim();
+      const dir = String(r?.direction || "").trim();
+      const status = amapTrafficStatusLabel(r?.status);
+      const speed = r?.speed != null && String(r.speed).trim() ? `${r.speed} km/h` : "";
+      const seg = dir ? `${name}（${dir}）` : name;
+      return speed ? `${seg} — ${status}，${speed}` : `${seg} — ${status}`;
+    });
+
+  return { summary: parts.join("；"), congestedAreas };
+}
+
+async function fetchAmapTrafficJson(url: string): Promise<AmapTrafficResponse> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+  if (!res.ok) throw new Error(`amap_traffic_http_${res.status}`);
+  return (await res.json()) as AmapTrafficResponse;
+}
+
+/** 圆形区域交通态势：https://restapi.amap.com/v3/traffic/status/circle */
+async function fetchTrafficViaAmapCircle(lat: number, lon: number, apiKey: string): Promise<HybridDashboardData["traffic"]> {
+  const gcj = wgs84ToGcj02(lat, lon);
+  const location = `${gcj.lon.toFixed(6)},${gcj.lat.toFixed(6)}`;
+  const params = new URLSearchParams({
+    key: apiKey,
+    location,
+    radius: String(resolveAmapTrafficRadius()),
+    level: String(resolveAmapTrafficLevel()),
+    extensions: "all",
+    output: "JSON",
+  });
+  const url = `https://restapi.amap.com/v3/traffic/status/circle?${params.toString()}`;
+  const data = await fetchAmapTrafficJson(url);
+  return mapAmapTrafficResponse(data);
+}
+
+/** 指定线路交通态势：https://restapi.amap.com/v3/traffic/status/road */
+async function fetchTrafficViaAmapRoad(
+  roadName: string,
+  adcode: string,
+  apiKey: string,
+): Promise<HybridDashboardData["traffic"]> {
+  const params = new URLSearchParams({
+    key: apiKey,
+    name: roadName,
+    adcode,
+    level: String(resolveAmapTrafficLevel()),
+    extensions: "all",
+    output: "JSON",
+  });
+  const url = `https://restapi.amap.com/v3/traffic/status/road?${params.toString()}`;
+  const data = await fetchAmapTrafficJson(url);
+  return mapAmapTrafficResponse(data);
+}
+
+async function fetchTraffic(opts: { lat?: number; lon?: number }): Promise<HybridDashboardData["traffic"]> {
+  const apiKey = resolveAmapWebServiceKey();
+  if (!apiKey) {
+    return {
+      summary: "路况暂不可用：请在后端配置 AMAP_WEB_SERVICE_KEY（高德 Web 服务 API Key）",
+      congestedAreas: [],
+    };
   }
-  if (!isRoughlyMainlandChina(lat, lon)) return null;
-  if (lat >= 30.7 && lat <= 31.95 && lon >= 120.85 && lon <= 122.25) {
-    return "上海市快速路、高架與市區主幹道";
+
+  const hasCoords =
+    opts.lat != null && opts.lon != null && Number.isFinite(opts.lat) && Number.isFinite(opts.lon);
+
+  if (hasCoords) {
+    if (!isRoughlyMainlandChina(opts.lat!, opts.lon!)) {
+      return {
+        summary: "高德交通态势目前仅覆盖中国大陆指定城市，台港澳及海外定位暂不支持。",
+        congestedAreas: [],
+      };
+    }
+    return fetchTrafficViaAmapCircle(opts.lat!, opts.lon!, apiKey);
   }
-  if (lat >= 30.55 && lat <= 32.05 && lon >= 119.75 && lon <= 121.35) {
-    return "蘇州市區及周邊主幹道";
+
+  const roadName = String(process.env.AMAP_TRAFFIC_ROAD_NAME || "").trim();
+  const adcode = String(process.env.AMAP_TRAFFIC_ADCODE || "").trim();
+  if (roadName && adcode) {
+    return fetchTrafficViaAmapRoad(roadName, adcode, apiKey);
   }
-  if (lat >= 30.0 && lat <= 32.6 && lon >= 118.5 && lon <= 122.6) {
-    return "長三角江浙滬主要城市快速路即時路況";
-  }
-  return `中國大陸（緯度 ${lat.toFixed(2)}°、經度 ${lon.toFixed(2)}°）附近主幹道`;
+
+  return {
+    summary: "需要浏览器定位，或配置 AMAP_TRAFFIC_ROAD_NAME 与 AMAP_TRAFFIC_ADCODE 才能查询路况。",
+    congestedAreas: [],
+  };
 }
 
 /** 快取版本後綴：後端修復空新聞後舊條目不應佔 30 分鐘。 */
@@ -690,12 +796,6 @@ export async function executeDashboardLive(opts: HybridDashboardOpts = {}): Prom
   const hasCoords = lat != null && lon != null && Number.isFinite(lat) && Number.isFinite(lon);
   const hasOwm = !!String(process.env.OPENWEATHER_API_KEY || "").trim();
 
-  const trafficLabel =
-    opts.trafficLocation?.trim() ||
-    (hasCoords
-      ? trafficSearchLabelFromCoords(lat!, lon!) ?? `座標 ${lat!.toFixed(2)}, ${lon!.toFixed(2)} 鄰近道路`
-      : "未指定區域（路況為概括參考）");
-
   const [weatherResult, trafficResult] = await Promise.allSettled([
     (async () => {
       if (hasOwm && hasCoords) {
@@ -717,7 +817,7 @@ export async function executeDashboardLive(opts: HybridDashboardOpts = {}): Prom
       }
       throw new Error("no_weather_source");
     })(),
-    fetchTrafficViaGemini(trafficLabel),
+    fetchTraffic({ lat, lon }),
   ]);
 
   const weather: HybridDashboardData["weather"] =
@@ -728,7 +828,7 @@ export async function executeDashboardLive(opts: HybridDashboardOpts = {}): Prom
   const traffic: HybridDashboardData["traffic"] =
     trafficResult.status === "fulfilled"
       ? trafficResult.value
-      : { summary: "路況資料暫時無法取得（請確認 Vertex 專案／IAM 或 GEMINI_API_KEY）", congestedAreas: [] };
+      : { summary: "路况资料暂时无法取得（请确认 AMAP_WEB_SERVICE_KEY 与定位）", congestedAreas: [] };
 
   const data: HybridDashboardLiveData = {
     currentTime: getPreciseLocalTime(timeZone),

@@ -32,6 +32,7 @@
     "push:github": "bash scripts/gh-git-push.sh"
   },
   "dependencies": {
+    "@amap/amap-jsapi-loader": "^1.0.1",
     "@aws-sdk/client-s3": "^3.693.0",
     "@aws-sdk/s3-request-presigner": "^3.693.0",
     "@fal-ai/client": "^1.9.3",
