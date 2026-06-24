@@ -413,20 +413,25 @@ export async function runPlatformTopicImagePipeline(
     if (creationIdOut != null && database) {
       try {
         await database
-          .update(userCreations)
-          .set({
-            status: finalStatus,
-            outputUrl: imageUrl,
-            updatedAt: new Date(),
-            metadata: JSON.stringify({
-              ...newJobMetaBase,
-              resolvedFrameStatus: finalStatus,
-              imagePromptStats: promptStats,
-              fallbackUsed,
-              coverClickEstimate,
-            }),
-          })
-          .where(eq(userCreations.id, creationIdOut));
+            .update(userCreations)
+            .set({
+              status: finalStatus,
+              outputUrl: imageUrl,
+              updatedAt: new Date(),
+              metadata: JSON.stringify({
+                ...newJobMetaBase,
+                resolvedFrameStatus: finalStatus,
+                imagePromptStats: promptStats,
+                fallbackUsed,
+                coverClickEstimate,
+                // Store topicHook + context so exportInteractiveHtml can build a
+                // full Markdown doc (copywriting + script) without querying the
+                // platformStrategicBlueprintSnapshots table for new creations.
+                topicHook: String(input.topicHook || "").trim().slice(0, 500) || undefined,
+                context: String(input.context || "").trim().slice(0, 12000) || undefined,
+              }),
+            })
+            .where(eq(userCreations.id, creationIdOut));
       } catch (e) {
         console.warn("[runPlatformTopicImagePipeline] update platform_topic_frame failed:", e);
       }
