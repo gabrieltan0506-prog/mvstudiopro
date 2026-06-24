@@ -105,6 +105,93 @@ function advancedAIReportDataToMarkdown(report: Record<string, any>, fallbackTit
   return lines.join("\n").trim();
 }
 
+/**
+ * Convert a platform_topic_frame blueprint into Markdown for exportInteractiveHtml.
+ * Handles both inline metadata (new creations) and snapshot-loaded blueprints (historical).
+ */
+function platformTopicFrameToMarkdown(
+  blueprint: {
+    title?: string;
+    hook?: string;
+    copywriting?: string;
+    detailedScript?: string;
+    publishingAdvice?: string;
+    actionableSteps?: unknown;
+    suitablePlatforms?: unknown;
+    executionDetails?: {
+      environmentAndWardrobe?: string;
+      lightingAndCamera?: string;
+      stepByStepScript?: unknown;
+    };
+    format?: string;
+  },
+  fallbackTitle: string,
+): string {
+  const safeStr = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  const safeArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.map((x) => (typeof x === "string" ? x : "")).filter(Boolean) : [];
+  const lines: string[] = [];
+
+  const title = safeStr(blueprint.title) || fallbackTitle || "选题文案";
+  const hook = safeStr(blueprint.hook);
+  const copywriting = safeStr(blueprint.copywriting);
+  const detailedScript = safeStr(blueprint.detailedScript);
+  const publishingAdvice = safeStr(blueprint.publishingAdvice);
+  const format = safeStr(blueprint.format);
+  const steps = safeArr(blueprint.actionableSteps);
+  const platforms = safeArr(blueprint.suitablePlatforms);
+
+  lines.push(`# ${title}`);
+  if (format) lines.push(`\n> 内容形式：${format}`);
+  if (platforms.length > 0) lines.push(`\n> 适合平台：${platforms.join("、")}`);
+  lines.push("");
+
+  if (hook) {
+    lines.push("## 开头钩子");
+    lines.push(`\n${hook}`);
+    lines.push("");
+  }
+
+  if (copywriting) {
+    lines.push("## 正文文案");
+    lines.push(`\n${copywriting}`);
+    lines.push("");
+  }
+
+  if (detailedScript) {
+    lines.push("## 详细脚本");
+    lines.push(`\n${detailedScript}`);
+    lines.push("");
+  }
+
+  if (steps.length > 0) {
+    lines.push("## 落地步骤");
+    for (const step of steps) lines.push(`- ${step}`);
+    lines.push("");
+  }
+
+  if (publishingAdvice) {
+    lines.push("## 发布建议");
+    lines.push(`\n${publishingAdvice}`);
+    lines.push("");
+  }
+
+  const ed = blueprint.executionDetails;
+  if (ed && typeof ed === "object") {
+    lines.push("## 执行细节");
+    if (safeStr(ed.environmentAndWardrobe)) lines.push(`\n**拍摄环境与服装**：${safeStr(ed.environmentAndWardrobe)}`);
+    if (safeStr(ed.lightingAndCamera)) lines.push(`\n**灯光与机位**：${safeStr(ed.lightingAndCamera)}`);
+    const ss = safeArr(ed.stepByStepScript);
+    if (ss.length > 0) {
+      lines.push("\n**逐步脚本**：");
+      for (const s of ss) lines.push(`- ${s}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
 async function db() {
   const d = await getDb();
   if (!d) throw new Error("Database not available");
@@ -645,6 +732,42 @@ export const creationsRouter = router({
       // This makes all existing strategy map creations exportable too.
       if (!md && meta.report && typeof meta.report === "object") {
         md = advancedAIReportDataToMarkdown(meta.report as any, row.title || "");
+      }
+
+      // Fallback for platform_topic_frame: full blueprint lives in
+      // platformStrategicBlueprintSnapshots keyed by sceneId.
+      // New creations also store topicHook + context inline in metadata.
+      if (!md && row.type === "platform_topic_frame") {
+        const sceneId = String(meta.sceneId || meta.scene_id || "").trim();
+        const inlineTitle = String(meta.topicHook || meta.title || "").trim();
+        const inlineCopy = String(meta.context || meta.copywriting || "").trim();
+        if (inlineTitle || inlineCopy) {
+          md = platformTopicFrameToMarkdown(
+            { title: inlineTitle, copywriting: inlineCopy },
+            row.title || "",
+          );
+        } else if (sceneId) {
+          try {
+            const { platformStrategicBlueprintSnapshots: snapTable } = await import(
+              "../../drizzle/schema-platform-strategic-blueprints.js"
+            );
+            const { desc: descOp, eq: eqOp } = await import("drizzle-orm");
+            const snapRows = await database
+              .select({ blueprintsJson: snapTable.blueprintsJson })
+              .from(snapTable)
+              .where(eqOp(snapTable.userId, ctx.user.id))
+              .orderBy(descOp(snapTable.updatedAt))
+              .limit(1);
+            const rawJson = snapRows[0]?.blueprintsJson;
+            if (rawJson) {
+              const blueprints = JSON.parse(rawJson) as Array<Record<string, unknown>>;
+              const hit = blueprints.find((b) => String(b.sceneId || "").trim() === sceneId);
+              if (hit) md = platformTopicFrameToMarkdown(hit as any, row.title || "");
+            }
+          } catch (e) {
+            console.warn("[exportInteractiveHtml] platform_topic_frame snapshot lookup failed:", e);
+          }
+        }
       }
 
       if (!md) {
