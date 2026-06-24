@@ -1082,7 +1082,7 @@ export async function callGemini3_1_Pro_AiStudio(
   opts?: { skipVertexFallback?: boolean; compositeTranslationStrict?: boolean },
 ): Promise<string> {
   const isTopicCoverPipeline = statCtx?.pipeline === "topic_cover";
-  const hasOpenAiKey = Boolean(String(process.env.OPENAI_API_KEY || "").trim());
+  const hasOpenAiKey = Boolean(String(process.env.EVOLINK_API_KEY || process.env.OPENAI_API_KEY || "").trim());
   const allowCoverOpenAi =
     isPlatformImageOpenAiAllowed() || (isTopicCoverPipeline && hasOpenAiKey);
   if (!allowCoverOpenAi) {
@@ -1092,7 +1092,7 @@ export async function callGemini3_1_Pro_AiStudio(
         "[封面·英文化] OpenAI 未启用 · 已选择 GPT 5.4 · 中止（无 Flash 兜底）",
       );
       throw new Error(
-        "封面英文化：已选择 GPT 5.4，但服务端未启用 OpenAI（需 PLATFORM_IMAGE_ALLOW_OPENAI=1 或配置 OPENAI_API_KEY）",
+        "封面英文化：已选择 GPT 5.4，但服务端未启用 OpenAI（需 PLATFORM_IMAGE_ALLOW_OPENAI=1 或配置 EVOLINK_API_KEY / OPENAI_API_KEY）",
       );
     }
     appendGpt54TranslationDebug(flowLog, "[英文化] OpenAI 未啟用 · 改走 Vertex（設 PLATFORM_IMAGE_ALLOW_OPENAI=1 可恢復 GPT）");
