@@ -389,12 +389,17 @@ const getGeminiModelName = (modelTier: ModelTier | undefined) =>
   modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-2.5-flash";
 
 const DEFAULT_OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
+const EVOLINK_CHAT_COMPLETIONS_URL = "https://api.evolink.ai/v1/chat/completions";
 
 function getOpenAiModelName(modelTier: ModelTier | undefined) {
   if (modelTier === "gpt54" || modelTier === "gpt5") {
     return String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim() || "gpt-5.4";
   }
   return String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim() || "gpt-5.4";
+}
+
+function getEvolinkApiKey(): string {
+  return String(process.env.EVOLINK_API_KEY || "").trim();
 }
 
 function hasVertexEnv() {
@@ -469,8 +474,18 @@ const resolveTarget = (
   explicitModelName?: string,
 ): LlmTarget => {
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
+    const evolinkKey = getEvolinkApiKey();
+    if (evolinkKey) {
+      // 優先使用 Evolink（OpenAI 相容端點）呼叫 GPT-5.4/5.5
+      return {
+        provider: "openai",
+        apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+        apiKey: evolinkKey,
+        modelName: String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier),
+      };
+    }
     if (!ENV.openaiApiKey) {
-      throw new Error("OPENAI_API_KEY is not configured");
+      throw new Error("EVOLINK_API_KEY (or OPENAI_API_KEY) is not configured");
     }
 
     return {

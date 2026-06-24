@@ -217,6 +217,8 @@ export function resolvePlatformCompositeSheetImageEngine(
  * 預設 **false**（無額度時零 OpenAI）。設 `PLATFORM_IMAGE_ALLOW_OPENAI=1`（或 `true`/`yes`/`on`）恢復舊兜底。
  */
 export function isPlatformImageOpenAiAllowed(): boolean {
+  // 配置 EVOLINK_API_KEY 時自動啟用（Evolink 為 OpenAI 相容端點）
+  if (String(process.env.EVOLINK_API_KEY || "").trim()) return true;
   const v = norm(process.env.PLATFORM_IMAGE_ALLOW_OPENAI);
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }

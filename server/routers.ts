@@ -8625,15 +8625,17 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         question: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
-        if (!apiKey) return { ok: false as const, error: "Missing OPENAI_API_KEY" };
+        const evolinkKey = String(process.env.EVOLINK_API_KEY || "").trim();
+        const apiKey = evolinkKey || String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+        if (!apiKey) return { ok: false as const, error: "Missing EVOLINK_API_KEY or OPENAI_API_KEY" };
+        const analysisBaseUrl = evolinkKey ? "https://api.evolink.ai/v1" : "https://api.openai.com/v1";
 
         const question = input.question ||
           "请详细分析这张图片的视觉风格、色彩搭配、构图特点、情绪氛围，以及创作者可以借鉴的核心元素。用简体中文回答，分点说明。";
 
         let res: Response;
         try {
-          res = await fetch("https://api.openai.com/v1/responses", {
+          res = await fetch(`${analysisBaseUrl}/responses`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({
