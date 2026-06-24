@@ -173,17 +173,37 @@ function summarizeMessagesForPeek(messages: Message[], maxChars = 24_000): strin
 }
 
 export function extractFirstChoicePlainText(result: InvokeResult): string {
-  const c = result?.choices?.[0]?.message?.content;
-  if (typeof c === "string") return c;
+  const choice = result?.choices?.[0];
+  const c = choice?.message?.content;
+  if (typeof c === "string" && c.trim()) return c;
   if (Array.isArray(c)) {
-    return c
+    const joined = c
       .map((part) =>
         typeof part === "object" && part !== null && "text" in part && typeof part.text === "string"
           ? part.text
           : "",
       )
       .join("");
+    if (joined.trim()) return joined;
   }
+  // GPT-5 reasoning 系列：content 可能為 null，實際文字在 output_text 或其他欄位
+  const raw = result as any;
+  if (typeof raw?.output_text === "string" && raw.output_text.trim()) return raw.output_text;
+  if (Array.isArray(raw?.output)) {
+    for (const item of raw.output) {
+      if (item?.type === "message" && Array.isArray(item?.content)) {
+        for (const part of item.content) {
+          if (part?.type === "output_text" && typeof part?.text === "string" && part.text.trim()) {
+            return part.text;
+          }
+        }
+      }
+    }
+  }
+  if (typeof (choice as any)?.message?.refusal === "string") {
+    console.warn("[extractFirstChoicePlainText] model refused:", (choice as any).message.refusal);
+  }
+  console.warn("[extractFirstChoicePlainText] empty content. keys:", Object.keys(raw || {}).join(","), "choice keys:", Object.keys((choice as any) || {}).join(","));
   return "";
 }
 
@@ -474,16 +494,31 @@ const resolveTarget = (
   explicitModelName?: string,
 ): LlmTarget => {
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
-    const evolinkKey = getEvolinkApiKey();
-    if (evolinkKey) {
-      // 優先使用 Evolink（OpenAI 相容端點）呼叫 GPT-5.4/5.5
-      return {
-        provider: "openai",
-        apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
-        apiKey: evolinkKey,
-        modelName: String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier),
-      };
+    const resolvedModelName =
+      String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier);
+
+    /**
+     * GPT-5.5 uses the native OpenAI API key (OPENAI_API_KEY / OPENAI_API_URL).
+     * GPT-5.4 uses Evolink API key (EVOLINK_API_KEY) and Evolink base URL.
+     * Routing is determined by the resolved model name at call time.
+     */
+    const isGpt55Model = /gpt-?5\.5/i.test(resolvedModelName);
+
+    if (!isGpt55Model) {
+      // GPT-5.4 uses Evolink API key (https://api.evolink.ai/v1)
+      const evolinkKey = getEvolinkApiKey();
+      if (evolinkKey) {
+        return {
+          provider: "openai",
+          // GPT-5.4 uses Evolink API key — see EVOLINK_API_KEY env var
+          apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+          apiKey: evolinkKey,
+          modelName: resolvedModelName,
+        };
+      }
     }
+
+    // GPT-5.5 (and GPT-5.4 when no Evolink key is configured) fall through to native OpenAI
     if (!ENV.openaiApiKey) {
       throw new Error("EVOLINK_API_KEY (or OPENAI_API_KEY) is not configured");
     }
@@ -492,7 +527,7 @@ const resolveTarget = (
       provider: "openai",
       apiUrl: String(process.env.OPENAI_API_URL || DEFAULT_OPENAI_CHAT_COMPLETIONS_URL).trim() || DEFAULT_OPENAI_CHAT_COMPLETIONS_URL,
       apiKey: ENV.openaiApiKey,
-      modelName: String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier),
+      modelName: resolvedModelName,
     };
   }
 
