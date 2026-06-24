@@ -409,7 +409,8 @@ const getGeminiModelName = (modelTier: ModelTier | undefined) =>
   modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-2.5-flash";
 
 const DEFAULT_OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
-const EVOLINK_CHAT_COMPLETIONS_URL = "https://api.evolink.ai/v1/chat/completions";
+// Use direct.evolink.ai for better long-connection support (avoids Cloudflare 524)
+const EVOLINK_CHAT_COMPLETIONS_URL = "https://direct.evolink.ai/v1/chat/completions";
 
 function getOpenAiModelName(modelTier: ModelTier | undefined) {
   if (modelTier === "gpt54" || modelTier === "gpt5") {
@@ -505,7 +506,7 @@ const resolveTarget = (
     const isGpt55Model = /gpt-?5\.5/i.test(resolvedModelName);
 
     if (!isGpt55Model) {
-      // GPT-5.4 uses Evolink API key (https://api.evolink.ai/v1)
+      // GPT-5.4 uses Evolink API key (https://direct.evolink.ai/v1)
       const evolinkKey = getEvolinkApiKey();
       if (evolinkKey) {
         return {
