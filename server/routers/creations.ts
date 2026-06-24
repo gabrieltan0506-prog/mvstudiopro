@@ -16,6 +16,95 @@ import { getDb } from "../db";
 import { userCreations, userFavorites } from "../../drizzle/schema-creations";
 import { eq, and, desc, sql, lt, lte, isNull, or, inArray } from "drizzle-orm";
 
+/**
+ * Convert AdvancedAIReportData (stored in meta.report for advanced_decision_report / 战略地图)
+ * into Markdown so that exportInteractiveHtml can render it.
+ * This allows both new and historical strategy-map creations to be exported as HTML.
+ */
+function advancedAIReportDataToMarkdown(report: Record<string, any>, fallbackTitle: string): string {
+  const safeStr = (v: unknown): string => (typeof v === "string" ? v : "");
+  const safeArr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+  const lines: string[] = [];
+
+  const topic = safeStr(report.topic) || fallbackTitle || "个性化战略地图";
+  const dateRange = safeStr(report.dateRange);
+
+  lines.push(`# ${topic}`);
+  if (dateRange) lines.push(`\n> 分析窗口：${dateRange}`);
+  lines.push("");
+
+  // Global Predictions
+  const gp = report.globalPredictions;
+  if (gp && typeof gp === "object") {
+    lines.push("## 全局预测指标");
+    if (typeof gp.totalAddressableReach === "number") lines.push(`- **预估触达规模**：${gp.totalAddressableReach.toLocaleString()}`);
+    if (typeof gp.estimatedCtr === "number") lines.push(`- **预估点击率**：${(gp.estimatedCtr * 100).toFixed(1)}%`);
+    if (typeof gp.revenueMultiplier === "number") lines.push(`- **商业倍数**：${gp.revenueMultiplier}×`);
+    const radar = gp.hitPotentialRadar;
+    if (radar && typeof radar === "object") {
+      lines.push("### 平台命中潜力雷达");
+      for (const [k, v] of Object.entries(radar)) {
+        lines.push(`- **${k}**：${v}`);
+      }
+    }
+    lines.push("");
+  }
+
+  // Core Insights
+  const insights = safeArr(report.coreInsights);
+  if (insights.length > 0) {
+    lines.push("## 核心洞察");
+    for (const insight of insights) {
+      if (!insight || typeof insight !== "object") continue;
+      const ins = insight as Record<string, any>;
+      if (safeStr(ins.title)) lines.push(`\n### ${safeStr(ins.title)}`);
+      if (safeStr(ins.content)) lines.push(`\n${safeStr(ins.content)}`);
+      if (safeStr(ins.metricsText)) lines.push(`\n> ${safeStr(ins.metricsText)}`);
+    }
+    lines.push("");
+  }
+
+  // Execution Suggestions
+  const es = report.executionSuggestions;
+  if (es && typeof es === "object") {
+    const mabVariants = safeArr(es.mabVariants);
+    if (mabVariants.length > 0) {
+      lines.push("## 赛马标题方案");
+      for (const v of mabVariants) {
+        if (!v || typeof v !== "object") continue;
+        const vr = v as Record<string, any>;
+        lines.push(`- **${safeStr(vr.title) || safeStr(vr.id)}** — 预估 CTR ${typeof vr.estimatedCtr === "number" ? (vr.estimatedCtr * 100).toFixed(1) + "%" : "—"}`);
+      }
+      lines.push("");
+    }
+    const personalization = safeArr(es.personalization);
+    if (personalization.length > 0) {
+      lines.push("## 个性化选题方向");
+      for (const p of personalization) {
+        if (!p || typeof p !== "object") continue;
+        const pr = p as Record<string, any>;
+        if (safeStr(pr.topicDirection)) lines.push(`- ${safeStr(pr.topicDirection)}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // Topic Structure Examples
+  const examples = safeArr(report.topicStructureExamples);
+  if (examples.length > 0) {
+    lines.push("## 内容结构示例");
+    for (const ex of examples) {
+      if (!ex || typeof ex !== "object") continue;
+      const exr = ex as Record<string, any>;
+      if (safeStr(exr.title)) lines.push(`\n### ${safeStr(exr.title)}`);
+      if (safeStr(exr.structure)) lines.push(`\n${safeStr(exr.structure)}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
 async function db() {
   const d = await getDb();
   if (!d) throw new Error("Database not available");
@@ -549,7 +638,15 @@ export const creationsRouter = router({
       if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "作品不存在或无权访问" });
       let meta: any = {};
       try { meta = JSON.parse(row.metadata || "{}"); } catch {}
-      const md = String(meta.reportMarkdown || meta.draftMarkdown || "").trim();
+      let md = String(meta.reportMarkdown || meta.draftMarkdown || "").trim();
+
+      // Fallback for advanced_decision_report (战略地图) which stores data as
+      // meta.report (AdvancedAIReportData) instead of reportMarkdown.
+      // This makes all existing strategy map creations exportable too.
+      if (!md && meta.report && typeof meta.report === "object") {
+        md = advancedAIReportDataToMarkdown(meta.report as any, row.title || "");
+      }
+
       if (!md) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "该报告尚未生成 Markdown 内容，无法导出 HTML" });
       }
