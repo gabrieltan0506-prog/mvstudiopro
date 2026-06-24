@@ -499,35 +499,20 @@ const resolveTarget = (
       String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier);
 
     /**
-     * GPT-5.5 uses the native OpenAI API key (OPENAI_API_KEY / OPENAI_API_URL).
-     * GPT-5.4 uses Evolink API key (EVOLINK_API_KEY) and Evolink base URL.
-     * Routing is determined by the resolved model name at call time.
+     * Both GPT-5.4 and GPT-5.5 use Evolink API key (EVOLINK_API_KEY) and Evolink base URL.
+     * Native OpenAI API key is not used for these models.
+     * Refs:
+     *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.4/gpt-5.4-reference
+     *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.5/gpt-5.5-reference
      */
-    const isGpt55Model = /gpt-?5\.5/i.test(resolvedModelName);
-
-    if (!isGpt55Model) {
-      // GPT-5.4 uses Evolink API key (https://direct.evolink.ai/v1)
-      const evolinkKey = getEvolinkApiKey();
-      if (evolinkKey) {
-        return {
-          provider: "openai",
-          // GPT-5.4 uses Evolink API key — see EVOLINK_API_KEY env var
-          apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
-          apiKey: evolinkKey,
-          modelName: resolvedModelName,
-        };
-      }
+    const evolinkKey = getEvolinkApiKey();
+    if (!evolinkKey) {
+      throw new Error("EVOLINK_API_KEY is not configured");
     }
-
-    // GPT-5.5 (and GPT-5.4 when no Evolink key is configured) fall through to native OpenAI
-    if (!ENV.openaiApiKey) {
-      throw new Error("EVOLINK_API_KEY (or OPENAI_API_KEY) is not configured");
-    }
-
     return {
       provider: "openai",
-      apiUrl: String(process.env.OPENAI_API_URL || DEFAULT_OPENAI_CHAT_COMPLETIONS_URL).trim() || DEFAULT_OPENAI_CHAT_COMPLETIONS_URL,
-      apiKey: ENV.openaiApiKey,
+      apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+      apiKey: evolinkKey,
       modelName: resolvedModelName,
     };
   }
