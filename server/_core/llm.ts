@@ -1121,7 +1121,21 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenAI invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
+    throw new Error(`Evolink API error ${response.status}: ${response.statusText} – ${errorText.slice(0, 400)}`);
+  }
+
+  // Guard against Cloudflare / proxy returning an HTML error page with status 200
+  // (e.g. 524 timeout pages that arrive with 200 OK from intermediate CDN layers).
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("text/html")) {
+    throw new Error(
+      `Evolink returned HTML instead of JSON (status ${response.status}) — possible 524 timeout or Cloudflare error page`,
+    );
+  }
+  if (!contentType.includes("application/json") && !contentType.includes("text/event-stream") && contentType !== "") {
+    throw new Error(
+      `Evolink returned unexpected Content-Type "${contentType}" (status ${response.status}) — expected application/json`,
+    );
   }
 
   return (await response.json()) as InvokeResult;

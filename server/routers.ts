@@ -1989,10 +1989,27 @@ async function personalizeGrowthSnapshot(params: {
     response_format: { type: "json_object" },
   });
 
-  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  // Use extractFirstChoicePlainText to handle GPT-5 multi-part content arrays,
+  // reasoning-only responses (empty content), and other provider-specific formats.
+  // Then strip any markdown fences before JSON.parse to avoid "Unexpected token '<'"
+  // or "Unexpected token '`'" when Evolink returns an HTML page or the model wraps JSON.
+  const rawText = extractFirstChoicePlainText(response);
+  if (!rawText.trim()) {
+    throw new Error("personalizeGrowthSnapshot: LLM returned empty content (possible Evolink 524 or reasoning budget exhausted)");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractJsonString(rawText));
+  } catch (jsonErr) {
+    throw new Error(`personalizeGrowthSnapshot: JSON parse failed — ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)} — head: ${rawText.slice(0, 120)}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("personalizeGrowthSnapshot: parsed result is not an object");
+  }
+  const parsedObj = parsed as Record<string, unknown>;
   return growthSnapshotPersonalizationSchema.parse({
-    ...parsed,
-    decisionFramework: parsed?.decisionFramework || snapshot.decisionFramework,
+    ...parsedObj,
+    decisionFramework: parsedObj?.decisionFramework || snapshot.decisionFramework,
   });
 }
 
