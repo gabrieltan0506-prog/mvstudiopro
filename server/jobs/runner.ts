@@ -53,6 +53,7 @@ import {
   claimNextPdfExportJob,
   markJobFailed,
   markJobSucceeded,
+  patchJobRunningProgress,
   requeueJob,
   type JobType,
 } from "./repository";
@@ -1095,6 +1096,9 @@ async function processPlatformJob(
       const rawStage2 = (params as Record<string, unknown>).stage2LlmMode;
       const stage2LlmModeOverride =
         rawStage2 === "vertex" || rawStage2 === "openai" ? rawStage2 : undefined;
+      // Incremental accumulator: holds blueprints already written to job output during generation
+      const incrementalBlueprints: unknown[] = [];
+
       const built = await buildPlatformContent({
         snapshot: snapshotSummary,
         platformMenu,
@@ -1105,6 +1109,21 @@ async function processPlatformJob(
         abortSignal: undefined,
         stage1Handoff,
         stage2LlmModeOverride: stage2LlmModeOverride ?? null,
+        onBlueprintGenerated: platformJobId
+          ? async (blueprint, dimIndex) => {
+              incrementalBlueprints[dimIndex] = blueprint;
+              // Build a dense snapshot: only keep non-null slots in order
+              const partialBlueprints = incrementalBlueprints.filter(Boolean);
+              await patchJobRunningProgress(platformJobId, {
+                platformContent: {
+                  contentBlueprints: partialBlueprints,
+                  monetizationLanes: [],
+                },
+                incrementalBlueprintCount: partialBlueprints.length,
+                incrementalBlueprintLastDim: dimIndex + 1,
+              });
+            }
+          : undefined,
       });
       const uidRaw = jobUserId != null ? Number(jobUserId) : NaN;
       if (Number.isFinite(uidRaw) && Array.isArray(built.data?.contentBlueprints) && built.data.contentBlueprints.length > 0) {

@@ -1048,6 +1048,15 @@ const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】�
 - **每条方案应有辨识度**：五条的标题、场景、情绪基调 **建议明显不同**（不要五条同一结构换词）。
 - **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。`;
 
+/** 5 個內容維度（順序固定，與 Prompt 對齊） */
+const BLUEPRINT_DIMENSIONS = [
+  { index: 1, name: "核心专业洞察(Professional Insight)" },
+  { index: 2, name: "跨界结合与价值观(Cross-over Value)" },
+  { index: 3, name: "目标受众痛点暴击(Audience Pain Point)" },
+  { index: 4, name: "个人经历与人设魅力(IP Persona Story)" },
+  { index: 5, name: "强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）" },
+] as const;
+
 export async function buildPlatformContent(params: {
   snapshot: any;
   platformMenu: any;
@@ -1063,6 +1072,11 @@ export async function buildPlatformContent(params: {
    * 未傳時沿用 {@link resolvePlatformStage2LlmMode}（Fly env 等）。
    */
   stage2LlmModeOverride?: PlatformStage2LlmMode | null;
+  /**
+   * 逐條生成回呼：每生成一條 blueprint 立即觸發，供呼叫端即時持久化至 job output。
+   * `dimIndex` 為 0-based 維度序號（0–4）。
+   */
+  onBlueprintGenerated?: (blueprint: unknown, dimIndex: number) => Promise<void> | void;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1363,286 +1377,192 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
   const stage2LlmMode: PlatformStage2LlmMode = "openai";
   diagnostics.stage2LlmMode = stage2LlmMode;
   diagnostics.stage2LlmModeSource = "fixed_gpt55";
-  console.log("[buildPlatformContent] Stage2 LLM", {
+  const openaiCreativeModel = getPlatformStage2OpenAiModel();
+  const stage2ReasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
+  diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
+  diagnostics.platformStage2OpenAiReasoningEffort = stage2ReasoningEffort;
+
+  console.log("[buildPlatformContent] Stage2 incremental LLM", {
     stage2LlmMode,
     stage2LlmModeSource: diagnostics.stage2LlmModeSource,
-    geminiApiModel: null,
-    openaiModel: getPlatformStage2OpenAiModel(),
+    openaiModel: openaiCreativeModel,
+    mode: "parallel_per_dimension",
   });
 
-  /** Stage 2：默认 OpenAI GPT‑5.5；`PLATFORM_STAGE2_LLM=vertex` 走 Gemini API 退路。 */
-  let response: Awaited<ReturnType<typeof invokeLLM>> | undefined;
-  let vertexJsonErrMsg: string | null = null;
-  let vertexPlainErrMsg: string | null = null;
-  let geminiErrMsg: string | null = null;
-  let openaiJsonErrMsg: string | null = null;
-  let openaiPlainErrMsg: string | null = null;
-  let llmPath = "";
+  // ── 逐條生成：每個維度獨立呼叫 LLM，每條完成後立即回呼 onBlueprintGenerated ──────────
+  // 共 5 條 contentBlueprints（維度 1-5）+ 1 次 monetizationLanes，並行發出。
+  // 任一條失敗不中斷整體：記錯誤、繼續其他條。
 
-  if (stage2LlmMode === "openai") {
-    const openaiCreativeModel = getPlatformStage2OpenAiModel();
-    const stage2ReasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
-    diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
-    diagnostics.platformStage2OpenAiReasoningEffort = stage2ReasoningEffort;
+  const systemContent = String(structuredStage2Messages.find((m) => m.role === "system")?.content ?? "");
+  const userContent = String(structuredStage2Messages.find((m) => m.role === "user")?.content ?? "");
 
-    type OpenAiEffort = NonNullable<Parameters<typeof invokeLLM>[0]["reasoningEffort"]>;
-
-    const invokeOpenAiStructured = (effort?: OpenAiEffort) =>
-      invokeLLM({
-        provider: "openai",
-        modelName: openaiCreativeModel,
-        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-        temperature: STAGE2_LLM_TEMPERATURE,
-        response_format: { type: "json_object" },
-        messages: structuredStage2Messages,
-        abortSignal: params.abortSignal,
-        reasoningEffort: effort ?? stage2ReasoningEffort,
-      });
-
-    const invokeOpenAiPlain = (effort?: OpenAiEffort) =>
-      invokeLLM({
-        provider: "openai",
-        modelName: openaiCreativeModel,
-        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-        temperature: STAGE2_LLM_TEMPERATURE,
-        messages: structuredStage2Messages,
-        abortSignal: params.abortSignal,
-        reasoningEffort: effort ?? stage2ReasoningEffort,
-      });
-
-    const assistantTextTrimmed = (r: Awaited<ReturnType<typeof invokeLLM>>) =>
-      extractFirstChoicePlainText(r).trim();
-
-    try {
-      response = await invokeOpenAiStructured();
-      llmPath = "openai+json_object";
-    } catch (openaiJsonErr) {
-      openaiJsonErrMsg =
-        openaiJsonErr instanceof Error ? openaiJsonErr.message : String(openaiJsonErr);
-      console.warn("[buildPlatformContent] openai+json_object failed:", openaiJsonErr);
-      try {
-        response = await invokeOpenAiPlain();
-        llmPath = "openai_plain";
-      } catch (openaiPlainErr) {
-        openaiPlainErrMsg =
-          openaiPlainErr instanceof Error ? openaiPlainErr.message : String(openaiPlainErr);
-        diagnostics.llmPath = "openai_all_failed";
-        diagnostics.openaiJsonError = openaiJsonErrMsg;
-        diagnostics.openaiPlainError = openaiPlainErrMsg;
-        throw openaiPlainErr;
-      }
-    }
-
-    /** GPT‑5：`message.content` 可能為分段陣列；僅 String(content) 會變空／錯。另若推理獨占 completion budget 會回空正文，需備援呼叫。 */
-    if (response && !assistantTextTrimmed(response)) {
-      diagnostics.stage2OpenAiAssistantEmptyBeforeRecovery = true;
-      const attempts: ReadonlyArray<{ path: string; run: () => ReturnType<typeof invokeOpenAiStructured> | ReturnType<typeof invokeOpenAiPlain> }> = [
-        { path: "openai+json_object+minimal_reasoning", run: () => invokeOpenAiStructured("minimal") },
-        { path: "openai_plain+default_reasoning", run: () => invokeOpenAiPlain() },
-        { path: "openai_plain+minimal_reasoning", run: () => invokeOpenAiPlain("minimal") },
-      ];
-      let recovered = false;
-      for (const a of attempts) {
-        try {
-          const next = await a.run();
-          if (assistantTextTrimmed(next)) {
-            response = next;
-            llmPath = a.path;
-            openaiJsonErrMsg = null;
-            openaiPlainErrMsg = null;
-            recovered = true;
-            diagnostics.stage2OpenAiAssistantEmptyRecoveryPath = a.path;
-            break;
-          }
-        } catch (e) {
-          console.warn(`[buildPlatformContent] Stage2 empty-body recovery (${a.path}) failed:`, e);
-        }
-      }
-      if (!recovered || !assistantTextTrimmed(response!)) {
-        throw new Error(
-          "Stage2：OpenAI 返回空正文（常見為推理過程耗盡輸出額度，或正文在分段 content 未被讀取）。已嘗試 json+minimal reasoning 與純正文重試。請調高 Fly `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`，或暫將 `OPENAI_GPT5_JSON_REASONING_EFFORT`/`OPENAI_GPT5_TEXT_REASONING_EFFORT` 設低一級後重試。",
-        );
-      }
-    }
-  } else {
-    diagnostics.platformStage2OpenAiModel = null;
-    const stage2GeminiModel = resolvePlatformStage2GeminiModel();
-    diagnostics.platformStage2GeminiModel = stage2GeminiModel;
-    const stage2SystemInstruction = String(
-      structuredStage2Messages.find((m) => m.role === "system")?.content ?? "",
-    );
-    const stage2UserText = String(
-      structuredStage2Messages.find((m) => m.role === "user")?.content ?? "",
-    );
-
-    try {
-      const rawContent = await callGemini35FlashCopywriting({
-        taskSystemInstruction: stage2SystemInstruction,
-        userText: stage2UserText,
-        responseMimeType: "application/json",
-        maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-        temperature: STAGE2_LLM_TEMPERATURE,
-        topP: 0.9,
-        modelName: stage2GeminiModel,
-        abortSignal: params.abortSignal,
-      });
-      response = {
-        id: `stage2-${Date.now()}`,
-        created: Date.now(),
-        model: stage2GeminiModel,
-        provider: "gemini",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: rawContent },
-            finish_reason: null,
-          },
-        ],
-      };
-      llmPath = "gemini-api+gemini35flash+json_object";
-    } catch (geminiPrimaryErr) {
-      vertexJsonErrMsg =
-        geminiPrimaryErr instanceof Error ? geminiPrimaryErr.message : String(geminiPrimaryErr);
-      console.warn("[buildPlatformContent] gemini-api+json_object failed:", geminiPrimaryErr);
-      try {
-        response = await invokeLLM({
-          provider: "gemini",
-          modelName: stage2GeminiModel,
-          max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-          temperature: STAGE2_LLM_TEMPERATURE,
-          topP: 0.9,
-          response_format: { type: "json_object" },
-          messages: structuredStage2Messages,
-          abortSignal: params.abortSignal,
-        });
-        llmPath = "gemini-api+invokeLLM+json_object";
-      } catch (geminiErr) {
-        geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-        diagnostics.llmPath = llmPath || "gemini_api_chain_failed";
-        diagnostics.vertexJsonError = vertexJsonErrMsg;
-        diagnostics.geminiJsonError = geminiErrMsg;
-        throw geminiErr;
-      }
-    }
-  }
-
-  if (response === undefined) {
-    throw new Error("buildPlatformContent：LLM 未返回結果（內部狀態錯誤）");
-  }
-
-  diagnostics.llmPath = llmPath;
-  {
-    type Stage2DebugSubStep = { id: string; title: string; model: string; status: string };
-    const steps: Stage2DebugSubStep[] = [];
-    const openaiModel = typeof diagnostics.platformStage2OpenAiModel === "string" ? diagnostics.platformStage2OpenAiModel : "";
-    steps.push({
-      id: "2-o",
-      title: "OpenAI 單次呼叫（推理與正文一次完成 → JSON）",
-      model: openaiModel || "—",
-      status: "✅ 已完成",
-    });
-
-    diagnostics.stage2SubSteps = steps;
-    diagnostics.stage2SubStepsSummary = steps
-      .map((s) => `${s.id} ${s.title} · model=${s.model} · ${s.status}`)
-      .join(" → ");
-  }
-  diagnostics.vertexJsonError = vertexJsonErrMsg;
-  diagnostics.vertexPlainError = vertexPlainErrMsg;
-  diagnostics.geminiJsonError = geminiErrMsg;
-  diagnostics.openaiJsonError = openaiJsonErrMsg;
-  diagnostics.openaiPlainError = openaiPlainErrMsg;
-  diagnostics.responseModel = response.model;
-  diagnostics.responseProvider = response.provider ?? null;
-  diagnostics.responseFinishReason = response.choices?.[0]?.finish_reason ?? null;
-  diagnostics.usage = response.usage ?? null;
-  // Robust JSON extraction — greedy bracket extraction, then fence strip fallback
-  const rawContent = extractFirstChoicePlainText(response);
-  const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
-  const bracketExtracted = bracketMatch ? bracketMatch[0].trim() : "";
-  
-  const fenceMatch2 = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
-  const strippedContent2 = fenceMatch2
-    ? fenceMatch2[1].trim()
-    : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
-
+  /**
+   * 為單一維度生成一條 blueprint。
+   * Prompt 告知 LLM 只輸出這個維度的方案，格式：`{ "blueprint": { ...fields } }`。
+   */
   const tryJson = (s: string): unknown | null => {
     const t = String(s || "").trim();
     if (!t) return null;
+    try { return JSON.parse(t); } catch { return null; }
+  };
+
+  const parseSingleBlueprintRaw = (raw: string): Record<string, unknown> | null => {
+    const candidates = [
+      extractJsonString(raw),
+      (() => { const m = raw.match(/\{[\s\S]*\}/); return m ? m[0] : ""; })(),
+      raw,
+    ];
+    for (const c of candidates) {
+      if (!c.trim()) continue;
+      const v = tryJson(c);
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      const obj = v as Record<string, unknown>;
+      // Unwrap `{ blueprint: {...} }` or `{ contentBlueprints: [{...}] }` or root blueprint fields
+      if (obj.blueprint && typeof obj.blueprint === "object" && !Array.isArray(obj.blueprint)) {
+        return obj.blueprint as Record<string, unknown>;
+      }
+      if (Array.isArray(obj.contentBlueprints) && obj.contentBlueprints.length > 0) {
+        const first = obj.contentBlueprints[0];
+        if (first && typeof first === "object" && !Array.isArray(first)) return first as Record<string, unknown>;
+      }
+      // root object with known blueprint fields
+      if (obj.title || obj.hook || obj.copywriting || obj.format) return obj;
+    }
+    return null;
+  };
+
+  const parseMonetizationRaw = (raw: string): unknown[] => {
+    const candidates = [
+      extractJsonString(raw),
+      (() => { const m = raw.match(/\{[\s\S]*\}/); return m ? m[0] : ""; })(),
+      raw,
+    ];
+    for (const c of candidates) {
+      if (!c.trim()) continue;
+      const v = tryJson(c);
+      if (!v || typeof v !== "object") continue;
+      if (Array.isArray(v)) return v;
+      const obj = v as Record<string, unknown>;
+      if (Array.isArray(obj.monetizationLanes)) return obj.monetizationLanes as unknown[];
+      if (Array.isArray(obj.lanes)) return obj.lanes as unknown[];
+    }
+    return [];
+  };
+
+  type OpenAiEffort = NonNullable<Parameters<typeof invokeLLM>[0]["reasoningEffort"]>;
+
+  const invokeOneBlueprintLlm = async (dimIndex: number, dimName: string): Promise<Record<string, unknown> | null> => {
+    // Per-dimension system override: tell LLM to output exactly ONE blueprint for this dimension
+    const dimSystemSuffix = `
+
+【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
+輸出格式必須嚴格為：
+{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": [...], "actionableSteps": [...], "detailedScript": "（≥400字分鏡）", "publishingAdvice": "...", "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] }, "highlightKeywords": [...] } }
+不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
+
+    const dimMessages: typeof structuredStage2Messages = [
+      { role: "system", content: systemContent + dimSystemSuffix },
+      { role: "user", content: userContent },
+    ];
+
+    const invoke = (effort?: OpenAiEffort) => invokeLLM({
+      provider: "openai",
+      modelName: openaiCreativeModel,
+      max_tokens: Math.min(STAGE2_SHARED_MAX_OUTPUT_TOKENS, 16000), // single blueprint needs less tokens
+      temperature: STAGE2_LLM_TEMPERATURE,
+      response_format: { type: "json_object" },
+      messages: dimMessages,
+      abortSignal: params.abortSignal,
+      reasoningEffort: effort ?? stage2ReasoningEffort,
+    });
+
     try {
-      return JSON.parse(t);
-    } catch {
+      let res = await invoke();
+      let rawText = extractFirstChoicePlainText(res).trim();
+      // Retry if empty (reasoning budget exhaustion)
+      if (!rawText) {
+        res = await invoke("minimal");
+        rawText = extractFirstChoicePlainText(res).trim();
+      }
+      if (!rawText) return null;
+      return parseSingleBlueprintRaw(rawText);
+    } catch (e) {
+      console.warn(`[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) failed:`, e instanceof Error ? e.message : e);
       return null;
     }
   };
 
-  let parsedRaw: unknown = {};
-  let jsonParseStrategy = "none";
-  const exForParse = extractJsonString(rawContent);
-  const tryChain: Array<{ label: string; s: string | null }> = [
-    { label: "extractJsonString", s: exForParse.trim() ? exForParse : null },
-    { label: "bracket_or_stripped", s: (bracketExtracted || strippedContent2).trim() ? bracketExtracted || strippedContent2 : null },
-    { label: "strippedOnly", s: strippedContent2.trim() ? strippedContent2 : null },
-    { label: "raw_full", s: rawContent.trim() ? rawContent : null },
-  ];
-  for (const { label, s } of tryChain) {
-    if (!s) continue;
-    const v = tryJson(s);
-    if (v !== null) {
-      parsedRaw = v;
-      jsonParseStrategy = label;
-      break;
+  const invokeMonetizationLlm = async (): Promise<unknown[]> => {
+    const monetizationSystemOverride = `
+
+【本次任務限制】本次請求只需輸出 monetizationLanes（1-2 條變現路徑），不輸出 contentBlueprints。
+格式：{ "monetizationLanes": [ { "title": "...", "fitReason": "...", "offerShape": "...", "revenueModes": [...], "firstValidation": "..." } ] }
+第一個字元必須是 {，最後必須是 }。`;
+
+    const monetizationMessages: typeof structuredStage2Messages = [
+      { role: "system", content: systemContent + monetizationSystemOverride },
+      { role: "user", content: userContent },
+    ];
+
+    try {
+      const res = await invokeLLM({
+        provider: "openai",
+        modelName: openaiCreativeModel,
+        max_tokens: Math.min(STAGE2_SHARED_MAX_OUTPUT_TOKENS, 4096),
+        temperature: STAGE2_LLM_TEMPERATURE,
+        response_format: { type: "json_object" },
+        messages: monetizationMessages,
+        abortSignal: params.abortSignal,
+        reasoningEffort: stage2ReasoningEffort,
+      });
+      const rawText = extractFirstChoicePlainText(res).trim();
+      if (!rawText) return [];
+      return parseMonetizationRaw(rawText);
+    } catch (e) {
+      console.warn("[buildPlatformContent] monetizationLanes call failed:", e instanceof Error ? e.message : e);
+      return [];
     }
-  }
-  if (jsonParseStrategy === "none" && rawContent.trim()) {
-    jsonParseStrategy = "parse_failed_all";
-  }
-  diagnostics.jsonParseStrategy = jsonParseStrategy;
-  diagnostics.rawContentChars = rawContent.length;
-  diagnostics.rawContentEmpty = !rawContent.trim();
-  diagnostics.rawContentHead280 = rawContent.slice(0, 280);
-  diagnostics.rawContentTail280 = rawContent.slice(-280);
+  };
 
-  /**
-   * 模型常返回**截断 JSON**（末尾缺少引号/括号）→ 所有 JSON.parse 失败。
-   * 旧逻辑会把 parsedRaw 留在 {} 上，normalize 后 0 条，Zod 仍 strict_ok，造成「假成功」。
-   */
-  if (jsonParseStrategy === "parse_failed_all" && rawContent.trim().length > 80) {
-    diagnostics.stage2FailureReason = "unparseable_json_likely_truncated";
-    console.error("[buildPlatformContent] parse_failed_all rawLen=", rawContent.length);
-    throw new Error(
-      "Stage2：模型输出未形成完整 JSON（多为截断）。请重新分析或稍后再试；若重复出现可缩短人设描述，或设置环境变量 PLATFORM_STAGE2_MAX_OUTPUT_TOKENS 提高输出上限。",
-    );
-  }
+  // 5 個維度並行 + 1 個 monetizationLanes 並行（共 6 個並行 LLM 呼叫）
+  // 每條 blueprint 完成後立即回呼 onBlueprintGenerated
+  const collectedBlueprints: Array<Record<string, unknown> | null> = new Array(BLUEPRINT_DIMENSIONS.length).fill(null);
+  let completedCount = 0;
 
-  if (
-    parsedRaw &&
-    typeof parsedRaw === "object" &&
-    !Array.isArray(parsedRaw) &&
-    Object.keys(parsedRaw as object).length === 0 &&
-    rawContent.trim()
-  ) {
-    console.error("[buildPlatformContent] JSON parse FAILED on all attempts.");
-    console.error("[buildPlatformContent] rawContent length:", rawContent.length);
-    console.error("[buildPlatformContent] rawContent tail (last 200 chars):", rawContent.slice(-200));
-  }
-  if (!rawContent.trim()) {
-    console.error("[buildPlatformContent] empty model output");
-  }
+  const dimensionPromises = BLUEPRINT_DIMENSIONS.map(async ({ index, name }) => {
+    const dimIndex = index - 1; // 0-based
+    const bp = await invokeOneBlueprintLlm(dimIndex, name);
+    collectedBlueprints[dimIndex] = bp;
+    if (bp) {
+      completedCount++;
+      if (params.onBlueprintGenerated) {
+        try {
+          await params.onBlueprintGenerated(bp, dimIndex);
+        } catch (cbErr) {
+          console.warn("[buildPlatformContent] onBlueprintGenerated callback error:", cbErr);
+        }
+      }
+      console.log(`[buildPlatformContent] dim ${index} (${name}) done · total=${completedCount}`);
+    } else {
+      console.warn(`[buildPlatformContent] dim ${index} (${name}) returned null, skipped`);
+    }
+  });
 
-  /** 模型偶发只输出 JSON 数组（整段就是 blueprints） */
-  const parsedWasRootArray = Array.isArray(parsedRaw);
-  if (parsedWasRootArray) {
-    parsedRaw = { contentBlueprints: parsedRaw };
-  }
-  diagnostics.parsedRootArrayWrappedToObject = parsedWasRootArray;
+  const [, rawMonetization] = await Promise.all([
+    Promise.all(dimensionPromises),
+    invokeMonetizationLlm(),
+  ]);
 
-  // Key normalization layer — handles known Gemini key-drift patterns before Zod parse.
-  // Gemini may rename keys despite the 【强制 JSON Key 锁定】 prompt instruction.
-  // This layer remaps all observed alias variants back to the canonical key names.
-  const partial = normalizePlatformContentKeys((parsedRaw || {}) as Record<string, unknown>);
-  const rawBp = Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [];
-  /** 單條若不是 object（模型偶爾塞字符串），強制包成物件，避免 z.array(z.object()) 整批失敗 */
+  // Aggregate: filter out failed (null) blueprints, preserve order
+  const rawBp = collectedBlueprints.filter((bp): bp is Record<string, unknown> => bp !== null);
+  diagnostics.blueprintDimResults = collectedBlueprints.map((bp, i) => ({
+    dim: i + 1,
+    success: bp !== null,
+    title: bp ? String(bp.title || "").slice(0, 60) : null,
+  }));
+  diagnostics.blueprintCountCollected = rawBp.length;
+  diagnostics.llmPath = "openai_parallel_per_dimension";
+
   const coercedBp = rawBp.map((item: unknown) => {
     if (item != null && typeof item === "object" && !Array.isArray(item)) {
       return item as Record<string, unknown>;
@@ -1652,9 +1572,9 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
     }
     return { title: "", hook: "", copywriting: "" };
   });
-  /** 極端長輸出保護（不影響正常 5–8 條） */
   const blueprintsForSchema = coercedBp.length > 48 ? coercedBp.slice(0, 48) : coercedBp;
-  const rawMl = Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [];
+
+  const rawMl = Array.isArray(rawMonetization) ? rawMonetization : [];
   const monetizationCoerced = (rawMl as unknown[]).map((item: unknown) => {
     if (item != null && typeof item === "object" && !Array.isArray(item)) return item as Record<string, unknown>;
     if (typeof item === "string") {
@@ -1662,13 +1582,40 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
     }
     return { title: "", fitReason: "", offerShape: "", revenueModes: [] as string[], firstValidation: "" };
   });
-  /** 勿展開 partial：多餘頂層鍵曾導致 Zod 與預期不一致；Stage 2 只消费这两组数组 */
-  const partialForParse = { contentBlueprints: blueprintsForSchema, monetizationLanes: monetizationCoerced };
+
+  const partial = normalizePlatformContentKeys({
+    contentBlueprints: blueprintsForSchema,
+    monetizationLanes: monetizationCoerced,
+  });
+  const partialForParse = {
+    contentBlueprints: Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : blueprintsForSchema,
+    monetizationLanes: Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : monetizationCoerced,
+  };
+
   diagnostics.normalizedTopLevelKeys = Object.keys(partial);
   diagnostics.blueprintCountAfterKeyNormalize = rawBp.length;
   diagnostics.monetizationCountAfterKeyNormalize = rawMl.length;
   diagnostics.blueprintCountAfterCoerce = blueprintsForSchema.length;
   diagnostics.monetizationCountAfterCoerce = monetizationCoerced.length;
+
+  {
+    const steps: Array<{ id: string; title: string; model: string; status: string }> = BLUEPRINT_DIMENSIONS.map((d, i) => ({
+      id: `2-dim${d.index}`,
+      title: d.name,
+      model: openaiCreativeModel,
+      status: collectedBlueprints[i] !== null ? "✅ 已完成" : "❌ 失敗（跳過）",
+    }));
+    steps.push({
+      id: "2-monetization",
+      title: "monetizationLanes",
+      model: openaiCreativeModel,
+      status: rawMl.length > 0 ? "✅ 已完成" : "⚠️ 空",
+    });
+    diagnostics.stage2SubSteps = steps;
+    diagnostics.stage2SubStepsSummary = steps
+      .map((s) => `${s.id} ${s.title} · model=${s.model} · ${s.status}`)
+      .join(" → ");
+  }
 
   const parseResult = platformContentResponseSchema.safeParse(partialForParse);
   if (parseResult.success) {
@@ -1680,7 +1627,6 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
   console.error("[buildPlatformContent] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
   diagnostics.zodStrictIssues = (parseResult.error as any).issues?.slice(0, 12) ?? String(parseResult.error.message);
-  console.warn("[buildPlatformContent] attempting loose parse with defaults");
   const looseResult = platformContentResponseSchema.safeParse({
     contentBlueprints: blueprintsForSchema,
     monetizationLanes: monetizationCoerced,
@@ -1693,7 +1639,6 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
   }
   console.error("[buildPlatformContent] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
   diagnostics.zodLooseIssues = (looseResult.error as any).issues?.slice(0, 12) ?? String(looseResult.error.message);
-  /** 最後一道：绝不让 Stage 2 因校验抛错而整包 null（文案可事后人工改） */
   return {
     data: attachTitleVariantsToPlatformContent({
       contentBlueprints: blueprintsForSchema as any[],
