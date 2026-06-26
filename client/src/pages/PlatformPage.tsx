@@ -1288,7 +1288,7 @@ function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServer
     return "精炼英文 prompt …";
   }
   if (/GPT54·英文化|骨架·中文视觉|extractChineseVisualBrief|\[GPT54·翻译\]/.test(tail)) {
-    return "英文 prompt · GPT 5.4／骨架抽取（多数 1～3 分钟内）…";
+    return "英文化中（骨架抽取，多数 1～3 分钟内）…";
   }
   return "英文化与绘图合计大约 3～5 分钟，请勿中途刷新 ";
 }
@@ -5347,36 +5347,40 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-white">封面英文化</div>
-                    <p className="mt-1 text-xs leading-relaxed text-white/55">
-                      竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（reasoning=medium · max_tokens=64K · strict · 无 Flash 兜底）。
-                    </p>
-                  </div>
-                  <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                    GPT 5.4
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-white">文案模型（Stage 1 + Stage 2 + 深度追问）</div>
-                    <p className="mt-1 text-xs leading-relaxed text-white/55">
-                      战略看板、专属选题文案与<strong className="text-white/80">深度追问</strong>固定走{" "}
-                      <strong className="text-white/80">GPT‑5.5</strong>；Debug 会显示实际模型与 token。
-                    </p>
-                  </div>
-                  <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                    GPT‑5.5
+              {debugMode && (
+                <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-white">封面英文化</div>
+                      <p className="mt-1 text-xs leading-relaxed text-white/55">
+                        竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（reasoning=medium · max_tokens=64K · strict · 无 Flash 兜底）。
+                      </p>
+                    </div>
+                    <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
+                      GPT 5.4
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {canConfigureStage2CopyEngine ? (
+              {debugMode && (
+                <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-white">文案模型（Stage 1 + Stage 2 + 深度追问）</div>
+                      <p className="mt-1 text-xs leading-relaxed text-white/55">
+                        战略看板、专属选题文案与<strong className="text-white/80">深度追问</strong>固定走{" "}
+                        <strong className="text-white/80">GPT‑5.5</strong>；Debug 会显示实际模型与 token。
+                      </p>
+                    </div>
+                    <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
+                      GPT‑5.5
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {canConfigureStage2CopyEngine && debugMode ? (
                 <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
                   监管提示：文案与深度追问已固定 <span className="font-mono text-amber-100/80">openai / GPT‑5.5</span>
                   ；封面与 2×4 英文化固定 GPT 5.4。
@@ -6711,14 +6715,16 @@ export default function PlatformPage() {
                       <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
                         <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
                           <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
-                          2×4 合成 · 英文化（GPT 5.4 strict）
+                          2×4 合成 · 英文化
+                          {debugMode && <span className="ml-1 text-gray-400">（GPT 5.4 strict）</span>}
                         </div>
                         <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
                           <strong className="text-[#5eead4]">2×4 分镜主表</strong>与
                           <strong className="text-[#5eead4]">小红书 2×4 八格</strong>
-                          宽幅合成英文化固定走{" "}
-                          <strong className="text-gray-200">GPT 5.4</strong>（reasoning=medium · max_tokens=32K · strict · 无 Flash 兜底）。竖版
-                          <strong className="text-gray-400">封面单帧</strong>固定 GPT 5.4（reasoning=medium · max_tokens=64K）。
+                          宽幅合成英文化固定走高精度模型
+                          {debugMode && <>{" "}<strong className="text-gray-200">GPT 5.4</strong>（reasoning=medium · max_tokens=32K · strict · 无 Flash 兜底）</>}。竖版
+                          <strong className="text-gray-400">封面单帧</strong>固定高精度模型
+                          {debugMode && <>（reasoning=medium · max_tokens=64K）</>}。
                         </p>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
                           调参与配额：
@@ -6955,7 +6961,7 @@ export default function PlatformPage() {
                         pendingCompositeSheet?.kind === compositeKind;
                       const compositePhaseHint =
                         compositePendingUxHints[`${item.id}::${compositeKind}`] ??
-                        "英文 prompt → GPT 5.4 英文化 → 出图 · 合计常需 3～5 分钟，请勿中途刷新";
+                        "英文化与出图 · 合计常需 3～5 分钟，请勿中途刷新";
                       const bundleCost = platformCoverCompositeBundleCreditsForFormat(item.format);
                       const bundleRetailSum =
                         CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;
