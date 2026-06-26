@@ -5571,8 +5571,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 20_000)),
         ]).catch(() => storeNull);
 
-        // Build dashboard — 120s cap, return null on timeout (no fallback)
-        const DASHBOARD_TIMEOUT_MS = PLATFORM_LLM_TIMEOUT_MS;
+        // Build dashboard — timeout cap scales with windowDays:
+        // 30/45-day requests carry more trend data → LLM takes longer.
+        // The inner AbortSignal.timeout (DEFAULT_LLM_TIMEOUT_MS = 480s in llm.ts) may
+        // fire before our outer Promise.race timer for large windows, producing a
+        // "fetch failed" TypeError caught here. We give the outer timer 10s of headroom
+        // over the inner fetch timeout so the outer timer always wins.
+        const DASHBOARD_TIMEOUT_MS = selectedWindowDays >= 30
+          ? Math.max(PLATFORM_LLM_TIMEOUT_MS, 600_000)  // 10 min for 30/45-day windows
+          : PLATFORM_LLM_TIMEOUT_MS;
         let platformDashboard: z.infer<typeof platformDashboardResponseSchema> | null = null;
         try {
           platformDashboard = await Promise.race([
@@ -5600,6 +5607,33 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             console.error("[platform.getPlatformDashboard] ZodError issues:", JSON.stringify((error as any).issues?.slice(0, 5)));
           }
           const errorMessage = error instanceof Error ? error.message : String(error);
+          // Treat fetch-failed / AbortError as a graceful timeout rather than a hard failure.
+          // Root cause: for 30-day windows the Evolink/OpenAI call approaches the
+          // DEFAULT_LLM_TIMEOUT_MS (480s) in llm.ts, causing AbortSignal.timeout() to fire
+          // and throw "fetch failed" BEFORE our outer Promise.race timer resolves to null.
+          // Both outcomes mean the same thing (LLM timed out) — normalize to success+null
+          // so the client handles it identically to the outer-timer timeout path.
+          const isFetchTimeoutOrAbort =
+            (error as any)?.name === "AbortError" ||
+            errorMessage.toLowerCase().includes("fetch failed") ||
+            errorMessage.toLowerCase().includes("aborted") ||
+            errorMessage.toLowerCase().includes("超时") ||
+            errorMessage.toLowerCase().includes("timeout");
+          if (isFetchTimeoutOrAbort) {
+            console.warn(
+              `[platform.getPlatformDashboard] fetch-failed/abort treated as graceful timeout (windowDays=${selectedWindowDays}, totalMs=${Date.now() - t0}): ${errorMessage}`,
+            );
+            return {
+              success: true,
+              platformDashboard: null,
+              debug: {
+                route: "mvAnalysis.getPlatformDashboard",
+                totalMs: Date.now() - t0,
+                hasDashboard: false,
+                error: `graceful_timeout: ${errorMessage}`,
+              },
+            };
+          }
           return {
             success: false,
             platformDashboard: null,
