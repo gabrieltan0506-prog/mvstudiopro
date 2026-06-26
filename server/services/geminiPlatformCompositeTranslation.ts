@@ -469,9 +469,16 @@ export const XHS_IMAGE_TEXT_NOTE_DIRECTOR_EN = `You compress Xiaohongshu (Little
 
 LAYOUT: strict **2 rows × 4 columns**, **eight** equal cells, row-major (top L→R, then bottom L→R). **Not** a lone hero, **not** 2×2-only.
 
-CONTENT STYLE (**not** a film storyboard): each cell should feel like a **Little Red Book carousel card** — hook lines, bullet takeaways, before/after, step lists, mini diagrams, hashtags, persona tips.
+VISUAL STYLE — CRITICAL (**not** photorealistic, **not** cinematic): this is a **single-page infographic note** (单页图文笔记), NOT a film storyboard. The entire canvas should look like a **premium Little Red Book 小红书 viral infographic poster** with these aesthetic requirements:
+- **Art style:** flat illustration / vector graphic / editorial infographic aesthetic — think warm pastel gradient background, cute illustrated icons, hand-drawn accent elements (flowers, butterflies, ribbons, sparkles), cohesive warm color palette (peach, coral, cream, lavender, powder blue)
+- **Background:** soft warm gradient (peach→coral→lavender or similar), NOT plain white, NOT dark/moody cinematic
+- **Cards/cells:** each of the 8 panels rendered as a **rounded card** with a distinct pastel accent color, subtle drop shadow, clean borders
+- **Illustrations:** small hand-drawn or flat vector decorative elements (mini icons, emoji-style illustrations, badge numbers, pill tags) that echo the hook/theme of each cell
+- **NOT recommended:** photorealistic photography, cinematic lighting, dark moody film aesthetics, actor/model headshots, dramatic shadows — those belong to the separate storyboard pipeline
 
-TYPOGRAPHY POLICY: **Simplified Chinese is the primary on-image explanation** (headlines, main bullets, body). **English is allowed as auxiliary**—small keywords,micro-subtags, short secondary hints, stylized accent lines—must stay **secondary** in visual weight vs 中文主解说; do not replace Chinese body copy with English.
+CONTENT STYLE: each cell should feel like a **Little Red Book carousel card** — hook lines, bullet takeaways, before/after, step lists, mini diagrams, hashtags, persona tips.
+
+TYPOGRAPHY POLICY: **Simplified Chinese is the primary on-image explanation** (headlines, main bullets, body). **English is allowed as auxiliary**—small keywords, micro-subtags, short secondary hints, stylized accent lines—must stay **secondary** in visual weight vs 中文主解说; do not replace Chinese body copy with English.
 
 **Soft boundary:** avoid restructuring the user's copy into **video-production callout tables** (e.g. dedicated rows/columns titled 情绪 / 灯光 / 拍摄环境 / 景别 / 机位 / 分镜表头-style grids). Those fit the separate **cinematic storyboard** pipeline better. Palette/vibe may appear as **brief** English tags, not a long DP checklist.`;
 
@@ -479,13 +486,14 @@ TYPOGRAPHY POLICY: **Simplified Chinese is the primary on-image explanation** (h
 export const XHS_GRAPHIC_NOTE_2X4_FOOTER = `
 TAG:XHS_GRAPHIC_NOTE_2X4_SHEET
 
-【英文生图输出 / OUTPUT — Xiaohongshu **2×4 八格筆記**（单张宽幅 landscape，GPT-Image-2 優先）】
+【英文生图输出 / OUTPUT — Xiaohongshu **2×4 八格筆記 · 单页图文笔记风格**（单张宽幅 landscape，GPT-Image-2 優先）】
 1. Output **one** English string **optimized for GPT-Image-2**; preferred style: **comma-separated tags / 2–5 word phrases**，並用短句**锁死** 2×4、順序、gutter。 **No fixed character limit**—longer English is OK: richer staging makes **eight cells** feel **less cramped** and balances information across the grid。
 2. LAYOUT (keep explicit): wide ~16:9 landscape master (1536×1024 class), **exactly 8 equal panels**, **2 rows × 4 columns**, rigid cross gutters, read order row1 L→R then row2 L→R, masterpiece, 8k, premium Little Red Book / lifestyle-editorial note aesthetic.
-3. **TYPOGRAPHY:** **Primary** on-image copy = **legible 简体中文** in every cell (titles, main lists, hooks). **Optional English** as **secondary** accent only—keywords, micro-subtitles, short tags—smaller weight than Chinese; **do not** make English the main explanation body.
-4. **MANDATORY** in **each** cell: note-style density — bullets, icons, badges 01–08, pill tags, mini infographics as fits.**建议避免**整页做成電影**分鏡網格註解**（如每格固定「镜头/景别/情绪/灯光/机位」製片表）；那是 **TAG:STORYBOARD_2X4_SHEET** 專用。
-5. **版式软边界：** 尽量不采用「整 canvas 单图满铺」「只有 2×2 四格」「整排八条过细横条」等会丢八格阅读性的布局；其余细节可由你根据脚本取舍。
-6. Per cell: distinct carousel beat; cohesive palette across the sheet.
+3. **VISUAL STYLE — MANDATORY:** render as a **flat illustration infographic poster** (单页图文笔记), NOT photorealistic photography. Required aesthetics: warm pastel gradient background (peach / coral / lavender / cream), rounded card panels with distinct pastel accent colors and subtle drop shadows, flat vector or hand-drawn decorative elements (flowers, sparkles, ribbons, cute icons, badge numbers 01–08), cohesive warm editorial palette. **Strongly avoid:** dark cinematic lighting, photorealistic actor portraits, dramatic film aesthetics, moody shadows — those belong to the storyboard pipeline.
+4. **TYPOGRAPHY:** **Primary** on-image copy = **legible 简体中文** in every cell (titles, main lists, hooks). **Optional English** as **secondary** accent only—keywords, micro-subtitles, short tags—smaller weight than Chinese; **do not** make English the main explanation body.
+5. **MANDATORY** in **each** cell: note-style density — bullets, flat icons, badge numbers 01–08, pill tags, mini infographics as fits. **建议避免**整页做成電影**分鏡網格註解**（如每格固定「镜头/景别/情绪/灯光/机位」製片表）；那是 **TAG:STORYBOARD_2X4_SHEET** 專用。
+6. **版式软边界：** 尽量不采用「整 canvas 单图满铺」「只有 2×2 四格」「整排八条过细横条」等会丢八格阅读性的布局；其余细节可由你根据脚本取舍。
+7. Per cell: distinct carousel beat; cohesive warm pastel palette across the entire sheet; overall feel = cheerful, clean, high-engagement 小红书 infographic.
 `.trim();
 
 /** @deprecated 已升級為八格 2×4；請使用 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} */
