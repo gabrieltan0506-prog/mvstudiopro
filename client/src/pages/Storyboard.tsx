@@ -99,7 +99,7 @@ const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: st
   },
   {
     value: "gpt54",
-    label: "GPT 5.4",
+    label: "高精度版",
     desc: "更强推理与导演级分镜分析",
     cost: "20 Credits",
     icon: Crown,
@@ -612,7 +612,7 @@ export default function StoryboardPage() {
           );
           if (matchedPreset) setBgmStylePreset((matchedPreset as any).id);
         }
-        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt54" ? "GPT 5.4" : "旗舰版"}，5 Credits）`);
+        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt54" ? "高精度版" : "旗舰版"}，5 Credits）`);
         setShowBgmPanel(true);
       }
     } catch (error: any) {
@@ -1006,9 +1006,9 @@ export default function StoryboardPage() {
                 </Select>
                 <p className="text-yellow-500 text-xs mt-1.5">
                   {selectedModel === "gpt54"
-                    ? "GPT 5.4 每次生成消耗 20 Credits"
+                    ? "高精度版 每次生成消耗 20 Credits"
                     : selectedModel === "gpt5"
-                        ? "GPT 5.4（兼容档）每次生成消耗 20 Credits"
+                        ? "高精度版（兼容档）每次生成消耗 20 Credits"
                         : selectedModel === "pro"
                           ? "旗舰版 每次生成消耗 15 Credits"
                           : "极速版 每次生成消耗 8 Credits"}
@@ -1328,7 +1328,7 @@ export default function StoryboardPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="pro">旗舰版</SelectItem>
-                          <SelectItem value="gpt54">GPT 5.4</SelectItem>
+                          <SelectItem value="gpt54">高精度版</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
