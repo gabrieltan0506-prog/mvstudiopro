@@ -135,7 +135,10 @@ function isPlatformTimeoutError(error: unknown): boolean {
     lower.includes("timeout") ||
     lower.includes("timed out") ||
     lower.includes("abort") ||
-    lower.includes("aborted")
+    lower.includes("aborted") ||
+    // withLlmTimeout throws Chinese messages — must also match these:
+    message.includes("超时") ||   // "LLM 请求超时，已等待 Xms"
+    message.includes("已取消")    // "LLM 请求已取消（客户端已断开）"
   );
 }
 
@@ -144,6 +147,19 @@ function getPlatformJobErrorMessage(error: unknown): string {
     return "AI 深度思考时间过长导致连接超时。请尝试缩减提示词范围，或重新提交分析。";
   }
   return "任务执行失败，请稍后重试。";
+}
+
+/** Preserve the original error message inside the thrown error so job.error field is diagnostic. */
+function buildPlatformJobError(error: unknown): Error {
+  const originalMsg = error instanceof Error ? error.message : String(error ?? "unknown");
+  const userMsg = getPlatformJobErrorMessage(error);
+  // Embed original message (≤400 chars) so operators can see actual cause in job.error
+  const enriched = new Error(`${userMsg} [原始错误: ${originalMsg.slice(0, 400)}]`);
+  // Preserve timeout classification in the name so downstream getJobFailureMessage() works correctly
+  if (isPlatformTimeoutError(error)) {
+    enriched.name = "TimeoutError";
+  }
+  return enriched;
 }
 
 function getJobFailureMessage(jobType: JobType, error: unknown): string {
@@ -1498,7 +1514,9 @@ async function processPlatformJob(
     throw new Error(`不支持的平台任务动作：${input.action}`);
   } catch (error) {
     console.error("[processPlatformJob] 实际错误详情:", error);
-    throw new Error(getPlatformJobErrorMessage(error));
+    // buildPlatformJobError: preserves original error message inside the new error so that
+    // job.error field (written by markJobFailed) contains actionable diagnostics for operators.
+    throw buildPlatformJobError(error);
   }
 }
 
@@ -1532,7 +1550,12 @@ async function processOneJob() {
     );
     await markJobSucceeded(job.id, output, provider);
   } catch (error) {
-    const message = getJobFailureMessage(job.type as JobType, error);
+    // For platform jobs, processPlatformJob already builds a descriptive error via buildPlatformJobError
+    // (user-facing message + original error embedded). Use it directly so job.error is diagnostic.
+    const message =
+      job.type === "platform" && error instanceof Error
+        ? error.message
+        : getJobFailureMessage(job.type as JobType, error);
     if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {
