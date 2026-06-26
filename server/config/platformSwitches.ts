@@ -362,11 +362,11 @@ export function resolveGpt54CoverTranslationMaxOutputTokens(): number {
   return 65_536;
 }
 
-/** 2×4 / 八格英文化 max_output_tokens：默认 **32768**（32K）。 */
+/** 2×4 / 八格英文化 max_output_tokens：默认 **65536**（64K）以生成更精细的提示词。 */
 export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
   const raw = Number(process.env.GPT54_COMPOSITE_TRANSLATION_MAX_OUTPUT_TOKENS);
   if (Number.isFinite(raw) && raw >= 4096) return Math.min(65_536, Math.floor(raw));
-  return 32_768;
+  return 65_536;
 }
 
 /**
