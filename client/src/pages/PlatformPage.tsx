@@ -1882,6 +1882,32 @@ export default function PlatformPage() {
         if (status === "queued") {
           setContentLoadingText("任务排队中，请稍候…");
         } else if (status === "running") {
+          // Show partial blueprints immediately as they are generated one by one
+          if (output && typeof output === "object" && !Array.isArray(output)) {
+            const runningOut = output as Record<string, unknown>;
+            const partialPc = runningOut.platformContent;
+            if (partialPc && typeof partialPc === "object" && !Array.isArray(partialPc)) {
+              const pcObj = partialPc as Record<string, unknown>;
+              const partialBps = Array.isArray(pcObj.contentBlueprints) ? pcObj.contentBlueprints : [];
+              if (partialBps.length > 0) {
+                // Incrementally update platformContent so UI can render as blueprints arrive
+                setPlatformContent((prev) => {
+                  const prevBps = Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : [];
+                  // Only update if we have more blueprints than before
+                  if (partialBps.length > prevBps.length) {
+                    return {
+                      contentBlueprints: partialBps as typeof prevBps,
+                      monetizationLanes: (prev?.monetizationLanes ?? []),
+                    };
+                  }
+                  return prev;
+                });
+                const count = partialBps.length;
+                setContentLoadingText(`已生成 ${count}/5 条专属选题，继续生成中…`);
+                return;
+              }
+            }
+          }
           if (attempt < 12) setContentLoadingText("后台正在生成专属文案（撰写与校对中）…");
           else if (attempt < 28) setContentLoadingText("内容较长，后台仍在处理…");
           else setContentLoadingText("已等待较久，后台仍在处理；请勿关闭页面…");
