@@ -1762,6 +1762,10 @@ export default function PlatformPage() {
   const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
   /** 小红书双笔记卡（单张合成） */
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
+  /** 自定義文案生成小紅書圖文筆記（獨立功能，不依賴 Stage 1/2） */
+  const [customNoteText, setCustomNoteText] = useState("");
+  const [customNoteImageUrl, setCustomNoteImageUrl] = useState<string | null>(null);
+  const [customNoteError, setCustomNoteError] = useState<string | null>(null);
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
@@ -3222,6 +3226,69 @@ export default function PlatformPage() {
 
   const compositeMutationBusy =
     generatePlatformCompositeSheetMutation.isPending || compositeAwaitingJobTerminal;
+
+  /** 自定義文案生成小紅書圖文筆記 — 獨立 mutation，不依賴選題流程 */
+  const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
+    onSuccess: (res) => {
+      if (res.imageUrl) {
+        setCustomNoteImageUrl(res.imageUrl);
+        setCustomNoteError(null);
+        toast.success("圖文筆記已生成");
+      } else if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
+        const pid = (res as { progressJobId?: string }).progressJobId!;
+        void pollJobUntilTerminal(pid, {
+          intervalMs: 1500,
+          maxWaitMs: 10 * 60_000,
+          adaptiveBackoffAfterAttempts: 20,
+          maxIntervalMs: 5000,
+          onPoll: ({ status }) => {
+            if (status === "queued") setCustomNoteError(null);
+          },
+        }).then((j) => {
+          if (j.status === "failed") {
+            setCustomNoteError(j.error || "生成失敗，請重試");
+          } else {
+            const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
+            const url = out?.compositeImageUrl || out?.imageUrl || "";
+            if (url) {
+              setCustomNoteImageUrl(url);
+              setCustomNoteError(null);
+              toast.success("圖文筆記已生成");
+            } else {
+              setCustomNoteError("未取得圖片 URL，請重試");
+            }
+          }
+        }).catch((e) => {
+          setCustomNoteError(e instanceof Error ? e.message : "生成失敗，請重試");
+        });
+      }
+    },
+    onError: (error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      setCustomNoteError(msg);
+      toast.error(`圖文筆記生成失敗：${msg.slice(0, 120)}`);
+    },
+  });
+
+  const handleGenerateCustomNote = () => {
+    const trimmed = customNoteText.trim();
+    if (!trimmed) {
+      toast.error("請先輸入中文文案");
+      return;
+    }
+    setCustomNoteImageUrl(null);
+    setCustomNoteError(null);
+    const sceneId = `custom-note-${Date.now()}`;
+    const progressJobId = newPlatformCompositeProgressJobId();
+    generateCustomNoteMutation.mutate({
+      sceneId,
+      title: trimmed.slice(0, 80),
+      scriptContext: trimmed,
+      kind: "xiaohongshu_dual_note",
+      imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
+      progressJobId,
+    });
+  };
 
   const runSequentialCompositeBatchGeneration = async () => {
     const cards = visibleExecutionCards;
@@ -7783,6 +7850,95 @@ export default function PlatformPage() {
             )}
           </section>
         ) : null}
+
+        {/* ── 自定義文案生成小紅書圖文筆記（獨立功能區塊，不依賴 Stage 1/2） ── */}
+        <section className={`${shellCardClasses("p-6 mt-8")} max-w-4xl mx-auto`}>
+          <div className="flex items-center gap-2 mb-4">
+            <PenLine className="h-5 w-5 text-[#ff4fb8]" />
+            <h2 className="text-base font-bold text-white">自定義文案 → 小紅書圖文筆記</h2>
+            <span className="ml-2 rounded-full border border-[#ff4fb8]/40 bg-[rgba(255,79,184,0.08)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff9fe0]">
+              獨立生成
+            </span>
+          </div>
+          <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
+            貼入中文文案，系統將自動翻譯並以 GPT-IMAGE-2 生成小紅書 2×4 八格圖文筆記。無需先完成 Stage 1 / Stage 2 分析。
+          </p>
+          <textarea
+            className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
+            placeholder="輸入中文文案，系統自動翻譯並生成小紅書圖文筆記…（建議 100–800 字）"
+            value={customNoteText}
+            onChange={(e) => setCustomNoteText(e.target.value)}
+            disabled={generateCustomNoteMutation.isPending}
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleGenerateCustomNote}
+              disabled={generateCustomNoteMutation.isPending || !customNoteText.trim()}
+              className="inline-flex items-center gap-2 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {generateCustomNoteMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
+              ) : (
+                <><Sparkles className="h-4 w-4" />生成圖文筆記</>
+              )}
+            </button>
+            {(customNoteImageUrl || customNoteError) && (
+              <button
+                type="button"
+                onClick={() => { setCustomNoteImageUrl(null); setCustomNoteError(null); setCustomNoteText(""); }}
+                className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
+              >
+                清除
+              </button>
+            )}
+          </div>
+
+          {/* 生成中提示 */}
+          {generateCustomNoteMutation.isPending && (
+            <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
+              正在翻譯並生成圖文，約需 3–5 分鐘，請勿關閉頁面…
+            </div>
+          )}
+
+          {/* 錯誤提示 */}
+          {customNoteError && (
+            <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+              ❌ {customNoteError}
+            </div>
+          )}
+
+          {/* 生成結果 */}
+          {customNoteImageUrl && (
+            <div className="mt-5 space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
+                生成結果
+              </div>
+              <img
+                src={customNoteImageUrl}
+                alt="小紅書圖文筆記"
+                className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                  setCustomNoteError("圖片載入失敗，請確認圖片 URL 是否有效");
+                }}
+              />
+              <div className="flex justify-end">
+                <a
+                  href={customNoteImageUrl}
+                  download="xiaohongshu-note.png"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                >
+                  <Download className="h-4 w-4" />
+                  下載圖片
+                </a>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* 邀请码管理已迁移至 /admin 页面 */}
       </div>
