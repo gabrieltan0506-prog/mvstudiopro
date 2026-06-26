@@ -227,7 +227,12 @@ type LlmTarget = {
   apiKey: string;
 };
 
-const DEFAULT_LLM_TIMEOUT_MS = 480_000;
+/**
+ * Default LLM request wall-clock timeout. Must be long enough for GPT-5.5 Stage 2 (which can take
+ * 10+ minutes on complex prompts). The platform_build_content job allows up to 20 min; this default
+ * must stay below that. Override via env LLM_TIMEOUT_MS.
+ */
+const DEFAULT_LLM_TIMEOUT_MS = 660_000; // 11 min (was 8 min — too short for GPT-5.5 Stage 2)
 
 function getLlmTimeoutMs() {
   const raw = Number(process.env.LLM_TIMEOUT_MS || "");
