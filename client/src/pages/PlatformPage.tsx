@@ -1766,6 +1766,8 @@ export default function PlatformPage() {
   const [customNoteText, setCustomNoteText] = useState("");
   const [customNoteImageUrl, setCustomNoteImageUrl] = useState<string | null>(null);
   const [customNoteError, setCustomNoteError] = useState<string | null>(null);
+  /** 用戶自選生成類型：單頁圖文筆記 or 2×4 分鏡圖 */
+  const [customNoteKind, setCustomNoteKind] = useState<"xiaohongshu_dual_note" | "storyboard_sheet_landscape">("xiaohongshu_dual_note");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
     sceneId: string;
     kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
@@ -3284,7 +3286,7 @@ export default function PlatformPage() {
       sceneId,
       title: trimmed.slice(0, 80),
       scriptContext: trimmed,
-      kind: "xiaohongshu_dual_note",
+      kind: customNoteKind,
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       progressJobId,
     });
@@ -7851,21 +7853,60 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        {/* ── 自定義文案生成小紅書圖文筆記（獨立功能區塊，不依賴 Stage 1/2） ── */}
+        {/* ── 自定義文案生成圖文筆記或分鏡圖（獨立功能區塊，不依賴 Stage 1/2） ── */}
         <section className={`${shellCardClasses("p-6 mt-8")} max-w-4xl mx-auto`}>
           <div className="flex items-center gap-2 mb-4">
             <PenLine className="h-5 w-5 text-[#ff4fb8]" />
-            <h2 className="text-base font-bold text-white">自定義文案 → 小紅書圖文筆記</h2>
+            <h2 className="text-base font-bold text-white">自定義文案 → 生成圖片</h2>
             <span className="ml-2 rounded-full border border-[#ff4fb8]/40 bg-[rgba(255,79,184,0.08)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff9fe0]">
               獨立生成
             </span>
           </div>
           <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-            貼入中文文案，系統將自動翻譯並以 GPT-IMAGE-2 生成小紅書 2×4 八格圖文筆記。無需先完成 Stage 1 / Stage 2 分析。
+            貼入中文文案，系統將自動用 GPT 5.4 翻譯成英文，並生成簡體中文內容圖片。可選擇生成「單頁圖文筆記」或「2×4 分鏡圖」。
           </p>
+
+          {/* 圖片類型選擇器 */}
+          <div className="mb-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">生成類型</div>
+            <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+              <button
+                type="button"
+                onClick={() => { setCustomNoteKind("xiaohongshu_dual_note"); setCustomNoteImageUrl(null); setCustomNoteError(null); }}
+                disabled={generateCustomNoteMutation.isPending}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customNoteKind === "xiaohongshu_dual_note"
+                    ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <Image className="h-3.5 w-3.5 shrink-0" />
+                單頁圖文筆記
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUrl(null); setCustomNoteError(null); }}
+                disabled={generateCustomNoteMutation.isPending}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customNoteKind === "storyboard_sheet_landscape"
+                    ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <Film className="h-3.5 w-3.5 shrink-0" />
+                2×4 分鏡圖
+              </button>
+            </div>
+            <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
+              {customNoteKind === "xiaohongshu_dual_note"
+                ? "生成小紅書風格單頁 2×4 八格圖文筆記（參考上傳的圖文筆記樣式）"
+                : "生成電影級 2×4 橫幅分鏡圖（含景別、運鏡、台詞與音效欄位）"}
+            </p>
+          </div>
+
           <textarea
             className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
-            placeholder="輸入中文文案，系統自動翻譯並生成小紅書圖文筆記…（建議 100–800 字）"
+            placeholder={customNoteKind === "xiaohongshu_dual_note" ? "輸入中文文案，系統自動翻譯並生成小紅書圖文筆記…（建議 100–800 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
             value={customNoteText}
             onChange={(e) => setCustomNoteText(e.target.value)}
             disabled={generateCustomNoteMutation.isPending}
@@ -7875,12 +7916,18 @@ export default function PlatformPage() {
               type="button"
               onClick={handleGenerateCustomNote}
               disabled={generateCustomNoteMutation.isPending || !customNoteText.trim()}
-              className="inline-flex items-center gap-2 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
+                customNoteKind === "xiaohongshu_dual_note"
+                  ? "border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)]"
+                  : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
+              }`}
             >
               {generateCustomNoteMutation.isPending ? (
                 <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
-              ) : (
+              ) : customNoteKind === "xiaohongshu_dual_note" ? (
                 <><Sparkles className="h-4 w-4" />生成圖文筆記</>
+              ) : (
+                <><Film className="h-4 w-4" />生成分鏡圖</>
               )}
             </button>
             {(customNoteImageUrl || customNoteError) && (
@@ -7913,11 +7960,11 @@ export default function PlatformPage() {
           {customNoteImageUrl && (
             <div className="mt-5 space-y-3">
               <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
-                生成結果
+                {customNoteKind === "xiaohongshu_dual_note" ? "圖文筆記生成結果" : "分鏡圖生成結果"}
               </div>
               <img
                 src={customNoteImageUrl}
-                alt="小紅書圖文筆記"
+                alt={customNoteKind === "xiaohongshu_dual_note" ? "小紅書圖文筆記" : "2×4 分鏡圖"}
                 className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = "none";
@@ -7927,7 +7974,7 @@ export default function PlatformPage() {
               <div className="flex justify-end">
                 <a
                   href={customNoteImageUrl}
-                  download="xiaohongshu-note.png"
+                  download={customNoteKind === "xiaohongshu_dual_note" ? "xiaohongshu-note.png" : "storyboard-2x4.png"}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
