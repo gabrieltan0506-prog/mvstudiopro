@@ -883,8 +883,9 @@ async function buildPlatformDashboard(params: {
         });
 
   const copyLlmMode = resolvePlatformCopyLlmMode(params.copyLlmMode);
-  // 空回重试：GPT‑5.5 medium 推理偶发把输出预算耗尽 → content 为空（rawPreview: {}）；
-  // Evolink 过载时也可能瞬时空回。重试时把推理档位降到 low，逼模型直接输出 JSON 而非空转。
+  // 看板本质是「把 live 快照浓缩成结构化 JSON」，答案基本已在输入里，无需高推理；
+  // 固定用 low：更快、更省，且避免 GPT‑5.5 medium 推理把输出预算耗尽导致 content 为空（rawPreview: {}）。
+  // Stage 2（buildPlatformContent）需要跨维度策略协调，仍保留 medium，不受此处影响。
   const DASHBOARD_LLM_MAX_ATTEMPTS = 3;
   let rawContent = "";
   for (let attempt = 1; attempt <= DASHBOARD_LLM_MAX_ATTEMPTS; attempt += 1) {
@@ -893,12 +894,12 @@ async function buildPlatformDashboard(params: {
       systemInstruction: dashboardSystemInstruction,
       userText: dashboardUserPayload,
       abortSignal: params.abortSignal,
-      reasoningEffortOverride: attempt > 1 ? "low" : undefined,
+      reasoningEffortOverride: "low",
     });
     if (String(rawContent || "").trim()) break;
     console.warn(
       `[buildPlatformDashboard] LLM 第 ${attempt}/${DASHBOARD_LLM_MAX_ATTEMPTS} 次返回空内容` +
-        `（GPT‑5.5 推理耗尽或 Evolink 瞬时空回）${attempt < DASHBOARD_LLM_MAX_ATTEMPTS ? "，降推理档位重试…" : "，放弃重试，转用快照兜底"}`,
+        `（low 推理仍空，疑似 Evolink 瞬时空回）${attempt < DASHBOARD_LLM_MAX_ATTEMPTS ? "，重试…" : "，放弃重试，转用快照兜底"}`,
     );
     if (params.abortSignal?.aborted) break;
   }
