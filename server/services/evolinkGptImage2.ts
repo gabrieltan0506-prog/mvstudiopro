@@ -176,6 +176,11 @@ export async function postEvolinkGptImage2AndUpload(
     imageUrls?: string[];
     /** 局部重绘遮罩 PNG（alpha 通道）URL，仅在传了 imageUrls 时生效。 */
     maskUrl?: string;
+    /**
+     * 出参：失败时回填原始错误信息，供上层判断是否为「内容审核误判」并触发澄清重试。
+     * 成功返回非空 URL 时不写入；仅在返回 null 时由本函数填充 `message`。
+     */
+    captureError?: { message?: string };
   } = {},
 ): Promise<string | null> {
   const L = opts.flowLog;
@@ -217,6 +222,7 @@ export async function postEvolinkGptImage2AndUpload(
       const msg = createJson?.error?.message || JSON.stringify(createJson).slice(0, 400);
       appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 创建任务失败 · HTTP ${createRes.status} · ${msg}`);
       console.warn("[evolinkGptImage2] create failed:", createRes.status, msg);
+      if (opts.captureError) opts.captureError.message = String(msg);
       return null;
     }
 
@@ -238,6 +244,28 @@ export async function postEvolinkGptImage2AndUpload(
     const msg = e instanceof Error ? e.message : String(e);
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 异常 · ${msg}`);
     console.warn("[evolinkGptImage2] exception:", msg);
+    if (opts.captureError) opts.captureError.message = msg;
     return null;
   }
+}
+
+/**
+ * 判断 EvoLink 失败信息是否属于「内容审核拦截」（而非鉴权/网络/超时等）。
+ * 命中后上层可对**良性人像**附澄清语境（成年、著装得体、本人/已授权编辑肖像）重试一次，降低误杀；
+ * 不命中则视为可正常 fallback / 重试的传输类错误。
+ */
+export function isEvolinkModerationFailure(message: string | undefined): boolean {
+  const m = String(message || "").toLowerCase();
+  if (!m) return false;
+  return (
+    m.includes("inappropriate") ||
+    m.includes("moderation") ||
+    m.includes("content policy") ||
+    m.includes("safety") ||
+    m.includes("violat") ||
+    m.includes("not allowed") ||
+    m.includes("敏感") ||
+    m.includes("违规") ||
+    m.includes("审核")
+  );
 }

@@ -136,6 +136,8 @@ export type RunPlatformTopicImagePipelineResult = {
     score: number;
     labelZh: string;
   };
+  /** 面向用户的失败原因（如换脸人像被内容审核拦截）；前端可直接 toast，替代泛泛「生成失败」。 */
+  userFacingError?: string;
 };
 
 export async function runPlatformTopicImagePipeline(
@@ -212,6 +214,8 @@ export async function runPlatformTopicImagePipeline(
     };
     let fallbackUsed = false;
     let imageUrl: string | null = null;
+    // 换脸（用户上传人像）被内容审核拦截时回填，用于给用户「请换一张清晰正常的正脸照」明确提示。
+    const coverCaptureError: { message?: string; moderationBlocked?: boolean } = {};
 
     let strategistChinesePrompt: string | null = null;
     if (isPlatformCoverAgenticBrainEnabled()) {
@@ -384,6 +388,7 @@ export async function runPlatformTopicImagePipeline(
           flowLog: topicImageCondenseLog,
           coverPixelEngine: coverPixelEngineOverride,
           referenceImageUrls: coverReferenceImageUrls.length ? coverReferenceImageUrls : undefined,
+          captureError: coverCaptureError,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -409,7 +414,15 @@ export async function runPlatformTopicImagePipeline(
     const newJobMetaBase = input.newJobMetaBase;
 
     if (!imageUrl) {
-      topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  ✗ 本条结束：仍无 URL`);
+      // 换脸被内容审核拦截 → 给用户可操作的明确提示（而非泛泛「生成失败」）。
+      const faceSwapModerationBlocked =
+        coverReferenceImageUrls.length > 0 && coverCaptureError.moderationBlocked === true;
+      const userFacingError = faceSwapModerationBlocked
+        ? "上传的参考人像被内容审核拦截，请换一张清晰、正常、着装得体的正脸照（避免过暗/侧脸/暴露/疑似未成年）后重试。"
+        : undefined;
+      topicImageCondenseLog.push(
+        `${platformFlowLogTimestamp()}  ✗ 本条结束：仍无 URL${faceSwapModerationBlocked ? " · 原因=换脸人像内容审核拦截（已提示用户换图）" : ""}`,
+      );
       if (creationIdOut != null && database) {
         try {
           await database
@@ -420,7 +433,10 @@ export async function runPlatformTopicImagePipeline(
               updatedAt: new Date(),
               metadata: JSON.stringify({
                 ...newJobMetaBase,
-                platformFreeRetryLastError: "empty_output",
+                platformFreeRetryLastError: faceSwapModerationBlocked
+                  ? "reference_photo_moderation"
+                  : "empty_output",
+                ...(userFacingError ? { userFacingError } : {}),
                 imagePromptStats: promptStats,
                 fallbackUsed,
               }),
@@ -439,6 +455,7 @@ export async function runPlatformTopicImagePipeline(
         imageGenFlowLog: topicImageCondenseLog,
         imagePromptStats: promptStats,
         fallbackUsed,
+        userFacingError,
       };
     }
 

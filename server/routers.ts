@@ -4463,13 +4463,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ input }) => {
-        const buffer = Buffer.from(input.imageBase64, "base64");
+        const rawBuffer = Buffer.from(input.imageBase64, "base64");
         // GPT-Image-2 单图 ≤ 50MB；这里收敛到 12MB，避免超大上传与超时。
-        if (buffer.length < 64) {
+        if (rawBuffer.length < 64) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "图片为空或损坏" });
         }
-        if (buffer.length > 12 * 1024 * 1024) {
+        if (rawBuffer.length > 12 * 1024 * 1024) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "图片过大（请 ≤ 12MB）" });
+        }
+        // 第1级「无损正规化」：sharp 自动按 EXIF 旋正 → 抹掉所有元数据 → 长边收敛 1280 → 重编码 JPEG q90。
+        // 很多内容审核「误判」其实来自相机元数据 / 异常编码 / 过大尺寸，重编码后常可直接通过，且对人像质感几乎无损。
+        // 重编码失败（极少数损坏文件）则退回原图，不阻断上传。
+        let buffer: Buffer = rawBuffer;
+        let mimeType: "image/jpeg" | "image/png" = "image/jpeg";
+        try {
+          const { default: sharp } = await import("sharp");
+          buffer = await sharp(rawBuffer, { failOn: "none" })
+            .rotate()
+            .resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true })
+            .jpeg({ quality: 90, chromaSubsampling: "4:4:4" })
+            .toBuffer();
+        } catch {
+          buffer = rawBuffer;
+          mimeType = input.mimeType === "image/png" ? "image/png" : "image/jpeg";
         }
         // 与封面成品同一套存储：优先 GCS（签名 7 天直链，EvoLink 服务器可抓取），未配置则落 Fly 卷。
         const { uploadBufferToPlatformStorage } = await import("./services/evolinkGptImage2.js");
@@ -4478,10 +4494,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return { url };
         } catch (e) {
           // 兜底：GCS/Fly 不可用时退回 S3/Blob（storagePut）。
-          const ext = input.mimeType === "image/png" ? "png" : "jpg";
+          const ext = mimeType === "image/png" ? "png" : "jpg";
           const key = `platform-cover-reference/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const mime = input.mimeType === "image/png" ? "image/png" : "image/jpeg";
-          const { url } = await storagePut(key, buffer, mime);
+          const { url } = await storagePut(key, buffer, mimeType);
           if (!url) throw e;
           return { url };
         }
