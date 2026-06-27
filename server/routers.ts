@@ -1104,11 +1104,11 @@ const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学·
 /** Stage2 口吻：减轻「合规顾问模板腔」。 */
 const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人直接开拍/开写**的稿子，不是给风控看的合规摘要。
 - **像成熟顾问对创作者当面说话**：有判断、有温度、有意外感；hook 与 copywriting **优先**用口语、具体物件、可感知的动作与反差，**避免**「首先…其次…综上所述」公文笔触。
-- **每条方案应有辨识度**：五条的标题、场景、情绪基调 **建议明显不同**（不要五条同一结构换词）。
+- **每条方案应有辨识度**：六条的标题、场景、情绪基调 **建议明显不同**（不要六条同一结构换词）。
 - **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。`;
 
 /**
- * 5 個內容維度（順序固定，與 Prompt 對齊）。
+ * 6 個內容維度（順序固定，與 Prompt 對齊）。
  * `reasoning`：逐維度 GPT‑5.5 推理檔位。維度 1/3/4/5 走 high（更吃策略/場景推理），
  * 維度 2 留 medium。每條 blueprint 都是獨立 LLM 呼叫、獨立 token 預算（非共用一個預算）。
  */
@@ -1122,6 +1122,7 @@ const BLUEPRINT_DIMENSIONS: ReadonlyArray<{
   { index: 3, name: "目标受众痛点暴击(Audience Pain Point)", reasoning: "high" },
   { index: 4, name: "个人经历与人设魅力(IP Persona Story)", reasoning: "high" },
   { index: 5, name: "强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）", reasoning: "high" },
+  { index: 6, name: "长尾常青与搜索流量（Long-tail Evergreen & Search Traffic）", reasoning: "medium" },
 ];
 
 export async function buildPlatformContent(params: {
@@ -1141,7 +1142,7 @@ export async function buildPlatformContent(params: {
   stage2LlmModeOverride?: PlatformStage2LlmMode | null;
   /**
    * 逐條生成回呼：每生成一條 blueprint 立即觸發，供呼叫端即時持久化至 job output。
-   * `dimIndex` 為 0-based 維度序號（0–4）。
+   * `dimIndex` 為 0-based 維度序號（0–5）。
    */
   onBlueprintGenerated?: (blueprint: unknown, dimIndex: number) => Promise<void> | void;
 }): Promise<{
@@ -1319,7 +1320,7 @@ export async function buildPlatformContent(params: {
           /** Stage 1 看板清洗手遞：含 contentSeeds（title/hook/copywriting/分鏡欄位） */
           stage1StrategicHandoff: handoff,
           ipContextBinding:
-            "当前用户真实人设（职业、身份、兴趣、爱好、专长等，见 context 与用户 JSON 快照），必须据此生成恰好 5 条、五个内容维度各一的 contentBlueprints。泛化、与此人设脱钩或仅用「创作者」「博主」等空壳表述的内容将被拒收。",
+            "当前用户真实人设（职业、身份、兴趣、爱好、专长等，见 context 与用户 JSON 快照），必须据此生成恰好 6 条、六个内容维度各一的 contentBlueprints。泛化、与此人设脱钩或仅用「创作者」「博主」等空壳表述的内容将被拒收。",
         });
 
   const structuredStage2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
@@ -1333,7 +1334,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
 【人设口径】此处「人设 / Persona / IP」均指可获知信息下尽量还原的真实创作者画像；选题、脚本、变现须能用**职业、身份、兴趣、爱好、专长**等多维解释。**不建议**把人设写成泛化「创作者」「博主」。热点与高互动样本仅作结构与节奏参考，**须改写**为贴合本人设的事实与口气，**不建议**硬套无关热梗。
 
-【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。请在此基础上产出 **5 条**更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但**不建议**偏离人设与 headline/subheadline/persona 主线；若种子不足 5 条，可补充新选题但须与同一真实人设一致。
+【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。请在此基础上产出 **6 条**更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但**不建议**偏离人设与 headline/subheadline/persona 主线；若种子不足 6 条，可补充新选题但须与同一真实人设一致。
 
 【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，须重写）：
 - "电商带货" / "带货" / "橱窗"
@@ -1346,13 +1347,14 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 输出要求：
 须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。
 
-【核心数量与维度指令】：须为该平台精确生成 **5** 个深度内容方案（**少于 5 个将导致系统拒收**）。请结合 ipContextBinding，依序从以下**五个维度**各发散**一个**独特选题（每条对应一个维度，顺序不可乱）：
+【核心数量与维度指令】：须为该平台精确生成 **6** 个深度内容方案（**少于 6 个将导致系统拒收**）。请结合 ipContextBinding，依序从以下**六个维度**各发散**一个**独特选题（每条对应一个维度，顺序不可乱）：
 1.核心专业洞察(Professional Insight)
 2.跨界结合与价值观(Cross-over Value)
 3.目标受众痛点暴击(Audience Pain Point)
 4.个人经历与人设魅力(IP Persona Story)
 5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**建议经解构与重塑**，使其贴合用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，**不建议**为凑热点而脱钩。
-【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。须恰好 **5** 条。
+6.长尾常青与搜索流量（Long-tail Evergreen & Search Traffic）：面向**可持续吃长尾流量**的常青选题——围绕用户赛道里**高搜索意图、低时效衰减**的真实问题/关键词（如「如何…」「…怎么选」「…避坑」「…对比」等），设计可被反复搜索与收藏的实用内容；**建议**明确给出该平台可布局的**搜索关键词**与可系列化的子选题方向，便于沉淀为 IP 资产。
+【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。须恰好 **6** 条。
 【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，**优先**读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，**不建议**混成同一判断。
 【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。请：
 (1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——**适配该用户本人设（职业、身份、兴趣、爱好、专长）**，而非泛化稿；热点结构须**改写**落地到本人设；
@@ -1362,7 +1364,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
 请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
-1. contentBlueprints：须恰好包含 **5** 个具体可执行的内容方案，并与上方 **5** 个维度一一对应（第 1 条对应维度 1，依此类推，第 5 条对应维度 5）。每个方案须包含：
+1. contentBlueprints：须恰好包含 **6** 个具体可执行的内容方案，并与上方 **6** 个维度一一对应（第 1 条对应维度 1，依此类推，第 6 条对应维度 6）。每个方案须包含：
    - title（选题标题，**建议**具体、有画面感，避免抽象空话）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，**建议**是一句具体的、能让用户停下来的话——可带反问、具体物件或反常识）
@@ -1597,7 +1599,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
     }
   };
 
-  // 5 個維度並行 + 1 個 monetizationLanes 並行（共 6 個並行 LLM 呼叫）
+  // 6 個維度並行 + 1 個 monetizationLanes 並行（共 7 個並行 LLM 呼叫）
   // 每條 blueprint 完成後立即回呼 onBlueprintGenerated
   const collectedBlueprints: Array<Record<string, unknown> | null> = new Array(BLUEPRINT_DIMENSIONS.length).fill(null);
   let completedCount = 0;
@@ -1797,7 +1799,7 @@ function buildFallbackPlatformDashboard(params: {
       whyHot: item.rationale,
       howToUse: params.snapshot.titleExecutions[index]?.copywriting || item.executionHint,
     })),
-    contentBlueprints: params.snapshot.titleExecutions.slice(0, 5).map((item) => ({
+    contentBlueprints: params.snapshot.titleExecutions.slice(0, 6).map((item) => ({
       title: item.title,
       format: item.presentationMode,
       hook: item.openingHook || item.copywriting,
