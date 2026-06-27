@@ -258,7 +258,7 @@ export interface SimulatedAdvancedReportInput {
   /** 可选：自定义 MAB 两臂标题 */
   mabTitles?: [string, string];
   /** 与平台页时间窗一致，供摘要与入库 metadata 对齐 */
-  windowDays?: 15 | 30 | 45;
+  windowDays?: 3 | 7 | 15 | 30 | 45;
 }
 
 /**

@@ -2384,7 +2384,8 @@ export function buildMockGrowthSnapshot(params: {
 
   const today = new Date();
   const generatedAt = today.toISOString();
-  const windowDays = Math.max(15, Number(params.windowDaysOverride || DEFAULT_GROWTH_WINDOW_DAYS) || DEFAULT_GROWTH_WINDOW_DAYS);
+  // 下限放宽到 3 天：平台页支持 3/7/15/30/45 多窗（短窗看即时风向）。仅当显式 override<15 时才生效，其余调用不受影响。
+  const windowDays = Math.max(3, Number(params.windowDaysOverride || DEFAULT_GROWTH_WINDOW_DAYS) || DEFAULT_GROWTH_WINDOW_DAYS);
   const dataAnalystSummary: GrowthDataAnalystSummary = buildGrowthDataAnalystSummary({
     requestedPlatforms,
     collections: {},
@@ -2559,7 +2560,10 @@ export function buildGrowthSnapshotFromCollections(params: {
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
   const detectedWindowDays = Math.max(DEFAULT_GROWTH_WINDOW_DAYS, ...activeCollections.map((collection) => collection.windowDays || 0));
-  const windowDays = Math.max(15, Number(params.windowDaysOverride || detectedWindowDays) || detectedWindowDays);
+  // 显式 override（如平台页 3/7 天）优先且不被下限顶回；未传 override 时仍走 detectedWindowDays（≥默认）。
+  const windowDays = params.windowDaysOverride
+    ? Math.max(3, Number(params.windowDaysOverride) || detectedWindowDays)
+    : detectedWindowDays;
   const industryTemplate = matchIndustryTemplate(context, [
     params.analysis.summary,
     ...params.analysis.strengths,

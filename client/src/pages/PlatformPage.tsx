@@ -46,6 +46,7 @@ import { DEMO_ADVANCED_AI_REPORT_DATA } from "@shared/advancedAIReportDemoData";
 import { buildSimulatedAdvancedAIReport } from "@shared/advancedPredictionEngine";
 import {
   formatDecisionIntelDateRangeZh,
+  type PlatformWindowDays,
   pickPrimaryDecisionIntelPlatformHint,
 } from "@shared/decisionIntelligencePlatformHint";
 import { selectDecisionIntelBonusTopics } from "@shared/decisionIntelBonusTopics";
@@ -225,6 +226,8 @@ function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
 }
 
 const WINDOW_OPTIONS = [
+  { days: 3 as const, label: "3天", description: "盯最新风向与突发热点" },
+  { days: 7 as const, label: "7天", description: "一周热度与即时机会" },
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
   { days: 30 as const, label: "30天", description: "看平台主流结构与相对稳定方向" },
   { days: 45 as const, label: "45天", description: "看更长窗口的沉淀与长期可做性" },
@@ -631,7 +634,7 @@ function revealText(text: string, elapsedTime: number, seed = 0, speed = 18) {
   return normalized.slice(0, visibleCount);
 }
 
-function buildPlatformProcessingSteps(selectedWindowDays: 15 | 30 | 45, elapsedTime: number, focusPrompt: string): ProcessingStepCard[] {
+function buildPlatformProcessingSteps(selectedWindowDays: PlatformWindowDays, elapsedTime: number, focusPrompt: string): ProcessingStepCard[] {
   const phase = Math.floor(elapsedTime / 4);
   const subject = String(focusPrompt || "").trim() || "当前平台机会";
   const currentStep = Math.min(3, phase);
@@ -663,7 +666,7 @@ function buildPlatformProcessingSteps(selectedWindowDays: 15 | 30 | 45, elapsedT
   ];
 }
 
-function getWindowLabel(value: 15 | 30 | 45) {
+function getWindowLabel(value: PlatformWindowDays) {
   return WINDOW_OPTIONS.find((item) => item.days === value)?.label || `${value}天`;
 }
 
@@ -1695,7 +1698,7 @@ export default function PlatformPage() {
   });
   const queryClient = useQueryClient();
   const trpcUtils = trpc.useUtils();
-  const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
+  const [selectedWindowDays, setSelectedWindowDays] = useState<PlatformWindowDays>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
   const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
@@ -1776,7 +1779,7 @@ export default function PlatformPage() {
   /** Stage 2：platform_build_content job + GET /api/jobs 轮询时的错误说明 */
   const [contentJobError, setContentJobError] = useState<string | null>(null);
   /** 供「重新生成文案」：上次入队的快照（避免虚构成功） */
-  const lastStage2InputRef = useRef<{ snapshotSummary: Record<string, unknown>; windowDays: 15 | 30 | 45 } | null>(
+  const lastStage2InputRef = useRef<{ snapshotSummary: Record<string, unknown>; windowDays: PlatformWindowDays } | null>(
     null,
   );
   /** Debug：Stage 2 文案 job 的 jobId、每次 GET、终态 */
@@ -2149,7 +2152,7 @@ export default function PlatformPage() {
     async (
       dash: PlatformDashboard,
       snapshotSummary: Record<string, unknown>,
-      windowDays: 15 | 30 | 45,
+      windowDays: PlatformWindowDays,
       /** 若傳入（含 `""`），本輪入隊用該字串；省略則用當前 `focusPrompt`（手動重試 Stage 2） */
       capturedJudgment?: string,
     ) => {
@@ -3925,22 +3928,15 @@ export default function PlatformPage() {
     [platformDashboard, snapshot, platformContent],
   );
 
-  /** 全案专属文案（Stage 2）成功落地后才允许示意预览与扣点生成；价格查询不受此限。 */
+  /**
+   * 战略地图独立化：只要「快照 + Stage 1 战略看板」就绪即可扣点生成，**不再强制 Stage 2 专属文案**。
+   * 若已跑 Stage 2，其选题会一并纳入分析（见 strategicMapBlueprint）；正在跑 Stage 2 时先等其完成，避免竞态。
+   */
   const decisionIntelInputReady = useMemo(() => {
     if (!snapshot || !platformDashboard) return false;
     if (isContentLoading) return false;
-    if (stage2Failed || contentJobError) return false;
-    if (!platformContent || stage2EmptyPayload) return false;
     return true;
-  }, [
-    snapshot,
-    platformDashboard,
-    isContentLoading,
-    stage2Failed,
-    contentJobError,
-    platformContent,
-    stage2EmptyPayload,
-  ]);
+  }, [snapshot, platformDashboard, isContentLoading]);
   const strategicMapTopic = useMemo(() => {
     const raw = (platformDashboard?.headline || platformDashboard?.subheadline || "").trim();
     return raw.slice(0, 160) || "个性化战略选题";
@@ -6138,8 +6134,8 @@ export default function PlatformPage() {
                   <div>
                     <h3 className="text-base font-bold text-white md:text-lg">个性化战略地图（决策智库视图）</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      在<strong className="text-white">全案专属文案已成功写入</strong>后，将本页战略看板与长稿要点<strong className="text-white">收敛成一页可视化报告</strong>
-                      （雷达、执行向建议与阅读用排行条；均为<strong className="text-white">辅助决策的模型推演</strong>，不构成效果承诺）。解锁为
+                      <strong className="text-white">独立模块</strong>：只要完成<strong className="text-white">快照 + 战略看板</strong>即可解锁，<strong className="text-white">无需先跑专属文案</strong>；将本页战略看板与热点要点<strong className="text-white">收敛成一页可视化报告</strong>
+                      （雷达、执行向建议与阅读用排行条；均为<strong className="text-white">辅助决策的模型推演</strong>，不构成效果承诺）。若已生成专属文案，其选题会一并纳入分析。解锁为
                       <strong className="text-white"> 加购模块</strong>
                       ，与全案入队扣点分开计：首次体验{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
@@ -6158,14 +6154,8 @@ export default function PlatformPage() {
                     {!decisionIntelInputReady ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
                         {isContentLoading
-                          ? "专属文案生成中，完成后才可扣点解锁（价格已标示于上）。"
-                          : stage2Failed || contentJobError
-                            ? "专属文案未完成，请重试全案文案后再解锁本模块。"
-                            : stage2EmptyPayload
-                              ? "后台未返回有效选题请重试；完成后再解锁。"
-                              : platformDashboard && !platformContent
-                                ? "请先完成专属文案入队结果，再解锁本报告。"
-                                : "请完成全案专属文案后再解锁。"}
+                          ? "专属文案生成中，完成后再解锁可一并纳入选题（价格已标示于上）。"
+                          : "请先完成快照与战略看板（点「开始全案分析」），即可独立解锁本报告。"}
                       </span>
                     ) : null}
                     <button
@@ -6191,7 +6181,7 @@ export default function PlatformPage() {
                         }
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于当前「战略看板 + 已写入的专属文案」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                            `将扣除 ${next} 积分，基于当前「战略看板${platformContent ? " + 已写入的专属文案" : ""}」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
                           );
                           if (!ok) return;
                         }

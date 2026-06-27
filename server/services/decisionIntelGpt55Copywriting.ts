@@ -1,5 +1,6 @@
 /**
- * 战略全景图 / 决策智库：OpenAI GPT‑5.5 · reasoning medium · JSON 结构化输出。
+ * 战略全景图 / 决策智库：OpenAI GPT‑5.5 · reasoning high · JSON 结构化输出。
+ * 该模块为 200 积分的高价值独立分析，提到 high 以换取更强的策略推演与一致性。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
@@ -16,7 +17,7 @@ export async function callDecisionIntelGpt55StructuredJson(params: {
     max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
     temperature: 0.8,
     response_format: { type: "json_object" },
-    reasoningEffort: "medium",
+    reasoningEffort: "high",
     messages: [
       { role: "system", content: params.taskSystemInstruction },
       { role: "user", content: params.userText },
