@@ -5250,6 +5250,73 @@ export default function PlatformPage() {
     );
   }, [unlockedStrategicReport]);
 
+  /**
+   * 热点风向标「一键出图」：从 Stage1 看板热点（topTopics）直接扩写成可执行文案并入执行区，
+   * **不依赖 200 积分报告，也不依赖 Stage2 智能文案**——只需先完成快照 + 战略看板。
+   * 复用 generateDecisionIntelTopicExecutionCopy（同一选题首次免费），落地后即可在执行区直接出封面 / 分镜。
+   */
+  const handleQuickHotTopicToExecution = useCallback(
+    async (topic: { title?: string; whyHot?: string; howToUse?: string }) => {
+      if (!platformDashboard) {
+        toast.error("请先完成快照与战略看板（点「开始全案分析」）");
+        return;
+      }
+      const title = String(topic.title || "").trim();
+      if (title.length < 2) {
+        toast.error("该选题标题不足，无法扩写");
+        return;
+      }
+      const structure =
+        [topic.howToUse, topic.whyHot]
+          .map((s) => String(s || "").trim())
+          .filter(Boolean)
+          .join("\n")
+          .slice(0, 8000) || title;
+      const titleKey = normalizeDecisionIntelTopicTitleKey(title);
+      if (existingStrategicExecutionTitleKeys.some((t) => normalizeDecisionIntelTopicTitleKey(t) === titleKey)) {
+        toast.message("该选题已在下方执行区，可直接生封面与分镜");
+        scrollToPlatformExecutionCopy();
+        return;
+      }
+      if (generateDecisionIntelTopicCopyMutation.isPending) return;
+
+      setGeneratingStrategicMapTopicKey(titleKey);
+      try {
+        const res = await generateDecisionIntelTopicCopyMutation.mutateAsync({
+          topic: strategicMapTopic,
+          contentBlueprint: strategicMapBlueprint,
+          platformHint: decisionIntelPlatformHint,
+          pick: { title: title.slice(0, 240), structure, source: "structure" as const },
+        });
+        const mapped = mapStrategicMapBlueprintsToExecutionCards(
+          res.executionBlueprints ?? [],
+          contentExecutionCards.length + strategicMapSessionExecutionCards.length,
+          { isDecisionIntelPicked: true },
+        );
+        if (mapped.length === 0) {
+          toast.error("未能生成执行文案，请稍后重试");
+          return;
+        }
+        setStrategicMapSessionExecutionCards((prev) => [...prev, ...mapped]);
+        toast.success("已扩写并加入下方执行区，可直接出封面 / 分镜");
+        scrollToPlatformExecutionCopy();
+      } finally {
+        setGeneratingStrategicMapTopicKey(null);
+      }
+    },
+    [
+      platformDashboard,
+      existingStrategicExecutionTitleKeys,
+      generateDecisionIntelTopicCopyMutation,
+      strategicMapTopic,
+      strategicMapBlueprint,
+      decisionIntelPlatformHint,
+      contentExecutionCards.length,
+      strategicMapSessionExecutionCards.length,
+      scrollToPlatformExecutionCopy,
+    ],
+  );
+
   const handleStrategicMapRegenerateTopicCopy = useCallback(
     async (pick: DecisionIntelTopicPick) => {
       if (!unlockedStrategicReport) {
@@ -6137,6 +6204,67 @@ export default function PlatformPage() {
                 </div>
               </div>
             </div>
+
+            {platformDashboard && topTopics.length > 0 ? (
+              <div className="scroll-mt-20 rounded-2xl border border-[#7d73ff]/25 bg-[rgba(12,10,30,0.7)] p-4 md:p-5">
+                <div className="flex flex-col gap-1 border-b border-white/8 pb-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <TrendingUp className="h-4 w-4 shrink-0 text-[#c4b5fd]" aria-hidden />
+                    <h3 className="text-base font-bold text-white md:text-lg">热点风向标 · 一键出图</h3>
+                    <span className="rounded-full border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-2 py-0.5 text-[10px] font-semibold text-[#8cefff]">
+                      独立 · 免跑专属文案
+                    </span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-[#b7add8]">
+                    基于「近 {selectedWindowDays} 天」窗口的热点切口。点「扩写并出图」即把该选题扩写成可执行文案（同一选题<strong className="text-white">首次免费</strong>），随后可直接在下方执行区生成<strong className="text-white">封面 / 2×4·3×4 分镜</strong>，无需先跑专属文案。
+                  </p>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  {topTopics.slice(0, 6).map((t: any, i: number) => {
+                    const tTitle = String(t?.title || "").trim();
+                    const tKey = normalizeDecisionIntelTopicTitleKey(tTitle);
+                    const tBusy = generatingStrategicMapTopicKey === tKey;
+                    const tAlready = existingStrategicExecutionTitleKeys.some(
+                      (x) => normalizeDecisionIntelTopicTitleKey(x) === tKey,
+                    );
+                    return (
+                      <div
+                        key={`${tKey || "topic"}-${i}`}
+                        className="flex flex-col gap-2 rounded-xl border border-white/8 bg-black/25 p-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-white" title={tTitle}>
+                            {tTitle || "（未命名选题）"}
+                          </div>
+                          {t?.whyHot ? (
+                            <div className="mt-1 truncate text-[11px] leading-snug text-white/55" title={String(t.whyHot)}>
+                              {String(t.whyHot)}
+                            </div>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={tBusy || generateDecisionIntelTopicCopyMutation.isPending || tTitle.length < 2}
+                          onClick={() => void handleQuickHotTopicToExecution(t)}
+                          className="inline-flex min-h-[2.1rem] items-center justify-center gap-1.5 self-start rounded-lg border border-[#49e6ff]/40 bg-[#49e6ff]/10 px-3 py-1.5 text-[11px] font-bold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:opacity-45"
+                        >
+                          {tBusy ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              扩写中…
+                            </>
+                          ) : tAlready ? (
+                            "已在执行区 · 去出图"
+                          ) : (
+                            "扩写并出图（首次免费）"
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div
               id={PLATFORM_SECTION_DECISION_INTEL_ID}
