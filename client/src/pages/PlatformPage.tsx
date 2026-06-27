@@ -2823,12 +2823,15 @@ export default function PlatformPage() {
           creationId: undefined as number | undefined,
           imageGenFlowLog: [] as string[],
           coverClickEstimate: undefined,
+          userFacingError: undefined as string | undefined,
         };
       }
       const o = raw as Record<string, unknown>;
       const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
+      const userFacingError =
+        typeof o.userFacingError === "string" && o.userFacingError.trim() ? o.userFacingError.trim() : undefined;
       /** job output 若仅缺 success（序列化/进度合并），有 URL 也应写入 platformImageMap */
       const success =
         Boolean(imageUrl) &&
@@ -2861,6 +2864,7 @@ export default function PlatformPage() {
         creationId,
         imageGenFlowLog: finalFlowLog,
         coverClickEstimate,
+        userFacingError,
       };
     },
     [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs],
@@ -7368,7 +7372,10 @@ export default function PlatformPage() {
                               }));
                               toast.success(hasDisplayedUrl ? "单张封面已更新" : "单张封面已生成");
                             } else {
-                              toast.error("单帧生图失败，可稍后在本卡重试或联系支持。");
+                              toast.error(
+                                (res as { userFacingError?: string }).userFacingError ||
+                                  "单帧生图失败，可稍后在本卡重试或联系支持。",
+                              );
                             }
                             markCoverGenerationFinished(item.id);
                           })
@@ -7433,7 +7440,8 @@ export default function PlatformPage() {
                               );
                             } else {
                               toast.error(
-                                "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
+                                (res as { userFacingError?: string }).userFacingError ||
+                                  "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
                               );
                             }
                             markCoverGenerationFinished(item.id);

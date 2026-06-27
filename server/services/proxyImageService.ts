@@ -915,6 +915,8 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   coverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
   /** EvoLink edit 模式参考图（用户上传的人像 URL）；非空则换封面主角。 */
   referenceImageUrls?: string[];
+  /** 出参：换脸被内容审核拦截时回填 `moderationBlocked`，供上层给用户明确提示。 */
+  captureError?: { message?: string; moderationBlocked?: boolean };
 }): Promise<string | null> {
   const raw = String(options.englishPrompt || "").trim();
   if (!raw) {
@@ -938,6 +940,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     gcsSubdir: "platform_topic_reference",
     flowLog: L,
     referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
+    captureError: options.captureError,
   });
 }
 
@@ -1016,6 +1019,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   flowLog?: string[];
   /** EvoLink edit 模式参考图（如用户上传的人像 URL）；非空则注入换人指令 + image_urls。 */
   referenceImageUrls?: string[];
+  /**
+   * 出参：失败时回填供上层做「快速失败 / 用户提示」。
+   * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
+   */
+  captureError?: { message?: string; moderationBlocked?: boolean };
 }): Promise<string | null> {
   const L = options.flowLog;
   const raw = String(options.englishPrompt || "").trim();
@@ -1044,14 +1052,14 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       L,
       `[单帧·主力] EvoLink GPT-IMAGE-2 · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""} · 英文 prompt 约 ${prompt.length} 字`,
     );
-    const captureError: { message?: string } = {};
+    const evoErr: { message?: string } = {};
     const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
       aspectRatio: options.aspectRatio,
       size: sizes[0],
       flowLog: L,
       quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
       imageUrls: hasRef ? refImageUrls : undefined,
-      captureError,
+      captureError: evoErr,
     });
     if (fromEvolink) {
       appendImageFlowLog(L, "[单帧·主力] EvoLink GPT-IMAGE-2 成功，已落库");
@@ -1059,26 +1067,40 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     }
 
     // 换脸/换人路径：若 EvoLink 把这张**良性人像**误判为违规，附澄清语境（成年/着装/本人或已授权/编辑用途）重试一次，降低误杀。
-    if (hasRef && isEvolinkModerationFailure(captureError.message)) {
+    if (hasRef && isEvolinkModerationFailure(evoErr.message)) {
       appendImageFlowLog(
         L,
-        `[单帧·换脸] EvoLink 内容审核拦截（${String(captureError.message).slice(0, 80)}）→ 附澄清语境对良性人像重试一次`,
+        `[单帧·换脸] EvoLink 内容审核拦截（${String(evoErr.message).slice(0, 80)}）→ 附澄清语境对良性人像重试一次`,
       );
       const retryPrompt = `${prompt}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`;
+      const retryErr: { message?: string } = {};
       const retryEvolink = await postEvolinkGptImage2AndUpload(retryPrompt, options.gcsSubdir, {
         aspectRatio: options.aspectRatio,
         size: sizes[0],
         flowLog: L,
         quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
         imageUrls: refImageUrls,
+        captureError: retryErr,
       });
       if (retryEvolink) {
         appendImageFlowLog(L, "[单帧·换脸] 澄清语境重试成功，已落库");
         return retryEvolink;
       }
+      // 澄清重试仍被审核拦截 → 标记 moderationBlocked，让上层「快速失败」并给用户明确换图提示，不再空跑后续重试。
+      if (isEvolinkModerationFailure(retryErr.message || evoErr.message)) {
+        if (options.captureError) {
+          options.captureError.moderationBlocked = true;
+          options.captureError.message = retryErr.message || evoErr.message;
+        }
+        appendImageFlowLog(
+          L,
+          "[单帧·换脸] 澄清重试后仍被内容审核拦截 → 快速失败（提示用户换一张清晰正常的正脸照，可免费补发）",
+        );
+        return null;
+      }
       appendImageFlowLog(
         L,
-        "[单帧·换脸] 澄清重试后仍被拦截 → 本条失败（提示用户换一张清晰正脸/着装得体的本人照片，可免费补发）",
+        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 本条失败（可免费补发）",
       );
     }
     appendImageFlowLog(L, "[单帧·主力] EvoLink 无图 → 评估 fallback");
@@ -1365,6 +1387,9 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
 
   let lastFailure: unknown = null;
+  // 内容审核拦截属「用户可纠正错误」（OpenAI 文档：moderation_blocked / image_generation_user_error 不应自动重试）。
+  // 命中后立即停手，不再空跑后续整链重试（重新英文化 + 再次送审都会再次被同样内容拦截）。
+  let moderationBlocked = false;
 
   for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
     appendImageFlowLog(
@@ -1494,11 +1519,13 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
 
       if (isEvolinkGptImage2Configured()) {
         appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}`);
+        const evoErr: { message?: string } = {};
         const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
           aspectRatio: "16:9",
           size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
           flowLog: L,
           quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+          captureError: evoErr,
         });
         if (fromEvolink) {
           appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
@@ -1509,6 +1536,15 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
             compositeSheetMaxAttempts: compositeMaxAttempts,
           });
           return fromEvolink;
+        }
+        if (isEvolinkModerationFailure(evoErr.message)) {
+          moderationBlocked = true;
+          lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
+          appendImageFlowLog(
+            L,
+            `[2×4·步骤2a·主力] EvoLink 内容审核拦截 → 标记快速失败（不再整链重试；OhMyGPT/fal 跳过，同内容也会被拦截）`,
+          );
+          throw lastFailure;
         }
         appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
       }
@@ -1559,6 +1595,15 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         L,
         `[2×4·整链] 第 ${attempt}/${compositeMaxAttempts} 次失败 · ${msg.replace(/\s+/g, " ").slice(0, 480)}`,
       );
+      // 快速失败：内容审核拦截属用户可纠正错误，重试只会被同样内容再次拦截，立即停手省时省钱。
+      if (moderationBlocked || isEvolinkModerationFailure(msg)) {
+        moderationBlocked = true;
+        appendImageFlowLog(
+          L,
+          `[2×4·整链] 命中内容审核拦截 → 快速失败，跳过剩余 ${compositeMaxAttempts - attempt} 次重试`,
+        );
+        break;
+      }
       if (attempt >= compositeMaxAttempts) {
         break;
       }
@@ -1571,6 +1616,12 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
   const flowLog = L ?? [];
   const finalMsg =
     lastFailure instanceof Error ? lastFailure.message : lastFailure != null ? String(lastFailure) : "unknown";
+  if (moderationBlocked) {
+    flowLog.push(`[2×4·整链] 内容审核拦截·已快速失败（未空跑重试）· ${finalMsg.slice(0, 200)}`);
+    throw new Error(
+      `[2×4 宽幅合成·内容审核拦截]\n该选题文案/画面触发了内容审核，已立即停止（未重复重试）。请调整文案后再试。\n最后原因: ${finalMsg}\n执行日志:\n${flowLog.join("\n")}`,
+    );
+  }
   flowLog.push(`[2×4·整链] 已达 ${compositeMaxAttempts} 次仍失败 · ${finalMsg.slice(0, 400)}`);
   throw new Error(`[2×4 宽幅合成·${compositeMaxAttempts} 次尝试均失败]\n最后原因: ${finalMsg}\n执行日志:\n${flowLog.join("\n")}`);
   };
