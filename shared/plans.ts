@@ -260,6 +260,10 @@ export const CREDIT_COSTS = {
   platformXhsDualNote: 72,
   /** 单页连贯图文知识卡片 **25/篇**（`single_page_knowledge_card`，自定义文案）；上篇+下篇合计 50 */
   platformSinglePageKnowledgeCard: 25,
+  /** 3×4 十二格分镜 **120**（`storyboard_sheet_landscape` + gridVariant=3x4）；后端分 2 段生成拼接 */
+  platformStoryboardSheet3x4: 120,
+  /** 3×4 十二格图文 **144**（`xiaohongshu_dual_note` + gridVariant=3x4）；后端分 2 段生成拼接 */
+  platformXhsDualNote3x4: 144,
   /**
    * @deprecated 单条封面+分镜请用 {@link platformCoverCompositeBundleCreditsForFormat} 动态九折价；保留键供旧数据/文档兼容。
    */

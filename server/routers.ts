@@ -5141,6 +5141,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             ]),
             /** 仅 single_page_knowledge_card：上篇 / 下篇分页（标题自动加「（上篇）/（下篇）」，仅取对应半篇内容）。 */
             notePart: z.enum(["upper", "lower"]).optional(),
+            /** 仅 storyboard_sheet_landscape / xiaohongshu_dual_note：2×4(默认) 或 3×4 十二格（后端分 2 段生成再 sharp 拼成一张长图，降低糊字）。 */
+            gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
             progressJobId: z.string().min(8).max(64).optional(),
             executionDetails: z.string().max(4000).optional(),
@@ -5200,6 +5202,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "gpt54" as const;
         const compositePack = input.bulkCompositePack;
+        // 3×4 十二格：仅 storyboard_sheet_landscape / xiaohongshu_dual_note 支持，后端分段生成再拼接，定价另算
+        const is3x4Grid =
+          input.gridVariant === "3x4" &&
+          (input.kind === "storyboard_sheet_landscape" || input.kind === "xiaohongshu_dual_note");
         const cost = compositePack
           ? platformBundleCreditsForSlot(
               platformCompositeBundleTotalCredits(compositePack.packSceneIds.length),
@@ -5207,10 +5213,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositePack.packSceneIds.length,
             )
           : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-            ? CREDIT_COSTS.platformStoryboardSheet
+            ? (is3x4Grid ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet)
             : input.kind === "single_page_knowledge_card"
               ? CREDIT_COSTS.platformSinglePageKnowledgeCard // 25/篇；上篇+下篇两次合计 50
-              : CREDIT_COSTS.platformXhsDualNote;
+              : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -5243,7 +5249,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         let detachLiveProgress: (() => void) | undefined;
 
-        const { generatePlatformCompositeSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
+        const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
+        // 3×4 → 走「分段生成 + sharp 直向拼接」总控；否则走单张合成
+        const generateSheet = is3x4Grid ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage;
         const imageGenFlowLog: string[] = [];
 
         if (progressJobId) {
@@ -5277,7 +5285,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
             let imageUrl: string | null = null;
             try {
-              imageUrl = await generatePlatformCompositeSheetImage({
+              imageUrl = await generateSheet({
                 kind: input.kind,
                 title: input.title,
                 scriptContext: input.scriptContext,
@@ -5341,7 +5349,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
         let imageUrl: string | null = null;
         try {
-          imageUrl = await generatePlatformCompositeSheetImage({
+          imageUrl = await generateSheet({
             kind: input.kind,
             title: input.title,
             scriptContext: input.scriptContext,
