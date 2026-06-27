@@ -115,7 +115,7 @@ async function downloadEvolinkImage(url: string): Promise<Buffer> {
   return Buffer.from(ab);
 }
 
-async function uploadBufferToPlatformStorage(
+export async function uploadBufferToPlatformStorage(
   buffer: Buffer,
   gcsSubdir: string,
   flowLog?: string[],
