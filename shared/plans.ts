@@ -258,6 +258,8 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格 **72**（`xiaohongshu_dual_note`，非分镜主表） */
   platformXhsDualNote: 72,
+  /** 单页连贯图文知识卡片 **25/篇**（`single_page_knowledge_card`，自定义文案）；上篇+下篇合计 50 */
+  platformSinglePageKnowledgeCard: 25,
   /**
    * @deprecated 单条封面+分镜请用 {@link platformCoverCompositeBundleCreditsForFormat} 动态九折价；保留键供旧数据/文档兼容。
    */

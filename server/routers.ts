@@ -5111,6 +5111,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               "xiaohongshu_dual_note",
               "single_page_knowledge_card",
             ]),
+            /** 仅 single_page_knowledge_card：上篇 / 下篇分页（标题自动加「（上篇）/（下篇）」，仅取对应半篇内容）。 */
+            notePart: z.enum(["upper", "lower"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
             progressJobId: z.string().min(8).max(64).optional(),
             executionDetails: z.string().max(4000).optional(),
@@ -5178,7 +5180,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
           : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? CREDIT_COSTS.platformStoryboardSheet
-            : CREDIT_COSTS.platformXhsDualNote;
+            : input.kind === "single_page_knowledge_card"
+              ? CREDIT_COSTS.platformSinglePageKnowledgeCard // 25/篇；上篇+下篇两次合计 50
+              : CREDIT_COSTS.platformXhsDualNote;
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -5256,6 +5260,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
                 coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
                 compositeImageEngine: input.compositeImageEngine,
+                notePart: input.notePart,
               });
 
               appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
@@ -5319,6 +5324,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
             coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
             compositeImageEngine: input.compositeImageEngine,
+            notePart: input.notePart,
           });
         } catch (error: any) {
           detachLiveProgress?.();

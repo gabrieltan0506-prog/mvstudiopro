@@ -1766,10 +1766,17 @@ export default function PlatformPage() {
   const [platformStoryboardSheetMap, setPlatformStoryboardSheetMap] = useState<Record<string, string>>({});
   /** 小红书双笔记卡（单张合成） */
   const [platformXhsNoteMap, setPlatformXhsNoteMap] = useState<Record<string, string>>({});
-  /** 自定義文案生成小紅書圖文筆記（獨立功能，不依賴 Stage 1/2） */
+  /** 自定義文案生成圖文筆記（獨立功能，不依賴 Stage 1/2） */
   const [customNoteText, setCustomNoteText] = useState("");
-  const [customNoteImageUrl, setCustomNoteImageUrl] = useState<string | null>(null);
+  /** 知識卡片：上篇圖（分鏡圖也用此槽，單張）。 */
+  const [customNoteImageUpper, setCustomNoteImageUpper] = useState<string | null>(null);
+  /** 知識卡片：下篇圖（分鏡圖不使用）。 */
+  const [customNoteImageLower, setCustomNoteImageLower] = useState<string | null>(null);
   const [customNoteError, setCustomNoteError] = useState<string | null>(null);
+  /** 生成中（上篇/下篇/單張共用一個忙碌旗標）。 */
+  const [customNoteBusy, setCustomNoteBusy] = useState(false);
+  /** 進度提示：目前正在生成哪一篇（上篇/下篇），分鏡為 null。 */
+  const [customNotePartInFlight, setCustomNotePartInFlight] = useState<"upper" | "lower" | null>(null);
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖（自定義文案專用，與選題卡片小紅書八格互不影響） */
   const [customNoteKind, setCustomNoteKind] = useState<"single_page_knowledge_card" | "storyboard_sheet_landscape">("single_page_knowledge_card");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -3241,67 +3248,82 @@ export default function PlatformPage() {
   const compositeMutationBusy =
     generatePlatformCompositeSheetMutation.isPending || compositeAwaitingJobTerminal;
 
-  /** 自定義文案生成小紅書圖文筆記 — 獨立 mutation，不依賴選題流程 */
-  const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation({
-    onSuccess: (res) => {
-      if (res.imageUrl) {
-        setCustomNoteImageUrl(res.imageUrl);
-        setCustomNoteError(null);
-        toast.success("圖文筆記已生成");
-      } else if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
-        const pid = (res as { progressJobId?: string }).progressJobId!;
-        void pollJobUntilTerminal(pid, {
-          intervalMs: 1500,
-          maxWaitMs: 10 * 60_000,
-          adaptiveBackoffAfterAttempts: 20,
-          maxIntervalMs: 5000,
-          onPoll: ({ status }) => {
-            if (status === "queued") setCustomNoteError(null);
-          },
-        }).then((j) => {
-          if (j.status === "failed") {
-            setCustomNoteError(j.error || "生成失敗，請重試");
-          } else {
-            const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
-            const url = out?.compositeImageUrl || out?.imageUrl || "";
-            if (url) {
-              setCustomNoteImageUrl(url);
-              setCustomNoteError(null);
-              toast.success("圖文筆記已生成");
-            } else {
-              setCustomNoteError("未取得圖片 URL，請重試");
-            }
-          }
-        }).catch((e) => {
-          setCustomNoteError(e instanceof Error ? e.message : "生成失敗，請重試");
-        });
-      }
-    },
-    onError: (error) => {
-      const msg = error instanceof Error ? error.message : String(error);
-      setCustomNoteError(msg);
-      toast.error(`圖文筆記生成失敗：${msg.slice(0, 120)}`);
-    },
-  });
+  /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
+  const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
 
-  const handleGenerateCustomNote = () => {
+  /**
+   * 生成一張卡片：同步回 imageUrl 直接用；非同步回 progressJobId 則輪詢至終態取圖。
+   * @param notePart 知識卡片分頁（上篇/下篇）；分鏡圖傳 undefined。
+   */
+  const generateCustomNoteOne = async (
+    trimmed: string,
+    notePart?: "upper" | "lower",
+  ): Promise<string> => {
+    const sceneId = `custom-note-${notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const progressJobId = newPlatformCompositeProgressJobId();
+    const res = await generateCustomNoteMutation.mutateAsync({
+      sceneId,
+      title: trimmed.slice(0, 80),
+      scriptContext: trimmed,
+      kind: customNoteKind,
+      ...(notePart ? { notePart } : {}),
+      imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
+      progressJobId,
+    });
+    if (res.imageUrl) return res.imageUrl;
+    if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
+      const pid = (res as { progressJobId?: string }).progressJobId!;
+      const j = await pollJobUntilTerminal(pid, {
+        intervalMs: 1500,
+        maxWaitMs: 10 * 60_000,
+        adaptiveBackoffAfterAttempts: 20,
+        maxIntervalMs: 5000,
+      });
+      if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
+      const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
+      const url = out?.compositeImageUrl || out?.imageUrl || "";
+      if (!url) throw new Error("未取得圖片 URL，請重試");
+      return url;
+    }
+    throw new Error("生成失敗，請重試");
+  };
+
+  const handleGenerateCustomNote = async () => {
     const trimmed = customNoteText.trim();
     if (!trimmed) {
       toast.error("請先輸入中文文案");
       return;
     }
-    setCustomNoteImageUrl(null);
+    setCustomNoteImageUpper(null);
+    setCustomNoteImageLower(null);
     setCustomNoteError(null);
-    const sceneId = `custom-note-${Date.now()}`;
-    const progressJobId = newPlatformCompositeProgressJobId();
-    generateCustomNoteMutation.mutate({
-      sceneId,
-      title: trimmed.slice(0, 80),
-      scriptContext: trimmed,
-      kind: customNoteKind,
-      imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
-      progressJobId,
-    });
+    setCustomNoteBusy(true);
+    try {
+      if (customNoteKind === "single_page_knowledge_card") {
+        // 知識卡片：一次生成「上篇 + 下篇」兩張完整卡片（依序生成、各自顯示）
+        setCustomNotePartInFlight("upper");
+        const upper = await generateCustomNoteOne(trimmed, "upper");
+        setCustomNoteImageUpper(upper);
+        toast.success("上篇已生成，正在生成下篇…");
+        setCustomNotePartInFlight("lower");
+        const lower = await generateCustomNoteOne(trimmed, "lower");
+        setCustomNoteImageLower(lower);
+        toast.success("上篇＋下篇已生成");
+      } else {
+        // 分鏡圖：單張
+        setCustomNotePartInFlight(null);
+        const img = await generateCustomNoteOne(trimmed, undefined);
+        setCustomNoteImageUpper(img);
+        toast.success("分鏡圖已生成");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setCustomNoteError(msg);
+      toast.error(`生成失敗：${msg.slice(0, 120)}`);
+    } finally {
+      setCustomNoteBusy(false);
+      setCustomNotePartInFlight(null);
+    }
   };
 
   const runSequentialCompositeBatchGeneration = async () => {
@@ -7875,7 +7897,7 @@ export default function PlatformPage() {
             </span>
           </div>
           <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-            貼入中文文案 / Markdown，系統將自動用 GPT 5.4 翻譯成英文，再生成簡體中文圖片。可選擇生成「單頁圖文卡片」或「2×4 分鏡圖」。
+            貼入中文文案 / Markdown，生成精緻的簡體中文圖片。「單頁圖文卡片」會把內容拆成<strong className="text-[#ff9fe0]">上篇＋下篇兩張</strong>完整卡片（標題自動標註「（上篇）/（下篇）」），<strong className="text-[#ff9fe0]">共扣 50 積分</strong>（上下篇各 25 · supervisor 免扣）；「2×4 分鏡圖」為單張。
           </p>
 
           {/* 圖片類型選擇器 */}
@@ -7884,8 +7906,8 @@ export default function PlatformPage() {
             <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
               <button
                 type="button"
-                onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUrl(null); setCustomNoteError(null); }}
-                disabled={generateCustomNoteMutation.isPending}
+                onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
+                disabled={customNoteBusy}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                   customNoteKind === "single_page_knowledge_card"
                     ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
@@ -7897,8 +7919,8 @@ export default function PlatformPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUrl(null); setCustomNoteError(null); }}
-                disabled={generateCustomNoteMutation.isPending}
+                onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
+                disabled={customNoteBusy}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                   customNoteKind === "storyboard_sheet_landscape"
                     ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
@@ -7911,41 +7933,41 @@ export default function PlatformPage() {
             </div>
             <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
               {customNoteKind === "single_page_knowledge_card"
-                ? "依小標題順序，把文案完整鋪成「一整頁連貫圖文知識卡片」：彩色圖標串接、橙→淡紫漸層、印刷級清晰簡體中文（非 2×4 八格網格、不限定小紅書格式）"
+                ? "依小標題順序對半拆成「上篇＋下篇」兩張完整單頁卡片：手繪＋寫實＋花卉裝飾、書法標題、橙→淡紫漸層、印刷級清晰簡體中文（非 2×4 八格網格）"
                 : "生成電影級 2×4 橫幅分鏡圖（含景別、運鏡、台詞與音效欄位）"}
             </p>
           </div>
 
           <textarea
             className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
-            placeholder={customNoteKind === "single_page_knowledge_card" ? "貼入中文文案 / Markdown，系統自動翻譯並生成單頁連貫圖文知識卡片…（建議 200–1500 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
+            placeholder={customNoteKind === "single_page_knowledge_card" ? "貼入中文文案 / Markdown，直接生成單頁連貫圖文知識卡片（上篇＋下篇兩張）…（建議 200–1500 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
             value={customNoteText}
             onChange={(e) => setCustomNoteText(e.target.value)}
-            disabled={generateCustomNoteMutation.isPending}
+            disabled={customNoteBusy}
           />
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={handleGenerateCustomNote}
-              disabled={generateCustomNoteMutation.isPending || !customNoteText.trim()}
+              disabled={customNoteBusy || !customNoteText.trim()}
               className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
                 customNoteKind === "single_page_knowledge_card"
                   ? "border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)]"
                   : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
               }`}
             >
-              {generateCustomNoteMutation.isPending ? (
+              {customNoteBusy ? (
                 <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
               ) : customNoteKind === "single_page_knowledge_card" ? (
-                <><Sparkles className="h-4 w-4" />生成圖文卡片</>
+                <><Sparkles className="h-4 w-4" />生成圖文卡片（上＋下篇）</>
               ) : (
                 <><Film className="h-4 w-4" />生成分鏡圖</>
               )}
             </button>
-            {(customNoteImageUrl || customNoteError) && (
+            {(customNoteImageUpper || customNoteImageLower || customNoteError) && !customNoteBusy && (
               <button
                 type="button"
-                onClick={() => { setCustomNoteImageUrl(null); setCustomNoteError(null); setCustomNoteText(""); }}
+                onClick={() => { setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomNoteText(""); }}
                 className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
               >
                 清除
@@ -7954,10 +7976,14 @@ export default function PlatformPage() {
           </div>
 
           {/* 生成中提示 */}
-          {generateCustomNoteMutation.isPending && (
+          {customNoteBusy && (
             <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
-              正在翻譯並生成圖文，約需 3–5 分鐘，請勿關閉頁面…
+              {customNotePartInFlight === "upper"
+                ? "正在生成【上篇】，約需 3–5 分鐘…（之後自動接著生成下篇）"
+                : customNotePartInFlight === "lower"
+                  ? "上篇已完成 ✓ 正在生成【下篇】，約需 3–5 分鐘，請勿關閉頁面…"
+                  : "正在生成圖片，約需 3–5 分鐘，請勿關閉頁面…"}
             </div>
           )}
 
@@ -7969,32 +7995,65 @@ export default function PlatformPage() {
           )}
 
           {/* 生成結果 */}
-          {customNoteImageUrl && (
-            <div className="mt-5 space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
-                {customNoteKind === "single_page_knowledge_card" ? "圖文卡片生成結果" : "分鏡圖生成結果"}
-              </div>
-              <img
-                src={customNoteImageUrl}
-                alt={customNoteKind === "single_page_knowledge_card" ? "單頁圖文知識卡片" : "2×4 分鏡圖"}
-                className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                  setCustomNoteError("圖片載入失敗，請確認圖片 URL 是否有效");
-                }}
-              />
-              <div className="flex justify-end">
-                <a
-                  href={customNoteImageUrl}
-                  download={customNoteKind === "single_page_knowledge_card" ? "knowledge-card.png" : "storyboard-2x4.png"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                >
-                  <Download className="h-4 w-4" />
-                  下載圖片
-                </a>
-              </div>
+          {(customNoteImageUpper || customNoteImageLower) && (
+            <div className="mt-5 space-y-6">
+              {/* 上篇（分鏡圖也走此槽，單張） */}
+              {customNoteImageUpper && (
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
+                    {customNoteKind === "single_page_knowledge_card" ? "圖文卡片 ·（上篇）" : "分鏡圖生成結果"}
+                  </div>
+                  <img
+                    src={customNoteImageUpper}
+                    alt={customNoteKind === "single_page_knowledge_card" ? "單頁圖文知識卡片（上篇）" : "2×4 分鏡圖"}
+                    className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                      setCustomNoteError("圖片載入失敗，請確認圖片 URL 是否有效");
+                    }}
+                  />
+                  <div className="flex justify-end">
+                    <a
+                      href={customNoteImageUpper}
+                      download={customNoteKind === "single_page_knowledge_card" ? "knowledge-card-upper.png" : "storyboard-2x4.png"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                    >
+                      <Download className="h-4 w-4" />
+                      下載{customNoteKind === "single_page_knowledge_card" ? "上篇" : "圖片"}
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* 下篇（僅知識卡片） */}
+              {customNoteImageLower && (
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">圖文卡片 ·（下篇）</div>
+                  <img
+                    src={customNoteImageLower}
+                    alt="單頁圖文知識卡片（下篇）"
+                    className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                      setCustomNoteError("下篇圖片載入失敗，請確認圖片 URL 是否有效");
+                    }}
+                  />
+                  <div className="flex justify-end">
+                    <a
+                      href={customNoteImageLower}
+                      download="knowledge-card-lower.png"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                    >
+                      <Download className="h-4 w-4" />
+                      下載下篇
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </section>

@@ -1226,6 +1226,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   progressJobId?: string | null;
   /** 覆寫 2×4 出圖引擎；未傳則見 {@link resolvePlatformCompositeSheetImageEngine}（環境變數預設 gpt_image2 鏈）。 */
   compositeImageEngine?: PlatformCompositeSheetImageEngine;
+  /** 仅 single_page_knowledge_card：上篇 / 下篇分页（标题自动加「（上篇）/（下篇）」，仅取对应半篇内容）。 */
+  notePart?: import("./geminiPlatformCompositeTranslation.js").KnowledgeCardNotePart;
 }): Promise<string | null> {
   const totalMs = resolvePlatformCompositeSheetTotalTimeoutMs();
   appendImageFlowLog(
@@ -1354,10 +1356,10 @@ export async function generatePlatformCompositeSheetImage(options: {
         // 单页连贯图文知识卡片（自定义文案专用）：**取消英文翻译**，直接用中文 directive + Markdown 原文送 GPT-IMAGE-2，
         // 以保留书法标题 / 文艺复兴手绘 + 大师写实摄影 / 山茶花蝴蝶洋牡丹装饰 / 宣纸暖色底等细腻美学（英文化会压缩丢失这些质感）。
         const { buildSinglePageKnowledgeCardImagePrompt } = await import("./geminiPlatformCompositeTranslation.js");
-        promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline);
+        promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline, options.notePart);
         appendImageFlowLog(
           L,
-          `[单页知识卡片·步骤1] 已取消英文翻译 → 直接用中文 directive + Markdown 送 GPT-IMAGE-2（无像素锁/无写实修饰）· 约 ${promptForImage.length} 字符`,
+          `[单页知识卡片·步骤1] 已取消英文翻译 → 直接用中文 directive + Markdown 送 GPT-IMAGE-2（无像素锁/无写实修饰）· 分页=${options.notePart ?? "整篇"} · 约 ${promptForImage.length} 字符`,
         );
         appendImageFlowLog(
           L,

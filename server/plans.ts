@@ -265,6 +265,8 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格（`xiaohongshu_dual_note`）·**72** — 非分镜主表 */
   platformXhsDualNote: 72,
+  /** 单页连贯图文知识卡片（`single_page_knowledge_card`，自定义文案）·**25/篇** — 上篇+下篇两次生成合计 50 */
+  platformSinglePageKnowledgeCard: 25,
   /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 串行非同步兩階段生圖） */
   platformTopicCoverAndCompositeBundle: 388,
   /** 平台页：四选题仅 2×4 套裝总价（router：bulk 模式下按序 4 笔整数分拆，合计=此值） */
