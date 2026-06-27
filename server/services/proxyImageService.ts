@@ -923,10 +923,10 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     .filter(Boolean)
     .slice(0, 16);
 
-  // 已收敛为单一像素供应商：无论请求/环境如何，封面统一走 EvoLink GPT-Image-2（移除 OhMyGPT/fal/Vertex）。
+  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal（已移除 Vertex）。有参考人像时仅 EvoLink。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] 唯一供应商=EvoLink GPT-IMAGE-2（9:16）${refImageUrls.length ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · 仅 EvoLink` : "顺序 EvoLink → OhMyGPT → fal"}…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -983,9 +983,11 @@ const COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN = [
 ].join("\n");
 
 /**
- * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **EvoLink** `gpt-image-2`（唯一像素供应商；
- * 已移除 OhMyGPT / fal / Vertex 退路）。图像 API **不**执行翻译。
- * 传 `referenceImageUrls` 时走 EvoLink edit 模式（image_urls）做换人/换脸。
+ * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → GPT-Image-2 像素链。
+ * **供应商顺序：EvoLink（主力）→ OhMyGPT → fal**（均为 gpt-image-2 同模型；已移除 Vertex 退路）。
+ * fallback 仅在 EvoLink 出不了图时触发，正常路径零额外成本。图像 API **不**执行翻译。
+ * 传 `referenceImageUrls`（换人/换脸 edit 模式）时**只走 EvoLink**（OhMyGPT/fal 封装不保证支持 image_urls，
+ * 避免 fallback 出「无脸错图」）；EvoLink 失败则本条失败，走免费补发重试。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
   englishPrompt: string;
@@ -1020,27 +1022,56 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const prompt = hasRef ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
 
-  if (!isEvolinkGptImage2Configured()) {
-    appendImageFlowLog(L, "[单帧主路径] EVOLINK_API_KEY 缺失 · 已停用 OhMyGPT/fal/Vertex 退路 · 本条无图");
+  if (isEvolinkGptImage2Configured()) {
+    appendImageFlowLog(
+      L,
+      `[单帧·主力] EvoLink GPT-IMAGE-2 · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""} · 英文 prompt 约 ${prompt.length} 字`,
+    );
+    const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
+      aspectRatio: options.aspectRatio,
+      size: sizes[0],
+      flowLog: L,
+      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+      imageUrls: hasRef ? refImageUrls : undefined,
+    });
+    if (fromEvolink) {
+      appendImageFlowLog(L, "[单帧·主力] EvoLink GPT-IMAGE-2 成功，已落库");
+      return fromEvolink;
+    }
+    appendImageFlowLog(L, "[单帧·主力] EvoLink 无图 → 评估 fallback");
+  }
+
+  // 换脸 / 换人（edit 模式）只走 EvoLink：OhMyGPT/fal 封装不保证支持 image_urls，避免 fallback 出无脸错图。
+  if (hasRef) {
+    appendImageFlowLog(
+      L,
+      "[单帧·换脸] 参考人像路径仅 EvoLink；EvoLink 未出图 → 本条失败（可免费补发重试），不走 OhMyGPT/fal 以免丢失人像",
+    );
     return null;
   }
 
   appendImageFlowLog(
     L,
-    `[单帧主路径] EvoLink GPT-IMAGE-2（唯一供应商）· ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""} · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧·备援1] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT}`,
   );
-  const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
-    aspectRatio: options.aspectRatio,
-    size: sizes[0],
+  const fromOhm = await postGptImage2AndUpload(prompt, options.gcsSubdir, {
+    sizes,
     flowLog: L,
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-    imageUrls: hasRef ? refImageUrls : undefined,
   });
-  if (fromEvolink) {
-    appendImageFlowLog(L, "[单帧主路径] EvoLink GPT-IMAGE-2 成功，已落库");
-    return fromEvolink;
+  if (fromOhm) {
+    appendImageFlowLog(L, "[单帧·备援1] OhMyGPT GPT-IMAGE-2 成功，已上传 GCS");
+    return fromOhm;
   }
-  appendImageFlowLog(L, "[单帧主路径] EvoLink 无图 · 已停用其它供应商退路 · 本条失败（可免费补发重试）");
+
+  appendImageFlowLog(L, `[单帧·备援2] OhMyGPT 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`);
+  const falSecond = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
+  if (falSecond) {
+    appendImageFlowLog(L, "[单帧·备援2] fal GPT-IMAGE-2 成功，已落库");
+    return falSecond;
+  }
+
+  appendImageFlowLog(L, "[单帧] EvoLink / OhMyGPT / fal 均无图（已移除 Vertex 退路）· 本条失败（可免费补发重试）");
   return null;
 }
 
@@ -1412,36 +1443,72 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         );
       }
 
-      // 已收敛为单一像素供应商：宽幅合成统一走 EvoLink GPT-Image-2（移除 OhMyGPT/fal/Vertex 退路）。
+      // GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal（同模型；已移除 Vertex 退路）。fallback 仅在 EvoLink 失败时触发。
       appendImageFlowLog(
         L,
-        `[2×4·步骤2] EvoLink GPT-IMAGE-2（唯一供应商）· 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}`,
+        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 顺序 EvoLink → OhMyGPT → fal`,
       );
 
-      if (!isEvolinkGptImage2Configured()) {
-        throw new Error("EVOLINK_API_KEY 缺失：宽幅合成已停用 OhMyGPT/fal/Vertex 退路，无法出图。");
+      if (isEvolinkGptImage2Configured()) {
+        appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}`);
+        const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
+          aspectRatio: "16:9",
+          size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+          flowLog: L,
+          quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+        });
+        if (fromEvolink) {
+          appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+          emitPlatformImagePipelineStat({
+            event: "composite_sheet_gpt_image2_success",
+            sheetKind: k,
+            compositeSheetAttempt: attempt,
+            compositeSheetMaxAttempts: compositeMaxAttempts,
+          });
+          return fromEvolink;
+        }
+        appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
       }
 
-      const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
-        aspectRatio: "16:9",
-        size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+      appendImageFlowLog(L, `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`);
+      const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
+        sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
         flowLog: L,
         quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
       });
-      if (fromEvolink) {
-        appendImageFlowLog(
-          L,
-          `[2×4·步骤2] EvoLink GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
-        );
+      if (fromOhm) {
+        appendImageFlowLog(L, `[2×4·步骤2b·备援1] OhMyGPT 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
         emitPlatformImagePipelineStat({
           event: "composite_sheet_gpt_image2_success",
           sheetKind: k,
           compositeSheetAttempt: attempt,
           compositeSheetMaxAttempts: compositeMaxAttempts,
         });
-        return fromEvolink;
+        return fromOhm;
       }
-      throw new Error("EvoLink GPT-IMAGE-2 未返回图像（已停用其它供应商退路）");
+
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤2c·备援2] OhMyGPT 无图 → fal openai/gpt-image-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
+      );
+      const falWide = await postGptImage2ViaFalAndUpload(
+        promptForImage,
+        subdir,
+        "16:9",
+        L,
+        GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+      );
+      if (falWide) {
+        appendImageFlowLog(L, `[2×4·步骤2c·备援2] fal 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        emitPlatformImagePipelineStat({
+          event: "composite_sheet_fal_gpt_image2_success",
+          sheetKind: k,
+          compositeSheetAttempt: attempt,
+          compositeSheetMaxAttempts: compositeMaxAttempts,
+        });
+        return falWide;
+      }
+      throw new Error("EvoLink / OhMyGPT / fal 均未返回图像（已移除 Vertex 退路）");
     } catch (e: unknown) {
       lastFailure = e;
       const msg = e instanceof Error ? e.message : String(e);
