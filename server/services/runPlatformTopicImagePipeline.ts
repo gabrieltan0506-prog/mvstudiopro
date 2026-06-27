@@ -153,6 +153,8 @@ export async function runPlatformTopicImagePipeline(
     buildPlatformTopicReferenceGeminiTask,
     extractChineseVisualBrief,
     translatePlatformTopicCoverToEnglishGpt54,
+    buildPlatformTopicCoverDirectChinesePrompt,
+    isPlatformImageChineseDirectEnabled,
   } = await import("./geminiPlatformCompositeTranslation.js");
   const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
   const {
@@ -309,30 +311,52 @@ export async function runPlatformTopicImagePipeline(
 
         void persistCoverChineseStagingToRunningJob(input.progressJobId ?? null, staging);
 
-        const geminiTask = buildPlatformTopicReferenceGeminiTask({
-          topicHook: staging.topicHookZh,
-          context: staging.optimizedChineseBlob,
-          variant: isGraphic ? "graphic" : "video",
-          coverPersonaContext: coverPersona || undefined,
-          batchSceneDiversity: input.batchSceneDiversity,
-        });
-        topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`,
-        );
-        const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(
-          geminiTask,
-          topicImageCondenseLog,
-        );
-        topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-        const trimmedEn = String(englishPrompt || "").trim();
-        if (!trimmedEn) {
-          topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 翻译结果为空（不注入模版英文）`);
-          throw new Error("英文 prompt 为空");
+        let safePrompt = "";
+        const coverChineseDirect = isPlatformImageChineseDirectEnabled();
+        if (coverChineseDirect) {
+          try {
+            safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
+              topicHook: staging.topicHookZh,
+              context: staging.optimizedChineseBlob,
+              variant: isGraphic ? "graphic" : "video",
+              coverPersonaContext: coverPersona || undefined,
+            }).trim();
+            topicImageCondenseLog.push(
+              `${platformFlowLogTimestamp()}  [步骤1·中文直送] 已跳过 GPT 5.4 英文化 → 直接用中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+            );
+          } catch (e: unknown) {
+            safePrompt = "";
+            topicImageCondenseLog.push(
+              `${platformFlowLogTimestamp()}  [步骤1·中文直送] 组装失败，回退 GPT 5.4 英文化: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }
+        if (!safePrompt) {
+          const geminiTask = buildPlatformTopicReferenceGeminiTask({
+            topicHook: staging.topicHookZh,
+            context: staging.optimizedChineseBlob,
+            variant: isGraphic ? "graphic" : "video",
+            coverPersonaContext: coverPersona || undefined,
+            batchSceneDiversity: input.batchSceneDiversity,
+          });
+          topicImageCondenseLog.push(
+            `${platformFlowLogTimestamp()}  [步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`,
+          );
+          const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(
+            geminiTask,
+            topicImageCondenseLog,
+          );
+          topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
+          const trimmedEn = String(englishPrompt || "").trim();
+          if (!trimmedEn) {
+            topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 翻译结果为空（不注入模版英文）`);
+            throw new Error("英文 prompt 为空");
+          }
+          safePrompt = trimmedEn;
         }
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 英文化原文直接进封面像素链路（GPT‑Image‑2 / NB2 / NBP 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${trimmedEn.length}）`,
+          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 主体直接进封面像素链路（GPT‑Image‑2 / NB2 / NBP 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${safePrompt.length}）`,
         );
-        const safePrompt = trimmedEn;
         promptStats = buildImagePromptStats(safePrompt);
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,

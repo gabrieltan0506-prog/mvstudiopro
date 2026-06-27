@@ -1366,24 +1366,56 @@ export async function generatePlatformCompositeSheetImage(options: {
           `[单页知识卡片·预览] ${promptForImage.replace(/\s+/g, " ").slice(0, 180)}…`,
         );
       } else {
-        const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
+        const {
+          translatePlatformCompositeToEnglishPrompt,
+          buildCompositeSheetDirectChineseBody,
+          isPlatformImageChineseDirectEnabled,
+        } = await import("./geminiPlatformCompositeTranslation.js");
 
-        const englishCore = await translatePlatformCompositeToEnglishPrompt({
-          kind: k,
-          scriptContext: scriptContextForPipeline,
-          translator: options.imagePromptTranslator,
-          flowLog: L,
-          compositeSheetAttempt: attempt,
-          compositeSheetMaxAttempts: compositeMaxAttempts,
-          neonProgressJobId: options.progressJobId,
-        });
-
-        if (!String(englishCore || "").trim()) {
-          appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空（不注入模版英文）");
-          throw new Error("宽幅合成翻译结果为空");
+        let englishCore = "";
+        const chineseDirect = isPlatformImageChineseDirectEnabled();
+        if (chineseDirect) {
+          try {
+            englishCore = buildCompositeSheetDirectChineseBody(
+              k as "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
+              scriptContextForPipeline,
+            );
+            appendImageFlowLog(
+              L,
+              `[2×4·步骤1·中文直送] 已跳过 GPT 5.4 英文化 → 直接用中文主体 + 英文像素锁送 GPT-IMAGE-2（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 约 ${englishCore.length} 字符`,
+            );
+          } catch (e: unknown) {
+            englishCore = "";
+            appendImageFlowLog(
+              L,
+              `[2×4·步骤1·中文直送] 组装失败，回退 GPT 5.4 英文化: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
         }
 
-        appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，直接进入像素锁与送生图");
+        if (!String(englishCore || "").trim()) {
+          englishCore = await translatePlatformCompositeToEnglishPrompt({
+            kind: k,
+            scriptContext: scriptContextForPipeline,
+            translator: options.imagePromptTranslator,
+            flowLog: L,
+            compositeSheetAttempt: attempt,
+            compositeSheetMaxAttempts: compositeMaxAttempts,
+            neonProgressJobId: options.progressJobId,
+          });
+        }
+
+        if (!String(englishCore || "").trim()) {
+          appendImageFlowLog(L, "[2×4·步骤1] 主体为空（中文直送与英文化均无结果）");
+          throw new Error("宽幅合成主体为空");
+        }
+
+        appendImageFlowLog(
+          L,
+          chineseDirect && String(englishCore).trim()
+            ? "[2×4·步骤1·完成] 主体就绪（中文直送优先），直接进入像素锁与送生图"
+            : "[2×4·步骤1·完成] 英文化成功，直接进入像素锁与送生图",
+        );
         appendImageFlowLog(
           L,
           `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,

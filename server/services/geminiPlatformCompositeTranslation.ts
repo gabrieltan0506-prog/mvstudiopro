@@ -783,6 +783,79 @@ ${slice}
 ${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}`.trim();
 }
 
+/**
+ * 主线生图「中文直送」总开关（默认**开启**：封面 / 2×4 分镜 / 小红书八格 跳过 GPT 5.4 英文化，
+ * 直接用中文主体 + 英文像素锁送 GPT-IMAGE-2）。设 `PLATFORM_IMAGE_CHINESE_DIRECT=0/false/off/no` 可即时回退翻译。
+ * 直送失败时各调用点仍会自动 fallback 回原英文化路径，确保线上不硬断。
+ */
+export function isPlatformImageChineseDirectEnabled(): boolean {
+  const v = String(process.env.PLATFORM_IMAGE_CHINESE_DIRECT ?? "").trim().toLowerCase();
+  if (v === "0" || v === "false" || v === "off" || v === "no") return false;
+  return true;
+}
+
+/**
+ * **2×4 分镜 / 小红书八格** 的「中文直送主体」（取代 GPT 5.4 英文化的英文主体）。
+ * 仅产出**中文画面主体**；调用方仍会在其后拼接英文像素锁（`GPT_IMAGE2_*_2X4_PIXEL_LOCK`）+ 顶栏注入 + 镜头/光影 modifier，
+ * 故 2×4 八格的格状纪律由像素锁继续锁死，本函数只负责把 GPT-5.5 中文文案（含分镜描述）原样带入。
+ */
+export function buildCompositeSheetDirectChineseBody(
+  kind:
+    | "storyboard_sheet_portrait"
+    | "storyboard_sheet_landscape"
+    | "xiaohongshu_dual_note",
+  scriptContext: string,
+): string {
+  const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
+  const isStoryboard = kind === "storyboard_sheet_landscape" || kind === "storyboard_sheet_portrait";
+  if (isStoryboard) {
+    return `请直接据下方中文脚本生成一张**电影级 2×4 八格分镜参考图**（横版约 16:9 单张主表，不是单张满版海报）：
+- 顶部约 8–12% 为通栏【内容总结】标题栏（简体中文·全片梗概，不放各格分镜标题）。
+- 其下严格排成 **2 行 × 4 列、共 8 格**，格线笔直、格间留白清晰，按 row1 左→右、row2 左→右顺扫。
+- 每一格自上而下：① 本格分镜主题（一行加粗简体中文）；② 该镜头电影级写实剧照（高细节，约占 70–75%）；③ 格内底部约 25–30% 为简体中文四栏小表，表头固定【景别 / 运镜 / 画面内容 / 台词与音效】四栏都要填。
+- 风格：电影感、8k、精致布光、统一高级色调；所有屏内文字一律**简体中文、印刷清晰、不可乱码/缺笔**。
+
+【中文脚本】：
+${slice}`;
+  }
+  return `请直接据下方中文文案生成一张**小红书风格 2×4 八格图文笔记参考图**（横版约 16:9 单张主表，不是单张满版海报）：
+- 严格排成 **2 行 × 4 列、共 8 格**，格线笔直、格间留白清晰，按 row1 左→右、row2 左→右顺扫。
+- 每格为一个知识/内容要点：醒目简体中文小标题 + 要点短句 + 扁平插画/图标/序号徽章 01–08；整体暖色粉彩、明快多彩、高级商务审美、印刷清晰。
+- 画风为**扁平插画信息图（单页图文笔记风）**，不要电影写实摄影或暗调光影；屏内文字一律**简体中文、清晰不乱码**（英文仅作极少量点缀）。
+
+【中文文案】：
+${slice}`;
+}
+
+/**
+ * **平台选题单帧封面** 的「中文直送 prompt」（取代 `translatePlatformTopicCoverToEnglishGpt54` 的英文产物）。
+ * 直接把 GPT-5.5 选题 + 中文语境/身份锚点组装成一条中文封面指令，附英文版式 footer（结构指令模型可直接遵循），送封面像素链路。
+ */
+export function buildPlatformTopicCoverDirectChinesePrompt(input: {
+  topicHook: string;
+  context: string;
+  variant: "video" | "graphic";
+  coverPersonaContext?: string;
+}): string {
+  const hook = String(input.topicHook || "").trim().slice(0, 120);
+  const ctx = String(input.context || "").slice(0, SCRIPT_SLICE);
+  const persona = String(input.coverPersonaContext || "").trim();
+  const personaBlock = persona
+    ? `【身份锚点】（人物服装 / 道具 / 环境须与此一致）：\n${persona.slice(0, 1200)}\n\n`
+    : "";
+  return `${personaBlock}请直接据下方选题与语境生成**一张竖版 9:16 单帧信息流封面**（单一主体、满版主视觉，不要做成 2×4 网格或多格分镜）：
+- 主标题用**简体中文**，大而清晰、印刷级，紧扣「${hook}」；可有次级简中辅标，英文仅作极少量点缀。
+- 场景随文案多样化、贴合选题，避免千篇一律的书房 / 办公室 / 沙发电视等套路；高级 editorial / 杂志质感，统一受光、克制配色 + 一处鲜明强调色。
+- 加 2–4 个与主题呼应的精致线描小图标，各配 4–8 字简体中文辅标，自然融入场景光影、不要硬框贴纸感，且不可压过主标题。
+- masterpiece、8k、视觉冲击力强；所有屏内文字一律**简体中文、清晰不乱码**。
+
+【选题】：「${hook}」
+【语境】：
+${ctx}
+
+${PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER}`.trim();
+}
+
 /** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
 export function buildStrategicCoverGeminiTask(input: {
   chineseTitle: string;
