@@ -7868,6 +7868,9 @@ export default function PlatformPage() {
                                   ? "已绑定人像 · 生成封面时由 GPT-Image-2 换成此人（保留排版与风格）"
                                   : "可选 · 上传一张清晰正脸照，让封面主角换成你/指定人物"}
                               </span>
+                              <span className="mt-0.5 text-[10px] leading-tight text-amber-300/70">
+                                请仅上传本人或已获授权人物的照片（着装得体、成年）；请勿上传他人、未成年或不雅照片。
+                              </span>
                             </div>
                             {coverReferencePhotoMap[item.id] ? (
                               <button
