@@ -41,6 +41,7 @@ export function appendVertexProPhotographyPromptModifiers(
     | "strategic_cover"
     | "platform_vertical_cover"
     | "platform_landscape_sheet"
+    | "platform_knowledge_card_landscape"
     | "platform_vertical_cover_after_gpt2_aspect_lock",
 ): string {
   const base = String(basePrompt || "").trim();
@@ -48,6 +49,10 @@ export function appendVertexProPhotographyPromptModifiers(
   const modifiers = PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS;
   if (intent === "strategic_cover") {
     return `${base}. ${modifiers}, dark gold aesthetics, masterpiece, highly detailed, vertical 9:16 aspect.`;
+  }
+  if (intent === "platform_knowledge_card_landscape") {
+    // 单页图文知识卡片：flat 插画资讯图，绝不叠加 35mm/写实/电影感语汇，避免被拉回照片质感
+    return `${base}. Flat vector illustration / editorial infographic knowledge card, NOT photorealistic, NOT cinematic, NOT 3D, NOT photography; warm orange-to-lavender gradient palette, vivid multi-color icons and symbols, no gray/grayscale; crisp high-resolution printed Simplified Chinese typography with high legibility; wide 16:9 landscape single continuous poster (no grid partition), masterpiece, 8k clean vector edges.`;
   }
   if (intent === "platform_landscape_sheet") {
     return `${base}. ${modifiers}, wide 16:9 landscape master canvas, multi-panel graphic layout, high legibility, cohesive cinematic grade across the frame.`;

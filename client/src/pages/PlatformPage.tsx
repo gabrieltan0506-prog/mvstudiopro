@@ -1238,7 +1238,11 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
 
 /** 宽幅合成：pending 时由 progressJobId + GET /api/jobs 实时刷新（分镜 / 小红书同一套）。 */
 function buildCompositeImageGenPendingLines(input: {
-  kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
+  kind:
+    | "storyboard_sheet_portrait"
+    | "storyboard_sheet_landscape"
+    | "xiaohongshu_dual_note"
+    | "single_page_knowledge_card";
   sceneId: string;
   title: string;
   imagePromptTranslator?: PlatformImagePromptTranslator | "vertex_gemini_31_pro_preview";
@@ -1766,11 +1770,15 @@ export default function PlatformPage() {
   const [customNoteText, setCustomNoteText] = useState("");
   const [customNoteImageUrl, setCustomNoteImageUrl] = useState<string | null>(null);
   const [customNoteError, setCustomNoteError] = useState<string | null>(null);
-  /** 用戶自選生成類型：單頁圖文筆記 or 2×4 分鏡圖 */
-  const [customNoteKind, setCustomNoteKind] = useState<"xiaohongshu_dual_note" | "storyboard_sheet_landscape">("xiaohongshu_dual_note");
+  /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖（自定義文案專用，與選題卡片小紅書八格互不影響） */
+  const [customNoteKind, setCustomNoteKind] = useState<"single_page_knowledge_card" | "storyboard_sheet_landscape">("single_page_knowledge_card");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
     sceneId: string;
-    kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
+    kind:
+      | "storyboard_sheet_portrait"
+      | "storyboard_sheet_landscape"
+      | "xiaohongshu_dual_note"
+      | "single_page_knowledge_card";
   } | null>(null);
   /**
    * 2×4 非同步：TRPC 已 200 但须轮询 GET /api/jobs 至 succeeded/failed。
@@ -1783,7 +1791,11 @@ export default function PlatformPage() {
     localOpId: string;
     sceneId: string;
     title: string;
-    kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
+    kind:
+      | "storyboard_sheet_portrait"
+      | "storyboard_sheet_landscape"
+      | "xiaohongshu_dual_note"
+      | "single_page_knowledge_card";
   } | null>(null);
   /** 与 GET /api/jobs 合成轮询同步的计数（仅用于 Debug 面板，不刷整条 imageGenFlowLog） */
   const compositeLivePollAttemptRef = useRef(0);
@@ -7863,7 +7875,7 @@ export default function PlatformPage() {
             </span>
           </div>
           <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-            貼入中文文案，系統將自動用 GPT 5.4 翻譯成英文，並生成簡體中文內容圖片。可選擇生成「單頁圖文筆記」或「2×4 分鏡圖」。
+            貼入中文文案 / Markdown，系統將自動用 GPT 5.4 翻譯成英文，再生成簡體中文圖片。可選擇生成「單頁圖文卡片」或「2×4 分鏡圖」。
           </p>
 
           {/* 圖片類型選擇器 */}
@@ -7872,16 +7884,16 @@ export default function PlatformPage() {
             <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
               <button
                 type="button"
-                onClick={() => { setCustomNoteKind("xiaohongshu_dual_note"); setCustomNoteImageUrl(null); setCustomNoteError(null); }}
+                onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUrl(null); setCustomNoteError(null); }}
                 disabled={generateCustomNoteMutation.isPending}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                  customNoteKind === "xiaohongshu_dual_note"
+                  customNoteKind === "single_page_knowledge_card"
                     ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
                     : "text-[#c9c0e6]/70 hover:text-white"
                 }`}
               >
                 <Image className="h-3.5 w-3.5 shrink-0" />
-                單頁圖文筆記
+                單頁圖文卡片
               </button>
               <button
                 type="button"
@@ -7898,15 +7910,15 @@ export default function PlatformPage() {
               </button>
             </div>
             <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
-              {customNoteKind === "xiaohongshu_dual_note"
-                ? "生成小紅書風格單頁 2×4 八格圖文筆記（參考上傳的圖文筆記樣式）"
+              {customNoteKind === "single_page_knowledge_card"
+                ? "依小標題順序，把文案完整鋪成「一整頁連貫圖文知識卡片」：彩色圖標串接、橙→淡紫漸層、印刷級清晰簡體中文（非 2×4 八格網格、不限定小紅書格式）"
                 : "生成電影級 2×4 橫幅分鏡圖（含景別、運鏡、台詞與音效欄位）"}
             </p>
           </div>
 
           <textarea
             className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
-            placeholder={customNoteKind === "xiaohongshu_dual_note" ? "輸入中文文案，系統自動翻譯並生成小紅書圖文筆記…（建議 100–800 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
+            placeholder={customNoteKind === "single_page_knowledge_card" ? "貼入中文文案 / Markdown，系統自動翻譯並生成單頁連貫圖文知識卡片…（建議 200–1500 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
             value={customNoteText}
             onChange={(e) => setCustomNoteText(e.target.value)}
             disabled={generateCustomNoteMutation.isPending}
@@ -7917,15 +7929,15 @@ export default function PlatformPage() {
               onClick={handleGenerateCustomNote}
               disabled={generateCustomNoteMutation.isPending || !customNoteText.trim()}
               className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
-                customNoteKind === "xiaohongshu_dual_note"
+                customNoteKind === "single_page_knowledge_card"
                   ? "border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)]"
                   : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
               }`}
             >
               {generateCustomNoteMutation.isPending ? (
                 <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
-              ) : customNoteKind === "xiaohongshu_dual_note" ? (
-                <><Sparkles className="h-4 w-4" />生成圖文筆記</>
+              ) : customNoteKind === "single_page_knowledge_card" ? (
+                <><Sparkles className="h-4 w-4" />生成圖文卡片</>
               ) : (
                 <><Film className="h-4 w-4" />生成分鏡圖</>
               )}
@@ -7960,11 +7972,11 @@ export default function PlatformPage() {
           {customNoteImageUrl && (
             <div className="mt-5 space-y-3">
               <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
-                {customNoteKind === "xiaohongshu_dual_note" ? "圖文筆記生成結果" : "分鏡圖生成結果"}
+                {customNoteKind === "single_page_knowledge_card" ? "圖文卡片生成結果" : "分鏡圖生成結果"}
               </div>
               <img
                 src={customNoteImageUrl}
-                alt={customNoteKind === "xiaohongshu_dual_note" ? "小紅書圖文筆記" : "2×4 分鏡圖"}
+                alt={customNoteKind === "single_page_knowledge_card" ? "單頁圖文知識卡片" : "2×4 分鏡圖"}
                 className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = "none";
@@ -7974,7 +7986,7 @@ export default function PlatformPage() {
               <div className="flex justify-end">
                 <a
                   href={customNoteImageUrl}
-                  download={customNoteKind === "xiaohongshu_dual_note" ? "xiaohongshu-note.png" : "storyboard-2x4.png"}
+                  download={customNoteKind === "single_page_knowledge_card" ? "knowledge-card.png" : "storyboard-2x4.png"}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"

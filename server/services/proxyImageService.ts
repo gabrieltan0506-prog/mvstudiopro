@@ -155,6 +155,10 @@ const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
   "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. NOT RECOMMENDED: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells. SOFT PREFERENCE: let Hook/context drive light and color—daylight, soft pastel, or warm editorial tones are welcome when they fit; not recommended to default every sheet to heavy dark-gold / low-key gloom without narrative reason.";
 
+/** **单页连贯图文知识卡片**（kind=single_page_knowledge_card · 自定义文案专用）：一整页连续版式（非 2×4 网格），flat 插画资讯图、橙→淡紫渐层、彩色图标、强简中、印刷级清晰。与小红书八格独立。 */
+const GPT_IMAGE2_SINGLE_PAGE_KNOWLEDGE_CARD_PIXEL_LOCK =
+  "CRITICAL COMPOSITION LOCK: ONE single continuous wide-landscape (~16:9) **knowledge card poster** (单页图文知识卡片). It is **flat vector illustration / editorial infographic**, NOT photorealistic, NOT cinematic, NOT 3D, NOT photography. Background uses a warm **orange → light-purple (lavender) gradient**; vivid multi-color palette; every icon and symbol is colorful; **no gray / grayscale imagery, no muted dead zones**. LAYOUT: a bold top banner title, then the manuscript's sections laid out **in order** as flowing rounded blocks of varied sizes, connected by arrows, numbered badges 01/02/03…, ribbons and flat icons — a coherent single page; **NOT** a 2×4 / eight-panel equal grid, **NOT** a 2×2 quad, **NOT** a storyboard, **NOT** a note collage. TYPOGRAPHY: dense yet legible **Simplified Chinese** section titles and body copy, print-crisp and high-resolution (never blurry), body text enlarged one size for readability; English only as small secondary accents. NOT RECOMMENDED: equal-cell grids, eight panels, four quadrants, film stills, photoreal actors, dark/moody/cinematic grading, gray backgrounds, blurry tiny text.";
+
 /** 单次 GPT-IMAGE-2（fal / OhMyGPT）fetch 超时；封面/分镜/图文笔记共用。默认 6 分钟；`GPT_IMAGE_FETCH_TIMEOUT_MS` 可缩短，上限 6 分钟。 */
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
   6 * 60_000,
@@ -1131,7 +1135,8 @@ export async function generateGptImage2(options: {
 export type PlatformCompositeSheetKind =
   | "storyboard_sheet_portrait"
   | "storyboard_sheet_landscape"
-  | "xiaohongshu_dual_note";
+  | "xiaohongshu_dual_note"
+  | "single_page_knowledge_card";
 
 /** 2×4 整链墙钟硬上限（默认 10min，与 platform_topic_image 一致）；`PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS` 可覆寫，至少 60000ms */
 function resolvePlatformCompositeSheetTotalTimeoutMs(): number {
@@ -1245,7 +1250,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   const k = normalizeCompositeSheetKind(options.kind);
   const isStoryboard = k === "storyboard_sheet_landscape";
   const isXhs = k === "xiaohongshu_dual_note";
-  if (!isStoryboard && !isXhs) {
+  const isKnowledgeCard = k === "single_page_knowledge_card";
+  if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
@@ -1264,7 +1270,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : isKnowledgeCard ? "单页连贯图文知识卡片（buildSinglePageKnowledgeCardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
   appendImageFlowLog(
     L,
@@ -1370,7 +1376,11 @@ export async function generatePlatformCompositeSheetImage(options: {
       );
 
       const trimmedEnglishCore = String(englishCore).trim();
-      const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
+      const pixelLock = isStoryboard
+        ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK
+        : isKnowledgeCard
+          ? GPT_IMAGE2_SINGLE_PAGE_KNOWLEDGE_CARD_PIXEL_LOCK
+          : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
       const topicTitleZh = String(options.title || "").trim().slice(0, 80);
       const storyboardTitleInject =
         isStoryboard && topicTitleZh
@@ -1385,12 +1395,12 @@ export async function generatePlatformCompositeSheetImage(options: {
       const promptForImageBase = `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
       const promptForImage = appendVertexProPhotographyPromptModifiers(
         promptForImageBase,
-        "platform_landscape_sheet",
+        isKnowledgeCard ? "platform_knowledge_card_landscape" : "platform_landscape_sheet",
       );
 
       appendImageFlowLog(
         L,
-        `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
+        `[合成·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : isKnowledgeCard ? "单页连贯图文知识卡片" : "小红书 2×4 八格"}）+ ${isKnowledgeCard ? "flat 插画资讯图修饰（非写实）" : "与 Vertex 共用鏡頭/光影語彙"} · 送生图总长约 ${promptForImage.length} 字符`,
       );
 
       if (compositeImageEngine === "nano_banana_2") {
