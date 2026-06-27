@@ -704,14 +704,78 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归
  */
 export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. Render every Chinese glyph **large, crisp, print-clear and correctly-formed** — no garbled, no duplicated, no missing/broken strokes, no invented or wrong characters. Keep each text block **short and well-spaced** (titles + bullet keyphrases, not dense paragraphs); prioritize legibility over text volume. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
 
+/** 上篇 / 下篇：知识卡片分两页商业化用。`upper`=上篇（免费预览思路）、`lower`=下篇。 */
+export type KnowledgeCardNotePart = "upper" | "lower";
+
+/**
+ * 把 Markdown 文稿按 `##` 子标题**对半切**成上篇 / 下篇（切不开则按长度对半）。
+ * H1 文档大标题在两页都保留（作为各页标题来源）；上篇含 H1 + 前导段 + 前半子标题，下篇含 H1 + 后半子标题。
+ */
+export function splitKnowledgeCardMarkdown(scriptContext: string): { upper: string; lower: string } {
+  const full = String(scriptContext || "").trim();
+  if (!full) return { upper: "", lower: "" };
+
+  const lines = full.split(/\r?\n/);
+  // H1 文档大标题（首个 `# ` 行）
+  const h1 = lines.find((l) => /^#\s+/.test(l.trim()))?.trim() ?? "";
+
+  // 以 `## ` 子标题切块：preamble（首个 `## ` 之前的所有内容）+ 各子标题块
+  const sectionStarts: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^##\s+/.test(l.trim())) sectionStarts.push(i);
+  });
+
+  if (sectionStarts.length >= 2) {
+    const preamble = lines.slice(0, sectionStarts[0]).join("\n").trim();
+    const sections: string[] = sectionStarts.map((start, idx) => {
+      const end = idx + 1 < sectionStarts.length ? sectionStarts[idx + 1] : lines.length;
+      return lines.slice(start, end).join("\n").trim();
+    });
+    const half = Math.ceil(sections.length / 2);
+    const upperSections = sections.slice(0, half);
+    const lowerSections = sections.slice(half);
+    const upper = [preamble, ...upperSections].filter(Boolean).join("\n\n").trim();
+    // 下篇保留 H1 大标题作为上下文，再接后半子标题
+    const lowerHead = h1 && !lowerSections[0]?.startsWith(h1) ? h1 : "";
+    const lower = [lowerHead, ...lowerSections].filter(Boolean).join("\n\n").trim();
+    return { upper, lower: lower || upper };
+  }
+
+  // 没有足够子标题：按字符长度对半切；下篇前补 H1
+  const mid = Math.ceil(full.length / 2);
+  const upper = full.slice(0, mid).trim();
+  const lowerBody = full.slice(mid).trim();
+  const lower = h1 ? `${h1}\n\n${lowerBody}`.trim() : lowerBody;
+  return { upper, lower };
+}
+
 /**
  * **单页连贯图文知识卡片**（自定义文案专用）：组装**直接送 GPT-Image-2** 的 prompt。
- * 结构 = 中文艺术 directive（保美学）+ Markdown 原文 + 英文渲染外壳（防乱码）。
+ * 结构 = 中文艺术 directive（保美学）+ 上下篇分页指令（如有）+ Markdown 内容 + 英文渲染外壳（防乱码）。
  * 本路径**不经过英文翻译**，与小红书八格 {@link buildXhsNoteGeminiPrompt} 完全独立。
+ *
+ * @param notePart 传入 `upper`/`lower` 时，仅取对应半篇内容并在标题末尾标注「（上篇）」/「（下篇）」。不传则整篇。
  */
-export function buildSinglePageKnowledgeCardImagePrompt(scriptContext: string): string {
-  const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
-  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}
+export function buildSinglePageKnowledgeCardImagePrompt(
+  scriptContext: string,
+  notePart?: KnowledgeCardNotePart,
+): string {
+  const source =
+    notePart === "upper"
+      ? splitKnowledgeCardMarkdown(scriptContext).upper
+      : notePart === "lower"
+        ? splitKnowledgeCardMarkdown(scriptContext).lower
+        : String(scriptContext || "");
+  const slice = source.slice(0, SCRIPT_SLICE);
+
+  const partDirective =
+    notePart === "upper"
+      ? `\n【分页·上篇】本页是该主题图文笔记的【上篇】（共上下两篇）。请在文档大标题的末尾追加「（上篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致的单页知识卡片（不要画出下篇内容，也不要写"未完待续"之外的占位）。`
+      : notePart === "lower"
+        ? `\n【分页·下篇】本页是该主题图文笔记的【下篇】（承接上篇，共上下两篇）。请在文档大标题的末尾追加「（下篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致的单页知识卡片，整体风格须与上篇保持一致。`
+        : "";
+
+  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}
 
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
 ${slice}
