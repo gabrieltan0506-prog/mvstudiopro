@@ -2899,7 +2899,7 @@ export const appRouter = router({
         requestedPlatforms: z.array(z.string()).optional(),
         analysis: growthAnalysisScoresSchema,
         modelName: growthCampModelSchema.optional(),
-        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+        windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]).optional(),
         interactivePlatform: z.boolean().optional(),
       }))
       .query(async ({ input, ctx }) => {
@@ -3135,7 +3135,7 @@ export const appRouter = router({
       .input(z.object({
         question: z.string().min(3).max(1200),
         context: z.string().optional(),
-        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+        windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
         snapshot: growthSnapshotSchema,
         copyLlmMode: zPlatformCopyLlmModeInput,
       }))
@@ -3562,7 +3562,7 @@ export const appRouter = router({
           report: null,
           creationId: null as number | null,
           createdAt: null as string | null,
-          windowDays: null as null | 15 | 30 | 45,
+          windowDays: null as null | 3 | 7 | 15 | 30 | 45,
           dateRange: null as string | null,
         };
       }
@@ -3616,7 +3616,7 @@ export const appRouter = router({
           contentBlueprint: z.unknown().optional(),
           platformHint: z.enum(["douyin", "bilibili", "xiaohongshu", "kuaishou"]).optional(),
           dateRange: z.string().max(120).optional(),
-          windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+          windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]).optional(),
           /** 每次「全案分析」由前端递增，写入 requestHash，避免命中 user_creations 中上一份同参报告缓存。 */
           platformAnalysisEpoch: z.number().int().min(0).max(1_000_000_000).optional(),
         }),
@@ -5681,7 +5681,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     getPlatformDashboard: publicProcedure
       .input(z.object({
         context: z.string().optional(),
-        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+        windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
         requestedPlatforms: z.array(z.string()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
         copyLlmMode: zPlatformCopyLlmModeInput,
@@ -5792,7 +5792,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .input(
         z.object({
           context: z.string().optional(),
-          windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+          windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
           platformMenu: z.array(z.any()).optional(),
           snapshotSummary: z.record(z.string(), z.any()),
           /** Stage 1 完整戰略看板：後端清洗為 stage1StrategicHandoff 再併入 Stage 2 提示 */
@@ -5852,7 +5852,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     getPlatformContent: publicProcedure
       .input(z.object({
         context: z.string().optional(),
-        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+        windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
         platformMenu: z.array(z.any()).optional(),
         snapshotSummary: z.record(z.string(), z.any()),
         strategicDashboard: z.record(z.string(), z.any()).optional(),
