@@ -663,48 +663,46 @@ ${slice}
 }
 
 /**
- * **单页连贯图文知识卡片**（kind=`single_page_knowledge_card`，自定义文案专用）：像知识卡片设计师那样读 markdown，
- * 把文档详细内容依子标题顺序铺成**一整页连续**的精致图文卡片（非 2×4 网格、非小红书拼图、非分镜）。
- * 与 {@link buildXhsNoteGeminiPrompt}（小红书 2×4 八格）相互独立，互不影响。
+ * **单页连贯图文知识卡片**（kind=`single_page_knowledge_card`，自定义文案专用）的**中文**艺术指令。
+ *
+ * ⚠️ 与小红书八格不同：此路径**取消英文翻译**，直接把这段中文 directive + Markdown 原文送 GPT-Image-2，
+ * 以保留书法标题 / 大师写实摄影 + 文艺复兴手绘 / 山茶花蝴蝶洋牡丹装饰 / 宣纸暖色底等细腻美学
+ * （经英文化压缩会丢失这些质感、退化成扁平资讯图）。与 {@link buildXhsNoteGeminiPrompt}（2×4 八格）互不影响。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTOR_EN = `You are a world-class **Knowledge Card Visual Designer** (顶尖知识卡片设计师) who reads Markdown fluently and turns a document into **one single continuous one-page graphic knowledge card** (单页图文知识卡片). You compress the Chinese Markdown manuscript below into **one** English prompt block optimized for **GPT-Image-2**, which will then render a Simplified-Chinese knowledge card.
+export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归纳知识内容、规划整理的知识卡片设计师（Knowledge Card Visual Designer），精通解读 Markdown 文档，擅长把"文档内容"画成知识分解图。请把下方 Markdown 的详细内容做成**一整页连贯的单页图文知识卡片**（务必是"单页连贯"，而非 2×4 八格网格、也不是分镜表），用连贯的叙述把不同子标题的内容依序呈现。
 
-CORE TASK: read the Markdown and lay out **all of its detailed content, section by section following each subtitle in order**, as one coherent, richly-illustrated single page. Faithfully transcribe and proofread the content — keep it **detailed and substantial**; do NOT shrink it to a few hooks. Flow continuously: top banner title → each subtitle block in sequence (header + its bullets/explanations) → closing takeaway.
+【任务目标】
+- 内容详尽充实、完整不删减，校对文稿保持正确；用简体中文解说，措辞通畅易懂、有趣可读。
+- 标题：采用书法楷书字体、金橙色字体并以淡蓝紫色描边包裹每个标题字，字体用渐变色，呈现优雅飘逸的美感。
+- 内文：务必印刷清晰、绝不可模糊；执行内文小字的清晰度优化，并把当前内文小字**放大一级**（字号比主题小一级），兼顾排版美观与可读性。
 
-LAYOUT — CRITICAL: **ONE single continuous poster**, **NOT** a 2×4 grid, **NOT** eight equal panels, **NOT** a 2×2 quad, **NOT** a film storyboard, **NOT** a platform-specific note collage. Build a clear visual hierarchy: a bold top banner title, then sequential section blocks (one per subtitle) flowing down/across the page, connected by arrows, numbered badges (01/02/03…), ribbons and icons. Rounded section containers of **varied** sizes that flow naturally — never a rigid equal-cell matrix.
+【视觉规范】
+- 主体构图：在中央或左上方放置文档的核心视觉意象；画面采用摄影大师写实风格 + 透视学审美 + 当代大师艺术手稿素描结合的精致画面。
+- 四周环绕模块：以均匀布局围绕主体，层递排列文档中各类详尽知识点。
+- 图标：每段详细内文配上立体透视的素描图标，加深各类知识的印象；图标要带有冲击力，多种色彩、强烈对比。
+- 连接结构：用贝聿铭大师风格的素描线稿与写实美学线条，以及大师彩绘的各色山茶花、不同种蝴蝶、洋牡丹作为视觉链接；知识点用生动的符号或精致图形串接表达；**不要使用内部边框，法式大师设计风格的立体透视素描边框只出现在最外层**；严格避免箭头重叠、视觉不混乱。
 
-VISUAL STYLE — MANDATORY (**flat illustration / vector editorial infographic**, NOT photorealistic, NOT cinematic, NOT 3D render, NOT photography): a premium, high-end, exquisite business knowledge-card aesthetic with a **warm orange → light-purple (lavender) gradient** background and accents. Rich, vivid, **multi-color** palette — every icon and symbol is colorful; **absolutely no gray / grayscale imagery, no muted dead zones**. Use many **varied flat icons and connective symbols** (arrows, numbered badges, pins, sparkles, ribbons, mini-diagrams) to link ideas and enrich the expression. Strong visual impact, clean editorial composition, tasteful and premium.
+【内容拆解】
+- 把文档分成若干子标题，均匀分配在卡片上，用优雅、叙述通畅的文字与细致图标解释每个子标题；排版合理、说明详细、文字印刷清晰正确。
+- 结尾需详细总结（不要写出"总结"等小标题），直接凝练关键重点，并生成 **1 首当代诗词**来阐释文档的内容与核心知识点，配诗意插图与一句点睛之语（不要写出"金句"二字），该处文字用楷书书法风格，四周放置图标与相关视觉链接。
 
-TYPOGRAPHY — MANDATORY: the on-card explanatory text is **Simplified Chinese**, **crisp and print-clear (high-resolution, never blurry)**. **Enlarge the body text by one size** — prefer larger, legible fonts over cramming; balance density with readability and aesthetics. Titles and section headers bold and prominent. English may appear only as small secondary accent keywords, never replacing the Chinese explanation.
+【核心要求】
+- 风格混合：文艺复兴时期大师手绘艺术插画（透视学素描）+ 贝聿铭大师级绝美写实摄影立体风格图标，二者组合；整体如同用彩色画笔在画布上绘制，所有元素细腻有质感、强烈视觉冲击。
+- 构图布局：清晰完整、有逻辑，能自然引导读者视线；元素从左到右合理安排，填满画布以保证视觉均衡，不要过度居中。
+- 颜色：暖色调为主、清爽合理；背景采用爱马仕橙色到浅紫的渐变（亦可用宣纸/绢本底色，春天淡紫加粉色渐变色谱），圆角、阴影、适当字体层次的现代设计；**图文笔记中不要有任何灰色的图像**，图标与符号都要彩色、有视觉冲击力；注释文字用橙色书法楷书、浅蓝描边。
 
-OUTPUT a single English prompt that explicitly tells GPT-Image-2 to bake the Simplified-Chinese section titles and body copy from the manuscript onto the card, large and legible.`;
+【输出格式】完整描述、内容连贯、文字详尽、简体中文印刷清晰正确 / 高清 4K / 横向 16:9 构图。若文档有难以理解之处，先在内部翻译成英文校对原意，再生成简体中文叙述。`;
 
-/** **单页连贯图文知识卡片**：整页连续版式约束（非 2×4 网格）；输出体例与 {@link SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTOR_EN} 配套。 */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_FOOTER = `
-TAG:SINGLE_PAGE_KNOWLEDGE_CARD
-
-【英文生图输出 / OUTPUT — **单页图文知识卡片**（single continuous one-page knowledge card · landscape · GPT-Image-2 优先）】
-1. Output **one** English string **optimized for GPT-Image-2**. **No character limit** — longer is better: spell out the Simplified-Chinese title and the content of **every** section so the card stays detailed and faithful to the manuscript.
-2. LAYOUT (lock explicitly): **ONE single continuous poster**, wide ~16:9 landscape (1536×1024 class). **Do NOT** split into a 2×4 / eight-panel grid, 2×2 quad, equal-cell matrix, or storyboard. Use a top banner title + sequential section blocks (one per subtitle, in order) flowing down/across the page, connected by arrows, numbered badges 01/02/03…, and decorative icons. Rounded section containers of varied sizes are welcome; a rigid equal-cell grid is not.
-3. **VISUAL STYLE — MANDATORY:** **flat illustration / vector editorial infographic**, NOT photorealistic, NOT cinematic, NOT 3D render, NOT photography. Background and accents use a **warm orange → light-purple (lavender) gradient**. Vivid, **multi-color** palette; **every icon and symbol is colorful**; **no gray / grayscale imagery, no muted dead areas**. High visual impact, premium and exquisite business knowledge-card aesthetic.
-4. **CONTENT FIDELITY:** transcribe the manuscript's sections faithfully and **in order**; keep explanations **detailed and substantial** (do not reduce to a few hooks); proofread for correctness; render as Simplified-Chinese explanatory copy.
-5. **TYPOGRAPHY:** primary on-card copy = **legible 简体中文**, **print-crisp and high-resolution (never blurry)**. **Enlarge body text by one size**; prefer larger readable fonts with balanced, tasteful layout. Section headers bold and colorful. English only as small secondary accent keywords.
-6. Decorate richly with **varied flat icons, symbols, arrows, ribbons, badges, mini-diagrams** that connect and illustrate each section; cohesive warm orange→lavender gradient palette across the whole card; overall feel = vivid, clean, high-impact, high-end single-page knowledge infographic.
-`.trim();
-
-/** **单页连贯图文知识卡片**（自定义文案专用）：依 markdown 子标题顺序铺满一整页（非 2×4 网格）；与小红书八格 {@link buildXhsNoteGeminiPrompt} 独立。 */
-export function buildSinglePageKnowledgeCardGeminiPrompt(scriptContext: string): string {
+/**
+ * **单页连贯图文知识卡片**（自定义文案专用）：组装**直接送 GPT-Image-2** 的中文 prompt（中文 directive + Markdown 原文）。
+ * 本路径**不经过英文翻译**，与小红书八格 {@link buildXhsNoteGeminiPrompt} 完全独立。
+ */
+export function buildSinglePageKnowledgeCardImagePrompt(scriptContext: string): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
-  return (
-    `
-${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTOR_EN}
+  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}
 
-[Chinese Markdown Manuscript]:
-${slice}
-`.trim() +
-    "\n\n" +
-    SINGLE_PAGE_KNOWLEDGE_CARD_FOOTER
-  );
+【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
+${slice}`.trim();
 }
 
 /** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
@@ -1710,29 +1708,16 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     pipelineStatCtx: compositeStatCtx,
   });
   const isStoryboard = kind === "storyboard_sheet_landscape";
-  const isKnowledgeCard = kind === "single_page_knowledge_card";
   appendVertexFlashDebug(
     flowLog,
     `translatePlatformComposite · kind=${options.kind}${options.kind !== kind ? `→${kind}` : ""} · translator=${options.translator ?? "(未指定)"} · engine=${options.engine ?? "n/a"}`,
   );
-  // 单页知识卡片需要忠实、详尽的全文内容；视觉骨架提炼会剥离解释性正文，故仅分镜/小红书八格使用骨架。
-  let task: string;
-  if (isKnowledgeCard) {
-    appendVertexFlashDebug(
-      flowLog,
-      `[单页知识卡片] 跳过 extractChineseVisualBrief（保留 markdown 详尽内容，不做视觉骨架剥离）`,
-    );
-    task = buildSinglePageKnowledgeCardGeminiPrompt(options.scriptContext);
-  } else {
-    const chineseBrief = await extractChineseVisualBrief(options.scriptContext, flowLog);
-    task = isStoryboard
-      ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
-      : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
-  }
-  appendVertexFlashDebug(
-    flowLog,
-    `已組裝 ${isKnowledgeCard ? "buildSinglePageKnowledgeCard" : isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`,
-  );
+  // 注意：single_page_knowledge_card 不走本英文化函数（已在 proxyImageService 直接用中文 directive 送生图）。
+  const chineseBrief = await extractChineseVisualBrief(options.scriptContext, flowLog);
+  const task = isStoryboard
+    ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
+    : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
+  appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
 
   logSheetChineseStagingBeforeTranslate(
     flowLog,
