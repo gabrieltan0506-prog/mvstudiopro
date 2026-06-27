@@ -292,8 +292,11 @@ export function PlatformReportDashboard({
           </span>
         </div>
       ) : null}
-      <header className="mb-5 flex flex-wrap items-end justify-between gap-3 rounded-xl border border-gray-800/60 bg-[linear-gradient(125deg,rgba(99,102,241,0.08),rgba(15,23,42,0.95)_40%,rgba(16,185,129,0.06))] px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.25)]">
-        <div>
+      <header className="relative mb-5 flex flex-wrap items-end justify-between gap-3 overflow-hidden rounded-xl border border-indigo-500/30 bg-[linear-gradient(125deg,rgba(139,92,246,0.16),rgba(15,23,42,0.96)_42%,rgba(16,185,129,0.1))] px-4 py-3 shadow-[0_16px_48px_rgba(99,102,241,0.18)]">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-fuchsia-500 via-cyan-400 to-emerald-400" aria-hidden />
+        <div className="pointer-events-none absolute -left-16 -top-16 h-40 w-40 rounded-full bg-fuchsia-500/20 blur-3xl" aria-hidden />
+        <div className="pointer-events-none absolute -right-10 -bottom-16 h-40 w-40 rounded-full bg-emerald-500/15 blur-3xl" aria-hidden />
+        <div className="relative">
           <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
             <span className="inline-flex items-center gap-1 rounded-full border border-purple-500/25 bg-purple-500/10 px-2 py-0.5 text-purple-200/90">
               <Sparkles size={12} className="text-purple-300" aria-hidden />
@@ -305,10 +308,12 @@ export function PlatformReportDashboard({
             </span>
           </div>
           <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-wide md:text-3xl">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/40 to-emerald-500/30 text-sm font-black text-white shadow-inner">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-fuchsia-500 via-violet-500 to-cyan-400 text-sm font-black text-white shadow-[0_0_18px_rgba(168,85,247,0.5)]">
               M
             </span>
-            <span>MV Studio Pro AI 决策智库报告</span>
+            <span className="bg-gradient-to-r from-white via-violet-100 to-cyan-200 bg-clip-text text-transparent">
+              MV Studio Pro AI 决策智库报告
+            </span>
             <span className="text-sm font-normal text-gray-300 md:text-base">
               {trial ? (
                 <span className="inline-flex items-center gap-1">
@@ -323,7 +328,7 @@ export function PlatformReportDashboard({
           </h1>
         </div>
         <div
-          className="inline-flex items-center gap-2 rounded-lg border border-amber-500/45 bg-[linear-gradient(135deg,rgba(245,158,11,0.18),rgba(15,23,42,0.9))] px-3 py-2 text-sm font-semibold tabular-nums text-amber-50 shadow-[0_0_28px_rgba(245,158,11,0.15)] md:text-base"
+          className="relative inline-flex items-center gap-2 rounded-lg border border-amber-500/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.24),rgba(15,23,42,0.9))] px-3 py-2 text-sm font-semibold tabular-nums text-amber-50 shadow-[0_0_32px_rgba(245,158,11,0.22)] md:text-base"
           title="分析窗口"
         >
           <Compass size={18} className="shrink-0 text-amber-300" aria-hidden />
@@ -333,7 +338,8 @@ export function PlatformReportDashboard({
 
       {/* 横向第一带：全局 / 平台雷达 / 战略对照 */}
       <div className="mb-4 grid grid-cols-1 gap-3.5 lg:grid-cols-3">
-        <section className="flex flex-col overflow-hidden rounded-xl border border-emerald-500/30 bg-[linear-gradient(180deg,rgba(16,185,129,0.14)_0%,rgba(17,24,39,0.97)_42%)] shadow-[0_8px_32px_rgba(16,185,129,0.08)]">
+        <section className="flex flex-col overflow-hidden rounded-xl border border-emerald-500/40 bg-[linear-gradient(180deg,rgba(16,185,129,0.16)_0%,rgba(17,24,39,0.97)_42%)] shadow-[0_10px_36px_rgba(16,185,129,0.14)]">
+          <div className="h-1 w-full bg-gradient-to-r from-emerald-400 via-teal-400 to-transparent" aria-hidden />
           <div className="flex items-center gap-2.5 border-b border-emerald-500/25 bg-emerald-500/10 px-3.5 py-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/25 text-emerald-200 shadow-sm">
               <LayoutDashboard size={18} strokeWidth={2.25} aria-hidden />
@@ -377,7 +383,8 @@ export function PlatformReportDashboard({
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-cyan-500/30 bg-[linear-gradient(180deg,rgba(34,211,238,0.12)_0%,rgba(17,24,39,0.97)_40%)] shadow-[0_8px_32px_rgba(34,211,238,0.08)]">
+        <section className="overflow-hidden rounded-xl border border-cyan-500/40 bg-[linear-gradient(180deg,rgba(34,211,238,0.14)_0%,rgba(17,24,39,0.97)_40%)] shadow-[0_10px_36px_rgba(34,211,238,0.14)]">
+          <div className="h-1 w-full bg-gradient-to-r from-cyan-400 via-sky-400 to-transparent" aria-hidden />
           <div className="flex items-center gap-2.5 border-b border-cyan-500/25 bg-cyan-500/10 px-3.5 py-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/25 text-cyan-100 shadow-sm">
               <ScanLine size={18} strokeWidth={2.25} aria-hidden />
@@ -419,7 +426,8 @@ export function PlatformReportDashboard({
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-violet-500/30 bg-[linear-gradient(180deg,rgba(139,92,246,0.14)_0%,rgba(17,24,39,0.97)_38%)] shadow-[0_8px_32px_rgba(139,92,246,0.1)]">
+        <section className="overflow-hidden rounded-xl border border-violet-500/40 bg-[linear-gradient(180deg,rgba(139,92,246,0.16)_0%,rgba(17,24,39,0.97)_38%)] shadow-[0_10px_36px_rgba(139,92,246,0.16)]">
+          <div className="h-1 w-full bg-gradient-to-r from-violet-400 via-fuchsia-400 to-transparent" aria-hidden />
           <div className="flex items-center gap-2.5 border-b border-violet-500/25 bg-violet-500/10 px-3.5 py-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/30 text-violet-100 shadow-sm">
               <GitCompare size={18} strokeWidth={2.25} aria-hidden />
@@ -514,7 +522,8 @@ export function PlatformReportDashboard({
       {/* 横向第二带：洞察 + 选题实例 + IP */}
       <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 lg:items-stretch">
         <div className="lg:col-span-5">
-          <section className="grid h-full grid-rows-[auto_1fr] gap-0 overflow-hidden rounded-xl border border-indigo-500/25 bg-[linear-gradient(180deg,rgba(99,102,241,0.1)_0%,rgba(17,24,39,0.96)_28%)] shadow-[0_8px_28px_rgba(99,102,241,0.08)]">
+          <section className="grid h-full grid-rows-[auto_auto_1fr] gap-0 overflow-hidden rounded-xl border border-indigo-500/40 bg-[linear-gradient(180deg,rgba(99,102,241,0.13)_0%,rgba(17,24,39,0.96)_28%)] shadow-[0_10px_32px_rgba(99,102,241,0.14)]">
+            <div className="h-1 w-full bg-gradient-to-r from-indigo-400 via-blue-400 to-transparent" aria-hidden />
             <div className="flex items-center gap-2.5 border-b border-indigo-500/20 bg-indigo-500/10 px-3 py-2.5">
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/25 text-indigo-100">
                 <Lightbulb size={18} strokeWidth={2.25} aria-hidden />
@@ -561,7 +570,8 @@ export function PlatformReportDashboard({
         </div>
 
         <div className="lg:col-span-4">
-          <section className="flex h-full flex-col overflow-hidden rounded-xl border border-amber-500/28 bg-[linear-gradient(180deg,rgba(245,158,11,0.11)_0%,rgba(17,24,39,0.96)_32%)] shadow-[0_8px_28px_rgba(245,158,11,0.07)]">
+          <section className="flex h-full flex-col overflow-hidden rounded-xl border border-amber-500/40 bg-[linear-gradient(180deg,rgba(245,158,11,0.13)_0%,rgba(17,24,39,0.96)_32%)] shadow-[0_10px_32px_rgba(245,158,11,0.13)]">
+            <div className="h-1 w-full bg-gradient-to-r from-amber-400 via-orange-400 to-transparent" aria-hidden />
             <div className="flex items-center gap-2.5 border-b border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/25 text-amber-100">
                 <BookOpen size={18} strokeWidth={2.25} aria-hidden />
@@ -641,7 +651,8 @@ export function PlatformReportDashboard({
         </div>
 
         <div className="lg:col-span-3">
-          <section className="flex h-full flex-col overflow-hidden rounded-xl border border-rose-500/28 bg-[linear-gradient(180deg,rgba(244,63,94,0.1)_0%,rgba(17,24,39,0.96)_30%)] shadow-[0_8px_28px_rgba(244,63,94,0.08)]">
+          <section className="flex h-full flex-col overflow-hidden rounded-xl border border-rose-500/40 bg-[linear-gradient(180deg,rgba(244,63,94,0.12)_0%,rgba(17,24,39,0.96)_30%)] shadow-[0_10px_32px_rgba(244,63,94,0.14)]">
+            <div className="h-1 w-full bg-gradient-to-r from-rose-400 via-pink-400 to-transparent" aria-hidden />
             <h2 className="flex items-center gap-2.5 border-b border-rose-500/25 bg-rose-500/10 px-3 py-2.5 text-base font-bold text-rose-50">
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-500/25 text-rose-100">
                 <HeartHandshake size={18} strokeWidth={2.25} aria-hidden />
