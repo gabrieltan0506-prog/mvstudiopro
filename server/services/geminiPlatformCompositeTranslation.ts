@@ -672,9 +672,14 @@ ${slice}
 export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归纳知识内容、规划整理的知识卡片设计师（Knowledge Card Visual Designer），精通解读 Markdown 文档，擅长把"文档内容"画成知识分解图。请把下方 Markdown 的详细内容做成**一整页连贯的单页图文知识卡片**（务必是"单页连贯"，而非 2×4 八格网格、也不是分镜表），用连贯的叙述把不同子标题的内容依序呈现。
 
 【任务目标】
-- 内容详尽充实、完整不删减，校对文稿保持正确；用简体中文解说，措辞通畅易懂、有趣可读。
+- 内容详尽充实、覆盖每个子标题的关键点、校对文稿保持正确；用简体中文解说，措辞通畅易懂、有趣可读。
 - 标题：采用书法楷书字体、金橙色字体并以淡蓝紫色描边包裹每个标题字，字体用渐变色，呈现优雅飘逸的美感。
 - 内文：务必印刷清晰、绝不可模糊；执行内文小字的清晰度优化，并把当前内文小字**放大一级**（字号比主题小一级），兼顾排版美观与可读性。
+
+【文字渲染·防乱码（关键）】
+- 字数与字号优先级：**宁可精炼也不要密集小字**。把每个子标题下的长段落改写成 3-6 条**短句或关键词短语**（每条尽量 ≤ 16 字），用要点化、提炼后的简体中文呈现，**不要整段长文堆砌**——密集小字最容易糊成乱码。
+- 每个文字块都要留足够留白与字号，确保即使缩放后每个汉字笔画清晰、不粘连、不变形、不重复、不缺笔。
+- 仅渲染**确实需要出现在图上**的简体中文（标题、要点短句、关键数据/百分比）；解释性长句可省略或大幅精简。每个汉字必须是**真实存在、写法正确**的规范简体字，严禁生造字、错字、半个字或火星文。
 
 【视觉规范】
 - 主体构图：在中央或左上方放置文档的核心视觉意象；画面采用摄影大师写实风格 + 透视学审美 + 当代大师艺术手稿素描结合的精致画面。
@@ -694,7 +699,14 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归
 【输出格式】完整描述、内容连贯、文字详尽、简体中文印刷清晰正确 / 高清 4K / 横向 16:9 构图。若文档有难以理解之处，先在内部翻译成英文校对原意，再生成简体中文叙述。`;
 
 /**
- * **单页连贯图文知识卡片**（自定义文案专用）：组装**直接送 GPT-Image-2** 的中文 prompt（中文 directive + Markdown 原文）。
+ * 英文「渲染外壳」：内容用中文（保美学），但用一段简短英文**强约束模型如何渲染中文字**——
+ * 模型对英文 meta 指令解析最稳，可显著降低密集简体中文的乱码/重复/缺笔概率。
+ */
+export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. Render every Chinese glyph **large, crisp, print-clear and correctly-formed** — no garbled, no duplicated, no missing/broken strokes, no invented or wrong characters. Keep each text block **short and well-spaced** (titles + bullet keyphrases, not dense paragraphs); prioritize legibility over text volume. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
+
+/**
+ * **单页连贯图文知识卡片**（自定义文案专用）：组装**直接送 GPT-Image-2** 的 prompt。
+ * 结构 = 中文艺术 directive（保美学）+ Markdown 原文 + 英文渲染外壳（防乱码）。
  * 本路径**不经过英文翻译**，与小红书八格 {@link buildXhsNoteGeminiPrompt} 完全独立。
  */
 export function buildSinglePageKnowledgeCardImagePrompt(scriptContext: string): string {
@@ -702,7 +714,9 @@ export function buildSinglePageKnowledgeCardImagePrompt(scriptContext: string): 
   return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}
 
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
-${slice}`.trim();
+${slice}
+
+${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}`.trim();
 }
 
 /** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
