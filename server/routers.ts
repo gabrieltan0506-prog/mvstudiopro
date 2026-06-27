@@ -505,10 +505,12 @@ async function invokePlatformStructuredCopyLlm(options: {
   systemInstruction: string;
   userText: string;
   abortSignal?: AbortSignal;
+  /** 覆寫 GPT‑5.5 推理檔位：空回重試時降到 low/minimal，逼模型把预算用于直接输出 JSON 而非耗尽在推理。 */
+  reasoningEffortOverride?: ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
 }): Promise<string> {
   if (options.copyLlmMode === "openai") {
     const modelName = getPlatformStage2OpenAiModel();
-    const reasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
+    const reasoningEffort = options.reasoningEffortOverride ?? resolvePlatformStage2OpenAiReasoningEffort();
     const response = await invokeLLM({
       provider: "openai",
       modelName,
@@ -627,6 +629,44 @@ function padPlatformMenuFromSnapshot(
     });
   }
   return { ...dashboard, platformMenu: menu.slice(0, PLATFORM_MENU_TARGET_MAX) };
+}
+
+/**
+ * 兜底看板：当 Stage 1 LLM（GPT‑5.5）多次返回空内容或缺字段时，用 **live 快照** 直接合成一份可用看板，
+ * 避免硬报错 `missing required fields` 卡死整条流程（快照已采集成功，数据齐全）。
+ * 可叠加 LLM 已部分产出的字段（partial）。
+ */
+function buildSnapshotFallbackDashboard(
+  snapshot: z.infer<typeof growthSnapshotSchema>,
+  partial?: Record<string, unknown>,
+): z.infer<typeof platformDashboardResponseSchema> {
+  const mainPath = (snapshot as any).mainPath ?? {};
+  const topics = Array.isArray(snapshot.topicLibrary) ? snapshot.topicLibrary : [];
+  const headline =
+    String(partial?.headline || mainPath?.title || topics[0]?.title || "你的多平台成长看板").slice(0, 80);
+  const subheadline = String(partial?.subheadline || mainPath?.summary || "").slice(0, 160);
+  const personaSummary = String(partial?.personaSummary || mainPath?.whyNow || "").slice(0, 240);
+  const hotTopics =
+    Array.isArray(partial?.hotTopics) && (partial!.hotTopics as unknown[]).length > 0
+      ? (partial!.hotTopics as unknown[])
+      : topics.slice(0, 6).map((item) => ({
+          title: item.title,
+          rationale: item.rationale,
+          executionHint: item.executionHint,
+        }));
+  const base = platformDashboardResponseSchema.parse({
+    headline,
+    subheadline,
+    personaSummary,
+    topSignals: Array.isArray(partial?.topSignals) ? partial!.topSignals : [],
+    platformMenu: Array.isArray(partial?.platformMenu) ? partial!.platformMenu : [],
+    hotTopics,
+    contentBlueprints: [],
+    monetizationLanes: [],
+    actionCards: Array.isArray(partial?.actionCards) ? partial!.actionCards : [],
+    conversationStarters: Array.isArray(partial?.conversationStarters) ? partial!.conversationStarters : [],
+  });
+  return padPlatformMenuFromSnapshot(base, snapshot);
 }
 
 async function buildPlatformDashboard(params: {
@@ -843,12 +883,30 @@ async function buildPlatformDashboard(params: {
         });
 
   const copyLlmMode = resolvePlatformCopyLlmMode(params.copyLlmMode);
-  const rawContent = await invokePlatformStructuredCopyLlm({
-    copyLlmMode,
-    systemInstruction: dashboardSystemInstruction,
-    userText: dashboardUserPayload,
-    abortSignal: params.abortSignal,
-  });
+  // 空回重试：GPT‑5.5 medium 推理偶发把输出预算耗尽 → content 为空（rawPreview: {}）；
+  // Evolink 过载时也可能瞬时空回。重试时把推理档位降到 low，逼模型直接输出 JSON 而非空转。
+  const DASHBOARD_LLM_MAX_ATTEMPTS = 3;
+  let rawContent = "";
+  for (let attempt = 1; attempt <= DASHBOARD_LLM_MAX_ATTEMPTS; attempt += 1) {
+    rawContent = await invokePlatformStructuredCopyLlm({
+      copyLlmMode,
+      systemInstruction: dashboardSystemInstruction,
+      userText: dashboardUserPayload,
+      abortSignal: params.abortSignal,
+      reasoningEffortOverride: attempt > 1 ? "low" : undefined,
+    });
+    if (String(rawContent || "").trim()) break;
+    console.warn(
+      `[buildPlatformDashboard] LLM 第 ${attempt}/${DASHBOARD_LLM_MAX_ATTEMPTS} 次返回空内容` +
+        `（GPT‑5.5 推理耗尽或 Evolink 瞬时空回）${attempt < DASHBOARD_LLM_MAX_ATTEMPTS ? "，降推理档位重试…" : "，放弃重试，转用快照兜底"}`,
+    );
+    if (params.abortSignal?.aborted) break;
+  }
+  // 三次仍空 → 直接用 live 快照合成兜底看板，不让 Stage 1 硬失败。
+  if (!String(rawContent || "").trim()) {
+    console.warn("[buildPlatformDashboard] LLM 持续空回，使用快照兜底看板（headline/platformMenu 取自 live snapshot）。");
+    return buildSnapshotFallbackDashboard(params.snapshot);
+  }
 
   // Phase 0-C: Robust JSON extraction — greedy bracket extraction, then fence strip fallback
   // Step 1: greedy bracket extraction — find the outermost { … } block in the raw output
@@ -887,8 +945,8 @@ async function buildPlatformDashboard(params: {
   const partial = (parsedRaw || {}) as Record<string, unknown>;
   if (!partial.headline || !partial.platformMenu) {
     const rawPreview = JSON.stringify(parsedRaw || {}).slice(0, 500);
-    console.error("[buildPlatformDashboard] missing required fields. parsedRaw preview:", rawPreview);
-    throw new Error(`buildPlatformDashboard: missing required fields. rawPreview: ${rawPreview}`);
+    console.error("[buildPlatformDashboard] missing required fields, 使用快照兜底叠加已产出字段. parsedRaw preview:", rawPreview);
+    return buildSnapshotFallbackDashboard(params.snapshot, partial);
   }
   const parseResult = platformDashboardResponseSchema.safeParse(partial);
   if (parseResult.success) {
@@ -910,8 +968,8 @@ async function buildPlatformDashboard(params: {
     conversationStarters: Array.isArray(partial.conversationStarters) ? partial.conversationStarters : [],
   });
   if (looseResult.success) return padPlatformMenuFromSnapshot(looseResult.data, params.snapshot);
-  console.error("[buildPlatformDashboard] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
-  throw new Error(`buildPlatformDashboard: loose parse failed. errors: ${JSON.stringify((looseResult.error as any).issues?.slice(0, 3) ?? looseResult.error.message)}`);
+  console.error("[buildPlatformDashboard] loose parse also failed, 使用快照兜底:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
+  return buildSnapshotFallbackDashboard(params.snapshot, partial);
 }
 
 /**
