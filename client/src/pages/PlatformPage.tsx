@@ -1400,18 +1400,19 @@ function CoverGenerationWaitCarousel({
   );
 }
 
-/** Stage 2 五个内容维度 + 变现路径的展示标签（与后端 BLUEPRINT_DIMENSIONS 顺序对齐）。 */
+/** Stage 2 六个内容维度 + 变现路径的展示标签（与后端 BLUEPRINT_DIMENSIONS 顺序对齐）。 */
 const STAGE2_BLUEPRINT_STEPS: ReadonlyArray<{ label: string; hint: string }> = [
   { label: "专业洞察", hint: "行业壁垒与权威结论" },
   { label: "跨界价值", hint: "美学与个人哲学视野" },
   { label: "受众痛点", hint: "击中核心焦虑" },
   { label: "人设魅力", hint: "真实经历建立信任" },
   { label: "多场景热点", hint: "趋势改写贴脸场景" },
+  { label: "长尾常青", hint: "高搜索·吃长尾流量" },
 ];
 
 /**
- * Stage 2 逐条 blueprint 生成进度：5 个内容维度 + 变现路径，各自独立进度条与状态。
- * 已到位的 blueprint（轮询增量）显示 100%，当前条「生成中」脉冲，其余「排队中」。
+ * Stage 2 逐条 blueprint 生成进度：6 个内容维度 + 变现路径，各自独立进度条与状态。
+ * 已到位的 blueprint（轮询增量）显示 100%，当前条「生成中」用时间推进的百分比缓爬，其余「排队中」。
  */
 function Stage2BlueprintProgress({
   completedBlueprints,
@@ -1422,6 +1423,16 @@ function Stage2BlueprintProgress({
   monetizationReady: boolean;
   statusText: string;
 }) {
+  // 单条 blueprint 为一次原子 LLM 调用，无 token 级进度；用时间推进的缓爬百分比给出「正在动」的体感（封顶 95%）。
+  const [activeCreep, setActiveCreep] = useState(14);
+  useEffect(() => {
+    setActiveCreep(14);
+    const id = window.setInterval(() => {
+      setActiveCreep((p) => (p >= 95 ? 95 : p + Math.max(1, Math.round((97 - p) * 0.07))));
+    }, 850);
+    return () => window.clearInterval(id);
+  }, [completedBlueprints, monetizationReady]);
+
   const rows = [
     ...STAGE2_BLUEPRINT_STEPS.map((s, i) => ({
       label: s.label,
@@ -1439,6 +1450,7 @@ function Stage2BlueprintProgress({
     },
   ];
   const doneCount = rows.filter((r) => r.status === "done").length;
+  const overallPct = Math.round((doneCount / rows.length) * 100);
 
   return (
     <div
@@ -1450,13 +1462,13 @@ function Stage2BlueprintProgress({
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#c4b5fd]" aria-hidden />
         <span className="text-[11px] font-semibold tracking-wide text-[#c4b5fd]">专属文案逐条生成中</span>
         <span className="tabular-nums text-[11px] text-white/55">
-          {doneCount} / {rows.length} 条已完成
+          {doneCount} / {rows.length} 条已完成 · {overallPct}%
         </span>
         {statusText ? <span className="text-[11px] text-white/40">· {statusText}</span> : null}
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {rows.map((row, i) => {
-          const pct = row.status === "done" ? 100 : row.status === "active" ? 72 : 6;
+          const pct = row.status === "done" ? 100 : row.status === "active" ? activeCreep : 0;
           const barClass =
             row.status === "done"
               ? "bg-[linear-gradient(90deg,#6fffb0,#49e6ff)]"
@@ -1475,8 +1487,12 @@ function Stage2BlueprintProgress({
                 <span className="text-[13px] font-semibold text-white">
                   {i + 1}. {row.label}
                 </span>
-                <span className={`shrink-0 text-[10px] font-semibold ${tagClass}`}>
-                  {row.status === "done" ? "完成" : row.status === "active" ? "生成中…" : "排队中"}
+                <span className={`shrink-0 text-[10px] font-semibold tabular-nums ${tagClass}`}>
+                  {row.status === "done"
+                    ? "完成 · 100%"
+                    : row.status === "active"
+                      ? `生成中… ${pct}%`
+                      : "排队中"}
                 </span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" aria-hidden>
@@ -1994,7 +2010,7 @@ export default function PlatformPage() {
                   return prev;
                 });
                 const count = partialBps.length;
-                setContentLoadingText(`已生成 ${count}/5 条专属选题，继续生成中…`);
+                setContentLoadingText(`已生成 ${count}/6 条专属选题，继续生成中…`);
                 return;
               }
             }
