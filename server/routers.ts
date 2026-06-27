@@ -5180,7 +5180,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
           : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? CREDIT_COSTS.platformStoryboardSheet
-            : CREDIT_COSTS.platformXhsDualNote;
+            : input.kind === "single_page_knowledge_card"
+              ? CREDIT_COSTS.platformSinglePageKnowledgeCard // 25/篇；上篇+下篇两次合计 50
+              : CREDIT_COSTS.platformXhsDualNote;
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);

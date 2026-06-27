@@ -7897,7 +7897,7 @@ export default function PlatformPage() {
             </span>
           </div>
           <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-            貼入中文文案 / Markdown，生成精緻的簡體中文圖片。「單頁圖文卡片」會把內容拆成<strong className="text-[#ff9fe0]">上篇＋下篇兩張</strong>完整卡片（標題自動標註「（上篇）/（下篇）」）；「2×4 分鏡圖」為單張。
+            貼入中文文案 / Markdown，生成精緻的簡體中文圖片。「單頁圖文卡片」會把內容拆成<strong className="text-[#ff9fe0]">上篇＋下篇兩張</strong>完整卡片（標題自動標註「（上篇）/（下篇）」），<strong className="text-[#ff9fe0]">共扣 50 積分</strong>（上下篇各 25 · supervisor 免扣）；「2×4 分鏡圖」為單張。
           </p>
 
           {/* 圖片類型選擇器 */}
@@ -7940,7 +7940,7 @@ export default function PlatformPage() {
 
           <textarea
             className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
-            placeholder={customNoteKind === "single_page_knowledge_card" ? "貼入中文文案 / Markdown，系統自動翻譯並生成單頁連貫圖文知識卡片…（建議 200–1500 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
+            placeholder={customNoteKind === "single_page_knowledge_card" ? "貼入中文文案 / Markdown，直接生成單頁連貫圖文知識卡片（上篇＋下篇兩張）…（建議 200–1500 字）" : "輸入中文文案或分鏡腳本，系統自動翻譯並生成 2×4 分鏡圖…（建議 100–800 字）"}
             value={customNoteText}
             onChange={(e) => setCustomNoteText(e.target.value)}
             disabled={customNoteBusy}
