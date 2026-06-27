@@ -4942,6 +4942,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           buildPlatformTopicReferenceGeminiTask,
           extractChineseVisualBrief,
           translatePlatformTopicCoverToEnglishGpt54,
+          buildPlatformTopicCoverDirectChinesePrompt,
+          isPlatformImageChineseDirectEnabled,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
@@ -5010,27 +5012,53 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             translatedPromptWords: 0,
           };
           try {
-            const geminiTask = buildPlatformTopicReferenceGeminiTask({
-              topicHook: opt.topicHook,
-              context: (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000),
-              variant: geminiVariant,
-              coverPersonaContext: batchCoverPersona || undefined,
-              batchSceneDiversity:
-                input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
-            });
-            appendImageFlowLog(flowLog, `[步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`);
-            const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(geminiTask, flowLog);
-            appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-            const trimmedEn = String(englishPrompt || "").trim();
-            if (!trimmedEn) {
-              appendImageFlowLog(flowLog, `${new Date().toISOString()}  [步骤1] 翻译结果为空，不注入模版英文`);
-              throw new Error("英文 prompt 为空");
+            const coverContextZh =
+              (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000);
+            let safePrompt = "";
+            const coverChineseDirect = isPlatformImageChineseDirectEnabled();
+            if (coverChineseDirect) {
+              try {
+                safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
+                  topicHook: opt.topicHook,
+                  context: coverContextZh,
+                  variant: geminiVariant,
+                  coverPersonaContext: batchCoverPersona || undefined,
+                }).trim();
+                appendImageFlowLog(
+                  flowLog,
+                  `[步骤1·中文直送] 已跳过 GPT 5.4 英文化 → 直接用中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+                );
+              } catch (e: unknown) {
+                safePrompt = "";
+                appendImageFlowLog(
+                  flowLog,
+                  `[步骤1·中文直送] 组装失败，回退 GPT 5.4 英文化: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              }
+            }
+            if (!safePrompt) {
+              const geminiTask = buildPlatformTopicReferenceGeminiTask({
+                topicHook: opt.topicHook,
+                context: coverContextZh,
+                variant: geminiVariant,
+                coverPersonaContext: batchCoverPersona || undefined,
+                batchSceneDiversity:
+                  input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
+              });
+              appendImageFlowLog(flowLog, `[步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`);
+              const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(geminiTask, flowLog);
+              appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
+              const trimmedEn = String(englishPrompt || "").trim();
+              if (!trimmedEn) {
+                appendImageFlowLog(flowLog, `${new Date().toISOString()}  [步骤1] 翻译结果为空，不注入模版英文`);
+                throw new Error("英文 prompt 为空");
+              }
+              safePrompt = trimmedEn;
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1b] 无智能提炼 · 英文化原文直接进封面像素链路（NB2 / Imagen 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${trimmedEn.length}）`,
+              `[步骤1b] 无智能提炼 · 主体直接进封面像素链路（NB2 / Imagen 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${safePrompt.length}）`,
             );
-            const safePrompt = trimmedEn;
             promptStats = buildImagePromptStats(safePrompt);
             appendImageFlowLog(
               flowLog,
