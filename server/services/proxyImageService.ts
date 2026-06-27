@@ -155,10 +155,6 @@ const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
   "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. NOT RECOMMENDED: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells. SOFT PREFERENCE: let Hook/context drive light and color—daylight, soft pastel, or warm editorial tones are welcome when they fit; not recommended to default every sheet to heavy dark-gold / low-key gloom without narrative reason.";
 
-/** **单页连贯图文知识卡片**（kind=single_page_knowledge_card · 自定义文案专用）：一整页连续版式（非 2×4 网格），flat 插画资讯图、橙→淡紫渐层、彩色图标、强简中、印刷级清晰。与小红书八格独立。 */
-const GPT_IMAGE2_SINGLE_PAGE_KNOWLEDGE_CARD_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: ONE single continuous wide-landscape (~16:9) **knowledge card poster** (单页图文知识卡片). It is **flat vector illustration / editorial infographic**, NOT photorealistic, NOT cinematic, NOT 3D, NOT photography. Background uses a warm **orange → light-purple (lavender) gradient**; vivid multi-color palette; every icon and symbol is colorful; **no gray / grayscale imagery, no muted dead zones**. LAYOUT: a bold top banner title, then the manuscript's sections laid out **in order** as flowing rounded blocks of varied sizes, connected by arrows, numbered badges 01/02/03…, ribbons and flat icons — a coherent single page; **NOT** a 2×4 / eight-panel equal grid, **NOT** a 2×2 quad, **NOT** a storyboard, **NOT** a note collage. TYPOGRAPHY: dense yet legible **Simplified Chinese** section titles and body copy, print-crisp and high-resolution (never blurry), body text enlarged one size for readability; English only as small secondary accents. NOT RECOMMENDED: equal-cell grids, eight panels, four quadrants, film stills, photoreal actors, dark/moody/cinematic grading, gray backgrounds, blurry tiny text.";
-
 /** 单次 GPT-IMAGE-2（fal / OhMyGPT）fetch 超时；封面/分镜/图文笔记共用。默认 6 分钟；`GPT_IMAGE_FETCH_TIMEOUT_MS` 可缩短，上限 6 分钟。 */
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
   6 * 60_000,
@@ -1270,7 +1266,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : isKnowledgeCard ? "单页连贯图文知识卡片（buildSinglePageKnowledgeCardGeminiPrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·取消英文翻译·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
   appendImageFlowLog(
     L,
@@ -1352,56 +1348,66 @@ export async function generatePlatformCompositeSheetImage(options: {
     );
 
     try {
-      const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
+      let promptForImage: string;
 
-      const englishCore = await translatePlatformCompositeToEnglishPrompt({
-        kind: k,
-        scriptContext: scriptContextForPipeline,
-        translator: options.imagePromptTranslator,
-        flowLog: L,
-        compositeSheetAttempt: attempt,
-        compositeSheetMaxAttempts: compositeMaxAttempts,
-        neonProgressJobId: options.progressJobId,
-      });
-
-      if (!String(englishCore || "").trim()) {
-        appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空（不注入模版英文）");
-        throw new Error("宽幅合成翻译结果为空");
-      }
-
-      appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，直接进入像素锁与送生图");
-      appendImageFlowLog(
-        L,
-        `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
-      );
-
-      const trimmedEnglishCore = String(englishCore).trim();
-      const pixelLock = isStoryboard
-        ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK
-        : isKnowledgeCard
-          ? GPT_IMAGE2_SINGLE_PAGE_KNOWLEDGE_CARD_PIXEL_LOCK
-          : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
-      const topicTitleZh = String(options.title || "").trim().slice(0, 80);
-      const storyboardTitleInject =
-        isStoryboard && topicTitleZh
-          ? `\n\nTOP STRIP — **内容总结** (Simplified Chinese; overall arc / synopsis for the whole sheet — render in the top band above the 2×4 grid; **not** per-panel shot titles). Anchor text to include or paraphrase from: 「${topicTitleZh}」`
-          : "";
-      if (isStoryboard && topicTitleZh) {
+      if (isKnowledgeCard) {
+        // 单页连贯图文知识卡片（自定义文案专用）：**取消英文翻译**，直接用中文 directive + Markdown 原文送 GPT-IMAGE-2，
+        // 以保留书法标题 / 文艺复兴手绘 + 大师写实摄影 / 山茶花蝴蝶洋牡丹装饰 / 宣纸暖色底等细腻美学（英文化会压缩丢失这些质感）。
+        const { buildSinglePageKnowledgeCardImagePrompt } = await import("./geminiPlatformCompositeTranslation.js");
+        promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline);
         appendImageFlowLog(
           L,
-          `[2×4·顶栏] 已并入 prompt · 内容总结锚点（简中）· len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
+          `[单页知识卡片·步骤1] 已取消英文翻译 → 直接用中文 directive + Markdown 送 GPT-IMAGE-2（无像素锁/无写实修饰）· 约 ${promptForImage.length} 字符`,
+        );
+        appendImageFlowLog(
+          L,
+          `[单页知识卡片·预览] ${promptForImage.replace(/\s+/g, " ").slice(0, 180)}…`,
+        );
+      } else {
+        const { translatePlatformCompositeToEnglishPrompt } = await import("./geminiPlatformCompositeTranslation.js");
+
+        const englishCore = await translatePlatformCompositeToEnglishPrompt({
+          kind: k,
+          scriptContext: scriptContextForPipeline,
+          translator: options.imagePromptTranslator,
+          flowLog: L,
+          compositeSheetAttempt: attempt,
+          compositeSheetMaxAttempts: compositeMaxAttempts,
+          neonProgressJobId: options.progressJobId,
+        });
+
+        if (!String(englishCore || "").trim()) {
+          appendImageFlowLog(L, "[2×4·步骤1] 翻译结果为空（不注入模版英文）");
+          throw new Error("宽幅合成翻译结果为空");
+        }
+
+        appendImageFlowLog(L, "[2×4·步骤1·完成] 英文化成功，直接进入像素锁与送生图");
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
+        );
+
+        const trimmedEnglishCore = String(englishCore).trim();
+        const pixelLock = isStoryboard ? GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK : GPT_IMAGE2_XHS_2X4_PIXEL_LOCK;
+        const topicTitleZh = String(options.title || "").trim().slice(0, 80);
+        const storyboardTitleInject =
+          isStoryboard && topicTitleZh
+            ? `\n\nTOP STRIP — **内容总结** (Simplified Chinese; overall arc / synopsis for the whole sheet — render in the top band above the 2×4 grid; **not** per-panel shot titles). Anchor text to include or paraphrase from: 「${topicTitleZh}」`
+            : "";
+        if (isStoryboard && topicTitleZh) {
+          appendImageFlowLog(
+            L,
+            `[2×4·顶栏] 已并入 prompt · 内容总结锚点（简中）· len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
+          );
+        }
+        const promptForImageBase = `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
+        promptForImage = appendVertexProPhotographyPromptModifiers(promptForImageBase, "platform_landscape_sheet");
+
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
         );
       }
-      const promptForImageBase = `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
-      const promptForImage = appendVertexProPhotographyPromptModifiers(
-        promptForImageBase,
-        isKnowledgeCard ? "platform_knowledge_card_landscape" : "platform_landscape_sheet",
-      );
-
-      appendImageFlowLog(
-        L,
-        `[合成·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : isKnowledgeCard ? "单页连贯图文知识卡片" : "小红书 2×4 八格"}）+ ${isKnowledgeCard ? "flat 插画资讯图修饰（非写实）" : "与 Vertex 共用鏡頭/光影語彙"} · 送生图总长约 ${promptForImage.length} 字符`,
-      );
 
       if (compositeImageEngine === "nano_banana_2") {
         return await generatePlatformCompositeSheetViaNanoBanana2Primary({
