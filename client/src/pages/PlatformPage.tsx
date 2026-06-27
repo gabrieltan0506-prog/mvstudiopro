@@ -1779,6 +1779,8 @@ export default function PlatformPage() {
   const [customNotePartInFlight, setCustomNotePartInFlight] = useState<"upper" | "lower" | null>(null);
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖（自定義文案專用，與選題卡片小紅書八格互不影響） */
   const [customNoteKind, setCustomNoteKind] = useState<"single_page_knowledge_card" | "storyboard_sheet_landscape">("single_page_knowledge_card");
+  /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
+  const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
     sceneId: string;
     kind:
@@ -6866,6 +6868,37 @@ export default function PlatformPage() {
                           2×4 分镜 · 小红书 2×4 八格图文 画廊
                         </h3>
                       </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setCompositeGridVariant("2x4")}
+                            className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
+                              compositeGridVariant === "2x4"
+                                ? "bg-[#10B981]/20 text-[#10B981]"
+                                : "text-gray-400 hover:text-white"
+                            }`}
+                          >
+                            2×4 单张
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCompositeGridVariant("3x4")}
+                            className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
+                              compositeGridVariant === "3x4"
+                                ? "bg-[#ff4fb8]/20 text-[#ff9fe0]"
+                                : "text-gray-400 hover:text-white"
+                            }`}
+                          >
+                            3×4 十二格
+                          </button>
+                        </div>
+                        <span className="max-w-[22rem] text-right text-[10px] leading-snug text-gray-500">
+                          {compositeGridVariant === "3x4"
+                            ? `3×4 十二格：后端分 2 段生成再拼成一张完整长图（更详尽·降糊字）·分镜 ${CREDIT_COSTS.platformStoryboardSheet3x4} 点 / 图文 ${CREDIT_COSTS.platformXhsDualNote3x4} 点`
+                            : `2×4：单张合成 ·分镜 ${CREDIT_COSTS.platformStoryboardSheet} 点 / 图文 ${CREDIT_COSTS.platformXhsDualNote} 点`}
+                        </span>
+                      </div>
                       <CompositeImageEngineToggle
                         value={platformComposite2x4Engine}
                         onChange={setPlatformComposite2x4Engine}
@@ -6913,6 +6946,7 @@ export default function PlatformPage() {
                               title: sourceRow.title,
                               scriptContext: buildPlatformSheetScriptContext(sourceRow as any),
                               kind: compositeKind,
+                              gridVariant: compositeGridVariant,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
                               ...optionalBoundCreationRecordId(),
                               imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
@@ -7049,10 +7083,13 @@ export default function PlatformPage() {
                       const headlineTitle = item.title;
                       const isGraphicFormat = item.format === "图文" || item.format === "小红书";
                       const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
+                      const is3x4 = compositeGridVariant === "3x4";
                       const compositeCost = isGraphicFormat
-                        ? CREDIT_COSTS.platformXhsDualNote
-                        : CREDIT_COSTS.platformStoryboardSheet;
-                      const compositeLabel = isGraphicFormat ? "小红书 2×4 八格图文" : "2×4 高定分镜表";
+                        ? (is3x4 ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote)
+                        : (is3x4 ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet);
+                      const compositeLabel = isGraphicFormat
+                        ? (is3x4 ? "小红书 3×4 十二格图文" : "小红书 2×4 八格图文")
+                        : (is3x4 ? "3×4 十二格分镜表" : "2×4 高定分镜表");
                       const CompositeIcon = isGraphicFormat ? Heart : Film;
                       const compositeColorClass = isGraphicFormat
                         ? "text-[#ff9fe0] bg-[#ff4fb8]/10 border-[#ff4fb8]/40 hover:bg-[#ff4fb8]/20"
@@ -7658,6 +7695,7 @@ export default function PlatformPage() {
                                     title: headlineTitle,
                                     scriptContext: buildPlatformSheetScriptContext(item as any),
                                     kind: compositeKind,
+                                    gridVariant: compositeGridVariant,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                                     ...optionalBoundCreationRecordId(),
                                     imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,

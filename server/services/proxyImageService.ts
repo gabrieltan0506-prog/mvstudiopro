@@ -1228,6 +1228,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   compositeImageEngine?: PlatformCompositeSheetImageEngine;
   /** 仅 single_page_knowledge_card：上篇 / 下篇分页（标题自动加「（上篇）/（下篇）」，仅取对应半篇内容）。 */
   notePart?: import("./geminiPlatformCompositeTranslation.js").KnowledgeCardNotePart;
+  /**
+   * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
+   * 注入连贯/同风格指令，确保各段拼接后接缝处风格一致；第 2 段起不再重复顶部总标题栏。
+   */
+  gridSection?: { index: number; total: number };
 }): Promise<string | null> {
   const totalMs = resolvePlatformCompositeSheetTotalTimeoutMs();
   appendImageFlowLog(
@@ -1443,6 +1448,22 @@ export async function generatePlatformCompositeSheetImage(options: {
         );
       }
 
+      if (options.gridSection && (isStoryboard || isXhs)) {
+        const { index, total } = options.gridSection;
+        const isFirst = index <= 0;
+        promptForImage = `${promptForImage}
+
+MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}** that will be **stacked vertically into ONE final long sheet**. Keep the **SAME background color, palette, lighting, outer border and decorative style** as the sibling parts so the stitched seams blend invisibly. Render **ONLY this part's panels** (full-width 4-column rows; fill the whole canvas; no empty area). ${
+          isFirst
+            ? "This is the FIRST part: include the top 内容总结 title band, then this part's panels below it."
+            : "This is a CONTINUATION part: do NOT repeat the global top title band — start directly with this part's 4-column panels at the very top edge."
+        } All on-image text stays **Simplified Chinese**, print-clear, no garble.`;
+        appendImageFlowLog(
+          L,
+          `[3×4·分段] 第 ${index + 1}/${total} 段 · 已注入连贯/同风格指令（${isFirst ? "含顶栏" : "无顶栏·续接"}）· prompt≈${promptForImage.length} 字符`,
+        );
+      }
+
       if (compositeImageEngine === "nano_banana_2") {
         return await generatePlatformCompositeSheetViaNanoBanana2Primary({
           promptForImage,
@@ -1613,6 +1634,85 @@ export async function generatePlatformCompositeSheetImage(options: {
   } finally {
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
+}
+
+/**
+ * 把一份文案/脚本按行/长度**对半（或三等分）**切成连续 N 段，供 3×4 分段生成用。
+ * 优先按空行分段聚合；聚合不出来时按字符长度等分。
+ */
+export function splitScriptIntoSections(scriptContext: string, sections: number): string[] {
+  const n = Math.max(2, Math.min(3, Math.floor(sections) || 2));
+  const full = String(scriptContext || "").trim();
+  if (!full) return Array.from({ length: n }, () => "");
+
+  // 先尝试按「空行分隔的段落块」聚合，保证不切断句子
+  const blocks = full.split(/\n\s*\n+/).map((s) => s.trim()).filter(Boolean);
+  if (blocks.length >= n) {
+    const per = Math.ceil(blocks.length / n);
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
+      out.push(blocks.slice(i * per, (i + 1) * per).join("\n\n").trim());
+    }
+    // 过滤掉聚合后产生的空段，确保段数 = 实际有内容的段
+    const nonEmpty = out.filter(Boolean);
+    return nonEmpty.length >= 2 ? nonEmpty : [full];
+  }
+
+  // 按字符长度等分
+  const per = Math.ceil(full.length / n);
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const chunk = full.slice(i * per, (i + 1) * per).trim();
+    if (chunk) out.push(chunk);
+  }
+  return out.length >= 2 ? out : [full];
+}
+
+/**
+ * **3×4 十二格分镜 / 图文：分段生成 → sharp 直向拼成一张完整长图。**
+ *
+ * 把内容拆成 2–3 段，每段各自走 {@link generatePlatformCompositeSheetImage}（注入 `gridSection` 连贯指令、
+ * 每段字密度更低 → 降低糊字），再纵向拼成单张长图上传，返回单一 URL。仅支持 storyboard / xhs；
+ * 任一段失败即抛错（调用方据此报错或退款）。
+ */
+export async function generatePlatformGridStitchedSheetImage(
+  options: Parameters<typeof generatePlatformCompositeSheetImage>[0] & { sections?: number },
+): Promise<string | null> {
+  const L = options.flowLog;
+  const k = normalizeCompositeSheetKind(options.kind);
+  const isStoryboard = k === "storyboard_sheet_landscape";
+  const isXhs = k === "xiaohongshu_dual_note";
+  if (!isStoryboard && !isXhs) {
+    throw new Error(`[3×4] 仅支持 storyboard_sheet_landscape / xiaohongshu_dual_note，收到 ${String(k)}`);
+  }
+  const total = Math.max(2, Math.min(3, options.sections ?? 2));
+  const parts = splitScriptIntoSections(options.scriptContext, total);
+  const realTotal = parts.length;
+  appendImageFlowLog(
+    L,
+    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段分别生成（每段更低密度·降糊字）→ sharp 直向拼成一张长图`,
+  );
+
+  const urls: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    appendImageFlowLog(L, `[3×4·总控] ▶ 生成第 ${i + 1}/${realTotal} 段 …`);
+    const url = await generatePlatformCompositeSheetImage({
+      ...options,
+      scriptContext: parts[i],
+      gridSection: { index: i, total: realTotal },
+    });
+    if (!String(url || "").trim()) {
+      throw new Error(`[3×4] 第 ${i + 1}/${realTotal} 段未返回图像`);
+    }
+    urls.push(String(url));
+    appendImageFlowLog(L, `[3×4·总控] ✓ 第 ${i + 1}/${realTotal} 段完成`);
+  }
+
+  const subdir = isStoryboard ? "platform_storyboard_sheet_3x4" : "platform_xhs_dual_3x4";
+  const { stitchSheetsVerticalAndUpload } = await import("./platformGridStitch.js");
+  const stitched = await stitchSheetsVerticalAndUpload({ imageUrls: urls, subdir, flowLog: L });
+  appendImageFlowLog(L, `[3×4·总控] 全部完成 · 已拼成一张完整长图返回`);
+  return stitched;
 }
 
 /**

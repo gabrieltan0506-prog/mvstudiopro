@@ -267,6 +267,10 @@ export const CREDIT_COSTS = {
   platformXhsDualNote: 72,
   /** 单页连贯图文知识卡片（`single_page_knowledge_card`，自定义文案）·**25/篇** — 上篇+下篇两次生成合计 50 */
   platformSinglePageKnowledgeCard: 25,
+  /** 3×4 十二格分镜（`storyboard_sheet_landscape` + gridVariant=3x4）·**120** — 后端分 2 段生成再拼成一张长图 */
+  platformStoryboardSheet3x4: 120,
+  /** 3×4 十二格图文（`xiaohongshu_dual_note` + gridVariant=3x4）·**144** — 后端分 2 段生成再拼成一张长图 */
+  platformXhsDualNote3x4: 144,
   /** 同一選題：封面 + 分鏡/八格套裝（platform_topic_cover_composite_bundle job · 串行非同步兩階段生圖） */
   platformTopicCoverAndCompositeBundle: 388,
   /** 平台页：四选题仅 2×4 套裝总价（router：bulk 模式下按序 4 笔整数分拆，合计=此值） */
