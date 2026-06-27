@@ -5,7 +5,6 @@ import {
   isPlatformWeekendSurvivalModeEnabled,
   resolvePlatformCompositeSheetImageEngine,
   resolvePlatformImageStorageDriver,
-  resolvePlatformTopicCoverPixelEngine,
   type PlatformCompositeSheetImageEngine,
   type PlatformTopicCoverPixelEngineChoice,
 } from "../config/platformSwitches.js";
@@ -910,6 +909,8 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
   englishPrompt: string;
   flowLog?: string[];
   coverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
+  /** EvoLink edit 模式参考图（用户上传的人像 URL）；非空则换封面主角。 */
+  referenceImageUrls?: string[];
 }): Promise<string | null> {
   const raw = String(options.englishPrompt || "").trim();
   if (!raw) {
@@ -917,74 +918,23 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     return null;
   }
   const L = options.flowLog;
-  const gpt2Aligned = buildGptImage2AlignedPlatformTopicCoverPrompt(raw);
-  const withProVisual = appendVertexProPhotographyPromptModifiers(
-    gpt2Aligned,
-    "platform_vertical_cover_after_gpt2_aspect_lock",
-  );
+  const refImageUrls = (options.referenceImageUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean)
+    .slice(0, 16);
 
-  const pick = options.coverPixelEngine;
-  if (pick === "gpt_image2") {
-    appendImageFlowLog(
-      L,
-      `${platformFlowLogTimestamp()}  [封面·像素] 请求=gpt_image2 · EvoLink / OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
-    );
-    return generateGptImage2FromRawEnglishPrompt({
-      englishPrompt: raw,
-      aspectRatio: "9:16",
-      gcsSubdir: "platform_topic_reference",
-      flowLog: L,
-    });
-  }
-  if (pick === "nano_banana_2") {
-    appendImageFlowLog(
-      L,
-      `${platformFlowLogTimestamp()}  [封面·像素] 请求=nano_banana_2 · 仅 Vertex Nano Banana 2 …`,
-    );
-    appendImageFlowLog(
-      L,
-      `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
-    );
-    return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
-  }
-  if (pick === "nano_banana_pro") {
-    appendImageFlowLog(
-      L,
-      `${platformFlowLogTimestamp()}  [封面·像素] 请求=nano_banana_pro · Vertex Nano Banana Pro（gemini-3-pro-image-preview）…`,
-    );
-    const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");
-    return generatePlatformTopicCoverNanoBananaProImage({ englishPrompt: raw, flowLog: L });
-  }
-
-  const engine = resolvePlatformTopicCoverPixelEngine();
+  // 已收敛为单一像素供应商：无论请求/环境如何，封面统一走 EvoLink GPT-Image-2（移除 OhMyGPT/fal/Vertex）。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] PLATFORM_TOPIC_COVER_PIXEL_ENGINE=${engine}（nb2_only=Nano Banana 2 預設；gpt_image2_only=GPT‑Image‑2；nbp_only=Nano Banana Pro）`,
+    `${platformFlowLogTimestamp()}  [封面·像素] 唯一供应商=EvoLink GPT-IMAGE-2（9:16）${refImageUrls.length ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""}…`,
   );
-
-  if (engine === "gpt_image2_only") {
-    appendImageFlowLog(
-      L,
-      `${platformFlowLogTimestamp()}  [封面·像素] env=gpt_image2_only · EvoLink / OhMyGPT / fal GPT-IMAGE-2（9:16）…`,
-    );
-    return generateGptImage2FromRawEnglishPrompt({
-      englishPrompt: raw,
-      aspectRatio: "9:16",
-      gcsSubdir: "platform_topic_reference",
-      flowLog: L,
-    });
-  }
-
-  if (engine === "nbp_only") {
-    const { generatePlatformTopicCoverNanoBananaProImage } = await import("./imageGenerationService.js");
-    return generatePlatformTopicCoverNanoBananaProImage({ englishPrompt: raw, flowLog: L });
-  }
-
-  appendImageFlowLog(
-    L,
-    `${new Date().toISOString()}  [NB2·封面] Vertex Nano Banana 2 · 9:16 · 2K · GPT-IMAGE-2 同款比例锁 + Pro 鏡頭/光影語彙（非 OhMyGPT）`,
-  );
-  return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L, "platform_vertex_cover_primary");
+  return generateGptImage2FromRawEnglishPrompt({
+    englishPrompt: raw,
+    aspectRatio: "9:16",
+    gcsSubdir: "platform_topic_reference",
+    flowLog: L,
+    referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
+  });
 }
 
 /**
@@ -1019,8 +969,23 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
 }
 
 /**
- * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **OhMyGPT** `gpt-image-2` 主路径 → **fal** 退路
- * → **Nano Banana 2** 兜底。图像 API **不**执行翻译。
+ * 用户上传人像参考图时追加的「换人/换脸」编辑指令（GPT-Image-2 edit 模式 image_urls）。
+ * 保留封面设计/排版/简中文字/9:16 构图，仅把主角替换为参考图中的真人并保住其相貌辨识度。
+ */
+const COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN = [
+  "",
+  "REFERENCE PERSON (CRITICAL IMAGE EDIT): One reference photo of a real person is attached as input.",
+  "Replace the main human character on this cover with THIS exact person. Preserve their facial identity,",
+  "face shape, skin tone, hairstyle and overall likeness so they are immediately recognizable, while you may",
+  "restyle the lighting, wardrobe, pose and background to fit the cover design. Render only ONE person, with a",
+  "natural, flattering, magazine-grade portrait integration (no distortion, no extra faces, no duplicated heads).",
+  "Keep ALL designed Simplified Chinese text, layout, color palette and the 9:16 vertical framing unchanged.",
+].join("\n");
+
+/**
+ * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → **EvoLink** `gpt-image-2`（唯一像素供应商；
+ * 已移除 OhMyGPT / fal / Vertex 退路）。图像 API **不**执行翻译。
+ * 传 `referenceImageUrls` 时走 EvoLink edit 模式（image_urls）做换人/换脸。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
   englishPrompt: string;
@@ -1030,6 +995,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   trialWatermarkPromptSuffix?: string;
   /** 可選：逐步寫入供平台 Debug 面板展示 */
   flowLog?: string[];
+  /** EvoLink edit 模式参考图（如用户上传的人像 URL）；非空则注入换人指令 + image_urls。 */
+  referenceImageUrls?: string[];
 }): Promise<string | null> {
   const L = options.flowLog;
   const raw = String(options.englishPrompt || "").trim();
@@ -1037,6 +1004,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     appendImageFlowLog(L, "[单帧·英文 prompt] 为空，跳过生图");
     return null;
   }
+  const refImageUrls = (options.referenceImageUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean)
+    .slice(0, 16);
+  const hasRef = refImageUrls.length > 0;
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
   const base =
     options.aspectRatio === "9:16"
@@ -1044,56 +1016,32 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       : [raw, suffix].filter(Boolean).join("\n\n");
   const photoIntent =
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
-  const prompt = appendVertexProPhotographyPromptModifiers(base, photoIntent);
+  const withProVisual = appendVertexProPhotographyPromptModifiers(base, photoIntent);
+  const prompt = hasRef ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
 
-  if (isEvolinkGptImage2Configured()) {
-    appendImageFlowLog(
-      L,
-      `[单帧主路径] EvoLink GPT-IMAGE-2 · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · 英文 prompt 约 ${prompt.length} 字`,
-    );
-    const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
-      aspectRatio: options.aspectRatio,
-      size: sizes[0],
-      flowLog: L,
-      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-    });
-    if (fromEvolink) {
-      appendImageFlowLog(L, "[单帧主路径] EvoLink GPT-IMAGE-2 成功，已落库");
-      return fromEvolink;
-    }
-    appendImageFlowLog(L, "[单帧主路径] EvoLink 无图 → 改走 OhMyGPT / fal / Vertex 退路");
+  if (!isEvolinkGptImage2Configured()) {
+    appendImageFlowLog(L, "[单帧主路径] EVOLINK_API_KEY 缺失 · 已停用 OhMyGPT/fal/Vertex 退路 · 本条无图");
+    return null;
   }
 
   appendImageFlowLog(
     L,
-    `[单帧主路径] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT} · 英文 prompt 约 ${prompt.length} 字`,
+    `[单帧主路径] EvoLink GPT-IMAGE-2（唯一供应商）· ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""} · 英文 prompt 约 ${prompt.length} 字`,
   );
-  const fromOhm = await postGptImage2AndUpload(prompt, options.gcsSubdir, {
-    sizes,
+  const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
+    aspectRatio: options.aspectRatio,
+    size: sizes[0],
     flowLog: L,
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+    imageUrls: hasRef ? refImageUrls : undefined,
   });
-  if (fromOhm) {
-    appendImageFlowLog(L, "[单帧主路径] OhMyGPT GPT-IMAGE-2 成功，已上传 GCS");
-    return fromOhm;
+  if (fromEvolink) {
+    appendImageFlowLog(L, "[单帧主路径] EvoLink GPT-IMAGE-2 成功，已落库");
+    return fromEvolink;
   }
-
-  appendImageFlowLog(
-    L,
-    `[单帧·fal 退路] OhMyGPT 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`,
-  );
-  const falSecond = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
-  if (falSecond) {
-    appendImageFlowLog(L, "[单帧·fal 退路] fal GPT-IMAGE-2 成功，已落库");
-    return falSecond;
-  }
-
-  appendImageFlowLog(
-    L,
-    `[单帧兜底] OhMyGPT / fal 均无图 → Vertex Nano Banana 2 · ${options.aspectRatio} · 2K · 沿用同一条 prompt（已含比例/宽幅约束与共用光影）`,
-  );
-  return fallbackNanoBanana2FromPrompt(prompt, options.aspectRatio, L);
+  appendImageFlowLog(L, "[单帧主路径] EvoLink 无图 · 已停用其它供应商退路 · 本条失败（可免费补发重试）");
+  return null;
 }
 
 /**
@@ -1464,148 +1412,36 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         );
       }
 
-      if (compositeImageEngine === "nano_banana_2") {
-        return await generatePlatformCompositeSheetViaNanoBanana2Primary({
-          promptForImage,
-          subdir,
-          flowLog: L,
-          attempt,
-          compositeMaxAttempts,
-          sheetKind: k,
-        });
-      }
-
+      // 已收敛为单一像素供应商：宽幅合成统一走 EvoLink GPT-Image-2（移除 OhMyGPT/fal/Vertex 退路）。
       appendImageFlowLog(
         L,
-        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · 尺寸序列: ${GPT_IMAGE2_LANDSCAPE_SIZES.join(" → ")}`,
+        `[2×4·步骤2] EvoLink GPT-IMAGE-2（唯一供应商）· 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}`,
       );
 
-      if (isEvolinkGptImage2Configured()) {
-        appendImageFlowLog(
-          L,
-          `[2×4·步骤2a] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
-        );
-        const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
-          aspectRatio: "16:9",
-          size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
-          flowLog: L,
-          quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
-        });
-        if (fromEvolink) {
-          appendImageFlowLog(
-            L,
-            `[2×4·步骤2a] EvoLink GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
-          );
-          emitPlatformImagePipelineStat({
-            event: "composite_sheet_gpt_image2_success",
-            sheetKind: k,
-            compositeSheetAttempt: attempt,
-            compositeSheetMaxAttempts: compositeMaxAttempts,
-          });
-          return fromEvolink;
-        }
-        appendImageFlowLog(L, "[2×4·步骤2a] EvoLink 无图 → 改走 OhMyGPT / fal");
+      if (!isEvolinkGptImage2Configured()) {
+        throw new Error("EVOLINK_API_KEY 缺失：宽幅合成已停用 OhMyGPT/fal/Vertex 退路，无法出图。");
       }
 
-      appendImageFlowLog(L, `[2×4·步骤2b] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`);
-      const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
-        sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
+      const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
+        aspectRatio: "16:9",
+        size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
         flowLog: L,
         quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
       });
-      if (fromOhm) {
-        appendImageFlowLog(L, `[2×4·步骤2b] OhMyGPT GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+      if (fromEvolink) {
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤2] EvoLink GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
+        );
         emitPlatformImagePipelineStat({
           event: "composite_sheet_gpt_image2_success",
           sheetKind: k,
           compositeSheetAttempt: attempt,
           compositeSheetMaxAttempts: compositeMaxAttempts,
         });
-        return fromOhm;
+        return fromEvolink;
       }
-
-      appendImageFlowLog(
-        L,
-        `[2×4·步骤2c] OhMyGPT 无图 → fal POST openai/gpt-image-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
-      );
-      const falWide = await postGptImage2ViaFalAndUpload(
-        promptForImage,
-        subdir,
-        "16:9",
-        L,
-        GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
-      );
-      if (falWide) {
-        appendImageFlowLog(L, `[2×4·步骤2c] fal GPT-IMAGE-2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
-        emitPlatformImagePipelineStat({
-          event: "composite_sheet_fal_gpt_image2_success",
-          sheetKind: k,
-          compositeSheetAttempt: attempt,
-          compositeSheetMaxAttempts: compositeMaxAttempts,
-        });
-        return falWide;
-      }
-
-      appendImageFlowLog(
-        L,
-        "[2×4·步骤2] OhMyGPT / fal 均未返回图像 → 若允许则走 Vertex Nano 兜底…",
-      );
-
-      if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
-        appendImageFlowLog(
-          L,
-          "[2×4·兜底] 已跳过 Vertex Nano（GCP 避险或 PLATFORM_VERTEX_NANO_BANANA2 未开启）",
-        );
-        throw new Error(
-          "OhMyGPT / fal 均未出图；当前未启用 Vertex 图像兜底。请检查 PROXY_OPENAI_API_KEY、FAL_API_KEY；需兜底可设 PLATFORM_VERTEX_NANO_BANANA2=1 并确保未触发平台 GCP 避险。",
-        );
-      }
-
-      try {
-        const { generateGeminiImage, isGeminiImageAvailable } = await import("../gemini-image.js");
-        if (!isGeminiImageAvailable()) {
-          appendImageFlowLog(
-            L,
-            "[2×4·步骤3] Vertex 图像不可用（需 GOOGLE_APPLICATION_CREDENTIALS_JSON + VERTEX_PROJECT_ID），无法兜底",
-          );
-          throw new Error(
-            "GPT-IMAGE-2 未出图且 Vertex Nano Banana 2 未配置，请稍后重试或联系管理员检查 Vertex 凭据。",
-          );
-        }
-        appendImageFlowLog(
-          L,
-          `[2×4·步骤3] Nano Banana 2 兜底 · 2K · 沿用步骤2同一条 prompt（已含鏡頭/光影與 16:9 宽幅语彙）· 16:9 · prompt≈${promptForImage.length} chars`,
-        );
-        const vertexResult = await generateGeminiImage({
-          prompt: promptForImage,
-          quality: "2k",
-          aspectRatio: "16:9",
-          personGeneration: "ALLOW_ADULT",
-          imagePersistFlowLog: L,
-        });
-        const fallbackUrl = String(vertexResult?.imageUrl || "").trim();
-        if (!fallbackUrl) {
-          appendImageFlowLog(L, "[2×4·步骤3] Nano Banana 2 返回空 URL");
-          throw new Error("Vertex Nano Banana 2 未返回图像。");
-        }
-        appendImageFlowLog(
-          L,
-          `[2×4·步骤3] Nano Banana 2 兜底成功 · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
-        );
-        const mirrored = await mirrorNanoSheetUrlToGcs(fallbackUrl, subdir, L);
-        appendImageFlowLog(L, `[2×4·步骤3] 整链第 ${attempt}/${compositeMaxAttempts} 次 · Nano 兜底成功`);
-        emitPlatformImagePipelineStat({
-          event: "composite_sheet_nano_fallback_success",
-          sheetKind: k,
-          compositeSheetAttempt: attempt,
-          compositeSheetMaxAttempts: compositeMaxAttempts,
-        });
-        return mirrored;
-      } catch (fallbackError: unknown) {
-        const realError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        appendImageFlowLog(L, `[2×4·步骤2/3] 生图链失败: ${realError.slice(0, 600)}`);
-        throw fallbackError;
-      }
+      throw new Error("EvoLink GPT-IMAGE-2 未返回图像（已停用其它供应商退路）");
     } catch (e: unknown) {
       lastFailure = e;
       const msg = e instanceof Error ? e.message : String(e);
