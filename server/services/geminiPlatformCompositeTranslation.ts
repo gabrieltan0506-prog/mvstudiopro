@@ -676,10 +676,10 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归
 - 标题：采用书法楷书字体、金橙色字体并以淡蓝紫色描边包裹每个标题字，字体用渐变色，呈现优雅飘逸的美感。
 - 内文：务必印刷清晰、绝不可模糊；执行内文小字的清晰度优化，并把当前内文小字**放大一级**（字号比主题小一级），兼顾排版美观与可读性。
 
-【文字渲染·防乱码（关键）】
-- 字数与字号优先级：**宁可精炼也不要密集小字**。把每个子标题下的长段落改写成 3-6 条**短句或关键词短语**（每条尽量 ≤ 16 字），用要点化、提炼后的简体中文呈现，**不要整段长文堆砌**——密集小字最容易糊成乱码。
-- 每个文字块都要留足够留白与字号，确保即使缩放后每个汉字笔画清晰、不粘连、不变形、不重复、不缺笔。
-- 仅渲染**确实需要出现在图上**的简体中文（标题、要点短句、关键数据/百分比）；解释性长句可省略或大幅精简。每个汉字必须是**真实存在、写法正确**的规范简体字，严禁生造字、错字、半个字或火星文。
+【信息密度·文字渲染（关键）】
+- 信息密度优先：内容务必**详尽充实、宁详勿略**，信息量对标排版成熟、字数密集的高质量图文笔记（参考密度只能更高、不能更少）。把每个子标题下的内容展开成 **5-9 条要点**，每条写成信息完整的短句（约 12-30 字，含定义 / 数字 / 方法 / 示例），覆盖该子标题的全部关键知识点，**不要为了简洁而删减内容**。
+- 在保证内容详尽的同时确保**字迹清晰**：每个文字块留足够留白、字号足够大，即使密集排布也要让每个汉字笔画清晰、不粘连、不变形、不重复、不缺笔。
+- 关键数据 / 百分比 / 方法步骤 / 示例都要完整渲染出来；每个汉字必须是**真实存在、写法正确**的规范简体字，严禁生造字、错字、半个字或火星文。
 
 【视觉规范】
 - 主体构图：在中央或左上方放置文档的核心视觉意象；画面采用摄影大师写实风格 + 透视学审美 + 当代大师艺术手稿素描结合的精致画面。
@@ -689,7 +689,7 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归
 
 【内容拆解】
 - 把文档分成若干子标题，均匀分配在卡片上，用优雅、叙述通畅的文字与细致图标解释每个子标题；排版合理、说明详细、文字印刷清晰正确。
-- 结尾需详细总结（不要写出"总结"等小标题），直接凝练关键重点，并生成 **1 首当代诗词**来阐释文档的内容与核心知识点，配诗意插图与一句点睛之语（不要写出"金句"二字），该处文字用楷书书法风格，四周放置图标与相关视觉链接。
+- 结尾需把关键重点详细凝练地收束（不要写出"总结"等小标题），直接呈现核心要点；**是否在结尾生成诗词 / 书法点睛金句，以下方【收尾】指令为准**。
 
 【核心要求】
 - 风格混合：文艺复兴时期大师手绘艺术插画（透视学素描）+ 贝聿铭大师级绝美写实摄影立体风格图标，二者组合；整体如同用彩色画笔在画布上绘制，所有元素细腻有质感、强烈视觉冲击。
@@ -702,7 +702,7 @@ export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归
  * 英文「渲染外壳」：内容用中文（保美学），但用一段简短英文**强约束模型如何渲染中文字**——
  * 模型对英文 meta 指令解析最稳，可显著降低密集简体中文的乱码/重复/缺笔概率。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. Render every Chinese glyph **large, crisp, print-clear and correctly-formed** — no garbled, no duplicated, no missing/broken strokes, no invented or wrong characters. Keep each text block **short and well-spaced** (titles + bullet keyphrases, not dense paragraphs); prioritize legibility over text volume. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
+export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. The card must be **content-rich and information-dense** — include detailed bullet points, key data/percentages, methods and concise explanatory lines for EVERY section; do NOT thin out or omit content for the sake of brevity. AT THE SAME TIME render every Chinese glyph **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes, no invented or wrong characters — by spacing blocks well and keeping font size adequate even when dense. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
 
 /** 上篇 / 下篇：知识卡片分两页商业化用。`upper`=上篇（免费预览思路）、`lower`=下篇。 */
 export type KnowledgeCardNotePart = "upper" | "lower";
@@ -770,10 +770,10 @@ export function buildSinglePageKnowledgeCardImagePrompt(
 
   const partDirective =
     notePart === "upper"
-      ? `\n【分页·上篇】本页是该主题图文笔记的【上篇】（共上下两篇）。请在文档大标题的末尾追加「（上篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致的单页知识卡片（不要画出下篇内容，也不要写"未完待续"之外的占位）。`
+      ? `\n【分页·上篇】本页是该主题图文笔记的【上篇】（共上下两篇）。请在文档大标题的末尾追加「（上篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致且**信息详尽**的单页知识卡片（内容只多不少、宁详勿略，把每个子标题充分展开；不要画出下篇内容，也不要写"未完待续"之外的占位）。\n【收尾·上篇】上篇结尾**不要**生成任何诗词、金句或书法点睛横幅；把底部版面同样用于详尽的知识点内容。`
       : notePart === "lower"
-        ? `\n【分页·下篇】本页是该主题图文笔记的【下篇】（承接上篇，共上下两篇）。请在文档大标题的末尾追加「（下篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致的单页知识卡片，整体风格须与上篇保持一致。`
-        : "";
+        ? `\n【分页·下篇】本页是该主题图文笔记的【下篇】（承接上篇，共上下两篇）。请在文档大标题的末尾追加「（下篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致且**信息详尽**的单页知识卡片（内容只多不少、宁详勿略，把每个子标题充分展开），整体风格须与上篇保持一致。\n【收尾·下篇】下篇结尾请生成 **1 首当代诗词**阐释全文核心知识点，并配 1 句楷书书法点睛语横幅 + 诗意插图与视觉链接（不要写出"金句"二字），四周放置图标与相关视觉链接。`
+        : `\n【收尾】结尾生成 **1 首当代诗词**阐释文档核心，并配 1 句楷书书法点睛语 + 诗意插图与视觉链接（不要写出"金句"二字）。`;
 
   return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}
 
