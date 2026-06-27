@@ -26,8 +26,12 @@ import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
-  kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
-): "storyboard_sheet_landscape" | "xiaohongshu_dual_note" {
+  kind:
+    | "storyboard_sheet_portrait"
+    | "storyboard_sheet_landscape"
+    | "xiaohongshu_dual_note"
+    | "single_page_knowledge_card",
+): "storyboard_sheet_landscape" | "xiaohongshu_dual_note" | "single_page_knowledge_card" {
   return kind === "storyboard_sheet_portrait" ? "storyboard_sheet_landscape" : kind;
 }
 
@@ -48,7 +52,8 @@ export type Gpt54PlatformImagePromptStatCtx = {
 export type PlatformCompositeSheetKindForStat =
   | "storyboard_sheet_portrait"
   | "storyboard_sheet_landscape"
-  | "xiaohongshu_dual_note";
+  | "xiaohongshu_dual_note"
+  | "single_page_knowledge_card";
 
 /** 寫入平台頁 / 寬幅合成 debug 時間線（與 imageGenFlowLog 同源）。 */
 function appendVertexFlashDebug(flowLog: string[] | undefined, line: string): void {
@@ -654,6 +659,51 @@ ${slice}
 `.trim() +
     "\n\n" +
     XHS_GRAPHIC_NOTE_2X4_FOOTER
+  );
+}
+
+/**
+ * **单页连贯图文知识卡片**（kind=`single_page_knowledge_card`，自定义文案专用）：像知识卡片设计师那样读 markdown，
+ * 把文档详细内容依子标题顺序铺成**一整页连续**的精致图文卡片（非 2×4 网格、非小红书拼图、非分镜）。
+ * 与 {@link buildXhsNoteGeminiPrompt}（小红书 2×4 八格）相互独立，互不影响。
+ */
+export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTOR_EN = `You are a world-class **Knowledge Card Visual Designer** (顶尖知识卡片设计师) who reads Markdown fluently and turns a document into **one single continuous one-page graphic knowledge card** (单页图文知识卡片). You compress the Chinese Markdown manuscript below into **one** English prompt block optimized for **GPT-Image-2**, which will then render a Simplified-Chinese knowledge card.
+
+CORE TASK: read the Markdown and lay out **all of its detailed content, section by section following each subtitle in order**, as one coherent, richly-illustrated single page. Faithfully transcribe and proofread the content — keep it **detailed and substantial**; do NOT shrink it to a few hooks. Flow continuously: top banner title → each subtitle block in sequence (header + its bullets/explanations) → closing takeaway.
+
+LAYOUT — CRITICAL: **ONE single continuous poster**, **NOT** a 2×4 grid, **NOT** eight equal panels, **NOT** a 2×2 quad, **NOT** a film storyboard, **NOT** a platform-specific note collage. Build a clear visual hierarchy: a bold top banner title, then sequential section blocks (one per subtitle) flowing down/across the page, connected by arrows, numbered badges (01/02/03…), ribbons and icons. Rounded section containers of **varied** sizes that flow naturally — never a rigid equal-cell matrix.
+
+VISUAL STYLE — MANDATORY (**flat illustration / vector editorial infographic**, NOT photorealistic, NOT cinematic, NOT 3D render, NOT photography): a premium, high-end, exquisite business knowledge-card aesthetic with a **warm orange → light-purple (lavender) gradient** background and accents. Rich, vivid, **multi-color** palette — every icon and symbol is colorful; **absolutely no gray / grayscale imagery, no muted dead zones**. Use many **varied flat icons and connective symbols** (arrows, numbered badges, pins, sparkles, ribbons, mini-diagrams) to link ideas and enrich the expression. Strong visual impact, clean editorial composition, tasteful and premium.
+
+TYPOGRAPHY — MANDATORY: the on-card explanatory text is **Simplified Chinese**, **crisp and print-clear (high-resolution, never blurry)**. **Enlarge the body text by one size** — prefer larger, legible fonts over cramming; balance density with readability and aesthetics. Titles and section headers bold and prominent. English may appear only as small secondary accent keywords, never replacing the Chinese explanation.
+
+OUTPUT a single English prompt that explicitly tells GPT-Image-2 to bake the Simplified-Chinese section titles and body copy from the manuscript onto the card, large and legible.`;
+
+/** **单页连贯图文知识卡片**：整页连续版式约束（非 2×4 网格）；输出体例与 {@link SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTOR_EN} 配套。 */
+export const SINGLE_PAGE_KNOWLEDGE_CARD_FOOTER = `
+TAG:SINGLE_PAGE_KNOWLEDGE_CARD
+
+【英文生图输出 / OUTPUT — **单页图文知识卡片**（single continuous one-page knowledge card · landscape · GPT-Image-2 优先）】
+1. Output **one** English string **optimized for GPT-Image-2**. **No character limit** — longer is better: spell out the Simplified-Chinese title and the content of **every** section so the card stays detailed and faithful to the manuscript.
+2. LAYOUT (lock explicitly): **ONE single continuous poster**, wide ~16:9 landscape (1536×1024 class). **Do NOT** split into a 2×4 / eight-panel grid, 2×2 quad, equal-cell matrix, or storyboard. Use a top banner title + sequential section blocks (one per subtitle, in order) flowing down/across the page, connected by arrows, numbered badges 01/02/03…, and decorative icons. Rounded section containers of varied sizes are welcome; a rigid equal-cell grid is not.
+3. **VISUAL STYLE — MANDATORY:** **flat illustration / vector editorial infographic**, NOT photorealistic, NOT cinematic, NOT 3D render, NOT photography. Background and accents use a **warm orange → light-purple (lavender) gradient**. Vivid, **multi-color** palette; **every icon and symbol is colorful**; **no gray / grayscale imagery, no muted dead areas**. High visual impact, premium and exquisite business knowledge-card aesthetic.
+4. **CONTENT FIDELITY:** transcribe the manuscript's sections faithfully and **in order**; keep explanations **detailed and substantial** (do not reduce to a few hooks); proofread for correctness; render as Simplified-Chinese explanatory copy.
+5. **TYPOGRAPHY:** primary on-card copy = **legible 简体中文**, **print-crisp and high-resolution (never blurry)**. **Enlarge body text by one size**; prefer larger readable fonts with balanced, tasteful layout. Section headers bold and colorful. English only as small secondary accent keywords.
+6. Decorate richly with **varied flat icons, symbols, arrows, ribbons, badges, mini-diagrams** that connect and illustrate each section; cohesive warm orange→lavender gradient palette across the whole card; overall feel = vivid, clean, high-impact, high-end single-page knowledge infographic.
+`.trim();
+
+/** **单页连贯图文知识卡片**（自定义文案专用）：依 markdown 子标题顺序铺满一整页（非 2×4 网格）；与小红书八格 {@link buildXhsNoteGeminiPrompt} 独立。 */
+export function buildSinglePageKnowledgeCardGeminiPrompt(scriptContext: string): string {
+  const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
+  return (
+    `
+${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTOR_EN}
+
+[Chinese Markdown Manuscript]:
+${slice}
+`.trim() +
+    "\n\n" +
+    SINGLE_PAGE_KNOWLEDGE_CARD_FOOTER
   );
 }
 
@@ -1615,7 +1665,11 @@ export async function callGemini31ProForImagePrompt(
 }
 
 export async function translatePlatformCompositeToEnglishPrompt(options: {
-  kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note";
+  kind:
+    | "storyboard_sheet_portrait"
+    | "storyboard_sheet_landscape"
+    | "xiaohongshu_dual_note"
+    | "single_page_knowledge_card";
   scriptContext: string;
   /** 保留相容；分鏡/八格 **預設** **GPT 5.4** 英文化三輪 → **Gemini 3.5 Flash** 三輪兜底；`engine=gemini31flash` 強制先 Flash */
   translator?: PlatformImagePromptTranslator;
@@ -1656,15 +1710,29 @@ export async function translatePlatformCompositeToEnglishPrompt(options: {
     pipelineStatCtx: compositeStatCtx,
   });
   const isStoryboard = kind === "storyboard_sheet_landscape";
+  const isKnowledgeCard = kind === "single_page_knowledge_card";
   appendVertexFlashDebug(
     flowLog,
     `translatePlatformComposite · kind=${options.kind}${options.kind !== kind ? `→${kind}` : ""} · translator=${options.translator ?? "(未指定)"} · engine=${options.engine ?? "n/a"}`,
   );
-  const chineseBrief = await extractChineseVisualBrief(options.scriptContext, flowLog);
-  const task = isStoryboard
-    ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
-    : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
-  appendVertexFlashDebug(flowLog, `已組裝 ${isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`);
+  // 单页知识卡片需要忠实、详尽的全文内容；视觉骨架提炼会剥离解释性正文，故仅分镜/小红书八格使用骨架。
+  let task: string;
+  if (isKnowledgeCard) {
+    appendVertexFlashDebug(
+      flowLog,
+      `[单页知识卡片] 跳过 extractChineseVisualBrief（保留 markdown 详尽内容，不做视觉骨架剥离）`,
+    );
+    task = buildSinglePageKnowledgeCardGeminiPrompt(options.scriptContext);
+  } else {
+    const chineseBrief = await extractChineseVisualBrief(options.scriptContext, flowLog);
+    task = isStoryboard
+      ? buildVideoStoryboardGeminiPrompt(chineseBrief || options.scriptContext)
+      : buildXhsNoteGeminiPrompt(chineseBrief || options.scriptContext);
+  }
+  appendVertexFlashDebug(
+    flowLog,
+    `已組裝 ${isKnowledgeCard ? "buildSinglePageKnowledgeCard" : isStoryboard ? "buildVideoStoryboard" : "buildXhsNote"} task · 約 ${task.length} 字`,
+  );
 
   logSheetChineseStagingBeforeTranslate(
     flowLog,

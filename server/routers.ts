@@ -5105,7 +5105,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
             scriptContext: z.string().min(1).max(12000),
-            kind: z.enum(["storyboard_sheet_portrait", "storyboard_sheet_landscape", "xiaohongshu_dual_note"]),
+            kind: z.enum([
+              "storyboard_sheet_portrait",
+              "storyboard_sheet_landscape",
+              "xiaohongshu_dual_note",
+              "single_page_knowledge_card",
+            ]),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
             progressJobId: z.string().min(8).max(64).optional(),
             executionDetails: z.string().max(4000).optional(),
@@ -5186,7 +5191,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const compositeDeductionNote =
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
-              : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
+              : input.kind === "single_page_knowledge_card"
+                ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`
+                : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag = compositePack
             ? ` · 分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
