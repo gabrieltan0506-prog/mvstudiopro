@@ -4449,6 +4449,44 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     /**
      * 平台单帧生图：先入队，由 Fly jobs worker 执行生图；前端轮询 GET /api/jobs/:id，避免长 HTTP 占用。
      */
+    /**
+     * 上传一张人像照片 → 返回公网直链 URL，供 {@link enqueueGenerateTopicImage} 的 `referencePhotoUrl`
+     * 走 EvoLink GPT-Image-2 edit 模式替换封面主角。URL 须 EvoLink 服务器可直接抓取（S3/Blob 公链）。
+     */
+    uploadCoverReferencePhoto: protectedProcedure
+      .input(
+        z.object({
+          imageBase64: z.string().min(1),
+          mimeType: z
+            .enum(["image/jpeg", "image/jpg", "image/png", "image/webp"])
+            .default("image/jpeg"),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const buffer = Buffer.from(input.imageBase64, "base64");
+        // GPT-Image-2 单图 ≤ 50MB；这里收敛到 12MB，避免超大上传与超时。
+        if (buffer.length < 64) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "图片为空或损坏" });
+        }
+        if (buffer.length > 12 * 1024 * 1024) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "图片过大（请 ≤ 12MB）" });
+        }
+        // 与封面成品同一套存储：优先 GCS（签名 7 天直链，EvoLink 服务器可抓取），未配置则落 Fly 卷。
+        const { uploadBufferToPlatformStorage } = await import("./services/evolinkGptImage2.js");
+        try {
+          const url = await uploadBufferToPlatformStorage(buffer, "platform_cover_reference");
+          return { url };
+        } catch (e) {
+          // 兜底：GCS/Fly 不可用时退回 S3/Blob（storagePut）。
+          const ext = input.mimeType === "image/png" ? "png" : "jpg";
+          const key = `platform-cover-reference/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const mime = input.mimeType === "image/png" ? "image/png" : "image/jpeg";
+          const { url } = await storagePut(key, buffer, mime);
+          if (!url) throw e;
+          return { url };
+        }
+      }),
+
     enqueueGenerateTopicImage: protectedProcedure
       .input(
         z.object({
@@ -4471,6 +4509,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           drProSecondarySceneId: z.string().min(1).max(128).optional(),
           /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認監管參數（不免扣積分）。 */
           supervisorToken: z.string().max(512).optional(),
+          /** 可選：用户上传人像照片 URL（公网直链）→ EvoLink GPT-Image-2 edit 换封面主角 */
+          referencePhotoUrl: z.string().url().max(2048).optional(),
           /** 一键封面套装：40×N 按序分拆扣费 */
           bulkCoverPack: z
             .object({
@@ -4728,6 +4768,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 topicCoverPixelEngine,
                 enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
                 drProSecondarySceneId: input.drProSecondarySceneId,
+                referencePhotoUrl: input.referencePhotoUrl,
               },
             },
           });

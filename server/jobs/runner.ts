@@ -1261,6 +1261,9 @@ async function processPlatformJob(
         typeof rawBatchIdx === "number" && typeof rawBatchTot === "number" && rawBatchTot >= 2
           ? { slotIndex: Math.max(0, Math.floor(rawBatchIdx)), slotTotal: Math.floor(rawBatchTot) }
           : undefined;
+      const rawRefPhoto = (params as { referencePhotoUrl?: unknown }).referencePhotoUrl;
+      const referencePhotoUrl =
+        typeof rawRefPhoto === "string" && rawRefPhoto.trim() ? rawRefPhoto.trim() : undefined;
       const result = await runPlatformTopicImagePipeline({
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
@@ -1278,6 +1281,7 @@ async function processPlatformJob(
         drProSecondaryCoverInputs,
         batchSceneDiversity,
         trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
+        referencePhotoUrl,
       });
       return { provider: "vertex", output: result };
     }

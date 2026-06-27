@@ -114,6 +114,11 @@ export type RunPlatformTopicImagePipelineInput = {
    * 可選：與當前快照 **platformsKey** 對齊的 trendStore **高互動樣本**簡中摘要（服端注入；非帳號實測 CTR）。
    */
   trendEngagementVisualBrief?: string;
+  /**
+   * 可選：用户上传的人像照片 URL（公网可直接抓取）。传入则封面强制走 EvoLink GPT-Image-2 edit 模式，
+   * 把封面主角替换成此人（保住相貌辨识度），并注入换人指令。
+   */
+  referencePhotoUrl?: string;
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -138,9 +143,14 @@ export async function runPlatformTopicImagePipeline(
 ): Promise<RunPlatformTopicImagePipelineResult> {
   const legacyCoverNb2 =
     input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro";
+  const coverReferencePhotoUrl = String(input.referencePhotoUrl || "").trim();
+  const coverReferenceImageUrls = coverReferencePhotoUrl ? [coverReferencePhotoUrl] : [];
   const coverPixelEngineOverride =
-    parsePlatformTopicCoverPixelEngineChoice(input.coverPixelEngine) ??
-    (legacyCoverNb2 ? ("nano_banana_2" as const) : undefined);
+    // 有上传人像 → 强制 GPT-Image-2（唯一支持 image_urls/edit 的供应商），忽略 NB2/NBP 请求。
+    coverReferenceImageUrls.length > 0
+      ? ("gpt_image2" as const)
+      : (parsePlatformTopicCoverPixelEngineChoice(input.coverPixelEngine) ??
+        (legacyCoverNb2 ? ("nano_banana_2" as const) : undefined));
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
   void input.imagePromptTranslator;
@@ -364,10 +374,16 @@ export async function runPlatformTopicImagePipeline(
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [步骤2] 竖封像素（GPT‑Image‑2 / NB2 / Pro 由 env 决定，见 flowLog · PLATFORM_TOPIC_COVER_PIXEL_ENGINE）…`,
         );
+        if (coverReferenceImageUrls.length > 0) {
+          topicImageCondenseLog.push(
+            `${platformFlowLogTimestamp()}  [步骤2·换人] 检测到用户上传人像 → EvoLink GPT-Image-2 edit 模式（image_urls=${coverReferenceImageUrls.length}）· 将替换封面主角并保住相貌辨识度`,
+          );
+        }
         imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
           englishPrompt: safePrompt,
           flowLog: topicImageCondenseLog,
           coverPixelEngine: coverPixelEngineOverride,
+          referenceImageUrls: coverReferenceImageUrls.length ? coverReferenceImageUrls : undefined,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);

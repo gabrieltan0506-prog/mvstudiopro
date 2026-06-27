@@ -96,6 +96,7 @@ import {
   Target,
   TrendingUp,
   Trophy,
+  UserRound,
   Users,
   Video,
   Zap,
@@ -1359,9 +1360,12 @@ type CoverGenWaitCarouselItem = { id: string; title: string; excerpt: string };
 function CoverGenerationWaitCarousel({
   items,
   itemsKey,
+  phaseLabel,
 }: {
   items: CoverGenWaitCarouselItem[];
   itemsKey: string;
+  /** 覆盖默认「封面绘制中」头部副标题（如出图阶段显示合成进度提示）。 */
+  phaseLabel?: string;
 }) {
   const [idx, setIdx] = useState(0);
 
@@ -1390,9 +1394,11 @@ function CoverGenerationWaitCarousel({
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#ff9fe0]" aria-hidden />
-        <span className="text-[11px] font-semibold tracking-wide text-[#ff9fe0]/90">封面绘制中</span>
+        <span className="text-[11px] font-semibold tracking-wide text-[#ff9fe0]/90">
+          {phaseLabel ? "出图进行中" : "封面绘制中"}
+        </span>
         <span className="text-[11px] text-white/48">
-          合计常需约 3～5 分钟 · 每条预览约 1 分钟 · 全部选题均有有效封面后自动收起
+          {phaseLabel ?? "合计常需约 3～5 分钟 · 每条预览约 1 分钟 · 全部选题均有有效封面后自动收起"}
         </span>
       </div>
 
@@ -1852,6 +1858,10 @@ export default function PlatformPage() {
   ]);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
+  /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId */
+  const [coverReferencePhotoMap, setCoverReferencePhotoMap] = useState<Record<string, string>>({});
+  /** 正在上传人像参考图的 sceneId 集合（上传期间禁用生成按钮） */
+  const [coverRefUploadingIds, setCoverRefUploadingIds] = useState<Set<string>>(() => new Set());
   /** 用户发起封面绘制后置为 true；收起条件为当前视窗内每一条选题均有有效封面 URL（与 Stage1 轮播只看「任务旗标」区分）。 */
   const [coverWaitCarouselEngaged, setCoverWaitCarouselEngaged] = useState(false);
   const [coverLoadRetriedIds, setCoverLoadRetriedIds] = useState<Set<string>>(() => new Set());
@@ -2439,6 +2449,73 @@ export default function PlatformPage() {
   }, [contentJobPollTrace, topicImageJobPollTrace, compositeJobPollTrace]);
 
   const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
+  const uploadCoverReferencePhotoMutation = trpc.mvAnalysis.uploadCoverReferencePhoto.useMutation();
+  /** 读取人像文件 → canvas 压缩为 JPEG（长边≤1280）→ 上传 GCS → 写入 coverReferencePhotoMap[sceneId]。 */
+  const handleUploadCoverReferencePhoto = useCallback(
+    async (sceneId: string, file: File) => {
+      const sid = String(sceneId || "").trim();
+      if (!sid) return;
+      if (!file.type.startsWith("image/")) {
+        toast.error("请上传图片文件（JPG / PNG）");
+        return;
+      }
+      if (file.size > 25 * 1024 * 1024) {
+        toast.error("图片过大（请 ≤ 25MB）");
+        return;
+      }
+      setCoverRefUploadingIds((prev) => new Set(prev).add(sid));
+      try {
+        const jpegBase64 = await new Promise<string>((resolve, reject) => {
+          const img = new window.Image();
+          const objectUrl = URL.createObjectURL(file);
+          img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            const maxEdge = 1280;
+            const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const cctx = canvas.getContext("2d");
+            if (!cctx) {
+              reject(new Error("无法处理图片（canvas 不可用）"));
+              return;
+            }
+            cctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+            const base64 = dataUrl.split(",")[1] || "";
+            if (!base64) {
+              reject(new Error("图片编码失败"));
+              return;
+            }
+            resolve(base64);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error("图片读取失败"));
+          };
+          img.src = objectUrl;
+        });
+        const { url } = await uploadCoverReferencePhotoMutation.mutateAsync({
+          imageBase64: jpegBase64,
+          mimeType: "image/jpeg",
+        });
+        if (!url) throw new Error("上传未返回 URL");
+        setCoverReferencePhotoMap((prev) => ({ ...prev, [sid]: url }));
+        toast.success("人像已上传，将用于替换封面主角");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "人像上传失败");
+      } finally {
+        setCoverRefUploadingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(sid);
+          return next;
+        });
+      }
+    },
+    [uploadCoverReferencePhotoMutation],
+  );
   const syncPlatformExecutionBlueprintsSnapshotMutation =
     trpc.mvAnalysis.syncPlatformExecutionBlueprintsSnapshot.useMutation();
   const enqueueTopicCoverAndCompositeBundleMutation =
@@ -2641,6 +2718,8 @@ export default function PlatformPage() {
       coverProEngine?: "nano_banana_2";
       /** 一键封面套装：40×N 按序分拆扣费 */
       bulkCoverPack?: { packSceneIds: string[]; sequentialSlot: number };
+      /** 用户上传人像照片 URL → EvoLink GPT-Image-2 edit 换封面主角 */
+      referencePhotoUrl?: string;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
@@ -2661,6 +2740,7 @@ export default function PlatformPage() {
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
         ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
+        ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
       });
       setTopicImageJobPollTrace({
         jobId,
@@ -4654,6 +4734,12 @@ export default function PlatformPage() {
     ],
   );
 
+  /** 出图（2×4 / 3×4 合成）阶段忙碌：等待动效需覆盖封面阶段 + 出图阶段。 */
+  const anyCompositeOutputBusy = useMemo(
+    () => compositeMutationBusy || isSequentialCompositeBatchGenerating,
+    [compositeMutationBusy, isSequentialCompositeBatchGenerating],
+  );
+
   const allTopicCoverImagesReady = useMemo(() => {
     if (visibleExecutionCards.length === 0) return true;
     return visibleExecutionCards.every((row) => {
@@ -4663,13 +4749,14 @@ export default function PlatformPage() {
   }, [visibleExecutionCards, platformImageMap]);
 
   useEffect(() => {
-    if (anyCoverImagePipelineBusy) setCoverWaitCarouselEngaged(true);
-  }, [anyCoverImagePipelineBusy]);
+    if (anyCoverImagePipelineBusy || anyCompositeOutputBusy) setCoverWaitCarouselEngaged(true);
+  }, [anyCoverImagePipelineBusy, anyCompositeOutputBusy]);
 
   useEffect(() => {
-    if (!coverWaitCarouselEngaged || !allTopicCoverImagesReady) return;
+    // 封面已就绪且出图阶段也已结束，才收起等待动效。
+    if (!coverWaitCarouselEngaged || !allTopicCoverImagesReady || anyCompositeOutputBusy) return;
     setCoverWaitCarouselEngaged(false);
-  }, [coverWaitCarouselEngaged, allTopicCoverImagesReady]);
+  }, [coverWaitCarouselEngaged, allTopicCoverImagesReady, anyCompositeOutputBusy]);
 
   /** 顶部「2×4 / 小红书合成」画廊：各选题合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
@@ -7165,9 +7252,13 @@ export default function PlatformPage() {
                   ) : null}
                   {visibleExecutionCards.length > 0 &&
                   coverWaitCarouselEngaged &&
-                  !allTopicCoverImagesReady &&
+                  (!allTopicCoverImagesReady || anyCompositeOutputBusy) &&
                   coverGenWaitCarouselItems.some((row) => row.title || row.excerpt.trim()) ? (
-                    <CoverGenerationWaitCarousel items={coverGenWaitCarouselItems} itemsKey={coverGenWaitCarouselItemsKey} />
+                    <CoverGenerationWaitCarousel
+                      items={coverGenWaitCarouselItems}
+                      itemsKey={coverGenWaitCarouselItemsKey}
+                      phaseLabel={anyCompositeOutputBusy ? "正在出图（2×4 / 3×4 合成）· 约 3～5 分钟" : undefined}
+                    />
                   ) : null}
                   {visibleExecutionCards.length === 0 && isDashboardLoading ? (
                     <div className="col-span-full flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
@@ -7257,6 +7348,7 @@ export default function PlatformPage() {
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
+                            referencePhotoUrl: coverReferencePhotoMap[item.id] || undefined,
                             pollDebugLabel: `单张选题封面 · ${item.id}`,
                           });
                         })
@@ -7318,6 +7410,7 @@ export default function PlatformPage() {
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
+                            referencePhotoUrl: coverReferencePhotoMap[item.id] || undefined,
                             pollDebugLabel: `手动重生成 · ${item.id}`,
                           });
                         })
@@ -7728,6 +7821,69 @@ export default function PlatformPage() {
                               · 推荐一键套装 {bundleCost} 点{PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（竖版封面 + 本条 2×4；散买约 {bundleRetailSum} 点）· 本条仅 2×4：{compositeCost}{" "}
                               点（{isGraphicFormat ? "图文/小红书八格" : "短视频分镜"}）
                             </span>
+                          </div>
+                          <div className="mb-2 flex items-center gap-2 rounded-lg border border-[#6a5cff]/30 bg-[#6a5cff]/8 px-2.5 py-2">
+                            {coverReferencePhotoMap[item.id] ? (
+                              <img
+                                src={coverReferencePhotoMap[item.id]}
+                                alt="人像参考"
+                                className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-[#c4b5fd]/50"
+                              />
+                            ) : (
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-dashed border-[#c4b5fd]/40 text-[#c4b5fd]/70">
+                                <UserRound className="h-4 w-4" aria-hidden />
+                              </span>
+                            )}
+                            <div className="flex min-w-0 flex-1 flex-col">
+                              <label
+                                className={`inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-md border border-[#6a5cff]/45 bg-[#6a5cff]/15 px-2 py-1 text-[11px] font-bold text-[#c4b5fd] transition hover:bg-[#6a5cff]/25 ${
+                                  coverRefUploadingIds.has(item.id) ? "cursor-wait opacity-70" : ""
+                                }`}
+                              >
+                                {coverRefUploadingIds.has(item.id) ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    上传中…
+                                  </>
+                                ) : (
+                                  <>
+                                    <UserRound className="h-3 w-3" aria-hidden />
+                                    {coverReferencePhotoMap[item.id] ? "更换人物照片" : "上传人物照片（换封面主角）"}
+                                  </>
+                                )}
+                                <input
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/webp"
+                                  className="hidden"
+                                  disabled={coverRefUploadingIds.has(item.id)}
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    e.target.value = "";
+                                    if (f) void handleUploadCoverReferencePhoto(item.id, f);
+                                  }}
+                                />
+                              </label>
+                              <span className="mt-0.5 text-[10px] leading-tight text-gray-500">
+                                {coverReferencePhotoMap[item.id]
+                                  ? "已绑定人像 · 生成封面时由 GPT-Image-2 换成此人（保留排版与风格）"
+                                  : "可选 · 上传一张清晰正脸照，让封面主角换成你/指定人物"}
+                              </span>
+                            </div>
+                            {coverReferencePhotoMap[item.id] ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCoverReferencePhotoMap((prev) => {
+                                    const next = { ...prev };
+                                    delete next[item.id];
+                                    return next;
+                                  })
+                                }
+                                className="shrink-0 rounded-md border border-white/15 px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:border-white/30 hover:text-gray-200"
+                              >
+                                移除
+                              </button>
+                            ) : null}
                           </div>
                           <div className="flex flex-wrap gap-2">
                             <button
