@@ -5331,9 +5331,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "gpt54" as const;
         const compositePack = input.bulkCompositePack;
-        // 3×4 十二格：仅 storyboard_sheet_landscape / xiaohongshu_dual_note 支持，后端分段生成再拼接，定价另算
+        // 3×4 十二格：仅 storyboard_sheet_landscape / xiaohongshu_dual_note 支持，后端分段生成再拼接，定价另算。
+        // 套装（bulkCompositePack）为固定九折 2×4 捆绑商品，强制 2×4，避免按 2×4 收费却跑 3×4。
         const is3x4Grid =
           input.gridVariant === "3x4" &&
+          !compositePack &&
           (input.kind === "storyboard_sheet_landscape" || input.kind === "xiaohongshu_dual_note");
         const cost = compositePack
           ? platformBundleCreditsForSlot(

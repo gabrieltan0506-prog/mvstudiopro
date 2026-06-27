@@ -334,6 +334,21 @@ export function platformCoverCompositeBundleCreditsForFormat(format: string): nu
   return Math.round((cover + composite) * PLATFORM_BUNDLE_NINE_DISCOUNT);
 }
 
+/** 单条体裁的合成价（含 2×4 / 3×4 十二格档位） */
+export function platformCompositeSingleCreditsForFormatGrid(format: string, is3x4: boolean): number {
+  if (platformIsGraphicTopicFormat(format)) {
+    return is3x4 ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote;
+  }
+  return is3x4 ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet;
+}
+
+/** 单条「封面+分镜」套装（含 3×4 档位）：（48 + 合成价[按 2×4/3×4]）× 九折 */
+export function platformCoverCompositeBundleCreditsForFormatGrid(format: string, is3x4: boolean): number {
+  const cover = CREDIT_COSTS.platformTopicFrameGraphic;
+  const composite = platformCompositeSingleCreditsForFormatGrid(format, is3x4);
+  return Math.round((cover + composite) * PLATFORM_BUNDLE_NINE_DISCOUNT);
+}
+
 /** 批量「封面+分镜」套装合计（按每条体裁分别九折后相加） */
 export function platformCoverCompositeBulkBundleTotalCredits(
   topics: ReadonlyArray<{ format: string }>,

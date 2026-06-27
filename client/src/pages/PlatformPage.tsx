@@ -29,7 +29,7 @@ import {
   platformCoverBundleTotalCredits,
   platformCompositeBundleTotalCredits,
   platformCoverCompositeBulkBundleTotalCredits,
-  platformCoverCompositeBundleCreditsForFormat,
+  platformCoverCompositeBundleCreditsForFormatGrid,
 } from "@shared/plans";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
@@ -147,46 +147,6 @@ function readPlatformCopyLlmEngineFromLs(): PlatformCopyLlmEngine {
 
 function parseComposite2x4EngineLs(raw: string | null): PlatformComposite2x4ImageEngine {
   return raw === "nano_banana_2" ? "nano_banana_2" : "gpt_image2";
-}
-
-function CompositeImageEngineToggle(props: {
-  value: PlatformComposite2x4ImageEngine;
-  onChange: (next: PlatformComposite2x4ImageEngine) => void;
-  hintClassName?: string;
-}) {
-  const { value, onChange, hintClassName } = props;
-  return (
-    <div className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">分镜 2×4 出图引擎</span>
-      <div className="inline-flex rounded-lg border border-white/15 bg-black/40 p-0.5">
-        <button
-          type="button"
-          onClick={() => onChange("gpt_image2")}
-          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
-            value === "gpt_image2"
-              ? "bg-white/15 text-white shadow-sm"
-              : "text-gray-400 hover:text-white"
-          }`}
-        >
-          GPT‑Image‑2
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange("nano_banana_2")}
-          className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
-            value === "nano_banana_2"
-              ? "bg-emerald-500/25 text-emerald-100 shadow-sm"
-              : "text-gray-400 hover:text-emerald-100/90"
-          }`}
-        >
-          Nano Banana 2
-        </button>
-      </div>
-      <p className={hintClassName ?? "max-w-[20rem] text-[10px] leading-snug text-gray-500"}>
-        作用于 2×4 分镜与小红书八格；英文化链路不变。NB2 需 Vertex / GCP 可用。
-      </p>
-    </div>
-  );
 }
 
 type CoverClickEstimate = { band: "high" | "medium"; score: number; labelZh: string };
@@ -2417,8 +2377,7 @@ export default function PlatformPage() {
               生图 · 封面与分镜
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
-              合计轮询 <span className="font-semibold tabular-nums text-white">{imageGenTotal}</span> 次（GPT-IMAGE-2
-              / EvoLink / NB2 等）
+              合计轮询 <span className="font-semibold tabular-nums text-white">{imageGenTotal}</span> 次
             </p>
             <p className="mt-2 break-words text-[10px] leading-relaxed text-gray-400">
               {imageGenOverview.join("  ·  ")}
@@ -6865,10 +6824,6 @@ export default function PlatformPage() {
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成分镜套装、一键生成封面加分镜。</p>
                     </div>
-                    <CompositeImageEngineToggle
-                      value={platformComposite2x4Engine}
-                      onChange={setPlatformComposite2x4Engine}
-                    />
                   </div>
                   {platformTopicCount > 0 ? (
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
@@ -7000,47 +6955,6 @@ export default function PlatformPage() {
                       </div>
                     ) : null}
                   </div>
-                  {canConfigureCompositeImageTranslator ? (
-                    <div className="flex w-full flex-col gap-3 md:ms-auto md:max-w-lg">
-                      <div className="w-full rounded-2xl border border-[#6366f1]/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.14),rgba(15,10,35,0.95))] p-4 shadow-[0_0_0_1px_rgba(139,92,255,0.12)]">
-                        <div className="flex items-center gap-2 text-xs font-bold tracking-wide text-[#c4b5fd]">
-                          <Zap className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
-                          2×4 合成 · 英文化
-                          {debugMode && <span className="ml-1 text-gray-400">（GPT 5.4 strict）</span>}
-                        </div>
-                        <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
-                          <strong className="text-[#5eead4]">2×4 分镜主表</strong>与
-                          <strong className="text-[#5eead4]">小红书 2×4 八格</strong>
-                          宽幅合成英文化固定走高精度模型
-                          {debugMode && <>{" "}<strong className="text-gray-200">GPT 5.4</strong>（reasoning=medium · max_tokens=32K · strict · 无 Flash 兜底）</>}。竖版
-                          <strong className="text-gray-400">封面单帧</strong>固定高精度模型
-                          {debugMode && <>（reasoning=medium · max_tokens=64K）</>}。
-                        </p>
-                        <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                          调参与配额：
-                          <code className="text-[#8cefff]">VERTEX_GEMINI_FLASH_TRANSLATION_MODEL</code>、
-                          <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_THINKING_LEVEL</code>、
-                          <code className="text-[#8cefff]">VERTEX_FLASH_TRANSLATION_MAX_TOKENS</code>。
-                        </p>
-                      </div>
-                      <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-amber-400/35 bg-amber-950/30 px-3 py-2.5 text-left text-[11px] leading-snug text-amber-50/95 shadow-sm">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-amber-400/60 accent-amber-400"
-                          checked={platformCoverVertexNb2}
-                          onChange={(e) => setPlatformCoverVertexNb2(e.target.checked)}
-                        />
-                        <span>
-                          <span className="font-bold text-amber-200">监管专用 · 单帧封面主生图</span>
-                          ：启用后走 Vertex <strong className="text-amber-100/90">Nano Banana 2</strong>
-                          （<code className="rounded bg-black/40 px-1 text-[10px] text-cyan-200/90">1024×1536 竖版</code>
-                          、官方 API，与 GPT-IMAGE-2 主路径同款比例锁 + 共用光影语汇）；主路径失败再走版式 + NB2，
-                          <strong className="text-amber-200">不调用</strong> OhMyGPT GPT-IMAGE-2。一般用户无此选项。
-                        </span>
-                      </label>
-                    </div>
-                  ) : null}
-
                 {contentExecutionCards.length > 0 ? (
                   <div
                     id={PLATFORM_REFERENCE_GALLERY_ID}
@@ -7080,15 +6994,10 @@ export default function PlatformPage() {
                         </div>
                         <span className="max-w-[22rem] text-right text-[10px] leading-snug text-gray-500">
                           {compositeGridVariant === "3x4"
-                            ? `3×4 十二格：后端分 2 段生成再拼成一张完整长图（更详尽·降糊字）·分镜 ${CREDIT_COSTS.platformStoryboardSheet3x4} 点 / 图文 ${CREDIT_COSTS.platformXhsDualNote3x4} 点`
-                            : `2×4：单张合成 ·分镜 ${CREDIT_COSTS.platformStoryboardSheet} 点 / 图文 ${CREDIT_COSTS.platformXhsDualNote} 点`}
+                            ? `3×4 十二格：内容更完整、画面更清晰 · 分镜 ${CREDIT_COSTS.platformStoryboardSheet3x4} 点 / 图文 ${CREDIT_COSTS.platformXhsDualNote3x4} 点`
+                            : `2×4 八格：经典单图 · 分镜 ${CREDIT_COSTS.platformStoryboardSheet} 点 / 图文 ${CREDIT_COSTS.platformXhsDualNote} 点`}
                         </span>
                       </div>
-                      <CompositeImageEngineToggle
-                        value={platformComposite2x4Engine}
-                        onChange={setPlatformComposite2x4Engine}
-                        hintClassName="max-w-[20rem] text-[10px] leading-snug text-gray-500"
-                      />
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
@@ -7298,7 +7207,7 @@ export default function PlatformPage() {
                       const compositePhaseHint =
                         compositePendingUxHints[`${item.id}::${compositeKind}`] ??
                         "英文化与出图 · 合计常需 3～5 分钟，请勿中途刷新";
-                      const bundleCost = platformCoverCompositeBundleCreditsForFormat(item.format);
+                      const bundleCost = platformCoverCompositeBundleCreditsForFormatGrid(item.format, is3x4);
                       const bundleRetailSum =
                         CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;
                       const isThisBundleLoading = coverCompositeBundleSceneId === item.id;
@@ -7334,7 +7243,7 @@ export default function PlatformPage() {
                           if (isEligibleFreeRetry) {
                             confirmNote = "检测到黑图，本次将免费补发，是否继续？";
                           } else if (!hasDisplayedUrl) {
-                            confirmNote = `将为本选题生成竖版封面（单帧 GPT-IMAGE-2），消耗 ${normalCoverCost} 积分，是否继续？`;
+                            confirmNote = `将为本选题生成竖版封面（单帧高精出图），消耗 ${normalCoverCost} 积分，是否继续？`;
                           } else {
                             confirmNote = `将为该选题重新生成竖版封面，消耗 ${normalCoverCost} 积分（沿用当前选题文案与人设锚点），是否继续？`;
                           }
@@ -7816,18 +7725,14 @@ export default function PlatformPage() {
 
                         <div className="mt-4 space-y-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.55)] p-3">
                           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11px] tracking-[0.08em]">
-                            <span className="uppercase text-[#9ddcff]">原生 2×4</span>
-                            <span className="text-gray-500">·</span>
-                            <span className="text-[#9ddcff]">生图采用</span>{" "}
                             <span
                               className="font-black uppercase tracking-[0.14em] text-[#49e6ff] [text-shadow:0_0_14px_rgba(73,230,255,0.55)]"
-                              title="Vertex Nano Banana 2（2×4 默认主路径；服务端可切回 GPT-IMAGE-2）"
                             >
-                              Nano Banana 2
+                              {is3x4 ? "3×4 十二格" : "2×4 八格"}
                             </span>
                             <span className="normal-case tracking-normal text-[10px] leading-none text-gray-500">
-                              · 推荐一键套装 {bundleCost} 点{PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（竖版封面 + 本条 2×4；散买约 {bundleRetailSum} 点）· 本条仅 2×4：{compositeCost}{" "}
-                              点（{isGraphicFormat ? "图文/小红书八格" : "短视频分镜"}）
+                              · 推荐一键套装 {bundleCost} 点{PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（竖版封面 + 本条{is3x4 ? " 3×4 十二格" : " 2×4 八格"}；散买约 {bundleRetailSum} 点）· 本条仅{is3x4 ? " 3×4" : " 2×4"}：{compositeCost}{" "}
+                              点（{isGraphicFormat ? "图文/小红书" : "短视频分镜"}）
                             </span>
                           </div>
                           <div className="mb-2 flex items-center gap-2 rounded-lg border border-[#6a5cff]/30 bg-[#6a5cff]/8 px-2.5 py-2">
@@ -7946,7 +7851,7 @@ export default function PlatformPage() {
                                 }
                                 const note = supervisorAccess
                                   ? ""
-                                  : `将消耗 ${compositeCost} 积分，主路径 GPT-IMAGE-2，生成${compositeLabel}，是否继续？`;
+                                  : `将消耗 ${compositeCost} 积分，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
                                 const supervisorTok = getSupervisorTrpcToken();
                                 const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
