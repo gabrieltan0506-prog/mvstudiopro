@@ -319,11 +319,34 @@ export function platformCompositeBundleTotalCredits(topicCount: number): number 
   return n * PLATFORM_COMPOSITE_BUNDLE_UNIT_CREDITS;
 }
 
+/** 分镜套装单条九折单价（按 2×4 / 3×4 档位）：2×4→round(60×0.9)=54；3×4→round(120×0.9)=108 */
+export function platformCompositeBundleUnitCreditsForGrid(is3x4: boolean): number {
+  const base = is3x4 ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet;
+  return Math.round(base * PLATFORM_BUNDLE_NINE_DISCOUNT);
+}
+
+/** 一键分镜/八格套装合计（含 3×4 档位）：单条九折单价 × 选题数 */
+export function platformCompositeBundleTotalCreditsForGrid(topicCount: number, is3x4: boolean): number {
+  const n = normalizePlatformBundleTopicCount(topicCount);
+  return n * platformCompositeBundleUnitCreditsForGrid(is3x4);
+}
+
 export function platformCoverCompositeBundleCreditsForCompositeKind(
   kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
 ): number {
   return platformCoverCompositeBundleCreditsForFormat(
     kind === "xiaohongshu_dual_note" ? "小红书" : "短视频",
+  );
+}
+
+/** 单条「封面+分镜」套装（按 compositeKind + 2×4/3×4 档位）九折价 */
+export function platformCoverCompositeBundleCreditsForCompositeKindGrid(
+  kind: "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
+  is3x4: boolean,
+): number {
+  return platformCoverCompositeBundleCreditsForFormatGrid(
+    kind === "xiaohongshu_dual_note" ? "小红书" : "短视频",
+    is3x4,
   );
 }
 
@@ -356,6 +379,18 @@ export function platformCoverCompositeBulkBundleTotalCredits(
   let sum = 0;
   for (const t of topics) {
     sum += platformCoverCompositeBundleCreditsForFormat(t.format);
+  }
+  return sum;
+}
+
+/** 批量「封面+分镜」套装合计（含 2×4 / 3×4 档位，按每条体裁分别九折后相加） */
+export function platformCoverCompositeBulkBundleTotalCreditsForGrid(
+  topics: ReadonlyArray<{ format: string }>,
+  is3x4: boolean,
+): number {
+  let sum = 0;
+  for (const t of topics) {
+    sum += platformCoverCompositeBundleCreditsForFormatGrid(t.format, is3x4);
   }
   return sum;
 }

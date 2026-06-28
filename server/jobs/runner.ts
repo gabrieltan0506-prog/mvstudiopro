@@ -1288,7 +1288,9 @@ async function processPlatformJob(
 
     if (input.action === "platform_topic_cover_composite_bundle") {
       const { runPlatformTopicImagePipeline } = await import("../services/runPlatformTopicImagePipeline.js");
-      const { generatePlatformCompositeSheetImage } = await import("../services/proxyImageService.js");
+      const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage } = await import(
+        "../services/proxyImageService.js"
+      );
 
       const bundleCreditsCharged = Math.max(0, Math.floor(Number(params.bundleCreditsCharged) || 0));
       const uidNum = jobUserId != null ? Number(jobUserId) : NaN;
@@ -1397,6 +1399,11 @@ async function processPlatformJob(
           ? rawCompositeEngine
           : undefined;
 
+      // 3×4 十二格：仅 landscape / 小红书图文支持；走「分段生成 + sharp 直向拼接」
+      const compositeIs3x4 =
+        (params as { compositeGridVariant?: unknown }).compositeGridVariant === "3x4" &&
+        (compositeKind === "storyboard_sheet_landscape" || compositeKind === "xiaohongshu_dual_note");
+
       const creationRecordIdRaw = (params as { creationRecordId?: unknown }).creationRecordId;
       const creationRecordId =
         typeof creationRecordIdRaw === "number" && Number.isFinite(creationRecordIdRaw) && creationRecordIdRaw > 0
@@ -1440,7 +1447,7 @@ async function processPlatformJob(
           batchSceneDiversity: batchSceneDiversityBundle,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
         }),
-        generatePlatformCompositeSheetImage({
+        (compositeIs3x4 ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage)({
           kind: compositeKind,
           title: compositeTitle,
           scriptContext: compositeScriptContext,
