@@ -71,6 +71,37 @@ async function ensurePlatformDrSecondaryStagingTable(db: NonNullable<Awaited<Ret
   }
 }
 
+/** 投流投后复盘表：缺失时自动建表，避免未跑 migration 时写入失败。幂等。 */
+async function ensurePaidTrafficReviewsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "paid_traffic_reviews" (
+        "id"            serial PRIMARY KEY,
+        "userId"        integer NOT NULL,
+        "platform"      varchar(32),
+        "campaignName"  varchar(255),
+        "spend"         numeric(12, 2) NOT NULL,
+        "impressions"   integer NOT NULL DEFAULT 0,
+        "clicks"        integer NOT NULL DEFAULT 0,
+        "conversions"   integer NOT NULL DEFAULT 0,
+        "revenue"       numeric(12, 2) NOT NULL DEFAULT '0',
+        "notes"         text,
+        "measuredAt"    timestamp,
+        "createdAt"     timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "paid_traffic_reviews_user_created_idx"
+        ON "paid_traffic_reviews" ("userId", "createdAt" DESC)
+    `);
+  } catch (e) {
+    console.warn(
+      "[Database] ensure paid_traffic_reviews (non-fatal):",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -80,6 +111,7 @@ export async function getDb() {
       await ensureUsersEnterpriseTrialPaidColumn(_db);
       await ensurePlatformStrategicBlueprintSnapshotsTable(_db);
       await ensurePlatformDrSecondaryStagingTable(_db);
+      await ensurePaidTrafficReviewsTable(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

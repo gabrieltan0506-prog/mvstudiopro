@@ -56,6 +56,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { PaidTrafficReviewPanel } from "./PaidTrafficReviewPanel";
 
 export type { DecisionIntelTopicPick };
 
@@ -309,6 +310,23 @@ const PLATFORM_PAID_PLANS: Record<string, PlatformPaidPlan> = {
 };
 const PAID_PLATFORM_ORDER = ["douyin", "xiaohongshu", "kuaishou", "bilibili"] as const;
 
+/** 各平台信息流投流经验基准 CPM（元/千次曝光），用于把选题的预估 CTR/转化率换算成预估 CPA。仅经验值，非平台报价。 */
+const PLATFORM_REFERENCE_CPM: Record<string, number> = {
+  douyin: 32,
+  xiaohongshu: 42,
+  kuaishou: 26,
+  bilibili: 36,
+};
+const PLATFORM_REFERENCE_CPM_DEFAULT = 35;
+/** 预估单次成交成本 CPA = (CPM/1000) / (点击率 × 转化率)；ctr/conv 为 0~100 的百分数 */
+function estimateTopicCpa(cpm: number, ctrPct: number, convPct: number): number | null {
+  const ctr = Math.max(0, ctrPct) / 100;
+  const conv = Math.max(0, convPct) / 100;
+  const denom = ctr * conv;
+  if (denom <= 0) return null;
+  return cpm / 1000 / denom;
+}
+
 /** 投流预算快捷档（元） */
 const PAID_BUDGET_PRESETS = [1000, 3000, 8000, 20000] as const;
 const PAID_BUDGET_DEFAULT = 3000;
@@ -481,6 +499,21 @@ export function PlatformReportDashboard({
     }
     return { aov, marginPct, convPct, breakevenCpa, breakevenRoas, maxCpc, stopLoss, ordersToBreakeven, verdict };
   }, [aovInput, marginInput, convInput, paidBudget]);
+
+  // 优先投流选题：用回本自测的盈亏 CPA + 平台基准 CPM 估算每条选题的预估 CPA，筛出「投得起」的
+  const breakevenActive = breakeven.aov > 0 && breakeven.marginPct > 0;
+  const paidTopicsWithCpa = useMemo(() => {
+    const cpm = PLATFORM_REFERENCE_CPM[selectedPaidPlatform] ?? PLATFORM_REFERENCE_CPM_DEFAULT;
+    return paidPriorityTopics.map((t) => {
+      const estCpa = estimateTopicCpa(cpm, t.ctr, t.conv);
+      const affordable = breakevenActive && estCpa != null ? estCpa <= breakeven.breakevenCpa : true;
+      return { ...t, estCpa, affordable };
+    });
+  }, [paidPriorityTopics, selectedPaidPlatform, breakevenActive, breakeven.breakevenCpa]);
+  const affordableTopics = breakevenActive
+    ? paidTopicsWithCpa.filter((t) => t.affordable)
+    : paidTopicsWithCpa;
+  const unaffordableCount = breakevenActive ? paidTopicsWithCpa.length - affordableTopics.length : 0;
 
   const platformAside =
     typeof data.platformDetailedData.autoMatchExplanation === "string"
@@ -1059,16 +1092,20 @@ export function PlatformReportDashboard({
             <p className="mt-2 text-[11px] leading-relaxed text-orange-100/80">{activePaidPlan.note}</p>
           </div>
 
-          {/* 优先投流选题 */}
+          {/* 优先投流选题（盈亏线过滤：只列「投得起」的） */}
           <div className="lg:col-span-4 rounded-lg border border-emerald-400/30 bg-[linear-gradient(160deg,rgba(16,185,129,0.1),rgba(15,23,42,0.95))] p-3">
             <h3 className="flex items-center gap-1.5 text-sm font-bold text-emerald-100">
               <Target size={15} className="text-emerald-300" aria-hidden />
-              优先投流选题
+              {breakevenActive ? "投得起的优先选题" : "优先投流选题"}
             </h3>
-            <p className="mt-1 text-[10px] text-emerald-200/70">综合分 = 封面×0.4 + 转化×0.4 + 契合×0.2</p>
+            <p className="mt-1 text-[10px] text-emerald-200/70">
+              {breakevenActive
+                ? `预估CPA = (${activePaidPlan.label}基准CPM ÷ 1000) ÷ (点击率×转化率)，≤ 盈亏线 ${formatCny(Math.round(breakeven.breakevenCpa))} 即投得起`
+                : "综合分 = 封面×0.4 + 转化×0.4 + 契合×0.2（填写上方「回本自测」可按盈亏线过滤）"}
+            </p>
             <div className="mt-2 space-y-2">
-              {paidPriorityTopics.length > 0 ? (
-                paidPriorityTopics.map((t, i) => (
+              {affordableTopics.length > 0 ? (
+                affordableTopics.map((t, i) => (
                   <div key={`${t.title}-${i}`} className="rounded-md border border-emerald-400/25 bg-emerald-950/40 px-2 py-1.5">
                     <div className="flex items-center gap-1.5">
                       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/30 text-[11px] font-black text-emerald-50">
@@ -1077,21 +1114,37 @@ export function PlatformReportDashboard({
                       <span className="line-clamp-2 text-[12px] font-semibold leading-snug text-white">
                         {trial ? <TrialReadSensitive className="w-full">{t.title}</TrialReadSensitive> : t.title}
                       </span>
-                      <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 text-[11px] font-black tabular-nums text-emerald-50">
-                        {t.score}
-                      </span>
+                      {breakevenActive && t.estCpa != null ? (
+                        <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 text-[11px] font-black tabular-nums text-emerald-50">
+                          CPA≈{formatCny(Math.round(t.estCpa))}
+                        </span>
+                      ) : (
+                        <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 text-[11px] font-black tabular-nums text-emerald-50">
+                          {t.score}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-1 flex gap-1 pl-[1.75rem] text-[10px] tabular-nums text-emerald-100/80">
                       <span>封面 {t.ctr}%</span>
                       <span>· 转化 {t.conv}%</span>
                       <span>· 契合 {t.fit}</span>
+                      {breakevenActive ? <span className="text-emerald-300">· 综合 {t.score}</span> : null}
                     </div>
                   </div>
                 ))
+              ) : breakevenActive ? (
+                <p className="rounded-md border border-rose-400/25 bg-rose-950/30 px-2 py-1.5 text-[11px] leading-snug text-rose-100/85">
+                  按当前盈亏线 {formatCny(Math.round(breakeven.breakevenCpa))}，暂无选题预估 CPA 能回本。建议提高客单价/毛利，或优化封面点击与转化率后再投。
+                </p>
               ) : (
                 <p className="text-[11px] text-emerald-100/60">暂无可排序选题。</p>
               )}
             </div>
+            {breakevenActive && unaffordableCount > 0 ? (
+              <p className="mt-2 rounded-md border border-amber-400/25 bg-amber-950/30 px-2 py-1 text-[10px] leading-snug text-amber-100/80">
+                另有 {unaffordableCount} 条预估 CPA 超盈亏线，已折叠（获客成本可能吃掉利润，优先做自然流或优化转化）。
+              </p>
+            ) : null}
           </div>
 
           {/* 止损与放量纪律 */}
@@ -1113,6 +1166,10 @@ export function PlatformReportDashboard({
           金额按你填写的总预算与各渠道权重自动换算，仅为分配建议；具体出价请结合账户实测数据与平台后台口径，分阶段小步放量。指标为决策辅助，非平台官方流量承诺。
         </p>
       </section>
+
+      {!trial ? (
+        <PaidTrafficReviewPanel breakevenCpa={breakeven.breakevenCpa} platformKey={selectedPaidPlatform} />
+      ) : null}
 
       {!trial && onGenerateTopicCopy && totalDirections > 0 ? (
         <div className="mb-3.5 rounded-xl border-2 border-[#fde047]/40 bg-[linear-gradient(135deg,rgba(253,224,71,0.14),rgba(17,24,39,0.92))] px-3.5 py-3 shadow-[0_8px_28px_rgba(253,224,71,0.12)]">
