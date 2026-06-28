@@ -17,6 +17,7 @@ import {
   BarChart3,
   BookOpen,
   Brain,
+  Calculator,
   Coins,
   Compass,
   FilePenLine,
@@ -438,6 +439,49 @@ export function PlatformReportDashboard({
   const perCreativeTestCap = Math.round((paidBudget * 0.2) / PAID_TEST_CREATIVE_COUNT);
   const activePaidPlan = PLATFORM_PAID_PLANS[selectedPaidPlatform] ?? PLATFORM_PAID_PLANS.douyin!;
 
+  // 回本自测：用户输入客单价/毛利率/转化率 → 算盈亏平衡 CPA / ROAS / 可接受 CPC / 止损线（不依赖任何投放数据）
+  const [aovInput, setAovInput] = useState<string>("199");
+  const [marginInput, setMarginInput] = useState<string>("50");
+  const [convInput, setConvInput] = useState<string>("3");
+  const breakeven = useMemo(() => {
+    const aov = Math.max(0, Math.floor(Number(String(aovInput).replace(/[^\d.]/g, "")) || 0));
+    const marginPct = Math.min(100, Math.max(0, Number(String(marginInput).replace(/[^\d.]/g, "")) || 0));
+    const convPct = Math.min(100, Math.max(0, Number(String(convInput).replace(/[^\d.]/g, "")) || 0));
+    const margin = marginPct / 100;
+    const conv = convPct / 100;
+    const grossPerOrder = aov * margin; // 单笔毛利 = 可接受单次成交成本上限(盈亏平衡 CPA)
+    const breakevenCpa = grossPerOrder;
+    const breakevenRoas = margin > 0 ? 1 / margin : 0;
+    const maxCpc = breakevenCpa * conv; // CPA = CPC / 转化率 → CPC = CPA × 转化率
+    const stopLoss = Math.round(breakevenCpa * 2); // 单素材止损 = 盈亏平衡CPA × 2（学习期容错）
+    const testAmount = Math.round((paidBudget * 20) / 100);
+    const ordersToBreakeven = breakevenCpa > 0 ? testAmount / breakevenCpa : 0; // 测试期回本所需成交数
+    // 经验判定：毛利空间决定投流可行性（content-commerce 经验阈值）
+    let verdict: { tone: "go" | "caution" | "stop"; label: string; note: string };
+    if (aov <= 0 || marginPct <= 0) {
+      verdict = { tone: "caution", label: "先填客单价与毛利率", note: "填入真实数据后即可判断投流是否回得了本。" };
+    } else if (breakevenCpa < 15) {
+      verdict = {
+        tone: "stop",
+        label: "投流难回本",
+        note: "单笔毛利过薄，付费获客成本极易吃掉利润；建议先靠自然流/提客单价/做复购，再考虑投流。",
+      };
+    } else if (breakevenCpa < 50) {
+      verdict = {
+        tone: "caution",
+        label: "有机会但要精打细算",
+        note: "需把单次成交成本压在盈亏线内，严控转化率与出价，小步测试达标再放量。",
+      };
+    } else {
+      verdict = {
+        tone: "go",
+        label: "毛利充足，适合放量",
+        note: "单笔毛利能覆盖较高获客成本，跑通达标素材后可加大投流放大规模。",
+      };
+    }
+    return { aov, marginPct, convPct, breakevenCpa, breakevenRoas, maxCpc, stopLoss, ordersToBreakeven, verdict };
+  }, [aovInput, marginInput, convInput, paidBudget]);
+
   const platformAside =
     typeof data.platformDetailedData.autoMatchExplanation === "string"
       ? data.platformDetailedData.autoMatchExplanation
@@ -854,6 +898,103 @@ export function PlatformReportDashboard({
                 <p className="mt-1 text-[11px] leading-snug opacity-90">{ph.watch}</p>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* 回本自测：能不能投得起 */}
+        <div className="border-b border-amber-500/15 bg-[linear-gradient(160deg,rgba(16,185,129,0.06),rgba(15,23,42,0))] px-3 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="inline-flex items-center gap-1.5 text-sm font-bold text-emerald-100">
+              <Calculator size={15} className="text-emerald-300" aria-hidden />
+              回本自测 · 这条赛道投不投得起
+            </h3>
+            <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-100/80">
+              只需 3 个真实数据，立即算盈亏线（不接广告后台）
+            </span>
+          </div>
+          <div className="mt-2.5 grid grid-cols-1 gap-2.5 lg:grid-cols-12">
+            {/* 输入区 */}
+            <div className="lg:col-span-4 grid grid-cols-3 gap-2">
+              {[
+                { label: "客单价", unit: "¥", value: aovInput, set: setAovInput, hint: "成交一单的价格" },
+                { label: "毛利率", unit: "%", value: marginInput, set: setMarginInput, hint: "扣成本后利润占比" },
+                { label: "转化率", unit: "%", value: convInput, set: setConvInput, hint: "看了→下单比例" },
+              ].map((f) => (
+                <label key={f.label} className="flex flex-col rounded-lg border border-emerald-400/25 bg-[#0B0F19]/70 px-2 py-1.5">
+                  <span className="text-[10px] font-semibold text-emerald-200/80">{f.label}</span>
+                  <span className="flex items-baseline gap-0.5">
+                    <span className="text-[11px] font-bold text-emerald-300/70">{f.unit === "¥" ? "¥" : ""}</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={f.value}
+                      onChange={(e) => f.set(e.target.value.replace(/[^\d.]/g, "").slice(0, 7))}
+                      className="w-full bg-transparent text-base font-black tabular-nums text-white outline-none"
+                      aria-label={f.label}
+                    />
+                    <span className="text-[11px] font-bold text-emerald-300/70">{f.unit === "%" ? "%" : ""}</span>
+                  </span>
+                  <span className="text-[9px] leading-tight text-emerald-100/45">{f.hint}</span>
+                </label>
+              ))}
+            </div>
+            {/* 结果四块 */}
+            <div className="lg:col-span-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { k: "盈亏平衡CPA", v: formatCny(Math.round(breakeven.breakevenCpa)), sub: "单次成交成本须低于此", cls: "text-amber-50" },
+                { k: "盈亏平衡ROAS", v: breakeven.breakevenRoas > 0 ? `${breakeven.breakevenRoas.toFixed(1)}x` : "—", sub: "投产比须高于此", cls: "text-cyan-50" },
+                { k: "可接受最高CPC", v: formatCny(Math.round(breakeven.maxCpc)), sub: "单次点击出价上限", cls: "text-sky-50" },
+                { k: "单素材止损线", v: formatCny(breakeven.stopLoss), sub: "花到此仍无成交即停", cls: "text-rose-50" },
+              ].map((r) => (
+                <div key={r.k} className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
+                  <p className="text-[10px] font-medium text-gray-300/80">{r.k}</p>
+                  <p className={`text-lg font-black tabular-nums ${r.cls} [text-shadow:0_0_12px_rgba(255,255,255,0.18)]`}>{r.v}</p>
+                  <p className="text-[9px] leading-tight text-gray-400/70">{r.sub}</p>
+                </div>
+              ))}
+            </div>
+            {/* 结论 */}
+            <div
+              className={`lg:col-span-3 flex flex-col justify-center rounded-lg border px-2.5 py-2 ${
+                breakeven.verdict.tone === "go"
+                  ? "border-emerald-400/45 bg-[linear-gradient(150deg,rgba(16,185,129,0.18),rgba(15,23,42,0.9))]"
+                  : breakeven.verdict.tone === "stop"
+                    ? "border-rose-400/45 bg-[linear-gradient(150deg,rgba(244,63,94,0.18),rgba(15,23,42,0.9))]"
+                    : "border-amber-400/45 bg-[linear-gradient(150deg,rgba(245,158,11,0.16),rgba(15,23,42,0.9))]"
+              }`}
+            >
+              <p className="flex items-center gap-1.5 text-sm font-black">
+                <span
+                  className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
+                    breakeven.verdict.tone === "go"
+                      ? "bg-emerald-500/30 text-emerald-100"
+                      : breakeven.verdict.tone === "stop"
+                        ? "bg-rose-500/30 text-rose-100"
+                        : "bg-amber-500/30 text-amber-100"
+                  }`}
+                >
+                  {breakeven.verdict.tone === "go" ? "✓" : breakeven.verdict.tone === "stop" ? "✕" : "!"}
+                </span>
+                <span
+                  className={
+                    breakeven.verdict.tone === "go"
+                      ? "text-emerald-50"
+                      : breakeven.verdict.tone === "stop"
+                        ? "text-rose-50"
+                        : "text-amber-50"
+                  }
+                >
+                  {breakeven.verdict.label}
+                </span>
+              </p>
+              <p className="mt-1 text-[11px] leading-snug text-gray-200/85">{breakeven.verdict.note}</p>
+              {breakeven.ordersToBreakeven > 0 ? (
+                <p className="mt-1 text-[10px] text-gray-300/70">
+                  测试期约需 <span className="font-bold text-white">{breakeven.ordersToBreakeven.toFixed(1)}</span> 单回本
+                  （测试预算 {formatCny(Math.round((paidBudget * 20) / 100))} ÷ 盈亏CPA）
+                </p>
+              ) : null}
+            </div>
           </div>
         </div>
 
