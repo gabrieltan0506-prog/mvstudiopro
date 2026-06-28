@@ -37,7 +37,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -253,32 +253,71 @@ function buildStructureMetricBars(structures: AdvancedAIReportData["topicStructu
   }));
 }
 
-/** 各平台付费投流产品矩阵（投流策略用） */
-const PLATFORM_PAID_CHANNELS: Record<
-  string,
-  { label: string; channels: string[]; note: string }
-> = {
+/** 各平台付费投流产品矩阵 + 渠道预算权重（投流策略用，weight 合计≈100） */
+interface PaidChannelPlan {
+  name: string;
+  weight: number;
+  role: string;
+}
+interface PlatformPaidPlan {
+  label: string;
+  kpiFocus: string;
+  note: string;
+  channels: PaidChannelPlan[];
+}
+const PLATFORM_PAID_PLANS: Record<string, PlatformPaidPlan> = {
   douyin: {
     label: "抖音",
-    channels: ["DOU+", "巨量千川", "小店随心推"],
+    kpiFocus: "3 秒完播 · 点击率 · 转化成本 CPA",
     note: "先 DOU+ 测完播与互动，达标素材切千川承接转化",
+    channels: [
+      { name: "DOU+", weight: 25, role: "冷启测试 · 测完播/互动" },
+      { name: "巨量千川", weight: 65, role: "放大承接 · 控 CPA / ROI" },
+      { name: "小店随心推", weight: 10, role: "日常稳量 · 加热自然流" },
+    ],
   },
   xiaohongshu: {
     label: "小红书",
-    channels: ["薯条", "聚光平台"],
+    kpiFocus: "点击率 · 收藏率 · 互动成本",
     note: "薯条测点击与收藏，跑通后用聚光放大种草人群",
-  },
-  bilibili: {
-    label: "B站",
-    channels: ["花火商单", "UP主起飞"],
-    note: "中长视频以完播/三连为核心，起飞放大优质稿件",
+    channels: [
+      { name: "薯条", weight: 35, role: "低价测试 · 测点击/收藏" },
+      { name: "聚光平台", weight: 55, role: "精准放大 · 搜索/信息流种草" },
+      { name: "蒲公英", weight: 10, role: "达人合作 · 内容信任背书" },
+    ],
   },
   kuaishou: {
     label: "快手",
-    channels: ["粉条", "磁力金牛"],
+    kpiFocus: "完播 · 互动 · 成交 ROI",
     note: "强信任带货，磁力金牛承接成交与复购",
+    channels: [
+      { name: "粉条", weight: 30, role: "作品加热 · 测互动" },
+      { name: "磁力金牛", weight: 60, role: "电商放大 · 承接成交/复购" },
+      { name: "小店通", weight: 10, role: "直播间引流 · 稳成交" },
+    ],
+  },
+  bilibili: {
+    label: "B站",
+    kpiFocus: "完播率 · 三连率 · 涨粉成本",
+    note: "中长视频以完播/三连为核心，起飞放大优质稿件",
+    channels: [
+      { name: "UP主起飞", weight: 60, role: "放大优质稿件 · 拉播放与粉丝" },
+      { name: "花火商单", weight: 40, role: "商业合作 · 品牌承接" },
+    ],
   },
 };
+const PAID_PLATFORM_ORDER = ["douyin", "xiaohongshu", "kuaishou", "bilibili"] as const;
+
+/** 投流预算快捷档（元） */
+const PAID_BUDGET_PRESETS = [1000, 3000, 8000, 20000] as const;
+const PAID_BUDGET_DEFAULT = 3000;
+const PAID_BUDGET_MAX = 10_000_000;
+/** 冷启测试段建议铺设的素材条数（用于反推单条测试预算上限） */
+const PAID_TEST_CREATIVE_COUNT = 6;
+
+function formatCny(n: number): string {
+  return `¥${formatInt(Math.max(0, Math.round(n)))}`;
+}
 
 /** 三段式投流预算配比方法论（与具体金额无关，按比例与观测指标推进） */
 const PAID_TRAFFIC_PHASES = [
@@ -382,6 +421,22 @@ export function PlatformReportDashboard({
     g.platformHitPotentialRadar ??
     fallbackPlatformHitPotentialRadar(platformKey, `${data.topic}|${data.dateRange}`);
   const subRadar = buildRadarRows(platformR);
+
+  // 投流策略：可交互预算算钱 + 平台切换
+  const [selectedPaidPlatform, setSelectedPaidPlatform] = useState<string>(
+    PLATFORM_PAID_PLANS[platformKey] ? platformKey : "douyin",
+  );
+  const [paidBudgetInput, setPaidBudgetInput] = useState<string>(String(PAID_BUDGET_DEFAULT));
+  const paidBudget = useMemo(() => {
+    const n = Math.floor(Number(String(paidBudgetInput).replace(/[^\d]/g, "")) || 0);
+    return Math.min(PAID_BUDGET_MAX, Math.max(0, n));
+  }, [paidBudgetInput]);
+  const paidPhaseAmounts = useMemo(
+    () => PAID_TRAFFIC_PHASES.map((p) => ({ ...p, amount: Math.round((paidBudget * p.ratio) / 100) })),
+    [paidBudget],
+  );
+  const perCreativeTestCap = Math.round((paidBudget * 0.2) / PAID_TEST_CREATIVE_COUNT);
+  const activePaidPlan = PLATFORM_PAID_PLANS[selectedPaidPlatform] ?? PLATFORM_PAID_PLANS.douyin!;
 
   const platformAside =
     typeof data.platformDetailedData.autoMatchExplanation === "string"
@@ -723,128 +778,200 @@ export function PlatformReportDashboard({
         </div>
       ) : null}
 
-      {/* 投流策略：付费放大路线（数据驱动 · 测试→校准→放大） */}
-      {(() => {
-        const paid = PLATFORM_PAID_CHANNELS[platformKey] ?? PLATFORM_PAID_CHANNELS.douyin!;
-        return (
-          <section className="mb-4 overflow-hidden rounded-xl border border-amber-500/40 bg-[linear-gradient(180deg,rgba(245,158,11,0.13)_0%,rgba(17,24,39,0.97)_30%)] shadow-[0_10px_36px_rgba(245,158,11,0.14)]">
-            <div className="h-1 w-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400" aria-hidden />
-            <div className="flex flex-wrap items-center gap-2.5 border-b border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/25 text-amber-100 shadow-sm">
-                <Megaphone size={18} strokeWidth={2.25} aria-hidden />
+      {/* 投流策略：付费放大路线（可交互算钱 · 四平台可切换） */}
+      <section className="mb-4 overflow-hidden rounded-xl border border-amber-500/40 bg-[linear-gradient(180deg,rgba(245,158,11,0.13)_0%,rgba(17,24,39,0.97)_26%)] shadow-[0_10px_36px_rgba(245,158,11,0.14)]">
+        <div className="h-1 w-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400" aria-hidden />
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/25 text-amber-100 shadow-sm">
+            <Megaphone size={18} strokeWidth={2.25} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-base font-bold leading-tight text-amber-50 md:text-lg">投流策略 · 付费放大路线</h2>
+            <p className="text-[11px] font-medium text-amber-200/75">输入预算自动算钱 · 测试→校准→放大 · 四平台可切换</p>
+          </div>
+          {matchedLabel ? (
+            <span className="ml-auto rounded-md border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-50">
+              主战场：{matchedLabel}
+            </span>
+          ) : null}
+        </div>
+
+        {/* 预算输入条 + 三段式金额 */}
+        <div className="border-b border-amber-500/15 bg-black/20 px-3 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-1.5 text-sm font-bold text-amber-100">
+              <Coins size={15} className="text-amber-300" aria-hidden />
+              投流总预算
+            </label>
+            <div className="inline-flex items-center overflow-hidden rounded-lg border border-amber-400/45 bg-[#0B0F19]/80">
+              <span className="px-2 text-sm font-bold text-amber-200/80">¥</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={paidBudgetInput}
+                onChange={(e) => setPaidBudgetInput(e.target.value.replace(/[^\d]/g, "").slice(0, 9))}
+                className="w-28 bg-transparent py-1.5 pr-2 text-base font-black tabular-nums text-white outline-none placeholder:text-white/30"
+                placeholder="预算金额"
+                aria-label="投流总预算（元）"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {PAID_BUDGET_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPaidBudgetInput(String(p))}
+                  className={`rounded-md border px-2 py-1 text-[11px] font-bold tabular-nums transition ${
+                    paidBudget === p
+                      ? "border-amber-400/70 bg-amber-500/30 text-amber-50"
+                      : "border-white/15 bg-white/5 text-amber-100/80 hover:bg-white/10"
+                  }`}
+                >
+                  {formatInt(p)}
+                </button>
+              ))}
+            </div>
+            <span className="ml-auto rounded-md border border-rose-400/35 bg-rose-500/10 px-2 py-1 text-[11px] font-semibold text-rose-100">
+              建议单条测试上限 ≈ {formatCny(perCreativeTestCap)}
+            </span>
+          </div>
+          <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {paidPhaseAmounts.map((ph, i) => (
+              <div key={ph.key} className={`rounded-lg border px-2.5 py-2 ${ph.accent}`}>
+                <div className="flex items-center justify-between text-[12px] font-bold">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="opacity-70">{i + 1}.</span>
+                    {ph.label}
+                    <span className="opacity-70">· {ph.ratio}%</span>
+                  </span>
+                  <span className="text-base font-black tabular-nums [text-shadow:0_0_12px_rgba(255,255,255,0.25)]">
+                    {formatCny(ph.amount)}
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-black/30" aria-hidden>
+                  <div className={`h-full ${ph.bar}`} style={{ width: `${ph.ratio}%` }} />
+                </div>
+                <p className="mt-1 text-[11px] leading-snug opacity-90">{ph.watch}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 平台切换 tabs */}
+        <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+          {PAID_PLATFORM_ORDER.map((pk) => {
+            const plan = PLATFORM_PAID_PLANS[pk]!;
+            const active = selectedPaidPlatform === pk;
+            const isMatched = pk === platformKey;
+            return (
+              <button
+                key={pk}
+                type="button"
+                onClick={() => setSelectedPaidPlatform(pk)}
+                className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                  active
+                    ? "border-amber-400/70 bg-amber-500/25 text-amber-50 shadow-[0_0_16px_rgba(245,158,11,0.25)]"
+                    : "border-white/12 bg-white/5 text-amber-100/70 hover:bg-white/10"
+                }`}
+              >
+                {plan.label}
+                {isMatched ? (
+                  <span className="rounded-full bg-cyan-400/25 px-1.5 text-[9px] font-black text-cyan-100">主战场</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid grid-cols-1 gap-2.5 p-3 lg:grid-cols-12">
+          {/* 渠道预算分配（按所选平台） */}
+          <div className="lg:col-span-5 flex flex-col rounded-lg border border-orange-400/30 bg-[linear-gradient(160deg,rgba(251,146,60,0.12),rgba(15,23,42,0.95))] p-3">
+            <h3 className="flex flex-wrap items-center gap-1.5 text-sm font-bold text-orange-100">
+              <Rocket size={15} className="text-orange-300" aria-hidden />
+              {activePaidPlan.label} · 渠道预算分配
+              <span className="ml-auto rounded bg-orange-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-orange-100/90">
+                KPI：{activePaidPlan.kpiFocus}
               </span>
-              <div className="min-w-0">
-                <h2 className="text-base font-bold leading-tight text-amber-50 md:text-lg">投流策略 · 付费放大路线</h2>
-                <p className="text-[11px] font-medium text-amber-200/75">测试 → 校准 → 放大 三段式 · 配比与止损线</p>
-              </div>
-              {matchedLabel ? (
-                <span className="ml-auto rounded-md border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-50">
-                  主战场：{matchedLabel}
-                </span>
-              ) : null}
-            </div>
-
-            <div className="grid grid-cols-1 gap-2.5 p-3 lg:grid-cols-12">
-              {/* 平台付费矩阵 */}
-              <div className="lg:col-span-3 flex flex-col rounded-lg border border-orange-400/30 bg-[linear-gradient(160deg,rgba(251,146,60,0.12),rgba(15,23,42,0.95))] p-3">
-                <h3 className="flex items-center gap-1.5 text-sm font-bold text-orange-100">
-                  <Rocket size={15} className="text-orange-300" aria-hidden />
-                  平台付费矩阵
-                </h3>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {paid.channels.map((c) => (
-                    <span
-                      key={c}
-                      className="inline-flex items-center rounded-full border border-orange-400/40 bg-orange-500/20 px-2 py-0.5 text-[11px] font-semibold text-orange-50"
-                    >
-                      {c}
-                    </span>
-                  ))}
-                </div>
-                <p className="mt-2 text-[12px] leading-relaxed text-orange-50/90">{paid.note}</p>
-              </div>
-
-              {/* 三段式预算配比 */}
-              <div className="lg:col-span-4 rounded-lg border border-amber-400/30 bg-[linear-gradient(160deg,rgba(245,158,11,0.1),rgba(15,23,42,0.95))] p-3">
-                <h3 className="flex items-center gap-1.5 text-sm font-bold text-amber-100">
-                  <Coins size={15} className="text-amber-300" aria-hidden />
-                  预算三段式配比
-                </h3>
-                <div className="mt-2 space-y-2">
-                  {PAID_TRAFFIC_PHASES.map((ph, i) => (
-                    <div key={ph.key} className={`rounded-md border px-2 py-1.5 ${ph.accent}`}>
-                      <div className="flex items-center justify-between text-[12px] font-bold">
-                        <span className="inline-flex items-center gap-1">
-                          <span className="opacity-70">{i + 1}.</span>
-                          {ph.label}
+            </h3>
+            <div className="mt-2 space-y-1.5">
+              {activePaidPlan.channels.map((ch) => {
+                const amt = Math.round((paidBudget * ch.weight) / 100);
+                return (
+                  <div key={ch.name} className="rounded-md border border-orange-400/20 bg-black/25 px-2.5 py-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-orange-50">
+                        <span className="rounded border border-orange-400/40 bg-orange-500/20 px-1.5 py-0.5 text-[11px]">
+                          {ch.name}
                         </span>
-                        <span className="tabular-nums">{ph.ratio}%</span>
-                      </div>
-                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-black/30" aria-hidden>
-                        <div className={`h-full ${ph.bar}`} style={{ width: `${ph.ratio}%` }} />
-                      </div>
-                      <p className="mt-1 text-[11px] leading-snug opacity-90">{ph.watch}</p>
+                        <span className="text-[11px] font-medium text-orange-100/70">{ch.weight}%</span>
+                      </span>
+                      <span className="text-sm font-black tabular-nums text-amber-50">{formatCny(amt)}</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* 优先投流选题 */}
-              <div className="lg:col-span-3 rounded-lg border border-emerald-400/30 bg-[linear-gradient(160deg,rgba(16,185,129,0.1),rgba(15,23,42,0.95))] p-3">
-                <h3 className="flex items-center gap-1.5 text-sm font-bold text-emerald-100">
-                  <Target size={15} className="text-emerald-300" aria-hidden />
-                  优先投流选题
-                </h3>
-                <p className="mt-1 text-[10px] text-emerald-200/70">综合分 = 封面×0.4 + 转化×0.4 + 契合×0.2</p>
-                <div className="mt-2 space-y-2">
-                  {paidPriorityTopics.length > 0 ? (
-                    paidPriorityTopics.map((t, i) => (
-                      <div key={`${t.title}-${i}`} className="rounded-md border border-emerald-400/25 bg-emerald-950/40 px-2 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/30 text-[11px] font-black text-emerald-50">
-                            {i + 1}
-                          </span>
-                          <span className="line-clamp-2 text-[12px] font-semibold leading-snug text-white">
-                            {trial ? <TrialReadSensitive className="w-full">{t.title}</TrialReadSensitive> : t.title}
-                          </span>
-                          <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 text-[11px] font-black tabular-nums text-emerald-50">
-                            {t.score}
-                          </span>
-                        </div>
-                        <div className="mt-1 flex gap-1 pl-[1.75rem] text-[10px] tabular-nums text-emerald-100/80">
-                          <span>封面 {t.ctr}%</span>
-                          <span>· 转化 {t.conv}%</span>
-                          <span>· 契合 {t.fit}</span>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-[11px] text-emerald-100/60">暂无可排序选题。</p>
-                  )}
-                </div>
-              </div>
-
-              {/* 止损与放量纪律 */}
-              <div className="lg:col-span-2 rounded-lg border border-rose-400/30 bg-[linear-gradient(160deg,rgba(244,63,94,0.1),rgba(15,23,42,0.95))] p-3">
-                <h3 className="flex items-center gap-1.5 text-sm font-bold text-rose-100">
-                  <ShieldAlert size={15} className="text-rose-300" aria-hidden />
-                  止损纪律
-                </h3>
-                <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-rose-50/90">
-                  <li>· 单素材设测试预算上限，未达点击/互动阈值即止损</li>
-                  <li>· ROI 连续低于盈亏线即降价或停投</li>
-                  <li>· 每日补新素材赛马，替换衰退条目</li>
-                </ul>
-              </div>
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-black/30" aria-hidden>
+                      <div className="h-full bg-gradient-to-r from-orange-400 to-amber-300" style={{ width: `${ch.weight}%` }} />
+                    </div>
+                    <p className="mt-1 text-[11px] leading-snug text-orange-50/85">{ch.role}</p>
+                  </div>
+                );
+              })}
             </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-orange-100/80">{activePaidPlan.note}</p>
+          </div>
 
-            <p className="mx-3 mb-3 rounded-lg border-l-4 border-amber-400/70 bg-gradient-to-r from-amber-950/55 to-amber-950/20 px-2.5 py-2 text-[11px] leading-relaxed text-amber-50/90">
-              <span className="font-semibold text-amber-200">参照说明：</span>
-              以上为投流方法论与配比建议（依主战场与本报告选题分推演），具体金额与出价请结合账户实测数据与平台后台口径，分阶段小步放量；指标为决策辅助，非平台官方流量承诺。
-            </p>
-          </section>
-        );
-      })()}
+          {/* 优先投流选题 */}
+          <div className="lg:col-span-4 rounded-lg border border-emerald-400/30 bg-[linear-gradient(160deg,rgba(16,185,129,0.1),rgba(15,23,42,0.95))] p-3">
+            <h3 className="flex items-center gap-1.5 text-sm font-bold text-emerald-100">
+              <Target size={15} className="text-emerald-300" aria-hidden />
+              优先投流选题
+            </h3>
+            <p className="mt-1 text-[10px] text-emerald-200/70">综合分 = 封面×0.4 + 转化×0.4 + 契合×0.2</p>
+            <div className="mt-2 space-y-2">
+              {paidPriorityTopics.length > 0 ? (
+                paidPriorityTopics.map((t, i) => (
+                  <div key={`${t.title}-${i}`} className="rounded-md border border-emerald-400/25 bg-emerald-950/40 px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/30 text-[11px] font-black text-emerald-50">
+                        {i + 1}
+                      </span>
+                      <span className="line-clamp-2 text-[12px] font-semibold leading-snug text-white">
+                        {trial ? <TrialReadSensitive className="w-full">{t.title}</TrialReadSensitive> : t.title}
+                      </span>
+                      <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 text-[11px] font-black tabular-nums text-emerald-50">
+                        {t.score}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex gap-1 pl-[1.75rem] text-[10px] tabular-nums text-emerald-100/80">
+                      <span>封面 {t.ctr}%</span>
+                      <span>· 转化 {t.conv}%</span>
+                      <span>· 契合 {t.fit}</span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-[11px] text-emerald-100/60">暂无可排序选题。</p>
+              )}
+            </div>
+          </div>
+
+          {/* 止损与放量纪律 */}
+          <div className="lg:col-span-3 rounded-lg border border-rose-400/30 bg-[linear-gradient(160deg,rgba(244,63,94,0.1),rgba(15,23,42,0.95))] p-3">
+            <h3 className="flex items-center gap-1.5 text-sm font-bold text-rose-100">
+              <ShieldAlert size={15} className="text-rose-300" aria-hidden />
+              止损纪律
+            </h3>
+            <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-rose-50/90">
+              <li>· 单素材设测试预算上限，未达点击/互动阈值即止损</li>
+              <li>· ROI 连续低于盈亏线即降价或停投</li>
+              <li>· 每日补新素材赛马，替换衰退条目</li>
+            </ul>
+          </div>
+        </div>
+
+        <p className="mx-3 mb-3 rounded-lg border-l-4 border-amber-400/70 bg-gradient-to-r from-amber-950/55 to-amber-950/20 px-2.5 py-2 text-[11px] leading-relaxed text-amber-50/90">
+          <span className="font-semibold text-amber-200">参照说明：</span>
+          金额按你填写的总预算与各渠道权重自动换算，仅为分配建议；具体出价请结合账户实测数据与平台后台口径，分阶段小步放量。指标为决策辅助，非平台官方流量承诺。
+        </p>
+      </section>
 
       {!trial && onGenerateTopicCopy && totalDirections > 0 ? (
         <div className="mb-3.5 rounded-xl border-2 border-[#fde047]/40 bg-[linear-gradient(135deg,rgba(253,224,71,0.14),rgba(17,24,39,0.92))] px-3.5 py-3 shadow-[0_8px_28px_rgba(253,224,71,0.12)]">
