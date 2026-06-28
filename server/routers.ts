@@ -46,6 +46,7 @@ import {
   repairTrackGrowthRows,
 } from "./services/visualReportTrackGrowth";
 import { feedbackRouter } from "./routers/feedback";
+import { paidTrafficReviewsRouter } from "./routers/paidTrafficReviews";
 import { inviteApplyRouter } from "./routers/inviteApply";
 import { staticPayRouter } from "./routers/staticPay";
 import { educationRouter } from "./routers/education";
@@ -2325,6 +2326,7 @@ export const appRouter = router({
   payment: paymentRouter,
   betaCode: betaCodeRouter,
   feedback: feedbackRouter,
+  paidTrafficReviews: paidTrafficReviewsRouter,
   inviteApply: inviteApplyRouter,
   staticPay: staticPayRouter,
   education: educationRouter,
