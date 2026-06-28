@@ -35,12 +35,21 @@ import {
 import type { ReactElement, ReactNode } from "react";
 import { useLayoutEffect, useRef } from "react";
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  LabelList,
+  Legend,
   PolarAngleAxis,
   PolarGrid,
   PolarRadiusAxis,
   Radar,
   RadarChart,
   ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 export type { DecisionIntelTopicPick };
@@ -215,6 +224,55 @@ function buildRadarRows(r: AdvancedAIReportData["globalPredictions"]["hitPotenti
   ];
 }
 
+const VIEWS_BAR_COLORS = ["#34d399", "#22d3ee", "#a78bfa", "#fbbf24", "#fb7185", "#60a5fa"] as const;
+
+/** 选题预估播放量横向对比（取个性化推荐方向，最多 6 条） */
+function buildTopicViewsBars(
+  personalization: AdvancedAIReportData["executionSuggestions"]["personalization"],
+) {
+  return personalization.slice(0, 6).map((it, i) => ({
+    name: `选题${i + 1}`,
+    fullName: String(it.topicDirection || "").trim(),
+    views: Math.max(0, Math.round(Number(it.viewsPredicted) || 0)),
+    color: VIEWS_BAR_COLORS[i % VIEWS_BAR_COLORS.length],
+  }));
+}
+
+/** 封面 / 转化 / IP 契合 三维分组对比（取选题结构实例，最多 5 条） */
+function buildStructureMetricBars(structures: AdvancedAIReportData["topicStructureExamples"]) {
+  return structures.slice(0, 5).map((it, i) => ({
+    name: `结构${i + 1}`,
+    fullName: String(it.title || "").trim(),
+    封面: Math.min(100, Math.max(0, Math.round(Number(it.predictedCtr) || 0))),
+    转化: Math.min(100, Math.max(0, Math.round(Number(it.predictedConversion) || 0))),
+    契合: Math.min(100, Math.max(0, Math.round(Number(it.brandMatchFit) || 0))),
+  }));
+}
+
+function BarTooltipDark({
+  active,
+  payload,
+  unit = "",
+}: {
+  active?: boolean;
+  payload?: Array<{ name?: string; value?: number; color?: string; payload?: { fullName?: string } }>;
+  unit?: string;
+}): ReactElement | null {
+  if (!active || !payload || payload.length === 0) return null;
+  const full = payload[0]?.payload?.fullName;
+  return (
+    <div className="max-w-[16rem] rounded-lg border border-white/15 bg-[#0B0F19]/95 px-2.5 py-1.5 text-xs shadow-xl">
+      {full ? <div className="mb-1 line-clamp-2 font-semibold text-white">{full}</div> : null}
+      {payload.map((p, i) => (
+        <div key={i} className="flex items-center gap-1.5 tabular-nums text-gray-200">
+          <span className="inline-block h-2 w-2 rounded-sm" style={{ background: p.color }} aria-hidden />
+          {p.name}：<span className="font-bold text-white">{formatInt(Number(p.value) || 0)}{unit}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function PlatformReportDashboard({
   data = DEMO_ADVANCED_AI_REPORT_DATA,
   className = "",
@@ -235,6 +293,8 @@ export function PlatformReportDashboard({
   const manualCopyCount = Math.max(0, totalDirections - giftedCount);
   const g = data.globalPredictions;
   const radarData = buildRadarRows(g.hitPotentialRadar);
+  const topicViewsBars = buildTopicViewsBars(data.executionSuggestions.personalization);
+  const structureMetricBars = buildStructureMetricBars(data.topicStructureExamples);
   const platformKey =
     typeof data.platformDetailedData.matchedPlatform === "string"
       ? data.platformDetailedData.matchedPlatform
@@ -505,6 +565,84 @@ export function PlatformReportDashboard({
           </div>
         </section>
       </div>
+
+      {/* 横向对比带：量化柱形图基准 */}
+      {topicViewsBars.length > 0 || structureMetricBars.length > 0 ? (
+        <div className="mb-4 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+          <section className="overflow-hidden rounded-xl border border-sky-500/40 bg-[linear-gradient(180deg,rgba(56,189,248,0.14)_0%,rgba(17,24,39,0.97)_42%)] shadow-[0_10px_36px_rgba(56,189,248,0.14)]">
+            <div className="h-1 w-full bg-gradient-to-r from-sky-400 via-cyan-400 to-transparent" aria-hidden />
+            <div className="flex items-center gap-2.5 border-b border-sky-500/25 bg-sky-500/10 px-3.5 py-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/25 text-sky-100 shadow-sm">
+                <BarChart3 size={18} strokeWidth={2.25} aria-hidden />
+              </span>
+              <div>
+                <h2 className="text-base font-bold leading-tight text-sky-50 md:text-lg">选题预估播放量对比</h2>
+                <p className="text-[11px] font-medium text-sky-200/75">横向柱状 · 序号对应「IP 契合与推荐」</p>
+              </div>
+            </div>
+            <div className="min-h-[224px] px-2.5 pb-3 pt-3" style={{ height: 244 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={topicViewsBars}
+                  layout="vertical"
+                  margin={{ top: 4, right: 56, bottom: 4, left: 8 }}
+                  barCategoryGap="22%"
+                >
+                  <CartesianGrid horizontal={false} stroke="#1f2937" strokeDasharray="3 3" />
+                  <XAxis type="number" tick={{ fill: "#9CA3AF", fontSize: 11 }} axisLine={{ stroke: "#374151" }} tickLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={56}
+                    tick={{ fill: "#D1D5DB", fontSize: 12, fontWeight: 700 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip cursor={{ fill: "rgba(56,189,248,0.08)" }} content={<BarTooltipDark />} />
+                  <Bar dataKey="views" radius={[0, 6, 6, 0]} maxBarSize={26}>
+                    {topicViewsBars.map((row) => (
+                      <Cell key={row.name} fill={row.color} />
+                    ))}
+                    <LabelList
+                      dataKey="views"
+                      position="right"
+                      formatter={(v: number) => formatInt(Number(v) || 0)}
+                      style={{ fill: "#E5E7EB", fontSize: 11, fontWeight: 700 }}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-xl border border-fuchsia-500/40 bg-[linear-gradient(180deg,rgba(217,70,239,0.13)_0%,rgba(17,24,39,0.97)_42%)] shadow-[0_10px_36px_rgba(217,70,239,0.14)]">
+            <div className="h-1 w-full bg-gradient-to-r from-fuchsia-400 via-purple-400 to-transparent" aria-hidden />
+            <div className="flex items-center gap-2.5 border-b border-fuchsia-500/25 bg-fuchsia-500/10 px-3.5 py-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-fuchsia-500/25 text-fuchsia-100 shadow-sm">
+                <BarChart3 size={18} strokeWidth={2.25} aria-hidden />
+              </span>
+              <div>
+                <h2 className="text-base font-bold leading-tight text-fuchsia-50 md:text-lg">封面 / 转化 / 契合 三维对比</h2>
+                <p className="text-[11px] font-medium text-fuchsia-200/75">分组柱状 · 序号对应「选题结构实例」</p>
+              </div>
+            </div>
+            <div className="min-h-[224px] px-2.5 pb-3 pt-3" style={{ height: 244 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={structureMetricBars} margin={{ top: 8, right: 8, bottom: 4, left: -12 }} barCategoryGap="18%">
+                  <CartesianGrid vertical={false} stroke="#1f2937" strokeDasharray="3 3" />
+                  <XAxis dataKey="name" tick={{ fill: "#D1D5DB", fontSize: 12, fontWeight: 700 }} axisLine={{ stroke: "#374151" }} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fill: "#9CA3AF", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: "rgba(217,70,239,0.08)" }} content={<BarTooltipDark />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 2 }} iconType="circle" />
+                  <Bar dataKey="封面" fill="#fbbf24" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="转化" fill="#38bdf8" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="契合" fill="#34d399" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {!trial && onGenerateTopicCopy && totalDirections > 0 ? (
         <div className="mb-3.5 rounded-xl border-2 border-[#fde047]/40 bg-[linear-gradient(135deg,rgba(253,224,71,0.14),rgba(17,24,39,0.92))] px-3.5 py-3 shadow-[0_8px_28px_rgba(253,224,71,0.12)]">
