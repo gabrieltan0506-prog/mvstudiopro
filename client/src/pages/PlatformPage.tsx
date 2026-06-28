@@ -3860,6 +3860,7 @@ export default function PlatformPage() {
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
       fragment.querySelectorAll("script").forEach((n) => n.remove());
       fragment.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+      fragment.querySelector(`#${PLATFORM_REFERENCE_GALLERY_ID}`)?.remove();
       fragment.querySelectorAll("[data-pdf-only]").forEach((n) => {
         n.classList.remove("hidden");
       });
@@ -4816,6 +4817,63 @@ export default function PlatformPage() {
     platformXhsNoteMap,
     pendingCompositeSheet,
   ]);
+
+  // 分镜图独立导出（原始整图 URL，不经 PDF、不会被分页截断）
+  const [isExportingStoryboardSheets, setIsExportingStoryboardSheets] = useState(false);
+  const storyboardSheetDownloadItems = useMemo(
+    () => referenceStoryboardGraphicStrip.filter((it) => !!it.url),
+    [referenceStoryboardGraphicStrip],
+  );
+  const downloadSingleImageFile = useCallback(async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url, { mode: "cors", cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+      return true;
+    } catch {
+      // CORS/网络失败兜底：新标签打开，用户可右键/长按保存（仍是原图、无截断）
+      try {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } catch {
+        /* ignore */
+      }
+      return false;
+    }
+  }, []);
+  const buildStoryboardSheetFilename = useCallback((item: { key: string; title: string }, index: number) => {
+    const safeTitle = (item.title || "分镜").replace(/[\\/:*?"<>|]+/g, "").slice(0, 24);
+    const kindTag = item.key.includes("xhs") ? "小红书八格图文" : "分镜2x4";
+    return `mvstudiopro-${kindTag}-${safeTitle}-${index + 1}.png`;
+  }, []);
+  const handleExportAllStoryboardSheets = useCallback(async () => {
+    const items = storyboardSheetDownloadItems;
+    if (items.length === 0) {
+      toast.error("暂无可导出的分镜图");
+      return;
+    }
+    setIsExportingStoryboardSheets(true);
+    let ok = 0;
+    let fallback = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]!;
+      const success = await downloadSingleImageFile(it.url as string, buildStoryboardSheetFilename(it, i));
+      if (success) ok++;
+      else fallback++;
+      // 间隔，避免浏览器拦截连续多文件下载
+      await new Promise((r) => setTimeout(r, 450));
+    }
+    setIsExportingStoryboardSheets(false);
+    if (fallback === 0) toast.success(`已导出全部 ${ok} 张分镜图`);
+    else toast.message(`已导出 ${ok} 张，另有 ${fallback} 张已在新标签打开，可右键/长按保存原图`);
+  }, [storyboardSheetDownloadItems, downloadSingleImageFile, buildStoryboardSheetFilename]);
 
   const evidenceNotes = useMemo(() => {
     if (!snapshot) {
@@ -7104,6 +7162,7 @@ export default function PlatformPage() {
                 {contentExecutionCards.length > 0 ? (
                   <div
                     id={PLATFORM_REFERENCE_GALLERY_ID}
+                    data-pdf-exclude="true"
                     className="mb-10 rounded-3xl border border-white/5 bg-[#0a0a0a]/50 p-6"
                   >
                     <div className="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
@@ -7112,6 +7171,22 @@ export default function PlatformPage() {
                         <h3 className="text-xl font-bold tracking-tight text-white">
                           2×4 分镜 · 小红书 2×4 八格图文 画廊
                         </h3>
+                        {!isTrial && storyboardSheetDownloadItems.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleExportAllStoryboardSheets()}
+                            disabled={isExportingStoryboardSheets}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[#10B981]/40 bg-[#10B981]/15 px-3 py-1.5 text-xs font-bold text-[#6ee7b7] transition hover:bg-[#10B981]/25 disabled:cursor-not-allowed disabled:opacity-50"
+                            title="把全部分镜图下载为原始高清图片（不经 PDF，不会被截断）"
+                          >
+                            {isExportingStoryboardSheets ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4" />
+                            )}
+                            一键导出全部（{storyboardSheetDownloadItems.length}）
+                          </button>
+                        ) : null}
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
@@ -7250,6 +7325,22 @@ export default function PlatformPage() {
 
                               {ref.url ? (
                                 <div className="border-t border-white/5 bg-[rgba(14,9,32,0.88)] p-3">
+                                  {!isTrial ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void downloadSingleImageFile(
+                                          ref.url as string,
+                                          buildStoryboardSheetFilename(ref, 0),
+                                        )
+                                      }
+                                      className="mb-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-white/10"
+                                      title="下载这张分镜原图（高清、不截断）"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      下载这张原图
+                                    </button>
+                                  ) : null}
                                   <ImageUpscaleBar
                                     imageUrl={ref.url}
                                     baseCreditKey="forgeImage"
@@ -8220,7 +8311,7 @@ export default function PlatformPage() {
                   <span className="text-lg leading-none mt-0.5">⚡</span>
                   <div>
                     <div className="font-semibold mb-0.5">分析结果具有时效性</div>
-                    <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。</div>
+                    <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。2×4 分镜／八格图文请用上方画廊「一键导出全部」单独下载原图（PDF 不含分镜图，避免长图被截断）。</div>
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">
