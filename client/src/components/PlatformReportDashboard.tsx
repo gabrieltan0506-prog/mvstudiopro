@@ -17,6 +17,7 @@ import {
   BarChart3,
   BookOpen,
   Brain,
+  Coins,
   Compass,
   FilePenLine,
   GitCompare,
@@ -24,9 +25,12 @@ import {
   LayoutDashboard,
   Lightbulb,
   Loader2,
+  Megaphone,
   Radio,
   RefreshCcw,
+  Rocket,
   ScanLine,
+  ShieldAlert,
   Sparkles,
   Target,
   TrendingUp,
@@ -249,6 +253,80 @@ function buildStructureMetricBars(structures: AdvancedAIReportData["topicStructu
   }));
 }
 
+/** 各平台付费投流产品矩阵（投流策略用） */
+const PLATFORM_PAID_CHANNELS: Record<
+  string,
+  { label: string; channels: string[]; note: string }
+> = {
+  douyin: {
+    label: "抖音",
+    channels: ["DOU+", "巨量千川", "小店随心推"],
+    note: "先 DOU+ 测完播与互动，达标素材切千川承接转化",
+  },
+  xiaohongshu: {
+    label: "小红书",
+    channels: ["薯条", "聚光平台"],
+    note: "薯条测点击与收藏，跑通后用聚光放大种草人群",
+  },
+  bilibili: {
+    label: "B站",
+    channels: ["花火商单", "UP主起飞"],
+    note: "中长视频以完播/三连为核心，起飞放大优质稿件",
+  },
+  kuaishou: {
+    label: "快手",
+    channels: ["粉条", "磁力金牛"],
+    note: "强信任带货，磁力金牛承接成交与复购",
+  },
+};
+
+/** 三段式投流预算配比方法论（与具体金额无关，按比例与观测指标推进） */
+const PAID_TRAFFIC_PHASES = [
+  {
+    key: "test",
+    label: "冷启测试",
+    ratio: 20,
+    accent: "border-sky-400/40 bg-sky-500/10 text-sky-50",
+    bar: "bg-sky-400",
+    watch: "多素材小额赛马，盯 3 秒完播 / 点击率 / 互动率",
+  },
+  {
+    key: "calibrate",
+    label: "模型校准",
+    ratio: 30,
+    accent: "border-amber-400/40 bg-amber-500/10 text-amber-50",
+    bar: "bg-amber-400",
+    watch: "保留达标素材，定向放量至 ROI 接近 1，校准人群包",
+  },
+  {
+    key: "scale",
+    label: "规模放大",
+    ratio: 50,
+    accent: "border-emerald-400/40 bg-emerald-500/10 text-emerald-50",
+    bar: "bg-emerald-400",
+    watch: "跑通素材阶梯加价，控 CPA / 守 ROI 下限，持续换新",
+  },
+] as const;
+
+/** 优先投流选题：CTR×0.4 + 转化×0.4 + IP契合×0.2 综合分排序 */
+function buildPaidTrafficPriorityTopics(structures: AdvancedAIReportData["topicStructureExamples"]) {
+  return structures
+    .map((it) => {
+      const ctr = Math.min(100, Math.max(0, Math.round(Number(it.predictedCtr) || 0)));
+      const conv = Math.min(100, Math.max(0, Math.round(Number(it.predictedConversion) || 0)));
+      const fit = Math.min(100, Math.max(0, Math.round(Number(it.brandMatchFit) || 0)));
+      return {
+        title: String(it.title || "").trim(),
+        ctr,
+        conv,
+        fit,
+        score: Math.round(ctr * 0.4 + conv * 0.4 + fit * 0.2),
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2);
+}
+
 function BarTooltipDark({
   active,
   payload,
@@ -295,6 +373,7 @@ export function PlatformReportDashboard({
   const radarData = buildRadarRows(g.hitPotentialRadar);
   const topicViewsBars = buildTopicViewsBars(data.executionSuggestions.personalization);
   const structureMetricBars = buildStructureMetricBars(data.topicStructureExamples);
+  const paidPriorityTopics = buildPaidTrafficPriorityTopics(data.topicStructureExamples);
   const platformKey =
     typeof data.platformDetailedData.matchedPlatform === "string"
       ? data.platformDetailedData.matchedPlatform
@@ -643,6 +722,129 @@ export function PlatformReportDashboard({
           </section>
         </div>
       ) : null}
+
+      {/* 投流策略：付费放大路线（数据驱动 · 测试→校准→放大） */}
+      {(() => {
+        const paid = PLATFORM_PAID_CHANNELS[platformKey] ?? PLATFORM_PAID_CHANNELS.douyin!;
+        return (
+          <section className="mb-4 overflow-hidden rounded-xl border border-amber-500/40 bg-[linear-gradient(180deg,rgba(245,158,11,0.13)_0%,rgba(17,24,39,0.97)_30%)] shadow-[0_10px_36px_rgba(245,158,11,0.14)]">
+            <div className="h-1 w-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400" aria-hidden />
+            <div className="flex flex-wrap items-center gap-2.5 border-b border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/25 text-amber-100 shadow-sm">
+                <Megaphone size={18} strokeWidth={2.25} aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-base font-bold leading-tight text-amber-50 md:text-lg">投流策略 · 付费放大路线</h2>
+                <p className="text-[11px] font-medium text-amber-200/75">测试 → 校准 → 放大 三段式 · 配比与止损线</p>
+              </div>
+              {matchedLabel ? (
+                <span className="ml-auto rounded-md border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-xs font-bold text-amber-50">
+                  主战场：{matchedLabel}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 p-3 lg:grid-cols-12">
+              {/* 平台付费矩阵 */}
+              <div className="lg:col-span-3 flex flex-col rounded-lg border border-orange-400/30 bg-[linear-gradient(160deg,rgba(251,146,60,0.12),rgba(15,23,42,0.95))] p-3">
+                <h3 className="flex items-center gap-1.5 text-sm font-bold text-orange-100">
+                  <Rocket size={15} className="text-orange-300" aria-hidden />
+                  平台付费矩阵
+                </h3>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {paid.channels.map((c) => (
+                    <span
+                      key={c}
+                      className="inline-flex items-center rounded-full border border-orange-400/40 bg-orange-500/20 px-2 py-0.5 text-[11px] font-semibold text-orange-50"
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 text-[12px] leading-relaxed text-orange-50/90">{paid.note}</p>
+              </div>
+
+              {/* 三段式预算配比 */}
+              <div className="lg:col-span-4 rounded-lg border border-amber-400/30 bg-[linear-gradient(160deg,rgba(245,158,11,0.1),rgba(15,23,42,0.95))] p-3">
+                <h3 className="flex items-center gap-1.5 text-sm font-bold text-amber-100">
+                  <Coins size={15} className="text-amber-300" aria-hidden />
+                  预算三段式配比
+                </h3>
+                <div className="mt-2 space-y-2">
+                  {PAID_TRAFFIC_PHASES.map((ph, i) => (
+                    <div key={ph.key} className={`rounded-md border px-2 py-1.5 ${ph.accent}`}>
+                      <div className="flex items-center justify-between text-[12px] font-bold">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="opacity-70">{i + 1}.</span>
+                          {ph.label}
+                        </span>
+                        <span className="tabular-nums">{ph.ratio}%</span>
+                      </div>
+                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-black/30" aria-hidden>
+                        <div className={`h-full ${ph.bar}`} style={{ width: `${ph.ratio}%` }} />
+                      </div>
+                      <p className="mt-1 text-[11px] leading-snug opacity-90">{ph.watch}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 优先投流选题 */}
+              <div className="lg:col-span-3 rounded-lg border border-emerald-400/30 bg-[linear-gradient(160deg,rgba(16,185,129,0.1),rgba(15,23,42,0.95))] p-3">
+                <h3 className="flex items-center gap-1.5 text-sm font-bold text-emerald-100">
+                  <Target size={15} className="text-emerald-300" aria-hidden />
+                  优先投流选题
+                </h3>
+                <p className="mt-1 text-[10px] text-emerald-200/70">综合分 = 封面×0.4 + 转化×0.4 + 契合×0.2</p>
+                <div className="mt-2 space-y-2">
+                  {paidPriorityTopics.length > 0 ? (
+                    paidPriorityTopics.map((t, i) => (
+                      <div key={`${t.title}-${i}`} className="rounded-md border border-emerald-400/25 bg-emerald-950/40 px-2 py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/30 text-[11px] font-black text-emerald-50">
+                            {i + 1}
+                          </span>
+                          <span className="line-clamp-2 text-[12px] font-semibold leading-snug text-white">
+                            {trial ? <TrialReadSensitive className="w-full">{t.title}</TrialReadSensitive> : t.title}
+                          </span>
+                          <span className="ml-auto rounded bg-emerald-500/25 px-1.5 py-0.5 text-[11px] font-black tabular-nums text-emerald-50">
+                            {t.score}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex gap-1 pl-[1.75rem] text-[10px] tabular-nums text-emerald-100/80">
+                          <span>封面 {t.ctr}%</span>
+                          <span>· 转化 {t.conv}%</span>
+                          <span>· 契合 {t.fit}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-[11px] text-emerald-100/60">暂无可排序选题。</p>
+                  )}
+                </div>
+              </div>
+
+              {/* 止损与放量纪律 */}
+              <div className="lg:col-span-2 rounded-lg border border-rose-400/30 bg-[linear-gradient(160deg,rgba(244,63,94,0.1),rgba(15,23,42,0.95))] p-3">
+                <h3 className="flex items-center gap-1.5 text-sm font-bold text-rose-100">
+                  <ShieldAlert size={15} className="text-rose-300" aria-hidden />
+                  止损纪律
+                </h3>
+                <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-rose-50/90">
+                  <li>· 单素材设测试预算上限，未达点击/互动阈值即止损</li>
+                  <li>· ROI 连续低于盈亏线即降价或停投</li>
+                  <li>· 每日补新素材赛马，替换衰退条目</li>
+                </ul>
+              </div>
+            </div>
+
+            <p className="mx-3 mb-3 rounded-lg border-l-4 border-amber-400/70 bg-gradient-to-r from-amber-950/55 to-amber-950/20 px-2.5 py-2 text-[11px] leading-relaxed text-amber-50/90">
+              <span className="font-semibold text-amber-200">参照说明：</span>
+              以上为投流方法论与配比建议（依主战场与本报告选题分推演），具体金额与出价请结合账户实测数据与平台后台口径，分阶段小步放量；指标为决策辅助，非平台官方流量承诺。
+            </p>
+          </section>
+        );
+      })()}
 
       {!trial && onGenerateTopicCopy && totalDirections > 0 ? (
         <div className="mb-3.5 rounded-xl border-2 border-[#fde047]/40 bg-[linear-gradient(135deg,rgba(253,224,71,0.14),rgba(17,24,39,0.92))] px-3.5 py-3 shadow-[0_8px_28px_rgba(253,224,71,0.12)]">
