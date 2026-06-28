@@ -284,6 +284,11 @@ export function PlatformReportDashboard({
       data-platform-report-dashboard="true"
       className={`box-border w-[min(1680px,100vw)] max-w-[1680px] shrink-0 overflow-hidden border border-gray-800 bg-[#0B0F19] px-5 pb-5 pt-5 text-[15px] leading-relaxed font-sans text-white md:w-[1680px] ${className}`.trim()}
     >
+      <style>{`
+        @keyframes dashboardKeyFlash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .dashboard-flash-key { animation: dashboardKeyFlash 1.5s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .dashboard-flash-key { animation: none; } }
+      `}</style>
       {trial ? (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/40 bg-[linear-gradient(90deg,rgba(245,158,11,0.18),rgba(15,23,42,0.92))] px-3 py-2.5 text-[11px] font-semibold leading-snug text-amber-50 shadow-[0_6px_24px_rgba(245,158,11,0.12)]">
           <ScanLine className="h-3.5 w-3.5 shrink-0 text-amber-200" aria-hidden />
@@ -361,21 +366,21 @@ export function PlatformReportDashboard({
               </ResponsiveContainer>
             </div>
             <div className="flex w-[42%] min-w-[8rem] flex-col justify-center gap-2.5 border-l border-emerald-500/20 pl-3">
-              <div className="rounded-lg border border-emerald-400/25 bg-emerald-950/40 px-2.5 py-2 shadow-sm">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-200/90">
-                  <BarChart3 size={15} className="text-emerald-400" aria-hidden />
+              <div className="rounded-lg border border-emerald-400/40 bg-emerald-950/40 px-2.5 py-2.5 shadow-[0_0_24px_rgba(16,185,129,0.18)] ring-1 ring-emerald-400/20">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-200/90">
+                  <BarChart3 size={16} className="text-emerald-400" aria-hidden />
                   总播放量预测
                 </div>
-                <div className="mt-0.5 text-2xl font-bold leading-tight text-emerald-100 tabular-nums md:text-3xl">
+                <div className="dashboard-flash-key mt-0.5 text-3xl font-black leading-tight text-emerald-50 tabular-nums md:text-4xl [text-shadow:0_0_20px_rgba(16,185,129,0.7)]">
                   {formatInt(g.totalViewsPredicted)}
                 </div>
               </div>
-              <div className="rounded-lg border border-teal-400/25 bg-teal-950/35 px-2.5 py-2 shadow-sm">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-teal-200/90">
-                  <RefreshCcw size={15} className="text-teal-400" aria-hidden />
+              <div className="rounded-lg border border-teal-400/40 bg-teal-950/35 px-2.5 py-2.5 shadow-[0_0_24px_rgba(20,184,166,0.18)] ring-1 ring-teal-400/20">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-teal-200/90">
+                  <RefreshCcw size={16} className="text-teal-400" aria-hidden />
                   平均转化率
                 </div>
-                <div className="mt-0.5 text-xl font-bold text-teal-100 tabular-nums md:text-2xl">
+                <div className="dashboard-flash-key mt-0.5 text-2xl font-black text-teal-50 tabular-nums md:text-3xl [text-shadow:0_0_18px_rgba(20,184,166,0.7)]">
                   {g.averageConversionRate.toFixed(1)}%
                 </div>
               </div>
@@ -414,12 +419,12 @@ export function PlatformReportDashboard({
                 <Radio size={15} className="shrink-0 text-cyan-300" aria-hidden />
                 主战场自动匹配
                 {matchedLabel ? (
-                  <span className="ml-0.5 rounded-md bg-cyan-400/25 px-1.5 py-0.5 text-xs font-extrabold text-cyan-50">
+                  <span className="dashboard-flash-key ml-0.5 rounded-md bg-cyan-400/30 px-2 py-0.5 text-sm font-black text-cyan-50 ring-1 ring-cyan-300/40 [text-shadow:0_0_14px_rgba(34,211,238,0.7)]">
                     {matchedLabel}
                   </span>
                 ) : null}
               </p>
-              <p className="mt-1.5 line-clamp-6 text-[13px] text-gray-200">
+              <p className="mt-1.5 line-clamp-6 text-sm text-gray-100/95">
                 {trial ? <TrialReadSensitive>{platformAside}</TrialReadSensitive> : platformAside}
               </p>
             </div>
@@ -542,19 +547,19 @@ export function PlatformReportDashboard({
                     key={ins.id}
                     className={`rounded-lg border p-2.5 shadow-sm ${acc.ring}`}
                   >
-                    <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-white">
-                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${acc.badge}`}>
-                        <CardIcon size={13} strokeWidth={2.25} aria-hidden />
+                    <h3 className="mb-1 flex items-center gap-1.5 text-base font-bold text-white">
+                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${acc.badge}`}>
+                        <CardIcon size={15} strokeWidth={2.25} aria-hidden />
                       </span>
                       <span className="line-clamp-2 leading-snug">
                         {trial ? <TrialReadSensitive>{ins.title}</TrialReadSensitive> : ins.title}
                       </span>
                     </h3>
-                    <p className="line-clamp-4 text-xs leading-relaxed text-gray-200/90">
+                    <p className="line-clamp-4 text-[13px] leading-relaxed text-gray-100/95">
                       {trial ? <TrialReadSensitive>{ins.content}</TrialReadSensitive> : ins.content}
                     </p>
                     {ins.metricsText ? (
-                      <p className="mt-1.5 line-clamp-2 rounded-md border border-emerald-400/35 bg-emerald-950/45 px-2 py-1 text-xs font-medium leading-snug text-emerald-100">
+                      <p className="mt-1.5 line-clamp-2 rounded-md border border-emerald-400/45 bg-emerald-950/55 px-2 py-1 text-[13px] font-semibold leading-snug text-emerald-50">
                         {trial ? (
                           <TrialReadSensitive>{sanitizeDecisionIntelMetricsText(ins.metricsText)}</TrialReadSensitive>
                         ) : (
@@ -595,13 +600,13 @@ export function PlatformReportDashboard({
                     <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-black/25 text-amber-200">
                       <Sparkles size={12} aria-hidden />
                     </span>
-                    <div className="min-w-0 flex-1 whitespace-normal break-words text-sm font-semibold leading-snug text-white">
+                    <div className="min-w-0 flex-1 whitespace-normal break-words text-base font-bold leading-snug text-white">
                       {trial ? <TrialReadSensitive className="w-full">{ex.title}</TrialReadSensitive> : ex.title}
                     </div>
                   </div>
                   <TopicStructureDetails
                     className="mt-2 pl-7"
-                    summaryClassName="cursor-pointer select-none text-[11px] font-bold text-amber-200/95 [-webkit-tap-highlight-color:transparent] list-none [&::-webkit-details-marker]:hidden"
+                    summaryClassName="cursor-pointer select-none text-xs font-bold text-amber-200/95 [-webkit-tap-highlight-color:transparent] list-none [&::-webkit-details-marker]:hidden"
                     summary={
                       <span className="rounded-md border border-amber-500/25 bg-amber-950/30 px-2 py-1 text-amber-100/95">
                         完整结构文案
@@ -609,21 +614,21 @@ export function PlatformReportDashboard({
                       </span>
                     }
                   >
-                    <p className="mt-2 whitespace-pre-wrap break-words border-l-2 border-amber-400/35 pl-2 text-[13px] leading-relaxed text-gray-200">
+                    <p className="mt-2 whitespace-pre-wrap break-words border-l-2 border-amber-400/35 pl-2 text-sm leading-relaxed text-gray-100/95">
                       {trial ? <TrialReadSensitive className="w-full">{ex.structure}</TrialReadSensitive> : ex.structure}
                     </p>
                   </TopicStructureDetails>
                   <div className="mt-2 flex flex-wrap gap-1 pl-7">
-                    <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-50">
-                      <Zap size={10} className="shrink-0 text-amber-300" aria-hidden />
+                    <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[11px] font-semibold text-amber-50">
+                      <Zap size={11} className="shrink-0 text-amber-300" aria-hidden />
                       封面 {ex.predictedCtr}%
                     </span>
-                    <span className="inline-flex items-center gap-0.5 rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-50">
-                      <RefreshCcw size={10} className="shrink-0 text-sky-300" aria-hidden />
+                    <span className="inline-flex items-center gap-0.5 rounded-full border border-sky-400/40 bg-sky-500/20 px-2 py-0.5 text-[11px] font-semibold text-sky-50">
+                      <RefreshCcw size={11} className="shrink-0 text-sky-300" aria-hidden />
                       转化 {ex.predictedConversion}%
                     </span>
-                    <span className="inline-flex items-center gap-0.5 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-50">
-                      <Target size={10} className="shrink-0 text-emerald-300" aria-hidden />
+                    <span className="inline-flex items-center gap-0.5 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-50">
+                      <Target size={11} className="shrink-0 text-emerald-300" aria-hidden />
                       契合 {ex.brandMatchFit}
                     </span>
                   </div>

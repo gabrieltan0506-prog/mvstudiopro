@@ -27,8 +27,8 @@ import {
   CREDIT_COSTS,
   PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL,
   platformCoverBundleTotalCredits,
-  platformCompositeBundleTotalCredits,
-  platformCoverCompositeBulkBundleTotalCredits,
+  platformCompositeBundleTotalCreditsForGrid,
+  platformCoverCompositeBulkBundleTotalCreditsForGrid,
   platformCoverCompositeBundleCreditsForFormatGrid,
 } from "@shared/plans";
 import {
@@ -2510,6 +2510,7 @@ export default function PlatformPage() {
         | "xiaohongshu_dual_note";
       scriptContext: string;
       executionDetails: string;
+      gridVariant?: "2x4" | "3x4";
       pollDebugLabel?: string;
     }) => {
       const pollLabel =
@@ -2523,6 +2524,7 @@ export default function PlatformPage() {
         compositeScriptContext: inp.scriptContext,
         compositeKind: inp.compositeKind,
         compositeExecutionDetails: inp.executionDetails,
+        gridVariant: inp.gridVariant ?? "2x4",
         imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
         ...optionalBoundCreationRecordId(),
         coverProEngine:
@@ -3487,6 +3489,7 @@ export default function PlatformPage() {
   const runSequentialCompositeBatchGeneration = async () => {
     const cards = visibleExecutionCards;
     const packSceneIds = cards.map((c) => c.id);
+    const batchIs3x4 = compositeGridVariant === "3x4";
     const localOpId = `batch-composite-seq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     compositeBatchSilentUiRef.current = true;
     setIsSequentialCompositeBatchGenerating(true);
@@ -3495,8 +3498,8 @@ export default function PlatformPage() {
         at: new Date().toISOString(),
         kind: "batch_composite_2x4",
         lines: [
-          `${new Date().toISOString()}  [客户端] 一键 2×4/八格批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
-          `${new Date().toISOString()}  [等待中] 分镜套装合计 ${platformCompositeBundleTotalCredits(cards.length)} 积分（54×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
+          `${new Date().toISOString()}  [客户端] 一键 ${batchIs3x4 ? "3×4 十二格" : "2×4/八格"}批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
+          `${new Date().toISOString()}  [等待中] 分镜套装合计 ${platformCompositeBundleTotalCreditsForGrid(cards.length, batchIs3x4)} 积分（${batchIs3x4 ? 108 : 54}×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
         ],
         meta: {
           localOpId,
@@ -3555,6 +3558,7 @@ export default function PlatformPage() {
                 title: headlineTitle,
                 scriptContext: buildPlatformSheetScriptContext(item as any),
                 kind: compositeKind,
+                gridVariant: compositeGridVariant,
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 ...optionalBoundCreationRecordId(),
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
@@ -4484,12 +4488,16 @@ export default function PlatformPage() {
     [platformTopicCount],
   );
   const platformBulkCompositeCost = useMemo(
-    () => platformCompositeBundleTotalCredits(platformTopicCount),
-    [platformTopicCount],
+    () => platformCompositeBundleTotalCreditsForGrid(platformTopicCount, compositeGridVariant === "3x4"),
+    [platformTopicCount, compositeGridVariant],
   );
   const platformBulkCoverCompositeCost = useMemo(
-    () => platformCoverCompositeBulkBundleTotalCredits(visibleExecutionCards),
-    [visibleExecutionCards],
+    () =>
+      platformCoverCompositeBulkBundleTotalCreditsForGrid(
+        visibleExecutionCards,
+        compositeGridVariant === "3x4",
+      ),
+    [visibleExecutionCards, compositeGridVariant],
   );
   /** 一键 2×4 合成：短影音向（分镜主表）vs 图文/小红书（八格）条数，用于展示合计积分由来 */
   const platformBulkCompositeBreakdown = useMemo(() => {
@@ -4509,9 +4517,11 @@ export default function PlatformPage() {
       toast.error("请先登录");
       return;
     }
+    const bulkIs3x4 = compositeGridVariant === "3x4";
+    const bulkUnit = bulkIs3x4 ? 108 : 54;
     const note = supervisorAccess
       ? ""
-      : `将为 ${platformTopicCount} 个选题依次各生成一张 2×4 分镜或小红书八格图文。套装价 **54×${platformTopicCount}=${platformBulkCompositeCost} 积分**${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（散买单条短视频 ${CREDIT_COSTS.platformStoryboardSheet}、图文/小红书 ${CREDIT_COSTS.platformXhsDualNote}）。每条约 3～5 分钟。是否继续？`;
+      : `将为 ${platformTopicCount} 个选题依次各生成一张${bulkIs3x4 ? " 3×4 十二格" : " 2×4"}分镜或小红书${bulkIs3x4 ? "十二格" : "八格"}图文。套装价 **${bulkUnit}×${platformTopicCount}=${platformBulkCompositeCost} 积分**${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（散买单条短视频 ${bulkIs3x4 ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet}、图文/小红书 ${bulkIs3x4 ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote}）。每条约 3～5 分钟。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCompositeBatchGeneration();
   }
@@ -4578,6 +4588,7 @@ export default function PlatformPage() {
                 compositeKind,
                 scriptContext: buildPlatformSheetScriptContext(item as any),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                gridVariant: compositeGridVariant,
                 pollDebugLabel: `套装批量 · ${item.id}`,
               }),
             (waitMs) => {
@@ -4665,9 +4676,10 @@ export default function PlatformPage() {
       toast.error("请先登录");
       return;
     }
+    const bundleIs3x4 = compositeGridVariant === "3x4";
     const note = supervisorAccess
       ? ""
-      : `将为 ${platformTopicCount} 个选题依次生成封面 + 2×4/八格，合计 ${platformBulkCoverCompositeCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（按每条体裁：封面 48 + 分镜 60/72 后打九折）。是否继续？`;
+      : `将为 ${platformTopicCount} 个选题依次生成封面 +${bundleIs3x4 ? " 3×4 十二格" : " 2×4/八格"}，合计 ${platformBulkCoverCompositeCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}（按每条体裁：封面 48 + 分镜 ${bundleIs3x4 ? "120/144" : "60/72"} 后打九折）。是否继续？`;
     if (!supervisorAccess && !window.confirm(note)) return;
     void runSequentialCoverCompositeBundleBatchGeneration();
   }
@@ -7590,6 +7602,7 @@ export default function PlatformPage() {
                             compositeKind,
                             scriptContext: buildPlatformSheetScriptContext(item as any),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                            gridVariant: compositeGridVariant,
                             pollDebugLabel: `套装单卡 · ${item.id}`,
                           }),
                         )

@@ -103,8 +103,8 @@ import {
   getProductPackageDisplayRows,
   platformBundleCreditsForSlot,
   platformCoverBundleTotalCredits,
-  platformCoverCompositeBundleCreditsForCompositeKind,
-  platformCompositeBundleTotalCredits,
+  platformCoverCompositeBundleCreditsForCompositeKindGrid,
+  platformCompositeBundleTotalCreditsForGrid,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
@@ -4823,6 +4823,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           creationRecordId: z.number().int().positive().optional(),
           compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
+          gridVariant: z.enum(["2x4", "3x4"]).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4838,7 +4839,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const enableTopicCoverDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
 
-        const bundleCost = platformCoverCompositeBundleCreditsForCompositeKind(input.compositeKind);
+        // 3×4 仅 landscape / 小红书图文支持；其余按 2×4。
+        const bundleIs3x4 =
+          input.gridVariant === "3x4" &&
+          (input.compositeKind === "storyboard_sheet_landscape" ||
+            input.compositeKind === "xiaohongshu_dual_note");
+        const bundleCost = platformCoverCompositeBundleCreditsForCompositeKindGrid(
+          input.compositeKind,
+          bundleIs3x4,
+        );
         const database = await db.getDb();
         const { userCreations } = await import("../drizzle/schema-creations");
 
@@ -4987,6 +4996,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               creationRecordId: input.creationRecordId,
               enableCompositeDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
               compositeImageEngine: input.compositeImageEngine,
+              compositeGridVariant: bundleIs3x4 ? "3x4" : "2x4",
             },
           },
         });
@@ -5334,14 +5344,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const imagePromptTranslatorForComposite = "gpt54" as const;
         const compositePack = input.bulkCompositePack;
         // 3×4 十二格：仅 storyboard_sheet_landscape / xiaohongshu_dual_note 支持，后端分段生成再拼接，定价另算。
-        // 套装（bulkCompositePack）为固定九折 2×4 捆绑商品，强制 2×4，避免按 2×4 收费却跑 3×4。
+        // 套装（bulkCompositePack）随前端 3×4 开关换算单价（2×4→54/条；3×4→108/条），避免「选了 3×4 仍出 2×4」。
         const is3x4Grid =
           input.gridVariant === "3x4" &&
-          !compositePack &&
           (input.kind === "storyboard_sheet_landscape" || input.kind === "xiaohongshu_dual_note");
         const cost = compositePack
           ? platformBundleCreditsForSlot(
-              platformCompositeBundleTotalCredits(compositePack.packSceneIds.length),
+              platformCompositeBundleTotalCreditsForGrid(compositePack.packSceneIds.length, is3x4Grid),
               compositePack.sequentialSlot,
               compositePack.packSceneIds.length,
             )
