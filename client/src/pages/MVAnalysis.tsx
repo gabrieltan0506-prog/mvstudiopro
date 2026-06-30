@@ -2042,11 +2042,6 @@ export default function MVAnalysisPage() {
   const handleAnalyze = useCallback(async () => {
     if (!inputKind) return;
 
-    setAnalysis(null);
-    setAnalysisTranscript("");
-    setAnalyzedVideoUrl("");
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-
     if (!supervisorAccess) {
       try {
         const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "analysis" });
@@ -2195,6 +2190,7 @@ export default function MVAnalysisPage() {
                   },
                 },
               }));
+              const analysisRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
               const { jobId } = await createJob({
                 type: "video",
                 userId: user?.id ? String(user.id) : "",
@@ -2209,6 +2205,7 @@ export default function MVAnalysisPage() {
                     context: context || undefined,
                     modelName: growthCampAnalysisModel,
                     mode: analysisMode,
+                    analysisRunId,
                     durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
                     analysisProfile,
                     extractSections: analysisProfile === "extract_only" ? extractSections : undefined,
@@ -2280,6 +2277,7 @@ export default function MVAnalysisPage() {
       setAnalysis(normalizedAnalysis);
       setAnalysisTranscript(nextTranscript);
       setAnalyzedVideoUrl(nextVideoUrl);
+      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
       setDebugInfo((prev) => ({
         ...(prev || {}),
         inputKind,
@@ -4084,7 +4082,7 @@ export default function MVAnalysisPage() {
           </section>
         ) : null}
 
-        {analysis ? (
+        {analysis && !isProcessing ? (
           <section className="mt-8 space-y-6">
             <div className="space-y-6">
                 <PlatformTrendEntryPanel />

@@ -1226,6 +1226,66 @@ function buildEmptyVisualFirstPass(): VisualFirstPass {
   };
 }
 
+function looksLikeEmptyExtractStub(content: string): boolean {
+  const text = String(content || "").trim();
+  if (text.length < 80) return true;
+  return /未提供转写|无法精确整理|缺少.*转写|无法从.*整理|未能从视频/i.test(text)
+    && !/(?:^|\n)- .{20,}/m.test(text);
+}
+
+function buildExtractMultimodalUserContent(params: {
+  fileName?: string;
+  context?: string;
+  duration: number;
+  transcript: string;
+  visualFirstPass: VisualFirstPass;
+  sparseFrames: SparseFrame[];
+  videoGcsUri: string;
+}) {
+  const keyFrameLines = params.visualFirstPass.keyFrames
+    .slice(0, 12)
+    .map((item) => `[${item.timestamp}] ${item.whatShows}${item.issue ? `（问题：${item.issue}）` : ""}`)
+    .join("\n");
+
+  return [
+    {
+      type: "text" as const,
+      text: [
+        `文件名：${params.fileName || "未命名视频"}`,
+        `业务背景：${params.context?.trim() || "未提供"}`,
+        `视频 GCS：${params.videoGcsUri}`,
+        `视频时长：${params.duration.toFixed(1)} 秒`,
+        params.transcript.trim()
+          ? `【口播/字幕转写 — 必须据此整理，禁止声称未提供】\n${truncate(params.transcript, 32000)}`
+          : "【口播/字幕转写】本视频无明显口播或转写失败，请依据下方画面摘要与关键帧整理。",
+        params.visualFirstPass.visualSummary.trim()
+          ? `【画面摘要 — 必须据此整理，禁止声称未提供】\n${params.visualFirstPass.visualSummary.trim()}`
+          : "",
+        params.visualFirstPass.openingFrameAssessment.trim()
+          ? `【开场画面】\n${params.visualFirstPass.openingFrameAssessment.trim()}`
+          : "",
+        keyFrameLines
+          ? `【关键帧时间轴】\n${keyFrameLines}`
+          : "",
+        `【视觉初判 JSON】\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
+      ].filter(Boolean).join("\n\n"),
+    },
+    ...params.sparseFrames.map((item, index) => ({
+      type: "image_url" as const,
+      image_url: {
+        url: item.dataUrl,
+        detail: index < 4 ? ("high" as const) : ("auto" as const),
+      },
+    })),
+  ];
+}
+
+async function transcribeFullVideoFallback(videoPath: string, duration: number): Promise<string> {
+  const audioBuffer = await extractAudioTrackFromPath(videoPath, 0, duration).catch(() => null);
+  if (!audioBuffer?.length) return "";
+  return transcribeVideoAudio(audioBuffer);
+}
+
 async function runContentExtractPass(params: {
   strategistEngine: GrowthCampStrategistEngine;
   transcript: string;
@@ -1234,28 +1294,44 @@ async function runContentExtractPass(params: {
   fileName?: string;
   extractSections: GrowthExtractSections;
   extractPrompt?: string;
-  visualFirstPass?: VisualFirstPass;
+  visualFirstPass: VisualFirstPass;
+  sparseFrames: SparseFrame[];
+  videoGcsUri: string;
 }) {
   const sections = params.extractSections;
   const customPrompt = (params.extractPrompt || "").trim();
-  const visualSummary = params.visualFirstPass?.visualSummary?.trim() || "";
+  const visualFirstPass = params.visualFirstPass;
+  const visualSummary = visualFirstPass.visualSummary.trim();
+  const transcript = params.transcript.trim();
+  const hasTranscript = transcript.length >= 20;
+  const hasVisual = visualSummary.length >= 20 || params.sparseFrames.length > 0;
+
+  if (!hasTranscript && !hasVisual) {
+    throw new VideoAnalysisFailure(
+      "transcription",
+      "未能从视频提取口播转写或画面信息。请确认视频含清晰音轨或画面，或改用 Gemini 3.5 Flash 再试。",
+    );
+  }
+
+  const wantsVisualInOutput = sections.visualNotes || /画面|视觉|镜头|场景/.test(customPrompt);
 
   const sectionLines: string[] = [];
   if (sections.transcript) sectionLines.push("- **口播/字幕整理**：按时间分段，去重，保留完整表述");
   if (sections.contentOutline) sectionLines.push("- **内容大纲**：主题、核心论点、段落结构（条列）");
-  if (sections.visualNotes && visualSummary) sectionLines.push("- **画面简述**：基于视觉摘要，只描述画面与镜头，不做情绪/钩子/分镜/商业解读");
+  if (wantsVisualInOutput) sectionLines.push("- **画面简述**：基于下方转写、画面摘要与关键帧，只描述画面与镜头");
   if (sections.keyMoments) sectionLines.push("- **关键时刻**：时间戳 + 该段在讲什么（不做情绪/钩子分析）");
 
   const systemPrompt = `
-你是视频内容整理助手。任务：从转写文本${visualSummary ? "与视觉摘要" : ""}中提取结构化内容。
+你是视频内容整理助手。user message 已提供口播转写、画面摘要、关键帧图片与 JSON，**禁止**声称「未提供转写/画面」。
 
 【禁止输出】
 - 情绪弧线、钩子策略、分镜脚本、商业路径、选题策划、平台评分、变现建议、配乐分析
+- 「未提供转写」「无法整理」等推托话术（素材已在 user message）
 
 【必须输出】
-${sectionLines.length ? sectionLines.join("\n") : "- 按转写整理核心内容"}
+${sectionLines.length ? sectionLines.join("\n") : "- 按转写与画面整理核心内容"}
 
-【排版】Markdown 标题层级清晰（## / ###），条列去重，禁止文本墙。
+【排版】Markdown 标题层级清晰（## / ###），条列去重，禁止文本墙，内容详尽充实。
 ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
 
 【输出格式】必须返回 JSON 对象（不要用代码围栏），字段：
@@ -1264,6 +1340,15 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
 `.trim();
 
   const useOpenAiJsonObject = params.strategistEngine.provider === "openai";
+  const userMultimodalContent = buildExtractMultimodalUserContent({
+    fileName: params.fileName,
+    context: params.context,
+    duration: params.duration,
+    transcript,
+    visualFirstPass,
+    sparseFrames: params.sparseFrames,
+    videoGcsUri: params.videoGcsUri,
+  });
 
   const response = await invokeLLM({
     ...strategistInvokeBase(params.strategistEngine),
@@ -1271,16 +1356,7 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
     topP: 0.9,
     messages: [
       { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: JSON.stringify({
-          fileName: params.fileName || "video",
-          durationSeconds: params.duration,
-          businessContext: params.context || "",
-          transcript: truncate(params.transcript, 12000),
-          visualSummary: sections.visualNotes ? visualSummary : "",
-        }, null, 2),
-      },
+      { role: "user", content: userMultimodalContent },
     ],
     response_format: useOpenAiJsonObject
       ? { type: "json_object" }
@@ -1308,6 +1384,13 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
   });
 
   const parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
+  const extractedContent = String(parsed.extractedContent || "").trim();
+  if (looksLikeEmptyExtractStub(extractedContent) && (hasTranscript || hasVisual)) {
+    throw new VideoAnalysisFailure(
+      "llm",
+      "内容提取模型返回空模板（未使用已提供的转写/画面）。请换 Gemini 3.5 Flash 或缩短视频后再试。",
+    );
+  }
 
   return {
     composition: 0,
@@ -1858,7 +1941,6 @@ export async function analyzeVideo(params: {
       const extractSections = isExtractOnly
         ? normalizeExtractSections(params.extractSections)
         : defaultGrowthExtractSections;
-      const needVisualForExtract = isExtractOnly && extractSections.visualNotes;
 
       for (const chunk of chunkRanges) {
         const audioBuffer = await extractAudioTrackFromPath(videoPath, chunk.start, chunk.duration).catch((error) => {
@@ -1891,11 +1973,7 @@ export async function analyzeVideo(params: {
           audioPassChunks.push(audioPass);
         }
 
-        if (isExtractOnly && !needVisualForExtract) {
-          continue;
-        }
-
-        // ✨ GROWTH / REMIX 模式用 slim 策略（≥5min=8帧 / <5min=10帧），降本提速
+        // extract_only 也必须跑视觉抽帧，否则 GPT/Flash 只有空转写时会输出「未提供素材」模板
         const frameStrategy: SparseFrameStrategy = (params.mode === "GROWTH" || params.mode === "REMIX") ? "slim" : "dense";
         const sparseFrames = await extractSparseFramesFromPath(videoPath, chunk.start, chunk.duration, frameStrategy).catch((error) => {
           console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
@@ -1915,14 +1993,20 @@ export async function analyzeVideo(params: {
         visualPassChunks.push(visualPass);
       }
 
-      const transcript = transcriptChunks.join("\n\n");
+      let transcript = transcriptChunks.join("\n\n");
+      if (transcript.trim().length < 40) {
+        const fallbackTranscript = await transcribeFullVideoFallback(videoPath, duration).catch(() => "");
+        if (fallbackTranscript.trim().length > transcript.trim().length) {
+          transcript = fallbackTranscript;
+        }
+      }
+
       const analysisModePre = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       const costProfile = estimateTokenProfile(duration, allFrames.length);
 
       if (isExtractOnly) {
-        const visualFirstPass = needVisualForExtract
-          ? mergeVisualPasses(visualPassChunks)
-          : buildEmptyVisualFirstPass();
+        const visualFirstPass = mergeVisualPasses(visualPassChunks);
+        const strategistFrames = pickStrategistFrames(allFrames);
         const extracted = await withGrowthAnalysisSlot(() => runContentExtractPass({
           strategistEngine,
           transcript,
@@ -1932,12 +2016,14 @@ export async function analyzeVideo(params: {
           extractSections,
           extractPrompt: params.extractPrompt,
           visualFirstPass,
+          sparseFrames: strategistFrames,
+          videoGcsUri,
         }));
         const analysisMode = analysisModePre;
         const parsed = growthAnalysisScoresSchema.parse({
           ...extracted,
           mode: analysisMode,
-          visualSummary: needVisualForExtract ? visualFirstPass.visualSummary : "",
+          visualSummary: visualFirstPass.visualSummary || "",
         });
         return {
           analysis: parsed,
