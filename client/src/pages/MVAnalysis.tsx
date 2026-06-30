@@ -23,7 +23,6 @@ import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
   GrowthCampModel,
-  GrowthExtractSections,
   GrowthAnalysisProfile,
   GrowthHandoff,
   GrowthHotWordMatch,
@@ -33,7 +32,6 @@ import type {
   GrowthReferenceExample,
   GrowthSnapshot,
 } from "@shared/growth";
-import { defaultGrowthExtractSections } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
 import {
   ArrowLeft,
@@ -516,7 +514,6 @@ const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as
 
 const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
 const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
-const GROWTH_CAMP_EXTRACT_SECTIONS_LS = "mv-growth-camp-extract-sections";
 const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
 
 const GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS: Array<{ id: GrowthCampModel; label: string; hint: string }> = [
@@ -544,19 +541,6 @@ function readGrowthCampAnalysisProfileFromLs(): GrowthAnalysisProfile {
   return "full";
 }
 
-function readGrowthCampExtractSectionsFromLs(): GrowthExtractSections {
-  try {
-    const raw = localStorage.getItem(GROWTH_CAMP_EXTRACT_SECTIONS_LS);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<GrowthExtractSections>;
-      return { ...defaultGrowthExtractSections, ...parsed };
-    }
-  } catch {
-    /* ignore */
-  }
-  return { ...defaultGrowthExtractSections };
-}
-
 function readGrowthCampExtractPromptFromLs(): string {
   try {
     return localStorage.getItem(GROWTH_CAMP_EXTRACT_PROMPT_LS) || "";
@@ -565,12 +549,6 @@ function readGrowthCampExtractPromptFromLs(): string {
   }
 }
 
-const GROWTH_EXTRACT_SECTION_OPTIONS: Array<{ key: keyof GrowthExtractSections; label: string; hint: string }> = [
-  { key: "transcript", label: "口播/字幕整理", hint: "按时间分段整理转写" },
-  { key: "contentOutline", label: "内容大纲", hint: "主题、论点与结构" },
-  { key: "visualNotes", label: "画面简述", hint: "仅描述画面，不做情绪/分镜分析" },
-  { key: "keyMoments", label: "关键时刻", hint: "时间轴要点，不含钩子/商业解读" },
-];
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   xiaohongshu: "小红书",
@@ -1672,9 +1650,6 @@ export default function MVAnalysisPage() {
   const [analysisProfile, setAnalysisProfile] = useState<GrowthAnalysisProfile>(() =>
     typeof window !== "undefined" ? readGrowthCampAnalysisProfileFromLs() : "full",
   );
-  const [extractSections, setExtractSections] = useState<GrowthExtractSections>(() =>
-    typeof window !== "undefined" ? readGrowthCampExtractSectionsFromLs() : { ...defaultGrowthExtractSections },
-  );
   const [extractPrompt, setExtractPrompt] = useState(() =>
     typeof window !== "undefined" ? readGrowthCampExtractPromptFromLs() : "",
   );
@@ -1694,14 +1669,6 @@ export default function MVAnalysisPage() {
       /* ignore */
     }
   }, [analysisProfile]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(GROWTH_CAMP_EXTRACT_SECTIONS_LS, JSON.stringify(extractSections));
-    } catch {
-      /* ignore */
-    }
-  }, [extractSections]);
 
   useEffect(() => {
     try {
@@ -2042,11 +2009,6 @@ export default function MVAnalysisPage() {
   const handleAnalyze = useCallback(async () => {
     if (!inputKind) return;
 
-    setAnalysis(null);
-    setAnalysisTranscript("");
-    setAnalyzedVideoUrl("");
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-
     if (!supervisorAccess) {
       try {
         const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "analysis" });
@@ -2195,6 +2157,7 @@ export default function MVAnalysisPage() {
                   },
                 },
               }));
+              const analysisRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
               const { jobId } = await createJob({
                 type: "video",
                 userId: user?.id ? String(user.id) : "",
@@ -2209,9 +2172,9 @@ export default function MVAnalysisPage() {
                     context: context || undefined,
                     modelName: growthCampAnalysisModel,
                     mode: analysisMode,
+                    analysisRunId,
                     durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
                     analysisProfile,
-                    extractSections: analysisProfile === "extract_only" ? extractSections : undefined,
                     extractPrompt: analysisProfile === "extract_only" && extractPrompt.trim()
                       ? extractPrompt.trim()
                       : undefined,
@@ -2280,6 +2243,7 @@ export default function MVAnalysisPage() {
       setAnalysis(normalizedAnalysis);
       setAnalysisTranscript(nextTranscript);
       setAnalyzedVideoUrl(nextVideoUrl);
+      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
       setDebugInfo((prev) => ({
         ...(prev || {}),
         inputKind,
@@ -2337,7 +2301,7 @@ export default function MVAnalysisPage() {
     } finally {
       // no-op
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode, growthCampAnalysisModel, analysisProfile, extractSections, extractPrompt, localDurationSeconds, user?.id]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode, growthCampAnalysisModel, analysisProfile, extractPrompt, localDurationSeconds, user?.id]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
@@ -3649,7 +3613,7 @@ export default function MVAnalysisPage() {
                 <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
                   {([
                     { id: "full" as const, label: "完整商业分析", hint: "含情绪、钩子、分镜与商业路径" },
-                    { id: "extract_only" as const, label: "单纯提取内容", hint: "跳过情绪/钩子/分镜/商业路径" },
+                    { id: "extract_only" as const, label: "单纯提取内容", hint: "先扫语音转写，再对重点时刻抽帧，输出详尽 Markdown" },
                   ]).map((opt) => {
                     const active = analysisProfile === opt.id;
                     return (
@@ -3672,39 +3636,19 @@ export default function MVAnalysisPage() {
                 </div>
 
                 {analysisProfile === "extract_only" ? (
-                  <div className="mt-4 space-y-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                    <div>
-                      <p className="mb-2 text-xs font-semibold text-emerald-200/90">提取内容块（勾选）</p>
-                      <div className="flex flex-wrap gap-3">
-                        {GROWTH_EXTRACT_SECTION_OPTIONS.map((opt) => (
-                          <label
-                            key={opt.key}
-                            className="inline-flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/80"
-                            title={opt.hint}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={extractSections[opt.key]}
-                              onChange={(e) => setExtractSections((prev) => ({ ...prev, [opt.key]: e.target.checked }))}
-                              className="mt-0.5"
-                            />
-                            <span>
-                              <span className="block font-semibold text-white/90">{opt.label}</span>
-                              <span className="block text-[10px] text-white/45">{opt.hint}</span>
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
+                  <div className="mt-4 space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    <p className="text-xs leading-relaxed text-emerald-100/85">
+                      固定流程：全片语音转写 → 识别重点时刻 → 定点抽帧（约 8–12 张）→ 输出口播整理、内容大纲、<strong>画面描述</strong>、关键时刻的详尽 Markdown。
+                    </p>
                     <div>
                       <label className="mb-2 block text-xs font-semibold text-emerald-200/90">
-                        提取提示（可选）
+                        提取要求（可选）
                       </label>
                       <textarea
                         value={extractPrompt}
                         onChange={(e) => setExtractPrompt(e.target.value)}
-                        rows={2}
-                        placeholder="例如：只要整理口播原文，按段落去重；不要任何点评。"
+                        rows={3}
+                        placeholder="例如：分析画面内容与语音，整理成条理分明、重点清晰、内容详尽的 Markdown，去掉重复部分。"
                         className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30"
                       />
                     </div>
@@ -4084,7 +4028,7 @@ export default function MVAnalysisPage() {
           </section>
         ) : null}
 
-        {analysis ? (
+        {analysis && !isProcessing ? (
           <section className="mt-8 space-y-6">
             <div className="space-y-6">
                 <PlatformTrendEntryPanel />

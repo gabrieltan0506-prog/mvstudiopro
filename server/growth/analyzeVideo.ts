@@ -11,9 +11,6 @@ import {
   remixLlmSchema,
   growthPremiumContentSchema,
   type GrowthAnalysisProfile,
-  type GrowthExtractSections,
-  defaultGrowthExtractSections,
-  growthExtractSectionsSchema,
 } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM, extractJsonString } from "../_core/llm";
@@ -451,6 +448,219 @@ function buildSparseFrameTimestamps(duration: number, strategy: SparseFrameStrat
   return Array.from(new Set([...intro, ...middle, ...outroCandidates]))
     .filter((value) => value > 0 && value < duration)
     .sort((a, b) => a - b);
+}
+
+async function extractSparseFramesAtTimestamps(videoPath: string, timestampsSeconds: number[]): Promise<SparseFrame[]> {
+  const unique = Array.from(new Set(timestampsSeconds.map((t) => Number(t.toFixed(2)))))
+    .filter((t) => t >= 0)
+    .sort((a, b) => a - b);
+  if (!unique.length) return [];
+
+  const frameDir = path.join(
+    os.tmpdir(),
+    `growth-camp-target-frames-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(frameDir, { recursive: true });
+  try {
+    const frames: SparseFrame[] = [];
+    for (let index = 0; index < unique.length; index += 1) {
+      const absoluteTimestamp = unique[index];
+      const outPath = path.join(frameDir, `frame-${String(index).padStart(2, "0")}.jpg`);
+      await execFileAsync("ffmpeg", [
+        "-y",
+        "-ss",
+        String(absoluteTimestamp),
+        "-i",
+        videoPath,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale='min(960,iw)':-2",
+        "-q:v",
+        "5",
+        outPath,
+      ]);
+      const frameBuffer = await fs.readFile(outPath);
+      frames.push({
+        timestamp: absoluteTimestamp,
+        dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
+      });
+    }
+    return frames;
+  } finally {
+    await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function parseTimestampToSeconds(value: string): number | null {
+  const trimmed = String(value || "").trim();
+  const match = trimmed.match(/^(\d+):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  if (match[3]) {
+    return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+  }
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+const EXTRACT_TARGET_MAX_FRAMES = 12;
+const EXTRACT_TARGET_MAX_FRAMES_LONG = 10;
+
+function buildExtractTargetTimestamps(
+  duration: number,
+  priorityMoments: Array<{ timestamp?: string }>,
+): number[] {
+  const fromScan = priorityMoments
+    .map((item) => parseTimestampToSeconds(String(item.timestamp || "")))
+    .filter((seconds): seconds is number => seconds != null && seconds >= 0 && seconds < duration);
+  const anchors = [2, 5, Math.min(12, Math.max(1, duration * 0.02))].filter((t) => t < duration);
+  const nearEnd = duration > 30 ? [Math.max(1, duration - 8)] : [];
+  const cap = duration >= 480 ? EXTRACT_TARGET_MAX_FRAMES_LONG : EXTRACT_TARGET_MAX_FRAMES;
+  return Array.from(new Set([...anchors, ...fromScan, ...nearEnd]))
+    .filter((t) => t >= 0 && t < duration)
+    .sort((a, b) => a - b)
+    .slice(0, cap);
+}
+
+/** 提取模式 Phase 1：仅基于转写文本找出重点时刻（便宜），供 Phase 2 定点抽帧 */
+async function runExtractTranscriptScan(params: {
+  transcript: string;
+  duration: number;
+  context?: string;
+  fileName?: string;
+}) {
+  const transcript = params.transcript.trim();
+  if (transcript.length < 20) {
+    return { priorityMoments: [] as Array<{ timestamp: string; label: string }>, topicHint: "" };
+  }
+
+  const scanModel = growthCampFirstPassModel();
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: scanModel,
+    temperature: 0.2,
+    messages: [
+      {
+        role: "system",
+        content: `你是视频内容索引助手。根据口播/字幕转写，找出最值得再看画面的重点时刻（主题转折、关键论点、数据/案例、强视觉信息）。
+规则：timestamp 用 mm:ss；长视频(${Math.round(params.duration / 60)} 分钟)最多 8 个时刻；禁止编造转写里没有的内容。`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          fileName: params.fileName || "video",
+          durationSeconds: params.duration,
+          businessContext: params.context || "",
+          transcript: truncate(transcript, 24000),
+        }, null, 2),
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const parsed = parseLlmJsonResponse<{
+    priorityMoments?: Array<{ timestamp?: string; label?: string }>;
+    topicHint?: string;
+  }>(String(response.choices[0]?.message?.content || "{}"));
+
+  return {
+    priorityMoments: Array.isArray(parsed.priorityMoments)
+      ? parsed.priorityMoments
+          .filter((item) => item && typeof item.timestamp === "string")
+          .slice(0, 8)
+          .map((item) => ({
+            timestamp: String(item.timestamp),
+            label: String(item.label || "").trim(),
+          }))
+      : [],
+    topicHint: String(parsed.topicHint || "").trim(),
+  };
+}
+
+async function runExtractOnlyPipeline(params: {
+  videoPath: string;
+  duration: number;
+  safeName: string;
+  chunkRanges: Array<{ start: number; duration: number; index: number }>;
+  strategistEngine: GrowthCampStrategistEngine;
+  videoGcsUri: string;
+  context?: string;
+  fileName?: string;
+  extractPrompt?: string;
+  mode: GrowthAnalysisMode;
+}) {
+  const transcriptChunks: string[] = [];
+
+  for (const chunk of params.chunkRanges) {
+    const audioBuffer = await extractAudioTrackFromPath(params.videoPath, chunk.start, chunk.duration).catch((error) => {
+      console.warn("[growth.analyzeVideo] extract audio failed:", error);
+      return null;
+    });
+    const transcriptChunk = await transcribeVideoAudio(audioBuffer).catch((error) => {
+      console.warn("[growth.analyzeVideo] extract transcript failed:", error);
+      return "";
+    });
+    if (transcriptChunk) {
+      transcriptChunks.push(`[${toTimestamp(chunk.start)}-${toTimestamp(chunk.start + chunk.duration)}]\n${transcriptChunk}`);
+    }
+  }
+
+  let transcript = transcriptChunks.join("\n\n");
+  if (transcript.trim().length < 40) {
+    const fallbackTranscript = await transcribeFullVideoFallback(params.videoPath, params.duration).catch(() => "");
+    if (fallbackTranscript.trim().length > transcript.trim().length) {
+      transcript = fallbackTranscript;
+    }
+  }
+
+  const scan = await runExtractTranscriptScan({
+    transcript,
+    duration: params.duration,
+    context: params.context,
+    fileName: params.fileName,
+  });
+  const targetTimestamps = buildExtractTargetTimestamps(params.duration, scan.priorityMoments);
+  const sparseFrames = targetTimestamps.length
+    ? await extractSparseFramesAtTimestamps(params.videoPath, targetTimestamps)
+    : [];
+
+  let visualFirstPass = buildEmptyVisualFirstPass();
+  if (sparseFrames.length > 0) {
+    visualFirstPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
+      sparseFrames,
+      context: params.context,
+      duration: params.duration,
+      fileName: params.fileName,
+    }));
+  }
+
+  const extracted = await withGrowthAnalysisSlot(() => runContentExtractPass({
+    strategistEngine: params.strategistEngine,
+    transcript,
+    duration: params.duration,
+    context: params.context,
+    fileName: params.fileName,
+    extractPrompt: params.extractPrompt,
+    visualFirstPass,
+    sparseFrames,
+    videoGcsUri: params.videoGcsUri,
+    scanTopicHint: scan.topicHint,
+    priorityMoments: scan.priorityMoments,
+  }));
+
+  const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+  const parsed = growthAnalysisScoresSchema.parse({
+    ...extracted,
+    mode: analysisMode,
+    visualSummary: visualFirstPass.visualSummary || "",
+  });
+
+  return {
+    analysis: parsed,
+    transcript,
+    sparseFrameCount: sparseFrames.length,
+    costProfile: estimateTokenProfile(params.duration, sparseFrames.length),
+  };
 }
 
 async function extractSparseFramesFromPath(
@@ -1208,13 +1418,6 @@ function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: 
   });
 }
 
-function normalizeExtractSections(input?: Partial<GrowthExtractSections>): GrowthExtractSections {
-  return growthExtractSectionsSchema.parse({
-    ...defaultGrowthExtractSections,
-    ...(input && typeof input === "object" ? input : {}),
-  });
-}
-
 function buildEmptyVisualFirstPass(): VisualFirstPass {
   return {
     visualSummary: "",
@@ -1226,36 +1429,114 @@ function buildEmptyVisualFirstPass(): VisualFirstPass {
   };
 }
 
+function looksLikeEmptyExtractStub(content: string): boolean {
+  const text = String(content || "").trim();
+  if (text.length < 80) return true;
+  return /未提供转写|无法精确整理|缺少.*转写|无法从.*整理|未能从视频/i.test(text)
+    && !/(?:^|\n)- .{20,}/m.test(text);
+}
+
+function buildExtractMultimodalUserContent(params: {
+  fileName?: string;
+  context?: string;
+  duration: number;
+  transcript: string;
+  visualFirstPass: VisualFirstPass;
+  sparseFrames: SparseFrame[];
+  videoGcsUri: string;
+}) {
+  const keyFrameLines = params.visualFirstPass.keyFrames
+    .slice(0, 12)
+    .map((item) => `[${item.timestamp}] ${item.whatShows}${item.issue ? `（问题：${item.issue}）` : ""}`)
+    .join("\n");
+
+  return [
+    {
+      type: "text" as const,
+      text: [
+        `文件名：${params.fileName || "未命名视频"}`,
+        `业务背景：${params.context?.trim() || "未提供"}`,
+        `视频 GCS：${params.videoGcsUri}`,
+        `视频时长：${params.duration.toFixed(1)} 秒`,
+        params.transcript.trim()
+          ? `【口播/字幕转写 — 必须据此整理，禁止声称未提供】\n${truncate(params.transcript, 32000)}`
+          : "【口播/字幕转写】本视频无明显口播或转写失败，请依据下方画面摘要与关键帧整理。",
+        params.visualFirstPass.visualSummary.trim()
+          ? `【画面描述 — 必须据此整理，禁止声称未提供】\n${params.visualFirstPass.visualSummary.trim()}`
+          : "",
+        params.visualFirstPass.openingFrameAssessment.trim()
+          ? `【开场画面】\n${params.visualFirstPass.openingFrameAssessment.trim()}`
+          : "",
+        keyFrameLines
+          ? `【关键帧时间轴】\n${keyFrameLines}`
+          : "",
+        `【视觉初判 JSON】\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
+      ].filter(Boolean).join("\n\n"),
+    },
+    ...params.sparseFrames.map((item, index) => ({
+      type: "image_url" as const,
+      image_url: {
+        url: item.dataUrl,
+        detail: index < 4 ? ("high" as const) : ("auto" as const),
+      },
+    })),
+  ];
+}
+
+async function transcribeFullVideoFallback(videoPath: string, duration: number): Promise<string> {
+  const audioBuffer = await extractAudioTrackFromPath(videoPath, 0, duration).catch(() => null);
+  if (!audioBuffer?.length) return "";
+  return transcribeVideoAudio(audioBuffer);
+}
+
 async function runContentExtractPass(params: {
   strategistEngine: GrowthCampStrategistEngine;
   transcript: string;
   duration: number;
   context?: string;
   fileName?: string;
-  extractSections: GrowthExtractSections;
   extractPrompt?: string;
-  visualFirstPass?: VisualFirstPass;
+  visualFirstPass: VisualFirstPass;
+  sparseFrames: SparseFrame[];
+  videoGcsUri: string;
+  scanTopicHint?: string;
+  priorityMoments?: Array<{ timestamp: string; label: string }>;
 }) {
-  const sections = params.extractSections;
   const customPrompt = (params.extractPrompt || "").trim();
-  const visualSummary = params.visualFirstPass?.visualSummary?.trim() || "";
+  const visualFirstPass = params.visualFirstPass;
+  const visualSummary = visualFirstPass.visualSummary.trim();
+  const transcript = params.transcript.trim();
+  const hasTranscript = transcript.length >= 20;
+  const hasVisual = visualSummary.length >= 20 || params.sparseFrames.length > 0;
 
-  const sectionLines: string[] = [];
-  if (sections.transcript) sectionLines.push("- **口播/字幕整理**：按时间分段，去重，保留完整表述");
-  if (sections.contentOutline) sectionLines.push("- **内容大纲**：主题、核心论点、段落结构（条列）");
-  if (sections.visualNotes && visualSummary) sectionLines.push("- **画面简述**：基于视觉摘要，只描述画面与镜头，不做情绪/钩子/分镜/商业解读");
-  if (sections.keyMoments) sectionLines.push("- **关键时刻**：时间戳 + 该段在讲什么（不做情绪/钩子分析）");
+  if (!hasTranscript && !hasVisual) {
+    throw new VideoAnalysisFailure(
+      "transcription",
+      "未能从视频提取口播转写或画面信息。请确认视频含清晰音轨或画面，或改用 Gemini 3.5 Flash 再试。",
+    );
+  }
+
+  const priorityBlock = params.priorityMoments?.length
+    ? params.priorityMoments.map((m) => `- ${m.timestamp} ${m.label}`).join("\n")
+    : "";
 
   const systemPrompt = `
-你是视频内容整理助手。任务：从转写文本${visualSummary ? "与视觉摘要" : ""}中提取结构化内容。
+你是视频内容整理助手。流程：已先完成全片语音转写，再对重点时刻抽帧并做画面描述。user message 含转写、画面描述、关键帧图片，**禁止**声称「未提供转写/画面」。
 
 【禁止输出】
 - 情绪弧线、钩子策略、分镜脚本、商业路径、选题策划、平台评分、变现建议、配乐分析
+- 「未提供转写」「无法整理」等推托话术
 
-【必须输出】
-${sectionLines.length ? sectionLines.join("\n") : "- 按转写整理核心内容"}
+【必须输出 — 详尽充实，禁止简述敷衍】
+- **口播/字幕整理**：按时间分段，去重，保留完整表述
+- **内容大纲**：主题、核心论点、段落结构（条列）
+- **画面描述**：基于关键帧，详尽描述画面、人物、场景、字幕/文字、镜头信息（不是一句话带过）
+- **关键时刻**：时间戳 + 该段在讲什么 / 画面在展示什么
 
-【排版】Markdown 标题层级清晰（## / ###），条列去重，禁止文本墙。
+${params.scanTopicHint ? `【语音扫描主题提示】${params.scanTopicHint}` : ""}
+${priorityBlock ? `【已标记重点时刻】\n${priorityBlock}` : ""}
+
+【排版】Markdown 标题层级清晰（## / ###），条列去重，内容详尽精确。
 ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
 
 【输出格式】必须返回 JSON 对象（不要用代码围栏），字段：
@@ -1264,6 +1545,15 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
 `.trim();
 
   const useOpenAiJsonObject = params.strategistEngine.provider === "openai";
+  const userMultimodalContent = buildExtractMultimodalUserContent({
+    fileName: params.fileName,
+    context: params.context,
+    duration: params.duration,
+    transcript,
+    visualFirstPass,
+    sparseFrames: params.sparseFrames,
+    videoGcsUri: params.videoGcsUri,
+  });
 
   const response = await invokeLLM({
     ...strategistInvokeBase(params.strategistEngine),
@@ -1271,16 +1561,7 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
     topP: 0.9,
     messages: [
       { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: JSON.stringify({
-          fileName: params.fileName || "video",
-          durationSeconds: params.duration,
-          businessContext: params.context || "",
-          transcript: truncate(params.transcript, 12000),
-          visualSummary: sections.visualNotes ? visualSummary : "",
-        }, null, 2),
-      },
+      { role: "user", content: userMultimodalContent },
     ],
     response_format: useOpenAiJsonObject
       ? { type: "json_object" }
@@ -1294,7 +1575,7 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
           properties: {
             extractedContent: {
               type: "string",
-              description: "Markdown 正文，仅含用户勾选的内容块",
+              description: "Markdown 正文",
             },
             summary: {
               type: "string",
@@ -1308,6 +1589,13 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
   });
 
   const parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
+  const extractedContent = String(parsed.extractedContent || "").trim();
+  if (looksLikeEmptyExtractStub(extractedContent) && (hasTranscript || hasVisual)) {
+    throw new VideoAnalysisFailure(
+      "llm",
+      "内容提取模型返回空模板（未使用已提供的转写/画面）。请换 Gemini 3.5 Flash 或缩短视频后再试。",
+    );
+  }
 
   return {
     composition: 0,
@@ -1793,7 +2081,6 @@ export async function analyzeVideo(params: {
   /** @deprecated 已废弃：每次分析均复制到新 GCS 路径，不再复用 gs:// */
   forceRefresh?: boolean;
   analysisProfile?: GrowthAnalysisProfile;
-  extractSections?: Partial<GrowthExtractSections>;
   extractPrompt?: string;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
@@ -1850,15 +2137,46 @@ export async function analyzeVideo(params: {
       }
 
       const chunkRanges = buildChunkRanges(duration);
+      const isExtractOnly = params.analysisProfile === "extract_only";
+
+      if (isExtractOnly) {
+        const extractResult = await runExtractOnlyPipeline({
+          videoPath,
+          duration,
+          safeName,
+          chunkRanges,
+          strategistEngine,
+          videoGcsUri,
+          context: params.context,
+          fileName: params.fileName,
+          extractPrompt: params.extractPrompt,
+          mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
+        });
+        return {
+          analysis: extractResult.analysis,
+          videoMeta: {
+            videoUrl: videoGcsUri,
+            audioUrl: "",
+            transcript: extractResult.transcript,
+            videoDuration: duration,
+            provider: strategistEngine.provider,
+            model: finalModel,
+            fallback: false,
+            pipeline: "extract_only_voice_then_target_frames",
+            stageOneModel: growthCampFirstPassModel(),
+            stageTwoModel: finalModel,
+            sparseFrameCount: extractResult.sparseFrameCount,
+            estimatedCostProfile: extractResult.costProfile,
+            failureStage: undefined,
+            failureReason: undefined,
+          },
+        };
+      }
+
       const transcriptChunks: string[] = [];
       const audioPassChunks: AudioFirstPass[] = [];
       const visualPassChunks: VisualFirstPass[] = [];
       const allFrames: SparseFrame[] = [];
-      const isExtractOnly = params.analysisProfile === "extract_only";
-      const extractSections = isExtractOnly
-        ? normalizeExtractSections(params.extractSections)
-        : defaultGrowthExtractSections;
-      const needVisualForExtract = isExtractOnly && extractSections.visualNotes;
 
       for (const chunk of chunkRanges) {
         const audioBuffer = await extractAudioTrackFromPath(videoPath, chunk.start, chunk.duration).catch((error) => {
@@ -1874,7 +2192,7 @@ export async function analyzeVideo(params: {
           transcriptChunks.push(`[${toTimestamp(chunk.start)}-${toTimestamp(chunk.start + chunk.duration)}]\n${transcriptChunk}`);
         }
 
-        if (!isExtractOnly && audioBuffer) {
+        if (audioBuffer) {
           const audioStorage = await uploadBufferToGcs({
             objectName: `growth-camp/audio/${Date.now()}-${chunk.index}-${safeName.replace(/\.[^.]+$/, "")}.mp3`,
             buffer: audioBuffer,
@@ -1889,10 +2207,6 @@ export async function analyzeVideo(params: {
             fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
           }));
           audioPassChunks.push(audioPass);
-        }
-
-        if (isExtractOnly && !needVisualForExtract) {
-          continue;
         }
 
         // ✨ GROWTH / REMIX 模式用 slim 策略（≥5min=8帧 / <5min=10帧），降本提速
@@ -1918,47 +2232,6 @@ export async function analyzeVideo(params: {
       const transcript = transcriptChunks.join("\n\n");
       const analysisModePre = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       const costProfile = estimateTokenProfile(duration, allFrames.length);
-
-      if (isExtractOnly) {
-        const visualFirstPass = needVisualForExtract
-          ? mergeVisualPasses(visualPassChunks)
-          : buildEmptyVisualFirstPass();
-        const extracted = await withGrowthAnalysisSlot(() => runContentExtractPass({
-          strategistEngine,
-          transcript,
-          duration,
-          context: params.context,
-          fileName: params.fileName,
-          extractSections,
-          extractPrompt: params.extractPrompt,
-          visualFirstPass,
-        }));
-        const analysisMode = analysisModePre;
-        const parsed = growthAnalysisScoresSchema.parse({
-          ...extracted,
-          mode: analysisMode,
-          visualSummary: needVisualForExtract ? visualFirstPass.visualSummary : "",
-        });
-        return {
-          analysis: parsed,
-          videoMeta: {
-            videoUrl: videoGcsUri,
-            audioUrl: "",
-            transcript,
-            videoDuration: duration,
-            provider: strategistEngine.provider,
-            model: finalModel,
-            fallback: false,
-            pipeline: resolveGrowthCampPipelineMode(params.modelName),
-            stageOneModel: growthCampFirstPassModel(),
-            stageTwoModel: finalModel,
-            sparseFrameCount: allFrames.length,
-            estimatedCostProfile: costProfile,
-            failureStage: undefined,
-            failureReason: undefined,
-          },
-        };
-      }
 
       const audioFirstPass = mergeAudioPasses(audioPassChunks);
       const visualFirstPass = mergeVisualPasses(visualPassChunks);

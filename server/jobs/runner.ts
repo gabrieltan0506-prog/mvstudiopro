@@ -272,12 +272,6 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     }
 
     try {
-      const extractSectionsRaw = params.extractSections;
-      const extractSections =
-        extractSectionsRaw && typeof extractSectionsRaw === "object" && !Array.isArray(extractSectionsRaw)
-          ? extractSectionsRaw
-          : undefined;
-
       const result = await analyzeGrowthCampVideo({
         gcsUri: typeof params.gcsUri === "string" ? params.gcsUri : undefined,
         fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
@@ -288,7 +282,6 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         modelName: typeof params.modelName === "string" ? params.modelName : undefined,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
         analysisProfile: params.analysisProfile === "extract_only" ? "extract_only" : "full",
-        extractSections,
         extractPrompt: typeof params.extractPrompt === "string" ? params.extractPrompt : undefined,
       });
 
