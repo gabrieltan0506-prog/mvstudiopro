@@ -15,6 +15,33 @@ function generateCode(): string {
   return `${part(4)}-${part(4)}-${part(4)}`;
 }
 
+function normalizeInviteCode(raw: string): string {
+  const trimmed = String(raw || "").trim().toUpperCase();
+  const compact = trimmed.replace(/[^A-Z0-9]/g, "");
+  if (compact.length === 12) {
+    return `${compact.slice(0, 4)}-${compact.slice(4, 8)}-${compact.slice(8, 12)}`;
+  }
+  return trimmed;
+}
+
+async function assertBetaCodeAdmin(ctx: { user?: { id?: number } }) {
+  const userId = ctx.user?.id;
+  if (!userId) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录" });
+  }
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+  const [userRow] = await db
+    .select({ role: users.role, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "仅 Supervisor / Admin 可操作邀请码" });
+  }
+  return { db, userId };
+}
+
 /** 确保表存在（PostgreSQL 语法） */
 async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
   try {
@@ -28,8 +55,13 @@ async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>
         "created_by" INTEGER NOT NULL,
         "note"       VARCHAR(120),
         "expires_at" TIMESTAMP,
+        "is_active"  BOOLEAN NOT NULL DEFAULT TRUE,
         "created_at" TIMESTAMP NOT NULL DEFAULT NOW()
       )
+    `);
+    await db.execute(sql`
+      ALTER TABLE "beta_invite_codes"
+      ADD COLUMN IF NOT EXISTS "is_active" BOOLEAN NOT NULL DEFAULT TRUE
     `);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "beta_code_usages" (
@@ -97,6 +129,7 @@ export const betaCodeRouter = router({
               createdBy: (ctx as any).user?.id,
               note: input.note ?? null,
               expiresAt,
+              isActive: true,
             });
             codes.push(code);
             inserted = true;
@@ -121,11 +154,7 @@ export const betaCodeRouter = router({
   redeem: protectedProcedure
     .input(
       z.object({
-        code: z
-          .string()
-          .min(1)
-          .max(30)
-          .transform((s) => s.toUpperCase().trim()),
+        code: z.string().min(1).max(30).transform(normalizeInviteCode),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -142,6 +171,9 @@ export const betaCodeRouter = router({
 
       if (!codeRow) {
         throw new TRPCError({ code: "NOT_FOUND", message: "内测码不存在或已失效" });
+      }
+      if (codeRow.isActive === false) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "内测码已关闭，无法兑换" });
       }
       if (codeRow.expiresAt && codeRow.expiresAt < new Date()) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "内测码已过期" });
@@ -207,4 +239,39 @@ export const betaCodeRouter = router({
       .where(eq(betaInviteCodes.createdBy, (ctx as any).user?.id))
       .orderBy(desc(betaInviteCodes.createdAt));
   }),
+
+  /** Supervisor / Admin：按邀请码字符串启用或关闭（关闭后不可再兑换） */
+  setActive: protectedProcedure
+    .input(
+      z.object({
+        code: z.string().min(1).max(30).transform(normalizeInviteCode),
+        isActive: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { db } = await assertBetaCodeAdmin(ctx as { user?: { id?: number } });
+      await ensureBetaTables(db);
+
+      const [codeRow] = await db
+        .select()
+        .from(betaInviteCodes)
+        .where(eq(betaInviteCodes.code, input.code))
+        .limit(1);
+
+      if (!codeRow) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "找不到该邀请码" });
+      }
+
+      await db
+        .update(betaInviteCodes)
+        .set({ isActive: input.isActive })
+        .where(eq(betaInviteCodes.id, codeRow.id));
+
+      return {
+        success: true,
+        code: codeRow.code,
+        isActive: input.isActive,
+        message: input.isActive ? "邀请码已重新启用" : "邀请码已关闭",
+      };
+    }),
 });

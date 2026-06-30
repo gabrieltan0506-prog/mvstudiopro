@@ -38,6 +38,7 @@ export default function AdminPanel() {
   const [codeExpireDays, setCodeExpireDays] = useState("30");
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [deactivateCodeInput, setDeactivateCodeInput] = useState("");
 
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
   const [supervisorReapToken, setSupervisorReapToken] = useState("");
@@ -87,6 +88,15 @@ export default function AdminPanel() {
       setTimeout(() => myCodesList.refetch(), 1200);
     },
     onError: (err) => toast.error(err.message || "生成失败"),
+  });
+
+  const setCodeActiveMutation = trpc.betaCode.setActive.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
+      myCodesList.refetch();
+      if (!data.isActive) setDeactivateCodeInput("");
+    },
+    onError: (err) => toast.error(err.message || "操作失败"),
   });
 
   const reviewPayment = trpc.admin.paymentReview.useMutation({
@@ -736,6 +746,48 @@ export default function AdminPanel() {
               </CardContent>
             </Card>
 
+            {/* 关闭指定邀请码 */}
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <XCircle className="h-5 w-5 text-destructive" />
+                  关闭邀请码
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  输入完整邀请码（如 <span className="font-mono">ABCD-EFGH-JKLM</span>），关闭后用户将无法再兑换。
+                </p>
+              </CardHeader>
+              <CardContent className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  placeholder="输入要关闭的邀请码"
+                  value={deactivateCodeInput}
+                  onChange={(e) => setDeactivateCodeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && deactivateCodeInput.trim()) {
+                      setCodeActiveMutation.mutate({ code: deactivateCodeInput.trim(), isActive: false });
+                    }
+                  }}
+                  className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm font-mono text-foreground uppercase tracking-wider"
+                />
+                <Button
+                  variant="destructive"
+                  className="gap-2 shrink-0"
+                  disabled={!deactivateCodeInput.trim() || setCodeActiveMutation.isPending}
+                  onClick={() =>
+                    setCodeActiveMutation.mutate({ code: deactivateCodeInput.trim(), isActive: false })
+                  }
+                >
+                  {setCodeActiveMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <XCircle className="h-4 w-4" />
+                  )}
+                  关闭此邀请码
+                </Button>
+              </CardContent>
+            </Card>
+
             {/* 历史码列表 */}
             <Card className="bg-card/50 border-border/50">
               <CardHeader>
@@ -754,11 +806,29 @@ export default function AdminPanel() {
                   <div className="text-center py-8 text-muted-foreground">暂无邀请码</div>
                 ) : (
                   <div className="space-y-2">
-                    {myCodesList.data.map((row: any) => (
-                      <div key={row.id} className="flex items-center justify-between bg-background/30 rounded-lg px-4 py-3">
+                    {myCodesList.data.map((row: any) => {
+                      const expired = row.expiresAt && new Date(row.expiresAt) < new Date();
+                      const usedUp = row.maxUses !== -1 && row.usedCount >= row.maxUses;
+                      const closed = row.isActive === false;
+                      const statusLabel = closed
+                        ? "已关闭"
+                        : expired
+                          ? "已过期"
+                          : usedUp
+                            ? "已用完"
+                            : "有效";
+                      const statusClass = closed || expired || usedUp
+                        ? "text-destructive bg-destructive/10 border-destructive/30"
+                        : "text-green-400 bg-green-500/10 border-green-500/30";
+
+                      return (
+                      <div key={row.id} className="flex items-center justify-between bg-background/30 rounded-lg px-4 py-3 gap-3">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 flex-wrap">
                             <span className="font-mono text-sm text-foreground">{row.code}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusClass}`}>
+                              {statusLabel}
+                            </span>
                             <span className="text-xs text-muted-foreground">{row.credits} Credits</span>
                             {row.note && <span className="text-xs text-muted-foreground truncate">· {row.note}</span>}
                           </div>
@@ -767,18 +837,47 @@ export default function AdminPanel() {
                             {row.expiresAt ? ` · 有效至 ${new Date(row.expiresAt).toLocaleDateString("zh-CN")}` : " · 永不过期"}
                           </div>
                         </div>
-                        <button
-                          onClick={() => copyCode(row.code)}
-                          className="ml-3 p-1.5 rounded hover:bg-white/5 transition-colors"
-                        >
-                          {copiedCode === row.code ? (
-                            <CheckCircle className="h-4 w-4 text-green-400" />
-                          ) : (
-                            <Copy className="h-4 w-4 text-muted-foreground" />
+                        <div className="flex items-center gap-1 shrink-0">
+                          {!closed && (
+                            <button
+                              type="button"
+                              title="关闭此码"
+                              onClick={() =>
+                                setCodeActiveMutation.mutate({ code: row.code, isActive: false })
+                              }
+                              disabled={setCodeActiveMutation.isPending}
+                              className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </button>
                           )}
-                        </button>
+                          {closed && (
+                            <button
+                              type="button"
+                              title="重新启用"
+                              onClick={() =>
+                                setCodeActiveMutation.mutate({ code: row.code, isActive: true })
+                              }
+                              disabled={setCodeActiveMutation.isPending}
+                              className="text-xs px-2 py-1 rounded border border-border hover:bg-white/5 transition-colors"
+                            >
+                              启用
+                            </button>
+                          )}
+                          <button
+                            onClick={() => copyCode(row.code)}
+                            className="p-1.5 rounded hover:bg-white/5 transition-colors"
+                          >
+                            {copiedCode === row.code ? (
+                              <CheckCircle className="h-4 w-4 text-green-400" />
+                            ) : (
+                              <Copy className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </button>
+                        </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
               </CardContent>
