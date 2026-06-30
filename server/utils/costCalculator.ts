@@ -1,6 +1,5 @@
 /**
- * 阶梯式分析计费工具
- * 针对抖音/快手/B站/小红书的时长特性设计
+ * 成长营视频分析计费：每次分析固定扣一次积分（不按时长阶梯）。
  */
 
 export const BASE_COST = {
@@ -8,63 +7,30 @@ export const BASE_COST = {
   REMIX: 60,
 } as const;
 
+/** 每次分析固定积分（与 BASE_COST 一致，供 job / 前端展示） */
+export function flatAnalysisCost(type: "GROWTH" | "REMIX"): number {
+  return BASE_COST[type];
+}
+
 /** 60 分钟硬限制（秒） */
 export const MAX_DURATION_SECONDS = 3600;
 
-/** 无法获取时长时，默认按 10 分钟（1.5 倍）计费 */
-const DEFAULT_DURATION_SECONDS = 600;
-
-/**
- * 根据分析类型与视频时长计算积分消耗
- *
- * 阶梯规则：
- * - ≤ 3 分钟  (≤180s)  → 1.0×  [小红书/常规抖音]
- * - ≤ 10 分钟 (≤600s)  → 1.5×  [深度抖音/常规B站]
- * - ≤ 30 分钟 (≤1800s) → 2.5×  [硬核B站]
- * - > 30 分钟           → 4.0×  [B站超长视频]
- */
+/** @deprecated 成长营已改为固定单次扣费；保留别名避免旧引用报错 */
 export function calculateAnalysisCost(
   type: "GROWTH" | "REMIX",
-  durationSeconds: number | null | undefined,
+  _durationSeconds?: number | null,
 ): number {
-  const base = BASE_COST[type];
-  const dur = (durationSeconds != null && durationSeconds > 0)
-    ? durationSeconds
-    : DEFAULT_DURATION_SECONDS;
-
-  let multiplier: number;
-  if (dur <= 180) {
-    multiplier = 1.0;
-  } else if (dur <= 600) {
-    multiplier = 1.5;
-  } else if (dur <= 1800) {
-    multiplier = 2.5;
-  } else {
-    multiplier = 4.0;
-  }
-
-  return Math.ceil(base * multiplier);
+  return flatAnalysisCost(type);
 }
 
-/** 给前端使用的时长→费用预估（同 calculateAnalysisCost，无需 import server 依赖） */
+/** 给前端使用的费用预估（固定单次，不按时长阶梯） */
 export function estimateCostLabel(
   type: "GROWTH" | "REMIX",
-  durationSeconds: number | null | undefined,
+  _durationSeconds?: number | null,
 ): { cost: number; tierLabel: string; isDefault: boolean } {
-  const isDefault = !durationSeconds || durationSeconds <= 0;
-  const cost = calculateAnalysisCost(type, durationSeconds);
-  const dur = isDefault ? DEFAULT_DURATION_SECONDS : durationSeconds!;
-
-  let tierLabel: string;
-  if (dur <= 180) {
-    tierLabel = "≤3 分钟";
-  } else if (dur <= 600) {
-    tierLabel = "3~10 分钟";
-  } else if (dur <= 1800) {
-    tierLabel = "10~30 分钟";
-  } else {
-    tierLabel = ">30 分钟";
-  }
-
-  return { cost, tierLabel, isDefault };
+  return {
+    cost: flatAnalysisCost(type),
+    tierLabel: "每次分析",
+    isDefault: false,
+  };
 }

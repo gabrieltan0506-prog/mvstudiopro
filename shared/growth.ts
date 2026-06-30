@@ -37,6 +37,27 @@ export const growthAnalysisModeValues = ["GROWTH", "REMIX"] as const;
 export const growthAnalysisModeSchema = z.enum(growthAnalysisModeValues);
 export type GrowthAnalysisMode = z.infer<typeof growthAnalysisModeSchema>;
 
+/** 完整商业分析 vs 单纯提取内容（跳过情绪/钩子/分镜/商业路径） */
+export const growthAnalysisProfileValues = ["full", "extract_only"] as const;
+export const growthAnalysisProfileSchema = z.enum(growthAnalysisProfileValues);
+export type GrowthAnalysisProfile = z.infer<typeof growthAnalysisProfileSchema>;
+
+/** 提取模式可选输出块（仅 extract_only 时生效） */
+export const growthExtractSectionsSchema = z.object({
+  transcript: z.boolean().default(true),
+  contentOutline: z.boolean().default(true),
+  visualNotes: z.boolean().default(false),
+  keyMoments: z.boolean().default(false),
+});
+export type GrowthExtractSections = z.infer<typeof growthExtractSectionsSchema>;
+
+export const defaultGrowthExtractSections: GrowthExtractSections = {
+  transcript: true,
+  contentOutline: true,
+  visualNotes: false,
+  keyMoments: false,
+};
+
 export const growthPlatformScoresSchema = z.object({
   xiaohongshu: z.number().default(0),
   douyin: z.number().default(0),
@@ -191,6 +212,10 @@ export const growthRemixExecutionSchema = z.object({
 export const growthAnalysisScoresSchema = z.object({
   /** 与请求 mode 一致；供前端在刷新 / 导出 PDF 时还原二创版面。旧数据可缺省，由前端依 remix 字段推断。 */
   mode: growthAnalysisModeSchema.optional(),
+  /** full=完整商业分析；extract_only=仅结构化提取 */
+  analysisProfile: growthAnalysisProfileSchema.optional(),
+  /** extract_only 模式下的 Markdown 正文 */
+  extractedContent: z.string().optional(),
   composition: z.number(),
   color: z.number(),
   lighting: z.number(),

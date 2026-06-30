@@ -9,6 +9,10 @@ import {
   growthLlmSchema,
   remixLlmSchema,
   growthPremiumContentSchema,
+  type GrowthAnalysisProfile,
+  type GrowthExtractSections,
+  defaultGrowthExtractSections,
+  growthExtractSectionsSchema,
 } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
@@ -1169,6 +1173,128 @@ function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: 
   });
 }
 
+function normalizeExtractSections(input?: Partial<GrowthExtractSections>): GrowthExtractSections {
+  return growthExtractSectionsSchema.parse({
+    ...defaultGrowthExtractSections,
+    ...(input && typeof input === "object" ? input : {}),
+  });
+}
+
+function buildEmptyVisualFirstPass(): VisualFirstPass {
+  return {
+    visualSummary: "",
+    openingFrameAssessment: "",
+    sceneConsistency: "",
+    trustSignals: [],
+    visualRisks: [],
+    keyFrames: [],
+  };
+}
+
+async function runContentExtractPass(params: {
+  strategistEngine: GrowthCampStrategistEngine;
+  transcript: string;
+  duration: number;
+  context?: string;
+  fileName?: string;
+  extractSections: GrowthExtractSections;
+  extractPrompt?: string;
+  visualFirstPass?: VisualFirstPass;
+}) {
+  const sections = params.extractSections;
+  const customPrompt = (params.extractPrompt || "").trim();
+  const visualSummary = params.visualFirstPass?.visualSummary?.trim() || "";
+
+  const sectionLines: string[] = [];
+  if (sections.transcript) sectionLines.push("- **口播/字幕整理**：按时间分段，去重，保留完整表述");
+  if (sections.contentOutline) sectionLines.push("- **内容大纲**：主题、核心论点、段落结构（条列）");
+  if (sections.visualNotes && visualSummary) sectionLines.push("- **画面简述**：基于视觉摘要，只描述画面与镜头，不做情绪/钩子/分镜/商业解读");
+  if (sections.keyMoments) sectionLines.push("- **关键时刻**：时间戳 + 该段在讲什么（不做情绪/钩子分析）");
+
+  const systemPrompt = `
+你是视频内容整理助手。任务：从转写文本${visualSummary ? "与视觉摘要" : ""}中提取结构化内容。
+
+【禁止输出】
+- 情绪弧线、钩子策略、分镜脚本、商业路径、选题策划、平台评分、变现建议、配乐分析
+
+【必须输出】
+${sectionLines.length ? sectionLines.join("\n") : "- 按转写整理核心内容"}
+
+【排版】Markdown 标题层级清晰（## / ###），条列去重，禁止文本墙。
+${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
+`.trim();
+
+  const response = await invokeLLM({
+    ...strategistInvokeBase(params.strategistEngine),
+    temperature: 0.3,
+    topP: 0.9,
+    messages: [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: JSON.stringify({
+          fileName: params.fileName || "video",
+          durationSeconds: params.duration,
+          businessContext: params.context || "",
+          transcript: truncate(params.transcript, 12000),
+          visualSummary: sections.visualNotes ? visualSummary : "",
+        }, null, 2),
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "growth_camp_content_extract",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            extractedContent: {
+              type: "string",
+              description: "Markdown 正文，仅含用户勾选的内容块",
+            },
+            summary: {
+              type: "string",
+              description: "50 字以内一句话摘要",
+            },
+          },
+          required: ["extractedContent", "summary"],
+        },
+      },
+    },
+  });
+
+  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}")) as {
+    extractedContent?: string;
+    summary?: string;
+  };
+
+  return {
+    composition: 0,
+    color: 0,
+    lighting: 0,
+    impact: 0,
+    viralPotential: 0,
+    explosiveIndex: 0,
+    analysisProfile: "extract_only" as GrowthAnalysisProfile,
+    extractedContent: String(parsed.extractedContent || "").trim(),
+    summary: String(parsed.summary || "").trim(),
+    realityCheck: "",
+    reverseEngineering: { hookStrategy: "", emotionalArc: "", commercialLogic: "" },
+    premiumContent: {
+      summary: "",
+      strategy: "",
+      actionableTopics: [],
+      topics: [],
+      explosiveTopicAnalysis: "",
+      musicAndExpressionAnalysis: "",
+      remixVisualAnalysis: "",
+      remixExpressionAnalysis: "",
+      musicPrompt: "",
+    },
+  };
+}
+
 async function runDeepDivePass(params: {
   strategistEngine: GrowthCampStrategistEngine;
   sparseFrames: SparseFrame[];
@@ -1622,6 +1748,9 @@ export async function analyzeVideo(params: {
   mode?: GrowthAnalysisMode;
   /** 为 true 时重新上传至新 GCS 路径，避免沿用同一 gs:// 对象带来的中间层缓存疑虑 */
   forceRefresh?: boolean;
+  analysisProfile?: GrowthAnalysisProfile;
+  extractSections?: Partial<GrowthExtractSections>;
+  extractPrompt?: string;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
   try {
@@ -1680,6 +1809,11 @@ export async function analyzeVideo(params: {
       const audioPassChunks: AudioFirstPass[] = [];
       const visualPassChunks: VisualFirstPass[] = [];
       const allFrames: SparseFrame[] = [];
+      const isExtractOnly = params.analysisProfile === "extract_only";
+      const extractSections = isExtractOnly
+        ? normalizeExtractSections(params.extractSections)
+        : defaultGrowthExtractSections;
+      const needVisualForExtract = isExtractOnly && extractSections.visualNotes;
 
       for (const chunk of chunkRanges) {
         const audioBuffer = await extractAudioTrackFromPath(videoPath, chunk.start, chunk.duration).catch((error) => {
@@ -1695,7 +1829,7 @@ export async function analyzeVideo(params: {
           transcriptChunks.push(`[${toTimestamp(chunk.start)}-${toTimestamp(chunk.start + chunk.duration)}]\n${transcriptChunk}`);
         }
 
-        if (audioBuffer) {
+        if (!isExtractOnly && audioBuffer) {
           const audioStorage = await uploadBufferToGcs({
             objectName: `growth-camp/audio/${Date.now()}-${chunk.index}-${safeName.replace(/\.[^.]+$/, "")}.mp3`,
             buffer: audioBuffer,
@@ -1712,8 +1846,11 @@ export async function analyzeVideo(params: {
           audioPassChunks.push(audioPass);
         }
 
+        if (isExtractOnly && !needVisualForExtract) {
+          continue;
+        }
+
         // ✨ GROWTH / REMIX 模式用 slim 策略（≥5min=8帧 / <5min=10帧），降本提速
-        //    逆向工程模式（不在此函数内）保留 dense 密集策略
         const frameStrategy: SparseFrameStrategy = (params.mode === "GROWTH" || params.mode === "REMIX") ? "slim" : "dense";
         const sparseFrames = await extractSparseFramesFromPath(videoPath, chunk.start, chunk.duration, frameStrategy).catch((error) => {
           console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
@@ -1721,22 +1858,65 @@ export async function analyzeVideo(params: {
         });
         allFrames.push(...sparseFrames.frames);
 
-	        const visualPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
-	          sparseFrames: sparseFrames.frames,
-	          context: params.context,
-	          duration: chunk.duration,
-	          fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
-	        }).catch((error) => {
-	          console.warn("[growth.analyzeVideo] visual first pass failed:", error);
-	          throw new VideoAnalysisFailure("llm", normalizeFailureReason(error));
-	        }));
+        const visualPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
+          sparseFrames: sparseFrames.frames,
+          context: params.context,
+          duration: chunk.duration,
+          fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
+        }).catch((error) => {
+          console.warn("[growth.analyzeVideo] visual first pass failed:", error);
+          throw new VideoAnalysisFailure("llm", normalizeFailureReason(error));
+        }));
         visualPassChunks.push(visualPass);
       }
 
       const transcript = transcriptChunks.join("\n\n");
+      const analysisModePre = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+      const costProfile = estimateTokenProfile(duration, allFrames.length);
+
+      if (isExtractOnly) {
+        const visualFirstPass = needVisualForExtract
+          ? mergeVisualPasses(visualPassChunks)
+          : buildEmptyVisualFirstPass();
+        const extracted = await withGrowthAnalysisSlot(() => runContentExtractPass({
+          strategistEngine,
+          transcript,
+          duration,
+          context: params.context,
+          fileName: params.fileName,
+          extractSections,
+          extractPrompt: params.extractPrompt,
+          visualFirstPass,
+        }));
+        const analysisMode = analysisModePre;
+        const parsed = growthAnalysisScoresSchema.parse({
+          ...extracted,
+          mode: analysisMode,
+          visualSummary: needVisualForExtract ? visualFirstPass.visualSummary : "",
+        });
+        return {
+          analysis: parsed,
+          videoMeta: {
+            videoUrl: videoGcsUri,
+            audioUrl: "",
+            transcript,
+            videoDuration: duration,
+            provider: strategistEngine.provider,
+            model: finalModel,
+            fallback: false,
+            pipeline: resolveGrowthCampPipelineMode(params.modelName),
+            stageOneModel: GROWTH_CAMP_FIRST_PASS_MODEL,
+            stageTwoModel: finalModel,
+            sparseFrameCount: allFrames.length,
+            estimatedCostProfile: costProfile,
+            failureStage: undefined,
+            failureReason: undefined,
+          },
+        };
+      }
+
       const audioFirstPass = mergeAudioPasses(audioPassChunks);
       const visualFirstPass = mergeVisualPasses(visualPassChunks);
-      const analysisModePre = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       // 长视频 REMIX 模式：缩减抽帧数量，降低 LLM 推理时间，避免触发 Fly.io 60s proxy timeout
       const remixLongVideoFrameCap = analysisModePre === "REMIX" && duration > 480 ? 8 : undefined;
       const strategistFrames = remixLongVideoFrameCap
@@ -1825,7 +2005,6 @@ export async function analyzeVideo(params: {
             ? deepDive.keyFrames
             : visualFirstPass.keyFrames,
       });
-      const costProfile = estimateTokenProfile(duration, allFrames.length);
 
       return {
           analysis: parsed,
