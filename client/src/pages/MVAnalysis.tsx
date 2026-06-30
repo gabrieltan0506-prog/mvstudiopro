@@ -412,6 +412,7 @@ type VideoPipelineDebug = {
     status?: "idle" | "started" | "done" | "failed";
     modelName?: string;
     route?: "mvAnalysis.analyzeVideo" | "growth_analyze_video";
+    analysisProfile?: GrowthAnalysisProfile;
     error?: string;
   };
   job?: {
@@ -424,6 +425,12 @@ type VideoPipelineDebug = {
     status?: "idle" | "started" | "done" | "failed";
     provider?: string;
     model?: string;
+    pipeline?: string;
+    stageOneModel?: string;
+    stageTwoModel?: string;
+    visualPassModel?: string;
+    analysisProfile?: GrowthAnalysisProfile;
+    sparseFrameCount?: number;
     fallback?: boolean;
     failureStage?: string;
     failureReason?: string;
@@ -516,19 +523,20 @@ const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
 const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
 const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
 
-const GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS: Array<{ id: GrowthCampModel; label: string; hint: string }> = [
-  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", hint: "Vertex 多模态 + 关键帧，默认推荐" },
-  { id: "gpt-5.5", label: "GPT-5.5", hint: "Evolink 结构化报告，便于对比质量" },
-];
+/** 成长营分析固定 GPT-5.5；语音 scan 在后台用 Gemini 3.5 Flash（仅 Debug 展示）。 */
+const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
+
+/** 仅 Debug 面板展示：提取模式模型分工说明 */
+const EXTRACT_PIPELINE_DEBUG_NOTE =
+  "语音 scan：Gemini 3.5 Flash（覆盖不足时 fallback GPT-5.5）→ 关键点多次抽帧 + 其余约 50s 补帧 → 画面初判与 Markdown 总结：GPT-5.5";
 
 function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
   try {
-    const raw = localStorage.getItem(GROWTH_CAMP_ANALYSIS_MODEL_LS);
-    if (raw === "gpt-5.5" || raw === "gemini-3.5-flash") return raw;
+    localStorage.setItem(GROWTH_CAMP_ANALYSIS_MODEL_LS, GROWTH_CAMP_ANALYSIS_MODEL);
   } catch {
     /* ignore */
   }
-  return "gemini-3.5-flash";
+  return GROWTH_CAMP_ANALYSIS_MODEL;
 }
 
 function readGrowthCampAnalysisProfileFromLs(): GrowthAnalysisProfile {
@@ -1360,13 +1368,13 @@ function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadSt
       {
         id: "transfer",
         label: "上传到分析队列",
-        detail: isVideo ? "正在把原始文档送入分析入口，并持续同步字节进度。" : "正在整理文档内容并送入模型分析入口。",
+        detail: isVideo ? "正在把原始文档送入分析入口，并持续同步字节进度。" : "正在整理文档内容并送入分析入口。",
         status: uploadProgress >= 8 ? "active" : "pending",
       },
       {
         id: "handoff",
         label: "创建分析任务",
-        detail: "文档就绪后会立即创建任务，开始进入模型工作流。",
+        detail: "文档就绪后会立即创建任务，开始进入分析工作流。",
         status: uploadProgress >= 96 ? "active" : "pending",
       },
     ];
@@ -1644,8 +1652,8 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
-  const [growthCampAnalysisModel, setGrowthCampAnalysisModel] = useState<GrowthCampModel>(() =>
-    typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : "gemini-3.5-flash",
+  const [growthCampAnalysisModel] = useState<GrowthCampModel>(() =>
+    typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : GROWTH_CAMP_ANALYSIS_MODEL,
   );
   const [analysisProfile, setAnalysisProfile] = useState<GrowthAnalysisProfile>(() =>
     typeof window !== "undefined" ? readGrowthCampAnalysisProfileFromLs() : "full",
@@ -2154,6 +2162,7 @@ export default function MVAnalysisPage() {
                     status: "started",
                     modelName: growthCampAnalysisModel,
                     route: "growth_analyze_video",
+                    analysisProfile,
                   },
                 },
               }));
@@ -2189,6 +2198,7 @@ export default function MVAnalysisPage() {
                     status: "done",
                     modelName: growthCampAnalysisModel,
                     route: "growth_analyze_video",
+                    analysisProfile,
                   },
                   job: {
                     jobId,
@@ -2256,6 +2266,12 @@ export default function MVAnalysisPage() {
             status: "done",
             provider: String((result as any).debug?.provider || ""),
             model: String((result as any).debug?.model || ""),
+            pipeline: String((result as any).debug?.pipeline || ""),
+            stageOneModel: String((result as any).debug?.stageOneModel || ""),
+            stageTwoModel: String((result as any).debug?.stageTwoModel || ""),
+            visualPassModel: String((result as any).debug?.visualPassModel || ""),
+            analysisProfile,
+            sparseFrameCount: Number((result as any).debug?.sparseFrameCount || 0) || undefined,
             fallback: Boolean((result as any).debug?.fallback),
             failureStage: String((result as any).debug?.failureStage || ""),
             failureReason: String((result as any).debug?.failureReason || ""),
@@ -3529,7 +3545,7 @@ export default function MVAnalysisPage() {
                         ) : null}
                         {processingDetailMessages.length ? (
                           <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
-                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">模型正在做的事</div>
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">当前进度</div>
                             <div className="mt-2 space-y-2">
                               {processingDetailMessages.map((message, index) => (
                                 <div key={`${index}-${message}`} className="flex items-start gap-2 text-white/65">
@@ -3584,36 +3600,11 @@ export default function MVAnalysisPage() {
               </div>
 
               <div className="mt-5">
-                <p className="mb-2 text-xs font-semibold text-white/70">深度分析引擎（可切换对比）</p>
-                <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
-                  {GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS.map((opt) => {
-                    const active = growthCampAnalysisModel === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setGrowthCampAnalysisModel(opt.id)}
-                        className={`rounded-lg px-3 py-2 text-left transition ${
-                          active
-                            ? "bg-[#6366f1]/25 text-indigo-100 ring-1 ring-[#6366f1]/50"
-                            : "text-white/60 hover:bg-white/5 hover:text-white/85"
-                        }`}
-                        title={opt.hint}
-                      >
-                        <span className="block text-xs font-bold">{opt.label}</span>
-                        <span className="block text-[10px] opacity-75">{opt.hint}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="mt-5">
                 <p className="mb-2 text-xs font-semibold text-white/70">分析模式</p>
                 <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
                   {([
                     { id: "full" as const, label: "完整商业分析", hint: "含情绪、钩子、分镜与商业路径" },
-                    { id: "extract_only" as const, label: "单纯提取内容", hint: "先扫语音转写，再对重点时刻抽帧，输出详尽 Markdown" },
+                    { id: "extract_only" as const, label: "单纯提取内容", hint: "整理口播与画面，输出详尽 Markdown" },
                   ]).map((opt) => {
                     const active = analysisProfile === opt.id;
                     return (
@@ -3638,7 +3629,7 @@ export default function MVAnalysisPage() {
                 {analysisProfile === "extract_only" ? (
                   <div className="mt-4 space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
                     <p className="text-xs leading-relaxed text-emerald-100/85">
-                      固定流程：全片语音转写 → 识别重点时刻 → 定点抽帧（约 8–12 张）→ 输出口播整理、内容大纲、<strong>画面描述</strong>、关键时刻的详尽 Markdown。
+                      整理口播与画面内容，输出结构清晰、正文详尽、去重后的 Markdown。
                     </p>
                     <div>
                       <label className="mb-2 block text-xs font-semibold text-emerald-200/90">
@@ -3805,6 +3796,27 @@ export default function MVAnalysisPage() {
                   {debugInfo?.failureStage ? <div>失败阶段：{String(debugInfo.failureStage)}</div> : null}
                   {debugInfo?.failureReason ? <div>失败原因：{String(debugInfo.failureReason)}</div> : null}
                 </div>
+                <div className="mt-4 rounded-2xl border border-indigo-200/15 bg-black/15 p-4 text-xs text-white/75">
+                  <div className="text-xs uppercase tracking-[0.16em] text-indigo-100">模型与调用（Debug）</div>
+                  <div className="mt-3 space-y-2 leading-6">
+                    <div>分析模式：{analysisProfile === "extract_only" ? "单纯提取内容" : "完整商业分析"}</div>
+                    <div>请求模型：{growthCampAnalysisModel}</div>
+                    <div>主模型：{String(debugInfo?.model || (debugInfo as any)?.videoPipeline?.analysis?.model || "-")}</div>
+                    <div>Stage 1 / 语音 scan：{String(debugInfo?.stageOneModel || (debugInfo as any)?.videoPipeline?.analysis?.stageOneModel || "-")}</div>
+                    <div>Stage 2 / 总结：{String(debugInfo?.stageTwoModel || (debugInfo as any)?.videoPipeline?.analysis?.stageTwoModel || "-")}</div>
+                    <div>视觉初判模型：{String((debugInfo as any)?.visualPassModel || (debugInfo as any)?.videoPipeline?.analysis?.visualPassModel || "-")}</div>
+                    <div>Provider：{String(debugInfo?.provider || (debugInfo as any)?.videoPipeline?.analysis?.provider || "-")}</div>
+                    <div>管线 ID：{String(debugInfo?.pipeline || (debugInfo as any)?.videoPipeline?.analysis?.pipeline || "-")}</div>
+                    {(debugInfo as any)?.sparseFrameCount || (debugInfo as any)?.videoPipeline?.analysis?.sparseFrameCount ? (
+                      <div>抽帧数：{String((debugInfo as any)?.sparseFrameCount || (debugInfo as any)?.videoPipeline?.analysis?.sparseFrameCount)}</div>
+                    ) : null}
+                    {analysisProfile === "extract_only" ? (
+                      <div className="mt-2 rounded-xl border border-indigo-200/10 bg-indigo-500/5 px-3 py-2 text-white/70">
+                        {EXTRACT_PIPELINE_DEBUG_NOTE}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
                 {(debugInfo?.videoPipeline || inputKind === "video") ? (
                   <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/75">
                     <div className="text-xs uppercase tracking-[0.16em] text-cyan-100">视频链路 Debug</div>
@@ -3812,10 +3824,10 @@ export default function MVAnalysisPage() {
                       <div>1. 选择文档：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
                       <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
                       <div>3. 上传结果：GCS {String((debugInfo as any)?.videoPipeline?.upload?.gcsUri || "-")} / URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
-                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")}</div>
-                      <div>5. 派发状态：{String((debugInfo as any)?.videoPipeline?.dispatch?.status || "idle")}</div>
+                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")} / 模式 {String((debugInfo as any)?.videoPipeline?.dispatch?.analysisProfile || analysisProfile || "-")}</div>
+                      <div>5. 派发状态：{String((debugInfo as any)?.videoPipeline?.dispatch?.status || "idle")} / 请求模型 {String((debugInfo as any)?.videoPipeline?.dispatch?.modelName || growthCampAnalysisModel)}</div>
                       <div>6. Job：ID {String((debugInfo as any)?.videoPipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.videoPipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.videoPipeline?.job?.pollCount ?? "-")} 次</div>
-                      <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")}</div>
+                      <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.videoPipeline?.analysis?.model || debugInfo?.model || "-")}</div>
                       <div>8. Signed URL 申请失败：{String((debugInfo as any)?.videoPipeline?.upload?.signedUrlError || "-")}</div>
                       <div>9. 上传失败：{String((debugInfo as any)?.videoPipeline?.upload?.error || "-")}</div>
                       <div>10. 失败定位：阶段 {String((debugInfo as any)?.videoPipeline?.analysis?.failureStage || debugInfo?.failureStage || "-")} / 原因 {String((debugInfo as any)?.videoPipeline?.analysis?.failureReason || debugInfo?.failureReason || (debugInfo as any)?.videoPipeline?.analysis?.error || "-")}</div>

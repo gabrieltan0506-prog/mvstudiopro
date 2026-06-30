@@ -18,6 +18,8 @@ import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "
 import { storageRead } from "../storage";
 import {
   resolveGrowthCampExtractorModel,
+  resolveGrowthCampExtractScanEngine,
+  resolveGrowthCampGpt55Engine,
   resolveGrowthCampPipelineMode,
   resolveGrowthCampStrategistEngine,
   type GrowthCampStrategistEngine,
@@ -162,7 +164,7 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "followUpPrompt"
 >>;
 
-// Stage 1（音频/视觉初筛）与 Stage 2（战略分析）默认均为 Gemini 3.5 Flash；Stage 2 可在 UI 切 GPT-5.5。
+// Stage 1（音频/视觉初筛）默认 Gemini 3.5 Flash；提取模式抽帧分析与总结固定 GPT-5.5。
 function growthCampFirstPassModel(): string {
   return resolveGrowthCampExtractorModel();
 }
@@ -502,48 +504,128 @@ function parseTimestampToSeconds(value: string): number | null {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-const EXTRACT_TARGET_MAX_FRAMES = 12;
-const EXTRACT_TARGET_MAX_FRAMES_LONG = 10;
+/** 非关键点区域：约每 50 秒抽一帧 */
+const EXTRACT_BASELINE_INTERVAL_SEC = 50;
+/** 语音 scan 每个关键时刻：前后偏移多次抽帧（秒） */
+const EXTRACT_KEY_FRAME_OFFSETS_SEC = [-6, -2, 0, 3] as const;
+/** 关键点附近跳过 baseline，避免与 burst 重复 */
+const EXTRACT_KEY_NEAR_BASELINE_SEC = 10;
+/** 极端安全上限，防止异常 scan 爆量；关键点 burst 优先保留 */
+const EXTRACT_ABSOLUTE_MAX_FRAMES = 40;
+
+function buildKeyMomentExtractTimestamps(
+  duration: number,
+  priorityMoments: Array<{ timestamp?: string }>,
+): number[] {
+  const keySeconds = priorityMoments
+    .map((item) => parseTimestampToSeconds(String(item.timestamp || "")))
+    .filter((seconds): seconds is number => seconds != null && seconds >= 0 && seconds < duration);
+
+  const timestamps: number[] = [];
+  for (const center of keySeconds) {
+    for (const offset of EXTRACT_KEY_FRAME_OFFSETS_SEC) {
+      const t = Math.round((center + offset) * 10) / 10;
+      if (t >= 0 && t < duration) timestamps.push(t);
+    }
+  }
+  return timestamps;
+}
+
+function buildBaselineExtractAnchors(duration: number, keySeconds: number[]): number[] {
+  const anchors: number[] = [2, 5].filter((t) => t < duration);
+  for (let t = EXTRACT_BASELINE_INTERVAL_SEC; t < duration - 5; t += EXTRACT_BASELINE_INTERVAL_SEC) {
+    const tooNearKey = keySeconds.some((k) => Math.abs(k - t) <= EXTRACT_KEY_NEAR_BASELINE_SEC);
+    if (!tooNearKey) anchors.push(Math.round(t));
+  }
+  if (duration > 30) {
+    const nearEnd = Math.max(1, duration - 8);
+    const tooNearKey = keySeconds.some((k) => Math.abs(k - nearEnd) <= EXTRACT_KEY_NEAR_BASELINE_SEC);
+    if (!tooNearKey) anchors.push(nearEnd);
+  }
+  return anchors;
+}
 
 function buildExtractTargetTimestamps(
   duration: number,
   priorityMoments: Array<{ timestamp?: string }>,
 ): number[] {
-  const fromScan = priorityMoments
+  const keySeconds = priorityMoments
     .map((item) => parseTimestampToSeconds(String(item.timestamp || "")))
     .filter((seconds): seconds is number => seconds != null && seconds >= 0 && seconds < duration);
-  const anchors = [2, 5, Math.min(12, Math.max(1, duration * 0.02))].filter((t) => t < duration);
-  const nearEnd = duration > 30 ? [Math.max(1, duration - 8)] : [];
-  const cap = duration >= 480 ? EXTRACT_TARGET_MAX_FRAMES_LONG : EXTRACT_TARGET_MAX_FRAMES;
-  return Array.from(new Set([...anchors, ...fromScan, ...nearEnd]))
+  const keyBurst = buildKeyMomentExtractTimestamps(duration, priorityMoments);
+  const baseline = buildBaselineExtractAnchors(duration, keySeconds);
+  const merged = Array.from(new Set([...baseline, ...keyBurst]))
     .filter((t) => t >= 0 && t < duration)
-    .sort((a, b) => a - b)
-    .slice(0, cap);
+    .sort((a, b) => a - b);
+
+  if (merged.length <= EXTRACT_ABSOLUTE_MAX_FRAMES) return merged;
+
+  // 超上限时：保留全部关键点 burst，baseline 按间隔稀疏化
+  const keySet = new Set(keyBurst.map((t) => t.toFixed(1)));
+  const baselineOnly = baseline.filter((t) => !keySet.has(t.toFixed(1)));
+  const slotsLeft = Math.max(0, EXTRACT_ABSOLUTE_MAX_FRAMES - keyBurst.length);
+  const thinnedBaseline =
+    baselineOnly.length <= slotsLeft
+      ? baselineOnly
+      : baselineOnly.filter((_, i) => i % Math.ceil(baselineOnly.length / Math.max(1, slotsLeft)) === 0)
+          .slice(0, slotsLeft);
+
+  return Array.from(new Set([...thinnedBaseline, ...keyBurst]))
+    .filter((t) => t >= 0 && t < duration)
+    .sort((a, b) => a - b);
 }
 
-/** 提取模式 Phase 1：仅基于转写文本找出重点时刻（便宜），供 Phase 2 定点抽帧 */
+function computeExtractMinChars(duration: number, transcriptLength: number): number {
+  const byDuration = Math.max(1800, Math.round((duration / 60) * 520));
+  const byTranscript = transcriptLength >= 200 ? Math.round(transcriptLength * 0.45) : 0;
+  return Math.max(byDuration, byTranscript);
+}
+
+function maxExtractScanMoments(duration: number): number {
+  if (duration >= 480) return 14;
+  if (duration >= 240) return 12;
+  return 8;
+}
+
+function isExtractScanWeak(
+  scan: { priorityMoments: Array<{ timestamp: string; label: string }> },
+  transcript: string,
+  duration: number,
+): boolean {
+  const text = transcript.trim();
+  if (text.length < 40) return false;
+  if (!scan.priorityMoments.length) return duration >= 90;
+  if (duration >= 240 && scan.priorityMoments.length < 3) return true;
+  const seconds = scan.priorityMoments
+    .map((item) => parseTimestampToSeconds(item.timestamp))
+    .filter((value): value is number => value != null);
+  if (!seconds.length) return true;
+  const maxSec = Math.max(...seconds);
+  if (duration >= 300 && maxSec < duration * 0.25) return true;
+  return false;
+}
+
+/** 提取模式 Phase 1：基于转写找重点时刻；默认 Gemini 3.5 Flash，效果差则改 GPT-5.5 */
 async function runExtractTranscriptScan(params: {
   transcript: string;
   duration: number;
   context?: string;
   fileName?: string;
+  scanEngine: GrowthCampStrategistEngine;
 }) {
   const transcript = params.transcript.trim();
   if (transcript.length < 20) {
     return { priorityMoments: [] as Array<{ timestamp: string; label: string }>, topicHint: "" };
   }
 
-  const scanModel = growthCampFirstPassModel();
   const response = await invokeLLM({
-    model: "pro",
-    provider: "vertex",
-    modelName: scanModel,
+    ...strategistInvokeBase(params.scanEngine),
     temperature: 0.2,
     messages: [
       {
         role: "system",
-        content: `你是视频内容索引助手。根据口播/字幕转写，找出最值得再看画面的重点时刻（主题转折、关键论点、数据/案例、强视觉信息）。
-规则：timestamp 用 mm:ss；长视频(${Math.round(params.duration / 60)} 分钟)最多 8 个时刻；禁止编造转写里没有的内容。`,
+        content: `你是视频内容索引助手。根据口播/字幕转写，找出**画面/演示/论点转折**的关键时刻（主题切换、案例展示、投屏操作、数据金句、强视觉信息）。
+规则：timestamp 用 mm:ss；本视频约 ${Math.round(params.duration / 60)} 分钟，最多 ${maxExtractScanMoments(params.duration)} 个时刻；**timestamp 尽量精确**（系统将每个关键点前后多次抽帧）；禁止编造转写里没有的内容。非关键点区域会另按约 50 秒间隔补帧，你只需标出真正重要的时刻。`,
       },
       {
         role: "user",
@@ -555,7 +637,9 @@ async function runExtractTranscriptScan(params: {
         }, null, 2),
       },
     ],
-    response_format: { type: "json_object" },
+    response_format: params.scanEngine.provider === "openai"
+      ? { type: "json_object" }
+      : { type: "json_object" },
   });
 
   const parsed = parseLlmJsonResponse<{
@@ -567,7 +651,7 @@ async function runExtractTranscriptScan(params: {
     priorityMoments: Array.isArray(parsed.priorityMoments)
       ? parsed.priorityMoments
           .filter((item) => item && typeof item.timestamp === "string")
-          .slice(0, 8)
+          .slice(0, maxExtractScanMoments(params.duration))
           .map((item) => ({
             timestamp: String(item.timestamp),
             label: String(item.label || "").trim(),
@@ -575,6 +659,21 @@ async function runExtractTranscriptScan(params: {
       : [],
     topicHint: String(parsed.topicHint || "").trim(),
   };
+}
+
+async function runExtractTranscriptScanWithFallback(params: {
+  transcript: string;
+  duration: number;
+  context?: string;
+  fileName?: string;
+}) {
+  const flashEngine = resolveGrowthCampExtractScanEngine();
+  let scan = await runExtractTranscriptScan({ ...params, scanEngine: flashEngine });
+  if (isExtractScanWeak(scan, params.transcript, params.duration)) {
+    console.warn("[growth.analyzeVideo] extract transcript scan weak on Flash, retry with GPT-5.5");
+    scan = await runExtractTranscriptScan({ ...params, scanEngine: resolveGrowthCampGpt55Engine() });
+  }
+  return scan;
 }
 
 async function runExtractOnlyPipeline(params: {
@@ -589,6 +688,7 @@ async function runExtractOnlyPipeline(params: {
   extractPrompt?: string;
   mode: GrowthAnalysisMode;
 }) {
+  const extractEngine = resolveGrowthCampGpt55Engine();
   const transcriptChunks: string[] = [];
 
   for (const chunk of params.chunkRanges) {
@@ -613,7 +713,7 @@ async function runExtractOnlyPipeline(params: {
     }
   }
 
-  const scan = await runExtractTranscriptScan({
+  const scan = await runExtractTranscriptScanWithFallback({
     transcript,
     duration: params.duration,
     context: params.context,
@@ -626,7 +726,8 @@ async function runExtractOnlyPipeline(params: {
 
   let visualFirstPass = buildEmptyVisualFirstPass();
   if (sparseFrames.length > 0) {
-    visualFirstPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
+    visualFirstPass = await withGrowthAnalysisSlot(() => runExtractVisualFirstPass({
+      strategistEngine: extractEngine,
       sparseFrames,
       context: params.context,
       duration: params.duration,
@@ -635,7 +736,7 @@ async function runExtractOnlyPipeline(params: {
   }
 
   const extracted = await withGrowthAnalysisSlot(() => runContentExtractPass({
-    strategistEngine: params.strategistEngine,
+    strategistEngine: extractEngine,
     transcript,
     duration: params.duration,
     context: params.context,
@@ -1056,6 +1157,84 @@ async function runVisualFirstPass(params: {
   };
 }
 
+/** 提取模式：GPT-5.5 关键帧视觉描述（不做商业/钩子解读） */
+async function runExtractVisualFirstPass(params: {
+  strategistEngine: GrowthCampStrategistEngine;
+  sparseFrames: SparseFrame[];
+  context?: string;
+  duration: number;
+  fileName?: string;
+}): Promise<VisualFirstPass> {
+  const response = await invokeLLM({
+    ...strategistInvokeBase(params.strategistEngine),
+    temperature: 0.25,
+    messages: [
+      {
+        role: "system",
+        content: `你是视频画面记录员。仅依据关键帧做**客观画面描述**，供后续 Markdown 整理使用。
+
+规则：
+1. 只描述看得见的内容：人物、着装、姿态、场景、道具、大屏/投屏/UI 文字、镜头景别。
+2. 禁止商业解读、钩子策略、情绪营销、变现建议。
+3. keyFrames 覆盖所给每一帧；timestamp 用 mm:ss。
+4. whatShows 写详尽（至少 2 句），含 UI 文字/界面模块如能辨认。
+
+只返回 JSON：
+{
+  "visualSummary": "string（整体场景与投屏内容概述）",
+  "openingFrameAssessment": "string",
+  "sceneConsistency": "string",
+  "trustSignals": [],
+  "visualRisks": [],
+  "keyFrames": [
+    { "timestamp": "00:08", "whatShows": "string", "commercialUse": "", "issue": "", "fix": "" }
+  ]
+}`,
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `文件名：${params.fileName || "未命名视频"}`,
+              `业务背景：${params.context?.trim() || "未提供"}`,
+              `视频时长：${params.duration.toFixed(1)} 秒`,
+              `关键帧时间点：${params.sparseFrames.map((item) => toTimestamp(item.timestamp)).join("、")}`,
+            ].join("\n\n"),
+          },
+          ...params.sparseFrames.map((item, index) => ({
+            type: "image_url" as const,
+            image_url: {
+              url: item.dataUrl,
+              detail: index < 4 ? "high" as const : "auto" as const,
+            },
+          })),
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const parsed = JSON.parse(extractJsonString(String(response.choices[0]?.message?.content || "{}")));
+  return {
+    visualSummary: String(parsed.visualSummary || ""),
+    openingFrameAssessment: String(parsed.openingFrameAssessment || ""),
+    sceneConsistency: String(parsed.sceneConsistency || ""),
+    trustSignals: [],
+    visualRisks: [],
+    keyFrames: Array.isArray(parsed.keyFrames)
+      ? parsed.keyFrames.map((item: any) => ({
+          timestamp: String(item?.timestamp || "00:00"),
+          whatShows: String(item?.whatShows || ""),
+          commercialUse: "",
+          issue: "",
+          fix: "",
+        }))
+      : [],
+  };
+}
+
 function normalizePremiumTopics(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((item: any) => ({
@@ -1436,6 +1615,80 @@ function looksLikeEmptyExtractStub(content: string): boolean {
     && !/(?:^|\n)- .{20,}/m.test(text);
 }
 
+function looksLikeTooBriefExtract(content: string, duration: number, transcriptLength: number): boolean {
+  const text = String(content || "").trim();
+  const minChars = computeExtractMinChars(duration, transcriptLength);
+  if (text.length < minChars * 0.65) return true;
+  const hasTranscriptSection = /##\s*(\d+\.\s*)?口播|##\s*口播/i.test(text);
+  const hasVisualSection = /##\s*(\d+\.\s*)?画面描述/i.test(text);
+  if (!hasTranscriptSection || !hasVisualSection) return true;
+  const h3Count = (text.match(/^###\s+/gm) || []).length;
+  const minSegments = Math.max(3, Math.round(duration / 120));
+  if (duration >= 240 && h3Count < minSegments) return true;
+  return false;
+}
+
+function looksLikeDuplicativeExtract(content: string): boolean {
+  const text = String(content || "").trim();
+  if (/去重后的重点|精确结论|重点信息汇总/i.test(text)) return true;
+  return false;
+}
+
+function buildExtractSystemPrompt(params: {
+  duration: number;
+  transcriptLength: number;
+  scanTopicHint?: string;
+  priorityBlock: string;
+  customPrompt: string;
+  strictRetry?: boolean;
+}): string {
+  const minChars = computeExtractMinChars(params.duration, params.transcriptLength);
+  const minTranscriptSegments = Math.max(3, Math.round(params.duration / 90));
+  const minVisualEntries = Math.max(4, Math.round(params.duration / 75));
+
+  return `
+你是视频内容整理助手（GPT-5.5）。后台已用 Gemini 3.5 Flash 完成语音 scan；你负责把转写、关键帧画面整理成**流畅、详尽、去重**的 Markdown。
+
+【任务目标】
+像培训实录文档：大纲清晰、正文流畅详尽。**同一事实不要在多个章节全文重复**——各章分工明确，后章只可一句交叉引用。
+
+【禁止输出】
+- 情绪弧线、钩子、分镜脚本、商业路径、选题、平台评分、变现、配乐
+- 「未提供转写」等推托
+- 章节「去重后的重点信息汇总」「精确结论」「演示要点整理」等重复摘要
+
+【必须按此结构（## 标题字面一致，可带序号如 ## 1.）】
+
+## 视频基本信息
+文件名、时长、内容类型、主要场景 — **各一行列表，不展开**
+
+## 口播/字幕整理
+按时间轴分段（### mm:ss 左右 或 mm:ss–mm:ss），**只写说了什么 / 讲解逻辑**
+- 至少 ${minTranscriptSegments} 段；转写稀疏时写「本段以画面演示为主：…」
+- 每段流畅通顺，保留关键句，禁止只写主题词
+
+## 内容大纲
+**结构索引**：主题（1 小段）、核心论点（3–6 条短句）、段落结构（时间范围 + **一句话**）
+- 不得复制「口播整理」整段正文
+
+## 画面描述
+**只写看得见的内容**：整体风格、主讲人、场景道具、大屏/UI/投屏细节
+- 按子节组织；至少 ${minVisualEntries} 处带 mm:ss
+- 不与「口播整理」逐段复述同一段话
+
+## 关键时刻
+每个 scan 重点时刻 1 条：**mm:ss｜一句口播要点｜一句画面要点**（禁止复制上文长段）
+
+【篇幅与文风】总字数建议 ≥ ${minChars} 字；行文通顺可读
+${params.strictRetry ? "\n【重试】上次重复过多或过短。删重复摘要章，扩写口播与画面正文。\n" : ""}
+${params.scanTopicHint ? `【语音 scan 主题】${params.scanTopicHint}` : ""}
+${params.priorityBlock ? `【语音 scan 关键时刻】\n${params.priorityBlock}` : ""}
+${params.customPrompt ? `\n【用户额外要求】\n${params.customPrompt}` : ""}
+
+【输出格式】JSON（无代码围栏）：extractedContent + summary（50 字内）
+`.trim();
+}
+
 function buildExtractMultimodalUserContent(params: {
   fileName?: string;
   context?: string;
@@ -1512,37 +1765,13 @@ async function runContentExtractPass(params: {
   if (!hasTranscript && !hasVisual) {
     throw new VideoAnalysisFailure(
       "transcription",
-      "未能从视频提取口播转写或画面信息。请确认视频含清晰音轨或画面，或改用 Gemini 3.5 Flash 再试。",
+      "未能从视频提取口播转写或画面信息。请确认视频含清晰音轨或画面后再试。",
     );
   }
 
   const priorityBlock = params.priorityMoments?.length
     ? params.priorityMoments.map((m) => `- ${m.timestamp} ${m.label}`).join("\n")
     : "";
-
-  const systemPrompt = `
-你是视频内容整理助手。流程：已先完成全片语音转写，再对重点时刻抽帧并做画面描述。user message 含转写、画面描述、关键帧图片，**禁止**声称「未提供转写/画面」。
-
-【禁止输出】
-- 情绪弧线、钩子策略、分镜脚本、商业路径、选题策划、平台评分、变现建议、配乐分析
-- 「未提供转写」「无法整理」等推托话术
-
-【必须输出 — 详尽充实，禁止简述敷衍】
-- **口播/字幕整理**：按时间分段，去重，保留完整表述
-- **内容大纲**：主题、核心论点、段落结构（条列）
-- **画面描述**：基于关键帧，详尽描述画面、人物、场景、字幕/文字、镜头信息（不是一句话带过）
-- **关键时刻**：时间戳 + 该段在讲什么 / 画面在展示什么
-
-${params.scanTopicHint ? `【语音扫描主题提示】${params.scanTopicHint}` : ""}
-${priorityBlock ? `【已标记重点时刻】\n${priorityBlock}` : ""}
-
-【排版】Markdown 标题层级清晰（## / ###），条列去重，内容详尽精确。
-${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
-
-【输出格式】必须返回 JSON 对象（不要用代码围栏），字段：
-- extractedContent：上述 Markdown 正文（字符串）
-- summary：50 字以内一句话摘要
-`.trim();
 
   const useOpenAiJsonObject = params.strategistEngine.provider === "openai";
   const userMultimodalContent = buildExtractMultimodalUserContent({
@@ -1555,45 +1784,82 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
     videoGcsUri: params.videoGcsUri,
   });
 
-  const response = await invokeLLM({
-    ...strategistInvokeBase(params.strategistEngine),
-    temperature: 0.3,
-    topP: 0.9,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMultimodalContent },
-    ],
-    response_format: useOpenAiJsonObject
-      ? { type: "json_object" }
-      : {
-      type: "json_schema",
-      json_schema: {
-        name: "growth_camp_content_extract",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            extractedContent: {
-              type: "string",
-              description: "Markdown 正文",
+  const invokeExtractPass = async (strictRetry: boolean) => {
+    const systemPrompt = buildExtractSystemPrompt({
+      duration: params.duration,
+      transcriptLength: transcript.length,
+      scanTopicHint: params.scanTopicHint,
+      priorityBlock,
+      customPrompt,
+      strictRetry,
+    });
+    return invokeLLM({
+      ...strategistInvokeBase(params.strategistEngine),
+      temperature: strictRetry ? 0.35 : 0.3,
+      topP: 0.92,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMultimodalContent },
+      ],
+      response_format: useOpenAiJsonObject
+        ? { type: "json_object" }
+        : {
+        type: "json_schema",
+        json_schema: {
+          name: "growth_camp_content_extract",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              extractedContent: {
+                type: "string",
+                description: `详尽 Markdown 正文，不少于 ${computeExtractMinChars(params.duration, transcript.length)} 字`,
+              },
+              summary: {
+                type: "string",
+                description: "50 字以内一句话摘要",
+              },
             },
-            summary: {
-              type: "string",
-              description: "50 字以内一句话摘要",
-            },
+            required: ["extractedContent", "summary"],
           },
-          required: ["extractedContent", "summary"],
         },
       },
-    },
-  });
+    });
+  };
 
-  const parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
-  const extractedContent = String(parsed.extractedContent || "").trim();
+  let response = await invokeExtractPass(false);
+  let parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
+  let extractedContent = String(parsed.extractedContent || "").trim();
+
+  if (
+    (hasTranscript || hasVisual)
+    && (
+      looksLikeTooBriefExtract(extractedContent, params.duration, transcript.length)
+      || looksLikeDuplicativeExtract(extractedContent)
+    )
+  ) {
+    console.warn("[growth.analyzeVideo] extract pass too brief or duplicative, retrying with strict prompt");
+    response = await invokeExtractPass(true);
+    parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
+    extractedContent = String(parsed.extractedContent || "").trim();
+  }
+
   if (looksLikeEmptyExtractStub(extractedContent) && (hasTranscript || hasVisual)) {
     throw new VideoAnalysisFailure(
       "llm",
-      "内容提取模型返回空模板（未使用已提供的转写/画面）。请换 Gemini 3.5 Flash 或缩短视频后再试。",
+      "内容提取模型返回空模板（未使用已提供的转写/画面）。请缩短视频或稍后重试。",
+    );
+  }
+  if (looksLikeTooBriefExtract(extractedContent, params.duration, transcript.length) && (hasTranscript || hasVisual)) {
+    throw new VideoAnalysisFailure(
+      "llm",
+      `内容提取结果过短（仅 ${extractedContent.length} 字，需详尽 Markdown）。请重试。`,
+    );
+  }
+  if (looksLikeDuplicativeExtract(extractedContent) && (hasTranscript || hasVisual)) {
+    throw new VideoAnalysisFailure(
+      "llm",
+      "内容提取结果重复章节过多。请重试或补充提取要求（去重、只要一份正文）。",
     );
   }
 
@@ -2159,12 +2425,12 @@ export async function analyzeVideo(params: {
             audioUrl: "",
             transcript: extractResult.transcript,
             videoDuration: duration,
-            provider: strategistEngine.provider,
-            model: finalModel,
+            provider: resolveGrowthCampGpt55Engine().provider,
+            model: resolveGrowthCampGpt55Engine().modelName,
             fallback: false,
-            pipeline: "extract_only_voice_then_target_frames",
-            stageOneModel: growthCampFirstPassModel(),
-            stageTwoModel: finalModel,
+            pipeline: "extract_only_flash_scan_gpt55_visual_summary",
+            stageOneModel: resolveGrowthCampExtractScanEngine().modelName,
+            stageTwoModel: resolveGrowthCampGpt55Engine().modelName,
             sparseFrameCount: extractResult.sparseFrameCount,
             estimatedCostProfile: extractResult.costProfile,
             failureStage: undefined,
