@@ -51,7 +51,6 @@ import {
   Music2,
   Orbit,
   Play,
-  RefreshCw,
   Rocket,
   ScanSearch,
   Send,
@@ -2040,9 +2039,13 @@ export default function MVAnalysisPage() {
     })();
   }, []);
 
-  const handleAnalyze = useCallback(async (opts?: { forceRefresh?: boolean }) => {
+  const handleAnalyze = useCallback(async () => {
     if (!inputKind) return;
-    const forceRefresh = Boolean(opts?.forceRefresh);
+
+    setAnalysis(null);
+    setAnalysisTranscript("");
+    setAnalyzedVideoUrl("");
+    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
 
     if (!supervisorAccess) {
       try {
@@ -2206,7 +2209,6 @@ export default function MVAnalysisPage() {
                     context: context || undefined,
                     modelName: growthCampAnalysisModel,
                     mode: analysisMode,
-                    forceRefresh,
                     durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
                     analysisProfile,
                     extractSections: analysisProfile === "extract_only" ? extractSections : undefined,
@@ -3736,27 +3738,12 @@ export default function MVAnalysisPage() {
               <div className="mt-5 flex flex-wrap items-center gap-4">
                 <button
                   type="button"
-                  onClick={() => void handleAnalyze({ forceRefresh: false })}
+                  onClick={() => void handleAnalyze()}
                   disabled={(!selectedFile && !fileBase64) || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
                   {analysisProfile === "extract_only" ? "开始提取内容" : "开始进行商业分析"}
-                </button>
-                <button
-                  type="button"
-                  disabled={(!selectedFile && !fileBase64) || isProcessing}
-                  onClick={() => {
-                    if (window.confirm("确定要强制重新分析吗？系统将无视旧纪录，重新生成最新架构的报告。")) {
-                      setAnalysis(null);
-                      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-                      void handleAnalyze({ forceRefresh: true });
-                    }
-                  }}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-bold text-red-400 shadow-lg shadow-red-500/5 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-4 w-4 ${isProcessing ? "animate-spin" : ""}`} />
-                  强制重新分析
                 </button>
               </div>
 
@@ -4548,7 +4535,7 @@ export default function MVAnalysisPage() {
                       </div>
                     ) : (
                       <p className="text-[15px] leading-relaxed text-white/55">
-                        （本节本次未生成可展示正文。请确认已选择「实战爆款 · 二次创作」并完成分析，或点击「强制重新分析」重试。）
+                        （本节本次未生成可展示正文。请确认已选择「实战爆款 · 二次创作」并完成分析后重试。）
                       </p>
                     )}
                   </section>
@@ -4564,7 +4551,7 @@ export default function MVAnalysisPage() {
                     ) : null}
                     {!_re && !_rmp ? (
                       <p className="mb-6 text-[15px] leading-relaxed text-white/55">
-                        （本节本次未生成表达指导或 BGM 提示词。可尝试「强制重新分析」或稍后重试。）
+                        （本节本次未生成表达指导或 BGM 提示词。可重新上传视频并再次分析，或稍后重试。）
                       </p>
                     ) : null}
                     {_rmp ? (

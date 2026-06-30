@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import {
@@ -1789,7 +1790,7 @@ export async function analyzeVideo(params: {
   context?: string;
   modelName?: string;
   mode?: GrowthAnalysisMode;
-  /** 为 true 时重新上传至新 GCS 路径，避免沿用同一 gs:// 对象带来的中间层缓存疑虑 */
+  /** @deprecated 已废弃：每次分析均复制到新 GCS 路径，不再复用 gs:// */
   forceRefresh?: boolean;
   analysisProfile?: GrowthAnalysisProfile;
   extractSections?: Partial<GrowthExtractSections>;
@@ -1804,7 +1805,8 @@ export async function analyzeVideo(params: {
     if (typeof params.gcsUri === "string" && isGsUri(params.gcsUri)) {
       const storedObject = await downloadGcsObject({ gcsUri: params.gcsUri });
       buffer = storedObject.buffer;
-      videoGcsUri = params.forceRefresh ? "" : params.gcsUri;
+      // 每次分析都复制到新 GCS 路径，避免 Vertex 对同一 gs:// 对象的多模态缓存导致结果串台
+      videoGcsUri = "";
     } else if (typeof params.fileKey === "string" && params.fileKey.trim()) {
       const storedBuffer = await storageRead(params.fileKey).catch(() => null);
       if (storedBuffer?.length) {
@@ -1833,7 +1835,7 @@ export async function analyzeVideo(params: {
     const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
     if (!videoGcsUri) {
       const storedVideo = await uploadBufferToGcs({
-        objectName: `growth-camp/videos/${params.forceRefresh ? "refresh-" : ""}${Date.now()}-${safeName}`,
+        objectName: `growth-camp/videos/${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${safeName}`,
         buffer,
         contentType: params.mimeType || "video/mp4",
       });
