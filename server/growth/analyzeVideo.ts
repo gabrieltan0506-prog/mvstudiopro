@@ -502,15 +502,43 @@ function parseTimestampToSeconds(value: string): number | null {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-const EXTRACT_TARGET_MAX_FRAMES = 14;
-const EXTRACT_TARGET_MAX_FRAMES_LONG = 16;
+/** 非关键点区域：约每 50 秒抽一帧 */
+const EXTRACT_BASELINE_INTERVAL_SEC = 50;
+/** 语音 scan 每个关键时刻：前后偏移多次抽帧（秒） */
+const EXTRACT_KEY_FRAME_OFFSETS_SEC = [-6, -2, 0, 3] as const;
+/** 关键点附近跳过 baseline，避免与 burst 重复 */
+const EXTRACT_KEY_NEAR_BASELINE_SEC = 10;
+/** 极端安全上限，防止异常 scan 爆量；关键点 burst 优先保留 */
+const EXTRACT_ABSOLUTE_MAX_FRAMES = 40;
 
-function buildPeriodicExtractAnchors(duration: number): number[] {
-  if (duration <= 90) return [];
-  const interval = duration >= 480 ? 75 : duration >= 240 ? 55 : 40;
-  const anchors: number[] = [];
-  for (let t = interval; t < duration - 12; t += interval) {
-    anchors.push(Math.round(t));
+function buildKeyMomentExtractTimestamps(
+  duration: number,
+  priorityMoments: Array<{ timestamp?: string }>,
+): number[] {
+  const keySeconds = priorityMoments
+    .map((item) => parseTimestampToSeconds(String(item.timestamp || "")))
+    .filter((seconds): seconds is number => seconds != null && seconds >= 0 && seconds < duration);
+
+  const timestamps: number[] = [];
+  for (const center of keySeconds) {
+    for (const offset of EXTRACT_KEY_FRAME_OFFSETS_SEC) {
+      const t = Math.round((center + offset) * 10) / 10;
+      if (t >= 0 && t < duration) timestamps.push(t);
+    }
+  }
+  return timestamps;
+}
+
+function buildBaselineExtractAnchors(duration: number, keySeconds: number[]): number[] {
+  const anchors: number[] = [2, 5].filter((t) => t < duration);
+  for (let t = EXTRACT_BASELINE_INTERVAL_SEC; t < duration - 5; t += EXTRACT_BASELINE_INTERVAL_SEC) {
+    const tooNearKey = keySeconds.some((k) => Math.abs(k - t) <= EXTRACT_KEY_NEAR_BASELINE_SEC);
+    if (!tooNearKey) anchors.push(Math.round(t));
+  }
+  if (duration > 30) {
+    const nearEnd = Math.max(1, duration - 8);
+    const tooNearKey = keySeconds.some((k) => Math.abs(k - nearEnd) <= EXTRACT_KEY_NEAR_BASELINE_SEC);
+    if (!tooNearKey) anchors.push(nearEnd);
   }
   return anchors;
 }
@@ -519,17 +547,30 @@ function buildExtractTargetTimestamps(
   duration: number,
   priorityMoments: Array<{ timestamp?: string }>,
 ): number[] {
-  const fromScan = priorityMoments
+  const keySeconds = priorityMoments
     .map((item) => parseTimestampToSeconds(String(item.timestamp || "")))
     .filter((seconds): seconds is number => seconds != null && seconds >= 0 && seconds < duration);
-  const anchors = [2, 5, Math.min(12, Math.max(1, duration * 0.02))].filter((t) => t < duration);
-  const periodic = buildPeriodicExtractAnchors(duration);
-  const nearEnd = duration > 30 ? [Math.max(1, duration - 8), Math.max(1, duration - 45)] : [];
-  const cap = duration >= 480 ? EXTRACT_TARGET_MAX_FRAMES_LONG : EXTRACT_TARGET_MAX_FRAMES;
-  return Array.from(new Set([...anchors, ...periodic, ...fromScan, ...nearEnd]))
+  const keyBurst = buildKeyMomentExtractTimestamps(duration, priorityMoments);
+  const baseline = buildBaselineExtractAnchors(duration, keySeconds);
+  const merged = Array.from(new Set([...baseline, ...keyBurst]))
     .filter((t) => t >= 0 && t < duration)
-    .sort((a, b) => a - b)
-    .slice(0, cap);
+    .sort((a, b) => a - b);
+
+  if (merged.length <= EXTRACT_ABSOLUTE_MAX_FRAMES) return merged;
+
+  // 超上限时：保留全部关键点 burst，baseline 按间隔稀疏化
+  const keySet = new Set(keyBurst.map((t) => t.toFixed(1)));
+  const baselineOnly = baseline.filter((t) => !keySet.has(t.toFixed(1)));
+  const slotsLeft = Math.max(0, EXTRACT_ABSOLUTE_MAX_FRAMES - keyBurst.length);
+  const thinnedBaseline =
+    baselineOnly.length <= slotsLeft
+      ? baselineOnly
+      : baselineOnly.filter((_, i) => i % Math.ceil(baselineOnly.length / Math.max(1, slotsLeft)) === 0)
+          .slice(0, slotsLeft);
+
+  return Array.from(new Set([...thinnedBaseline, ...keyBurst]))
+    .filter((t) => t >= 0 && t < duration)
+    .sort((a, b) => a - b);
 }
 
 function computeExtractMinChars(duration: number, transcriptLength: number): number {
@@ -565,8 +606,8 @@ async function runExtractTranscriptScan(params: {
     messages: [
       {
         role: "system",
-        content: `你是视频内容索引助手。根据口播/字幕转写，找出最值得再看画面的重点时刻（主题转折、关键论点、案例演示、投屏/操作步骤、数据/金句、强视觉信息）。
-规则：timestamp 用 mm:ss；本视频约 ${Math.round(params.duration / 60)} 分钟，请覆盖**开头、中段、结尾**，最多 ${maxExtractScanMoments(params.duration)} 个时刻；禁止编造转写里没有的内容；若转写稀疏，仍按时间均匀补全演示/画面转折时刻。`,
+        content: `你是视频内容索引助手。根据口播/字幕转写，找出**画面/演示/论点转折**的关键时刻（主题切换、案例展示、投屏操作、数据金句、强视觉信息）。
+规则：timestamp 用 mm:ss；本视频约 ${Math.round(params.duration / 60)} 分钟，最多 ${maxExtractScanMoments(params.duration)} 个时刻；**timestamp 尽量精确**（系统将每个关键点前后多次抽帧）；禁止编造转写里没有的内容。非关键点区域会另按约 50 秒间隔补帧，你只需标出真正重要的时刻。`,
       },
       {
         role: "user",
