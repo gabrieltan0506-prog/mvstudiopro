@@ -49,6 +49,7 @@ export const betaInviteCodes = pgTable("beta_invite_codes", {
   createdBy: integer("created_by").notNull(),               // supervisor userId
   note: varchar("note", { length: 120 }),
   expiresAt: timestamp("expires_at"),
+  isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
