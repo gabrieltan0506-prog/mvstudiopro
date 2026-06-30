@@ -784,10 +784,7 @@ function buildGeminiGenerationConfig(
   if (isGemini31ProModel(modelName)) {
     config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.9;
     config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
-    config.thinkingConfig = {
-      includeThoughts: false,
-      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_31_THINKING_LEVEL", "HIGH"),
-    };
+    // Vertex 部分预览模型不支持 thinking_level；勿传 thinkingConfig 以免 400 INVALID_ARGUMENT
     return config;
   }
 
@@ -795,8 +792,7 @@ function buildGeminiGenerationConfig(
     config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.8;
     config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
     config.thinkingConfig = {
-      includeThoughts: false,
-      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_25_THINKING_LEVEL", "HIGH"),
+      thinkingBudget: readNumberEnv("VERTEX_GEMINI_25_THINKING_BUDGET") ?? 1024,
     };
     return config;
   }
@@ -805,10 +801,6 @@ function buildGeminiGenerationConfig(
     config.temperature =
       temperature ?? readNumberEnv("VERTEX_GEMINI_35_FLASH_TEMPERATURE") ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TEMPERATURE") ?? 0.8;
     config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_35_FLASH_TOP_P") ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TOP_P") ?? 0.9;
-    config.thinkingConfig = {
-      includeThoughts: false,
-      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_35_FLASH_THINKING_LEVEL", "HIGH"),
-    };
     return config;
   }
 
@@ -816,20 +808,12 @@ function buildGeminiGenerationConfig(
     config.temperature =
       temperature ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TEMPERATURE") ?? readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.8;
     config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_3_FLASH_TOP_P") ?? readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
-    config.thinkingConfig = {
-      includeThoughts: false,
-      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_3_FLASH_THINKING_LEVEL", "HIGH"),
-    };
     return config;
   }
 
   if (isGemini31Model(modelName)) {
     config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.2;
     config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
-    config.thinkingConfig = {
-      includeThoughts: false,
-      thinkingLevel: normalizeVertexThinkingLevel("VERTEX_GEMINI_31_THINKING_LEVEL", "MEDIUM"),
-    };
     return config;
   }
 

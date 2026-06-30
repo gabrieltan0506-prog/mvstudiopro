@@ -508,6 +508,22 @@ type PersonalizedDirectionCard = {
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
+
+const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
+const GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS: Array<{ id: GrowthCampModel; label: string; hint: string }> = [
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", hint: "Vertex 多模态 + 关键帧，默认推荐" },
+  { id: "gpt-5.5", label: "GPT-5.5", hint: "Evolink 结构化报告，便于对比质量" },
+];
+
+function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
+  try {
+    const raw = localStorage.getItem(GROWTH_CAMP_ANALYSIS_MODEL_LS);
+    if (raw === "gpt-5.5" || raw === "gemini-3.5-flash") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "gemini-3.5-flash";
+}
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   xiaohongshu: "小红书",
@@ -1603,6 +1619,17 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
+  const [growthCampAnalysisModel, setGrowthCampAnalysisModel] = useState<GrowthCampModel>(() =>
+    typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : "gemini-3.5-flash",
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROWTH_CAMP_ANALYSIS_MODEL_LS, growthCampAnalysisModel);
+    } catch {
+      /* ignore */
+    }
+  }, [growthCampAnalysisModel]);
 
   // 竞品分析调研
   const [showResearch, setShowResearch] = useState(false);
@@ -1689,7 +1716,7 @@ export default function MVAnalysisPage() {
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
-      modelName: "gemini-3.1-pro-preview",
+      modelName: growthCampAnalysisModel,
       requestedPlatforms: [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
@@ -1983,7 +2010,7 @@ export default function MVAnalysisPage() {
               mimeType: fileMimeType || "application/octet-stream",
               fileName,
               context: context || undefined,
-              modelName: "gemini-3.1-pro-preview",
+              modelName: growthCampAnalysisModel,
             })
           : await (async () => {
               if (!selectedFile) {
@@ -2079,7 +2106,7 @@ export default function MVAnalysisPage() {
                   mode: "job",
                   dispatch: {
                     status: "started",
-                    modelName: "gemini-3.1-pro-preview",
+                    modelName: growthCampAnalysisModel,
                     route: "growth_analyze_video",
                   },
                 },
@@ -2096,7 +2123,7 @@ export default function MVAnalysisPage() {
                     mimeType: fileMimeType || "video/mp4",
                     fileName,
                     context: context || undefined,
-                    modelName: "gemini-3.1-pro-preview",
+                    modelName: growthCampAnalysisModel,
                     mode: analysisMode,
                     forceRefresh,
                     durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
@@ -2109,7 +2136,7 @@ export default function MVAnalysisPage() {
                   ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
                   dispatch: {
                     status: "done",
-                    modelName: "gemini-3.1-pro-preview",
+                    modelName: growthCampAnalysisModel,
                     route: "growth_analyze_video",
                   },
                   job: {
@@ -2222,7 +2249,7 @@ export default function MVAnalysisPage() {
     } finally {
       // no-op
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode, growthCampAnalysisModel, localDurationSeconds, user?.id]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
@@ -3505,6 +3532,28 @@ export default function MVAnalysisPage() {
               </div>
 
               <div className="mt-5">
+                <p className="mb-2 text-xs font-semibold text-white/70">深度分析引擎（可切换对比）</p>
+                <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
+                  {GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS.map((opt) => {
+                    const active = growthCampAnalysisModel === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setGrowthCampAnalysisModel(opt.id)}
+                        className={`rounded-lg px-3 py-2 text-left transition ${
+                          active
+                            ? "bg-[#6366f1]/25 text-indigo-100 ring-1 ring-[#6366f1]/50"
+                            : "text-white/60 hover:bg-white/5 hover:text-white/85"
+                        }`}
+                        title={opt.hint}
+                      >
+                        <span className="block text-xs font-bold">{opt.label}</span>
+                        <span className="block text-[10px] opacity-75">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* 预估积分提示 */}

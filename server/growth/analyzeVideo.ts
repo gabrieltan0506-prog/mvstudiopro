@@ -14,7 +14,7 @@ import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
-import { resolveGrowthCampPipelineMode } from "./extractorPipeline";
+import { resolveGrowthCampPipelineMode, resolveGrowthCampStrategistEngine, type GrowthCampStrategistEngine } from "./extractorPipeline";
 
 const execFileAsync = promisify(execFile);
 
@@ -175,7 +175,15 @@ class VideoAnalysisFailure extends Error {
 }
 
 function resolveGrowthCampFinalModel(modelName?: string): string {
-  return GROWTH_CAMP_STRATEGIST_MODEL;
+  return resolveGrowthCampStrategistEngine(modelName).modelName;
+}
+
+function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
+  return {
+    model: "pro" as const,
+    provider: engine.provider,
+    modelName: engine.modelName,
+  };
 }
 
 function normalizeFailureReason(error: unknown) {
@@ -1162,7 +1170,7 @@ function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: 
 }
 
 async function runDeepDivePass(params: {
-  finalModel: string;
+  strategistEngine: GrowthCampStrategistEngine;
   sparseFrames: SparseFrame[];
   audioFirstPass: AudioFirstPass;
   visualFirstPass: VisualFirstPass;
@@ -1270,9 +1278,7 @@ async function runDeepDivePass(params: {
   while (_retries > 0) {
     try {
       const mainResponse = await invokeLLM({
-        model: "pro",
-        provider: "vertex",
-        modelName: GROWTH_CAMP_STRATEGIST_MODEL,
+        ...strategistInvokeBase(params.strategistEngine),
         temperature: 0.7,
         topP: 0.9,
         messages: [
@@ -1463,9 +1469,7 @@ async function runDeepDivePass(params: {
       let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
       try {
         const premiumResp = await invokeLLM({
-          model: "pro",
-          provider: "vertex",
-          modelName: GROWTH_CAMP_STRATEGIST_MODEL,
+          ...strategistInvokeBase(params.strategistEngine),
           temperature: 0.7,
           topP: 0.9,
           messages: [
@@ -1621,7 +1625,8 @@ export async function analyzeVideo(params: {
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
   try {
-    const finalModel = resolveGrowthCampFinalModel(params.modelName);
+    const strategistEngine = resolveGrowthCampStrategistEngine(params.modelName);
+    const finalModel = strategistEngine.modelName;
     let buffer: Buffer;
     let videoGcsUri = "";
     if (typeof params.gcsUri === "string" && isGsUri(params.gcsUri)) {
@@ -1739,7 +1744,7 @@ export async function analyzeVideo(params: {
         : pickStrategistFrames(allFrames);
 
       const deepDive = await withGrowthAnalysisSlot(() => runDeepDivePass({
-        finalModel,
+        strategistEngine,
         sparseFrames: strategistFrames,
         audioFirstPass,
         visualFirstPass,
@@ -1829,10 +1834,10 @@ export async function analyzeVideo(params: {
             audioUrl: "",
             transcript,
           videoDuration: duration,
-          provider: "vertex",
+          provider: strategistEngine.provider,
           model: finalModel,
           fallback: false,
-          pipeline: resolveGrowthCampPipelineMode(finalModel),
+          pipeline: resolveGrowthCampPipelineMode(params.modelName),
           stageOneModel: GROWTH_CAMP_FIRST_PASS_MODEL,
           stageTwoModel: finalModel,
           sparseFrameCount: allFrames.length,

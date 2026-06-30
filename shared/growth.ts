@@ -24,6 +24,8 @@ export function growthPlatformsForStatsAggregationList(): (typeof growthPlatform
 }
 
 export const growthCampModelValues = [
+  "gemini-3.5-flash",
+  "gpt-5.5",
   "gemini-2.5-pro",
   "gemini-3.1-pro-preview",
 ] as const;
