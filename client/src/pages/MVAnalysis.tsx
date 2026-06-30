@@ -23,6 +23,8 @@ import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
   GrowthCampModel,
+  GrowthExtractSections,
+  GrowthAnalysisProfile,
   GrowthHandoff,
   GrowthHotWordMatch,
   GrowthPlanStep,
@@ -31,6 +33,8 @@ import type {
   GrowthReferenceExample,
   GrowthSnapshot,
 } from "@shared/growth";
+import { defaultGrowthExtractSections } from "@shared/growth";
+import { CREDIT_COSTS } from "@shared/plans";
 import {
   ArrowLeft,
   BriefcaseBusiness,
@@ -78,6 +82,8 @@ import WorkAmbientPanel from "@/components/WorkAmbientPanel";
 
 type AnalysisResult = {
   mode?: "GROWTH" | "REMIX";
+  analysisProfile?: GrowthAnalysisProfile;
+  extractedContent?: string;
   composition: number;
   color: number;
   lighting: number;
@@ -508,6 +514,64 @@ type PersonalizedDirectionCard = {
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
+
+const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
+const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
+const GROWTH_CAMP_EXTRACT_SECTIONS_LS = "mv-growth-camp-extract-sections";
+const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
+
+const GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS: Array<{ id: GrowthCampModel; label: string; hint: string }> = [
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", hint: "Vertex 多模态 + 关键帧，默认推荐" },
+  { id: "gpt-5.5", label: "GPT-5.5", hint: "Evolink 结构化报告，便于对比质量" },
+];
+
+function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
+  try {
+    const raw = localStorage.getItem(GROWTH_CAMP_ANALYSIS_MODEL_LS);
+    if (raw === "gpt-5.5" || raw === "gemini-3.5-flash") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "gemini-3.5-flash";
+}
+
+function readGrowthCampAnalysisProfileFromLs(): GrowthAnalysisProfile {
+  try {
+    const raw = localStorage.getItem(GROWTH_CAMP_ANALYSIS_PROFILE_LS);
+    if (raw === "extract_only" || raw === "full") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "full";
+}
+
+function readGrowthCampExtractSectionsFromLs(): GrowthExtractSections {
+  try {
+    const raw = localStorage.getItem(GROWTH_CAMP_EXTRACT_SECTIONS_LS);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<GrowthExtractSections>;
+      return { ...defaultGrowthExtractSections, ...parsed };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ...defaultGrowthExtractSections };
+}
+
+function readGrowthCampExtractPromptFromLs(): string {
+  try {
+    return localStorage.getItem(GROWTH_CAMP_EXTRACT_PROMPT_LS) || "";
+  } catch {
+    return "";
+  }
+}
+
+const GROWTH_EXTRACT_SECTION_OPTIONS: Array<{ key: keyof GrowthExtractSections; label: string; hint: string }> = [
+  { key: "transcript", label: "口播/字幕整理", hint: "按时间分段整理转写" },
+  { key: "contentOutline", label: "内容大纲", hint: "主题、论点与结构" },
+  { key: "visualNotes", label: "画面简述", hint: "仅描述画面，不做情绪/分镜分析" },
+  { key: "keyMoments", label: "关键时刻", hint: "时间轴要点，不含钩子/商业解读" },
+];
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   xiaohongshu: "小红书",
@@ -1603,6 +1667,50 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
+  const [growthCampAnalysisModel, setGrowthCampAnalysisModel] = useState<GrowthCampModel>(() =>
+    typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : "gemini-3.5-flash",
+  );
+  const [analysisProfile, setAnalysisProfile] = useState<GrowthAnalysisProfile>(() =>
+    typeof window !== "undefined" ? readGrowthCampAnalysisProfileFromLs() : "full",
+  );
+  const [extractSections, setExtractSections] = useState<GrowthExtractSections>(() =>
+    typeof window !== "undefined" ? readGrowthCampExtractSectionsFromLs() : { ...defaultGrowthExtractSections },
+  );
+  const [extractPrompt, setExtractPrompt] = useState(() =>
+    typeof window !== "undefined" ? readGrowthCampExtractPromptFromLs() : "",
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROWTH_CAMP_ANALYSIS_MODEL_LS, growthCampAnalysisModel);
+    } catch {
+      /* ignore */
+    }
+  }, [growthCampAnalysisModel]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROWTH_CAMP_ANALYSIS_PROFILE_LS, analysisProfile);
+    } catch {
+      /* ignore */
+    }
+  }, [analysisProfile]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROWTH_CAMP_EXTRACT_SECTIONS_LS, JSON.stringify(extractSections));
+    } catch {
+      /* ignore */
+    }
+  }, [extractSections]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(GROWTH_CAMP_EXTRACT_PROMPT_LS, extractPrompt);
+    } catch {
+      /* ignore */
+    }
+  }, [extractPrompt]);
 
   // 竞品分析调研
   const [showResearch, setShowResearch] = useState(false);
@@ -1689,7 +1797,7 @@ export default function MVAnalysisPage() {
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
-      modelName: "gemini-3.1-pro-preview",
+      modelName: growthCampAnalysisModel,
       requestedPlatforms: [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
@@ -1983,7 +2091,7 @@ export default function MVAnalysisPage() {
               mimeType: fileMimeType || "application/octet-stream",
               fileName,
               context: context || undefined,
-              modelName: "gemini-3.1-pro-preview",
+              modelName: growthCampAnalysisModel,
             })
           : await (async () => {
               if (!selectedFile) {
@@ -2079,7 +2187,7 @@ export default function MVAnalysisPage() {
                   mode: "job",
                   dispatch: {
                     status: "started",
-                    modelName: "gemini-3.1-pro-preview",
+                    modelName: growthCampAnalysisModel,
                     route: "growth_analyze_video",
                   },
                 },
@@ -2096,10 +2204,15 @@ export default function MVAnalysisPage() {
                     mimeType: fileMimeType || "video/mp4",
                     fileName,
                     context: context || undefined,
-                    modelName: "gemini-3.1-pro-preview",
+                    modelName: growthCampAnalysisModel,
                     mode: analysisMode,
                     forceRefresh,
                     durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
+                    analysisProfile,
+                    extractSections: analysisProfile === "extract_only" ? extractSections : undefined,
+                    extractPrompt: analysisProfile === "extract_only" && extractPrompt.trim()
+                      ? extractPrompt.trim()
+                      : undefined,
                   },
                 },
               });
@@ -2109,7 +2222,7 @@ export default function MVAnalysisPage() {
                   ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
                   dispatch: {
                     status: "done",
-                    modelName: "gemini-3.1-pro-preview",
+                    modelName: growthCampAnalysisModel,
                     route: "growth_analyze_video",
                   },
                   job: {
@@ -2222,7 +2335,7 @@ export default function MVAnalysisPage() {
     } finally {
       // no-op
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode, growthCampAnalysisModel, analysisProfile, extractSections, extractPrompt, localDurationSeconds, user?.id]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
@@ -3505,28 +3618,116 @@ export default function MVAnalysisPage() {
               </div>
 
               <div className="mt-5">
+                <p className="mb-2 text-xs font-semibold text-white/70">深度分析引擎（可切换对比）</p>
+                <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
+                  {GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS.map((opt) => {
+                    const active = growthCampAnalysisModel === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setGrowthCampAnalysisModel(opt.id)}
+                        className={`rounded-lg px-3 py-2 text-left transition ${
+                          active
+                            ? "bg-[#6366f1]/25 text-indigo-100 ring-1 ring-[#6366f1]/50"
+                            : "text-white/60 hover:bg-white/5 hover:text-white/85"
+                        }`}
+                        title={opt.hint}
+                      >
+                        <span className="block text-xs font-bold">{opt.label}</span>
+                        <span className="block text-[10px] opacity-75">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <p className="mb-2 text-xs font-semibold text-white/70">分析模式</p>
+                <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
+                  {([
+                    { id: "full" as const, label: "完整商业分析", hint: "含情绪、钩子、分镜与商业路径" },
+                    { id: "extract_only" as const, label: "单纯提取内容", hint: "跳过情绪/钩子/分镜/商业路径" },
+                  ]).map((opt) => {
+                    const active = analysisProfile === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setAnalysisProfile(opt.id)}
+                        className={`rounded-lg px-3 py-2 text-left transition ${
+                          active
+                            ? "bg-[#22c55e]/20 text-emerald-100 ring-1 ring-[#22c55e]/40"
+                            : "text-white/60 hover:bg-white/5 hover:text-white/85"
+                        }`}
+                        title={opt.hint}
+                      >
+                        <span className="block text-xs font-bold">{opt.label}</span>
+                        <span className="block text-[10px] opacity-75">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {analysisProfile === "extract_only" ? (
+                  <div className="mt-4 space-y-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                    <div>
+                      <p className="mb-2 text-xs font-semibold text-emerald-200/90">提取内容块（勾选）</p>
+                      <div className="flex flex-wrap gap-3">
+                        {GROWTH_EXTRACT_SECTION_OPTIONS.map((opt) => (
+                          <label
+                            key={opt.key}
+                            className="inline-flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/80"
+                            title={opt.hint}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={extractSections[opt.key]}
+                              onChange={(e) => setExtractSections((prev) => ({ ...prev, [opt.key]: e.target.checked }))}
+                              className="mt-0.5"
+                            />
+                            <span>
+                              <span className="block font-semibold text-white/90">{opt.label}</span>
+                              <span className="block text-[10px] text-white/45">{opt.hint}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold text-emerald-200/90">
+                        提取提示（可选）
+                      </label>
+                      <textarea
+                        value={extractPrompt}
+                        onChange={(e) => setExtractPrompt(e.target.value)}
+                        rows={2}
+                        placeholder="例如：只要整理口播原文，按段落去重；不要任何点评。"
+                        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-white/30"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {/* 预估积分提示 */}
               {(selectedFile || fileBase64) && !isProcessing && (() => {
-                const base = analysisMode === "REMIX" ? 60 : 40;
-                let mult = 1.5; let tierLabel = "时长未知，按默认计费";
-                if (localDurationSeconds > 0) {
-                  const d = localDurationSeconds;
-                  if (d <= 180) { mult = 1.0; tierLabel = `${Math.round(d / 60)} 分钟以内`; }
-                  else if (d <= 600) { mult = 1.5; tierLabel = `约 ${Math.round(d / 60)} 分钟`; }
-                  else if (d <= 1800) { mult = 2.5; tierLabel = `约 ${Math.round(d / 60)} 分钟`; }
-                  else { mult = 4.0; tierLabel = `约 ${Math.round(d / 60)} 分钟（长视频）`; }
-                }
-                const est = Math.ceil(base * mult);
+                const isSupervisorOrAdmin =
+                  supervisorAccess || user?.role === "supervisor" || user?.role === "admin";
+                const est = analysisMode === "REMIX" ? 60 : CREDIT_COSTS.growthCampGrowth;
                 return (
                   <div className="mt-3 inline-flex items-center gap-2 rounded-xl border border-orange-500/25 bg-orange-500/8 px-3 py-2 text-[12px] text-orange-300">
                     <span>⏱️</span>
                     <span>
-                      {localDurationSeconds > 0
-                        ? `检测到视频时长 ${tierLabel}，本次${analysisMode === "REMIX" ? "二创" : "深度"}分析将消耗 `
-                        : `${tierLabel}，本次${analysisMode === "REMIX" ? "二创" : "深度"}分析预计消耗 `}
-                      <strong className="text-orange-200">{est} 积分</strong>
+                      {isSupervisorOrAdmin ? (
+                        <>Supervisor / Admin：<strong className="text-emerald-200">本次分析免扣积分</strong></>
+                      ) : (
+                        <>
+                          本次{analysisProfile === "extract_only" ? "内容提取" : analysisMode === "REMIX" ? "二创" : "深度"}分析将消耗{" "}
+                          <strong className="text-orange-200">{est} 积分</strong>
+                          <span className="text-white/45">（每次分析固定扣一次，不按时长阶梯）</span>
+                        </>
+                      )}
                     </span>
                   </div>
                 );
@@ -3540,7 +3741,7 @@ export default function MVAnalysisPage() {
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                  开始进行商业分析
+                  {analysisProfile === "extract_only" ? "开始提取内容" : "开始进行商业分析"}
                 </button>
                 <button
                   type="button"
@@ -3900,6 +4101,18 @@ export default function MVAnalysisPage() {
           <section className="mt-8 space-y-6">
             <div className="space-y-6">
                 <PlatformTrendEntryPanel />
+
+                {analysis.analysisProfile === "extract_only" && (analysis.extractedContent || analysis.summary) ? (
+                  <div className="rounded-[28px] border border-emerald-400/25 bg-[#0f1f18] p-6">
+                    <div className="text-xs uppercase tracking-[0.16em] text-emerald-300/80">内容提取结果</div>
+                    {analysis.summary ? (
+                      <p className="mt-2 text-sm text-white/65">{analysis.summary}</p>
+                    ) : null}
+                    <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-white/88">
+                      {analysis.extractedContent || "暂无提取内容"}
+                    </div>
+                  </div>
+                ) : null}
 
                 {(analysis.explosiveIndex || analysis.realityCheck || analysis.reverseEngineering || analysis.premiumContent?.topics?.length || analysis.growthStrategy || analysis.remixExecution) ? (
                   <>

@@ -35,9 +35,9 @@ import { buildStage1StrategicHandoffForStage2 } from "../services/stage1Strategi
 import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
-import { deductCredits, getCredits, getUserPlan } from "../credits";
+import { deductCredits, deductCreditsAmount, getCredits, getUserPlan } from "../credits";
 import { CREDIT_COSTS } from "../plans";
-import { calculateAnalysisCost, MAX_DURATION_SECONDS } from "../utils/costCalculator";
+import { flatAnalysisCost, MAX_DURATION_SECONDS } from "../utils/costCalculator";
 import {
   createProducerTask,
   getProducerTaskStatus,
@@ -257,25 +257,27 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       throw new Error("系统暂不支持超过 60 分钟的超长视频，请剪辑后再试");
     }
 
-    // 阶梯式计费（durationSeconds 为 0 时默认按 10 分钟 1.5× 计）
-    const cost = calculateAnalysisCost(growthMode, durationSeconds);
+    // 固定单次计费（不按时长阶梯）；supervisor/admin 由 deductCreditsAmount 内部免扣
+    const cost = flatAnalysisCost(growthMode);
     let creditDeducted = 0;
 
     if (Number.isFinite(numericUserId)) {
-      const credits = await getCredits(numericUserId);
-      if (credits.totalAvailable < cost) {
-        throw new Error(
-          durationSeconds > 0
-            ? `积分不足，${Math.round(durationSeconds / 60)} 分钟视频分析需要 ${cost} 积分（当前余额: ${credits.totalAvailable}）`
-            : `积分不足，本次分析需要 ${cost} 积分（当前余额: ${credits.totalAvailable}）`,
-        );
-      }
-      const durationLabel = durationSeconds > 0 ? `（${Math.round(durationSeconds / 60)} 分钟）` : "（时长未知，按默认计费）";
-      await deductCredits(numericUserId, creditAction, `创作者成长营 ${growthMode} 分析${durationLabel}`);
-      creditDeducted = cost;
+      const deductResult = await deductCreditsAmount(
+        numericUserId,
+        cost,
+        creditAction,
+        `创作者成长营 ${growthMode} 分析（单次 ${cost} 积分）`,
+      );
+      creditDeducted = deductResult.cost;
     }
 
     try {
+      const extractSectionsRaw = params.extractSections;
+      const extractSections =
+        extractSectionsRaw && typeof extractSectionsRaw === "object" && !Array.isArray(extractSectionsRaw)
+          ? extractSectionsRaw
+          : undefined;
+
       const result = await analyzeGrowthCampVideo({
         gcsUri: typeof params.gcsUri === "string" ? params.gcsUri : undefined,
         fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
@@ -286,6 +288,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         modelName: typeof params.modelName === "string" ? params.modelName : undefined,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
         forceRefresh: params.forceRefresh === true,
+        analysisProfile: params.analysisProfile === "extract_only" ? "extract_only" : "full",
+        extractSections,
+        extractPrompt: typeof params.extractPrompt === "string" ? params.extractPrompt : undefined,
       });
 
       return {
