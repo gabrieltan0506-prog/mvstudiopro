@@ -13,7 +13,7 @@ import { generateVideo } from "../veo";
 import { buildCharacterLockPrompt } from "../workflow/prompts/characterLockPrompt";
 import { resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
-const PREMIUM_REMIX_MODEL: GrowthCampModel = "gemini-3.1-pro-preview";
+const PREMIUM_REMIX_MODEL: GrowthCampModel = "gemini-3.5-flash";
 const PREMIUM_REMIX_IMAGE_TIMEOUT_MS = Math.max(12_000, Number(process.env.PREMIUM_REMIX_IMAGE_TIMEOUT_MS || 28_000) || 28_000);
 
 type PremiumRemixDebugStep = {

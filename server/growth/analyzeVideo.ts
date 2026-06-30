@@ -18,7 +18,12 @@ import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
-import { resolveGrowthCampPipelineMode, resolveGrowthCampStrategistEngine, type GrowthCampStrategistEngine } from "./extractorPipeline";
+import {
+  resolveGrowthCampExtractorModel,
+  resolveGrowthCampPipelineMode,
+  resolveGrowthCampStrategistEngine,
+  type GrowthCampStrategistEngine,
+} from "./extractorPipeline";
 
 const execFileAsync = promisify(execFile);
 
@@ -159,11 +164,10 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "followUpPrompt"
 >>;
 
-// ⚠️ 模型分层：
-//  · FIRST_PASS = 初次扫描视频帧 / OCR / 抽取（沿用 2.5 Pro，长视频用 3.1 Pro 成本吃不消）
-//  · STRATEGIST = 战略分析阶段（用 3.1 Pro 提升商业洞察质量）
-const GROWTH_CAMP_FIRST_PASS_MODEL = "gemini-2.5-pro";
-const GROWTH_CAMP_STRATEGIST_MODEL = "gemini-3.1-pro-preview";
+// Stage 1（音频/视觉初筛）与 Stage 2（战略分析）默认均为 Gemini 3.5 Flash；Stage 2 可在 UI 切 GPT-5.5。
+function growthCampFirstPassModel(): string {
+  return resolveGrowthCampExtractorModel();
+}
 type GrowthAnalysisMode = "GROWTH" | "REMIX";
 
 class VideoAnalysisFailure extends Error {
@@ -531,7 +535,7 @@ async function runAudioFirstPass(params: {
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: GROWTH_CAMP_FIRST_PASS_MODEL,
+    modelName: growthCampFirstPassModel(),
     messages: [
       {
         role: "system",
@@ -730,7 +734,7 @@ async function runVisualFirstPass(params: {
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: GROWTH_CAMP_FIRST_PASS_MODEL,
+    modelName: growthCampFirstPassModel(),
     messages: [
       {
         role: "system",
@@ -1905,7 +1909,7 @@ export async function analyzeVideo(params: {
             model: finalModel,
             fallback: false,
             pipeline: resolveGrowthCampPipelineMode(params.modelName),
-            stageOneModel: GROWTH_CAMP_FIRST_PASS_MODEL,
+            stageOneModel: growthCampFirstPassModel(),
             stageTwoModel: finalModel,
             sparseFrameCount: allFrames.length,
             estimatedCostProfile: costProfile,
@@ -2017,7 +2021,7 @@ export async function analyzeVideo(params: {
           model: finalModel,
           fallback: false,
           pipeline: resolveGrowthCampPipelineMode(params.modelName),
-          stageOneModel: GROWTH_CAMP_FIRST_PASS_MODEL,
+          stageOneModel: growthCampFirstPassModel(),
           stageTwoModel: finalModel,
           sparseFrameCount: allFrames.length,
           estimatedCostProfile: costProfile,

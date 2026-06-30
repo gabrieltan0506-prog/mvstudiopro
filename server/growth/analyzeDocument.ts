@@ -2,6 +2,7 @@ import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/g
 import { invokeLLM } from "../_core/llm";
 import { storagePut } from "../storage";
 import { extractDocumentText } from "./documentExtract";
+import { resolveGrowthCampStrategistEngine } from "./extractorPipeline";
 
 type DocumentAnalysisResult = {
   analysis: GrowthAnalysisScores;
@@ -14,15 +15,6 @@ type DocumentAnalysisResult = {
     fallback: boolean;
   };
 };
-
-function resolveGrowthCampFinalModel(modelName?: string): string {
-  return String(
-    modelName
-      || process.env.GROWTH_CAMP_FINAL_MODEL
-      || process.env.VERTEX_GROWTH_FINAL_MODEL
-      || "gemini-3.1-pro-preview",
-  ).trim() || "gemini-3.1-pro-preview";
-}
 
 function truncate(value: string, max = 6000) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
@@ -64,7 +56,7 @@ export async function analyzeDocument(params: {
   context?: string;
   modelName?: string;
 }): Promise<DocumentAnalysisResult> {
-  const finalModel = resolveGrowthCampFinalModel(params.modelName);
+  const strategistEngine = resolveGrowthCampStrategistEngine(params.modelName);
   const buffer = Buffer.from(params.fileBase64, "base64");
   const keyName = params.fileName || `document-${Date.now()}.bin`;
   const { url: fileUrl } = await storagePut(`growth-camp/documents/${Date.now()}-${keyName}`, buffer, params.mimeType);
@@ -101,8 +93,8 @@ export async function analyzeDocument(params: {
 
     const response = await invokeLLM({
       model: "pro",
-      provider: "vertex",
-      modelName: finalModel,
+      provider: strategistEngine.provider,
+      modelName: strategistEngine.modelName,
       messages: [
         {
           role: "system",

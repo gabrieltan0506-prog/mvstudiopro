@@ -23,11 +23,9 @@ export function resolveGrowthCampStrategistEngine(modelName?: string): GrowthCam
   if (raw === "gpt-5.5" || raw === "gpt55") {
     return { modelName: "gpt-5.5", provider: "openai", label: "GPT-5.5" };
   }
-  if (raw === "gemini-2.5-pro") {
-    return { modelName: "gemini-2.5-pro", provider: "vertex", label: "Gemini 2.5 Pro" };
-  }
-  if (raw === "gemini-3.1-pro-preview") {
-    return { modelName: "gemini-3.1-pro-preview", provider: "vertex", label: "Gemini 3.1 Pro" };
+  // 旧配置/缓存别名 → 统一走 3.5 Flash
+  if (raw === "gemini-2.5-pro" || raw === "gemini-3.1-pro-preview") {
+    return { modelName: "gemini-3.5-flash", provider: "vertex", label: "Gemini 3.5 Flash" };
   }
   return { modelName: "gemini-3.5-flash", provider: "vertex", label: "Gemini 3.5 Flash" };
 }
@@ -44,9 +42,5 @@ export function resolveGrowthCampStrategistModel(modelName?: string): GrowthCamp
 export function resolveGrowthCampPipelineMode(modelName?: string) {
   const engine = resolveGrowthCampStrategistEngine(modelName);
   if (engine.provider === "openai") return "extractor_plus_gpt55_strategist";
-  return engine.modelName === "gemini-3.1-pro-preview"
-    ? "extractor_plus_3_1_strategist"
-    : engine.modelName === "gemini-3.5-flash"
-      ? "extractor_plus_3_5_strategist"
-      : "extractor_plus_2_5_strategist";
+  return "extractor_plus_3_5_strategist";
 }
