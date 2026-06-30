@@ -502,8 +502,18 @@ function parseTimestampToSeconds(value: string): number | null {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-const EXTRACT_TARGET_MAX_FRAMES = 12;
-const EXTRACT_TARGET_MAX_FRAMES_LONG = 10;
+const EXTRACT_TARGET_MAX_FRAMES = 14;
+const EXTRACT_TARGET_MAX_FRAMES_LONG = 16;
+
+function buildPeriodicExtractAnchors(duration: number): number[] {
+  if (duration <= 90) return [];
+  const interval = duration >= 480 ? 75 : duration >= 240 ? 55 : 40;
+  const anchors: number[] = [];
+  for (let t = interval; t < duration - 12; t += interval) {
+    anchors.push(Math.round(t));
+  }
+  return anchors;
+}
 
 function buildExtractTargetTimestamps(
   duration: number,
@@ -513,12 +523,25 @@ function buildExtractTargetTimestamps(
     .map((item) => parseTimestampToSeconds(String(item.timestamp || "")))
     .filter((seconds): seconds is number => seconds != null && seconds >= 0 && seconds < duration);
   const anchors = [2, 5, Math.min(12, Math.max(1, duration * 0.02))].filter((t) => t < duration);
-  const nearEnd = duration > 30 ? [Math.max(1, duration - 8)] : [];
+  const periodic = buildPeriodicExtractAnchors(duration);
+  const nearEnd = duration > 30 ? [Math.max(1, duration - 8), Math.max(1, duration - 45)] : [];
   const cap = duration >= 480 ? EXTRACT_TARGET_MAX_FRAMES_LONG : EXTRACT_TARGET_MAX_FRAMES;
-  return Array.from(new Set([...anchors, ...fromScan, ...nearEnd]))
+  return Array.from(new Set([...anchors, ...periodic, ...fromScan, ...nearEnd]))
     .filter((t) => t >= 0 && t < duration)
     .sort((a, b) => a - b)
     .slice(0, cap);
+}
+
+function computeExtractMinChars(duration: number, transcriptLength: number): number {
+  const byDuration = Math.max(1800, Math.round((duration / 60) * 520));
+  const byTranscript = transcriptLength >= 200 ? Math.round(transcriptLength * 0.45) : 0;
+  return Math.max(byDuration, byTranscript);
+}
+
+function maxExtractScanMoments(duration: number): number {
+  if (duration >= 480) return 14;
+  if (duration >= 240) return 12;
+  return 8;
 }
 
 /** 提取模式 Phase 1：仅基于转写文本找出重点时刻（便宜），供 Phase 2 定点抽帧 */
@@ -542,8 +565,8 @@ async function runExtractTranscriptScan(params: {
     messages: [
       {
         role: "system",
-        content: `你是视频内容索引助手。根据口播/字幕转写，找出最值得再看画面的重点时刻（主题转折、关键论点、数据/案例、强视觉信息）。
-规则：timestamp 用 mm:ss；长视频(${Math.round(params.duration / 60)} 分钟)最多 8 个时刻；禁止编造转写里没有的内容。`,
+        content: `你是视频内容索引助手。根据口播/字幕转写，找出最值得再看画面的重点时刻（主题转折、关键论点、案例演示、投屏/操作步骤、数据/金句、强视觉信息）。
+规则：timestamp 用 mm:ss；本视频约 ${Math.round(params.duration / 60)} 分钟，请覆盖**开头、中段、结尾**，最多 ${maxExtractScanMoments(params.duration)} 个时刻；禁止编造转写里没有的内容；若转写稀疏，仍按时间均匀补全演示/画面转折时刻。`,
       },
       {
         role: "user",
@@ -567,7 +590,7 @@ async function runExtractTranscriptScan(params: {
     priorityMoments: Array.isArray(parsed.priorityMoments)
       ? parsed.priorityMoments
           .filter((item) => item && typeof item.timestamp === "string")
-          .slice(0, 8)
+          .slice(0, maxExtractScanMoments(params.duration))
           .map((item) => ({
             timestamp: String(item.timestamp),
             label: String(item.label || "").trim(),
@@ -1436,6 +1459,78 @@ function looksLikeEmptyExtractStub(content: string): boolean {
     && !/(?:^|\n)- .{20,}/m.test(text);
 }
 
+function looksLikeTooBriefExtract(content: string, duration: number, transcriptLength: number): boolean {
+  const text = String(content || "").trim();
+  const minChars = computeExtractMinChars(duration, transcriptLength);
+  if (text.length < minChars) return true;
+  const hasTranscriptSection = /##\s*口播|##\s*字幕/i.test(text);
+  const onlyOutline =
+    /##\s*内容大纲/i.test(text)
+    && !hasTranscriptSection
+    && !/##\s*分段内容详述/i.test(text);
+  if (onlyOutline) return true;
+  const h3Count = (text.match(/^###\s+/gm) || []).length;
+  const bulletCount = (text.match(/^- /gm) || []).length;
+  const minSegments = Math.max(3, Math.round(duration / 120));
+  if (duration >= 240 && h3Count < minSegments && bulletCount < minSegments * 2) return true;
+  if (/演示要点整理|核心论点\s*\n/i.test(text) && text.length < minChars * 1.2) return true;
+  return false;
+}
+
+function buildExtractSystemPrompt(params: {
+  duration: number;
+  transcriptLength: number;
+  scanTopicHint?: string;
+  priorityBlock: string;
+  customPrompt: string;
+  strictRetry?: boolean;
+}): string {
+  const minChars = computeExtractMinChars(params.duration, params.transcriptLength);
+  const minTranscriptSegments = Math.max(3, Math.round(params.duration / 90));
+  const minVisualEntries = Math.max(4, Math.round(params.duration / 75));
+
+  return `
+你是视频内容整理助手。已先完成全片语音转写，再对重点时刻抽帧。user message 含**完整转写**、画面摘要与关键帧图片。
+
+【任务目标】
+输出**详尽 Markdown 正文**（像会议记录 / 内容复盘），不是 PPT 式要点大纲。用户要的是「能直接阅读、复盘的详实内容」，禁止用三句话概括九分钟视频。
+
+【禁止输出】
+- 情绪弧线、钩子策略、分镜脚本、商业路径、选题策划、平台评分、变现建议、配乐分析
+- 「未提供转写」「无法整理」等推托话术
+- 单独章节「演示要点整理」「核心总结」等 meta 摘要（把信息写进正文分段里）
+- 仅含「主题 / 核心论点 / 段落结构」三条的大纲式敷衍
+
+【必须按此 Markdown 结构输出（标题字面一致）】
+
+## 口播/字幕整理
+按时间轴分段（### mm:ss–mm:ss），每段：
+- 写清该段**实际讲了什么**（保留口播原意与关键句，不要只写主题词）
+- 本视频至少 ${minTranscriptSegments} 个时间段；有转写处必须引用/改写转写内容，不可跳过中间大段
+
+## 分段内容详述
+按相同时间轴，用**完整段落**叙述每段发生了什么、演示了什么、信息点是什么（每段不少于 120 字，禁止一行带过）
+
+## 画面描述
+基于关键帧与视觉摘要，按时间戳详尽描述：人物、着装、姿态、场景、大屏/投屏/UI 文字、道具、镜头景别与变化
+- 至少 ${minVisualEntries} 条，带 mm:ss
+- 每条不少于 2 句，禁止「主讲人讲解中」式空话
+
+## 关键时刻
+时间戳 + 该时刻口播要点 + 画面在展示什么（可与上文不重复但要更聚焦）
+
+【篇幅】extractedContent 总字数不少于 ${minChars} 字（约 ${Math.round(params.duration / 60)} 分钟视频）。
+${params.strictRetry ? "\n【重试提醒】上次输出过短或过于大纲化。务必扩写口播分段与画面描述，覆盖全片时间线。\n" : ""}
+${params.scanTopicHint ? `【语音扫描主题提示】${params.scanTopicHint}` : ""}
+${params.priorityBlock ? `【已标记重点时刻】\n${params.priorityBlock}` : ""}
+${params.customPrompt ? `\n【用户额外要求】\n${params.customPrompt}` : ""}
+
+【输出格式】必须返回 JSON（不要代码围栏）：
+- extractedContent：上述 Markdown 全文
+- summary：50 字以内一句话摘要
+`.trim();
+}
+
 function buildExtractMultimodalUserContent(params: {
   fileName?: string;
   context?: string;
@@ -1520,30 +1615,6 @@ async function runContentExtractPass(params: {
     ? params.priorityMoments.map((m) => `- ${m.timestamp} ${m.label}`).join("\n")
     : "";
 
-  const systemPrompt = `
-你是视频内容整理助手。流程：已先完成全片语音转写，再对重点时刻抽帧并做画面描述。user message 含转写、画面描述、关键帧图片，**禁止**声称「未提供转写/画面」。
-
-【禁止输出】
-- 情绪弧线、钩子策略、分镜脚本、商业路径、选题策划、平台评分、变现建议、配乐分析
-- 「未提供转写」「无法整理」等推托话术
-
-【必须输出 — 详尽充实，禁止简述敷衍】
-- **口播/字幕整理**：按时间分段，去重，保留完整表述
-- **内容大纲**：主题、核心论点、段落结构（条列）
-- **画面描述**：基于关键帧，详尽描述画面、人物、场景、字幕/文字、镜头信息（不是一句话带过）
-- **关键时刻**：时间戳 + 该段在讲什么 / 画面在展示什么
-
-${params.scanTopicHint ? `【语音扫描主题提示】${params.scanTopicHint}` : ""}
-${priorityBlock ? `【已标记重点时刻】\n${priorityBlock}` : ""}
-
-【排版】Markdown 标题层级清晰（## / ###），条列去重，内容详尽精确。
-${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
-
-【输出格式】必须返回 JSON 对象（不要用代码围栏），字段：
-- extractedContent：上述 Markdown 正文（字符串）
-- summary：50 字以内一句话摘要
-`.trim();
-
   const useOpenAiJsonObject = params.strategistEngine.provider === "openai";
   const userMultimodalContent = buildExtractMultimodalUserContent({
     fileName: params.fileName,
@@ -1555,45 +1626,73 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
     videoGcsUri: params.videoGcsUri,
   });
 
-  const response = await invokeLLM({
-    ...strategistInvokeBase(params.strategistEngine),
-    temperature: 0.3,
-    topP: 0.9,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMultimodalContent },
-    ],
-    response_format: useOpenAiJsonObject
-      ? { type: "json_object" }
-      : {
-      type: "json_schema",
-      json_schema: {
-        name: "growth_camp_content_extract",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            extractedContent: {
-              type: "string",
-              description: "Markdown 正文",
+  const invokeExtractPass = async (strictRetry: boolean) => {
+    const systemPrompt = buildExtractSystemPrompt({
+      duration: params.duration,
+      transcriptLength: transcript.length,
+      scanTopicHint: params.scanTopicHint,
+      priorityBlock,
+      customPrompt,
+      strictRetry,
+    });
+    return invokeLLM({
+      ...strategistInvokeBase(params.strategistEngine),
+      temperature: strictRetry ? 0.35 : 0.3,
+      topP: 0.92,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMultimodalContent },
+      ],
+      response_format: useOpenAiJsonObject
+        ? { type: "json_object" }
+        : {
+        type: "json_schema",
+        json_schema: {
+          name: "growth_camp_content_extract",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              extractedContent: {
+                type: "string",
+                description: `详尽 Markdown 正文，不少于 ${computeExtractMinChars(params.duration, transcript.length)} 字`,
+              },
+              summary: {
+                type: "string",
+                description: "50 字以内一句话摘要",
+              },
             },
-            summary: {
-              type: "string",
-              description: "50 字以内一句话摘要",
-            },
+            required: ["extractedContent", "summary"],
           },
-          required: ["extractedContent", "summary"],
         },
       },
-    },
-  });
+    });
+  };
 
-  const parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
-  const extractedContent = String(parsed.extractedContent || "").trim();
+  let response = await invokeExtractPass(false);
+  let parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
+  let extractedContent = String(parsed.extractedContent || "").trim();
+
+  if (
+    (hasTranscript || hasVisual)
+    && looksLikeTooBriefExtract(extractedContent, params.duration, transcript.length)
+  ) {
+    console.warn("[growth.analyzeVideo] extract pass too brief, retrying with strict prompt");
+    response = await invokeExtractPass(true);
+    parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
+    extractedContent = String(parsed.extractedContent || "").trim();
+  }
+
   if (looksLikeEmptyExtractStub(extractedContent) && (hasTranscript || hasVisual)) {
     throw new VideoAnalysisFailure(
       "llm",
       "内容提取模型返回空模板（未使用已提供的转写/画面）。请换 Gemini 3.5 Flash 或缩短视频后再试。",
+    );
+  }
+  if (looksLikeTooBriefExtract(extractedContent, params.duration, transcript.length) && (hasTranscript || hasVisual)) {
+    throw new VideoAnalysisFailure(
+      "llm",
+      `内容提取结果过短（仅 ${extractedContent.length} 字，需详尽 Markdown）。请重试或换 Gemini 3.5 Flash。`,
     );
   }
 

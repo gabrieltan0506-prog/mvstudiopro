@@ -3638,7 +3638,7 @@ export default function MVAnalysisPage() {
                 {analysisProfile === "extract_only" ? (
                   <div className="mt-4 space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
                     <p className="text-xs leading-relaxed text-emerald-100/85">
-                      固定流程：全片语音转写 → 识别重点时刻 → 定点抽帧（约 8–12 张）→ 输出口播整理、内容大纲、<strong>画面描述</strong>、关键时刻的详尽 Markdown。
+                      固定流程：全片语音转写 → 识别重点时刻 → 定点抽帧 → 输出<strong>口播整理、分段详述、画面描述、关键时刻</strong>的详尽 Markdown（非要点大纲）。
                     </p>
                     <div>
                       <label className="mb-2 block text-xs font-semibold text-emerald-200/90">
