@@ -287,7 +287,6 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         context: typeof params.context === "string" ? params.context : undefined,
         modelName: typeof params.modelName === "string" ? params.modelName : undefined,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
-        forceRefresh: params.forceRefresh === true,
         analysisProfile: params.analysisProfile === "extract_only" ? "extract_only" : "full",
         extractSections,
         extractPrompt: typeof params.extractPrompt === "string" ? params.extractPrompt : undefined,
