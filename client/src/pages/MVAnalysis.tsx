@@ -516,19 +516,16 @@ const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
 const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
 const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
 
-const GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS: Array<{ id: GrowthCampModel; label: string; hint: string }> = [
-  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", hint: "Vertex 多模态 + 关键帧，默认推荐" },
-  { id: "gpt-5.5", label: "GPT-5.5", hint: "Evolink 结构化报告，便于对比质量" },
-];
+/** 成长营分析固定 GPT-5.5；语音 scan 在后台用 Gemini 3.5 Flash，用户不可选。 */
+const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
 
 function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
   try {
-    const raw = localStorage.getItem(GROWTH_CAMP_ANALYSIS_MODEL_LS);
-    if (raw === "gpt-5.5" || raw === "gemini-3.5-flash") return raw;
+    localStorage.setItem(GROWTH_CAMP_ANALYSIS_MODEL_LS, GROWTH_CAMP_ANALYSIS_MODEL);
   } catch {
     /* ignore */
   }
-  return "gemini-3.5-flash";
+  return GROWTH_CAMP_ANALYSIS_MODEL;
 }
 
 function readGrowthCampAnalysisProfileFromLs(): GrowthAnalysisProfile {
@@ -1644,8 +1641,8 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
-  const [growthCampAnalysisModel, setGrowthCampAnalysisModel] = useState<GrowthCampModel>(() =>
-    typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : "gemini-3.5-flash",
+  const [growthCampAnalysisModel] = useState<GrowthCampModel>(() =>
+    typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : GROWTH_CAMP_ANALYSIS_MODEL,
   );
   const [analysisProfile, setAnalysisProfile] = useState<GrowthAnalysisProfile>(() =>
     typeof window !== "undefined" ? readGrowthCampAnalysisProfileFromLs() : "full",
@@ -3584,31 +3581,6 @@ export default function MVAnalysisPage() {
               </div>
 
               <div className="mt-5">
-                <p className="mb-2 text-xs font-semibold text-white/70">深度分析引擎（可切换对比）</p>
-                <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
-                  {GROWTH_CAMP_ANALYSIS_MODEL_OPTIONS.map((opt) => {
-                    const active = growthCampAnalysisModel === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setGrowthCampAnalysisModel(opt.id)}
-                        className={`rounded-lg px-3 py-2 text-left transition ${
-                          active
-                            ? "bg-[#6366f1]/25 text-indigo-100 ring-1 ring-[#6366f1]/50"
-                            : "text-white/60 hover:bg-white/5 hover:text-white/85"
-                        }`}
-                        title={opt.hint}
-                      >
-                        <span className="block text-xs font-bold">{opt.label}</span>
-                        <span className="block text-[10px] opacity-75">{opt.hint}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="mt-5">
                 <p className="mb-2 text-xs font-semibold text-white/70">分析模式</p>
                 <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
                   {([
@@ -3638,7 +3610,7 @@ export default function MVAnalysisPage() {
                 {analysisProfile === "extract_only" ? (
                   <div className="mt-4 space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
                     <p className="text-xs leading-relaxed text-emerald-100/85">
-                      固定流程：全片语音转写 → 识别<strong>关键时刻</strong>（每点多次抽帧）→ 其余区间约每 50 秒补帧 → 输出口播整理、分段详述、画面描述、关键时刻的详尽 Markdown。
+                      固定流程：后台 <strong>Gemini 3.5 Flash</strong> 语音 scan → 关键点多次抽帧 / 其余约 50 秒补帧 → <strong>GPT-5.5</strong> 画面分析与 Markdown 总结（去重、大纲清晰、正文详尽）。
                     </p>
                     <div>
                       <label className="mb-2 block text-xs font-semibold text-emerald-200/90">
