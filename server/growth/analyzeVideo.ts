@@ -15,7 +15,7 @@ import {
   growthExtractSectionsSchema,
 } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
-import { invokeLLM } from "../_core/llm";
+import { invokeLLM, extractJsonString } from "../_core/llm";
 import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
 import {
@@ -192,6 +192,36 @@ function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
     provider: engine.provider,
     modelName: engine.modelName,
   };
+}
+
+function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T {
+  const content = String(raw || "").trim();
+  if (!content) return {} as T;
+  return JSON.parse(extractJsonString(content)) as T;
+}
+
+/** extract_only：Vertex 走 json_schema；GPT-5.5 可能直接回 Markdown，需兼容。 */
+function parseExtractPassResponse(raw: string): { extractedContent: string; summary: string } {
+  const content = String(raw || "").trim();
+  if (!content) return { extractedContent: "", summary: "" };
+  try {
+    const parsed = parseLlmJsonResponse<{ extractedContent?: string; summary?: string }>(content);
+    const extractedContent = String(parsed.extractedContent || "").trim();
+    const summary = String(parsed.summary || "").trim();
+    if (extractedContent) {
+      return { extractedContent, summary: summary || extractedContent.slice(0, 80) };
+    }
+    if (summary) {
+      return { extractedContent: content, summary };
+    }
+  } catch {
+    /* GPT-5.5 / Evolink 常忽略 json_schema，直接输出 Markdown */
+  }
+  const firstLine = content
+    .split("\n")
+    .map((line) => line.replace(/^#+\s*/, "").trim())
+    .find(Boolean) || "内容提取完成";
+  return { extractedContent: content, summary: firstLine.slice(0, 80) };
 }
 
 function normalizeFailureReason(error: unknown) {
@@ -683,7 +713,7 @@ async function runAudioFirstPass(params: {
     },
   });
 
-  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  const parsed = JSON.parse(extractJsonString(String(response.choices[0]?.message?.content || "{}")));
   return {
     valueTier: parsed.valueTier === "high" || parsed.valueTier === "low" ? parsed.valueTier : "medium",
     contentSummary: String(parsed.contentSummary || ""),
@@ -795,7 +825,7 @@ async function runVisualFirstPass(params: {
     response_format: { type: "json_object" },
   });
 
-  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  const parsed = JSON.parse(extractJsonString(String(response.choices[0]?.message?.content || "{}")));
   return {
     visualSummary: String(parsed.visualSummary || ""),
     openingFrameAssessment: String(parsed.openingFrameAssessment || ""),
@@ -1226,7 +1256,13 @@ ${sectionLines.length ? sectionLines.join("\n") : "- 按转写整理核心内容
 
 【排版】Markdown 标题层级清晰（## / ###），条列去重，禁止文本墙。
 ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
+
+【输出格式】必须返回 JSON 对象（不要用代码围栏），字段：
+- extractedContent：上述 Markdown 正文（字符串）
+- summary：50 字以内一句话摘要
 `.trim();
+
+  const useOpenAiJsonObject = params.strategistEngine.provider === "openai";
 
   const response = await invokeLLM({
     ...strategistInvokeBase(params.strategistEngine),
@@ -1245,7 +1281,9 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
         }, null, 2),
       },
     ],
-    response_format: {
+    response_format: useOpenAiJsonObject
+      ? { type: "json_object" }
+      : {
       type: "json_schema",
       json_schema: {
         name: "growth_camp_content_extract",
@@ -1268,10 +1306,7 @@ ${customPrompt ? `\n【用户额外要求】\n${customPrompt}` : ""}
     },
   });
 
-  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}")) as {
-    extractedContent?: string;
-    summary?: string;
-  };
+  const parsed = parseExtractPassResponse(String(response.choices[0]?.message?.content || ""));
 
   return {
     composition: 0,
@@ -1595,7 +1630,9 @@ async function runDeepDivePass(params: {
       },
     },
       });
-      const parsedMain = JSON.parse(String(mainResponse.choices[0]?.message?.content || "{}"));
+      const parsedMain = parseLlmJsonResponse<Record<string, unknown>>(
+        String(mainResponse.choices[0]?.message?.content || "{}"),
+      );
       let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
       try {
         const premiumResp = await invokeLLM({
@@ -1621,7 +1658,9 @@ async function runDeepDivePass(params: {
             },
           },
         });
-        const premiumRaw = JSON.parse(String(premiumResp.choices[0]?.message?.content || "{}"));
+        const premiumRaw = parseLlmJsonResponse<Record<string, unknown>>(
+          String(premiumResp.choices[0]?.message?.content || "{}"),
+        );
         premiumContent = mapStrategistPremiumLlmToPremiumContent(mode, premiumRaw);
       } catch (premiumErr: unknown) {
         const errMsg = premiumErr instanceof Error ? premiumErr.message : String(premiumErr);
@@ -1737,7 +1776,7 @@ async function runStrategistRefinementPass(params: {
     ],
     response_format: { type: "json_object" },
   });
-  return JSON.parse(String(response.choices[0]?.message?.content || "{}")) as StrategistRefinement;
+  return parseLlmJsonResponse<StrategistRefinement>(String(response.choices[0]?.message?.content || "{}"));
 }
 
 export async function analyzeVideo(params: {
