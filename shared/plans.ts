@@ -260,6 +260,8 @@ export const CREDIT_COSTS = {
   platformXhsDualNote: 72,
   /** 单页连贯图文知识卡片 **25/篇**（`single_page_knowledge_card`，自定义文案）；上篇+下篇合计 50 */
   platformSinglePageKnowledgeCard: 25,
+  /** 自定义抠像·单张原价（GPT-IMAGE-2 场景/主体图；去背景为白底主体直出）；2 张九折、4 张八折 */
+  platformCustomMattingImage: 32,
   /** 3×4 十二格分镜 **120**（`storyboard_sheet_landscape` + gridVariant=3x4）；后端分 2 段生成拼接 */
   platformStoryboardSheet3x4: 120,
   /** 3×4 十二格图文 **144**（`xiaohongshu_dual_note` + gridVariant=3x4）；后端分 2 段生成拼接 */
@@ -279,6 +281,22 @@ export const CREDIT_COSTS = {
   /** 战略地图：同一选题第二次起「重新生成文案」 */
   decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
+
+/** 自定义抠像可选比例 */
+export const PLATFORM_MATTING_ASPECT_RATIOS = ["9:16", "16:9", "3:4", "4:3", "21:9"] as const;
+export type PlatformMattingAspectRatio = (typeof PLATFORM_MATTING_ASPECT_RATIOS)[number];
+
+/** 自定义抠像一次生成张数 */
+export const PLATFORM_MATTING_BATCH_COUNTS = [1, 2, 4] as const;
+export type PlatformMattingBatchCount = (typeof PLATFORM_MATTING_BATCH_COUNTS)[number];
+
+/** 自定义抠像合计积分：1 张原价；2 张九折；4 张八折 */
+export function platformCustomMattingTotalCredits(count: PlatformMattingBatchCount): number {
+  const unit = CREDIT_COSTS.platformCustomMattingImage;
+  if (count === 1) return unit;
+  if (count === 2) return Math.round(unit * 2 * 0.9);
+  return Math.round(unit * 4 * 0.8);
+}
 
 /** 一键套装·九折文案（按钮/说明统一后缀） */
 export const PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL = "（九折优惠）";
