@@ -1425,6 +1425,12 @@ async function processPlatformJob(
           ? { slotIndex: Math.max(0, Math.floor(rawBatchIdxB)), slotTotal: Math.floor(rawBatchTotB) }
           : undefined;
 
+      const rawRefPhotoBundle = (params as { referencePhotoUrl?: unknown }).referencePhotoUrl;
+      const referencePhotoUrlBundle =
+        typeof rawRefPhotoBundle === "string" && rawRefPhotoBundle.trim()
+          ? rawRefPhotoBundle.trim()
+          : undefined;
+
       const [coverSettled, sheetSettled] = await Promise.allSettled([
         runPlatformTopicImagePipeline({
           topicHook,
@@ -1443,6 +1449,7 @@ async function processPlatformJob(
           drProSecondaryCoverInputs,
           batchSceneDiversity: batchSceneDiversityBundle,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
+          referencePhotoUrl: referencePhotoUrlBundle,
         }),
         (compositeIs3x4 ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage)({
           kind: compositeKind,

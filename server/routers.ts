@@ -4826,6 +4826,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           creationRecordId: z.number().int().positive().optional(),
           compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
           gridVariant: z.enum(["2x4", "3x4"]).optional(),
+          /** 用户上传人像 URL → 封面 EvoLink edit 融合主人公相貌 */
+          referencePhotoUrl: z.string().url().max(2048).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4999,6 +5001,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               enableCompositeDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
               compositeImageEngine: input.compositeImageEngine,
               compositeGridVariant: bundleIs3x4 ? "3x4" : "2x4",
+              referencePhotoUrl: input.referencePhotoUrl,
             },
           },
         });
