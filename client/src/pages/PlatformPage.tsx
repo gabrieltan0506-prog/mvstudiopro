@@ -5727,13 +5727,22 @@ export default function PlatformPage() {
 
       <div className="mx-auto max-w-[min(1920px,100%)] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => window.history.back()}
-            className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <a
+              href="#platform-custom-workspace"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/35 bg-[linear-gradient(135deg,rgba(255,79,184,0.18),rgba(192,38,211,0.10))] px-3.5 py-2 text-xs font-bold text-[#ff9fe0] shadow-[0_4px_20px_rgba(255,79,184,0.15)] transition hover:border-[#ff4fb8]/55 hover:brightness-110"
+            >
+              <PenLine className="h-3.5 w-3.5" />
+              自定义创作
+            </a>
+          </div>
           <div className="rounded-full border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#8cefff]">
             Platform Intelligence
           </div>
@@ -5775,6 +5784,499 @@ export default function PlatformPage() {
           </div>
         )}
 
+        {/* ── 自定义创作工作台 · 页面顶部快捷入口（不依赖 Stage 1/2） ── */}
+        <section
+          id="platform-custom-workspace"
+          className={`${shellCardClasses("relative overflow-hidden p-6 md:p-7 mb-6 scroll-mt-24")} ring-1 ring-[#ff4fb8]/30 shadow-[0_20px_70px_rgba(255,79,184,0.14)]`}
+        >
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#ff4fb8,#49e6ff,#7d73ff)]" />
+          <div className="pointer-events-none absolute -left-20 -top-20 h-40 w-40 rounded-full bg-[#ff4fb8]/12 blur-3xl" />
+          <div className="pointer-events-none absolute right-0 top-0 h-32 w-32 rounded-full bg-[#49e6ff]/8 blur-3xl" />
+          <div className="relative">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <PenLine className="h-5 w-5 text-[#ff4fb8]" />
+            <h2 className="text-lg md:text-xl font-black tracking-tight text-white">自定义创作工作台</h2>
+            <span className="ml-1 rounded-full border border-[#ff4fb8]/50 bg-[rgba(255,79,184,0.12)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#ff9fe0]">
+              快捷入口 · 独立生成
+            </span>
+          </div>
+          <p className="mb-4 text-xs text-[#c9c0e6]/55">无需全案分析，可直接粘贴文案或自定义主人公选题出图</p>
+
+          {/* 一级 Tab */}
+          <div className="mb-5 inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+            <button
+              type="button"
+              onClick={() => setCustomWorkspaceTab("copy")}
+              disabled={customNoteBusy || customTopicBusy}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                customWorkspaceTab === "copy"
+                  ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
+                  : "text-[#c9c0e6]/70 hover:text-white"
+              }`}
+            >
+              <PenLine className="h-3.5 w-3.5 shrink-0" />
+              自定义文案
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustomWorkspaceTab("topic")}
+              disabled={customNoteBusy || customTopicBusy}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                customWorkspaceTab === "topic"
+                  ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
+                  : "text-[#c9c0e6]/70 hover:text-white"
+              }`}
+            >
+              <UserRound className="h-3.5 w-3.5 shrink-0" />
+              自定义选题
+            </button>
+          </div>
+
+          {customWorkspaceTab === "copy" ? (
+            <>
+              <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
+                粘贴中文文案 / Markdown，生成精致的简体中文图片。「单页图文卡片」会把内容拆成
+                <strong className="text-[#ff9fe0]">上篇 + 下篇两张</strong>
+                完整卡片（标题自动标注「（上篇）/（下篇）」），
+                <strong className="text-[#ff9fe0]">共扣 50 积分</strong>
+                （上下篇各 25 · supervisor 免扣）；「2×4 分镜图」为单张。
+              </p>
+
+              <div className="mb-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">生成类型</div>
+                <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
+                    disabled={customNoteBusy}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                      customNoteKind === "single_page_knowledge_card"
+                        ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
+                        : "text-[#c9c0e6]/70 hover:text-white"
+                    }`}
+                  >
+                    <Image className="h-3.5 w-3.5 shrink-0" />
+                    单页图文卡片
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
+                    disabled={customNoteBusy}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                      customNoteKind === "storyboard_sheet_landscape"
+                        ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
+                        : "text-[#c9c0e6]/70 hover:text-white"
+                    }`}
+                  >
+                    <Film className="h-3.5 w-3.5 shrink-0" />
+                    2×4 分镜图
+                  </button>
+                </div>
+                <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
+                  {customNoteKind === "single_page_knowledge_card"
+                    ? "按小标题顺序对半拆成「上篇 + 下篇」两张完整单页卡片：手绘 + 写实 + 花卉装饰、书法标题、橙→淡紫渐变、印刷级清晰简体中文（非 2×4 八格网格）"
+                    : "生成电影级 2×4 横幅分镜图（含景别、运镜、台词与音效字段）"}
+                </p>
+              </div>
+
+              <textarea
+                className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
+                placeholder={customNoteKind === "single_page_knowledge_card" ? "粘贴中文文案 / Markdown，直接生成单页连贯图文知识卡片（上篇 + 下篇两张）…（建议 200–1500 字）" : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 分镜图…（建议 100–800 字）"}
+                value={customNoteText}
+                onChange={(e) => setCustomNoteText(e.target.value)}
+                disabled={customNoteBusy}
+              />
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleGenerateCustomNote}
+                  disabled={customNoteBusy || !customNoteText.trim()}
+                  className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
+                    customNoteKind === "single_page_knowledge_card"
+                      ? "border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)]"
+                      : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
+                  }`}
+                >
+                  {customNoteBusy ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
+                  ) : customNoteKind === "single_page_knowledge_card" ? (
+                    <><Sparkles className="h-4 w-4" />生成图文卡片（上 + 下篇）</>
+                  ) : (
+                    <><Film className="h-4 w-4" />生成分镜图</>
+                  )}
+                </button>
+                {(customNoteImageUpper || customNoteImageLower || customNoteError) && !customNoteBusy && (
+                  <button
+                    type="button"
+                    onClick={() => { setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomNoteText(""); }}
+                    className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+
+              {customNoteBusy && (
+                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
+                  {customNotePartInFlight === "upper"
+                    ? "正在生成【上篇】，约需 3–5 分钟…（之后自动接着生成下篇）"
+                    : customNotePartInFlight === "lower"
+                      ? "上篇已完成 ✓ 正在生成【下篇】，约需 3–5 分钟，请勿关闭页面…"
+                      : "正在生成图片，约需 3–5 分钟，请勿关闭页面…"}
+                </div>
+              )}
+
+              {customNoteError && (
+                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+                  ❌ {customNoteError}
+                </div>
+              )}
+
+              {(customNoteImageUpper || customNoteImageLower) && (
+                <div className="mt-5 space-y-6">
+                  {customNoteImageUpper && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
+                        {customNoteKind === "single_page_knowledge_card" ? "图文卡片 ·（上篇）" : "分镜图生成结果"}
+                      </div>
+                      <img
+                        src={customNoteImageUpper}
+                        alt={customNoteKind === "single_page_knowledge_card" ? "单页图文知识卡片（上篇）" : "2×4 分镜图"}
+                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                          setCustomNoteError("图片加载失败，请确认图片 URL 是否有效");
+                        }}
+                      />
+                      <div className="flex justify-end">
+                        <a
+                          href={customNoteImageUpper}
+                          download={customNoteKind === "single_page_knowledge_card" ? "knowledge-card-upper.png" : "storyboard-2x4.png"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                        >
+                          <Download className="h-4 w-4" />
+                          下载{customNoteKind === "single_page_knowledge_card" ? "上篇" : "图片"}
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                  {customNoteImageLower && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">图文卡片 ·（下篇）</div>
+                      <img
+                        src={customNoteImageLower}
+                        alt="单页图文知识卡片（下篇）"
+                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                          setCustomNoteError("下篇图片加载失败，请确认图片 URL 是否有效");
+                        }}
+                      />
+                      <div className="flex justify-end">
+                        <a
+                          href={customNoteImageLower}
+                          download="knowledge-card-lower.png"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                        >
+                          <Download className="h-4 w-4" />
+                          下载下篇
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
+                填写主人公特质与专长、上传参考人像，系统将
+                <strong className="text-[#8cefff]"> AI 扩写选题文案</strong>
+                ，并融合主人公生成
+                <strong className="text-[#8cefff]">竖版封面 + 分镜图</strong>
+                （可选 2×4 或 3×4）。文案扩写首次免费，封面套装
+                <strong className="text-[#ff9fe0]"> {customTopicBundleCost} 积分</strong>
+                {PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}。
+              </p>
+
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
+                {/* 左侧表单 */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
+                      选题标题（可选）
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={80}
+                      placeholder="例：职场妈妈的时间管理心法"
+                      value={customTopicTitle}
+                      onChange={(e) => setCustomTopicTitle(e.target.value)}
+                      disabled={customTopicBusy}
+                      className="w-full rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-2.5 text-sm text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
+                      主人公特质与专长 <span className="text-[#ff9fe0]">*</span>
+                    </label>
+                    <textarea
+                      className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
+                      placeholder="描述主人公的身份、性格、专业领域、表达风格、目标受众…（建议 50–400 字）&#10;例：35 岁儿科医生，温和专业，擅长用生活化比喻讲育儿知识，面向 0–3 岁新手爸妈。"
+                      value={customTopicProtagonist}
+                      onChange={(e) => setCustomTopicProtagonist(e.target.value)}
+                      disabled={customTopicBusy}
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">分镜网格</div>
+                    <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setCustomTopicGridVariant("2x4")}
+                        disabled={customTopicBusy}
+                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                          customTopicGridVariant === "2x4"
+                            ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white"
+                            : "text-[#c9c0e6]/70 hover:text-white"
+                        }`}
+                      >
+                        2×4 八格
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCustomTopicGridVariant("3x4")}
+                        disabled={customTopicBusy}
+                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                          customTopicGridVariant === "3x4"
+                            ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white"
+                            : "text-[#c9c0e6]/70 hover:text-white"
+                        }`}
+                      >
+                        3×4 十二格
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
+                      3×4 为分段拼接长图，文字更清晰，积分略高。
+                    </p>
+                  </div>
+                </div>
+
+                {/* 右侧人像上传 */}
+                <div className="flex flex-col">
+                  <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
+                    主人公图像 <span className="text-[#ff9fe0]">*</span>
+                  </label>
+                  <div
+                    className={`relative flex-1 min-h-[220px] rounded-2xl border-2 border-dashed transition overflow-hidden ${
+                      customTopicPhotoPreview
+                        ? "border-[#49e6ff]/40 bg-[rgba(73,230,255,0.04)]"
+                        : "border-white/15 bg-[rgba(255,255,255,0.02)] hover:border-[#49e6ff]/30"
+                    }`}
+                  >
+                    {customTopicPhotoPreview ? (
+                      <>
+                        <img
+                          src={customTopicPhotoPreview}
+                          alt="主人公参考图"
+                          className="absolute inset-0 w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                        <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between gap-2">
+                          <span className="text-[11px] text-white/80">已上传 · 封面将融合此相貌</span>
+                          {!customTopicBusy && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCustomTopicPhotoUrl(null);
+                                setCustomTopicPhotoPreview(null);
+                              }}
+                              className="text-[11px] text-red-300 hover:text-red-200 transition"
+                            >
+                              移除
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <label
+                        className={`flex flex-col items-center justify-center h-full min-h-[220px] cursor-pointer px-4 text-center ${
+                          customTopicPhotoUploading ? "cursor-wait opacity-70" : ""
+                        }`}
+                      >
+                        {customTopicPhotoUploading ? (
+                          <Loader2 className="h-8 w-8 animate-spin text-[#49e6ff] mb-2" />
+                        ) : (
+                          <UserRound className="h-10 w-10 text-[#49e6ff]/60 mb-2" />
+                        )}
+                        <span className="text-sm font-medium text-white/90">
+                          {customTopicPhotoUploading ? "上传中…" : "点击上传人像"}
+                        </span>
+                        <span className="mt-1 text-[11px] text-[#c9c0e6]/50">JPG / PNG · ≤ 25MB · 长边自动压缩至 1280px</span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={customTopicPhotoUploading || customTopicBusy}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void handleUploadCustomTopicPhoto(f);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
+                    {customTopicPhotoPreview && !customTopicBusy && (
+                      <label className="absolute top-2 right-2 cursor-pointer rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[10px] text-white/80 hover:bg-black/70 transition">
+                        更换
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={customTopicPhotoUploading}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void handleUploadCustomTopicPhoto(f);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateCustomTopic()}
+                  disabled={
+                    customTopicBusy ||
+                    !customTopicProtagonist.trim() ||
+                    !customTopicPhotoUrl
+                  }
+                  className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(73,230,255,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {customTopicBusy ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />{customTopicPhase === "copy" ? "扩写文案中…" : "生成封面与分镜…"}</>
+                  ) : (
+                    <><Sparkles className="h-4 w-4" />一键生成文案 + 封面 + 分镜</>
+                  )}
+                </button>
+                {(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl || customTopicError) && !customTopicBusy && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomTopicTitle("");
+                      setCustomTopicProtagonist("");
+                      setCustomTopicPhotoUrl(null);
+                      setCustomTopicPhotoPreview(null);
+                      setCustomTopicCard(null);
+                      setCustomTopicCoverUrl(null);
+                      setCustomTopicStoryboardUrl(null);
+                      setCustomTopicError(null);
+                    }}
+                    className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+
+              {customTopicBusy && (
+                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.05)] px-4 py-3 text-sm text-[#8cefff]/80">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#49e6ff]" />
+                  {customTopicPhase === "copy"
+                    ? "正在 AI 扩写选题文案…"
+                    : `正在并发生成竖版封面与 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 5–8 分钟，请勿关闭页面…`}
+                </div>
+              )}
+
+              {customTopicError && (
+                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+                  ❌ {customTopicError}
+                </div>
+              )}
+
+              {customTopicCard && (
+                <div className="mt-6 rounded-2xl border border-[#f472b6]/25 bg-[rgba(244,114,182,0.06)] p-5 space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">扩写文案</div>
+                  <h3 className="text-base font-bold text-white leading-snug">{customTopicCard.title}</h3>
+                  {customTopicCard.hook && (
+                    <p className="text-sm text-[#fde047]/90 leading-relaxed">
+                      <span className="text-[#c9c0e6]/50 text-xs mr-1">钩子</span>
+                      {customTopicCard.hook}
+                    </p>
+                  )}
+                  {customTopicCard.copywriting && (
+                    <div className="text-sm text-[#c9c0e6]/90 leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto rounded-xl border border-white/5 bg-black/20 px-4 py-3">
+                      {customTopicCard.copywriting}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(customTopicCoverUrl || customTopicStoryboardUrl) && (
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {customTopicCoverUrl && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">竖版封面 · 主人公融合</div>
+                      <img
+                        src={customTopicCoverUrl}
+                        alt="自定义选题封面"
+                        className="w-full max-w-[280px] mx-auto rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                      />
+                      <div className="flex justify-center">
+                        <a
+                          href={customTopicCoverUrl}
+                          download="custom-topic-cover.png"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                        >
+                          <Download className="h-4 w-4" />
+                          下载封面
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                  {customTopicStoryboardUrl && (
+                    <div className="space-y-3 md:col-span-1">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">
+                        {customTopicGridVariant === "3x4" ? "3×4 十二格分镜" : "2×4 八格分镜"}
+                      </div>
+                      <img
+                        src={customTopicStoryboardUrl}
+                        alt="自定义选题分镜"
+                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                      />
+                      <div className="flex justify-end">
+                        <a
+                          href={customTopicStoryboardUrl}
+                          download={`custom-topic-storyboard-${customTopicGridVariant}.png`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                        >
+                          <Download className="h-4 w-4" />
+                          下载分镜
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+          </div>
+        </section>
         <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
           <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -8531,490 +9033,6 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        {/* ── 自定义文案 / 自定义选题（独立功能区，不依赖 Stage 1/2） ── */}
-        <section className={`${shellCardClasses("p-6 mt-8")} max-w-5xl mx-auto`}>
-          <div className="flex flex-wrap items-center gap-2 mb-4">
-            <PenLine className="h-5 w-5 text-[#ff4fb8]" />
-            <h2 className="text-base font-bold text-white">自定义创作工作台</h2>
-            <span className="ml-1 rounded-full border border-[#ff4fb8]/40 bg-[rgba(255,79,184,0.08)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff9fe0]">
-              独立生成
-            </span>
-          </div>
-
-          {/* 一级 Tab */}
-          <div className="mb-5 inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("copy")}
-              disabled={customNoteBusy || customTopicBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "copy"
-                  ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <PenLine className="h-3.5 w-3.5 shrink-0" />
-              自定义文案
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("topic")}
-              disabled={customNoteBusy || customTopicBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "topic"
-                  ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <UserRound className="h-3.5 w-3.5 shrink-0" />
-              自定义选题
-            </button>
-          </div>
-
-          {customWorkspaceTab === "copy" ? (
-            <>
-              <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-                粘贴中文文案 / Markdown，生成精致的简体中文图片。「单页图文卡片」会把内容拆成
-                <strong className="text-[#ff9fe0]">上篇 + 下篇两张</strong>
-                完整卡片（标题自动标注「（上篇）/（下篇）」），
-                <strong className="text-[#ff9fe0]">共扣 50 积分</strong>
-                （上下篇各 25 · supervisor 免扣）；「2×4 分镜图」为单张。
-              </p>
-
-              <div className="mb-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">生成类型</div>
-                <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
-                    disabled={customNoteBusy}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                      customNoteKind === "single_page_knowledge_card"
-                        ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
-                        : "text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    <Image className="h-3.5 w-3.5 shrink-0" />
-                    单页图文卡片
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
-                    disabled={customNoteBusy}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                      customNoteKind === "storyboard_sheet_landscape"
-                        ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
-                        : "text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    <Film className="h-3.5 w-3.5 shrink-0" />
-                    2×4 分镜图
-                  </button>
-                </div>
-                <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
-                  {customNoteKind === "single_page_knowledge_card"
-                    ? "按小标题顺序对半拆成「上篇 + 下篇」两张完整单页卡片：手绘 + 写实 + 花卉装饰、书法标题、橙→淡紫渐变、印刷级清晰简体中文（非 2×4 八格网格）"
-                    : "生成电影级 2×4 横幅分镜图（含景别、运镜、台词与音效字段）"}
-                </p>
-              </div>
-
-              <textarea
-                className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
-                placeholder={customNoteKind === "single_page_knowledge_card" ? "粘贴中文文案 / Markdown，直接生成单页连贯图文知识卡片（上篇 + 下篇两张）…（建议 200–1500 字）" : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 分镜图…（建议 100–800 字）"}
-                value={customNoteText}
-                onChange={(e) => setCustomNoteText(e.target.value)}
-                disabled={customNoteBusy}
-              />
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleGenerateCustomNote}
-                  disabled={customNoteBusy || !customNoteText.trim()}
-                  className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    customNoteKind === "single_page_knowledge_card"
-                      ? "border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)]"
-                      : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
-                  }`}
-                >
-                  {customNoteBusy ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
-                  ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文卡片（上 + 下篇）</>
-                  ) : (
-                    <><Film className="h-4 w-4" />生成分镜图</>
-                  )}
-                </button>
-                {(customNoteImageUpper || customNoteImageLower || customNoteError) && !customNoteBusy && (
-                  <button
-                    type="button"
-                    onClick={() => { setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomNoteText(""); }}
-                    className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
-                  >
-                    清除
-                  </button>
-                )}
-              </div>
-
-              {customNoteBusy && (
-                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
-                  {customNotePartInFlight === "upper"
-                    ? "正在生成【上篇】，约需 3–5 分钟…（之后自动接着生成下篇）"
-                    : customNotePartInFlight === "lower"
-                      ? "上篇已完成 ✓ 正在生成【下篇】，约需 3–5 分钟，请勿关闭页面…"
-                      : "正在生成图片，约需 3–5 分钟，请勿关闭页面…"}
-                </div>
-              )}
-
-              {customNoteError && (
-                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customNoteError}
-                </div>
-              )}
-
-              {(customNoteImageUpper || customNoteImageLower) && (
-                <div className="mt-5 space-y-6">
-                  {customNoteImageUpper && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
-                        {customNoteKind === "single_page_knowledge_card" ? "图文卡片 ·（上篇）" : "分镜图生成结果"}
-                      </div>
-                      <img
-                        src={customNoteImageUpper}
-                        alt={customNoteKind === "single_page_knowledge_card" ? "单页图文知识卡片（上篇）" : "2×4 分镜图"}
-                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                          setCustomNoteError("图片加载失败，请确认图片 URL 是否有效");
-                        }}
-                      />
-                      <div className="flex justify-end">
-                        <a
-                          href={customNoteImageUpper}
-                          download={customNoteKind === "single_page_knowledge_card" ? "knowledge-card-upper.png" : "storyboard-2x4.png"}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载{customNoteKind === "single_page_knowledge_card" ? "上篇" : "图片"}
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                  {customNoteImageLower && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">图文卡片 ·（下篇）</div>
-                      <img
-                        src={customNoteImageLower}
-                        alt="单页图文知识卡片（下篇）"
-                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                          setCustomNoteError("下篇图片加载失败，请确认图片 URL 是否有效");
-                        }}
-                      />
-                      <div className="flex justify-end">
-                        <a
-                          href={customNoteImageLower}
-                          download="knowledge-card-lower.png"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载下篇
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-                填写主人公特质与专长、上传参考人像，系统将
-                <strong className="text-[#8cefff]"> AI 扩写选题文案</strong>
-                ，并融合主人公生成
-                <strong className="text-[#8cefff]">竖版封面 + 分镜图</strong>
-                （可选 2×4 或 3×4）。文案扩写首次免费，封面套装
-                <strong className="text-[#ff9fe0]"> {customTopicBundleCost} 积分</strong>
-                {PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}。
-              </p>
-
-              <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
-                {/* 左侧表单 */}
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                      选题标题（可选）
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={80}
-                      placeholder="例：职场妈妈的时间管理心法"
-                      value={customTopicTitle}
-                      onChange={(e) => setCustomTopicTitle(e.target.value)}
-                      disabled={customTopicBusy}
-                      className="w-full rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-2.5 text-sm text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                      主人公特质与专长 <span className="text-[#ff9fe0]">*</span>
-                    </label>
-                    <textarea
-                      className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
-                      placeholder="描述主人公的身份、性格、专业领域、表达风格、目标受众…（建议 50–400 字）&#10;例：35 岁儿科医生，温和专业，擅长用生活化比喻讲育儿知识，面向 0–3 岁新手爸妈。"
-                      value={customTopicProtagonist}
-                      onChange={(e) => setCustomTopicProtagonist(e.target.value)}
-                      disabled={customTopicBusy}
-                    />
-                  </div>
-
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">分镜网格</div>
-                    <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setCustomTopicGridVariant("2x4")}
-                        disabled={customTopicBusy}
-                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                          customTopicGridVariant === "2x4"
-                            ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white"
-                            : "text-[#c9c0e6]/70 hover:text-white"
-                        }`}
-                      >
-                        2×4 八格
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCustomTopicGridVariant("3x4")}
-                        disabled={customTopicBusy}
-                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                          customTopicGridVariant === "3x4"
-                            ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white"
-                            : "text-[#c9c0e6]/70 hover:text-white"
-                        }`}
-                      >
-                        3×4 十二格
-                      </button>
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
-                      3×4 为分段拼接长图，文字更清晰，积分略高。
-                    </p>
-                  </div>
-                </div>
-
-                {/* 右侧人像上传 */}
-                <div className="flex flex-col">
-                  <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                    主人公图像 <span className="text-[#ff9fe0]">*</span>
-                  </label>
-                  <div
-                    className={`relative flex-1 min-h-[220px] rounded-2xl border-2 border-dashed transition overflow-hidden ${
-                      customTopicPhotoPreview
-                        ? "border-[#49e6ff]/40 bg-[rgba(73,230,255,0.04)]"
-                        : "border-white/15 bg-[rgba(255,255,255,0.02)] hover:border-[#49e6ff]/30"
-                    }`}
-                  >
-                    {customTopicPhotoPreview ? (
-                      <>
-                        <img
-                          src={customTopicPhotoPreview}
-                          alt="主人公参考图"
-                          className="absolute inset-0 w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                        <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between gap-2">
-                          <span className="text-[11px] text-white/80">已上传 · 封面将融合此相貌</span>
-                          {!customTopicBusy && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCustomTopicPhotoUrl(null);
-                                setCustomTopicPhotoPreview(null);
-                              }}
-                              className="text-[11px] text-red-300 hover:text-red-200 transition"
-                            >
-                              移除
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <label
-                        className={`flex flex-col items-center justify-center h-full min-h-[220px] cursor-pointer px-4 text-center ${
-                          customTopicPhotoUploading ? "cursor-wait opacity-70" : ""
-                        }`}
-                      >
-                        {customTopicPhotoUploading ? (
-                          <Loader2 className="h-8 w-8 animate-spin text-[#49e6ff] mb-2" />
-                        ) : (
-                          <UserRound className="h-10 w-10 text-[#49e6ff]/60 mb-2" />
-                        )}
-                        <span className="text-sm font-medium text-white/90">
-                          {customTopicPhotoUploading ? "上传中…" : "点击上传人像"}
-                        </span>
-                        <span className="mt-1 text-[11px] text-[#c9c0e6]/50">JPG / PNG · ≤ 25MB · 长边自动压缩至 1280px</span>
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="hidden"
-                          disabled={customTopicPhotoUploading || customTopicBusy}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) void handleUploadCustomTopicPhoto(f);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    )}
-                    {customTopicPhotoPreview && !customTopicBusy && (
-                      <label className="absolute top-2 right-2 cursor-pointer rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[10px] text-white/80 hover:bg-black/70 transition">
-                        更换
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="hidden"
-                          disabled={customTopicPhotoUploading}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) void handleUploadCustomTopicPhoto(f);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void handleGenerateCustomTopic()}
-                  disabled={
-                    customTopicBusy ||
-                    !customTopicProtagonist.trim() ||
-                    !customTopicPhotoUrl
-                  }
-                  className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(73,230,255,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {customTopicBusy ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />{customTopicPhase === "copy" ? "扩写文案中…" : "生成封面与分镜…"}</>
-                  ) : (
-                    <><Sparkles className="h-4 w-4" />一键生成文案 + 封面 + 分镜</>
-                  )}
-                </button>
-                {(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl || customTopicError) && !customTopicBusy && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCustomTopicTitle("");
-                      setCustomTopicProtagonist("");
-                      setCustomTopicPhotoUrl(null);
-                      setCustomTopicPhotoPreview(null);
-                      setCustomTopicCard(null);
-                      setCustomTopicCoverUrl(null);
-                      setCustomTopicStoryboardUrl(null);
-                      setCustomTopicError(null);
-                    }}
-                    className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
-                  >
-                    清除
-                  </button>
-                )}
-              </div>
-
-              {customTopicBusy && (
-                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.05)] px-4 py-3 text-sm text-[#8cefff]/80">
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#49e6ff]" />
-                  {customTopicPhase === "copy"
-                    ? "正在 AI 扩写选题文案…"
-                    : `正在并发生成竖版封面与 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 5–8 分钟，请勿关闭页面…`}
-                </div>
-              )}
-
-              {customTopicError && (
-                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customTopicError}
-                </div>
-              )}
-
-              {customTopicCard && (
-                <div className="mt-6 rounded-2xl border border-[#f472b6]/25 bg-[rgba(244,114,182,0.06)] p-5 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">扩写文案</div>
-                  <h3 className="text-base font-bold text-white leading-snug">{customTopicCard.title}</h3>
-                  {customTopicCard.hook && (
-                    <p className="text-sm text-[#fde047]/90 leading-relaxed">
-                      <span className="text-[#c9c0e6]/50 text-xs mr-1">钩子</span>
-                      {customTopicCard.hook}
-                    </p>
-                  )}
-                  {customTopicCard.copywriting && (
-                    <div className="text-sm text-[#c9c0e6]/90 leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto rounded-xl border border-white/5 bg-black/20 px-4 py-3">
-                      {customTopicCard.copywriting}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {(customTopicCoverUrl || customTopicStoryboardUrl) && (
-                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {customTopicCoverUrl && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">竖版封面 · 主人公融合</div>
-                      <img
-                        src={customTopicCoverUrl}
-                        alt="自定义选题封面"
-                        className="w-full max-w-[280px] mx-auto rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                      />
-                      <div className="flex justify-center">
-                        <a
-                          href={customTopicCoverUrl}
-                          download="custom-topic-cover.png"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载封面
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                  {customTopicStoryboardUrl && (
-                    <div className="space-y-3 md:col-span-1">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">
-                        {customTopicGridVariant === "3x4" ? "3×4 十二格分镜" : "2×4 八格分镜"}
-                      </div>
-                      <img
-                        src={customTopicStoryboardUrl}
-                        alt="自定义选题分镜"
-                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                      />
-                      <div className="flex justify-end">
-                        <a
-                          href={customTopicStoryboardUrl}
-                          download={`custom-topic-storyboard-${customTopicGridVariant}.png`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载分镜
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </section>
 
         {/* 邀请码管理已迁移至 /admin 页面 */}
       </div>
