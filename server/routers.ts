@@ -106,6 +106,9 @@ import {
   platformCoverBundleTotalCredits,
   platformCoverCompositeBundleCreditsForCompositeKindGrid,
   platformCompositeBundleTotalCreditsForGrid,
+  platformCustomMattingTotalCredits,
+  PLATFORM_MATTING_ASPECT_RATIOS,
+  PLATFORM_MATTING_BATCH_COUNTS,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
@@ -5618,6 +5621,59 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imageUrl,
           totalCost: isAdminUser ? 0 : cost,
           kind: input.kind,
+          imageGenFlowLog,
+        };
+      }),
+
+    /**
+     * 平台页·自定义抠像：用户描述 + 比例 → GPT-IMAGE-2 主体图 → 透明底抠图。
+     * 单独扣费：1 张原价、2 张九折、4 张八折（见 platformCustomMattingTotalCredits）。
+     */
+    generatePlatformCustomMatting: protectedProcedure
+      .input(
+        z.object({
+          prompt: z.string().min(4).max(2000),
+          aspectRatio: z.enum(PLATFORM_MATTING_ASPECT_RATIOS),
+          count: z.union([z.literal(1), z.literal(2), z.literal(4)]),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = platformCustomMattingTotalCredits(input.count);
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformCustomMatting",
+            `自定义抠像 · ${input.aspectRatio} · ${input.count} 张 · ${input.prompt.slice(0, 48)}`,
+          );
+        }
+
+        const imageGenFlowLog: string[] = [];
+        const { generatePlatformCustomMattingImages } = await import("./services/platformCustomMatting.js");
+        const { imageUrls, englishPrompt } = await generatePlatformCustomMattingImages({
+          userPrompt: input.prompt,
+          aspectRatio: input.aspectRatio,
+          count: input.count,
+          flowLog: imageGenFlowLog,
+        });
+
+        return {
+          success: true as const,
+          imageUrls,
+          totalCost: isAdminUser ? 0 : cost,
+          aspectRatio: input.aspectRatio,
+          count: input.count,
+          englishPrompt,
           imageGenFlowLog,
         };
       }),

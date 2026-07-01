@@ -30,7 +30,9 @@ import {
   platformCompositeBundleTotalCreditsForGrid,
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
   platformCoverCompositeBundleCreditsForFormatGrid,
+  platformCustomMattingTotalCredits,
 } from "@shared/plans";
+import type { PlatformMattingAspectRatio, PlatformMattingBatchCount } from "@shared/plans";
 import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
@@ -89,6 +91,7 @@ import {
   PlayCircle,
   Rocket,
   RefreshCw,
+  Scissors,
   Share2,
   ShieldCheck,
   Sparkles,
@@ -1862,8 +1865,8 @@ export default function PlatformPage() {
   const [customNotePartInFlight, setCustomNotePartInFlight] = useState<"upper" | "lower" | null>(null);
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖（自定義文案專用，與選題卡片小紅書八格互不影響） */
   const [customNoteKind, setCustomNoteKind] = useState<"single_page_knowledge_card" | "storyboard_sheet_landscape">("single_page_knowledge_card");
-  /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 */
-  const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic">("copy");
+  /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
+  const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting">("copy");
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
   const [customTopicProtagonist, setCustomTopicProtagonist] = useState("");
@@ -1877,6 +1880,13 @@ export default function PlatformPage() {
   const [customTopicCoverUrl, setCustomTopicCoverUrl] = useState<string | null>(null);
   const [customTopicStoryboardUrl, setCustomTopicStoryboardUrl] = useState<string | null>(null);
   const [customTopicError, setCustomTopicError] = useState<string | null>(null);
+  /** 自定义抠像：提示词、比例、张数、结果 */
+  const [customMattingPrompt, setCustomMattingPrompt] = useState("");
+  const [customMattingAspect, setCustomMattingAspect] = useState<PlatformMattingAspectRatio>("9:16");
+  const [customMattingCount, setCustomMattingCount] = useState<PlatformMattingBatchCount>(1);
+  const [customMattingBusy, setCustomMattingBusy] = useState(false);
+  const [customMattingImages, setCustomMattingImages] = useState<string[]>([]);
+  const [customMattingError, setCustomMattingError] = useState<string | null>(null);
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -3570,6 +3580,59 @@ export default function PlatformPage() {
     [customTopicGridVariant],
   );
 
+  const customMattingCost = useMemo(
+    () => platformCustomMattingTotalCredits(customMattingCount),
+    [customMattingCount],
+  );
+
+  const handleGenerateCustomMatting = async () => {
+    const prompt = customMattingPrompt.trim();
+    if (prompt.length < 4) {
+      toast.error("请至少输入 4 个字的抠像描述");
+      return;
+    }
+    if (!isAuthenticated) {
+      toast.error("请先登录");
+      return;
+    }
+
+    const discountLabel =
+      customMattingCount === 1
+        ? "原价"
+        : customMattingCount === 2
+          ? "九折"
+          : "八折";
+    if (
+      !supervisorAccess &&
+      !window.confirm(
+        `将消耗 ${customMattingCost} 积分（${customMattingCount} 张 · ${discountLabel}），生成 ${customMattingAspect} 透明底抠像。是否继续？`,
+      )
+    ) {
+      return;
+    }
+
+    setCustomMattingBusy(true);
+    setCustomMattingError(null);
+    setCustomMattingImages([]);
+
+    try {
+      const res = await generatePlatformCustomMattingMutation.mutateAsync({
+        prompt,
+        aspectRatio: customMattingAspect,
+        count: customMattingCount,
+      });
+      setCustomMattingImages(res.imageUrls ?? []);
+      toast.success(`已生成 ${res.imageUrls?.length ?? 0} 张抠像`);
+      void queryClient.invalidateQueries({ queryKey: [["credits"]] });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setCustomMattingError(msg);
+      toast.error(msg.slice(0, 120));
+    } finally {
+      setCustomMattingBusy(false);
+    }
+  };
+
   const handleGenerateCustomTopic = async () => {
     const protagonist = customTopicProtagonist.trim();
     const title = customTopicTitle.trim() || protagonist.slice(0, 48) || "主人公主题内容";
@@ -4213,6 +4276,10 @@ export default function PlatformPage() {
   const generateDecisionIntelTopicCopyMutation =
     trpc.mvAnalysis.generateDecisionIntelTopicExecutionCopy.useMutation({
       onError: (e) => toast.error(e.message || "战略选题文案扩写失败"),
+    });
+  const generatePlatformCustomMattingMutation =
+    trpc.mvAnalysis.generatePlatformCustomMatting.useMutation({
+      onError: (e) => toast.error(e.message || "自定义抠像生成失败"),
     });
   const unlockedStrategicReport = useMemo((): AdvancedAIReportData | null => {
     const fromLatest = decisionIntelLatestQuery.data?.report;
@@ -5800,14 +5867,14 @@ export default function PlatformPage() {
               快捷入口 · 独立生成
             </span>
           </div>
-          <p className="mb-4 text-xs text-[#c9c0e6]/55">无需全案分析，可直接粘贴文案或自定义主人公选题出图</p>
+          <p className="mb-4 text-xs text-[#c9c0e6]/55">无需全案分析，可直接粘贴文案、自定义主人公选题或生成透明底抠像</p>
 
           {/* 一级 Tab */}
-          <div className="mb-5 inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+          <div className="mb-5 inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
             <button
               type="button"
               onClick={() => setCustomWorkspaceTab("copy")}
-              disabled={customNoteBusy || customTopicBusy}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                 customWorkspaceTab === "copy"
                   ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
@@ -5820,7 +5887,7 @@ export default function PlatformPage() {
             <button
               type="button"
               onClick={() => setCustomWorkspaceTab("topic")}
-              disabled={customNoteBusy || customTopicBusy}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                 customWorkspaceTab === "topic"
                   ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
@@ -5829,6 +5896,19 @@ export default function PlatformPage() {
             >
               <UserRound className="h-3.5 w-3.5 shrink-0" />
               自定义选题
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustomWorkspaceTab("matting")}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                customWorkspaceTab === "matting"
+                  ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
+                  : "text-[#c9c0e6]/70 hover:text-white"
+              }`}
+            >
+              <Scissors className="h-3.5 w-3.5 shrink-0" />
+              自定义抠像
             </button>
           </div>
 
@@ -5992,7 +6072,7 @@ export default function PlatformPage() {
                 </div>
               )}
             </>
-          ) : (
+          ) : customWorkspaceTab === "topic" ? (
             <>
               <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
                 填写主人公特质与专长、上传参考人像，系统将
@@ -6271,6 +6351,154 @@ export default function PlatformPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
+                输入抠像主体描述（人物姿态、服装、道具等），系统生成
+                <strong className="text-[#6ee7b7]"> 透明底 PNG 抠像</strong>
+                ，可一次生成 1 / 2 / 4 张。
+                单张原价 <strong className="text-[#6ee7b7]">{CREDIT_COSTS.platformCustomMattingImage} 积分</strong>，
+                2 张九折、4 张八折（单独扣费，与文案/选题无关）。
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
+                    抠像描述 / 预留提示词
+                  </label>
+                  <textarea
+                    className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#34d399]/60 focus:outline-none focus:ring-1 focus:ring-[#34d399]/30 transition"
+                    placeholder="例：一位穿白色实验服的年轻女医生，半身像，微笑，双手抱胸，面向镜头…"
+                    value={customMattingPrompt}
+                    onChange={(e) => setCustomMattingPrompt(e.target.value)}
+                    disabled={customMattingBusy}
+                  />
+                </div>
+
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">画面比例</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(["9:16", "16:9", "3:4", "4:3", "21:9"] as const).map((ratio) => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() => setCustomMattingAspect(ratio)}
+                        disabled={customMattingBusy}
+                        className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition disabled:opacity-50 ${
+                          customMattingAspect === ratio
+                            ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
+                            : "border border-white/10 bg-black/35 text-[#c9c0e6]/70 hover:text-white"
+                        }`}
+                      >
+                        {ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">一次生成张数</div>
+                  <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+                    {([1, 2, 4] as const).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setCustomMattingCount(n)}
+                        disabled={customMattingBusy}
+                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                          customMattingCount === n
+                            ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
+                            : "text-[#c9c0e6]/70 hover:text-white"
+                        }`}
+                      >
+                        {n} 张
+                        {n === 1 ? " · 原价" : n === 2 ? " · 九折" : " · 八折"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
+                    本次合计 <strong className="text-[#6ee7b7]">{customMattingCost} 积分</strong>
+                    {customMattingCount > 1 && `（单张 ${CREDIT_COSTS.platformCustomMattingImage} × ${customMattingCount}${customMattingCount === 2 ? " × 0.9" : " × 0.8"}）`}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateCustomMatting()}
+                    disabled={customMattingBusy || customMattingPrompt.trim().length < 4}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#34d399]/30 bg-[linear-gradient(135deg,#34d399,#059669)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(52,211,153,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {customMattingBusy ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" />生成抠像中…</>
+                    ) : (
+                      <><Scissors className="h-4 w-4" />生成抠像（{customMattingCost} 积分）</>
+                    )}
+                  </button>
+                  {(customMattingImages.length > 0 || customMattingError) && !customMattingBusy && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomMattingImages([]);
+                        setCustomMattingError(null);
+                        setCustomMattingPrompt("");
+                      }}
+                      className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {customMattingBusy && (
+                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#34d399]/15 bg-[rgba(52,211,153,0.05)] px-4 py-3 text-sm text-[#6ee7b7]/80">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#34d399]" />
+                  正在生成 {customMattingCount} 张 {customMattingAspect} 抠像（含透明底处理），每张约 2–4 分钟，请勿关闭页面…
+                </div>
+              )}
+
+              {customMattingError && (
+                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+                  ❌ {customMattingError}
+                </div>
+              )}
+
+              {customMattingImages.length > 0 && (
+                <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {customMattingImages.map((url, idx) => (
+                    <div key={`${url}-${idx}`} className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/70">
+                        抠像 #{idx + 1} · {customMattingAspect}
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-[repeating-conic-gradient(#1a1a2e_0%_25%,#12121f_0%_50%)] bg-[length:16px_16px] p-3">
+                        <img
+                          src={url}
+                          alt={`自定义抠像 ${idx + 1}`}
+                          className="w-full rounded-xl object-contain max-h-[420px]"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none";
+                            setCustomMattingError("抠像图片加载失败，请确认 URL 是否有效");
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <a
+                          href={url}
+                          download={`custom-matting-${customMattingAspect.replace(":", "x")}-${idx + 1}.png`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#34d399]/25 bg-[rgba(52,211,153,0.08)] px-4 py-2 text-sm font-semibold text-[#6ee7b7] transition hover:bg-[rgba(52,211,153,0.15)]"
+                        >
+                          <Download className="h-4 w-4" />
+                          下载 PNG
+                        </a>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </>
