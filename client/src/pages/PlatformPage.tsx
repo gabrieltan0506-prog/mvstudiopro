@@ -6364,8 +6364,8 @@ export default function PlatformPage() {
                 <strong className="text-[#6ee7b7]"> 坐姿 + 海边</strong>、
                 <strong className="text-[#6ee7b7]"> 站姿 + 书房</strong>），系统按你的提示词生成对应画面；
                 若需要
-                <strong className="text-[#6ee7b7]"> 透明底抠图</strong>
-                ，请在描述中写明「透明底 / 抠图 / 绿幕」。
+                <strong className="text-[#6ee7b7]"> 自动去背景</strong>
+                ，请在描述中写明「去背景 / 自动去背景」。
                 可一次生成 1 / 2 / 4 张，单张原价
                 <strong className="text-[#6ee7b7]"> {CREDIT_COSTS.platformCustomMattingImage} 积分</strong>，
                 2 张九折、4 张八折（单独扣费）。
@@ -6378,7 +6378,7 @@ export default function PlatformPage() {
                   </label>
                   <textarea
                     className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#34d399]/60 focus:outline-none focus:ring-1 focus:ring-[#34d399]/30 transition"
-                    placeholder="例：年轻女医生穿白大褂，坐姿，微笑，背景是明亮的书房；或：全身站姿，透明底抠图，双手自然下垂…"
+                    placeholder="例：年轻女医生穿白大褂，坐姿，微笑，背景是明亮的书房；或：全身站姿，自动去背景，双手自然下垂…"
                     value={customMattingPrompt}
                     onChange={(e) => setCustomMattingPrompt(e.target.value)}
                     disabled={customMattingBusy}
@@ -6481,7 +6481,7 @@ export default function PlatformPage() {
                     <div key={`${url}-${idx}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/70">
                         生成结果 #{idx + 1} · {customMattingAspect}
-                        {customMattingTransparentCutout ? " · 透明底" : ""}
+                        {customMattingTransparentCutout ? " · 已去背景" : ""}
                       </div>
                       <div
                         className={

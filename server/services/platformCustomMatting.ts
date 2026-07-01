@@ -4,9 +4,9 @@ import { postEvolinkGptImage2AndUpload } from "./evolinkGptImage2.js";
 import { backgroundRemoveStep } from "../workflow/steps/backgroundRemoveStep.js";
 import { runGemini31ProPreviewText } from "./geminiPlatformCompositeTranslation.js";
 
-/** 用户描述里出现这些词时，生成后追加透明底抠图 */
+/** 用户描述里出现这些词时，生成后自动去背景 */
 const TRANSPARENT_CUTOUT_HINT_RE =
-  /透明|抠图|去背景|绿幕|抠像|alpha\s*channel|cutout|transparent\s*background|isolated\s*subject/i;
+  /自动去背景|去背景|透明|抠图|绿幕|抠像|alpha\s*channel|cutout|transparent\s*background|isolated\s*subject/i;
 
 const SCENE_IMAGE_QUALITY_SUFFIX_EN = [
   "Follow the user's described subject, pose, clothing, props, and background scene exactly.",
@@ -37,7 +37,7 @@ export async function translateMattingUserPromptToEnglish(userPrompt: string, fl
   const task = [
     "Translate the following user description into concise English for an AI image generation prompt.",
     "Preserve subject identity, pose (e.g. sitting, standing), clothing, props, and background scene (e.g. beach, study room).",
-    "If the user asks for transparent background / cutout / green screen, keep that intent.",
+    "If the user asks for background removal / transparent background / cutout, keep that intent.",
     "Output English only, no markdown.",
     "",
     raw,
@@ -89,15 +89,15 @@ async function generateOneMattingImage(
     appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张场景图完成`);
     return rawUrl;
   }
-  appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张生图完成，用户要求透明底 → 开始抠图`);
+  appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张生图完成，用户要求去背景 → 开始自动去背景`);
   try {
     const { characterPngUrl } = await backgroundRemoveStep({ imageUrl: rawUrl });
-    appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张透明底抠图完成`);
+    appendImageFlowLog(flowLog, `[自定义抠像] 第 ${slotIndex + 1} 张自动去背景完成`);
     return characterPngUrl || rawUrl;
   } catch (e: unknown) {
     appendImageFlowLog(
       flowLog,
-      `[自定义抠像] 第 ${slotIndex + 1} 张抠图失败，回退原图：${String((e as Error)?.message || e).slice(0, 120)}`,
+      `[自定义抠像] 第 ${slotIndex + 1} 张去背景失败，回退原图：${String((e as Error)?.message || e).slice(0, 120)}`,
     );
     return rawUrl;
   }
@@ -117,7 +117,7 @@ export async function generatePlatformCustomMattingImages(options: {
   const transparentCutout = userPromptRequestsTransparentCutout(userPrompt);
   appendImageFlowLog(
     L,
-    `[自定义抠像] 开始 · 比例=${options.aspectRatio} · 张数=${options.count} · 模式=${transparentCutout ? "透明底抠图" : "场景生图"} · 用户描述约 ${userPrompt.length} 字`,
+    `[自定义抠像] 开始 · 比例=${options.aspectRatio} · 张数=${options.count} · 模式=${transparentCutout ? "自动去背景" : "场景生图"} · 用户描述约 ${userPrompt.length} 字`,
   );
   const englishSubject = await translateMattingUserPromptToEnglish(userPrompt, L);
   const englishPrompt = buildMattingEnglishPrompt(englishSubject, options.aspectRatio, transparentCutout);
