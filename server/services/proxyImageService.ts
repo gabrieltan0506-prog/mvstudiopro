@@ -1013,6 +1013,28 @@ const COVER_REFERENCE_BENIGN_CLARIFIER_EN = [
   "editorial-grade portrait integration suitable for publication.",
 ].join("\n");
 
+/** 2×4/3×4 分镜：参考人像时各格主人公须与上传照片同一人（古人/历史角色等除外） */
+const STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN = [
+  "",
+  "REFERENCE PROTAGONIST (CRITICAL IMAGE EDIT): A reference photo of the real presenter/host is attached.",
+  "In every panel where the modern-day presenter or host appears, use THIS exact person's face,",
+  "skin tone, hairstyle and likeness — keep the same identity across all panels.",
+  "Only depict a different unfamiliar person when the script explicitly calls for ancient/historical figures,",
+  "named third-party characters, or clearly distinct roles; never replace the main host with a random stranger.",
+].join("\n");
+
+function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverPersonaContext?: string): string {
+  const anchor = [
+    "【视觉锚点·主人公】",
+    "分镜各格中的现代主讲/主人公须与上传参考人像为同一人（五官、发型、气质跨格一致，禁止换成陌生面孔）。",
+    "仅当脚本明确描写古人、历史人物、古代场景、顾客/路人等独立角色时，才使用不同人物造型。",
+    coverPersonaContext?.trim() ? coverPersonaContext.trim() : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return `${String(scriptContext || "").trim()}\n\n${anchor}`;
+}
+
 /**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → GPT-Image-2 像素链。
  * **供应商顺序：EvoLink（主力）→ OhMyGPT → fal**（均为 gpt-image-2 同模型；已移除 Vertex 退路）。
@@ -1275,6 +1297,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   forceSkipCompositeDeepResearchPro?: boolean;
   /** IP / 身份錨點，供 DR Pro tenant 與選題錨定 */
   coverPersonaContext?: string;
+  /** 用户上传主人公参考人像 → EvoLink edit，分镜各格保持同一人（古人/历史角色等脚本明示时除外） */
+  referencePhotoUrl?: string;
   /**
    * 異步 platform job：寫入 Neon `jobs.output.chineseStaging`（2×4 編導中文 task），結案時剝除。
    */
@@ -1313,7 +1337,10 @@ export async function generatePlatformCompositeSheetImage(options: {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
-  const compositeImageEngine = resolvePlatformCompositeSheetImageEngine(options.compositeImageEngine ?? null);
+  const referencePhotoUrlEarly = String(options.referencePhotoUrl || "").trim() || undefined;
+  const compositeImageEngine = referencePhotoUrlEarly
+    ? "gpt_image2"
+    : resolvePlatformCompositeSheetImageEngine(options.compositeImageEngine ?? null);
 
   const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
@@ -1349,6 +1376,17 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
   let scriptContextForPipeline = options.scriptContext;
+  const referencePhotoUrl = String(options.referencePhotoUrl || "").trim() || undefined;
+  if (referencePhotoUrl) {
+    scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(
+      scriptContextForPipeline,
+      options.coverPersonaContext,
+    );
+    appendImageFlowLog(
+      L,
+      "[2×4·主人公参考] 已注入视觉锚点 · 分镜将融合上传参考人像（强制 GPT-IMAGE-2 edit 模式）",
+    );
+  }
   const drFromAdmin = Boolean(options.enableCompositeDeepResearchPro);
   const { isCompositeSheetDeepResearchProEnabled, runCoverDeepResearchInteractionsBrief } = await import(
     "./coverDeepResearchProBrief.js",
@@ -1535,15 +1573,39 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       );
 
       if (isEvolinkGptImage2Configured()) {
-        appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}`);
+        const refImageUrls = referencePhotoUrl ? [referencePhotoUrl] : [];
+        const promptForEvo = refImageUrls.length
+          ? `${promptForImage}\n${STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN}`
+          : promptForImage;
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}${refImageUrls.length ? " · edit模式·参考人像=1张" : ""}`,
+        );
         const evoErr: { message?: string } = {};
-        const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
+        let fromEvolink = await postEvolinkGptImage2AndUpload(promptForEvo, subdir, {
           aspectRatio: "16:9",
           size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
           flowLog: L,
           quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+          imageUrls: refImageUrls.length ? refImageUrls : undefined,
           captureError: evoErr,
         });
+        if (!fromEvolink && refImageUrls.length && isEvolinkModerationFailure(evoErr.message)) {
+          appendImageFlowLog(L, "[2×4·主人公参考] EvoLink 审核拦截 → 附澄清语境重试一次");
+          const retryErr: { message?: string } = {};
+          fromEvolink = await postEvolinkGptImage2AndUpload(
+            `${promptForEvo}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
+            subdir,
+            {
+              aspectRatio: "16:9",
+              size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+              flowLog: L,
+              quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+              imageUrls: refImageUrls,
+              captureError: retryErr,
+            },
+          );
+        }
         if (fromEvolink) {
           appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
           emitPlatformImagePipelineStat({
@@ -1553,6 +1615,14 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
             compositeSheetMaxAttempts: compositeMaxAttempts,
           });
           return fromEvolink;
+        }
+        if (refImageUrls.length) {
+          if (isEvolinkModerationFailure(evoErr.message)) {
+            moderationBlocked = true;
+            lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
+            throw lastFailure;
+          }
+          throw new Error("参考人像分镜生成失败（EvoLink edit 模式无备援路径）");
         }
         if (isEvolinkModerationFailure(evoErr.message)) {
           moderationBlocked = true;
@@ -1564,6 +1634,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           throw lastFailure;
         }
         appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
+      }
+
+      if (referencePhotoUrl) {
+        throw new Error("参考人像分镜生成失败");
       }
 
       appendImageFlowLog(L, `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`);

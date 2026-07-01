@@ -368,6 +368,25 @@ export function platformCoverCompositeBundleCreditsForCompositeKindGrid(
   );
 }
 
+/** 自定义选题工作台：按勾选的封面/分镜合计积分（文案另计；两项同时勾选走九折套装价） */
+export function platformCustomTopicImageCredits(opts: {
+  includeCover: boolean;
+  includeStoryboard: boolean;
+  is3x4: boolean;
+}): number {
+  const { includeCover, includeStoryboard, is3x4 } = opts;
+  if (!includeCover && !includeStoryboard) return 0;
+  if (includeCover && includeStoryboard) {
+    return platformCoverCompositeBundleCreditsForFormatGrid("短视频", is3x4);
+  }
+  let cost = 0;
+  if (includeCover) cost += CREDIT_COSTS.platformTopicFrameGraphic;
+  if (includeStoryboard) {
+    cost += is3x4 ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet;
+  }
+  return cost;
+}
+
 /** 单条「封面+分镜」套装：（48 + 60|72）× 九折 */
 export function platformCoverCompositeBundleCreditsForFormat(format: string): number {
   const cover = CREDIT_COSTS.platformTopicFrameGraphic;
