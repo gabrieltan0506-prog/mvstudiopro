@@ -267,7 +267,7 @@ export const CREDIT_COSTS = {
   platformXhsDualNote: 72,
   /** 单页连贯图文知识卡片（`single_page_knowledge_card`，自定义文案）·**25/篇** — 上篇+下篇两次生成合计 50 */
   platformSinglePageKnowledgeCard: 25,
-  /** 自定义抠像·单张原价（GPT-IMAGE-2 + 透明底抠图）；2 张九折、4 张八折 */
+  /** 自定义抠像·单张原价（GPT-IMAGE-2 场景/主体图；透明底为可选项）；2 张九折、4 张八折 */
   platformCustomMattingImage: 32,
   /** 3×4 十二格分镜（`storyboard_sheet_landscape` + gridVariant=3x4）·**120** — 后端分 2 段生成再拼成一张长图 */
   platformStoryboardSheet3x4: 120,
@@ -340,7 +340,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
     product: "平台数据分析",
     subFeature: "自定义抠像（单张原价）",
     credits: CREDIT_COSTS.platformCustomMattingImage,
-    note: "GPT-IMAGE-2 + 透明底；2 张九折、4 张八折",
+    note: "GPT-IMAGE-2 场景生图；描述含透明底/抠图时追加处理；2 张九折、4 张八折",
   },
   // ─── 大师级视频基地（逐步） ───────────────────────────────────
   { product: "大师级视频基地", subFeature: "脚本生成（每日第1次）", credits: CREDIT_COSTS.workflowScript, note: "第2次起 2 cr/次" },

@@ -1886,6 +1886,7 @@ export default function PlatformPage() {
   const [customMattingCount, setCustomMattingCount] = useState<PlatformMattingBatchCount>(1);
   const [customMattingBusy, setCustomMattingBusy] = useState(false);
   const [customMattingImages, setCustomMattingImages] = useState<string[]>([]);
+  const [customMattingTransparentCutout, setCustomMattingTransparentCutout] = useState(false);
   const [customMattingError, setCustomMattingError] = useState<string | null>(null);
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
@@ -3588,7 +3589,7 @@ export default function PlatformPage() {
   const handleGenerateCustomMatting = async () => {
     const prompt = customMattingPrompt.trim();
     if (prompt.length < 4) {
-      toast.error("请至少输入 4 个字的抠像描述");
+      toast.error("请至少输入 4 个字的描述");
       return;
     }
     if (!isAuthenticated) {
@@ -3605,7 +3606,7 @@ export default function PlatformPage() {
     if (
       !supervisorAccess &&
       !window.confirm(
-        `将消耗 ${customMattingCost} 积分（${customMattingCount} 张 · ${discountLabel}），生成 ${customMattingAspect} 透明底抠像。是否继续？`,
+        `将消耗 ${customMattingCost} 积分（${customMattingCount} 张 · ${discountLabel}），按描述生成 ${customMattingAspect} 人物/主体图。是否继续？`,
       )
     ) {
       return;
@@ -3614,6 +3615,7 @@ export default function PlatformPage() {
     setCustomMattingBusy(true);
     setCustomMattingError(null);
     setCustomMattingImages([]);
+    setCustomMattingTransparentCutout(false);
 
     try {
       const res = await generatePlatformCustomMattingMutation.mutateAsync({
@@ -3622,7 +3624,8 @@ export default function PlatformPage() {
         count: customMattingCount,
       });
       setCustomMattingImages(res.imageUrls ?? []);
-      toast.success(`已生成 ${res.imageUrls?.length ?? 0} 张抠像`);
+      setCustomMattingTransparentCutout(!!res.transparentCutout);
+      toast.success(`已生成 ${res.imageUrls?.length ?? 0} 张图片`);
       void queryClient.invalidateQueries({ queryKey: [["credits"]] });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -5867,7 +5870,7 @@ export default function PlatformPage() {
               快捷入口 · 独立生成
             </span>
           </div>
-          <p className="mb-4 text-xs text-[#c9c0e6]/55">无需全案分析，可直接粘贴文案、自定义主人公选题或生成透明底抠像</p>
+          <p className="mb-4 text-xs text-[#c9c0e6]/55">无需全案分析，可直接粘贴文案、自定义主人公选题或按描述生成人物/场景图</p>
 
           {/* 一级 Tab */}
           <div className="mb-5 inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
@@ -6357,21 +6360,25 @@ export default function PlatformPage() {
           ) : (
             <>
               <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-                输入抠像主体描述（人物姿态、服装、道具等），系统生成
-                <strong className="text-[#6ee7b7]"> 透明底 PNG 抠像</strong>
-                ，可一次生成 1 / 2 / 4 张。
-                单张原价 <strong className="text-[#6ee7b7]">{CREDIT_COSTS.platformCustomMattingImage} 积分</strong>，
-                2 张九折、4 张八折（单独扣费，与文案/选题无关）。
+                描述人物姿态、服装与背景场景（如
+                <strong className="text-[#6ee7b7]"> 坐姿 + 海边</strong>、
+                <strong className="text-[#6ee7b7]"> 站姿 + 书房</strong>），系统按你的提示词生成对应画面；
+                若需要
+                <strong className="text-[#6ee7b7]"> 透明底抠图</strong>
+                ，请在描述中写明「透明底 / 抠图 / 绿幕」。
+                可一次生成 1 / 2 / 4 张，单张原价
+                <strong className="text-[#6ee7b7]"> {CREDIT_COSTS.platformCustomMattingImage} 积分</strong>，
+                2 张九折、4 张八折（单独扣费）。
               </p>
 
               <div className="space-y-4">
                 <div>
                   <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                    抠像描述 / 预留提示词
+                    主体描述 / 场景提示词
                   </label>
                   <textarea
                     className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#34d399]/60 focus:outline-none focus:ring-1 focus:ring-[#34d399]/30 transition"
-                    placeholder="例：一位穿白色实验服的年轻女医生，半身像，微笑，双手抱胸，面向镜头…"
+                    placeholder="例：年轻女医生穿白大褂，坐姿，微笑，背景是明亮的书房；或：全身站姿，透明底抠图，双手自然下垂…"
                     value={customMattingPrompt}
                     onChange={(e) => setCustomMattingPrompt(e.target.value)}
                     disabled={customMattingBusy}
@@ -6435,7 +6442,7 @@ export default function PlatformPage() {
                     {customMattingBusy ? (
                       <><Loader2 className="h-4 w-4 animate-spin" />生成抠像中…</>
                     ) : (
-                      <><Scissors className="h-4 w-4" />生成抠像（{customMattingCost} 积分）</>
+                      <><Scissors className="h-4 w-4" />开始生成（{customMattingCost} 积分）</>
                     )}
                   </button>
                   {(customMattingImages.length > 0 || customMattingError) && !customMattingBusy && (
@@ -6444,6 +6451,7 @@ export default function PlatformPage() {
                       onClick={() => {
                         setCustomMattingImages([]);
                         setCustomMattingError(null);
+                        setCustomMattingTransparentCutout(false);
                         setCustomMattingPrompt("");
                       }}
                       className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
@@ -6457,7 +6465,7 @@ export default function PlatformPage() {
               {customMattingBusy && (
                 <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#34d399]/15 bg-[rgba(52,211,153,0.05)] px-4 py-3 text-sm text-[#6ee7b7]/80">
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#34d399]" />
-                  正在生成 {customMattingCount} 张 {customMattingAspect} 抠像（含透明底处理），每张约 2–4 分钟，请勿关闭页面…
+                  正在生成 {customMattingCount} 张 {customMattingAspect} 图片，每张约 2–4 分钟，请勿关闭页面…
                 </div>
               )}
 
@@ -6472,16 +6480,23 @@ export default function PlatformPage() {
                   {customMattingImages.map((url, idx) => (
                     <div key={`${url}-${idx}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/70">
-                        抠像 #{idx + 1} · {customMattingAspect}
+                        生成结果 #{idx + 1} · {customMattingAspect}
+                        {customMattingTransparentCutout ? " · 透明底" : ""}
                       </div>
-                      <div className="rounded-2xl border border-white/10 bg-[repeating-conic-gradient(#1a1a2e_0%_25%,#12121f_0%_50%)] bg-[length:16px_16px] p-3">
+                      <div
+                        className={
+                          customMattingTransparentCutout
+                            ? "rounded-2xl border border-white/10 bg-[repeating-conic-gradient(#1a1a2e_0%_25%,#12121f_0%_50%)] bg-[length:16px_16px] p-3"
+                            : "rounded-2xl border border-white/10 bg-black/20 p-3"
+                        }
+                      >
                         <img
                           src={url}
                           alt={`自定义抠像 ${idx + 1}`}
                           className="w-full rounded-xl object-contain max-h-[420px]"
                           onError={(e) => {
                             (e.target as HTMLImageElement).style.display = "none";
-                            setCustomMattingError("抠像图片加载失败，请确认 URL 是否有效");
+                            setCustomMattingError("图片加载失败，请确认 URL 是否有效");
                           }}
                         />
                       </div>

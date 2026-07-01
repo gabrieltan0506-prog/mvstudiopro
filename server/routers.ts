@@ -5626,7 +5626,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 平台页·自定义抠像：用户描述 + 比例 → GPT-IMAGE-2 主体图 → 透明底抠图。
+     * 平台页·自定义抠像：用户描述主体、姿态与场景（如坐姿+海边/书房）→ GPT-IMAGE-2 生图。
+     * 若描述含「透明底/抠图/绿幕」等关键词，则追加 fal 透明底处理。
      * 单独扣费：1 张原价、2 张九折、4 张八折（见 platformCustomMattingTotalCredits）。
      */
     generatePlatformCustomMatting: protectedProcedure
@@ -5660,7 +5661,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const imageGenFlowLog: string[] = [];
         const { generatePlatformCustomMattingImages } = await import("./services/platformCustomMatting.js");
-        const { imageUrls, englishPrompt } = await generatePlatformCustomMattingImages({
+        const { imageUrls, englishPrompt, transparentCutout } = await generatePlatformCustomMattingImages({
           userPrompt: input.prompt,
           aspectRatio: input.aspectRatio,
           count: input.count,
@@ -5675,6 +5676,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           count: input.count,
           englishPrompt,
           imageGenFlowLog,
+          transparentCutout,
         };
       }),
 
