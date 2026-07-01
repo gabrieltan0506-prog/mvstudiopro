@@ -5627,7 +5627,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     /**
      * 平台页·自定义抠像：用户描述主体、姿态与场景（如坐姿+海边/书房）→ GPT-IMAGE-2 生图。
-     * 若描述含「去背景 / 自动去背景」等关键词，则生图后自动去背景。
+     * 若描述含「去背景 / 自动去背景」等关键词，则 GPT-IMAGE-2 直出白底主体图（无 fal 后处理）。
      * 单独扣费：1 张原价、2 张九折、4 张八折（见 platformCustomMattingTotalCredits）。
      */
     generatePlatformCustomMatting: protectedProcedure

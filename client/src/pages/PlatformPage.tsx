@@ -6365,7 +6365,7 @@ export default function PlatformPage() {
                 <strong className="text-[#6ee7b7]"> 站姿 + 书房</strong>），系统按你的提示词生成对应画面；
                 若需要
                 <strong className="text-[#6ee7b7]"> 自动去背景</strong>
-                ，请在描述中写明「去背景 / 自动去背景」。
+                ，请在描述中写明「去背景 / 自动去背景」（系统将直出干净白底主体图）。
                 可一次生成 1 / 2 / 4 张，单张原价
                 <strong className="text-[#6ee7b7]"> {CREDIT_COSTS.platformCustomMattingImage} 积分</strong>，
                 2 张九折、4 张八折（单独扣费）。
@@ -6481,12 +6481,12 @@ export default function PlatformPage() {
                     <div key={`${url}-${idx}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/70">
                         生成结果 #{idx + 1} · {customMattingAspect}
-                        {customMattingTransparentCutout ? " · 已去背景" : ""}
+                        {customMattingTransparentCutout ? " · 白底主体" : ""}
                       </div>
                       <div
                         className={
                           customMattingTransparentCutout
-                            ? "rounded-2xl border border-white/10 bg-[repeating-conic-gradient(#1a1a2e_0%_25%,#12121f_0%_50%)] bg-[length:16px_16px] p-3"
+                            ? "rounded-2xl border border-white/10 bg-white p-3"
                             : "rounded-2xl border border-white/10 bg-black/20 p-3"
                         }
                       >

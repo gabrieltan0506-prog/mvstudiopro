@@ -340,7 +340,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
     product: "平台数据分析",
     subFeature: "自定义抠像（单张原价）",
     credits: CREDIT_COSTS.platformCustomMattingImage,
-    note: "GPT-IMAGE-2 场景生图；描述含去背景时自动处理；2 张九折、4 张八折",
+    note: "GPT-IMAGE-2 场景生图；描述含去背景时直出白底主体；2 张九折、4 张八折",
   },
   // ─── 大师级视频基地（逐步） ───────────────────────────────────
   { product: "大师级视频基地", subFeature: "脚本生成（每日第1次）", credits: CREDIT_COSTS.workflowScript, note: "第2次起 2 cr/次" },
