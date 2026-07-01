@@ -1461,6 +1461,7 @@ async function processPlatformJob(
           flowLog: compositeFlowLog,
           enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
           coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
+          referencePhotoUrl: referencePhotoUrlBundle,
           progressJobId: platformJobId,
           compositeImageEngine,
         }),

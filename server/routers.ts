@@ -5305,6 +5305,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             enableTopicCoverDeepResearchPro: z.boolean().optional(),
             /** IP / 身份锚点，供 DR Pro 与翻译链 */
             coverPersonaContext: z.string().max(8000).optional(),
+            /** 用户上传主人公参考人像 → 分镜各格融合同一人（古人/历史角色等除外） */
+            referencePhotoUrl: z.string().url().max(2048).optional(),
             /** 2×4 出图：GPT-Image-2 主链 vs Vertex Nano Banana 2 主路径（优先于部署变量 PLATFORM_COMPOSITE_SHEET_ENGINE） */
             compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
             /** 一键分镜/八格套装：54×N 按序分拆扣费 */
@@ -5445,6 +5447,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 flowLog: imageGenFlowLog,
                 enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
                 coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
+                referencePhotoUrl: String(input.referencePhotoUrl ?? "").trim() || undefined,
                 compositeImageEngine: input.compositeImageEngine,
                 notePart: input.notePart,
               });
@@ -5509,6 +5512,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             flowLog: imageGenFlowLog,
             enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
             coverPersonaContext: String(input.coverPersonaContext ?? "").trim() || undefined,
+            referencePhotoUrl: String(input.referencePhotoUrl ?? "").trim() || undefined,
             compositeImageEngine: input.compositeImageEngine,
             notePart: input.notePart,
           });

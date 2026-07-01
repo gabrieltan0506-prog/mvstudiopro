@@ -31,6 +31,7 @@ import {
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
   platformCoverCompositeBundleCreditsForFormatGrid,
   platformCustomMattingTotalCredits,
+  platformCustomTopicImageCredits,
 } from "@shared/plans";
 import type { PlatformMattingAspectRatio, PlatformMattingBatchCount } from "@shared/plans";
 import {
@@ -1888,6 +1889,10 @@ export default function PlatformPage() {
   const [customMattingImages, setCustomMattingImages] = useState<string[]>([]);
   const [customMattingTransparentCutout, setCustomMattingTransparentCutout] = useState(false);
   const [customMattingError, setCustomMattingError] = useState<string | null>(null);
+  /** 自定义选题：勾选生成项（文案 / 封面 / 分镜） */
+  const [customTopicGenCopy, setCustomTopicGenCopy] = useState(true);
+  const [customTopicGenCover, setCustomTopicGenCover] = useState(true);
+  const [customTopicGenStoryboard, setCustomTopicGenStoryboard] = useState(true);
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -2538,8 +2543,10 @@ export default function PlatformPage() {
       executionDetails: string;
       gridVariant?: "2x4" | "3x4";
       pollDebugLabel?: string;
-      /** 用户上传人像 → 封面融合主人公相貌 */
+      /** 用户上传人像 → 封面/分镜融合主人公相貌 */
       referencePhotoUrl?: string;
+      /** 有参考人像时分镜须走 GPT-IMAGE-2 edit，可显式传入 gpt_image2 */
+      compositeImageEngine?: PlatformComposite2x4ImageEngine;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ??
@@ -2561,7 +2568,7 @@ export default function PlatformPage() {
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
         ...(supervisorToken ? { supervisorToken } : {}),
-        compositeImageEngine: platformComposite2x4Engine,
+        compositeImageEngine: inp.compositeImageEngine ?? (inp.referencePhotoUrl ? "gpt_image2" : platformComposite2x4Engine),
         ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
       });
       setTopicImageJobPollTrace({
@@ -3576,9 +3583,14 @@ export default function PlatformPage() {
     [uploadCoverReferencePhotoMutation],
   );
 
-  const customTopicBundleCost = useMemo(
-    () => platformCoverCompositeBundleCreditsForFormatGrid("短视频", customTopicGridVariant === "3x4"),
-    [customTopicGridVariant],
+  const customTopicImageCost = useMemo(
+    () =>
+      platformCustomTopicImageCredits({
+        includeCover: customTopicGenCover,
+        includeStoryboard: customTopicGenStoryboard,
+        is3x4: customTopicGridVariant === "3x4",
+      }),
+    [customTopicGenCover, customTopicGenStoryboard, customTopicGridVariant],
   );
 
   const customMattingCost = useMemo(
@@ -3636,15 +3648,86 @@ export default function PlatformPage() {
     }
   };
 
-  const handleGenerateCustomTopic = async () => {
+  const customTopicActionLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (customTopicGenCopy) parts.push("文案");
+    if (customTopicGenCover) parts.push("封面");
+    if (customTopicGenStoryboard) parts.push("分镜");
+    return parts.length > 0 ? `生成 ${parts.join(" + ")}` : "请选择生成项";
+  }, [customTopicGenCopy, customTopicGenCover, customTopicGenStoryboard]);
+
+  const customTopicCanSubmit = useMemo(() => {
+    if (!customTopicGenCopy && !customTopicGenCover && !customTopicGenStoryboard) return false;
+    if (customTopicGenCopy && !customTopicProtagonist.trim()) return false;
+    if ((customTopicGenCover || customTopicGenStoryboard) && !customTopicPhotoUrl) return false;
+    if ((customTopicGenCover || customTopicGenStoryboard) && !customTopicGenCopy && !customTopicCard) return false;
+    return true;
+  }, [
+    customTopicGenCopy,
+    customTopicGenCover,
+    customTopicGenStoryboard,
+    customTopicProtagonist,
+    customTopicPhotoUrl,
+    customTopicCard,
+  ]);
+
+  const generateCustomTopicStoryboardOne = async (card: PlatformContentExecutionCard): Promise<string> => {
     const protagonist = customTopicProtagonist.trim();
-    const title = customTopicTitle.trim() || protagonist.slice(0, 48) || "主人公主题内容";
-    if (!protagonist) {
+    const coverPersona = [
+      `【主人公特质与专长】\n${protagonist || card.title}`,
+      "【视觉锚点】分镜各格须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；仅脚本明确描写古人/历史角色等时才使用不同人物。",
+    ]
+      .join("\n\n")
+      .slice(0, 3800);
+    const progressJobId = newPlatformCompositeProgressJobId();
+    const res = await generatePlatformCompositeSheetMutation.mutateAsync({
+      sceneId: card.id,
+      title: card.title,
+      scriptContext: buildPlatformSheetScriptContext(card),
+      kind: "storyboard_sheet_landscape",
+      gridVariant: customTopicGridVariant,
+      executionDetails: buildPlatformExecutionDetailsPayload(card),
+      imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
+      coverPersonaContext: coverPersona,
+      referencePhotoUrl: customTopicPhotoUrl ?? undefined,
+      progressJobId,
+      compositeImageEngine: customTopicPhotoUrl ? "gpt_image2" : platformComposite2x4Engine,
+    });
+    if (res.imageUrl) return res.imageUrl;
+    if ((res as { isAsync?: boolean }).isAsync) {
+      const j = await pollJobUntilTerminal(progressJobId, {
+        intervalMs: platformImageFlowPollIntervalMs,
+        maxWaitMs: 28 * 60_000,
+      });
+      if (j.status === "failed") throw new Error(j.error || "分镜生成失败");
+      const out = j.output as { imageUrl?: string; compositeImageUrl?: string } | null;
+      const url = String(out?.compositeImageUrl || out?.imageUrl || "").trim();
+      if (!url) throw new Error("未取得分镜 URL");
+      return url;
+    }
+    throw new Error("分镜生成失败");
+  };
+
+  const handleGenerateCustomTopic = async () => {
+    if (!customTopicGenCopy && !customTopicGenCover && !customTopicGenStoryboard) {
+      toast.error("请至少勾选一项生成内容");
+      return;
+    }
+    const protagonist = customTopicProtagonist.trim();
+    if (customTopicGenCopy && !protagonist) {
       toast.error("请先填写主人公特质与专长");
       return;
     }
-    if (!customTopicPhotoUrl) {
-      toast.error("请先上传主人公图像");
+    if (customTopicGenCover && !customTopicPhotoUrl) {
+      toast.error("生成封面请先上传主人公图像");
+      return;
+    }
+    if (customTopicGenStoryboard && !customTopicPhotoUrl) {
+      toast.error("生成分镜请先上传主人公图像（分镜将融合此相貌，避免生成陌生人）");
+      return;
+    }
+    if ((customTopicGenCover || customTopicGenStoryboard) && !customTopicGenCopy && !customTopicCard) {
+      toast.error("未勾选文案时，请先生成过文案，或勾选「文案生成」");
       return;
     }
     if (!isAuthenticated) {
@@ -3652,91 +3735,131 @@ export default function PlatformPage() {
       return;
     }
 
+    const title = customTopicTitle.trim() || protagonist.slice(0, 48) || "主人公主题内容";
+    const imageCost = customTopicImageCost;
+    const bundleDiscount =
+      customTopicGenCover && customTopicGenStoryboard ? PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL : "";
+
     setCustomTopicBusy(true);
     setCustomTopicError(null);
-    setCustomTopicCard(null);
-    setCustomTopicCoverUrl(null);
-    setCustomTopicStoryboardUrl(null);
+    if (customTopicGenCopy) {
+      setCustomTopicCard(null);
+      if (customTopicGenCover) setCustomTopicCoverUrl(null);
+      if (customTopicGenStoryboard) setCustomTopicStoryboardUrl(null);
+    } else {
+      if (customTopicGenCover) setCustomTopicCoverUrl(null);
+      if (customTopicGenStoryboard) setCustomTopicStoryboardUrl(null);
+    }
 
     try {
-      setCustomTopicPhase("copy");
-      const structure = [
-        "【主人公特质与专长】",
-        protagonist,
-        customTopicTitle.trim() ? `\n【选题方向】${customTopicTitle.trim()}` : "",
-        "\n请围绕该主人公的专业背景、人格特质与视觉形象，设计一条适合短视频传播的单条选题执行方案。封面与分镜须保持同一主人公形象一致（用户已上传参考人像）。",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      let card = customTopicCard;
 
-      const res = await generateDecisionIntelTopicCopyMutation.mutateAsync({
-        topic: strategicMapTopic || "自定义主人公选题",
-        contentBlueprint: {
-          summary: title,
-          source: "custom_topic_workspace",
+      if (customTopicGenCopy) {
+        setCustomTopicPhase("copy");
+        const structure = [
+          "【主人公特质与专长】",
           protagonist,
-          topicTitle: customTopicTitle.trim() || undefined,
-        },
-        platformHint: decisionIntelPlatformHint,
-        pick: {
-          title: title.slice(0, 240),
-          structure: structure.slice(0, 8000),
-          source: "personalization" as const,
-        },
-      });
+          customTopicTitle.trim() ? `\n【选题方向】${customTopicTitle.trim()}` : "",
+          "\n请围绕该主人公的专业背景、人格特质与视觉形象，设计一条适合短视频传播的单条选题执行方案。",
+          "\n【分镜视觉约束】各格分镜须以上传参考人像为主人公/主讲人相貌（跨格同一人，禁止换成陌生面孔）；仅脚本明确描写古人、历史人物、古代场景或独立第三方角色时，才使用不同人物造型。封面亦须融合同一参考人像。",
+        ]
+          .filter(Boolean)
+          .join("\n");
 
-      const mapped = mapStrategicMapBlueprintsToExecutionCards(res.executionBlueprints ?? [], 9000, {
-        isDecisionIntelPicked: true,
-      });
-      if (mapped.length === 0) {
-        throw new Error("未能生成执行文案，请稍后重试");
+        const res = await generateDecisionIntelTopicCopyMutation.mutateAsync({
+          topic: strategicMapTopic || "自定义主人公选题",
+          contentBlueprint: {
+            summary: title,
+            source: "custom_topic_workspace",
+            protagonist,
+            topicTitle: customTopicTitle.trim() || undefined,
+          },
+          platformHint: decisionIntelPlatformHint,
+          pick: {
+            title: title.slice(0, 240),
+            structure: structure.slice(0, 8000),
+            source: "personalization" as const,
+          },
+        });
+
+        const mapped = mapStrategicMapBlueprintsToExecutionCards(res.executionBlueprints ?? [], 9000, {
+          isDecisionIntelPicked: true,
+        });
+        if (mapped.length === 0) throw new Error("未能生成执行文案，请稍后重试");
+        card = mapped[0]!;
+        setCustomTopicCard(card);
+        await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+          contentBlueprints: res.executionBlueprints ?? [],
+        });
+        toast.success("文案已生成");
       }
-      const card = mapped[0]!;
-      setCustomTopicCard(card);
 
-      await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
-        contentBlueprints: res.executionBlueprints ?? [],
-      });
+      if (!customTopicGenCover && !customTopicGenStoryboard) return;
 
-      toast.success("文案已生成，正在生成封面与分镜…");
+      if (!card) throw new Error("缺少执行文案，无法生成图片");
+
       setCustomTopicPhase("images");
 
-      if (
-        !supervisorAccess &&
-        !window.confirm(
-          `将消耗 ${customTopicBundleCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}，生成竖版封面 + ${customTopicGridVariant === "3x4" ? "3×4 十二格" : "2×4 八格"}分镜（文案扩写首次免费）。是否继续？`,
-        )
-      ) {
-        return;
+      const imageParts: string[] = [];
+      if (customTopicGenCover) imageParts.push("竖版封面");
+      if (customTopicGenStoryboard) {
+        imageParts.push(`${customTopicGridVariant === "3x4" ? "3×4 十二格" : "2×4 八格"}分镜`);
       }
+      const confirmMsg =
+        imageCost > 0
+          ? `将消耗 ${imageCost} 积分${bundleDiscount}，生成 ${imageParts.join(" + ")}（文案扩写首次免费）。是否继续？`
+          : `即将生成 ${imageParts.join(" + ")}。是否继续？`;
+
+      if (!supervisorAccess && !window.confirm(confirmMsg)) return;
 
       const coverPersona = [
-        `【主人公特质与专长】\n${protagonist}`,
-        "【视觉锚点】封面与分镜须融合用户上传的主人公参考人像，保持相貌、气质与造型一致。",
+        `【主人公特质与专长】\n${protagonist || card.title}`,
+        "【视觉锚点】封面与分镜须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；分镜各格跨格同一人，仅古人/历史角色等脚本明示时换脸。",
       ]
         .join("\n\n")
         .slice(0, 3800);
+      const storyboardCompositeEngine = customTopicPhotoUrl ? ("gpt_image2" as const) : platformComposite2x4Engine;
 
-      const bundleRes = await runEnqueueTopicCoverCompositeBundleAndPoll({
-        sceneId: card.id,
-        coverPersonaContext: coverPersona,
-        headlineTitle: card.title,
-        compositeKind: "storyboard_sheet_landscape",
-        scriptContext: buildPlatformSheetScriptContext(card),
-        executionDetails: buildPlatformExecutionDetailsPayload(card),
-        gridVariant: customTopicGridVariant,
-        referencePhotoUrl: customTopicPhotoUrl,
-        pollDebugLabel: `自定义选题 · ${card.id}`,
-      });
-
-      if (bundleRes.imageUrl) setCustomTopicCoverUrl(bundleRes.imageUrl);
-      if (bundleRes.compositeImageUrl) setCustomTopicStoryboardUrl(bundleRes.compositeImageUrl);
-
-      if (bundleRes.success) {
+      if (customTopicGenCover && customTopicGenStoryboard) {
+        const bundleRes = await runEnqueueTopicCoverCompositeBundleAndPoll({
+          sceneId: card.id,
+          coverPersonaContext: coverPersona,
+          headlineTitle: card.title,
+          compositeKind: "storyboard_sheet_landscape",
+          scriptContext: buildPlatformSheetScriptContext(card),
+          executionDetails: buildPlatformExecutionDetailsPayload(card),
+          gridVariant: customTopicGridVariant,
+          referencePhotoUrl: customTopicPhotoUrl ?? undefined,
+          compositeImageEngine: storyboardCompositeEngine,
+          pollDebugLabel: `自定义选题 · ${card.id}`,
+        });
+        if (bundleRes.imageUrl) setCustomTopicCoverUrl(bundleRes.imageUrl);
+        if (bundleRes.compositeImageUrl) setCustomTopicStoryboardUrl(bundleRes.compositeImageUrl);
+        if (!bundleRes.success) throw new Error("套装未完成，请重试");
         toast.success(`封面 + ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜已生成`);
       } else {
-        throw new Error("套装未完成，请重试");
+        if (customTopicGenCover) {
+          const coverRes = await runEnqueueTopicImageAndPoll({
+            sceneId: card.id,
+            format: "短视频",
+            coverPersonaContext: coverPersona,
+            referencePhotoUrl: customTopicPhotoUrl ?? undefined,
+            pollDebugLabel: `自定义选题封面 · ${card.id}`,
+          });
+          if (coverRes.imageUrl) setCustomTopicCoverUrl(coverRes.imageUrl);
+          else throw new Error("封面生成失败");
+        }
+        if (customTopicGenStoryboard) {
+          const storyboardUrl = await generateCustomTopicStoryboardOne(card);
+          setCustomTopicStoryboardUrl(storyboardUrl);
+        }
+        const done: string[] = [];
+        if (customTopicGenCover) done.push("封面");
+        if (customTopicGenStoryboard) done.push("分镜");
+        toast.success(`${done.join(" + ")}已生成`);
       }
+
+      void queryClient.invalidateQueries({ queryKey: [["credits"]] });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setCustomTopicError(msg);
@@ -6078,14 +6201,49 @@ export default function PlatformPage() {
           ) : customWorkspaceTab === "topic" ? (
             <>
               <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-                填写主人公特质与专长、上传参考人像，系统将
-                <strong className="text-[#8cefff]"> AI 扩写选题文案</strong>
-                ，并融合主人公生成
-                <strong className="text-[#8cefff]">竖版封面 + 分镜图</strong>
-                （可选 2×4 或 3×4）。文案扩写首次免费，封面套装
-                <strong className="text-[#ff9fe0]"> {customTopicBundleCost} 积分</strong>
-                {PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}。
+                填写主人公特质与专长、上传参考人像，勾选需要生成的内容。文案扩写
+                <strong className="text-[#8cefff]">首次免费</strong>
+                ；封面/分镜会融合上传的主人公相貌（分镜各格保持同一人，仅古人/历史角色等脚本明示时换脸）。
+                {(customTopicGenCover || customTopicGenStoryboard) && (
+                  <>
+                    {" "}
+                    本次图片
+                    <strong className="text-[#ff9fe0]"> {customTopicImageCost} 积分</strong>
+                    {customTopicGenCover && customTopicGenStoryboard ? PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL : ""}。
+                  </>
+                )}
               </p>
+
+              <div className="mb-5 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2.5">
+                  生成内容（可多选）
+                </div>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  {(
+                    [
+                      ["copy", "文案生成", customTopicGenCopy, setCustomTopicGenCopy],
+                      ["cover", "封面生成", customTopicGenCover, setCustomTopicGenCover],
+                      ["storyboard", "分镜生成", customTopicGenStoryboard, setCustomTopicGenStoryboard],
+                    ] as const
+                  ).map(([key, label, checked, setter]) => (
+                    <label
+                      key={key}
+                      className={`inline-flex items-center gap-2 text-sm cursor-pointer select-none ${
+                        customTopicBusy ? "opacity-50 cursor-not-allowed" : "text-white/90"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={customTopicBusy}
+                        onChange={(e) => setter(e.target.checked)}
+                        className="h-4 w-4 rounded border-white/20 bg-black/40 text-[#49e6ff] focus:ring-[#49e6ff]/40"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
                 {/* 左侧表单 */}
@@ -6107,7 +6265,7 @@ export default function PlatformPage() {
 
                   <div>
                     <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                      主人公特质与专长 <span className="text-[#ff9fe0]">*</span>
+                      主人公特质与专长 {customTopicGenCopy ? <span className="text-[#ff9fe0]">*</span> : null}
                     </label>
                     <textarea
                       className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
@@ -6155,7 +6313,7 @@ export default function PlatformPage() {
                 {/* 右侧人像上传 */}
                 <div className="flex flex-col">
                   <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                    主人公图像 <span className="text-[#ff9fe0]">*</span>
+                    主人公图像 {(customTopicGenCover || customTopicGenStoryboard) ? <span className="text-[#ff9fe0]">*</span> : null}
                   </label>
                   <div
                     className={`relative flex-1 min-h-[220px] rounded-2xl border-2 border-dashed transition overflow-hidden ${
@@ -6173,7 +6331,7 @@ export default function PlatformPage() {
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
                         <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between gap-2">
-                          <span className="text-[11px] text-white/80">已上传 · 封面将融合此相貌</span>
+                          <span className="text-[11px] text-white/80">已上传 · 封面与分镜将融合此相貌</span>
                           {!customTopicBusy && (
                             <button
                               type="button"
@@ -6240,17 +6398,25 @@ export default function PlatformPage() {
                 <button
                   type="button"
                   onClick={() => void handleGenerateCustomTopic()}
-                  disabled={
-                    customTopicBusy ||
-                    !customTopicProtagonist.trim() ||
-                    !customTopicPhotoUrl
-                  }
+                  disabled={customTopicBusy || !customTopicCanSubmit}
                   className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(73,230,255,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {customTopicBusy ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />{customTopicPhase === "copy" ? "扩写文案中…" : "生成封面与分镜…"}</>
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {customTopicPhase === "copy"
+                        ? "扩写文案中…"
+                        : customTopicGenCover && customTopicGenStoryboard
+                          ? "生成封面与分镜…"
+                          : customTopicGenCover
+                            ? "生成封面…"
+                            : "生成分镜…"}
+                    </>
                   ) : (
-                    <><Sparkles className="h-4 w-4" />一键生成文案 + 封面 + 分镜</>
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      {customTopicActionLabel}
+                    </>
                   )}
                 </button>
                 {(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl || customTopicError) && !customTopicBusy && (
@@ -6278,7 +6444,11 @@ export default function PlatformPage() {
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#49e6ff]" />
                   {customTopicPhase === "copy"
                     ? "正在 AI 扩写选题文案…"
-                    : `正在并发生成竖版封面与 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 5–8 分钟，请勿关闭页面…`}
+                    : customTopicGenCover && customTopicGenStoryboard
+                      ? `正在并发生成竖版封面与 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 5–8 分钟，请勿关闭页面…`
+                      : customTopicGenCover
+                        ? "正在生成竖版封面，约需 3–5 分钟，请勿关闭页面…"
+                        : `正在生成 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜（融合主人公参考图），约需 5–8 分钟，请勿关闭页面…`}
                 </div>
               )}
 
