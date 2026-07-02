@@ -541,8 +541,11 @@ export default function PlatformAssetAnalysisPanel({
               {String(imagePipelineDebug.analysis?.model || "-")}
             </div>
             <div>
-              7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)} / 降级{" "}
+              7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)} / 备用路径{" "}
               {String(imagePipelineDebug.analysis?.fallback ?? "-")}
+              {imagePipelineDebug.analysis?.primaryError
+                ? ` · 主路径：${String(imagePipelineDebug.analysis.primaryError)}`
+                : null}
             </div>
             <div>8. 失败原因：{String(imagePipelineDebug.analysis?.error || error || "-")}</div>
           </div>

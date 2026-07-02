@@ -690,10 +690,12 @@ export async function runGrowthCampStrategistForImages(params: {
   context?: string;
   mode?: GrowthAnalysisMode;
   modelName?: string;
+  /** 覆写引擎（例如主路径失败后走 Gemini 3.5 Flash fallback） */
+  strategistEngine?: GrowthCampStrategistEngine;
 }): Promise<GrowthAnalysisScores> {
   const mode = params.mode || "GROWTH";
   const businessGoal = (params.context || "未提供").trim() || "未提供";
-  const strategistEngine = resolveGrowthCampStrategistEngine(params.modelName);
+  const strategistEngine = params.strategistEngine || resolveGrowthCampStrategistEngine(params.modelName);
   const systemMain = buildGrowthCampStrategistSystemMainForImages(mode, businessGoal);
   const result = await runGrowthCampStrategistMultimodalPass({
     systemMain,

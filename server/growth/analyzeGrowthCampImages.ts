@@ -1,6 +1,7 @@
 import { type GrowthAnalysisMode, type GrowthAnalysisScores } from "@shared/growth";
 import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl } from "../services/gcs";
 import { storagePut } from "../storage";
+import { resolveGrowthCampExtractScanEngine } from "./extractorPipeline";
 import { runGrowthCampStrategistForImages } from "./growthCampStrategistPass";
 
 export type GrowthCampImageAssetInput = {
@@ -18,7 +19,9 @@ export type GrowthCampImageAnalysisResult = {
     imageCount: number;
     provider: string;
     model: string;
+    /** true = 主模型失败后由 Gemini 3.5 Flash 重试成功 */
     fallback: boolean;
+    primaryError?: string;
   };
 };
 
@@ -83,21 +86,11 @@ async function resolveImageVisionUrls(images: GrowthCampImageAssetInput[]) {
   return { fileUrls, visionUrls };
 }
 
-export async function analyzeGrowthCampImages(params: {
-  images: GrowthCampImageAssetInput[];
-  context?: string;
-  modelName?: string;
-  mode?: GrowthAnalysisMode;
-}): Promise<GrowthCampImageAnalysisResult> {
-  const images = (params.images || []).filter(
-    (img) => String(img.gcsUri || "").trim() || String(img.fileBase64 || "").trim(),
-  );
-  if (!images.length) {
-    throw new Error("请至少上传一张 PNG 或 JPG 图片");
-  }
-
-  const { fileUrls, visionUrls } = await resolveImageVisionUrls(images);
-
+function buildImageAnalysisUserContent(
+  images: GrowthCampImageAssetInput[],
+  visionUrls: Array<{ mime: "image/png" | "image/jpeg"; url: string }>,
+  context?: string,
+) {
   const userContent: Array<
     | { type: "text"; text: string }
     | { type: "image_url"; image_url: { url: string; detail?: "high" | "auto" | "low" } }
@@ -106,7 +99,7 @@ export async function analyzeGrowthCampImages(params: {
       type: "text",
       text: [
         `用户上传了 ${images.length} 张图片（PNG/JPG），请基于画面内容做商业增长与视觉策略分析。`,
-        params.context?.trim() ? `业务背景：${params.context.trim()}` : "业务背景：未提供",
+        context?.trim() ? `业务背景：${context.trim()}` : "业务背景：未提供",
         "请综合所有图片中的文字、人物、产品、场景、版式与视觉风格做判断，输出须具体、可执行，禁止空泛模板句。",
       ].join("\n\n"),
     },
@@ -123,21 +116,74 @@ export async function analyzeGrowthCampImages(params: {
     });
   }
 
-  const analysis = await runGrowthCampStrategistForImages({
-    userContent,
-    context: params.context,
-    mode: params.mode,
-    modelName: params.modelName,
-  });
+  return userContent;
+}
+
+function formatAnalysisError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function analyzeGrowthCampImages(params: {
+  images: GrowthCampImageAssetInput[];
+  context?: string;
+  modelName?: string;
+  mode?: GrowthAnalysisMode;
+}): Promise<GrowthCampImageAnalysisResult> {
+  const images = (params.images || []).filter(
+    (img) => String(img.gcsUri || "").trim() || String(img.fileBase64 || "").trim(),
+  );
+  if (!images.length) {
+    throw new Error("请至少上传一张 PNG 或 JPG 图片");
+  }
+
+  const { fileUrls, visionUrls } = await resolveImageVisionUrls(images);
+  const userContent = buildImageAnalysisUserContent(images, visionUrls, params.context);
+  const primaryModel = params.modelName || "gpt-5.5";
+
+  let analysis: GrowthAnalysisScores;
+  let fallback = false;
+  let provider = "growth-camp-strategist";
+  let model = primaryModel;
+  let primaryError: string | undefined;
+
+  try {
+    analysis = await runGrowthCampStrategistForImages({
+      userContent,
+      context: params.context,
+      mode: params.mode,
+      modelName: primaryModel,
+    });
+  } catch (primaryFailure: unknown) {
+    primaryError = formatAnalysisError(primaryFailure);
+    console.warn("[growth.analyzeGrowthCampImages] primary failed, retry Gemini 3.5 Flash:", primaryError);
+
+    const geminiEngine = resolveGrowthCampExtractScanEngine();
+    try {
+      analysis = await runGrowthCampStrategistForImages({
+        userContent,
+        context: params.context,
+        mode: params.mode,
+        strategistEngine: geminiEngine,
+      });
+    } catch (fallbackFailure: unknown) {
+      const fallbackMsg = formatAnalysisError(fallbackFailure);
+      throw new Error(`图片分析失败（主模型与备用模型均未成功）：${fallbackMsg}`);
+    }
+
+    fallback = true;
+    provider = "vertex-gemini-flash-fallback";
+    model = geminiEngine.modelName;
+  }
 
   return {
     analysis,
     imageMeta: {
       fileUrls,
       imageCount: images.length,
-      provider: "growth-camp-strategist",
-      model: params.modelName || "default",
-      fallback: false,
+      provider,
+      model,
+      fallback,
+      primaryError: fallback ? primaryError : undefined,
     },
   };
 }

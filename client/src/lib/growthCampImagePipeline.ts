@@ -39,6 +39,7 @@ export type ImagePipelineDebugState = {
     provider?: unknown;
     model?: unknown;
     fallback?: unknown;
+    primaryError?: string;
     imageCount?: number;
     error?: string;
   };
@@ -299,13 +300,10 @@ export async function runGrowthCampImageAnalysis(
       provider: jobDebug.provider,
       model: jobDebug.model,
       fallback: jobDebug.fallback,
+      primaryError: typeof jobDebug.primaryError === "string" ? jobDebug.primaryError : undefined,
       imageCount: (jobDebug.imageCount as number | undefined) ?? imageInputs.length,
     },
   }));
-
-  if (jobDebug.fallback === true) {
-    throw new Error("图片分析未完成，积分将退回，请稍后重试");
-  }
 
   const analysis = job.output?.analysis as GrowthAnalysisScores | undefined;
   if (!analysis) {
