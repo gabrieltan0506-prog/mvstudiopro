@@ -232,7 +232,7 @@ export default function OmniCanvas() {
         const signed = await getSignedUrlMutation.mutateAsync({
           fileName: file.name,
           mimeType: mime,
-          objectName: `omni-canvas/${kind}/${Date.now()}-${safeName}`,
+          objectName: `canvas/${kind}/${Date.now()}-${safeName}`,
         });
         await uploadFileToSignedUrl({
           file,

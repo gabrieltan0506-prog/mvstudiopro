@@ -137,7 +137,7 @@ function Router() {
         <Route path={"/workflow-nodes"} component={WorkflowNodes} />
         <Route path={"/creative"} component={CreativePage} />
         <Route path={"/create"} component={CreativePage} />
-        <Route path={"/omni-canvas"} component={OmniCanvas} />
+        <Route path={"/canvas"} component={OmniCanvas} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />
