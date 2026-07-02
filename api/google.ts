@@ -9,6 +9,12 @@ import {
   startOmniVideoGeneration,
   type OmniVideoResolution,
 } from "../server/services/geminiOmniVertexVideo";
+import {
+  createOmniFlashInteraction,
+  extractOmniInteractionOutputs,
+  getOmniFlashInteraction,
+  type OmniVideoTask,
+} from "../server/services/geminiOmniInteractions";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -722,6 +728,118 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         return res.status(502).json({
           ok: false,
           error: "omni_video_poll_failed",
+          message: error?.message || String(error),
+        });
+      }
+    }
+
+    // ---------------- Gemini Omni Interactions（AI Studio · gemini-omni-flash-preview） ----------------
+    if (op === "omniMaterialUrl") {
+      const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
+      if (!gcsUri.startsWith("gs://")) {
+        return res.status(400).json({ ok: false, error: "missing_gcsUri" });
+      }
+      try {
+        const url = signGsUriV4ReadUrl(gcsUri, 3600);
+        return res.status(200).json({ ok: true, gcsUri, url });
+      } catch (error: any) {
+        return res.status(502).json({ ok: false, error: "sign_failed", message: error?.message || String(error) });
+      }
+    }
+
+    if (op === "omniInteractionCreate") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
+      const prompt = s(b.prompt || q.prompt || "").trim();
+      const task = s(b.task || q.task || "").trim() as OmniVideoTask;
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
+      const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
+      const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
+      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
+      const durationSeconds = Number(b.durationSeconds || q.durationSeconds || 10) || 10;
+      const systemInstruction = s(b.systemInstruction || q.systemInstruction || "").trim();
+
+      if (!prompt && !imageUrl && !videoUrl && !gcsUri) {
+        return res.status(400).json({ ok: false, error: "missing_prompt_or_media" });
+      }
+
+      try {
+        const created = await createOmniFlashInteraction({
+          prompt,
+          task: task || undefined,
+          aspectRatio,
+          durationSeconds,
+          imageUrl: imageUrl || undefined,
+          videoUrl: videoUrl || undefined,
+          gcsUri: gcsUri || undefined,
+          systemInstruction: systemInstruction || undefined,
+          responseModalities: ["video"],
+        });
+        return res.status(200).json({ ok: true, ...created });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: "omni_interaction_create_failed",
+          message: error?.message || String(error),
+        });
+      }
+    }
+
+    if (op === "omniInteractionGet") {
+      const interactionId = s(q.interactionId || b.interactionId || q.taskId || b.taskId || "").trim();
+      if (!interactionId) return res.status(400).json({ ok: false, error: "missing_interactionId" });
+
+      try {
+        const row = await getOmniFlashInteraction(interactionId);
+        const status = String((row as any)?.status || "unknown");
+        const outputs = extractOmniInteractionOutputs(row);
+
+        let videoUrl = "";
+        let materialized = false;
+
+        if (outputs.videoBytes) {
+          const uploaded = await materializeGeneratedVideo(interactionId, {
+            response: {
+              generatedVideos: [{ video: { videoBytes: outputs.videoBytes, mimeType: outputs.videoMimeType } }],
+            },
+          }).catch(() => ({ videoUrl: "", materialized: false }));
+          videoUrl = uploaded.videoUrl || "";
+          materialized = Boolean(uploaded.materialized);
+        } else if (outputs.videoUri) {
+          const download = await fetch(outputs.videoUri);
+          if (download.ok) {
+            const buf = Buffer.from(await download.arrayBuffer());
+            const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
+            if (token && buf.length) {
+              const blob = await put(`videos/${Date.now()}-omni-${interactionId.slice(-8)}.mp4`, buf, {
+                access: "public",
+                token,
+                contentType: outputs.videoMimeType,
+              });
+              videoUrl = buildBlobMediaUrlFromPath(String(blob.pathname || ""));
+              materialized = true;
+            } else {
+              videoUrl = outputs.videoUri;
+            }
+          } else {
+            videoUrl = outputs.videoUri;
+          }
+        }
+
+        return res.status(200).json({
+          ok: true,
+          status,
+          interactionId,
+          text: outputs.text || null,
+          videoUrl: videoUrl || null,
+          imageUrls: outputs.imageUrls,
+          materialized,
+          failed: status === "failed" || status === "cancelled",
+          error: (row as any)?.error ?? undefined,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: "omni_interaction_get_failed",
           message: error?.message || String(error),
         });
       }
