@@ -107,9 +107,11 @@ export async function runNanoImage(body: {
   imageSize?: string;
   model?: string;
   tier?: "flash" | "pro";
+  numberOfImages?: number;
 }) {
   const tier = body.tier || "flash";
   const model = body.model || "gemini-3.1-flash-image-preview";
+  const numberOfImages = Math.max(1, Math.min(4, Number(body.numberOfImages || 1) || 1));
   const resp = await fetch(`/api/google?op=nanoImage&tier=${tier}&model=${encodeURIComponent(model)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -120,7 +122,7 @@ export async function runNanoImage(body: {
       imageSize: body.imageSize || "1K",
       tier,
       model,
-      numberOfImages: 1,
+      numberOfImages,
     }),
   });
   const json = await parseJson(resp);

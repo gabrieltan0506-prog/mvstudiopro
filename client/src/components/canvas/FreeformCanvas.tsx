@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CANVAS_KIND_META,
+  collectUpstreamTexts,
+  collectVisionImages,
   defaultCanvasBlock,
   IMAGE_MODEL_OPTIONS,
   makeCanvasBlockId,
@@ -10,7 +12,14 @@ import {
   type CanvasBlock,
   type CanvasBlockKind,
   type CanvasEdge,
+  type CanvasImageBatchCount,
+  type CanvasUploadedAsset,
 } from "@/lib/canvasTypes";
+import {
+  CANVAS_IMAGE_BATCH_OPTIONS,
+  canvasImageBatchTotalCredits,
+  canvasVisionTotalCredits,
+} from "@/lib/canvasCredits";
 import { runCanvasBlock, type CanvasRunDeps, uploadFileToSignedUrl, resolveOmniMaterialUrl } from "@/lib/canvasRunBlock";
 import { trpc } from "@/lib/trpc";
 import {
@@ -48,6 +57,7 @@ export default function FreeformCanvas({
   const [spawnMenu, setSpawnMenu] = useState<SpawnMenuState>(null);
   const [dragState, setDragState] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
@@ -94,17 +104,16 @@ export default function FreeformCanvas({
     async (blockId: string) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
-      const parent = block.parentId ? blockMap.get(block.parentId) : undefined;
-      const parentOutput = parent
-        ? { text: parent.outputText, url: parent.outputUrl }
-        : undefined;
+      const visionImages = collectVisionImages(blockId, blocks, edges);
+      const texts = collectUpstreamTexts(blockId, blocks, edges);
       patchOne(blockId, { status: "running", error: undefined });
       try {
-        const out = await runCanvasBlock(runDeps, block, parentOutput);
+        const out = await runCanvasBlock(runDeps, block, { visionImages, texts });
         patchOne(blockId, {
           status: "done",
           outputText: out.outputText,
           outputUrl: out.outputUrl,
+          outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : block.outputUrls),
         });
         toast.success("生成完成");
       } catch (e: unknown) {
@@ -113,40 +122,67 @@ export default function FreeformCanvas({
         toast.error(msg);
       }
     },
-    [blockMap, blocks, patchOne, runDeps],
+    [blocks, edges, patchOne, runDeps],
   );
 
-  const uploadForBlock = useCallback(
-    async (blockId: string, file: File) => {
+  const uploadFilesForBlock = useCallback(
+    async (blockId: string, files: FileList | File[]) => {
+      const fileArr = Array.from(files).filter(
+        (f) => f.type.startsWith("image/") || f.type.startsWith("video/") || /\.(png|jpe?g|webp|mp4)$/i.test(f.name),
+      );
+      if (!fileArr.length) {
+        toast.error("请选择图片或视频文件");
+        return;
+      }
+
       setUploadBusyId(blockId);
+      setUploadProgress({ blockId, done: 0, total: fileArr.length });
+      const block = blocks.find((b) => b.id === blockId);
+      const nextAssets: CanvasUploadedAsset[] = [...(block?.uploadedAssets ?? [])];
+
       try {
-        const kind = file.type.startsWith("video/") ? "video" : "image";
-        const safeName = file.name.replace(/[^a-z0-9._-]/gi, "-");
-        const signed = await getSignedUrlMutation.mutateAsync({
-          fileName: file.name,
-          mimeType: file.type || (kind === "video" ? "video/mp4" : "image/png"),
-          objectName: `canvas/${kind}/${Date.now()}-${safeName}`,
-        });
-        await uploadFileToSignedUrl({
-          file,
-          uploadUrl: signed.uploadUrl,
-          headers: signed.requiredHeaders,
-        });
-        if (!signed.gcsUri) throw new Error("上传失败");
-        const readUrl = await resolveOmniMaterialUrl(signed.gcsUri);
+        for (let i = 0; i < fileArr.length; i++) {
+          const file = fileArr[i]!;
+          const kind = file.type.startsWith("video/") ? "video" : "image";
+          const safeName = file.name.replace(/[^a-z0-9._-]/gi, "-");
+          const signed = await getSignedUrlMutation.mutateAsync({
+            fileName: file.name,
+            mimeType: file.type || (kind === "video" ? "video/mp4" : "image/png"),
+            objectName: `canvas/${kind}/${Date.now()}-${i}-${safeName}`,
+          });
+          await uploadFileToSignedUrl({
+            file,
+            uploadUrl: signed.uploadUrl,
+            headers: signed.requiredHeaders,
+          });
+          if (!signed.gcsUri) throw new Error(`上传失败：${file.name}`);
+          const readUrl = await resolveOmniMaterialUrl(signed.gcsUri);
+          const previewUrl = kind === "image" ? URL.createObjectURL(file) : readUrl;
+          nextAssets.push({
+            id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+            url: readUrl,
+            previewUrl,
+            fileName: file.name,
+            gcsUri: signed.gcsUri,
+          });
+          setUploadProgress({ blockId, done: i + 1, total: fileArr.length });
+        }
+
+        const firstImage = nextAssets.find((a) => !a.fileName.match(/\.mp4$/i));
         patchOne(blockId, {
-          refImageUrl: kind === "image" ? readUrl : undefined,
-          refVideoUrl: kind === "video" ? readUrl : undefined,
-          outputUrl: kind === "image" ? readUrl : undefined,
+          uploadedAssets: nextAssets,
+          refImageUrl: firstImage?.url ?? block?.refImageUrl,
+          outputUrl: firstImage?.url ?? block?.outputUrl,
         });
-        toast.success("素材已上传");
+        toast.success(`已上传 ${fileArr.length} 个素材`);
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "上传失败");
       } finally {
         setUploadBusyId(null);
+        setUploadProgress(null);
       }
     },
-    [getSignedUrlMutation, patchOne],
+    [blocks, getSignedUrlMutation, patchOne],
   );
 
   useEffect(() => {
@@ -240,6 +276,21 @@ export default function FreeformCanvas({
             const meta = CANVAS_KIND_META[block.kind];
             const Icon = meta.icon;
             const selected = selectedId === block.id;
+            const visionCount = collectVisionImages(block.id, blocks, edges).length;
+            const imageCredits =
+              block.kind === "image"
+                ? canvasImageBatchTotalCredits(block.imageModel, block.imageBatchCount || 1)
+                : 0;
+            const visionCredits =
+              (block.kind === "text" || block.kind === "copy_organize") && visionCount > 0
+                ? canvasVisionTotalCredits(visionCount)
+                : 0;
+            const displayOutputs =
+              block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
+            const uploadLabel =
+              uploadBusyId === block.id && uploadProgress?.blockId === block.id
+                ? `上传中 ${uploadProgress.done}/${uploadProgress.total}`
+                : "上传素材";
             return (
               <div
                 key={block.id}
@@ -249,7 +300,7 @@ export default function FreeformCanvas({
                 style={{ left: block.x, top: block.y }}
                 onClick={() => setSelectedId(block.id)}
               >
-                {/* 顶栏：类型 + 模型 + 运行 + 引用生成 + 删除 */}
+                {/* 顶栏：类型 + 运行 + 引用 + 删除 */}
                 <div
                   className="flex cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing"
                   onPointerDown={(e) => {
@@ -268,7 +319,7 @@ export default function FreeformCanvas({
                   <select
                     value={block.kind}
                     onChange={(e) => patchOne(block.id, { kind: e.target.value as CanvasBlockKind })}
-                    className="max-w-[108px] rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                   >
                     {SPAWN_KIND_OPTIONS.map((o) => (
                       <option key={o.kind} value={o.kind}>
@@ -276,45 +327,6 @@ export default function FreeformCanvas({
                       </option>
                     ))}
                   </select>
-                  {block.kind === "text" || block.kind === "copy_organize" ? (
-                    <select
-                      value={block.textModel}
-                      onChange={(e) => patchOne(block.id, { textModel: e.target.value as CanvasBlock["textModel"] })}
-                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
-                    >
-                      {TEXT_MODEL_OPTIONS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  {block.kind === "image" ? (
-                    <select
-                      value={block.imageModel}
-                      onChange={(e) => patchOne(block.id, { imageModel: e.target.value as CanvasBlock["imageModel"] })}
-                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
-                    >
-                      {IMAGE_MODEL_OPTIONS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  {block.kind === "video" ? (
-                    <select
-                      value={block.videoModel}
-                      onChange={(e) => patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })}
-                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
-                    >
-                      {VIDEO_MODEL_OPTIONS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
                   <button
                     type="button"
                     disabled={block.status === "running"}
@@ -349,18 +361,106 @@ export default function FreeformCanvas({
                 </div>
 
                 <div className="grid grid-cols-[1fr_1fr] gap-0 divide-x divide-white/10">
-                  {/* 左：提示词 */}
+                  {/* 左：设置 + 提示词 */}
                   <div className="p-3">
+                    <div className="mb-2 space-y-2 rounded-xl border border-white/10 bg-black/25 p-2">
+                      <div className="text-[10px] uppercase tracking-wider text-white/40">方块设置</div>
+                      {block.kind === "text" || block.kind === "copy_organize" ? (
+                        <label className="flex items-center gap-2 text-[11px] text-white/70">
+                          <span className="shrink-0 text-white/45">模型</span>
+                          <select
+                            value={block.textModel}
+                            onChange={(e) =>
+                              patchOne(block.id, { textModel: e.target.value as CanvasBlock["textModel"] })
+                            }
+                            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                          >
+                            {TEXT_MODEL_OPTIONS.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {block.kind === "image" ? (
+                        <>
+                          <label className="flex items-center gap-2 text-[11px] text-white/70">
+                            <span className="shrink-0 text-white/45">模型</span>
+                            <select
+                              value={block.imageModel}
+                              onChange={(e) =>
+                                patchOne(block.id, { imageModel: e.target.value as CanvasBlock["imageModel"] })
+                              }
+                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                            >
+                              {IMAGE_MODEL_OPTIONS.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-2 text-[11px] text-white/70">
+                            <span className="shrink-0 text-white/45">张数</span>
+                            <select
+                              value={block.imageBatchCount || 1}
+                              onChange={(e) =>
+                                patchOne(block.id, {
+                                  imageBatchCount: Number(e.target.value) as CanvasImageBatchCount,
+                                })
+                              }
+                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                            >
+                              {CANVAS_IMAGE_BATCH_OPTIONS.map((o) => (
+                                <option key={o.count} value={o.count}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="text-[10px] text-emerald-300/90">预估积分：{imageCredits}</div>
+                        </>
+                      ) : null}
+                      {block.kind === "video" ? (
+                        <label className="flex items-center gap-2 text-[11px] text-white/70">
+                          <span className="shrink-0 text-white/45">模型</span>
+                          <select
+                            value={block.videoModel}
+                            onChange={(e) =>
+                              patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })
+                            }
+                            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                          >
+                            {VIDEO_MODEL_OPTIONS.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {(block.kind === "text" || block.kind === "copy_organize") && visionCount > 0 ? (
+                        <div className="text-[10px] text-amber-300/90">
+                          已接入 {visionCount} 张图片 · 预估积分 {visionCredits}
+                        </div>
+                      ) : null}
+                    </div>
+
                     <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
                     <textarea
                       value={block.prompt}
                       onChange={(e) => patchOne(block.id, { prompt: e.target.value })}
-                      rows={8}
+                      rows={6}
                       className="w-full resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
-                      placeholder={meta.hint}
+                      placeholder={
+                        visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
+                          ? "例：帮我识别所有图片内容，归纳整理成 Markdown，重复部分去掉，标题清晰、内容详尽…"
+                          : meta.hint
+                      }
                     />
-                    {(block.kind === "image" || block.kind === "video") && (
-                      <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(block.kind === "image" || block.kind === "video") && (
                         <select
                           value={block.aspectRatio}
                           onChange={(e) =>
@@ -371,22 +471,47 @@ export default function FreeformCanvas({
                           <option value="9:16">9:16</option>
                           <option value="16:9">16:9</option>
                         </select>
-                        <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white/70 hover:text-white">
-                          <Upload className="h-3 w-3" />
-                          {uploadBusyId === block.id ? "上传中…" : "参考图"}
-                          <input
-                            type="file"
-                            accept="image/*,video/*"
-                            className="hidden"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              e.target.value = "";
-                              if (f) void uploadForBlock(block.id, f);
-                            }}
+                      )}
+                      <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white/70 hover:text-white">
+                        <Upload className="h-3 w-3" />
+                        {uploadLabel}
+                        <input
+                          type="file"
+                          accept="image/*,video/*"
+                          multiple
+                          className="hidden"
+                          disabled={uploadBusyId === block.id}
+                          onChange={(e) => {
+                            const list = e.target.files;
+                            e.target.value = "";
+                            if (list?.length) void uploadFilesForBlock(block.id, list);
+                          }}
+                        />
+                      </label>
+                      {block.uploadedAssets.length > 0 ? (
+                        <span className="self-center text-[10px] text-white/45">
+                          已上传 {block.uploadedAssets.length} 个
+                        </span>
+                      ) : null}
+                    </div>
+                    {block.uploadedAssets.length > 0 ? (
+                      <div className="mt-2 flex max-h-16 flex-wrap gap-1 overflow-auto">
+                        {block.uploadedAssets.slice(0, 12).map((asset) => (
+                          <img
+                            key={asset.id}
+                            src={asset.previewUrl || asset.url}
+                            alt={asset.fileName}
+                            title={asset.fileName}
+                            className="h-8 w-8 rounded object-cover"
                           />
-                        </label>
+                        ))}
+                        {block.uploadedAssets.length > 12 ? (
+                          <span className="self-center text-[10px] text-white/40">
+                            +{block.uploadedAssets.length - 12}
+                          </span>
+                        ) : null}
                       </div>
-                    )}
+                    ) : null}
                   </div>
 
                   {/* 右：输出预览 */}
@@ -396,17 +521,26 @@ export default function FreeformCanvas({
                       <div className="text-xs text-red-300">{block.error}</div>
                     ) : null}
                     {block.outputText ? (
-                      <pre className="max-h-[200px] overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-white/85">
+                      <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-white/85">
                         {block.outputText}
                       </pre>
                     ) : null}
-                    {block.outputUrl && block.kind === "image" ? (
-                      <img src={block.outputUrl} alt="output" className="mt-1 max-h-[200px] w-full rounded-lg object-contain" />
+                    {block.kind === "image" && displayOutputs.length > 0 ? (
+                      <div className={`mt-1 grid gap-1 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                        {displayOutputs.map((url, idx) => (
+                          <img
+                            key={`${url}-${idx}`}
+                            src={url}
+                            alt={`output-${idx + 1}`}
+                            className="max-h-[120px] w-full rounded-lg object-contain"
+                          />
+                        ))}
+                      </div>
                     ) : null}
                     {block.outputUrl && block.kind === "video" ? (
                       <video src={block.outputUrl} controls className="mt-1 max-h-[200px] w-full rounded-lg" />
                     ) : null}
-                    {!block.outputText && !block.outputUrl && block.status !== "error" ? (
+                    {!block.outputText && !displayOutputs.length && block.status !== "error" ? (
                       <div className="flex h-[180px] items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-white/30">
                         运行后显示结果
                       </div>

@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
+import { normalizeCanvasBlock } from "@/lib/canvasTypes";
 import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard } from "lucide-react";
@@ -13,7 +14,10 @@ function loadCanvasState(): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return { blocks: [], edges: [] };
     const parsed = JSON.parse(raw) as { blocks?: CanvasBlock[]; edges?: CanvasEdge[] };
-    return { blocks: parsed.blocks || [], edges: parsed.edges || [] };
+    return {
+      blocks: (parsed.blocks || []).map(normalizeCanvasBlock),
+      edges: parsed.edges || [],
+    };
   } catch {
     return { blocks: [], edges: [] };
   }
@@ -72,8 +76,8 @@ export default function OmniCanvas() {
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Omni 创作画布</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
-              左侧 + 创建方块；方块内左侧写提示词、选模型，右侧看输出；方块右上角 + 可「引用该节点」生成下游方块。
-              文本：Gemini 3.1 Pro / GPT 5.5 / GPT 5.4 · 图片：Nano Banana 2 / GPT-Image-2 · 视频：Veo 3.1 / Gemini Omni Flash / Seedance 2.0
+              方块内可随时下拉切换模型；图片方块可选 1 / 2 / 4 张并自动显示积分。支持一次上传多张图片（如 50 张），
+              用连线接到文本方块后，在提示词里写「识别所有图片、整理成 Markdown」即可运行。
             </p>
           </div>
 

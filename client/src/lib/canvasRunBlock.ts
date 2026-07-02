@@ -37,7 +37,12 @@ async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refIma
   return url;
 }
 
-async function runNanoBanana2(prompt: string, aspectRatio: string, refImageUrl?: string): Promise<string> {
+async function runNanoBanana2(
+  prompt: string,
+  aspectRatio: string,
+  refImageUrl?: string,
+  count = 1,
+): Promise<string[]> {
   const urls = await runNanoImage({
     prompt,
     aspectRatio,
@@ -45,8 +50,43 @@ async function runNanoBanana2(prompt: string, aspectRatio: string, refImageUrl?:
     imageSize: "2K",
     model: "gemini-3.1-flash-image-preview",
     tier: "flash",
+    numberOfImages: count,
   });
-  return urls[0] || "";
+  return urls.filter(Boolean);
+}
+
+async function runGptImage2Batch(
+  prompt: string,
+  aspectRatio: "9:16" | "16:9",
+  refImageUrl: string | undefined,
+  count: number,
+): Promise<string[]> {
+  const tasks = Array.from({ length: count }, () => runGptImage2(prompt, aspectRatio, refImageUrl));
+  return Promise.all(tasks);
+}
+
+export type CanvasVisionImage = { url: string; gcsUri?: string; mimeType?: string };
+
+export type CanvasUpstreamContext = {
+  visionImages: CanvasVisionImage[];
+  texts: string[];
+};
+
+async function runCanvasVisionMarkdown(prompt: string, images: CanvasVisionImage[]): Promise<string> {
+  const resp = await fetch("/api/google?op=canvasVisionMarkdown", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      images,
+      model: "gemini-3.1-pro-preview",
+    }),
+  });
+  const json = (await resp.json()) as { ok?: boolean; markdown?: string; error?: string; message?: string };
+  if (!resp.ok || !json.ok) throw new Error(json.error || json.message || "多图视觉分析失败");
+  const md = String(json.markdown || "").trim();
+  if (!md) throw new Error("多图分析返回为空");
+  return md;
 }
 
 async function pollVeoTask(taskId: string): Promise<string> {
@@ -114,19 +154,33 @@ async function runOmniFlash(prompt: string, imageUrl: string | undefined, aspect
 export async function runCanvasBlock(
   deps: CanvasRunDeps,
   block: CanvasBlock,
-  parentOutput?: { text?: string; url?: string },
+  upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
 ): Promise<{
   outputText?: string;
   outputUrl?: string;
+  outputUrls?: string[];
 }> {
   const prompt = block.prompt.trim();
   if (!prompt) throw new Error("请先填写提示词");
 
-  const refText = parentOutput?.text?.trim();
-  const refUrl = block.refImageUrl || parentOutput?.url;
-  const mergedPrompt = refText ? `${prompt}\n\n【引用上游节点】\n${refText.slice(0, 6000)}` : prompt;
+  const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
+  const refTexts = upstream.texts.filter(Boolean);
+  const mergedPrompt = refTexts.length
+    ? `${prompt}\n\n【引用上游文本】\n${refTexts.join("\n\n---\n\n").slice(0, 12000)}`
+    : prompt;
+
+  const visionImages = upstream.visionImages.filter((i) => i.url || i.gcsUri);
 
   if (block.kind === "text" || block.kind === "copy_organize") {
+    if (visionImages.length > 0) {
+      const visionPrompt =
+        block.kind === "copy_organize"
+          ? `${mergedPrompt}\n\n请识别所有图片内容，归纳整理成 Markdown 文档：重复部分去掉，标题清晰，内容详尽，条理分明。`
+          : mergedPrompt;
+      const text = await runCanvasVisionMarkdown(visionPrompt, visionImages);
+      return { outputText: text };
+    }
+
     const model = block.textModel;
     if (model === "gemini-3.1-pro") {
       const text = await runGeminiScript(
@@ -151,11 +205,14 @@ export async function runCanvasBlock(
 
   if (block.kind === "image") {
     const ar = block.aspectRatio;
-    const url =
+    const count = block.imageBatchCount || 1;
+    const urls =
       block.imageModel === "gpt-image-2"
-        ? await runGptImage2(mergedPrompt, ar, refUrl)
-        : await runNanoBanana2(mergedPrompt, ar, refUrl);
-    return { outputUrl: url };
+        ? await runGptImage2Batch(mergedPrompt, ar, refUrl, count)
+        : await runNanoBanana2(mergedPrompt, ar, refUrl, count);
+    const filtered = urls.filter(Boolean);
+    if (!filtered.length) throw new Error("图片生成返回为空");
+    return { outputUrl: filtered[0], outputUrls: filtered };
   }
 
   if (block.kind === "video") {

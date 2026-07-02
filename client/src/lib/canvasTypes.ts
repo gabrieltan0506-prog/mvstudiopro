@@ -9,6 +9,16 @@ export type CanvasVideoModel = "veo-3.1" | "gemini-omni-flash" | "seedance-2.0";
 
 export type CanvasBlockStatus = "idle" | "running" | "done" | "error";
 
+export type CanvasUploadedAsset = {
+  id: string;
+  url: string;
+  previewUrl: string;
+  fileName: string;
+  gcsUri?: string;
+};
+
+export type CanvasImageBatchCount = 1 | 2 | 4;
+
 export type CanvasBlock = {
   id: string;
   kind: CanvasBlockKind;
@@ -19,11 +29,17 @@ export type CanvasBlock = {
   imageModel: CanvasImageModel;
   videoModel: CanvasVideoModel;
   aspectRatio: "9:16" | "16:9";
+  /** 图片方块一次生成张数 */
+  imageBatchCount: CanvasImageBatchCount;
+  /** 本地上传素材（可多张，供下游文本/视频引用） */
+  uploadedAssets: CanvasUploadedAsset[];
   parentId?: string;
   refImageUrl?: string;
   refVideoUrl?: string;
   outputText?: string;
   outputUrl?: string;
+  /** 图片批量输出 URL 列表 */
+  outputUrls: string[];
   status: CanvasBlockStatus;
   error?: string;
 };
@@ -107,6 +123,80 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     imageModel: "nano-banana-2",
     videoModel: "gemini-omni-flash",
     aspectRatio: "9:16",
+    imageBatchCount: 1,
+    uploadedAssets: [],
+    outputUrls: [],
     status: "idle",
   };
+}
+
+export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
+  return {
+    ...block,
+    imageBatchCount: block.imageBatchCount ?? 1,
+    uploadedAssets: block.uploadedAssets ?? [],
+    outputUrls: block.outputUrls?.length
+      ? block.outputUrls
+      : block.outputUrl
+        ? [block.outputUrl]
+        : [],
+  };
+}
+
+export function collectVisionImages(
+  blockId: string,
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): Array<{ url: string; gcsUri?: string; mimeType?: string }> {
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
+  const seen = new Set<string>();
+  const items: Array<{ url: string; gcsUri?: string; mimeType?: string }> = [];
+
+  const addAsset = (asset: CanvasUploadedAsset) => {
+    const key = asset.gcsUri || asset.url;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    items.push({ url: asset.url, gcsUri: asset.gcsUri, mimeType: asset.fileName.match(/\.png$/i) ? "image/png" : "image/jpeg" });
+  };
+
+  const addUrl = (url: string) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    items.push({ url });
+  };
+
+  const self = blockMap.get(blockId);
+  for (const asset of self?.uploadedAssets ?? []) addAsset(asset);
+
+  for (const edge of edges.filter((e) => e.toId === blockId)) {
+    const up = blockMap.get(edge.fromId);
+    if (!up) continue;
+    for (const asset of up.uploadedAssets ?? []) addAsset(asset);
+    if (up.outputUrls?.length) {
+      for (const u of up.outputUrls) addUrl(u);
+    } else if (up.outputUrl) {
+      addUrl(up.outputUrl);
+    }
+    if (up.refImageUrl) addUrl(up.refImageUrl);
+  }
+
+  return items;
+}
+
+export function collectUpstreamTexts(
+  blockId: string,
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): string[] {
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
+  const texts: string[] = [];
+  for (const edge of edges.filter((e) => e.toId === blockId)) {
+    const up = blockMap.get(edge.fromId);
+    if (up?.outputText?.trim()) texts.push(up.outputText.trim());
+  }
+  const parent = blockMap.get(blockId)?.parentId
+    ? blockMap.get(blockMap.get(blockId)!.parentId!)
+    : undefined;
+  if (parent?.outputText?.trim()) texts.unshift(parent.outputText.trim());
+  return texts;
 }
