@@ -13,19 +13,27 @@ import {
 } from "@/lib/growthCampImagePipeline";
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
-import { FileText, FileUp, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { FileText, FileUp, Film, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 type PlatformAssetAnalysisPanelProps = {
   debugMode: boolean;
   supervisorAccess: boolean;
   disabled?: boolean;
+  generateFromCopyBusy?: boolean;
+  onGenerateStoryboard?: (markdown: string) => void | Promise<void>;
+  onGenerateKnowledgeCard?: (markdown: string) => void | Promise<void>;
+  onPrefillCopyTab?: (markdown: string) => void;
 };
 
 export default function PlatformAssetAnalysisPanel({
   debugMode,
   supervisorAccess,
   disabled = false,
+  generateFromCopyBusy = false,
+  onGenerateStoryboard,
+  onGenerateKnowledgeCard,
+  onPrefillCopyTab,
 }: PlatformAssetAnalysisPanelProps) {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -534,6 +542,41 @@ export default function PlatformAssetAnalysisPanel({
                   {optimizeResult.debug.trendBriefChars} · visionFields={optimizeResult.debug.visionFieldCount}
                 </div>
               ) : null}
+              <div className="flex flex-wrap gap-2 pt-2">
+                {onPrefillCopyTab ? (
+                  <button
+                    type="button"
+                    disabled={generateFromCopyBusy || disabled}
+                    onClick={() => onPrefillCopyTab(optimizeResult.optimizedMarkdown)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/85 hover:bg-white/10 disabled:opacity-50"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    填入自定义文案
+                  </button>
+                ) : null}
+                {onGenerateStoryboard ? (
+                  <button
+                    type="button"
+                    disabled={generateFromCopyBusy || disabled}
+                    onClick={() => void onGenerateStoryboard(optimizeResult.optimizedMarkdown)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-3 py-1.5 text-xs font-semibold text-[#8cefff] hover:bg-[rgba(73,230,255,0.15)] disabled:opacity-50"
+                  >
+                    {generateFromCopyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
+                    一键生 2×4 分镜
+                  </button>
+                ) : null}
+                {onGenerateKnowledgeCard ? (
+                  <button
+                    type="button"
+                    disabled={generateFromCopyBusy || disabled}
+                    onClick={() => void onGenerateKnowledgeCard(optimizeResult.optimizedMarkdown)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/25 bg-[rgba(255,79,184,0.08)] px-3 py-1.5 text-xs font-semibold text-[#ff9fe0] hover:bg-[rgba(255,79,184,0.15)] disabled:opacity-50"
+                  >
+                    {generateFromCopyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Image className="h-3.5 w-3.5" />}
+                    一键生单页卡片
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>

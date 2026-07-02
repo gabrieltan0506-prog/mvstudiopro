@@ -3519,6 +3519,13 @@ export default function PlatformPage() {
       toast.error("请先输入中文文案");
       return;
     }
+    await runCustomNoteGeneration(trimmed, customNoteKind);
+  };
+
+  const runCustomNoteGeneration = async (
+    trimmed: string,
+    kind: "single_page_knowledge_card" | "storyboard_sheet_landscape" | "optimize_custom_copy",
+  ) => {
     setCustomNoteImageUpper(null);
     setCustomNoteImageLower(null);
     setCustomNoteError(null);
@@ -3526,7 +3533,7 @@ export default function PlatformPage() {
     setCustomOptimizeSummary(null);
     setCustomNoteBusy(true);
     try {
-      if (customNoteKind === "optimize_custom_copy") {
+      if (kind === "optimize_custom_copy") {
         const res = await optimizeCustomCopyMutation.mutateAsync({
           sourceText: trimmed,
           optimizationBrief: customOptimizeBrief.trim() || undefined,
@@ -3536,8 +3543,7 @@ export default function PlatformPage() {
         toast.success(`深度优化完成${res.cost > 0 ? `（已扣 ${res.cost} 积分）` : ""}`);
         return;
       }
-      if (customNoteKind === "single_page_knowledge_card") {
-        // 知識卡片：一次生成「上篇 + 下篇」兩張完整卡片（依序生成、各自顯示）
+      if (kind === "single_page_knowledge_card") {
         setCustomNotePartInFlight("upper");
         const upper = await generateCustomNoteOne(trimmed, "single_page_knowledge_card", "upper");
         setCustomNoteImageUpper(upper);
@@ -3547,11 +3553,10 @@ export default function PlatformPage() {
         setCustomNoteImageLower(lower);
         toast.success("上篇＋下篇已生成");
       } else {
-        // 分鏡圖：單張
         setCustomNotePartInFlight(null);
         const img = await generateCustomNoteOne(trimmed, "storyboard_sheet_landscape", undefined);
         setCustomNoteImageUpper(img);
-        toast.success("分鏡圖已生成");
+        toast.success("分镜图已生成");
       }
     } catch (e) {
       const msg = mapCustomNoteError(e);
@@ -3561,6 +3566,22 @@ export default function PlatformPage() {
       setCustomNoteBusy(false);
       setCustomNotePartInFlight(null);
     }
+  };
+
+  const handleGenerateFromAssetOptimizedCopy = async (
+    markdown: string,
+    kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
+  ) => {
+    const trimmed = markdown.trim();
+    if (!trimmed) {
+      toast.error("优化稿为空");
+      return;
+    }
+    setCustomNoteText(trimmed);
+    setCustomNoteKind(kind);
+    setCustomWorkspaceTab("copy");
+    await runCustomNoteGeneration(trimmed, kind);
+    document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const handleUploadCustomTopicPhoto = useCallback(
@@ -6656,6 +6677,15 @@ export default function PlatformPage() {
               debugMode={debugMode}
               supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
               disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              generateFromCopyBusy={customNoteBusy}
+              onPrefillCopyTab={(markdown) => {
+                setCustomNoteText(markdown);
+                setCustomWorkspaceTab("copy");
+                setCustomNoteKind("optimize_custom_copy");
+                document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              onGenerateStoryboard={(markdown) => handleGenerateFromAssetOptimizedCopy(markdown, "storyboard_sheet_landscape")}
+              onGenerateKnowledgeCard={(markdown) => handleGenerateFromAssetOptimizedCopy(markdown, "single_page_knowledge_card")}
             />
           ) : (
             <>
