@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
+import { JOB_PROGRESS_MESSAGES, createJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
@@ -1034,7 +1034,7 @@ function mapAnalysisError(error: unknown) {
     || message.includes("is not valid JSON")
     || message.includes("An error o")
   ) {
-    return "分析请求超时或服务器返回异常。图片/视频商业分析已在后台排队，若反复失败请稍后再试。";
+    return "分析请求超时或服务器返回异常。若刚部署完请等 1–2 分钟再试；仍失败请打开开发者工具 Network，把失败请求的 URL 与状态码发我。";
   }
   if (message.includes("Failed to fetch") || message.includes("502")) {
     return "视频预处理失败，请重试或更换文档。";
@@ -2217,22 +2217,19 @@ export default function MVAnalysisPage() {
         },
       });
 
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 12 * 60_000) {
-        const job = await getJob(jobId);
-        if (job.status === "succeeded") {
-          return {
-            analysis: job.output?.analysis,
-            debug: job.output?.debug,
-          };
-        }
-        if (job.status === "failed") {
-          throw new Error(String(job.error || "图片分析失败"));
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+      const job = await pollJobUntilTerminal(jobId, {
+        maxWaitMs: 12 * 60_000,
+        onPoll: () => {
+          setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+        },
+      });
+      if (job.status === "failed") {
+        throw new Error(String(job.error || "图片分析失败"));
       }
-      throw new Error("图片分析超时，请稍后重试");
+      return {
+        analysis: job.output?.analysis,
+        debug: job.output?.debug,
+      };
     };
 
     const runGrowthVideoAnalysis = async (asset: GrowthCampAsset) => {
@@ -2278,25 +2275,22 @@ export default function MVAnalysisPage() {
         },
       });
 
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 12 * 60_000) {
-        const job = await getJob(jobId);
-        if (job.status === "succeeded") {
-          return {
-            analysis: job.output?.analysis,
-            videoUrl: job.output?.videoUrl,
-            transcript: job.output?.transcript,
-            videoDuration: job.output?.videoDuration,
-            debug: job.output?.debug,
-          };
-        }
-        if (job.status === "failed") {
-          throw new Error(String(job.error || "视频分析失败"));
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-        setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+      const job = await pollJobUntilTerminal(jobId, {
+        maxWaitMs: 12 * 60_000,
+        onPoll: () => {
+          setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+        },
+      });
+      if (job.status === "failed") {
+        throw new Error(String(job.error || "视频分析失败"));
       }
-      throw new Error("视频分析超时，请稍后重试");
+      return {
+        analysis: job.output?.analysis,
+        videoUrl: job.output?.videoUrl,
+        transcript: job.output?.transcript,
+        videoDuration: job.output?.videoDuration,
+        debug: job.output?.debug,
+      };
     };
 
     setUploadStage("uploading");
