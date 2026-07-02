@@ -114,6 +114,13 @@ export function buildGrowthCampVideoObjectName(fileName?: string) {
   return normalizeObjectName(`${GCS_VIDEO_OBJECT_PREFIX}/${Date.now()}-${safeName}`);
 }
 
+export function buildGrowthCampImageObjectName(fileName?: string) {
+  const safeName = String(fileName || "image.png")
+    .replace(/[^a-z0-9._-]/gi, "-")
+    .replace(/-{2,}/g, "-");
+  return normalizeObjectName(`growth-camp/images/${Date.now()}-${safeName}`);
+}
+
 export function getPublicGcsHttpsUrl(gcsUri: string) {
   const { bucket, objectName } = parseGsUri(gcsUri);
   return `https://storage.googleapis.com/${encodeURIComponent(bucket)}/${objectName.split("/").map(encodeURIComponent).join("/")}`;

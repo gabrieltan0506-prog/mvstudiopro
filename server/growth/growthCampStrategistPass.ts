@@ -28,7 +28,11 @@ function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
 function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T {
   const content = String(raw || "").trim();
   if (!content) return {} as T;
-  return JSON.parse(extractJsonString(content)) as T;
+  try {
+    return JSON.parse(extractJsonString(content)) as T;
+  } catch {
+    throw new Error(`LLM 返回内容无法解析为 JSON：${content.slice(0, 160)}`);
+  }
 }
 
 function growthCampStrategistMainJsonSchema(): Record<string, unknown> {

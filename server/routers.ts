@@ -2652,11 +2652,16 @@ export const appRouter = router({
         z.object({
           images: z
             .array(
-              z.object({
-                fileBase64: z.string().min(1),
-                mimeType: z.string().min(1),
-                fileName: z.string().optional(),
-              }),
+              z
+                .object({
+                  gcsUri: z.string().min(1).optional(),
+                  fileBase64: z.string().min(1).optional(),
+                  mimeType: z.string().min(1),
+                  fileName: z.string().optional(),
+                })
+                .refine((item) => Boolean(String(item.gcsUri || "").trim() || String(item.fileBase64 || "").trim()), {
+                  message: "每张图片需提供 gcsUri 或 fileBase64",
+                }),
             )
             .min(1)
             .max(64),
@@ -2727,11 +2732,13 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().min(1),
         mimeType: z.string().min(1),
+        objectName: z.string().min(1).optional(),
       }))
       .mutation(async ({ input }) => {
         return createGcsSignedUploadUrl({
           fileName: input.fileName,
           contentType: input.mimeType,
+          objectName: input.objectName,
         });
       }),
 

@@ -1028,7 +1028,15 @@ function normalizeText(text: string) {
 
 function mapAnalysisError(error: unknown) {
   const message = replaceTerms(String((error as any)?.message || ""));
-  if (message.includes("Unexpected end of JSON input") || message.includes("Failed to fetch") || message.includes("502")) {
+  if (
+    message.includes("Unexpected end of JSON input")
+    || message.includes("Unexpected token")
+    || message.includes("is not valid JSON")
+    || message.includes("An error o")
+  ) {
+    return "分析请求失败（服务器返回异常）。请确认图片体积不要过大，或稍后再试。";
+  }
+  if (message.includes("Failed to fetch") || message.includes("502")) {
     return "视频预处理失败，请重试或更换文档。";
   }
   if (message.includes("frame") || message.includes("抽取")) {
@@ -2287,14 +2295,42 @@ export default function MVAnalysisPage() {
       }
 
       if (imageAssets.length > 0) {
+        setUploadStage("uploading");
+        const imageInputs: Array<{ gcsUri: string; mimeType: string; fileName: string }> = [];
+        for (let ii = 0; ii < imageAssets.length; ii++) {
+          const asset = imageAssets[ii]!;
+          const mime = normalizeGrowthCampImageMime(asset.file) || asset.mimeType;
+          const safeName = asset.fileName.replace(/[^a-z0-9._-]/gi, "-").replace(/-{2,}/g, "-");
+          const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
+            fileName: asset.fileName,
+            mimeType: mime,
+            objectName: `growth-camp/images/${Date.now()}-${ii}-${safeName}`,
+          });
+          await uploadFileToSignedUrl({
+            file: asset.file,
+            uploadUrl: signed.uploadUrl,
+            headers: signed.requiredHeaders,
+            onProgress: (percent) => {
+              const stepBase = videoAssets.length + ii / Math.max(1, imageAssets.length);
+              const stepSpan = 1 / Math.max(1, imageAssets.length);
+              const mapped = ((stepBase + (percent / 100) * stepSpan) / Math.max(1, totalSteps)) * 55;
+              setUploadProgress(Math.round(mapped));
+            },
+          });
+          if (!signed.gcsUri) {
+            throw new Error("图片上传完成但未返回 GCS 地址");
+          }
+          imageInputs.push({
+            gcsUri: signed.gcsUri,
+            mimeType: mime,
+            fileName: asset.fileName,
+          });
+        }
+
         setUploadStage("analyzing");
         setUploadProgress(Math.round(((videoAssets.length + 0.5) / Math.max(1, totalSteps)) * 85));
         const imgResult = await analyzeGrowthCampImagesMutation.mutateAsync({
-          images: imageAssets.map((a) => ({
-            fileBase64: a.base64 || "",
-            mimeType: a.mimeType,
-            fileName: a.fileName,
-          })),
+          images: imageInputs,
           context: context || undefined,
           modelName: growthCampAnalysisModel,
           mode: analysisMode,

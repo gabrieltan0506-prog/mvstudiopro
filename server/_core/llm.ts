@@ -1127,7 +1127,14 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     );
   }
 
-  return (await response.json()) as InvokeResult;
+  const rawText = await response.text();
+  try {
+    return JSON.parse(rawText) as InvokeResult;
+  } catch {
+    throw new Error(
+      `Evolink returned non-JSON body (status ${response.status}): ${rawText.slice(0, 400)}`,
+    );
+  }
 }
 
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
