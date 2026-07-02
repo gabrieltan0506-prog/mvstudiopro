@@ -97,7 +97,7 @@ export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; h
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
   { kind: "image", label: "图片生成", hint: "生成插图、海报、封面" },
   { kind: "video", label: "视频生成", hint: "图生视频 / 文生视频" },
-  { kind: "copy_organize", label: "整理文案", hint: "结构化 Markdown 发布稿" },
+  { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
 
 export function makeCanvasBlockId(prefix = "block") {

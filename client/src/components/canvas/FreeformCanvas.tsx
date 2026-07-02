@@ -164,7 +164,7 @@ export default function FreeformCanvas({
         if (failed.length) {
           toast.warning(`已上传 ${uploaded.length} 个，${failed.length} 个失败`);
         } else {
-          toast.success(`已并行上传 ${uploaded.length} 个素材`);
+          toast.success(`已上传 ${uploaded.length} 个素材`);
         }
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "上传失败");
@@ -280,7 +280,7 @@ export default function FreeformCanvas({
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
             const uploadLabel =
               uploadBusyId === block.id && uploadProgress?.blockId === block.id
-                ? `并行上传 ${uploadProgress.done}/${uploadProgress.total}`
+                ? `上传中 ${uploadProgress.done}/${uploadProgress.total}`
                 : "上传素材";
             return (
               <div
@@ -446,7 +446,7 @@ export default function FreeformCanvas({
                       className="w-full resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
                         visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
-                          ? "例：帮我识别所有图片内容，归纳整理成 Markdown，重复部分去掉，标题清晰、内容详尽…"
+                          ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
                           : meta.hint
                       }
                     />
@@ -481,7 +481,7 @@ export default function FreeformCanvas({
                       </label>
                       {block.uploadedAssets.length > 0 ? (
                         <span className="self-center text-[10px] text-emerald-300/80">
-                          已上传 {block.uploadedAssets.length} 个（不限张数）
+                          已上传 {block.uploadedAssets.length} 个
                         </span>
                       ) : null}
                     </div>
