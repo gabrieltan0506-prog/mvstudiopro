@@ -1864,8 +1864,15 @@ export default function PlatformPage() {
   const [customNoteBusy, setCustomNoteBusy] = useState(false);
   /** 進度提示：目前正在生成哪一篇（上篇/下篇），分鏡為 null。 */
   const [customNotePartInFlight, setCustomNotePartInFlight] = useState<"upper" | "lower" | null>(null);
-  /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖（自定義文案專用，與選題卡片小紅書八格互不影響） */
-  const [customNoteKind, setCustomNoteKind] = useState<"single_page_knowledge_card" | "storyboard_sheet_landscape">("single_page_knowledge_card");
+  /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
+  const [customNoteKind, setCustomNoteKind] = useState<
+    "single_page_knowledge_card" | "storyboard_sheet_landscape" | "optimize_custom_copy"
+  >("single_page_knowledge_card");
+  /** 深度优化：用户额外要求（封面/分镜/平台等） */
+  const [customOptimizeBrief, setCustomOptimizeBrief] = useState("");
+  /** 深度优化结果（Markdown） */
+  const [customOptimizeResult, setCustomOptimizeResult] = useState<string | null>(null);
+  const [customOptimizeSummary, setCustomOptimizeSummary] = useState<string | null>(null);
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting">("copy");
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
@@ -3446,6 +3453,8 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
+  const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
+  const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
 
   /**
    * 生成一張卡片：同步回 imageUrl 直接用；非同步回 progressJobId 則輪詢至終態取圖。
@@ -3453,6 +3462,7 @@ export default function PlatformPage() {
    */
   const generateCustomNoteOne = async (
     trimmed: string,
+    kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
     notePart?: "upper" | "lower",
   ): Promise<string> => {
     const sceneId = `custom-note-${notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -3461,7 +3471,7 @@ export default function PlatformPage() {
       sceneId,
       title: trimmed.slice(0, 80),
       scriptContext: trimmed,
-      kind: customNoteKind,
+      kind,
       ...(notePart ? { notePart } : {}),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       progressJobId,
@@ -3493,22 +3503,34 @@ export default function PlatformPage() {
     setCustomNoteImageUpper(null);
     setCustomNoteImageLower(null);
     setCustomNoteError(null);
+    setCustomOptimizeResult(null);
+    setCustomOptimizeSummary(null);
     setCustomNoteBusy(true);
     try {
+      if (customNoteKind === "optimize_custom_copy") {
+        const res = await optimizeCustomCopyMutation.mutateAsync({
+          sourceText: trimmed,
+          optimizationBrief: customOptimizeBrief.trim() || undefined,
+        });
+        setCustomOptimizeResult(res.result.optimizedMarkdown);
+        setCustomOptimizeSummary(res.result.summary);
+        toast.success(`深度优化完成${res.cost > 0 ? `（已扣 ${res.cost} 积分）` : ""}`);
+        return;
+      }
       if (customNoteKind === "single_page_knowledge_card") {
         // 知識卡片：一次生成「上篇 + 下篇」兩張完整卡片（依序生成、各自顯示）
         setCustomNotePartInFlight("upper");
-        const upper = await generateCustomNoteOne(trimmed, "upper");
+        const upper = await generateCustomNoteOne(trimmed, "single_page_knowledge_card", "upper");
         setCustomNoteImageUpper(upper);
         toast.success("上篇已生成，正在生成下篇…");
         setCustomNotePartInFlight("lower");
-        const lower = await generateCustomNoteOne(trimmed, "lower");
+        const lower = await generateCustomNoteOne(trimmed, "single_page_knowledge_card", "lower");
         setCustomNoteImageLower(lower);
         toast.success("上篇＋下篇已生成");
       } else {
         // 分鏡圖：單張
         setCustomNotePartInFlight(null);
-        const img = await generateCustomNoteOne(trimmed, undefined);
+        const img = await generateCustomNoteOne(trimmed, "storyboard_sheet_landscape", undefined);
         setCustomNoteImageUpper(img);
         toast.success("分鏡圖已生成");
       }
@@ -6041,19 +6063,23 @@ export default function PlatformPage() {
           {customWorkspaceTab === "copy" ? (
             <>
               <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-                粘贴中文文案 / Markdown，生成精致的简体中文图片。「单页图文卡片」会把内容拆成
+                粘贴中文文案 / Markdown，生成精致的简体中文图片，或先做深度文案优化。
+                「单页图文卡片」会把内容拆成
                 <strong className="text-[#ff9fe0]">上篇 + 下篇两张</strong>
                 完整卡片（标题自动标注「（上篇）/（下篇）」），
                 <strong className="text-[#ff9fe0]">共扣 50 积分</strong>
-                （上下篇各 25 · supervisor 免扣）；「2×4 分镜图」为单张。
+                （上下篇各 25 · supervisor 免扣）；「2×4 分镜图」为单张；
+                「优化自定义文案」为纯 LLM 深度改写，
+                <strong className="text-[#ff9fe0]"> {customOptimizeCopyCost} 积分/次</strong>
+                （supervisor 免扣）。
               </p>
 
               <div className="mb-4">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">生成类型</div>
-                <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+                <div className="inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
+                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
                     disabled={customNoteBusy}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                       customNoteKind === "single_page_knowledge_card"
@@ -6066,7 +6092,7 @@ export default function PlatformPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); }}
+                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
                     disabled={customNoteBusy}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                       customNoteKind === "storyboard_sheet_landscape"
@@ -6077,44 +6103,78 @@ export default function PlatformPage() {
                     <Film className="h-3.5 w-3.5 shrink-0" />
                     2×4 分镜图
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCustomNoteKind("optimize_custom_copy"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
+                    disabled={customNoteBusy}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                      customNoteKind === "optimize_custom_copy"
+                        ? "bg-[linear-gradient(135deg,#fbbf24,#f97316)] text-white shadow-sm"
+                        : "text-[#c9c0e6]/70 hover:text-white"
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                    优化自定义文案
+                  </button>
                 </div>
                 <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
                   {customNoteKind === "single_page_knowledge_card"
                     ? "按小标题顺序对半拆成「上篇 + 下篇」两张完整单页卡片：手绘 + 写实 + 花卉装饰、书法标题、橙→淡紫渐变、印刷级清晰简体中文（非 2×4 八格网格）"
-                    : "生成电影级 2×4 横幅分镜图（含景别、运镜、台词与音效字段）"}
+                    : customNoteKind === "storyboard_sheet_landscape"
+                      ? "生成电影级 2×4 横幅分镜图（含景别、运镜、台词与音效字段）"
+                      : `按你的要求深度改写封面文案、分镜脚本与平台发布稿；扣 ${customOptimizeCopyCost} 积分/次，不出图`}
                 </p>
               </div>
 
               <textarea
                 className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
-                placeholder={customNoteKind === "single_page_knowledge_card" ? "粘贴中文文案 / Markdown，直接生成单页连贯图文知识卡片（上篇 + 下篇两张）…（建议 200–1500 字）" : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 分镜图…（建议 100–800 字）"}
+                placeholder={
+                  customNoteKind === "optimize_custom_copy"
+                    ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
+                    : customNoteKind === "single_page_knowledge_card"
+                      ? "粘贴中文文案 / Markdown，直接生成单页连贯图文知识卡片（上篇 + 下篇两张）…（建议 200–1500 字）"
+                      : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 分镜图…（建议 100–800 字）"
+                }
                 value={customNoteText}
                 onChange={(e) => setCustomNoteText(e.target.value)}
                 disabled={customNoteBusy}
               />
+              {customNoteKind === "optimize_custom_copy" ? (
+                <textarea
+                  className="mt-3 w-full min-h-[96px] resize-y rounded-2xl border border-[#fbbf24]/20 bg-[rgba(251,191,36,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#fbbf24]/50 focus:outline-none focus:ring-1 focus:ring-[#fbbf24]/30 transition"
+                  placeholder="优化要求（可选）：例如「针对上传的封面与 2×4 分镜，强化苏轼×哈佛医学博士人设，小红书首发标题与八格叙事节奏」…"
+                  value={customOptimizeBrief}
+                  onChange={(e) => setCustomOptimizeBrief(e.target.value)}
+                  disabled={customNoteBusy}
+                />
+              ) : null}
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={handleGenerateCustomNote}
                   disabled={customNoteBusy || !customNoteText.trim()}
                   className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
-                    customNoteKind === "single_page_knowledge_card"
+                    customNoteKind === "optimize_custom_copy"
+                      ? "border border-[#fbbf24]/30 bg-[linear-gradient(135deg,#fbbf24,#f97316)]"
+                      : customNoteKind === "single_page_knowledge_card"
                       ? "border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)]"
                       : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
                   }`}
                 >
                   {customNoteBusy ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />生成中…</>
+                    <><Loader2 className="h-4 w-4 animate-spin" />{customNoteKind === "optimize_custom_copy" ? "优化中…" : "生成中…"}</>
+                  ) : customNoteKind === "optimize_custom_copy" ? (
+                    <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
                     <><Sparkles className="h-4 w-4" />生成图文卡片（上 + 下篇）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成分镜图</>
                   )}
                 </button>
-                {(customNoteImageUpper || customNoteImageLower || customNoteError) && !customNoteBusy && (
+                {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomNoteText(""); }}
+                    onClick={() => { setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); setCustomNoteText(""); setCustomOptimizeBrief(""); }}
                     className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
                   >
                     清除
@@ -6125,7 +6185,9 @@ export default function PlatformPage() {
               {customNoteBusy && (
                 <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
-                  {customNotePartInFlight === "upper"
+                  {customNoteKind === "optimize_custom_copy"
+                    ? "正在深度优化文案，约需 30–90 秒…"
+                    : customNotePartInFlight === "upper"
                     ? "正在生成【上篇】，约需 3–5 分钟…（之后自动接着生成下篇）"
                     : customNotePartInFlight === "lower"
                       ? "上篇已完成 ✓ 正在生成【下篇】，约需 3–5 分钟，请勿关闭页面…"
@@ -6138,6 +6200,15 @@ export default function PlatformPage() {
                   ❌ {customNoteError}
                 </div>
               )}
+
+              {customOptimizeResult ? (
+                <div className="mt-5 space-y-3 rounded-2xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] p-5">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[#fcd34d]/80">
+                    深度优化结果{customOptimizeSummary ? ` · ${customOptimizeSummary}` : ""}
+                  </div>
+                  <div className="whitespace-pre-wrap text-sm leading-7 text-white/88">{customOptimizeResult}</div>
+                </div>
+              ) : null}
 
               {(customNoteImageUpper || customNoteImageLower) && (
                 <div className="mt-5 space-y-6">

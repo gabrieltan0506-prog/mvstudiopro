@@ -260,6 +260,8 @@ export const CREDIT_COSTS = {
   platformXhsDualNote: 72,
   /** 单页连贯图文知识卡片 **25/篇**（`single_page_knowledge_card`，自定义文案）；上篇+下篇合计 50 */
   platformSinglePageKnowledgeCard: 25,
+  /** 自定义文案 · 深度优化（纯 LLM，无出图；GPT-5.5 结构化改写） */
+  platformOptimizeCustomCopy: 25,
   /** 自定义抠像·单张原价（GPT-IMAGE-2 场景/主体图；去背景为白底主体直出）；2 张九折、4 张八折 */
   platformCustomMattingImage: 32,
   /** 3×4 十二格分镜 **120**（`storyboard_sheet_landscape` + gridVariant=3x4）；后端分 2 段生成拼接 */
