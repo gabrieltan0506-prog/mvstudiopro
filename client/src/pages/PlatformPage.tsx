@@ -3503,7 +3503,9 @@ export default function PlatformPage() {
       message.includes("Unexpected end of JSON input") ||
       message.includes("Unexpected token") ||
       message.includes("is not valid JSON") ||
-      message.includes("An error o")
+      message.includes("An error o") ||
+      message.includes("模型返回格式异常") ||
+      message.includes("模型服务暂时异常")
     ) {
       return "算力紧张，请稍后再试";
     }
