@@ -489,27 +489,24 @@ export default function FreeformCanvas({
                         />
                       </label>
                       {block.uploadedAssets.length > 0 ? (
-                        <span className="self-center text-[10px] text-white/45">
-                          已上传 {block.uploadedAssets.length} 个
+                        <span className="self-center text-[10px] text-emerald-300/80">
+                          已上传 {block.uploadedAssets.length} 个（不限张数）
                         </span>
                       ) : null}
                     </div>
                     {block.uploadedAssets.length > 0 ? (
-                      <div className="mt-2 flex max-h-16 flex-wrap gap-1 overflow-auto">
-                        {block.uploadedAssets.slice(0, 12).map((asset) => (
-                          <img
-                            key={asset.id}
-                            src={asset.previewUrl || asset.url}
-                            alt={asset.fileName}
-                            title={asset.fileName}
-                            className="h-8 w-8 rounded object-cover"
-                          />
-                        ))}
-                        {block.uploadedAssets.length > 12 ? (
-                          <span className="self-center text-[10px] text-white/40">
-                            +{block.uploadedAssets.length - 12}
-                          </span>
-                        ) : null}
+                      <div className="mt-2 max-h-24 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
+                        <div className="flex flex-wrap gap-1">
+                          {block.uploadedAssets.map((asset) => (
+                            <img
+                              key={asset.id}
+                              src={asset.previewUrl || asset.url}
+                              alt={asset.fileName}
+                              title={asset.fileName}
+                              className="h-8 w-8 shrink-0 rounded object-cover"
+                            />
+                          ))}
+                        </div>
                       </div>
                     ) : null}
                   </div>

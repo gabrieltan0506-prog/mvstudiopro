@@ -17,7 +17,7 @@ export function canvasImageBatchTotalCredits(
   return Math.round(unit * 4 * 0.8);
 }
 
-/** 多图视觉分析预估（一次请求，含最多 50+ 张） */
+/** 多图视觉分析积分预估（按张数线性估算，不设上传上限） */
 export function canvasVisionTotalCredits(imageCount: number): number {
   if (imageCount <= 0) return 0;
   return imageCount <= 10 ? 60 : 60 + Math.ceil((imageCount - 10) / 10) * 15;
