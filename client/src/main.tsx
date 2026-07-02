@@ -83,6 +83,7 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.downloadPlatformPdf",
   "mvAnalysis.generateDecisionIntelligenceReport",
   "mvAnalysis.generateDecisionIntelTopicExecutionCopy",
+  "mvAnalysis.optimizeCustomCopy",
   "mvAnalysis.getVideoUploadSignedUrl",
   "usage.checkFeatureAccess",
   "ambient.dashboardLive",

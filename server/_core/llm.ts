@@ -174,17 +174,42 @@ function summarizeMessagesForPeek(messages: Message[], maxChars = 24_000): strin
 
 export function extractFirstChoicePlainText(result: InvokeResult): string {
   const choice = result?.choices?.[0];
+  const msg = choice?.message as Record<string, unknown> | undefined;
+
+  /** json_object / structured：部分网关直接返回已解析对象 */
+  const parsed = msg?.parsed;
+  if (parsed != null && typeof parsed === "object") {
+    try {
+      return JSON.stringify(parsed);
+    } catch {
+      /* fall through */
+    }
+  }
+
   const c = choice?.message?.content;
   if (typeof c === "string" && c.trim()) return c;
   if (Array.isArray(c)) {
-    const joined = c
+    const textParts: string[] = [];
+    for (const part of c) {
+      if (typeof part !== "object" || part === null) continue;
+      const p = part as Record<string, unknown>;
+      const t = typeof p.text === "string" ? p.text : "";
+      if (!t.trim()) continue;
+      const kind = String(p.type || "").toLowerCase();
+      if (!kind || kind === "text" || kind === "output_text") {
+        textParts.push(t);
+      }
+    }
+    const joined = textParts.join("").trim();
+    if (joined) return joined;
+    const fallbackJoined = c
       .map((part) =>
         typeof part === "object" && part !== null && "text" in part && typeof part.text === "string"
           ? part.text
           : "",
       )
       .join("");
-    if (joined.trim()) return joined;
+    if (fallbackJoined.trim()) return fallbackJoined;
   }
   // GPT-5 reasoning 系列：content 可能為 null，實際文字在 output_text 或其他欄位
   const raw = result as any;
