@@ -1,8 +1,8 @@
 import type { CanvasUploadedAsset } from "./canvasTypes";
 import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "./omniCanvasApi";
 
-/** 并行上传路数：GCS 直传 + 签名 URL 并发，80 张约比串行快 5～6 倍 */
-export const CANVAS_UPLOAD_CONCURRENCY = 6;
+/** 并行上传路数：GCS 直传 + 签名 URL 并发 */
+export const CANVAS_UPLOAD_CONCURRENCY = 10;
 
 type SignedUrlMutation = (input: {
   fileName: string;

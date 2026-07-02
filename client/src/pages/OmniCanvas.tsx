@@ -76,7 +76,7 @@ export default function OmniCanvas() {
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Omni 创作画布</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
-              方块内可随时下拉切换模型；图片方块可选 1 / 2 / 4 张并自动显示积分。支持一次批量上传多张图片（数量不设上限，默认 6 路并行加速），
+              方块内可随时下拉切换模型；图片方块可选 1 / 2 / 4 张并自动显示积分。支持一次批量上传多张图片（数量不设上限，默认 10 路并行加速），
               用连线接到文本方块后，在提示词里写「识别所有图片、整理成 Markdown」即可运行。
             </p>
           </div>
