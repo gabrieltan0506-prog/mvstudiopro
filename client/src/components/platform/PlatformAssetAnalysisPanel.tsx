@@ -12,7 +12,8 @@ import {
   type PlatformImageAsset,
 } from "@/lib/growthCampImagePipeline";
 import type { GrowthAnalysisScores } from "@shared/growth";
-import { FileUp, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { CREDIT_COSTS } from "@shared/plans";
+import { FileText, FileUp, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 type PlatformAssetAnalysisPanelProps = {
@@ -36,9 +37,24 @@ export default function PlatformAssetAnalysisPanel({
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<GrowthAnalysisScores | null>(null);
   const [imagePipelineDebug, setImagePipelineDebug] = useState<ImagePipelineDebugState>({});
+  const [sourceText, setSourceText] = useState("");
+  const [optimizeBrief, setOptimizeBrief] = useState("");
+  const [trendWindowDays, setTrendWindowDays] = useState<7 | 15>(7);
+  const [optimizeBusy, setOptimizeBusy] = useState(false);
+  const [optimizeError, setOptimizeError] = useState<string | null>(null);
+  const [optimizeResult, setOptimizeResult] = useState<{
+    summary: string;
+    optimizedMarkdown: string;
+    trendBriefUsed: boolean;
+    trendWindowDays: number;
+    trendSampleCount: number;
+    debug?: { trendFetchMs?: number; trendBriefChars?: number; visionFieldCount?: number };
+  } | null>(null);
 
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
+  const optimizeWithAssetsMutation = trpc.mvAnalysis.optimizeCustomCopyWithAssets.useMutation();
+  const optimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
     enabled: debugMode && supervisorAccess,
     refetchInterval: debugMode ? 30_000 : false,
@@ -151,6 +167,9 @@ export default function PlatformAssetAnalysisPanel({
       setAnalysis(result.analysis);
       setStage("done");
       setUploadProgress(100);
+      if (!sourceText.trim() && context.trim()) {
+        setSourceText(context.trim());
+      }
       toast.success("素材视觉分析完成");
     } catch (analysisError: unknown) {
       const msg = analysisError instanceof Error ? analysisError.message : "图片分析失败";
@@ -168,6 +187,55 @@ export default function PlatformAssetAnalysisPanel({
     getVideoUploadSignedUrlMutation,
     supervisorAccess,
     user?.id,
+  ]);
+
+  const mapOptimizeError = (err: unknown): string => {
+    const message = String((err as { message?: string })?.message || "");
+    if (message.includes("算力紧张")) return message;
+    if (
+      message.includes("Unexpected token") ||
+      message.includes("is not valid JSON") ||
+      message.includes("An error o")
+    ) {
+      return "算力紧张，请稍后再试";
+    }
+    return message || "深度优化失败，请稍后重试";
+  };
+
+  const handleOptimizeWithAssets = useCallback(async () => {
+    if (!analysis || optimizeBusy) return;
+    const trimmed = sourceText.trim();
+    if (trimmed.length < 10) {
+      toast.error("请至少输入 10 字以上的待优化文案");
+      return;
+    }
+
+    setOptimizeBusy(true);
+    setOptimizeError(null);
+    setOptimizeResult(null);
+
+    try {
+      const res = await optimizeWithAssetsMutation.mutateAsync({
+        sourceText: trimmed,
+        optimizationBrief: optimizeBrief.trim() || context.trim() || undefined,
+        visionAnalysis: analysis as Record<string, unknown>,
+        windowDays: trendWindowDays,
+      });
+      setOptimizeResult(res.result);
+      toast.success("素材绑定深度优化完成");
+    } catch (err: unknown) {
+      setOptimizeError(mapOptimizeError(err));
+    } finally {
+      setOptimizeBusy(false);
+    }
+  }, [
+    analysis,
+    context,
+    optimizeBrief,
+    optimizeBusy,
+    optimizeWithAssetsMutation,
+    sourceText,
+    trendWindowDays,
   ]);
 
   const stageLabel =
@@ -293,6 +361,10 @@ export default function PlatformAssetAnalysisPanel({
               setAnalysis(null);
               setError(null);
               setContext("");
+              setSourceText("");
+              setOptimizeBrief("");
+              setOptimizeResult(null);
+              setOptimizeError(null);
               setImagePipelineDebug({});
               setStage("idle");
               setUploadProgress(0);
@@ -363,6 +435,105 @@ export default function PlatformAssetAnalysisPanel({
                   <li key={`title-${i}`}>· {title}</li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {analysis ? (
+        <div className="mt-6 rounded-2xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.05)] p-5 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <FileText className="h-4 w-4 text-[#fcd34d]" />
+            <div className="text-xs font-semibold uppercase tracking-wide text-[#fcd34d]/90">
+              第二步 · 素材绑定深度优化（GPT-5.5 + live 趋势）
+            </div>
+            <span className="rounded-full border border-[#fbbf24]/30 px-2 py-0.5 text-[10px] text-[#fde68a]/80">
+              {optimizeCopyCost} 积分/次{supervisorAccess ? " · supervisor 免扣" : ""}
+            </span>
+          </div>
+          <p className="text-xs leading-relaxed text-[#c9c0e6]/65">
+            基于上方视觉分析 JSON + trendStore 近 7/15 天 live 样本，深度改写封面、分镜与平台稿。
+            <strong className="text-[#fde68a]"> 不调用 getGrowthSnapshot 套话。</strong>
+          </p>
+          <textarea
+            className="w-full min-h-[120px] resize-y rounded-2xl border border-[#fbbf24]/20 bg-[rgba(251,191,36,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#fbbf24]/50 focus:outline-none focus:ring-1 focus:ring-[#fbbf24]/30 transition"
+            placeholder="粘贴待优化的封面文案、分镜脚本或完整 Markdown…（建议 100–3000 字）"
+            value={sourceText}
+            onChange={(e) => setSourceText(e.target.value)}
+            disabled={optimizeBusy || disabled}
+          />
+          <textarea
+            className="w-full min-h-[72px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#fbbf24]/40 focus:outline-none transition"
+            placeholder="优化要求（可选）：例如「强化苏轼×哈佛医学博士人设，小红书首发 + 八格叙事节奏」…"
+            value={optimizeBrief}
+            onChange={(e) => setOptimizeBrief(e.target.value)}
+            disabled={optimizeBusy || disabled}
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-[11px] font-semibold text-[#c9c0e6]/60">趋势窗口</div>
+            {([7, 15] as const).map((days) => (
+              <button
+                key={days}
+                type="button"
+                disabled={optimizeBusy || disabled}
+                onClick={() => setTrendWindowDays(days)}
+                className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  trendWindowDays === days
+                    ? "bg-[linear-gradient(135deg,#fbbf24,#f97316)] text-white"
+                    : "border border-white/10 bg-black/35 text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                近 {days} 天
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleOptimizeWithAssets()}
+            disabled={optimizeBusy || disabled || sourceText.trim().length < 10}
+            className="inline-flex items-center gap-2 rounded-full border border-[#fbbf24]/30 bg-[linear-gradient(135deg,#fbbf24,#f97316)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(251,191,36,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {optimizeBusy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                深度优化中…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                深度优化（{optimizeCopyCost} 积分）
+              </>
+            )}
+          </button>
+          {optimizeBusy ? (
+            <div className="text-xs text-[#fde68a]/75">约需 30–120 秒，请勿关闭页面…</div>
+          ) : null}
+          {optimizeError ? (
+            <div className="rounded-xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+              ❌ {optimizeError}
+            </div>
+          ) : null}
+          {optimizeResult ? (
+            <div className="space-y-3 rounded-xl border border-[#fbbf24]/20 bg-black/20 p-4">
+              <div className="flex flex-wrap gap-2 text-[10px]">
+                <span className="rounded-full border border-[#6ee7b7]/30 px-2 py-0.5 text-[#6ee7b7]">
+                  视觉已绑定
+                </span>
+                <span className="rounded-full border border-[#8cefff]/30 px-2 py-0.5 text-[#8cefff]">
+                  趋势 {optimizeResult.trendBriefUsed ? `近 ${optimizeResult.trendWindowDays} 天 live` : "无 live 样本"}
+                  {optimizeResult.trendSampleCount > 0 ? ` · ${optimizeResult.trendSampleCount} 条` : ""}
+                </span>
+              </div>
+              <div className="text-xs font-semibold text-[#fcd34d]/80">{optimizeResult.summary}</div>
+              <div className="whitespace-pre-wrap text-sm leading-7 text-white/88 max-h-[480px] overflow-y-auto">
+                {optimizeResult.optimizedMarkdown}
+              </div>
+              {debugMode && optimizeResult.debug ? (
+                <div className="font-mono text-[10px] text-white/45 leading-5">
+                  trendFetchMs={optimizeResult.debug.trendFetchMs} · trendBriefChars=
+                  {optimizeResult.debug.trendBriefChars} · visionFields={optimizeResult.debug.visionFieldCount}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

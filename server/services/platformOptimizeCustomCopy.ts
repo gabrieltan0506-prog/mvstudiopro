@@ -58,6 +58,38 @@ function buildUserBlock(input: OptimizeCustomCopyInput): string {
   ].join("\n");
 }
 
+/** @internal 供 withAssets 等扩展路径复用 GPT-5.5 调用与 JSON 解析 */
+export async function runOptimizeCustomCopyLlm(userBlock: string): Promise<OptimizeCustomCopyResult> {
+  const primaryReasoning =
+    resolvePlatformStage2OpenAiReasoningEffort() === "high" ||
+    resolvePlatformStage2OpenAiReasoningEffort() === "xhigh"
+      ? "low"
+      : (resolvePlatformStage2OpenAiReasoningEffort() as "low" | "minimal");
+
+  let lastError: unknown;
+  for (const reasoningEffort of [primaryReasoning, "minimal"] as const) {
+    try {
+      const raw = await invokeOptimizeViaGpt55(userBlock, reasoningEffort);
+      return parseOptimizeCustomCopyJson(raw);
+    } catch (err) {
+      lastError = err;
+      if (err instanceof Error && err.message === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE) {
+        throw err;
+      }
+      console.warn(
+        `[optimizeCustomCopy] GPT-5.5 失败 (reasoning=${reasoningEffort}):`,
+        err instanceof Error ? err.message.slice(0, 240) : err,
+      );
+    }
+  }
+
+  console.warn(
+    "[optimizeCustomCopy] GPT-5.5 全部重试失败:",
+    lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
+  );
+  throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
+}
+
 function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
   const trimmed = String(raw || "").trim();
   if (!trimmed || /^an error occurred/i.test(trimmed)) {
@@ -132,35 +164,7 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     throw new Error("请至少提供 10 字以上的待优化文案");
   }
 
-  const userBlock = buildUserBlock(input);
-  const primaryReasoning =
-    resolvePlatformStage2OpenAiReasoningEffort() === "high" ||
-    resolvePlatformStage2OpenAiReasoningEffort() === "xhigh"
-      ? "low"
-      : (resolvePlatformStage2OpenAiReasoningEffort() as "low" | "minimal");
-
-  let lastError: unknown;
-  for (const reasoningEffort of [primaryReasoning, "minimal"] as const) {
-    try {
-      const raw = await invokeOptimizeViaGpt55(userBlock, reasoningEffort);
-      return parseOptimizeCustomCopyJson(raw);
-    } catch (err) {
-      lastError = err;
-      if (err instanceof Error && err.message === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE) {
-        throw err;
-      }
-      console.warn(
-        `[optimizeCustomCopy] GPT-5.5 失败 (reasoning=${reasoningEffort}):`,
-        err instanceof Error ? err.message.slice(0, 240) : err,
-      );
-    }
-  }
-
-  console.warn(
-    "[optimizeCustomCopy] GPT-5.5 全部重试失败:",
-    lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
-  );
-  throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
+  return runOptimizeCustomCopyLlm(buildUserBlock(input));
 }
 
 /** @internal 单测用：解析模型 JSON 文本 */

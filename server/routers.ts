@@ -6072,6 +6072,81 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
+    /**
+     * 自定义创作工作台 · 深度优化文案（绑定上传素材视觉 + live 趋势，无 getGrowthSnapshot 套话）。
+     * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
+     */
+    optimizeCustomCopyWithAssets: protectedProcedure
+      .input(
+        z.object({
+          sourceText: z.string().min(10).max(12000),
+          optimizationBrief: z.string().max(4000).optional(),
+          visionAnalysis: z.record(z.string(), z.any()),
+          windowDays: z.union([z.literal(7), z.literal(15)]).optional(),
+          supervisorToken: z.string().max(512).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformOptimizeCustomCopy;
+        let creditsCharged = false;
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，深度优化文案需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(
+            userId,
+            "platformOptimizeCustomCopy",
+            "自定义文案 · 素材绑定深度优化",
+          );
+          creditsCharged = true;
+        }
+
+        try {
+          const { optimizeCustomCopyWithAssets } = await import(
+            "./services/platformOptimizeCustomCopyWithAssets.js"
+          );
+          const result = await optimizeCustomCopyWithAssets({
+            sourceText: input.sourceText,
+            optimizationBrief: input.optimizationBrief,
+            visionAnalysis: input.visionAnalysis,
+            windowDays: input.windowDays,
+          });
+
+          return {
+            success: true as const,
+            cost: isAdminUser ? 0 : cost,
+            result,
+          };
+        } catch (error) {
+          if (creditsCharged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "platformOptimizeCustomCopy 素材优化失败退还").catch(
+              (refundErr: unknown) => {
+                console.error("[optimizeCustomCopyWithAssets] refund failed:", refundErr);
+              },
+            );
+          }
+          const { OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE } = await import(
+            "./services/platformOptimizeCustomCopy.js"
+          );
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const isCapacity = rawMessage === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE;
+          throw new TRPCError({
+            code: isCapacity ? "SERVICE_UNAVAILABLE" : "BAD_REQUEST",
+            message: isCapacity
+              ? `${OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
+              : rawMessage || `文案优化失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
+          });
+        }
+      }),
+
     getPlatformContent: publicProcedure
       .input(z.object({
         context: z.string().optional(),

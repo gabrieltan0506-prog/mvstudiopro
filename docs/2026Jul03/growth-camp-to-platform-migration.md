@@ -113,9 +113,11 @@ readTrendStoreForPlatforms(["douyin","xiaohongshu","bilibili","kuaishou"], {
 
 ### D1 下午 — 优化 mutation + 热点（~4h）
 
-- [ ] `optimizeCustomCopyWithAssets`：vision JSON + user brief + **`readTrendStoreForPlatforms` 7d 样本摘要**
-- [ ] **删除**对 `getGrowthSnapshot` / `buildMockGrowthSnapshot` / `personalizeGrowthSnapshot` 的调用（素材路径）
-- [ ] 结果 UI：仅展示优化稿 + 可选近期热点引用（带来源平台+标题）
+- [x] `optimizeCustomCopyWithAssets`：vision JSON + user brief + **`readTrendStoreForPlatforms` 7/15d 样本摘要**
+- [x] **删除**对 `getGrowthSnapshot` / `buildMockGrowthSnapshot` 的调用（素材路径；withAssets 白名单仅 vision + live trend）
+- [x] 结果 UI：素材分析 Tab 第二步展示优化稿 + 趋势/视觉绑定标签 + Debug 指标
+
+**分支（待你开 PR）**：`feat/migrate-platform-optimize-with-assets-d1b`（基于 PR-A 分支）
 
 ### D2 上午 — 退役 + 跳转（~3h）
 
