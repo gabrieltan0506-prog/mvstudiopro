@@ -1789,7 +1789,8 @@ export default function MVAnalysisPage() {
   const [playingMusicUrl, setPlayingMusicUrl] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const musicPollingRunRef = useRef(0);
   const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
@@ -1991,42 +1992,30 @@ export default function MVAnalysisPage() {
     };
   }, []);
 
-  const handleSelectFile = useCallback(() => {
-    fileInputRef.current?.click();
+  const handleSelectVideo = useCallback(() => {
+    videoFileInputRef.current?.click();
   }, []);
 
-  const removeGrowthCampAsset = useCallback((id: string) => {
-    setAssets((prev) => {
-      const target = prev.find((a) => a.id === id);
-      if (target?.previewUrl?.startsWith("blob:")) {
-        URL.revokeObjectURL(target.previewUrl);
-      }
-      return prev.filter((a) => a.id !== id);
-    });
-    setError(null);
-    setAnalysis(null);
-    setDebugInfo(null);
+  const handleSelectImages = useCallback(() => {
+    imageFileInputRef.current?.click();
   }, []);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target?.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-
-    const isVideo = isGrowthCampVideoFile(file);
-    const isImage = isGrowthCampImageFile(file);
-
-    if (!isVideo && !isImage) {
-      setError("请上传 MP4 视频，或 PNG / JPG 图片（每次选择一个文件，可多次添加）");
+  const ingestGrowthCampVideo = useCallback((file: File) => {
+    if (!isGrowthCampVideoFile(file)) {
+      setError("请上传 MP4 视频（每次仅 1 个）");
       return;
     }
 
     const assetId = newGrowthCampAssetId();
-    const kind: GrowthCampAsset["kind"] = isVideo ? "video" : "image";
-    const mimeType = isVideo
-      ? (file.type || "video/mp4")
-      : (normalizeGrowthCampImageMime(file) || "image/jpeg");
+    const mimeType = file.type || "video/mp4";
 
+    setAssets((prev) => {
+      const oldVideo = prev.find((a) => a.kind === "video");
+      if (oldVideo?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(oldVideo.previewUrl);
+      }
+      return prev.filter((a) => a.kind !== "video");
+    });
     setAssetReadingId(assetId);
     setError(null);
     setAnalysis(null);
@@ -2034,33 +2023,12 @@ export default function MVAnalysisPage() {
 
     void (async () => {
       try {
-        if (isImage) {
-          const dataUrl = await readFileAsDataUrl(file);
-          const base64 = dataUrl.split(",")[1] || "";
-          setAssets((prev) => [
-            ...prev,
-            {
-              id: assetId,
-              kind,
-              file,
-              fileName: file.name,
-              mimeType,
-              size: file.size,
-              previewUrl: dataUrl,
-              base64,
-              durationSeconds: 0,
-              ready: true,
-            },
-          ]);
-          return;
-        }
-
         const { previewUrl, durationSeconds } = await extractVideoPreview(file);
         setAssets((prev) => [
           ...prev,
           {
             id: assetId,
-            kind,
+            kind: "video" as const,
             file,
             fileName: file.name,
             mimeType,
@@ -2072,12 +2040,12 @@ export default function MVAnalysisPage() {
           },
         ]);
       } catch (fileError: unknown) {
-        const msg = fileError instanceof Error ? fileError.message : "素材读取失败";
+        const msg = fileError instanceof Error ? fileError.message : "视频读取失败";
         setAssets((prev) => [
           ...prev,
           {
             id: assetId,
-            kind,
+            kind: "video" as const,
             file,
             fileName: file.name,
             mimeType,
@@ -2096,8 +2064,106 @@ export default function MVAnalysisPage() {
     })();
   }, []);
 
+  const ingestGrowthCampImages = useCallback((files: File[]) => {
+    const valid = files.filter((f) => isGrowthCampImageFile(f));
+    if (!valid.length) {
+      setError("请上传 PNG 或 JPG 图片（单次可多选）");
+      return;
+    }
+
+    const batchId = newGrowthCampAssetId();
+    setAssetReadingId(batchId);
+    setError(null);
+    setAnalysis(null);
+    setDebugInfo(null);
+
+    void (async () => {
+      const newAssets = await Promise.all(
+        valid.map(async (file) => {
+          const assetId = newGrowthCampAssetId();
+          const mimeType = normalizeGrowthCampImageMime(file) || "image/jpeg";
+          try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const base64 = dataUrl.split(",")[1] || "";
+            return {
+              id: assetId,
+              kind: "image" as const,
+              file,
+              fileName: file.name,
+              mimeType,
+              size: file.size,
+              previewUrl: dataUrl,
+              base64,
+              durationSeconds: 0,
+              ready: true,
+            } satisfies GrowthCampAsset;
+          } catch (fileError: unknown) {
+            const msg = fileError instanceof Error ? fileError.message : "图片读取失败";
+            return {
+              id: assetId,
+              kind: "image" as const,
+              file,
+              fileName: file.name,
+              mimeType,
+              size: file.size,
+              previewUrl: null,
+              base64: null,
+              durationSeconds: 0,
+              ready: false,
+              readError: msg,
+            } satisfies GrowthCampAsset;
+          }
+        }),
+      );
+      setAssets((prev) => [...prev, ...newAssets]);
+      const failed = newAssets.filter((a) => !a.ready);
+      if (failed.length === newAssets.length) {
+        setError("图片读取失败，请重试");
+      } else if (failed.length > 0) {
+        setError(`${failed.length} 张图片读取失败，其余已添加`);
+      }
+      setAssetReadingId((current) => (current === batchId ? null : current));
+    })();
+  }, []);
+
+  const handleVideoFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (file) ingestGrowthCampVideo(file);
+    },
+    [ingestGrowthCampVideo],
+  );
+
+  const handleImageFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (files.length) ingestGrowthCampImages(files);
+    },
+    [ingestGrowthCampImages],
+  );
+
+  const removeGrowthCampAsset = useCallback((id: string) => {
+    setAssets((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((a) => a.id !== id);
+    });
+    setError(null);
+    setAnalysis(null);
+    setDebugInfo(null);
+  }, []);
+
   const handleAnalyze = useCallback(async () => {
     if (!allAssetsReady || assets.length === 0) return;
+
+    if (videoAssets.length > 1) {
+      toast.error("每次分析仅支持 1 个 MP4 视频");
+      return;
+    }
 
     if (analysisProfile === "extract_only" && (assets.length !== 1 || videoAssets.length !== 1)) {
       toast.error("内容提取模式仅支持单个 MP4 视频");
@@ -2121,7 +2187,7 @@ export default function MVAnalysisPage() {
       }
     }
 
-    const runGrowthVideoAnalysis = async (asset: GrowthCampAsset, skipCreditDeduction: boolean) => {
+    const runGrowthVideoAnalysis = async (asset: GrowthCampAsset) => {
       const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
         fileName: asset.fileName || "video.mp4",
         mimeType: asset.mimeType || "video/mp4",
@@ -2160,7 +2226,6 @@ export default function MVAnalysisPage() {
             analysisProfile,
             extractPrompt:
               analysisProfile === "extract_only" && extractPrompt.trim() ? extractPrompt.trim() : undefined,
-            skipCreditDeduction,
           },
         },
       });
@@ -2210,7 +2275,7 @@ export default function MVAnalysisPage() {
       for (let vi = 0; vi < videoAssets.length; vi++) {
         const asset = videoAssets[vi]!;
         setUploadProgress(Math.round(((vi + 0.15) / Math.max(1, totalSteps)) * 55));
-        const videoResult = await runGrowthVideoAnalysis(asset, vi > 0);
+        const videoResult = await runGrowthVideoAnalysis(asset);
         partials.push({
           label: asset.fileName || `视频 ${vi + 1}`,
           analysis: normalizeAnalysisScale(videoResult.analysis) as AnalysisResult,
@@ -3387,40 +3452,66 @@ export default function MVAnalysisPage() {
               )}
 
               {assets.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={handleSelectFile}
-                  className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center transition hover:bg-white/10"
-                >
+                <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 py-10 text-center">
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
                   <div className="mt-5 text-2xl font-bold">
-                    {isPlatformPage ? "上传视频或图片素材，专看平台判断" : "上传视频或图片素材"}
+                    {isPlatformPage ? "上传视频或图片素材" : "上传视频或图片素材"}
                   </div>
-                  <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    {isPlatformPage
-                      ? "支持 MP4、PNG、JPG。每次选择一个文件，可多次添加（数量不限）。"
-                      : "支持 MP4、PNG、JPG。每次选择一个文件，可多次添加（数量不限），用于完整商业分析。"}
+                  <p className="mt-3 max-w-lg text-sm leading-7 text-white/60">
+                    MP4 视频<strong className="text-white/85"> 每次仅 1 个</strong>；PNG / JPG 图片
+                    <strong className="text-white/85"> 单次可多选、数量不限</strong>。可组合「1 个视频 + 多张图片」做商业分析。
                   </p>
-                </button>
+                  <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSelectVideo}
+                      disabled={Boolean(assetReadingId) || isProcessing}
+                      className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 text-sm font-bold text-black transition hover:bg-[#ff9c5c] disabled:opacity-50"
+                    >
+                      <Film className="h-4 w-4" />
+                      上传 MP4（1 个）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSelectImages}
+                      disabled={Boolean(assetReadingId) || isProcessing}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/8 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/12 disabled:opacity-50"
+                    >
+                      <ImageIcon className="h-4 w-4" />
+                      上传图片（可多选）
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="text-sm text-white/70">
                       已添加 <strong className="text-white">{assets.length}</strong> 个素材
-                      {videoAssets.length > 0 ? ` · ${videoAssets.length} 个视频` : ""}
+                      {videoAssets.length > 0 ? ` · 1 个 MP4` : ""}
                       {imageAssets.length > 0 ? ` · ${imageAssets.length} 张图片` : ""}
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleSelectFile}
-                      disabled={Boolean(assetReadingId) || isProcessing}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10 disabled:opacity-50"
-                    >
-                      <Upload className="h-3.5 w-3.5" />
-                      继续添加
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectVideo}
+                        disabled={Boolean(assetReadingId) || isProcessing}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <Film className="h-3.5 w-3.5" />
+                        {videoAssets.length > 0 ? "更换 MP4" : "上传 MP4"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSelectImages}
+                        disabled={Boolean(assetReadingId) || isProcessing}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        添加图片（可多选）
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -3489,10 +3580,18 @@ export default function MVAnalysisPage() {
               )}
 
               <input
-                ref={fileInputRef}
+                ref={videoFileInputRef}
                 type="file"
-                accept="video/mp4,.mp4,image/png,image/jpeg,.png,.jpg,.jpeg"
-                onChange={handleFileChange}
+                accept="video/mp4,.mp4"
+                onChange={handleVideoFileChange}
+                className="hidden"
+              />
+              <input
+                ref={imageFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                multiple
+                onChange={handleImageFileChange}
                 className="hidden"
               />
 
@@ -3588,7 +3687,7 @@ export default function MVAnalysisPage() {
                         <>
                           本次{analysisProfile === "extract_only" ? "内容提取" : analysisMode === "REMIX" ? "二创" : "深度"}分析将消耗{" "}
                           <strong className="text-orange-200">{est} 积分</strong>
-                          <span className="text-white/45">（每次分析固定扣一次，不按时长阶梯）</span>
+                          <span className="text-white/45">（MP4 视频分析每次扣一次；图片批次另计，不按时长阶梯）</span>
                         </>
                       )}
                     </span>
