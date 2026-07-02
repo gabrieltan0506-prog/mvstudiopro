@@ -236,9 +236,15 @@ export default function PlatformAssetAnalysisPanel({
                 }`}
               >
                 {asset.previewUrl ? (
-                  <img src={asset.previewUrl} alt={asset.fileName} className="aspect-[4/5] w-full object-cover" />
+                  <div className="flex min-h-[100px] max-h-[220px] items-center justify-center bg-black/30 p-1.5">
+                    <img
+                      src={asset.previewUrl}
+                      alt={asset.fileName}
+                      className="max-h-[208px] w-full object-contain"
+                    />
+                  </div>
                 ) : (
-                  <div className="aspect-[4/5] flex items-center justify-center bg-black/40 text-xs text-red-300 px-2 text-center">
+                  <div className="flex min-h-[100px] items-center justify-center bg-black/40 px-2 py-8 text-center text-xs text-red-300">
                     {asset.readError || "读取失败"}
                   </div>
                 )}
