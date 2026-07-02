@@ -564,6 +564,10 @@ const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
 const EXTRACT_PIPELINE_DEBUG_NOTE =
   "语音 scan：Gemini 3.5 Flash（覆盖不足时 fallback GPT-5.5）→ 关键点多次抽帧 + 其余约 50s 补帧 → 画面初判与 Markdown 总结：GPT-5.5";
 
+/** 仅 Debug 面板展示：图片分析链路说明 */
+const IMAGE_PIPELINE_DEBUG_NOTE =
+  "PNG/JPG GCS 直传 → growth_analyze_images Job → analyzeGrowthCampImagesJob（GPT-5.5 视觉 + 商业战略）";
+
 function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
   try {
     localStorage.setItem(GROWTH_CAMP_ANALYSIS_MODEL_LS, GROWTH_CAMP_ANALYSIS_MODEL);
@@ -1687,6 +1691,8 @@ export default function MVAnalysisPage() {
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const videoAssets = useMemo(() => assets.filter((a) => a.kind === "video"), [assets]);
   const imageAssets = useMemo(() => assets.filter((a) => a.kind === "image"), [assets]);
+  const isVideoInput = videoAssets.length > 0;
+  const isImageOnlyInput = imageAssets.length > 0 && videoAssets.length === 0;
   const inputKind = useMemo((): InputKind | null => {
     if (videoAssets.length > 0) return "video";
     if (imageAssets.length > 0) return "image";
@@ -2202,6 +2208,19 @@ export default function MVAnalysisPage() {
       setUploadProgress(60);
 
       const analysisRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      setDebugInfo((prev) => ({
+        ...(prev || {}),
+        imagePipeline: {
+          ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+          dispatch: {
+            route: "growth_analyze_images",
+            modelName: growthCampAnalysisModel,
+            mode: analysisMode,
+            status: "creating_job",
+          },
+        },
+      }));
+
       const { jobId } = await createJob({
         type: "video",
         userId: user?.id ? String(user.id) : "",
@@ -2217,15 +2236,63 @@ export default function MVAnalysisPage() {
         },
       });
 
+      let pollCount = 0;
+      setDebugInfo((prev) => ({
+        ...(prev || {}),
+        imagePipeline: {
+          ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+          dispatch: {
+            route: "growth_analyze_images",
+            modelName: growthCampAnalysisModel,
+            mode: analysisMode,
+            status: "dispatched",
+          },
+          job: { jobId, status: "queued", pollCount: 0 },
+        },
+      }));
+
       const job = await pollJobUntilTerminal(jobId, {
         maxWaitMs: 12 * 60_000,
         onPoll: () => {
+          pollCount += 1;
           setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+          setDebugInfo((prev) => ({
+            ...(prev || {}),
+            imagePipeline: {
+              ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+              job: { jobId, status: "polling", pollCount },
+            },
+          }));
         },
       });
       if (job.status === "failed") {
+        setDebugInfo((prev) => ({
+          ...(prev || {}),
+          imagePipeline: {
+            ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+            job: { jobId, status: "failed", pollCount },
+            analysis: { status: "failed", error: String(job.error || "图片分析失败") },
+          },
+        }));
         throw new Error(String(job.error || "图片分析失败"));
       }
+
+      const jobDebug = (job.output?.debug as Record<string, unknown>) || {};
+      setDebugInfo((prev) => ({
+        ...(prev || {}),
+        imagePipeline: {
+          ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+          job: { jobId, status: "completed", pollCount },
+          analysis: {
+            status: "completed",
+            provider: jobDebug.provider,
+            model: jobDebug.model,
+            fallback: jobDebug.fallback,
+            imageCount: jobDebug.imageCount ?? imageInputs.length,
+          },
+        },
+      }));
+
       return {
         analysis: job.output?.analysis,
         debug: job.output?.debug,
@@ -2330,34 +2397,85 @@ export default function MVAnalysisPage() {
       if (imageAssets.length > 0) {
         setUploadStage("uploading");
         const imageInputs: Array<{ gcsUri: string; mimeType: string; fileName: string }> = [];
+        const imageUploadRecords: Array<{ fileName: string; gcsUri?: string; status: string; error?: string }> =
+          imageAssets.map((asset) => ({ fileName: asset.fileName, status: "pending" }));
+
+        setDebugInfo((prev) => ({
+          ...(prev || {}),
+          imagePipeline: {
+            upload: { status: "uploading", progress: 0 },
+            assets: imageUploadRecords,
+          },
+        }));
+
         for (let ii = 0; ii < imageAssets.length; ii++) {
           const asset = imageAssets[ii]!;
           const mime = normalizeGrowthCampImageMime(asset.file) || asset.mimeType;
           const safeName = asset.fileName.replace(/[^a-z0-9._-]/gi, "-").replace(/-{2,}/g, "-");
-          const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
-            fileName: asset.fileName,
-            mimeType: mime,
-            objectName: `growth-camp/images/${Date.now()}-${ii}-${safeName}`,
-          });
-          await uploadFileToSignedUrl({
-            file: asset.file,
-            uploadUrl: signed.uploadUrl,
-            headers: signed.requiredHeaders,
-            onProgress: (percent) => {
-              const stepBase = videoAssets.length + ii / Math.max(1, imageAssets.length);
-              const stepSpan = 1 / Math.max(1, imageAssets.length);
-              const mapped = ((stepBase + (percent / 100) * stepSpan) / Math.max(1, totalSteps)) * 55;
-              setUploadProgress(Math.round(mapped));
-            },
-          });
-          if (!signed.gcsUri) {
-            throw new Error("图片上传完成但未返回 GCS 地址");
+          try {
+            const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
+              fileName: asset.fileName,
+              mimeType: mime,
+              objectName: `growth-camp/images/${Date.now()}-${ii}-${safeName}`,
+            });
+            await uploadFileToSignedUrl({
+              file: asset.file,
+              uploadUrl: signed.uploadUrl,
+              headers: signed.requiredHeaders,
+              onProgress: (percent) => {
+                const stepBase = videoAssets.length + ii / Math.max(1, imageAssets.length);
+                const stepSpan = 1 / Math.max(1, imageAssets.length);
+                const mapped = ((stepBase + (percent / 100) * stepSpan) / Math.max(1, totalSteps)) * 55;
+                setUploadProgress(Math.round(mapped));
+                setDebugInfo((prev) => ({
+                  ...(prev || {}),
+                  imagePipeline: {
+                    ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+                    upload: { status: "uploading", progress: Math.round(percent) },
+                  },
+                }));
+              },
+            });
+            if (!signed.gcsUri) {
+              throw new Error("图片上传完成但未返回 GCS 地址");
+            }
+            imageUploadRecords[ii] = {
+              fileName: asset.fileName,
+              gcsUri: signed.gcsUri,
+              status: "done",
+            };
+            imageInputs.push({
+              gcsUri: signed.gcsUri,
+              mimeType: mime,
+              fileName: asset.fileName,
+            });
+            setDebugInfo((prev) => ({
+              ...(prev || {}),
+              imagePipeline: {
+                ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+                upload: {
+                  status: ii + 1 >= imageAssets.length ? "done" : "uploading",
+                  progress: Math.round(((ii + 1) / imageAssets.length) * 100),
+                },
+                assets: [...imageUploadRecords],
+              },
+            }));
+          } catch (uploadError: unknown) {
+            imageUploadRecords[ii] = {
+              fileName: asset.fileName,
+              status: "failed",
+              error: uploadError instanceof Error ? uploadError.message : String(uploadError),
+            };
+            setDebugInfo((prev) => ({
+              ...(prev || {}),
+              imagePipeline: {
+                ...(typeof prev?.imagePipeline === "object" && prev?.imagePipeline ? prev.imagePipeline : {}),
+                upload: { status: "failed", progress: Math.round((ii / imageAssets.length) * 100) },
+                assets: [...imageUploadRecords],
+              },
+            }));
+            throw uploadError;
           }
-          imageInputs.push({
-            gcsUri: signed.gcsUri,
-            mimeType: mime,
-            fileName: asset.fileName,
-          });
         }
 
         setUploadStage("analyzing");
@@ -2723,6 +2841,16 @@ export default function MVAnalysisPage() {
       { label: "商业承接力", value: analysis.viralPotential },
     ];
   }, [analysis, inputKind]);
+
+  const videoContentBody = useMemo(() => {
+    if (!analysis || !isVideoInput) return "";
+    return (
+      analysis.extractedContent?.trim() ||
+      analysisTranscript.trim() ||
+      analysis.summary?.trim() ||
+      ""
+    );
+  }, [analysis, analysisTranscript, isVideoInput]);
 
   const isProcessing = uploadStage === "uploading" || uploadStage === "analyzing";
   const remainingTime = isProcessing ? Math.max(1, estimatedTime - elapsedTime) : 0;
@@ -3900,36 +4028,80 @@ export default function MVAnalysisPage() {
                   <div className="mt-3 space-y-2 leading-6">
                     <div>分析模式：{analysisProfile === "extract_only" ? "单纯提取内容" : "完整商业分析"}</div>
                     <div>请求模型：{growthCampAnalysisModel}</div>
-                    <div>主模型：{String(debugInfo?.model || (debugInfo as any)?.videoPipeline?.analysis?.model || "-")}</div>
-                    <div>Stage 1 / 语音 scan：{String(debugInfo?.stageOneModel || (debugInfo as any)?.videoPipeline?.analysis?.stageOneModel || "-")}</div>
-                    <div>Stage 2 / 总结：{String(debugInfo?.stageTwoModel || (debugInfo as any)?.videoPipeline?.analysis?.stageTwoModel || "-")}</div>
-                    <div>视觉初判模型：{String((debugInfo as any)?.visualPassModel || (debugInfo as any)?.videoPipeline?.analysis?.visualPassModel || "-")}</div>
-                    <div>Provider：{String(debugInfo?.provider || (debugInfo as any)?.videoPipeline?.analysis?.provider || "-")}</div>
-                    <div>管线 ID：{String(debugInfo?.pipeline || (debugInfo as any)?.videoPipeline?.analysis?.pipeline || "-")}</div>
-                    {(debugInfo as any)?.sparseFrameCount || (debugInfo as any)?.videoPipeline?.analysis?.sparseFrameCount ? (
-                      <div>抽帧数：{String((debugInfo as any)?.sparseFrameCount || (debugInfo as any)?.videoPipeline?.analysis?.sparseFrameCount)}</div>
-                    ) : null}
-                    {analysisProfile === "extract_only" ? (
-                      <div className="mt-2 rounded-xl border border-indigo-200/10 bg-indigo-500/5 px-3 py-2 text-white/70">
-                        {EXTRACT_PIPELINE_DEBUG_NOTE}
-                      </div>
-                    ) : null}
+                    {isImageOnlyInput || debugInfo?.route === "analyzeGrowthCampImagesJob" ? (
+                      <>
+                        <div>主模型：{String(debugInfo?.model || (debugInfo as any)?.imagePipeline?.analysis?.model || "-")}</div>
+                        <div>Provider：{String(debugInfo?.provider || (debugInfo as any)?.imagePipeline?.analysis?.provider || "-")}</div>
+                        <div>图片数量：{String(debugInfo?.imageCount ?? (debugInfo as any)?.imagePipeline?.analysis?.imageCount ?? imageAssets.length)}</div>
+                        <div>路由：{String(debugInfo?.route || "analyzeGrowthCampImagesJob")}</div>
+                        <div className="mt-2 rounded-xl border border-indigo-200/10 bg-indigo-500/5 px-3 py-2 text-white/70">
+                          {IMAGE_PIPELINE_DEBUG_NOTE}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>主模型：{String(debugInfo?.model || (debugInfo as any)?.videoPipeline?.analysis?.model || "-")}</div>
+                        <div>Stage 1 / 语音 scan：{String(debugInfo?.stageOneModel || (debugInfo as any)?.videoPipeline?.analysis?.stageOneModel || "-")}</div>
+                        <div>Stage 2 / 总结：{String(debugInfo?.stageTwoModel || (debugInfo as any)?.videoPipeline?.analysis?.stageTwoModel || "-")}</div>
+                        <div>视觉初判模型：{String((debugInfo as any)?.visualPassModel || (debugInfo as any)?.videoPipeline?.analysis?.visualPassModel || "-")}</div>
+                        <div>Provider：{String(debugInfo?.provider || (debugInfo as any)?.videoPipeline?.analysis?.provider || "-")}</div>
+                        <div>管线 ID：{String(debugInfo?.pipeline || (debugInfo as any)?.videoPipeline?.analysis?.pipeline || "-")}</div>
+                        {(debugInfo as any)?.sparseFrameCount || (debugInfo as any)?.videoPipeline?.analysis?.sparseFrameCount ? (
+                          <div>抽帧数：{String((debugInfo as any)?.sparseFrameCount || (debugInfo as any)?.videoPipeline?.analysis?.sparseFrameCount)}</div>
+                        ) : null}
+                        {analysisProfile === "extract_only" ? (
+                          <div className="mt-2 rounded-xl border border-indigo-200/10 bg-indigo-500/5 px-3 py-2 text-white/70">
+                            {EXTRACT_PIPELINE_DEBUG_NOTE}
+                          </div>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </div>
-                {(debugInfo?.videoPipeline || inputKind === "video") ? (
+                {isVideoInput ? (
                   <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/75">
                     <div className="text-xs uppercase tracking-[0.16em] text-cyan-100">视频链路 Debug</div>
                     <div className="mt-3 space-y-2 leading-6">
                       <div>1. 视频素材：{videoAssets.map((a) => a.fileName).join("、") || "-"}</div>
                       <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
                       <div>3. 上传结果：GCS {String((debugInfo as any)?.videoPipeline?.upload?.gcsUri || "-")} / URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
-                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")} / 模式 {String((debugInfo as any)?.videoPipeline?.dispatch?.analysisProfile || analysisProfile || "-")}</div>
+                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || debugInfo?.route || "-")} / 模式 {String((debugInfo as any)?.videoPipeline?.dispatch?.analysisProfile || analysisProfile || "-")}</div>
                       <div>5. 派发状态：{String((debugInfo as any)?.videoPipeline?.dispatch?.status || "idle")} / 请求模型 {String((debugInfo as any)?.videoPipeline?.dispatch?.modelName || growthCampAnalysisModel)}</div>
                       <div>6. Job：ID {String((debugInfo as any)?.videoPipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.videoPipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.videoPipeline?.job?.pollCount ?? "-")} 次</div>
                       <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.videoPipeline?.analysis?.model || debugInfo?.model || "-")}</div>
                       <div>8. Signed URL 申请失败：{String((debugInfo as any)?.videoPipeline?.upload?.signedUrlError || "-")}</div>
                       <div>9. 上传失败：{String((debugInfo as any)?.videoPipeline?.upload?.error || "-")}</div>
                       <div>10. 失败定位：阶段 {String((debugInfo as any)?.videoPipeline?.analysis?.failureStage || debugInfo?.failureStage || "-")} / 原因 {String((debugInfo as any)?.videoPipeline?.analysis?.failureReason || debugInfo?.failureReason || (debugInfo as any)?.videoPipeline?.analysis?.error || "-")}</div>
+                      {debugInfo?.transcriptChars ? <div>11. 转录字数：{String(debugInfo.transcriptChars)}</div> : null}
+                      {debugInfo?.videoDuration ? <div>12. 视频时长秒数：{String(debugInfo.videoDuration)}</div> : null}
+                    </div>
+                  </div>
+                ) : null}
+                {imageAssets.length > 0 || debugInfo?.route === "analyzeGrowthCampImagesJob" || (debugInfo as any)?.imagePipeline ? (
+                  <div className="mt-4 rounded-2xl border border-emerald-200/15 bg-black/15 p-4 text-xs text-white/75">
+                    <div className="text-xs uppercase tracking-[0.16em] text-emerald-100">图片链路 Debug</div>
+                    <div className="mt-3 space-y-2 leading-6">
+                      <div>1. 图片素材：{imageAssets.map((a) => a.fileName).join("、") || "-"}</div>
+                      <div>2. 上传：{String((debugInfo as any)?.imagePipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.imagePipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
+                      <div>3. 上传明细：</div>
+                      {Array.isArray((debugInfo as any)?.imagePipeline?.assets) && (debugInfo as any).imagePipeline.assets.length ? (
+                        <div className="space-y-1 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                          {(debugInfo as any).imagePipeline.assets.map((item: { fileName?: string; gcsUri?: string; status?: string; error?: string }, index: number) => (
+                            <div key={`img-debug-${index}`}>
+                              {String(item.fileName || `图片 ${index + 1}`)} · {String(item.status || "-")}
+                              {item.gcsUri ? ` · ${String(item.gcsUri)}` : ""}
+                              {item.error ? ` · 错误 ${String(item.error)}` : ""}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/55">等待上传或尚未开始</div>
+                      )}
+                      <div>4. 派发：路由 {String((debugInfo as any)?.imagePipeline?.dispatch?.route || "growth_analyze_images")} / 模式 {String((debugInfo as any)?.imagePipeline?.dispatch?.mode || analysisMode)} / 状态 {String((debugInfo as any)?.imagePipeline?.dispatch?.status || "idle")}</div>
+                      <div>5. Job：ID {String((debugInfo as any)?.imagePipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.imagePipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.imagePipeline?.job?.pollCount ?? "-")} 次</div>
+                      <div>6. 分析：{String((debugInfo as any)?.imagePipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.imagePipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.imagePipeline?.analysis?.model || debugInfo?.model || "-")}</div>
+                      <div>7. 图片数：{String((debugInfo as any)?.imagePipeline?.analysis?.imageCount ?? debugInfo?.imageCount ?? imageAssets.length)} / 降级 {String((debugInfo as any)?.imagePipeline?.analysis?.fallback ?? debugInfo?.fallback ?? "-")}</div>
+                      <div>8. 失败原因：{String((debugInfo as any)?.imagePipeline?.analysis?.error || debugInfo?.failureReason || "-")}</div>
                     </div>
                   </div>
                 ) : null}
@@ -4144,14 +4316,19 @@ export default function MVAnalysisPage() {
             <div className="space-y-6">
                 <PlatformTrendEntryPanel />
 
-                {analysis.analysisProfile === "extract_only" && (analysis.extractedContent || analysis.summary) ? (
+                {isVideoInput && videoContentBody ? (
                   <div className="rounded-[28px] border border-emerald-400/25 bg-[#0f1f18] p-6">
-                    <div className="text-xs uppercase tracking-[0.16em] text-emerald-300/80">内容提取结果</div>
-                    {analysis.summary ? (
+                    <div className="text-xs uppercase tracking-[0.16em] text-emerald-300/80">
+                      {analysis.analysisProfile === "extract_only" ? "内容提取结果" : "视频内容整理"}
+                    </div>
+                    {analysis.summary && analysis.analysisProfile === "extract_only" ? (
                       <p className="mt-2 text-sm text-white/65">{analysis.summary}</p>
                     ) : null}
+                    {!analysis.extractedContent?.trim() && analysisTranscript.trim() && analysis.analysisProfile !== "extract_only" ? (
+                      <p className="mt-2 text-sm text-white/65">以下为转录与内容整理结果</p>
+                    ) : null}
                     <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-white/88">
-                      {analysis.extractedContent || "暂无提取内容"}
+                      {videoContentBody}
                     </div>
                   </div>
                 ) : null}
@@ -4604,7 +4781,7 @@ export default function MVAnalysisPage() {
                         {replaceTerms(_re)}
                       </div>
                     ) : null}
-                    {!_re && !_rmp ? (
+                    {!_re && !_rmp && !isImageOnlyInput ? (
                       <p className="mb-6 text-[15px] leading-relaxed text-white/55">
                         （本节本次未生成表达指导或 BGM 提示词。可重新上传视频并再次分析，或稍后重试。）
                       </p>
@@ -4796,10 +4973,12 @@ export default function MVAnalysisPage() {
                                       <div className="text-xs uppercase tracking-[0.16em] text-white/45">图文怎么做</div>
                                       <div className="mt-2 text-white/72">{replaceTerms(item.graphicPlan || "当前不建议先做图文首发。")}</div>
                                     </div>
-                                    <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
-                                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">视频怎么拍</div>
-                                      <div className="mt-2 text-white/72">{replaceTerms(item.videoPlan || "当前不建议先做视频首发。")}</div>
-                                    </div>
+                                    {!isImageOnlyInput ? (
+                                      <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
+                                        <div className="text-xs uppercase tracking-[0.16em] text-white/45">视频怎么拍</div>
+                                        <div className="mt-2 text-white/72">{replaceTerms(item.videoPlan || "当前不建议先做视频首发。")}</div>
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
                               ))}
@@ -4839,7 +5018,7 @@ export default function MVAnalysisPage() {
                     <VisualAnalysisSection analysis={analysis} visualKeyFrames={visualKeyFrames} />
                   ) : null}
 
-                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                  {!isRemixMode && analysis && isVideoInput && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
