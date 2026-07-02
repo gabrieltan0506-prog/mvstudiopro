@@ -17,8 +17,6 @@ import {
 } from "@/lib/canvasTypes";
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
-  canvasImageBatchTotalCredits,
-  canvasVisionTotalCredits,
 } from "@/lib/canvasCredits";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { CANVAS_UPLOAD_CONCURRENCY, uploadCanvasFilesParallel } from "@/lib/canvasUpload";
@@ -268,14 +266,6 @@ export default function FreeformCanvas({
             const Icon = meta.icon;
             const selected = selectedId === block.id;
             const visionCount = collectVisionImages(block.id, blocks, edges).length;
-            const imageCredits =
-              block.kind === "image"
-                ? canvasImageBatchTotalCredits(block.imageModel, block.imageBatchCount || 1)
-                : 0;
-            const visionCredits =
-              (block.kind === "text" || block.kind === "copy_organize") && visionCount > 0
-                ? canvasVisionTotalCredits(visionCount)
-                : 0;
             const displayOutputs =
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
             const uploadLabel =
@@ -410,7 +400,6 @@ export default function FreeformCanvas({
                               ))}
                             </select>
                           </label>
-                          <div className="text-[10px] text-emerald-300/90">预估积分：{imageCredits}</div>
                         </>
                       ) : null}
                       {block.kind === "video" ? (
@@ -432,9 +421,7 @@ export default function FreeformCanvas({
                         </label>
                       ) : null}
                       {(block.kind === "text" || block.kind === "copy_organize") && visionCount > 0 ? (
-                        <div className="text-[10px] text-amber-300/90">
-                          已接入 {visionCount} 张图片 · 预估积分 {visionCredits}
-                        </div>
+                        <div className="text-[10px] text-white/50">已接入 {visionCount} 张图片</div>
                       ) : null}
                     </div>
 

@@ -25,6 +25,6 @@ export function canvasVisionTotalCredits(imageCount: number): number {
 
 export const CANVAS_IMAGE_BATCH_OPTIONS: Array<{ count: CanvasImageBatchCount; label: string }> = [
   { count: 1, label: "1 张" },
-  { count: 2, label: "2 张（九折）" },
-  { count: 4, label: "4 张（八折）" },
+  { count: 2, label: "2 张九折" },
+  { count: 4, label: "4 张八折" },
 ];
