@@ -37,7 +37,7 @@ import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { deductCredits, deductCreditsAmount, getCredits, getUserPlan } from "../credits";
 import { CREDIT_COSTS } from "../plans";
-import { flatAnalysisCost, MAX_DURATION_SECONDS } from "../utils/costCalculator";
+import { flatAnalysisCost, flatImageAnalysisCost, MAX_DURATION_SECONDS } from "../utils/costCalculator";
 import {
   createProducerTask,
   getProducerTaskStatus,
@@ -330,18 +330,6 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     const numericUserId = userId ? Number(userId) : NaN;
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
-    const cost = flatAnalysisCost(growthMode);
-    let creditDeducted = 0;
-
-    if (Number.isFinite(numericUserId)) {
-      const deductResult = await deductCreditsAmount(
-        numericUserId,
-        cost,
-        creditAction,
-        `创作者成长营 ${growthMode} 图片分析（单次 ${cost} 积分）`,
-      );
-      creditDeducted = deductResult.cost;
-    }
 
     const rawImages = Array.isArray(params.images) ? params.images : [];
     const images = rawImages
@@ -358,6 +346,20 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
     if (!images.length) {
       throw new Error("请至少上传一张 PNG 或 JPG 图片");
+    }
+
+    const unitCost = flatAnalysisCost(growthMode);
+    const cost = flatImageAnalysisCost(growthMode, images.length);
+    let creditDeducted = 0;
+
+    if (Number.isFinite(numericUserId)) {
+      const deductResult = await deductCreditsAmount(
+        numericUserId,
+        cost,
+        creditAction,
+        `创作者成长营 ${growthMode} 图片分析（${images.length} 张 × ${unitCost} 积分）`,
+      );
+      creditDeducted = deductResult.cost;
     }
 
     try {
