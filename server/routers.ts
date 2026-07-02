@@ -62,6 +62,8 @@ import { sunoRouter } from "./routers/suno";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
+import { analyzeGrowthCampImages } from "./growth/analyzeGrowthCampImages";
+import { synthesizeGrowthAnalyses } from "./growth/synthesizeGrowthAnalyses";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
@@ -2643,6 +2645,82 @@ export const appRouter = router({
             extractionMethod: result.documentMeta.extractionMethod,
           },
         };
+      }),
+
+    analyzeGrowthCampImages: publicProcedure
+      .input(
+        z.object({
+          images: z
+            .array(
+              z.object({
+                fileBase64: z.string().min(1),
+                mimeType: z.string().min(1),
+                fileName: z.string().optional(),
+              }),
+            )
+            .min(1)
+            .max(64),
+          context: z.string().optional(),
+          modelName: growthCampModelSchema.optional(),
+          mode: growthAnalysisModeSchema.default("GROWTH"),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user?.id) {
+          const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+          if (!isAdminUser) {
+            const mode = input.mode || "GROWTH";
+            const creditKey = mode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
+            const cost = CREDIT_COSTS[creditKey];
+            const creditsInfo = await getCredits(ctx.user.id);
+            if (creditsInfo.totalAvailable < cost) {
+              throw new Error(
+                `Credits 不足，${mode === "REMIX" ? "二創分析" : "成長營分析"}需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`,
+              );
+            }
+            await deductCredits(ctx.user.id, creditKey, `創作者成長營 ${mode} 分析（图片×${input.images.length}）`);
+          }
+        } else {
+          throw new Error("請先登入，才能使用分析功能");
+        }
+        const result = await analyzeGrowthCampImages(input);
+        return {
+          success: true,
+          analysis: result.analysis,
+          fileUrls: result.imageMeta.fileUrls,
+          imageCount: result.imageMeta.imageCount,
+          debug: {
+            route: "analyzeGrowthCampImages",
+            provider: result.imageMeta.provider,
+            model: result.imageMeta.model,
+            fallback: result.imageMeta.fallback,
+            imageCount: result.imageMeta.imageCount,
+          },
+        };
+      }),
+
+    synthesizeGrowthCampAnalyses: publicProcedure
+      .input(
+        z.object({
+          parts: z
+            .array(
+              z.object({
+                label: z.string().min(1).max(120),
+                analysis: growthAnalysisScoresSchema,
+              }),
+            )
+            .min(2)
+            .max(16),
+          context: z.string().optional(),
+          modelName: growthCampModelSchema.optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        if (!ctx.user?.id) {
+          throw new Error("請先登入，才能使用分析功能");
+        }
+        const analysis = await synthesizeGrowthAnalyses(input);
+        return { success: true, analysis };
       }),
 
     getVideoUploadSignedUrl: publicProcedure

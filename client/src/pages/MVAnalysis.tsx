@@ -59,6 +59,8 @@ import {
   Upload,
   User,
   Workflow,
+  X,
+  ImageIcon,
 } from "lucide-react";
 import {
   Bar,
@@ -345,7 +347,39 @@ function normalizeShootingBlueprint(
 }
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
-type InputKind = "document" | "video";
+type InputKind = "video" | "image";
+
+type GrowthCampAsset = {
+  id: string;
+  kind: "video" | "image";
+  file: File;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  previewUrl: string | null;
+  base64: string | null;
+  durationSeconds: number;
+  ready: boolean;
+  readError?: string;
+};
+
+function isGrowthCampVideoFile(file: File): boolean {
+  return file.type.startsWith("video/") || /\.mp4$/i.test(file.name);
+}
+
+function isGrowthCampImageFile(file: File): boolean {
+  return /^image\/(png|jpeg|jpg)$/i.test(file.type) || /\.(png|jpe?g)$/i.test(file.name);
+}
+
+function normalizeGrowthCampImageMime(file: File): "image/png" | "image/jpeg" | null {
+  if (file.type === "image/png" || /\.png$/i.test(file.name)) return "image/png";
+  if (/^image\/jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name)) return "image/jpeg";
+  return null;
+}
+
+function newGrowthCampAssetId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 type DebugInfo = Record<string, unknown> | null;
 type MusicProvider = "suno" | "udio";
 type MusicGenerationStatus = "idle" | "generating" | "polling" | "success" | "error";
@@ -1361,20 +1395,20 @@ function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadSt
     return [
       {
         id: "prepare",
-        label: isVideo ? "校验视频文档" : "校验文档内容",
-        detail: isVideo ? "正在确认视频格式、时长与上传可用性。" : "正在确认文档格式、大小与可解析性。",
+        label: isVideo ? "校验视频素材" : "校验图片素材",
+        detail: isVideo ? "正在确认 MP4 格式、时长与上传可用性。" : "正在确认 PNG/JPG 格式与可读性。",
         status: uploadProgress >= 8 ? "done" : "active",
       },
       {
         id: "transfer",
         label: "上传到分析队列",
-        detail: isVideo ? "正在把原始文档送入分析入口，并持续同步字节进度。" : "正在整理文档内容并送入分析入口。",
+        detail: isVideo ? "正在把视频送入分析入口，并持续同步字节进度。" : "正在整理图片并送入分析入口。",
         status: uploadProgress >= 8 ? "active" : "pending",
       },
       {
         id: "handoff",
         label: "创建分析任务",
-        detail: "文档就绪后会立即创建任务，开始进入分析工作流。",
+        detail: "素材就绪后会立即创建任务，开始进入分析工作流。",
         status: uploadProgress >= 96 ? "active" : "pending",
       },
     ];
@@ -1408,11 +1442,11 @@ function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadSt
       },
     ];
 
-    const documentSteps: ProcessingStepCard[] = [
+    const imageSteps: ProcessingStepCard[] = [
       {
         id: "extract",
-        label: "抽取关键信息",
-        detail: "正在读取文件中的核心观点、结构与可成交线索。",
+        label: "解读画面信息",
+        detail: "正在读取图片中的文字、人物、场景与商业线索。",
         status: currentAnalyzeStep > 0 ? "done" : "active",
       },
       {
@@ -1429,7 +1463,7 @@ function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadSt
       },
     ];
 
-    return isVideo ? videoSteps : documentSteps;
+    return isVideo ? videoSteps : imageSteps;
   }
 
   return [];
@@ -1640,12 +1674,18 @@ export default function MVAnalysisPage() {
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading, user } = useAuth({ autoFetch: true });
 
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [fileBase64, setFileBase64] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [inputKind, setInputKind] = useState<InputKind | null>(null);
-  const [fileMimeType, setFileMimeType] = useState("");
+  const [assets, setAssets] = useState<GrowthCampAsset[]>([]);
+  const [assetReadingId, setAssetReadingId] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
+  const videoAssets = useMemo(() => assets.filter((a) => a.kind === "video"), [assets]);
+  const imageAssets = useMemo(() => assets.filter((a) => a.kind === "image"), [assets]);
+  const inputKind = useMemo((): InputKind | null => {
+    if (videoAssets.length > 0) return "video";
+    if (imageAssets.length > 0) return "image";
+    return null;
+  }, [videoAssets.length, imageAssets.length]);
+  const totalAssetBytes = useMemo(() => assets.reduce((sum, a) => sum + a.size, 0), [assets]);
+  const allAssetsReady = assets.length > 0 && assets.every((a) => a.ready) && !assetReadingId;
   const [uploadProgress, setUploadProgress] = useState(0);
   const queryClient = useQueryClient();
   const [estimatedTime, setEstimatedTime] = useState(0);
@@ -1725,9 +1765,6 @@ export default function MVAnalysisPage() {
   }, [analysis?.mode]);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState("");
-  const [fileName, setFileName] = useState("");
-  const [fileSize, setFileSize] = useState(0);
-  const [localDurationSeconds, setLocalDurationSeconds] = useState<number>(0);
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
   const [analysisTranscript, setAnalysisTranscript] = useState("");
@@ -1752,15 +1789,16 @@ export default function MVAnalysisPage() {
   const [playingMusicUrl, setPlayingMusicUrl] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const musicPollingRunRef = useRef(0);
   const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
-  const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
-  const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
+  const analyzeGrowthCampImagesMutation = trpc.mvAnalysis.analyzeGrowthCampImages.useMutation();
+  const synthesizeGrowthCampAnalysesMutation = trpc.mvAnalysis.synthesizeGrowthCampAnalyses.useMutation();
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
@@ -1954,68 +1992,183 @@ export default function MVAnalysisPage() {
     };
   }, []);
 
-  const handleSelectFile = useCallback(() => {
-    fileInputRef.current?.click();
+  const handleSelectVideo = useCallback(() => {
+    videoFileInputRef.current?.click();
   }, []);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target?.files?.[0];
-    if (!file) return;
+  const handleSelectImages = useCallback(() => {
+    imageFileInputRef.current?.click();
+  }, []);
 
-    const isVideo = file.type.startsWith("video/");
-    const isDocument =
-      file.type === "application/pdf" ||
-      file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-      /\.pdf$/i.test(file.name) ||
-      /\.docx$/i.test(file.name);
-
-    if (!isVideo && !isDocument) {
-      setError("请上传图文档案（Word、PDF）或 MP4 视频文档");
+  const ingestGrowthCampVideo = useCallback((file: File) => {
+    if (!isGrowthCampVideoFile(file)) {
+      setError("请上传 MP4 视频（每次仅 1 个）");
       return;
     }
 
-    setFileName(file.name);
-    setFileSize(file.size);
-    setLocalDurationSeconds(0);
-    setFileMimeType(file.type || "");
-    setSelectedFile(file);
-    setInputKind(isVideo ? "video" : "document");
-    setUploadStage("reading");
-    setUploadProgress(0);
+    const assetId = newGrowthCampAssetId();
+    const mimeType = file.type || "video/mp4";
+
+    setAssets((prev) => {
+      const oldVideo = prev.find((a) => a.kind === "video");
+      if (oldVideo?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(oldVideo.previewUrl);
+      }
+      return prev.filter((a) => a.kind !== "video");
+    });
+    setAssetReadingId(assetId);
     setError(null);
     setAnalysis(null);
     setDebugInfo(null);
-    setPreviewUrl(null);
-
-    const sizeMB = file.size / (1024 * 1024);
-    setEstimatedTime(Math.max(10, Math.round(sizeMB * 2 + 15)));
 
     void (async () => {
       try {
-        if (isDocument) {
-          const dataUrl = await readFileAsDataUrl(file);
-          setFileBase64(dataUrl.split(",")[1] || "");
-          setUploadStage("idle");
-          setUploadProgress(100);
-          return;
-        }
-
-        setFileBase64(null);
-
         const { previewUrl, durationSeconds } = await extractVideoPreview(file);
-        setPreviewUrl(previewUrl);
-        setLocalDurationSeconds(durationSeconds);
-        setUploadStage("idle");
-        setUploadProgress(100);
-      } catch (fileError: any) {
-        setError(fileError.message || "文档读取失败");
-        setUploadStage("error");
+        setAssets((prev) => [
+          ...prev,
+          {
+            id: assetId,
+            kind: "video" as const,
+            file,
+            fileName: file.name,
+            mimeType,
+            size: file.size,
+            previewUrl,
+            base64: null,
+            durationSeconds,
+            ready: true,
+          },
+        ]);
+      } catch (fileError: unknown) {
+        const msg = fileError instanceof Error ? fileError.message : "视频读取失败";
+        setAssets((prev) => [
+          ...prev,
+          {
+            id: assetId,
+            kind: "video" as const,
+            file,
+            fileName: file.name,
+            mimeType,
+            size: file.size,
+            previewUrl: null,
+            base64: null,
+            durationSeconds: 0,
+            ready: false,
+            readError: msg,
+          },
+        ]);
+        setError(msg);
+      } finally {
+        setAssetReadingId((current) => (current === assetId ? null : current));
       }
     })();
   }, []);
 
+  const ingestGrowthCampImages = useCallback((files: File[]) => {
+    const valid = files.filter((f) => isGrowthCampImageFile(f));
+    if (!valid.length) {
+      setError("请上传 PNG 或 JPG 图片（单次可多选）");
+      return;
+    }
+
+    const batchId = newGrowthCampAssetId();
+    setAssetReadingId(batchId);
+    setError(null);
+    setAnalysis(null);
+    setDebugInfo(null);
+
+    void (async () => {
+      const newAssets = await Promise.all(
+        valid.map(async (file) => {
+          const assetId = newGrowthCampAssetId();
+          const mimeType = normalizeGrowthCampImageMime(file) || "image/jpeg";
+          try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const base64 = dataUrl.split(",")[1] || "";
+            return {
+              id: assetId,
+              kind: "image" as const,
+              file,
+              fileName: file.name,
+              mimeType,
+              size: file.size,
+              previewUrl: dataUrl,
+              base64,
+              durationSeconds: 0,
+              ready: true,
+            } satisfies GrowthCampAsset;
+          } catch (fileError: unknown) {
+            const msg = fileError instanceof Error ? fileError.message : "图片读取失败";
+            return {
+              id: assetId,
+              kind: "image" as const,
+              file,
+              fileName: file.name,
+              mimeType,
+              size: file.size,
+              previewUrl: null,
+              base64: null,
+              durationSeconds: 0,
+              ready: false,
+              readError: msg,
+            } satisfies GrowthCampAsset;
+          }
+        }),
+      );
+      setAssets((prev) => [...prev, ...newAssets]);
+      const failed = newAssets.filter((a) => !a.ready);
+      if (failed.length === newAssets.length) {
+        setError("图片读取失败，请重试");
+      } else if (failed.length > 0) {
+        setError(`${failed.length} 张图片读取失败，其余已添加`);
+      }
+      setAssetReadingId((current) => (current === batchId ? null : current));
+    })();
+  }, []);
+
+  const handleVideoFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (file) ingestGrowthCampVideo(file);
+    },
+    [ingestGrowthCampVideo],
+  );
+
+  const handleImageFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = "";
+      if (files.length) ingestGrowthCampImages(files);
+    },
+    [ingestGrowthCampImages],
+  );
+
+  const removeGrowthCampAsset = useCallback((id: string) => {
+    setAssets((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((a) => a.id !== id);
+    });
+    setError(null);
+    setAnalysis(null);
+    setDebugInfo(null);
+  }, []);
+
   const handleAnalyze = useCallback(async () => {
-    if (!inputKind) return;
+    if (!allAssetsReady || assets.length === 0) return;
+
+    if (videoAssets.length > 1) {
+      toast.error("每次分析仅支持 1 个 MP4 视频");
+      return;
+    }
+
+    if (analysisProfile === "extract_only" && (assets.length !== 1 || videoAssets.length !== 1)) {
+      toast.error("内容提取模式仅支持单个 MP4 视频");
+      return;
+    }
 
     if (!supervisorAccess) {
       try {
@@ -2028,296 +2181,180 @@ export default function MVAnalysisPage() {
           setQuotaModalVisible(true);
           return;
         }
-      } catch (accessError: any) {
-        toast.error(accessError.message || "无法检查使用权限");
+      } catch (accessError: unknown) {
+        toast.error(accessError instanceof Error ? accessError.message : "无法检查使用权限");
         return;
       }
     }
+
+    const runGrowthVideoAnalysis = async (asset: GrowthCampAsset) => {
+      const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
+        fileName: asset.fileName || "video.mp4",
+        mimeType: asset.mimeType || "video/mp4",
+      });
+      await uploadFileToSignedUrl({
+        file: asset.file,
+        uploadUrl: signed.uploadUrl,
+        headers: signed.requiredHeaders,
+        onProgress: (percent) => {
+          const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
+          setUploadProgress(mappedPercent);
+        },
+      });
+      if (!signed.gcsUri) {
+        throw new Error("视频上传完成但未返回地址");
+      }
+
+      setUploadStage("analyzing");
+      setUploadProgress(60);
+
+      const analysisRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const { jobId } = await createJob({
+        type: "video",
+        userId: user?.id ? String(user.id) : "",
+        input: {
+          action: "growth_analyze_video",
+          params: {
+            gcsUri: signed.gcsUri,
+            mimeType: asset.mimeType || "video/mp4",
+            fileName: asset.fileName,
+            context: context || undefined,
+            modelName: growthCampAnalysisModel,
+            mode: analysisMode,
+            analysisRunId,
+            durationSeconds: asset.durationSeconds > 0 ? asset.durationSeconds : undefined,
+            analysisProfile,
+            extractPrompt:
+              analysisProfile === "extract_only" && extractPrompt.trim() ? extractPrompt.trim() : undefined,
+          },
+        },
+      });
+
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 12 * 60_000) {
+        const job = await getJob(jobId);
+        if (job.status === "succeeded") {
+          return {
+            analysis: job.output?.analysis,
+            videoUrl: job.output?.videoUrl,
+            transcript: job.output?.transcript,
+            videoDuration: job.output?.videoDuration,
+            debug: job.output?.debug,
+          };
+        }
+        if (job.status === "failed") {
+          throw new Error(String(job.error || "视频分析失败"));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+      }
+      throw new Error("视频分析超时，请稍后重试");
+    };
 
     setUploadStage("uploading");
     setUploadProgress(0);
     setError(null);
     setElapsedTime(0);
-    setEstimatedTime(Math.max(12, Math.round(fileSize / (1024 * 1024) * 1.5 + 12)));
+    setEstimatedTime(Math.max(12, Math.round(totalAssetBytes / (1024 * 1024) * 1.5 + 12)));
     setDebugInfo((prev) => ({
       ...(prev || {}),
       inputKind,
-      fileName,
-      mimeType: fileMimeType || null,
-      fileSize,
-      videoPipeline: inputKind === "video" ? {
-        selectedFile: {
-          name: selectedFile?.name || fileName || "",
-          size: selectedFile?.size || fileSize || 0,
-          mimeType: fileMimeType || selectedFile?.type || "",
-        },
-        upload: { status: "started", progress: 0 },
-        dispatch: { status: "idle" },
-        analysis: { status: "idle" },
-      } satisfies VideoPipelineDebug : undefined,
+      assetCount: assets.length,
+      videoCount: videoAssets.length,
+      imageCount: imageAssets.length,
     }));
 
     try {
-      const result = inputKind === "document"
-          ? await analyzeDocumentMutation.mutateAsync({
-              fileBase64: fileBase64 || "",
-              mimeType: fileMimeType || "application/octet-stream",
-              fileName,
-              context: context || undefined,
-              modelName: growthCampAnalysisModel,
-            })
-          : await (async () => {
-              if (!selectedFile) {
-                throw new Error("请先选择视频文档");
-              }
-              let signed;
-              try {
-                signed = await getVideoUploadSignedUrlMutation.mutateAsync({
-                  fileName: selectedFile.name || fileName || "video.mp4",
-                  mimeType: fileMimeType || selectedFile.type || "video/mp4",
-                });
-              } catch (signedUrlError: any) {
-                setDebugInfo((prev) => ({
-                  ...(prev || {}),
-                  videoPipeline: {
-                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                    upload: {
-                      ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
-                      status: "failed",
-                      strategy: "signed-url",
-                      signedUrlError: String(signedUrlError?.message || signedUrlError || "signed_url_request_failed"),
-                    },
-                  },
-                }));
-                throw signedUrlError;
-              }
-              try {
-                await uploadFileToSignedUrl({
-                  file: selectedFile,
-                  uploadUrl: signed.uploadUrl,
-                  headers: signed.requiredHeaders,
-                  onProgress: (percent) => {
-                    const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
-                    setUploadProgress(mappedPercent);
-                    setDebugInfo((prev) => ({
-                      ...(prev || {}),
-                      videoPipeline: {
-                        ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                        upload: {
-                          ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
-                          status: "started",
-                          progress: mappedPercent,
-                          strategy: "signed-url",
-                        },
-                      },
-                    }));
-                  },
-                });
-              } catch (uploadError: any) {
-                setDebugInfo((prev) => ({
-                  ...(prev || {}),
-                  videoPipeline: {
-                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                    upload: {
-                      ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
-                      status: "failed",
-                      strategy: "signed-url",
-                      error: String(uploadError?.message || uploadError || "signed_url_upload_failed"),
-                    },
-                  },
-                }));
-                throw uploadError;
-              }
-              const uploaded: { url?: string; key?: string; gcsUri?: string; strategy: "signed-url" | "legacy-upload" } = {
-                gcsUri: signed.gcsUri,
-                strategy: "signed-url" as const,
-              };
-              if (!uploaded?.gcsUri) {
-                throw new Error("视频上传完成但未返回地址");
-              }
-              setDebugInfo((prev) => ({
-                ...(prev || {}),
-                videoPipeline: {
-                  ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                  upload: {
-                    status: "done",
-                    progress: 100,
-                    url: uploaded.url,
-                    key: uploaded.key,
-                    gcsUri: uploaded.gcsUri,
-                    strategy: uploaded.strategy,
-                  },
-                },
-              }));
+      const partials: Array<{ label: string; analysis: AnalysisResult }> = [];
+      let lastTranscript = "";
+      let lastVideoUrl = "";
+      let lastVideoDebug: Record<string, unknown> = {};
 
-              setUploadStage("analyzing");
-              setUploadProgress(60);
+      const totalSteps = videoAssets.length + (imageAssets.length > 0 ? 1 : 0);
 
-              setDebugInfo((prev) => ({
-                ...(prev || {}),
-                videoPipeline: {
-                  ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                  mode: "job",
-                  dispatch: {
-                    status: "started",
-                    modelName: growthCampAnalysisModel,
-                    route: "growth_analyze_video",
-                    analysisProfile,
-                  },
-                },
-              }));
-              const analysisRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-              const { jobId } = await createJob({
-                type: "video",
-                userId: user?.id ? String(user.id) : "",
-                input: {
-                  action: "growth_analyze_video",
-                  params: {
-                    gcsUri: uploaded.gcsUri,
-                    fileUrl: uploaded.url,
-                    fileKey: uploaded.key,
-                    mimeType: fileMimeType || "video/mp4",
-                    fileName,
-                    context: context || undefined,
-                    modelName: growthCampAnalysisModel,
-                    mode: analysisMode,
-                    analysisRunId,
-                    durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
-                    analysisProfile,
-                    extractPrompt: analysisProfile === "extract_only" && extractPrompt.trim()
-                      ? extractPrompt.trim()
-                      : undefined,
-                  },
-                },
-              });
-              setDebugInfo((prev) => ({
-                ...(prev || {}),
-                videoPipeline: {
-                  ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                  dispatch: {
-                    status: "done",
-                    modelName: growthCampAnalysisModel,
-                    route: "growth_analyze_video",
-                    analysisProfile,
-                  },
-                  job: {
-                    jobId,
-                    status: "queued",
-                    pollCount: 0,
-                  },
-                  analysis: {
-                    status: "started",
-                  },
-                },
-              }));
+      for (let vi = 0; vi < videoAssets.length; vi++) {
+        const asset = videoAssets[vi]!;
+        setUploadProgress(Math.round(((vi + 0.15) / Math.max(1, totalSteps)) * 55));
+        const videoResult = await runGrowthVideoAnalysis(asset);
+        partials.push({
+          label: asset.fileName || `视频 ${vi + 1}`,
+          analysis: normalizeAnalysisScale(videoResult.analysis) as AnalysisResult,
+        });
+        lastTranscript = String(videoResult.transcript || "");
+        lastVideoUrl = String(videoResult.videoUrl || "");
+        lastVideoDebug = (videoResult.debug as Record<string, unknown>) || {};
+      }
 
-              const startedAt = Date.now();
-              let pollCount = 0;
-              while (Date.now() - startedAt < 12 * 60_000) {
-                const job = await getJob(jobId);
-                pollCount += 1;
-                setDebugInfo((prev) => ({
-                  ...(prev || {}),
-                  videoPipeline: {
-                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                    job: {
-                      jobId,
-                      status: String(job.status || "unknown"),
-                      pollCount,
-                      error: job.status === "failed" ? String(job.error || "") : undefined,
-                    },
-                  },
-                }));
-                if (job.status === "succeeded") {
-                  return {
-                    success: true,
-                    analysis: job.output?.analysis,
-                    videoUrl: job.output?.videoUrl,
-                    transcript: job.output?.transcript,
-                    videoDuration: job.output?.videoDuration,
-                    debug: job.output?.debug,
-                  };
-                }
-                if (job.status === "failed") {
-                  throw new Error(String(job.error || "视频分析失败"));
-                }
-                await new Promise((resolve) => setTimeout(resolve, 2500));
-                setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
-              }
+      if (imageAssets.length > 0) {
+        setUploadStage("analyzing");
+        setUploadProgress(Math.round(((videoAssets.length + 0.5) / Math.max(1, totalSteps)) * 85));
+        const imgResult = await analyzeGrowthCampImagesMutation.mutateAsync({
+          images: imageAssets.map((a) => ({
+            fileBase64: a.base64 || "",
+            mimeType: a.mimeType,
+            fileName: a.fileName,
+          })),
+          context: context || undefined,
+          modelName: growthCampAnalysisModel,
+          mode: analysisMode,
+        });
+        partials.push({
+          label: imageAssets.length === 1 ? imageAssets[0]!.fileName || "图片" : `图片×${imageAssets.length}`,
+          analysis: normalizeAnalysisScale(imgResult.analysis) as AnalysisResult,
+        });
+      }
 
-              throw new Error("视频分析超时，请稍后重试");
-            })();
-      const normalizedAnalysis = normalizeAnalysisScale(result.analysis);
-      const nextTranscript = String((result as any).transcript || "");
-      const nextVideoUrl = String((result as any).videoUrl || "");
-      setAnalysis(normalizedAnalysis);
-      setAnalysisTranscript(nextTranscript);
-      setAnalyzedVideoUrl(nextVideoUrl);
+      let finalAnalysis = partials[0]!.analysis;
+      if (partials.length > 1) {
+        const merged = await synthesizeGrowthCampAnalysesMutation.mutateAsync({
+          parts: partials.map((p) => ({ label: p.label, analysis: p.analysis })),
+          context: context || undefined,
+          modelName: growthCampAnalysisModel,
+        });
+        finalAnalysis = normalizeAnalysisScale(merged.analysis) as AnalysisResult;
+      }
+
+      setAnalysis(finalAnalysis);
+      setAnalysisTranscript(lastTranscript);
+      setAnalyzedVideoUrl(lastVideoUrl);
       queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
       setDebugInfo((prev) => ({
         ...(prev || {}),
         inputKind,
-        fileName,
-        mimeType: fileMimeType || null,
-        fileSize,
-        videoPipeline: inputKind === "video" ? {
-          ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-          analysis: {
-            status: "done",
-            provider: String((result as any).debug?.provider || ""),
-            model: String((result as any).debug?.model || ""),
-            pipeline: String((result as any).debug?.pipeline || ""),
-            stageOneModel: String((result as any).debug?.stageOneModel || ""),
-            stageTwoModel: String((result as any).debug?.stageTwoModel || ""),
-            visualPassModel: String((result as any).debug?.visualPassModel || ""),
-            analysisProfile,
-            sparseFrameCount: Number((result as any).debug?.sparseFrameCount || 0) || undefined,
-            fallback: Boolean((result as any).debug?.fallback),
-            failureStage: String((result as any).debug?.failureStage || ""),
-            failureReason: String((result as any).debug?.failureReason || ""),
-            transcriptChars: Number((result as any).debug?.transcriptChars || 0),
-            videoDuration: Number((result as any).debug?.videoDuration || 0),
-          },
-        } satisfies VideoPipelineDebug : undefined,
-        ...((result as any).debug || {}),
+        assetCount: assets.length,
+        mergedPartCount: partials.length,
+        ...lastVideoDebug,
       }));
       setUploadProgress(100);
       setUploadStage("done");
       if (!supervisorAccess) {
         usageStatsQuery.refetch();
       }
-    } catch (analysisError: any) {
-      setDebugInfo((prev) => ({
-        ...(prev || {}),
-        inputKind,
-        fileName,
-        mimeType: fileMimeType || null,
-        fileSize,
-        videoPipeline: inputKind === "video" ? {
-          ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-          upload: {
-            ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
-            status: (((prev as any)?.videoPipeline?.upload?.status as string) || "started") === "done" ? "done" : "failed",
-            error: (((prev as any)?.videoPipeline?.upload?.status as string) || "idle") === "done" ? undefined : String(analysisError?.message || analysisError || ""),
-          },
-          dispatch: {
-            ...((((prev as any)?.videoPipeline?.dispatch || {}) as VideoPipelineDebug["dispatch"])),
-            status: (((prev as any)?.videoPipeline?.dispatch?.status as string) || "idle") === "done" ? "done" : ((((prev as any)?.videoPipeline?.dispatch?.status as string) || "idle") === "started" ? "failed" : ((prev as any)?.videoPipeline?.dispatch?.status as any) || "idle"),
-            error: (((prev as any)?.videoPipeline?.dispatch?.status as string) || "idle") === "started" ? String(analysisError?.message || analysisError || "") : (((prev as any)?.videoPipeline?.dispatch?.error as string) || undefined),
-          },
-          analysis: {
-            ...((((prev as any)?.videoPipeline?.analysis || {}) as VideoPipelineDebug["analysis"])),
-            status: "failed",
-            error: String(analysisError?.message || analysisError || ""),
-          },
-        } satisfies VideoPipelineDebug : undefined,
-      }));
+    } catch (analysisError: unknown) {
       setError(mapAnalysisError(analysisError));
       setUploadStage("error");
-    } finally {
-      // no-op
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode, growthCampAnalysisModel, analysisProfile, extractPrompt, localDurationSeconds, user?.id]);
+  }, [
+    allAssetsReady,
+    assets.length,
+    videoAssets,
+    imageAssets,
+    inputKind,
+    supervisorAccess,
+    checkAccessMutation,
+    totalAssetBytes,
+    analyzeGrowthCampImagesMutation,
+    synthesizeGrowthCampAnalysesMutation,
+    getVideoUploadSignedUrlMutation,
+    context,
+    usageStatsQuery,
+    analysisMode,
+    growthCampAnalysisModel,
+    analysisProfile,
+    extractPrompt,
+    user?.id,
+    queryClient,
+  ]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
@@ -2586,7 +2623,7 @@ export default function MVAnalysisPage() {
 
   const scoreItems = useMemo(() => {
     if (!analysis) return [];
-    if (inputKind === "document") {
+    if (inputKind === "image") {
       return [
         { label: "结构质量", value: analysis.composition },
         { label: "包装潜力", value: analysis.color },
@@ -3414,159 +3451,147 @@ export default function MVAnalysisPage() {
                 </div>
               )}
 
-              {!selectedFile ? (
-                <button
-                  onClick={handleSelectFile}
-                  className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center transition hover:bg-white/10"
-                >
+              {assets.length === 0 ? (
+                <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 py-10 text-center">
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
                   <div className="mt-5 text-2xl font-bold">
-                    {isPlatformPage ? "上传图文档案或视频素材，专看平台判断" : "上传图文档案或视频素材"}
+                    {isPlatformPage ? "上传视频或图片素材" : "上传视频或图片素材"}
                   </div>
-                  <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    {isPlatformPage
-                      ? "支持 Word、PDF、MP4。上传后聚焦输出平台推荐、平台数据参考和扶持判断，不把二次创作模块一起展开。"
-                      : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
+                  <p className="mt-3 max-w-lg text-sm leading-7 text-white/60">
+                    MP4 视频<strong className="text-white/85"> 每次仅 1 个</strong>；PNG / JPG 图片
+                    <strong className="text-white/85"> 单次可多选、数量不限</strong>。可组合「1 个视频 + 多张图片」做商业分析。
                   </p>
-                </button>
+                  <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSelectVideo}
+                      disabled={Boolean(assetReadingId) || isProcessing}
+                      className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 text-sm font-bold text-black transition hover:bg-[#ff9c5c] disabled:opacity-50"
+                    >
+                      <Film className="h-4 w-4" />
+                      上传 MP4（1 个）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSelectImages}
+                      disabled={Boolean(assetReadingId) || isProcessing}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/8 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/12 disabled:opacity-50"
+                    >
+                      <ImageIcon className="h-4 w-4" />
+                      上传图片（可多选）
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-4">
-                  {previewUrl ? (
-                    <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/30">
-                      <img src={previewUrl} alt="Selected" className="max-h-[360px] w-full object-cover" />
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-sm text-white/70">
+                      已添加 <strong className="text-white">{assets.length}</strong> 个素材
+                      {videoAssets.length > 0 ? ` · 1 个 MP4` : ""}
+                      {imageAssets.length > 0 ? ` · ${imageAssets.length} 张图片` : ""}
                     </div>
-                  ) : (
-                    <div className="flex min-h-[220px] flex-col items-center justify-center rounded-[24px] border border-white/10 bg-black/30 px-6 text-center">
-                      {inputKind === "document" ? <FileUp className="h-12 w-12 text-[#ffb37f]" /> : <Film className="h-12 w-12 text-[#ffb37f]" />}
-                      <div className="mt-4 text-xl font-bold text-white">
-                        {inputKind === "document" ? "文档已就绪" : "视频文档已就绪"}
-                      </div>
-                      <p className="mt-2 text-sm leading-7 text-white/60">
-                        {inputKind === "document"
-                          ? "会先提取内容，再输出定位、平台与商业建议。"
-                          : "会先抽帧与理解节奏，再输出可直接执行的分析报告。"}
-                      </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectVideo}
+                        disabled={Boolean(assetReadingId) || isProcessing}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <Film className="h-3.5 w-3.5" />
+                        {videoAssets.length > 0 ? "更换 MP4" : "上传 MP4"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSelectImages}
+                        disabled={Boolean(assetReadingId) || isProcessing}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        添加图片（可多选）
+                      </button>
                     </div>
-                  )}
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/70">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2">
-                        <FileUp className="h-4 w-4 text-[#ffb37f]" />
-                        {fileName || "未命名文档"}
-                      </span>
-                      <span>{(fileSize / (1024 * 1024)).toFixed(1)} MB</span>
-                    </div>
-                    <div className="mt-4 h-2 rounded-full bg-white/10">
-                      <div className="h-2 rounded-full bg-[#ff8a3d]" style={{ width: `${uploadProgress}%` }} />
-                    </div>
-                    {isProcessing ? (
-                      <div className="mt-3 space-y-3 text-xs text-white/55">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="font-medium text-white/78">{processingStatusMessage}</div>
-                          <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-white/60">
-                            {uploadProgress}%
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {assets.map((asset) => (
+                      <div
+                        key={asset.id}
+                        className={`relative overflow-hidden rounded-2xl border bg-black/30 ${
+                          asset.ready ? "border-white/10" : "border-rose-400/30"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => removeGrowthCampAsset(asset.id)}
+                          disabled={isProcessing}
+                          className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-black/60 text-white/80 transition hover:bg-black/80 disabled:opacity-40"
+                          aria-label="移除素材"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                        {asset.previewUrl ? (
+                          asset.kind === "video" ? (
+                            <video
+                              src={asset.previewUrl}
+                              className="aspect-video w-full object-cover"
+                              muted
+                              playsInline
+                              preload="metadata"
+                            />
+                          ) : (
+                            <img src={asset.previewUrl} alt={asset.fileName} className="aspect-video w-full object-cover" />
+                          )
+                        ) : (
+                          <div className="flex aspect-video flex-col items-center justify-center px-4 text-center">
+                            {asset.kind === "video" ? (
+                              <Film className="h-8 w-8 text-[#ffb37f]" />
+                            ) : (
+                              <ImageIcon className="h-8 w-8 text-[#ffb37f]" />
+                            )}
+                            <div className="mt-2 text-xs text-white/55">{asset.readError || "读取中…"}</div>
+                          </div>
+                        )}
+                        <div className="border-t border-white/10 px-3 py-2 text-xs text-white/70">
+                          <div className="truncate font-medium">{asset.fileName}</div>
+                          <div className="mt-0.5 text-white/45">
+                            {asset.kind === "video" ? "MP4" : "图片"} · {(asset.size / (1024 * 1024)).toFixed(1)} MB
                           </div>
                         </div>
-                        {activeProcessingStep ? (
-                          <div className="rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/8 px-3 py-2.5 text-white/75">
-                            <div className="text-[11px] uppercase tracking-[0.16em] text-[#ffcf92]">当前步骤</div>
-                            <div className="mt-1 text-sm font-semibold text-white">{activeProcessingStep.label}</div>
-                            <div className="mt-1 leading-6 text-white/68">{activeProcessingStep.detail}</div>
-                          </div>
-                        ) : null}
-                        {animatedProcessingSteps.length ? (
-                          <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
-                            <div className="grid gap-2 md:grid-cols-3">
-                              {animatedProcessingSteps.map((step) => (
-                                <div
-                                  key={step.id}
-                                  className={`rounded-xl border px-3 py-2.5 ${
-                                    step.status === "done"
-                                      ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.12),0_0_24px_rgba(52,211,153,0.16)]"
-                                      : step.status === "active"
-                                        ? "animate-pulse border-[#ff8a3d]/35 bg-[rgba(255,138,61,0.14)] text-white shadow-[0_0_0_1px_rgba(255,138,61,0.1),0_0_24px_rgba(255,138,61,0.14)]"
-                                        : "animate-pulse border-white/12 bg-[rgba(255,255,255,0.05)] text-white/60"
-                                  }`}
-                                >
-                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">
-                                    {step.status === "done" ? "已完成" : step.status === "active" ? "进行中" : "等待中"}
-                                  </div>
-                                  <div className="mt-1 text-sm font-semibold">{step.animatedLabel || "…"}</div>
-                                  <div className={`mt-1 text-xs leading-5 ${
-                                    step.status === "done"
-                                      ? "text-emerald-100/80"
-                                      : step.status === "active"
-                                        ? "text-white/82"
-                                        : "text-white/55"
-                                  }`}>
-                                    {step.animatedDetail || "…"}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="rounded-xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] px-4 py-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-[11px] uppercase tracking-[0.16em] text-[#90c4ff]">平台当下活动</div>
-                                {activeCarouselActivity ? (
-                                  <div className="rounded-full border border-white/10 bg-black/15 px-2 py-1 text-[11px] text-white/60">
-                                    每 10 秒轮播
-                                  </div>
-                                ) : null}
-                              </div>
-                              {activeCarouselActivity ? (
-                                <div className="mt-3 space-y-3">
-                                  <div>
-                                    <div className="text-base font-bold text-white">{activeCarouselActivity.platformLabel}</div>
-                                    <div className="mt-1 text-sm leading-6 text-white/72">{activeCarouselActivity.summary}</div>
-                                  </div>
-                                  {activeCarouselActivity.hotTopic ? (
-                                    <div className="rounded-lg border border-white/10 bg-black/15 px-3 py-2 text-sm leading-6 text-white/78">
-                                      <span className="mr-2 inline-flex rounded-full border border-[#ffcf92]/20 bg-[#ffcf92]/10 px-2 py-0.5 text-[11px] text-[#ffd08f]">即时热题</span>
-                                      {activeCarouselActivity.hotTopic}
-                                    </div>
-                                  ) : null}
-                                  <div className="space-y-2 text-sm leading-6 text-white/78">
-                                    {activeCarouselActivity.supportActivities.slice(0, 2).map((entry) => (
-                                      <div key={`${activeCarouselActivity.platformLabel}-${entry}`} className="rounded-lg border border-white/10 bg-black/15 px-3 py-2">
-                                        {entry}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="mt-3 text-sm leading-6 text-white/55">
-                                  正在拉取当前有公开活动的平台信息，分析过程中会自动轮播展示。
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : null}
-                        {processingDetailMessages.length ? (
-                          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
-                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">当前进度</div>
-                            <div className="mt-2 space-y-2">
-                              {processingDetailMessages.map((message, index) => (
-                                <div key={`${index}-${message}`} className="flex items-start gap-2 text-white/65">
-                                  <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-[#ff8a3d]" />
-                                  <span className="leading-6">{message}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
                       </div>
-                    ) : null}
+                    ))}
                   </div>
+
+                  {isProcessing ? (
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/70">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-medium text-white/78">{processingStatusMessage}</div>
+                        <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-white/60">
+                          {uploadProgress}%
+                        </div>
+                      </div>
+                      <div className="mt-4 h-2 rounded-full bg-white/10">
+                        <div className="h-2 rounded-full bg-[#ff8a3d]" style={{ width: `${uploadProgress}%` }} />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
 
               <input
-                ref={fileInputRef}
+                ref={videoFileInputRef}
                 type="file"
-                accept=".docx,application/pdf,video/mp4"
-                onChange={handleFileChange}
+                accept="video/mp4,.mp4"
+                onChange={handleVideoFileChange}
+                className="hidden"
+              />
+              <input
+                ref={imageFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                multiple
+                onChange={handleImageFileChange}
                 className="hidden"
               />
 
@@ -3648,7 +3673,7 @@ export default function MVAnalysisPage() {
               </div>
 
               {/* 预估积分提示 */}
-              {(selectedFile || fileBase64) && !isProcessing && (() => {
+              {allAssetsReady && !isProcessing && (() => {
                 const isSupervisorOrAdmin =
                   supervisorAccess || user?.role === "supervisor" || user?.role === "admin";
                 const est = analysisMode === "REMIX" ? 60 : CREDIT_COSTS.growthCampGrowth;
@@ -3662,7 +3687,7 @@ export default function MVAnalysisPage() {
                         <>
                           本次{analysisProfile === "extract_only" ? "内容提取" : analysisMode === "REMIX" ? "二创" : "深度"}分析将消耗{" "}
                           <strong className="text-orange-200">{est} 积分</strong>
-                          <span className="text-white/45">（每次分析固定扣一次，不按时长阶梯）</span>
+                          <span className="text-white/45">（MP4 视频分析每次扣一次；图片批次另计，不按时长阶梯）</span>
                         </>
                       )}
                     </span>
@@ -3674,7 +3699,7 @@ export default function MVAnalysisPage() {
                 <button
                   type="button"
                   onClick={() => void handleAnalyze()}
-                  disabled={(!selectedFile && !fileBase64) || isProcessing}
+                  disabled={!allAssetsReady || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
@@ -3784,8 +3809,8 @@ export default function MVAnalysisPage() {
                   <div>健康检查时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.serviceHealth?.checkedAt || ""))}</div>
                   <div>运行模式：{String(growthSystemStatusQuery.data?.runtimeControl?.mode || "auto")}</div>
                   <div>模式更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.runtimeControl?.updatedAt || ""))}</div>
-                  <div>文档类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>
-                  <div>文件名：{String(debugInfo?.fileName || fileName || "-")}</div>
+                  <div>素材数量：{assets.length}（视频 {videoAssets.length} · 图片 {imageAssets.length}）</div>
+                  <div>输入类型：{inputKind || "-"}</div>
                   <div>邮件配置可用：{String(growthSystemStatusQuery.data?.smtp?.configured ?? "-")}</div>
                   <div>邮件接收人：{String(growthSystemStatusQuery.data?.targetEmail || "-")}</div>
                   <div>邮件发送人：{String(growthSystemStatusQuery.data?.smtp?.from || "-")}</div>
@@ -3821,7 +3846,7 @@ export default function MVAnalysisPage() {
                   <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/75">
                     <div className="text-xs uppercase tracking-[0.16em] text-cyan-100">视频链路 Debug</div>
                     <div className="mt-3 space-y-2 leading-6">
-                      <div>1. 选择文档：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
+                      <div>1. 视频素材：{videoAssets.map((a) => a.fileName).join("、") || "-"}</div>
                       <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
                       <div>3. 上传结果：GCS {String((debugInfo as any)?.videoPipeline?.upload?.gcsUri || "-")} / URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
                       <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")} / 模式 {String((debugInfo as any)?.videoPipeline?.dispatch?.analysisProfile || analysisProfile || "-")}</div>
