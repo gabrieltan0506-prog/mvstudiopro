@@ -635,7 +635,8 @@ async function contentPartToGeminiPart(part: TextContent | ImageContent | FileCo
   }
 
   if (part.type === "image_url") {
-    const dataUrl = parseDataUrl(part.image_url.url);
+    const imageUrl = part.image_url.url;
+    const dataUrl = parseDataUrl(imageUrl);
     if (dataUrl) {
       return {
         inlineData: {
@@ -645,7 +646,17 @@ async function contentPartToGeminiPart(part: TextContent | ImageContent | FileCo
       };
     }
 
-    const fetched = await fetchUrlAsBase64(part.image_url.url, "image/jpeg");
+    if (isGsUri(imageUrl)) {
+      const mimeType = /\.png$/i.test(imageUrl) ? "image/png" : "image/jpeg";
+      return {
+        fileData: {
+          mimeType,
+          fileUri: imageUrl,
+        },
+      };
+    }
+
+    const fetched = await fetchUrlAsBase64(imageUrl, "image/jpeg");
     return {
       inlineData: {
         mimeType: fetched.mimeType,

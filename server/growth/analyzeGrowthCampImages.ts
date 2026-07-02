@@ -1,6 +1,5 @@
 import { type GrowthAnalysisMode, type GrowthAnalysisScores } from "@shared/growth";
-import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl } from "../services/gcs";
-import { storagePut } from "../storage";
+import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl, uploadBufferToGcs } from "../services/gcs";
 import { resolveGrowthCampExtractScanEngine } from "./extractorPipeline";
 import { runGrowthCampStrategistForImages } from "./growthCampStrategistPass";
 
@@ -25,6 +24,18 @@ export type GrowthCampImageAnalysisResult = {
   };
 };
 
+type ImageVisionRef = {
+  mime: "image/png" | "image/jpeg";
+  gcsUri: string;
+  signedReadUrl: string;
+  publicUrl: string;
+};
+
+type VisionUserContent = Array<
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "high" | "auto" | "low" } }
+>;
+
 function normalizeImageMime(mimeType: string, fileName?: string): "image/png" | "image/jpeg" | null {
   const mime = String(mimeType || "").trim().toLowerCase();
   const name = String(fileName || "").toLowerCase();
@@ -33,29 +44,13 @@ function normalizeImageMime(mimeType: string, fileName?: string): "image/png" | 
   return null;
 }
 
-async function readImageAsDataUrl(
+async function ensureGcsUri(
   img: GrowthCampImageAssetInput,
   index: number,
-): Promise<{ mime: "image/png" | "image/jpeg"; dataUrl: string; publicUrl: string }> {
-  const mime = normalizeImageMime(img.mimeType, img.fileName);
-  if (!mime) {
-    throw new Error(`不支持的图片格式：${img.fileName || img.mimeType || "unknown"}`);
-  }
-
-  const gcsUri = String(img.gcsUri || "").trim();
-  if (gcsUri) {
-    const readUrl = signGsUriV4ReadUrl(gcsUri, 3600);
-    const response = await fetch(readUrl);
-    if (!response.ok) {
-      throw new Error(`第 ${index + 1} 张图片读取失败（${response.status}），请重新上传后重试`);
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return {
-      mime,
-      dataUrl: `data:${mime};base64,${buffer.toString("base64")}`,
-      publicUrl: getPublicGcsHttpsUrl(gcsUri),
-    };
-  }
+  mime: "image/png" | "image/jpeg",
+): Promise<string> {
+  const existing = String(img.gcsUri || "").trim();
+  if (existing) return existing;
 
   const base64 = String(img.fileBase64 || "").trim();
   if (!base64) {
@@ -64,53 +59,76 @@ async function readImageAsDataUrl(
 
   const buffer = Buffer.from(base64, "base64");
   const keyName = img.fileName || `image-${index + 1}.${mime === "image/png" ? "png" : "jpg"}`;
-  const { url } = await storagePut(`growth-camp/images/${Date.now()}-${index}-${keyName}`, buffer, mime);
-  return {
-    mime,
-    dataUrl: `data:${mime};base64,${base64}`,
-    publicUrl: url,
-  };
+  const uploaded = await uploadBufferToGcs({
+    objectName: `growth-camp/images/${Date.now()}-${index}-${keyName}`,
+    buffer,
+    contentType: mime,
+  });
+  return uploaded.gcsUri;
 }
 
-async function resolveImageVisionUrls(images: GrowthCampImageAssetInput[]) {
-  const fileUrls: string[] = [];
-  const visionUrls: Array<{ mime: "image/png" | "image/jpeg"; url: string }> = [];
+/** 解析为 GCS 引用 + 短时签名 HTTPS 直链（不在服端转 base64） */
+async function resolveImageVisionRefs(images: GrowthCampImageAssetInput[]): Promise<ImageVisionRef[]> {
+  const refs: ImageVisionRef[] = [];
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i]!;
-    const { mime, dataUrl, publicUrl } = await readImageAsDataUrl(img, i);
-    fileUrls.push(publicUrl);
-    visionUrls.push({ mime, url: dataUrl });
+    const mime = normalizeImageMime(img.mimeType, img.fileName);
+    if (!mime) {
+      throw new Error(`不支持的图片格式：${img.fileName || img.mimeType || "unknown"}`);
+    }
+
+    const gcsUri = await ensureGcsUri(img, i, mime);
+    refs.push({
+      mime,
+      gcsUri,
+      signedReadUrl: signGsUriV4ReadUrl(gcsUri, 3600),
+      publicUrl: getPublicGcsHttpsUrl(gcsUri),
+    });
   }
 
-  return { fileUrls, visionUrls };
+  return refs;
 }
 
-function buildImageAnalysisUserContent(
-  images: GrowthCampImageAssetInput[],
-  visionUrls: Array<{ mime: "image/png" | "image/jpeg"; url: string }>,
-  context?: string,
-) {
-  const userContent: Array<
-    | { type: "text"; text: string }
-    | { type: "image_url"; image_url: { url: string; detail?: "high" | "auto" | "low" } }
-  > = [
-    {
-      type: "text",
-      text: [
-        `用户上传了 ${images.length} 张图片（PNG/JPG），请基于画面内容做商业增长与视觉策略分析。`,
-        context?.trim() ? `业务背景：${context.trim()}` : "业务背景：未提供",
-        "请综合所有图片中的文字、人物、产品、场景、版式与视觉风格做判断，输出须具体、可执行，禁止空泛模板句。",
-      ].join("\n\n"),
-    },
+function buildAnalysisPromptText(imageCount: number, context?: string): string {
+  return [
+    `用户上传了 ${imageCount} 张图片（PNG/JPG），请基于画面内容做商业增长与视觉策略分析。`,
+    context?.trim() ? `业务背景：${context.trim()}` : "业务背景：未提供",
+    "请综合所有图片中的文字、人物、产品、场景、版式与视觉风格做判断，输出须具体、可执行，禁止空泛模板句。",
+  ].join("\n\n");
+}
+
+/** Evolink / GPT：传签名 HTTPS 直链，由上游自行拉取，请求体不含 base64 */
+function buildOpenAiVisionUserContent(refs: ImageVisionRef[], context?: string): VisionUserContent {
+  const userContent: VisionUserContent = [
+    { type: "text", text: buildAnalysisPromptText(refs.length, context) },
   ];
 
-  for (let i = 0; i < visionUrls.length; i++) {
-    const item = visionUrls[i]!;
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i]!;
     userContent.push({
       type: "image_url",
       image_url: {
-        url: item.url,
+        url: ref.signedReadUrl,
+        detail: i < 2 ? "high" : "auto",
+      },
+    });
+  }
+
+  return userContent;
+}
+
+/** Vertex Gemini fallback：传 gs:// URI，由 Vertex 直读 GCS，不经服端 base64 */
+function buildVertexVisionUserContent(refs: ImageVisionRef[], context?: string): VisionUserContent {
+  const userContent: VisionUserContent = [
+    { type: "text", text: buildAnalysisPromptText(refs.length, context) },
+  ];
+
+  for (let i = 0; i < refs.length; i++) {
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: refs[i]!.gcsUri,
         detail: i < 2 ? "high" : "auto",
       },
     });
@@ -136,8 +154,10 @@ export async function analyzeGrowthCampImages(params: {
     throw new Error("请至少上传一张 PNG 或 JPG 图片");
   }
 
-  const { fileUrls, visionUrls } = await resolveImageVisionUrls(images);
-  const userContent = buildImageAnalysisUserContent(images, visionUrls, params.context);
+  const refs = await resolveImageVisionRefs(images);
+  const fileUrls = refs.map((ref) => ref.publicUrl);
+  const openAiUserContent = buildOpenAiVisionUserContent(refs, params.context);
+  const vertexUserContent = buildVertexVisionUserContent(refs, params.context);
   const primaryModel = params.modelName || "gpt-5.5";
 
   let analysis: GrowthAnalysisScores;
@@ -148,7 +168,7 @@ export async function analyzeGrowthCampImages(params: {
 
   try {
     analysis = await runGrowthCampStrategistForImages({
-      userContent,
+      userContent: openAiUserContent,
       context: params.context,
       mode: params.mode,
       modelName: primaryModel,
@@ -160,13 +180,13 @@ export async function analyzeGrowthCampImages(params: {
     const geminiEngine = resolveGrowthCampExtractScanEngine();
     try {
       analysis = await runGrowthCampStrategistForImages({
-        userContent,
+        userContent: vertexUserContent,
         context: params.context,
         mode: params.mode,
         strategistEngine: geminiEngine,
       });
     } catch (fallbackFailure: unknown) {
-      const fallbackMsg = formatAnalysisError(fallbackFailure);
+      console.warn("[growth.analyzeGrowthCampImages] fallback failed:", formatAnalysisError(fallbackFailure));
       throw new Error("图片分析失败，请稍后重试");
     }
 
