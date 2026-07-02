@@ -1023,6 +1023,15 @@ const STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN = [
   "named third-party characters, or clearly distinct roles; never replace the main host with a random stranger.",
 ].join("\n");
 
+/** 参考图为已生成的竖版封面时：强制八格与封面同脸（解决抠像→封面 OK、分镜换脸） */
+const STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN = [
+  "",
+  "APPROVED COVER FACE LOCK (HIGHEST PRIORITY): The attached reference is the finalized vertical cover art.",
+  "The presenter/host face in EVERY modern-day panel MUST match this cover exactly — same facial bone structure,",
+  "eyes, nose, mouth, age, hairstyle, skin tone, and stethoscope/props if visible on the cover.",
+  "Do NOT invent a new face per panel; treat the cover as the single source of truth for host identity.",
+].join("\n");
+
 function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverPersonaContext?: string): string {
   const anchor = [
     "【视觉锚点·主人公】",
@@ -1299,6 +1308,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   coverPersonaContext?: string;
   /** 用户上传主人公参考人像 → EvoLink edit，分镜各格保持同一人（古人/历史角色等脚本明示时除外） */
   referencePhotoUrl?: string;
+  /** 参考图为已生成竖版封面（非原始抠像）→ 加强跨格同脸指令 */
+  referencePhotoFromApprovedCover?: boolean;
   /**
    * 異步 platform job：寫入 Neon `jobs.output.chineseStaging`（2×4 編導中文 task），結案時剝除。
    */
@@ -1574,12 +1585,18 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
 
       if (isEvolinkGptImage2Configured()) {
         const refImageUrls = referencePhotoUrl ? [referencePhotoUrl] : [];
-        const promptForEvo = refImageUrls.length
-          ? `${promptForImage}\n${STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN}`
-          : promptForImage;
+        const refDirectives = [
+          refImageUrls.length ? STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN : "",
+          refImageUrls.length && options.referencePhotoFromApprovedCover
+            ? STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        const promptForEvo = refImageUrls.length ? `${promptForImage}${refDirectives}` : promptForImage;
         appendImageFlowLog(
           L,
-          `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}${refImageUrls.length ? " · edit模式·参考人像=1张" : ""}`,
+          `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}${refImageUrls.length ? ` · edit模式·参考=${options.referencePhotoFromApprovedCover ? "已生成封面" : "上传人像"}` : ""}`,
         );
         const evoErr: { message?: string } = {};
         let fromEvolink = await postEvolinkGptImage2AndUpload(promptForEvo, subdir, {

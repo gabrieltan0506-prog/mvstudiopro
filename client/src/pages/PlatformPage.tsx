@@ -3681,7 +3681,14 @@ export default function PlatformPage() {
   const customTopicCanSubmit = useMemo(() => {
     if (!customTopicGenCopy && !customTopicGenCover && !customTopicGenStoryboard) return false;
     if (customTopicGenCopy && !customTopicProtagonist.trim()) return false;
-    if ((customTopicGenCover || customTopicGenStoryboard) && !customTopicPhotoUrl) return false;
+    if (customTopicGenCover && !customTopicPhotoUrl) return false;
+    if (
+      customTopicGenStoryboard &&
+      !customTopicPhotoUrl &&
+      !(customTopicCoverUrl && !customTopicGenCover)
+    ) {
+      return false;
+    }
     if ((customTopicGenCover || customTopicGenStoryboard) && !customTopicGenCopy && !customTopicCard) return false;
     return true;
   }, [
@@ -3690,14 +3697,23 @@ export default function PlatformPage() {
     customTopicGenStoryboard,
     customTopicProtagonist,
     customTopicPhotoUrl,
+    customTopicCoverUrl,
     customTopicCard,
   ]);
 
-  const generateCustomTopicStoryboardOne = async (card: PlatformContentExecutionCard): Promise<string> => {
+  const generateCustomTopicStoryboardOne = async (
+    card: PlatformContentExecutionCard,
+    opts?: { coverReferenceUrl?: string | null },
+  ): Promise<string> => {
     const protagonist = customTopicProtagonist.trim();
+    const storyboardRefUrl =
+      opts?.coverReferenceUrl ?? customTopicCoverUrl ?? customTopicPhotoUrl ?? undefined;
+    const refFromApprovedCover = Boolean(opts?.coverReferenceUrl ?? customTopicCoverUrl);
     const coverPersona = [
       `【主人公特质与专长】\n${protagonist || card.title}`,
-      "【视觉锚点】分镜各格须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；仅脚本明确描写古人/历史角色等时才使用不同人物。",
+      refFromApprovedCover
+        ? "【视觉锚点】分镜各格须与已生成竖版封面为同一人（以封面人脸为唯一标准，跨格禁止换脸）；仅脚本明确描写古人/历史角色等时才使用不同人物。"
+        : "【视觉锚点】分镜各格须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；仅脚本明确描写古人/历史角色等时才使用不同人物。",
     ]
       .join("\n\n")
       .slice(0, 3800);
@@ -3711,9 +3727,10 @@ export default function PlatformPage() {
       executionDetails: buildPlatformExecutionDetailsPayload(card),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       coverPersonaContext: coverPersona,
-      referencePhotoUrl: customTopicPhotoUrl ?? undefined,
+      referencePhotoUrl: storyboardRefUrl,
+      referencePhotoFromApprovedCover: refFromApprovedCover,
       progressJobId,
-      compositeImageEngine: customTopicPhotoUrl ? "gpt_image2" : platformComposite2x4Engine,
+      compositeImageEngine: storyboardRefUrl ? "gpt_image2" : platformComposite2x4Engine,
     });
     if (res.imageUrl) return res.imageUrl;
     if ((res as { isAsync?: boolean }).isAsync) {
@@ -3744,8 +3761,8 @@ export default function PlatformPage() {
       toast.error("生成封面请先上传主人公图像");
       return;
     }
-    if (customTopicGenStoryboard && !customTopicPhotoUrl) {
-      toast.error("生成分镜请先上传主人公图像（分镜将融合此相貌，避免生成陌生人）");
+    if (customTopicGenStoryboard && !customTopicPhotoUrl && !(customTopicCoverUrl && !customTopicGenCover)) {
+      toast.error("生成分镜请先上传主人公图像，或使用已有封面作为人脸参考");
       return;
     }
     if ((customTopicGenCover || customTopicGenStoryboard) && !customTopicGenCopy && !customTopicCard) {
@@ -3860,6 +3877,7 @@ export default function PlatformPage() {
         if (!bundleRes.success) throw new Error("套装未完成，请重试");
         toast.success(`封面 + ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜已生成`);
       } else {
+        let freshCoverUrl: string | undefined;
         if (customTopicGenCover) {
           const coverRes = await runEnqueueTopicImageAndPoll({
             sceneId: card.id,
@@ -3868,11 +3886,14 @@ export default function PlatformPage() {
             referencePhotoUrl: customTopicPhotoUrl ?? undefined,
             pollDebugLabel: `自定义选题封面 · ${card.id}`,
           });
+          freshCoverUrl = coverRes.imageUrl ?? undefined;
           if (coverRes.imageUrl) setCustomTopicCoverUrl(coverRes.imageUrl);
           else throw new Error("封面生成失败");
         }
         if (customTopicGenStoryboard) {
-          const storyboardUrl = await generateCustomTopicStoryboardOne(card);
+          const storyboardUrl = await generateCustomTopicStoryboardOne(card, {
+            coverReferenceUrl: freshCoverUrl ?? customTopicCoverUrl,
+          });
           setCustomTopicStoryboardUrl(storyboardUrl);
         }
         const done: string[] = [];
@@ -6516,7 +6537,7 @@ export default function PlatformPage() {
                   {customTopicPhase === "copy"
                     ? "正在 AI 扩写选题文案…"
                     : customTopicGenCover && customTopicGenStoryboard
-                      ? `正在并发生成竖版封面与 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 5–8 分钟，请勿关闭页面…`
+                      ? `正在先生成竖版封面，再以封面人脸生成 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 8–12 分钟，请勿关闭页面…`
                       : customTopicGenCover
                         ? "正在生成竖版封面，约需 3–5 分钟，请勿关闭页面…"
                         : `正在生成 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜（融合主人公参考图），约需 5–8 分钟，请勿关闭页面…`}
@@ -6741,7 +6762,20 @@ export default function PlatformPage() {
                           }}
                         />
                       </div>
-                      <div className="flex justify-end">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomTopicPhotoUrl(url);
+                            setCustomTopicPhotoPreview(url);
+                            setCustomWorkspaceTab("topic");
+                            toast.success("已设为参考人像，可在「主人公融合选题」生成封面与分镜");
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                        >
+                          <UserRound className="h-4 w-4" />
+                          设为参考人像
+                        </button>
                         <a
                           href={url}
                           download={`custom-matting-${customMattingAspect.replace(":", "x")}-${idx + 1}.png`}
