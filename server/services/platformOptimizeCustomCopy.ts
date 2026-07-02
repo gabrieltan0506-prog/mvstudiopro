@@ -7,7 +7,7 @@ import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches";
-import { callGemini35FlashCopywriting } from "./gemini35FlashRuntime";
+import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -23,6 +23,9 @@ export type OptimizeCustomCopyResult = {
   storyboardNotes?: string;
   coverNotes?: string;
 };
+
+/** GPT-5.5 链路失败时统一对用户展示的提示（不使用 Gemini 兜底）。 */
+export const OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE = "算力紧张，请稍后再试";
 
 const SYSTEM_PROMPT = `你是 mvstudiopro 平台页的资深内容顾问，专门帮创作者把「已有封面文案、分镜脚本、商业背景」深度改写成可直接发布的版本。
 
@@ -45,9 +48,6 @@ JSON schema:
   "coverNotes": "若涉及封面：主视觉/主标/副标/信息层级建议（可选）"
 }`;
 
-/** 文案优化输出上限：避免 64K 拖慢 Evolink / 触发网关超时。 */
-const OPTIMIZE_CUSTOM_COPY_MAX_OUTPUT_TOKENS = 8192;
-
 function buildUserBlock(input: OptimizeCustomCopyInput): string {
   const sourceText = String(input.sourceText || "").trim();
   const brief = String(input.optimizationBrief || "").trim();
@@ -60,26 +60,20 @@ function buildUserBlock(input: OptimizeCustomCopyInput): string {
 
 function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
   const trimmed = String(raw || "").trim();
-  if (!trimmed) {
-    throw new Error("模型未返回有效内容，请稍后重试");
-  }
-  if (/^an error occurred/i.test(trimmed)) {
-    throw new Error("模型服务暂时异常，请稍后重试");
+  if (!trimmed || /^an error occurred/i.test(trimmed)) {
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
 
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(extractJsonString(trimmed)) as Record<string, unknown>;
-  } catch (err) {
-    const hint = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `模型返回格式异常（${hint}），请稍后重试。若持续失败请缩短原文后重试。`,
-    );
+  } catch {
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
 
   const optimizedMarkdown = String(parsed.optimizedMarkdown || parsed.markdown || "").trim();
   if (!optimizedMarkdown) {
-    throw new Error("优化结果为空，请补充更具体的原文或要求后重试");
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
 
   const titles = Array.isArray(parsed.titles)
@@ -115,13 +109,13 @@ function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
 
 async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" | "minimal"): Promise<string> {
   if (!String(process.env.EVOLINK_API_KEY || "").trim()) {
-    throw new Error("EVOLINK_API_KEY is not configured");
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({
     provider: "openai",
     modelName: getPlatformStage2OpenAiModel(),
     reasoningEffort,
-    max_tokens: OPTIMIZE_CUSTOM_COPY_MAX_OUTPUT_TOKENS,
+    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
     temperature: 0.8,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -130,16 +124,6 @@ async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" 
     response_format: { type: "json_object" },
   });
   return extractFirstChoicePlainText(response).trim();
-}
-
-async function invokeOptimizeViaGeminiFlash(userBlock: string): Promise<string> {
-  return callGemini35FlashCopywriting({
-    taskSystemInstruction: SYSTEM_PROMPT,
-    userText: userBlock,
-    responseMimeType: "application/json",
-    maxOutputTokens: OPTIMIZE_CUSTOM_COPY_MAX_OUTPUT_TOKENS,
-    temperature: 0.8,
-  }).then((s) => String(s || "").trim());
 }
 
 export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promise<OptimizeCustomCopyResult> {
@@ -156,16 +140,14 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
       : (resolvePlatformStage2OpenAiReasoningEffort() as "low" | "minimal");
 
   let lastError: unknown;
-  let gptSkipped = false;
   for (const reasoningEffort of [primaryReasoning, "minimal"] as const) {
     try {
       const raw = await invokeOptimizeViaGpt55(userBlock, reasoningEffort);
       return parseOptimizeCustomCopyJson(raw);
     } catch (err) {
       lastError = err;
-      if (err instanceof Error && err.message.includes("EVOLINK_API_KEY is not configured")) {
-        gptSkipped = true;
-        break;
+      if (err instanceof Error && err.message === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE) {
+        throw err;
       }
       console.warn(
         `[optimizeCustomCopy] GPT-5.5 失败 (reasoning=${reasoningEffort}):`,
@@ -174,27 +156,11 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     }
   }
 
-  if (!String(process.env.GEMINI_API_KEY || "").trim()) {
-    throw lastError instanceof Error
-      ? lastError
-      : new Error("文案优化服务未配置，请联系管理员");
-  }
-
-  try {
-    const raw = await invokeOptimizeViaGeminiFlash(userBlock);
-    return parseOptimizeCustomCopyJson(raw);
-  } catch (geminiErr) {
-    console.warn(
-      "[optimizeCustomCopy] Gemini Flash 兜底失败:",
-      geminiErr instanceof Error ? geminiErr.message.slice(0, 240) : geminiErr,
-    );
-    const geminiMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-    if (gptSkipped) {
-      throw new Error(`文案优化失败（Gemini）：${geminiMsg}`);
-    }
-    const gptMsg = lastError instanceof Error ? lastError.message : String(lastError || "");
-    throw new Error(`文案优化失败：${gptMsg || geminiMsg}`);
-  }
+  console.warn(
+    "[optimizeCustomCopy] GPT-5.5 全部重试失败:",
+    lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
+  );
+  throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
 }
 
 /** @internal 单测用：解析模型 JSON 文本 */
