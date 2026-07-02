@@ -167,7 +167,7 @@ export async function analyzeGrowthCampImages(params: {
       });
     } catch (fallbackFailure: unknown) {
       const fallbackMsg = formatAnalysisError(fallbackFailure);
-      throw new Error(`图片分析失败（主模型与备用模型均未成功）：${fallbackMsg}`);
+      throw new Error("图片分析失败，请稍后重试");
     }
 
     fallback = true;

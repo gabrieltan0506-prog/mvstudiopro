@@ -22,6 +22,20 @@ type PlatformAssetAnalysisPanelProps = {
   disabled?: boolean;
 };
 
+/** 面向用户的错误文案：不暴露模型名、fallback、API 内部细节 */
+function sanitizeAssetAnalysisUserMessage(raw: string): string {
+  const text = String(raw || "").trim();
+  if (!text) return "图片分析失败，请稍后重试";
+  if (
+    /EVOLINK|OPENAI|VERTEX|GPT|Gemini|gemini|gpt-|主模型|备用模型|备用路径|fallback|analyzeGrowthCamp|growth_analyze/i.test(
+      text,
+    )
+  ) {
+    return "图片分析暂时不可用，请稍后重试";
+  }
+  return text;
+}
+
 export default function PlatformAssetAnalysisPanel({
   debugMode,
   supervisorAccess,
@@ -161,7 +175,8 @@ export default function PlatformAssetAnalysisPanel({
       setUploadProgress(100);
       toast.success("素材视觉分析完成");
     } catch (analysisError: unknown) {
-      const msg = analysisError instanceof Error ? analysisError.message : "图片分析失败";
+      const raw = analysisError instanceof Error ? analysisError.message : "图片分析失败";
+      const msg = sanitizeAssetAnalysisUserMessage(raw);
       setError(msg);
       setStage("error");
     } finally {
@@ -536,18 +551,16 @@ export default function PlatformAssetAnalysisPanel({
               {String(imagePipelineDebug.job?.pollCount ?? "-")} 次
             </div>
             <div>
-              6. 分析：{String(imagePipelineDebug.analysis?.status || "idle")} / Provider{" "}
-              {String(imagePipelineDebug.analysis?.provider || "-")} / Model{" "}
-              {String(imagePipelineDebug.analysis?.model || "-")}
+              6. 分析：{String(imagePipelineDebug.analysis?.status || "idle")}
             </div>
             <div>
-              7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)} / 备用路径{" "}
-              {String(imagePipelineDebug.analysis?.fallback ?? "-")}
-              {imagePipelineDebug.analysis?.primaryError
-                ? ` · 主路径：${String(imagePipelineDebug.analysis.primaryError)}`
-                : null}
+              7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)}
             </div>
-            <div>8. 失败原因：{String(imagePipelineDebug.analysis?.error || error || "-")}</div>
+            <div>
+              8. 失败原因：{sanitizeAssetAnalysisUserMessage(
+                String(imagePipelineDebug.analysis?.error || error || "-"),
+              )}
+            </div>
           </div>
 
           {growthSystemStatusQuery.data ? (

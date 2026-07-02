@@ -4,7 +4,7 @@ import type { GrowthAnalysisScores, GrowthCampModel } from "@shared/growth";
 export const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
 
 export const GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE =
-  "PNG/JPG GCS 直传 → growth_analyze_images Job → analyzeGrowthCampImagesJob（GPT-5.5 视觉 + 商业战略）";
+  "PNG/JPG GCS 直传 → growth_analyze_images Job → 视觉与策略分析";
 
 export type PlatformImageAsset = {
   id: string;
@@ -39,7 +39,6 @@ export type ImagePipelineDebugState = {
     provider?: unknown;
     model?: unknown;
     fallback?: unknown;
-    primaryError?: string;
     imageCount?: number;
     error?: string;
   };
@@ -300,7 +299,6 @@ export async function runGrowthCampImageAnalysis(
       provider: jobDebug.provider,
       model: jobDebug.model,
       fallback: jobDebug.fallback,
-      primaryError: typeof jobDebug.primaryError === "string" ? jobDebug.primaryError : undefined,
       imageCount: (jobDebug.imageCount as number | undefined) ?? imageInputs.length,
     },
   }));
