@@ -260,8 +260,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     // 固定单次计费（不按时长阶梯）；supervisor/admin 由 deductCreditsAmount 内部免扣
     const cost = flatAnalysisCost(growthMode);
     let creditDeducted = 0;
+    const skipCreditDeduction = params.skipCreditDeduction === true;
 
-    if (Number.isFinite(numericUserId)) {
+    if (Number.isFinite(numericUserId) && !skipCreditDeduction) {
       const deductResult = await deductCreditsAmount(
         numericUserId,
         cost,
