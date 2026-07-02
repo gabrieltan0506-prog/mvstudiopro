@@ -1688,6 +1688,7 @@ export default function MVAnalysisPage() {
   const allAssetsReady = assets.length > 0 && assets.every((a) => a.ready) && !assetReadingId;
   const [uploadProgress, setUploadProgress] = useState(0);
   const queryClient = useQueryClient();
+  const trpcUtils = trpc.useUtils();
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -2304,20 +2305,29 @@ export default function MVAnalysisPage() {
         });
       }
 
-      let finalAnalysis = partials[0]!.analysis;
+      let finalAnalysis = { ...partials[0]!.analysis, mode: analysisMode } as AnalysisResult;
       if (partials.length > 1) {
         const merged = await synthesizeGrowthCampAnalysesMutation.mutateAsync({
           parts: partials.map((p) => ({ label: p.label, analysis: p.analysis })),
           context: context || undefined,
           modelName: growthCampAnalysisModel,
         });
-        finalAnalysis = normalizeAnalysisScale(merged.analysis) as AnalysisResult;
+        finalAnalysis = normalizeAnalysisScale({ ...merged.analysis, mode: analysisMode }) as AnalysisResult;
       }
 
       setAnalysis(finalAnalysis);
       setAnalysisTranscript(lastTranscript);
       setAnalyzedVideoUrl(lastVideoUrl);
-      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+      void trpcUtils.mvAnalysis.getGrowthSnapshot
+        .fetch({
+          context: context || undefined,
+          modelName: growthCampAnalysisModel,
+          requestedPlatforms: [...FULL_PLATFORM_ORDER],
+          analysis: finalAnalysis,
+        })
+        .catch((snapshotError: unknown) => {
+          console.warn("[MVAnalysis] growth snapshot fetch failed:", snapshotError);
+        });
       setDebugInfo((prev) => ({
         ...(prev || {}),
         inputKind,
@@ -2353,7 +2363,7 @@ export default function MVAnalysisPage() {
     analysisProfile,
     extractPrompt,
     user?.id,
-    queryClient,
+    trpcUtils,
   ]);
 
   const handleRefreshGrowth = useCallback(async () => {

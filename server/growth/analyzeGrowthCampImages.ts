@@ -1,7 +1,6 @@
-import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
-import { invokeLLM } from "../_core/llm";
+import { type GrowthAnalysisMode, type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
 import { storagePut } from "../storage";
-import { resolveGrowthCampStrategistEngine } from "./extractorPipeline";
+import { runGrowthCampStrategistForImages } from "./growthCampStrategistPass";
 
 export type GrowthCampImageAssetInput = {
   fileBase64: string;
@@ -56,13 +55,13 @@ export async function analyzeGrowthCampImages(params: {
   images: GrowthCampImageAssetInput[];
   context?: string;
   modelName?: string;
+  mode?: GrowthAnalysisMode;
 }): Promise<GrowthCampImageAnalysisResult> {
   const images = (params.images || []).filter((img) => String(img.fileBase64 || "").trim());
   if (!images.length) {
     throw new Error("请至少上传一张 PNG 或 JPG 图片");
   }
 
-  const strategistEngine = resolveGrowthCampStrategistEngine(params.modelName);
   const fileUrls: string[] = [];
 
   for (let i = 0; i < images.length; i++) {
@@ -102,53 +101,19 @@ export async function analyzeGrowthCampImages(params: {
   }
 
   try {
-    const response = await invokeLLM({
-      model: "pro",
-      provider: strategistEngine.provider,
-      modelName: strategistEngine.modelName,
-      messages: [
-        {
-          role: "system",
-          content: `你是一位创作者商业增长顾问。请分析用户上传的图片素材，并返回 Creator Growth Camp 所需的统一评分结构。
-
-注意：
-1. 必须依据图片中可见内容（人物、产品、文字、场景、版式）做判断，不能空泛套模板。
-2. 评分字段语义：
-- composition: 结构/版式质量
-- color: 包装与视觉表达潜力
-- lighting: 信息清晰度（含文字可读性）
-- impact: 钩子与传播张力
-- viralPotential: 商业增长潜力
-3. platforms 返回最适合首发或分发的平台名称数组。
-4. strengths / improvements 用简体中文，具体可执行。
-5. summary 覆盖：视觉主题、商业定位、受众/平台建议、增长机会、可转成 brief 的方向。
-
-只返回 JSON：
-{
-  "composition": number,
-  "color": number,
-  "lighting": number,
-  "impact": number,
-  "viralPotential": number,
-  "strengths": ["string"],
-  "improvements": ["string"],
-  "platforms": ["string"],
-  "summary": "string"
-}`,
-        },
-        { role: "user", content: userContent },
-      ],
-      response_format: { type: "json_object" },
+    const analysis = await runGrowthCampStrategistForImages({
+      userContent,
+      context: params.context,
+      mode: params.mode,
+      modelName: params.modelName,
     });
-
-    const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
     return {
-      analysis: growthAnalysisScoresSchema.parse(parsed),
+      analysis,
       imageMeta: {
         fileUrls,
         imageCount: images.length,
-        provider: response.provider || "unknown",
-        model: response.model || "unknown",
+        provider: "growth-camp-strategist",
+        model: params.modelName || "default",
         fallback: false,
       },
     };
