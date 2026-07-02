@@ -8266,7 +8266,7 @@ export default function PlatformPage() {
                       items={immersiveRotatingCards}
                       activeIndex={rotatingCardIndex}
                       onPickIndex={setRotatingCardIndex}
-                      subtitle="热点文案来自当前快照里的样本题与趋势层，非顾问套话。需要更大采集窗口或续报，请先购买积分（套餐页）后再跑趋势分析。"
+                      subtitle="热点文案来自当前趋势分析中的样本题与趋势层，可对照您的账号方向选用。需要更大采集窗口或续报，请先购买积分（套餐页）后再跑趋势分析。"
                     />
                   ) : null}
                 </aside>

@@ -188,9 +188,8 @@ export default function PlatformAssetAnalysisPanel({
   return (
     <>
       <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-        上传封面、2×4 分镜等 PNG/JPG 素材（可多次添加，张数不限），系统用 GPT-5.5 做视觉与商业战略分析。
-        每张素材 <strong className="text-[#6ee7b7]">{unitCost} 积分</strong>，按实际上传张数合计。
-        本步骤<strong className="text-[#6ee7b7]">不调用成长营套话快照</strong>，结果可直接用于后续「优化自定义文案」。
+        上传封面、2×4 分镜等 PNG/JPG 素材（可多次添加，张数不限），系统将根据您的图片与业务背景生成视觉分析与策略建议。
+        每张素材 <strong className="text-[#6ee7b7]">{unitCost} 积分</strong>，按实际上传张数合计。完成后可继续「优化自定义文案」。
         {debugMode ? (
           <span className="block mt-2 text-[11px] text-emerald-200/70">{GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE}</span>
         ) : null}
