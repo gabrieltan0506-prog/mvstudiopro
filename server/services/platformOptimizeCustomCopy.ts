@@ -1,5 +1,9 @@
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm";
-import { getPlatformStage2OpenAiModel } from "../config/platformSwitches";
+import {
+  getPlatformStage2OpenAiModel,
+  resolvePlatformStage2OpenAiReasoningEffort,
+} from "../config/platformSwitches";
+import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -51,8 +55,11 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
   ].join("\n");
 
   const response = await invokeLLM({
+    provider: "openai",
     modelName: getPlatformStage2OpenAiModel(),
-    reasoningEffort: "medium",
+    reasoningEffort: resolvePlatformStage2OpenAiReasoningEffort(),
+    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+    temperature: 0.8,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userBlock },
