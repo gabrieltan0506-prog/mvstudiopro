@@ -13,6 +13,7 @@ import {
 } from "@/lib/growthCampImagePipeline";
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
+import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { FileUp, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,20 +22,6 @@ type PlatformAssetAnalysisPanelProps = {
   supervisorAccess: boolean;
   disabled?: boolean;
 };
-
-/** 面向用户的错误文案：不暴露模型名、fallback、API 内部细节 */
-function sanitizeAssetAnalysisUserMessage(raw: string): string {
-  const text = String(raw || "").trim();
-  if (!text) return "图片分析失败，请稍后重试";
-  if (
-    /EVOLINK|OPENAI|VERTEX|GPT|Gemini|gemini|gpt-|主模型|备用模型|备用路径|fallback|analyzeGrowthCamp|growth_analyze/i.test(
-      text,
-    )
-  ) {
-    return "图片分析暂时不可用，请稍后重试";
-  }
-  return text;
-}
 
 export default function PlatformAssetAnalysisPanel({
   debugMode,
@@ -176,7 +163,7 @@ export default function PlatformAssetAnalysisPanel({
       toast.success("素材视觉分析完成");
     } catch (analysisError: unknown) {
       const raw = analysisError instanceof Error ? analysisError.message : "图片分析失败";
-      const msg = sanitizeAssetAnalysisUserMessage(raw);
+      const msg = sanitizePlatformUserMessage(raw, "图片分析暂时不可用，请稍后重试");
       setError(msg);
       setStage("error");
     } finally {
@@ -557,8 +544,9 @@ export default function PlatformAssetAnalysisPanel({
               7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)}
             </div>
             <div>
-              8. 失败原因：{sanitizeAssetAnalysisUserMessage(
+              8. 失败原因：{sanitizePlatformUserMessage(
                 String(imagePipelineDebug.analysis?.error || error || "-"),
+                "-",
               )}
             </div>
           </div>
