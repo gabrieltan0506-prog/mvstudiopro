@@ -1481,9 +1481,7 @@ async function processPlatformJob(
       const isTrial = await resolveWatermark(uidNum, false);
       const compositeFlowLog: string[] = [];
 
-      // 套裝：封面（GPT 5.4 英文化 → 9:16）與 2×4（預設 Vertex Flash 英文化 → 16:9）**並行**。
-      // 各自內部仍為「翻譯完成再送 GPT-IMAGE-2」；總牆鐘約 max(兩路)，而非兩段相加。
-      // 舊注：曾串行以避免兩路同時塞滿載翻譯；現分轨譯者不同（5.4 vs Flash），可並行。
+      // 套裝：封面先生成 → 分镜以「已生成封面」为人脸参考（避免抠像直送 2×4 跨格换脸）。
       let coverResult: Awaited<ReturnType<typeof runPlatformTopicImagePipeline>> | null = null;
       let coverErr: unknown = null;
       let sheetUrl: string | null = null;
@@ -1502,8 +1500,8 @@ async function processPlatformJob(
           ? rawRefPhotoBundle.trim()
           : undefined;
 
-      const [coverSettled, sheetSettled] = await Promise.allSettled([
-        runPlatformTopicImagePipeline({
+      try {
+        coverResult = await runPlatformTopicImagePipeline({
           topicHook,
           format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
           context: enrichedContext,
@@ -1521,35 +1519,38 @@ async function processPlatformJob(
           batchSceneDiversity: batchSceneDiversityBundle,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
           referencePhotoUrl: referencePhotoUrlBundle,
-        }),
-        (compositeIs3x4 ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage)({
-          kind: compositeKind,
-          title: compositeTitle,
-          scriptContext: compositeScriptContext,
-          isTrial,
-          executionDetails: compositeExecutionDetails,
-          imagePromptTranslator,
-          flowLog: compositeFlowLog,
-          enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
-          coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
-          referencePhotoUrl: referencePhotoUrlBundle,
-          progressJobId: platformJobId,
-          compositeImageEngine,
-        }),
-      ]);
-
-      if (coverSettled.status === "fulfilled") {
-        coverResult = coverSettled.value;
-      } else {
-        coverErr = coverSettled.reason;
-      }
-      if (sheetSettled.status === "fulfilled") {
-        sheetUrl = sheetSettled.value;
-      } else {
-        sheetErr = sheetSettled.reason;
+        });
+      } catch (e) {
+        coverErr = e;
       }
 
       const coverUrl = String(coverResult?.imageUrl ?? coverResult?.url ?? "").trim();
+      const storyboardReferenceUrl = coverUrl || referencePhotoUrlBundle;
+      const storyboardRefFromCover = Boolean(coverUrl);
+
+      if (storyboardReferenceUrl) {
+        try {
+          sheetUrl = await (compositeIs3x4 ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage)({
+            kind: compositeKind,
+            title: compositeTitle,
+            scriptContext: compositeScriptContext,
+            isTrial,
+            executionDetails: compositeExecutionDetails,
+            imagePromptTranslator,
+            flowLog: compositeFlowLog,
+            enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
+            coverPersonaContext: typeof params.coverPersonaContext === "string" ? params.coverPersonaContext : undefined,
+            referencePhotoUrl: storyboardReferenceUrl,
+            referencePhotoFromApprovedCover: storyboardRefFromCover,
+            progressJobId: platformJobId,
+            compositeImageEngine,
+          });
+        } catch (e) {
+          sheetErr = e;
+        }
+      } else if (!coverUrl) {
+        sheetErr = coverErr ?? new Error("缺少参考人像，无法生成分镜");
+      }
       const sheetOk = String(sheetUrl ?? "").trim();
 
       // Neon DR 副選題暫存：僅在整個 executeJob return 後由 markJobSucceeded/markJobFailed 刪除；
