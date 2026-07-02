@@ -1,4 +1,8 @@
-import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm";
+import {
+  extractFirstChoicePlainText,
+  extractJsonString,
+  invokeLLM,
+} from "../_core/llm";
 import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
@@ -19,6 +23,9 @@ export type OptimizeCustomCopyResult = {
   storyboardNotes?: string;
   coverNotes?: string;
 };
+
+/** GPT-5.5 链路失败时统一对用户展示的提示（不使用 Gemini 兜底）。 */
+export const OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE = "算力紧张，请稍后再试";
 
 const SYSTEM_PROMPT = `你是 mvstudiopro 平台页的资深内容顾问，专门帮创作者把「已有封面文案、分镜脚本、商业背景」深度改写成可直接发布的版本。
 
@@ -41,47 +48,32 @@ JSON schema:
   "coverNotes": "若涉及封面：主视觉/主标/副标/信息层级建议（可选）"
 }`;
 
-export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promise<OptimizeCustomCopyResult> {
+function buildUserBlock(input: OptimizeCustomCopyInput): string {
   const sourceText = String(input.sourceText || "").trim();
   const brief = String(input.optimizationBrief || "").trim();
-  if (sourceText.length < 10) {
-    throw new Error("请至少提供 10 字以上的待优化文案");
-  }
-
-  const userBlock = [
+  return [
     "【待优化原文】",
     sourceText,
     brief ? "\n【用户优化要求】\n" + brief : "",
   ].join("\n");
+}
 
-  const response = await invokeLLM({
-    provider: "openai",
-    modelName: getPlatformStage2OpenAiModel(),
-    reasoningEffort: resolvePlatformStage2OpenAiReasoningEffort(),
-    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-    temperature: 0.8,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userBlock },
-    ],
-    response_format: { type: "json_object" },
-  });
-
-  const raw = extractFirstChoicePlainText(response).trim();
-  if (!raw) {
-    throw new Error("模型未返回有效内容，请稍后重试");
+function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed || /^an error occurred/i.test(trimmed)) {
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
 
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed = JSON.parse(extractJsonString(trimmed)) as Record<string, unknown>;
   } catch {
-    throw new Error("模型返回格式异常，请稍后重试");
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
 
   const optimizedMarkdown = String(parsed.optimizedMarkdown || parsed.markdown || "").trim();
   if (!optimizedMarkdown) {
-    throw new Error("优化结果为空，请补充更具体的原文或要求后重试");
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
 
   const titles = Array.isArray(parsed.titles)
@@ -113,4 +105,65 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     storyboardNotes: parsed.storyboardNotes ? String(parsed.storyboardNotes).trim() : undefined,
     coverNotes: parsed.coverNotes ? String(parsed.coverNotes).trim() : undefined,
   };
+}
+
+async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" | "minimal"): Promise<string> {
+  if (!String(process.env.EVOLINK_API_KEY || "").trim()) {
+    throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
+  }
+  const response = await invokeLLM({
+    provider: "openai",
+    modelName: getPlatformStage2OpenAiModel(),
+    reasoningEffort,
+    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+    temperature: 0.8,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userBlock },
+    ],
+    response_format: { type: "json_object" },
+  });
+  return extractFirstChoicePlainText(response).trim();
+}
+
+export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promise<OptimizeCustomCopyResult> {
+  const sourceText = String(input.sourceText || "").trim();
+  if (sourceText.length < 10) {
+    throw new Error("请至少提供 10 字以上的待优化文案");
+  }
+
+  const userBlock = buildUserBlock(input);
+  const primaryReasoning =
+    resolvePlatformStage2OpenAiReasoningEffort() === "high" ||
+    resolvePlatformStage2OpenAiReasoningEffort() === "xhigh"
+      ? "low"
+      : (resolvePlatformStage2OpenAiReasoningEffort() as "low" | "minimal");
+
+  let lastError: unknown;
+  for (const reasoningEffort of [primaryReasoning, "minimal"] as const) {
+    try {
+      const raw = await invokeOptimizeViaGpt55(userBlock, reasoningEffort);
+      return parseOptimizeCustomCopyJson(raw);
+    } catch (err) {
+      lastError = err;
+      if (err instanceof Error && err.message === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE) {
+        throw err;
+      }
+      console.warn(
+        `[optimizeCustomCopy] GPT-5.5 失败 (reasoning=${reasoningEffort}):`,
+        err instanceof Error ? err.message.slice(0, 240) : err,
+      );
+    }
+  }
+
+  console.warn(
+    "[optimizeCustomCopy] GPT-5.5 全部重试失败:",
+    lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
+  );
+  throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
+}
+
+/** @internal 单测用：解析模型 JSON 文本 */
+export function parseOptimizeCustomCopyJsonForTest(raw: string): OptimizeCustomCopyResult {
+  return parseOptimizeCustomCopyJson(raw);
 }

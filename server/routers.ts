@@ -6017,6 +6017,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const cost = CREDIT_COSTS.platformOptimizeCustomCopy;
+        let creditsCharged = false;
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -6031,19 +6032,44 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             "platformOptimizeCustomCopy",
             "自定义文案 · 深度优化",
           );
+          creditsCharged = true;
         }
 
-        const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
-        const result = await optimizeCustomCopy({
-          sourceText: input.sourceText,
-          optimizationBrief: input.optimizationBrief,
-        });
+        try {
+          const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
+          const result = await optimizeCustomCopy({
+            sourceText: input.sourceText,
+            optimizationBrief: input.optimizationBrief,
+          });
 
-        return {
-          success: true as const,
-          cost: isAdminUser ? 0 : cost,
-          result,
-        };
+          return {
+            success: true as const,
+            cost: isAdminUser ? 0 : cost,
+            result,
+          };
+        } catch (error) {
+          if (creditsCharged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "platformOptimizeCustomCopy 深度优化失败退还").catch(
+              (refundErr: unknown) => {
+                console.error("[optimizeCustomCopy] refund failed:", refundErr);
+              },
+            );
+          }
+          const { OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE } = await import(
+            "./services/platformOptimizeCustomCopy.js"
+          );
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const isCapacity = rawMessage === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE;
+          throw new TRPCError({
+            code: isCapacity ? "SERVICE_UNAVAILABLE" : "INTERNAL_SERVER_ERROR",
+            message: isCapacity
+              ? `${OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
+              : rawMessage.includes("is not valid JSON")
+                ? `${OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
+                : rawMessage || `文案优化失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
+          });
+        }
       }),
 
     getPlatformContent: publicProcedure
