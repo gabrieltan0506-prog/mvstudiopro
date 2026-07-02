@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CANVAS_BLOCK_DEFAULT_HEIGHT,
+  CANVAS_BLOCK_DEFAULT_WIDTH,
+  CANVAS_BLOCK_MAX_HEIGHT,
+  CANVAS_BLOCK_MAX_WIDTH,
+  CANVAS_BLOCK_MIN_HEIGHT,
+  CANVAS_BLOCK_MIN_WIDTH,
   CANVAS_KIND_META,
   collectUpstreamTexts,
   collectVisionImages,
@@ -39,6 +45,18 @@ type FreeformCanvasProps = {
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
+type ToolbarMenuState = { x: number; y: number } | null;
+type ResizeState = {
+  id: string;
+  startW: number;
+  startH: number;
+  startPointerX: number;
+  startPointerY: number;
+} | null;
+
+function blockEdgeAnchor(block: CanvasBlock) {
+  return { x: block.x + block.width, y: block.y + 44 };
+}
 
 function patchBlock(blocks: CanvasBlock[], id: string, patch: Partial<CanvasBlock>) {
   return blocks.map((b) => (b.id === id ? { ...b, ...patch } : b));
@@ -52,27 +70,53 @@ export default function FreeformCanvas({
   runDeps,
 }: FreeformCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
+  const toolbarFileInputRef = useRef<HTMLInputElement>(null);
+  const pendingUploadBlockIdRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [spawnMenu, setSpawnMenu] = useState<SpawnMenuState>(null);
+  const [toolbarMenu, setToolbarMenu] = useState<ToolbarMenuState>(null);
   const [dragState, setDragState] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [resizeState, setResizeState] = useState<ResizeState>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
 
+  const getViewportSpawnPosition = useCallback((width: number, height: number, staggerIndex: number) => {
+    const canvas = canvasRef.current;
+    const stagger = staggerIndex % 5;
+    if (!canvas) {
+      return { x: 120 + stagger * 24, y: 120 + stagger * 20 };
+    }
+    const x = canvas.scrollLeft + (canvas.clientWidth - width) / 2 + stagger * 22;
+    const y = canvas.scrollTop + (canvas.clientHeight - height) / 2 + stagger * 18;
+    return { x: Math.max(8, x), y: Math.max(8, y) };
+  }, []);
+
   const addBlock = useCallback(
     (kind: CanvasBlockKind, opts?: { x?: number; y?: number; parentId?: string }) => {
       const id = makeCanvasBlockId(kind);
-      const x = opts?.x ?? 120 + blocks.length * 36;
-      const y = opts?.y ?? 120 + blocks.length * 28;
-      const block = defaultCanvasBlock(kind, x, y, opts?.parentId);
+      const block = defaultCanvasBlock(kind, 0, 0, opts?.parentId);
       block.id = id;
       const parent = opts?.parentId ? blockMap.get(opts.parentId) : undefined;
       if (parent?.outputText) block.prompt = `${block.prompt}\n\n${parent.outputText.slice(0, 2000)}`;
       if (parent?.outputUrl && (kind === "image" || kind === "video")) {
         block.refImageUrl = parent.outputUrl;
       }
+
+      if (opts?.x != null && opts?.y != null) {
+        block.x = opts.x;
+        block.y = opts.y;
+      } else if (parent) {
+        block.x = parent.x + parent.width + 40;
+        block.y = parent.y + 32;
+      } else {
+        const pos = getViewportSpawnPosition(block.width, block.height, blocks.length);
+        block.x = pos.x;
+        block.y = pos.y;
+      }
+
       onBlocksChange([...blocks, block]);
       if (opts?.parentId) {
         onEdgesChange([...edges, { fromId: opts.parentId, toId: id }]);
@@ -80,8 +124,15 @@ export default function FreeformCanvas({
       setSelectedId(id);
       return id;
     },
-    [blockMap, blocks, edges, onBlocksChange, onEdgesChange],
+    [blockMap, blocks, edges, getViewportSpawnPosition, onBlocksChange, onEdgesChange],
   );
+
+  const openToolbarUpload = useCallback(() => {
+    setToolbarMenu(null);
+    const id = addBlock("text");
+    pendingUploadBlockIdRef.current = id;
+    window.setTimeout(() => toolbarFileInputRef.current?.click(), 0);
+  }, [addBlock]);
 
   const patchOne = useCallback(
     (id: string, patch: Partial<CanvasBlock>) => {
@@ -198,19 +249,42 @@ export default function FreeformCanvas({
     };
   }, [blocks, dragState, onBlocksChange]);
 
+  useEffect(() => {
+    if (!resizeState) return;
+    const onMove = (e: PointerEvent) => {
+      const dw = e.clientX - resizeState.startPointerX;
+      const dh = e.clientY - resizeState.startPointerY;
+      const width = Math.min(
+        CANVAS_BLOCK_MAX_WIDTH,
+        Math.max(CANVAS_BLOCK_MIN_WIDTH, Math.round(resizeState.startW + dw)),
+      );
+      const height = Math.min(
+        CANVAS_BLOCK_MAX_HEIGHT,
+        Math.max(CANVAS_BLOCK_MIN_HEIGHT, Math.round(resizeState.startH + dh)),
+      );
+      onBlocksChange(patchBlock(blocks, resizeState.id, { width, height }));
+    };
+    const onUp = () => setResizeState(null);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [blocks, onBlocksChange, resizeState]);
+
   const renderEdge = (fromId: string, toId: string) => {
     const a = blockMap.get(fromId);
     const b = blockMap.get(toId);
     if (!a || !b) return null;
-    const x1 = a.x + 420;
-    const y1 = a.y + 80;
+    const from = blockEdgeAnchor(a);
     const x2 = b.x;
-    const y2 = b.y + 80;
-    const mx = (x1 + x2) / 2;
+    const y2 = b.y + 44;
+    const mx = (from.x + x2) / 2;
     return (
       <path
         key={`${fromId}-${toId}`}
-        d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+        d={`M ${from.x} ${from.y} C ${mx} ${from.y}, ${mx} ${y2}, ${x2} ${y2}`}
         fill="none"
         stroke="rgba(255,255,255,0.16)"
         strokeWidth={2}
@@ -220,31 +294,34 @@ export default function FreeformCanvas({
 
   return (
     <div className="flex min-h-[720px] gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90">
+      <input
+        ref={toolbarFileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const list = e.target.files;
+          e.target.value = "";
+          const blockId = pendingUploadBlockIdRef.current;
+          pendingUploadBlockIdRef.current = null;
+          if (blockId && list?.length) void uploadFilesForBlock(blockId, list);
+        }}
+      />
+
       {/* 左侧工具栏 */}
       <aside className="flex w-14 shrink-0 flex-col items-center gap-3 border-r border-white/10 bg-black/30 py-4">
         <button
           type="button"
-          title="添加节点"
-          onClick={() => addBlock("text", { x: 160, y: 160 })}
+          title="添加功能"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setToolbarMenu({ x: rect.right + 8, y: rect.top });
+          }}
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:scale-105"
         >
           <Plus className="h-5 w-5" />
         </button>
-        <div className="h-px w-8 bg-white/10" />
-        {SPAWN_KIND_OPTIONS.map((opt) => {
-          const Icon = CANVAS_KIND_META[opt.kind].icon;
-          return (
-            <button
-              key={opt.kind}
-              type="button"
-              title={opt.label}
-              onClick={() => addBlock(opt.kind)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70 transition hover:border-primary/40 hover:text-primary"
-            >
-              <Icon className="h-4 w-4" />
-            </button>
-          );
-        })}
       </aside>
 
       {/* 无限画布 */}
@@ -256,8 +333,8 @@ export default function FreeformCanvas({
           {blocks.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-white/40">
               <Plus className="mb-3 h-10 w-10 opacity-30" />
-              <p className="text-sm">点击左侧 + 创建第一个方块</p>
-              <p className="mt-1 text-xs">可自由拖动 · 右侧 + 引用上游生成新方块</p>
+              <p className="text-sm">点击左侧 + 在画面中央创建方块</p>
+              <p className="mt-1 text-xs">可拖动 · 右下角缩放 · 右侧 + 引用上游</p>
             </div>
           ) : null}
 
@@ -275,10 +352,10 @@ export default function FreeformCanvas({
             return (
               <div
                 key={block.id}
-                className={`absolute w-[420px] rounded-2xl border bg-gradient-to-br ${meta.color} backdrop-blur-md transition-shadow ${
+                className={`absolute flex flex-col overflow-hidden rounded-2xl border bg-gradient-to-br ${meta.color} backdrop-blur-md transition-shadow ${
                   selected ? "border-primary/60 shadow-[0_0_0_2px_rgba(var(--primary),0.25)]" : "border-white/12"
                 }`}
-                style={{ left: block.x, top: block.y }}
+                style={{ left: block.x, top: block.y, width: block.width, height: block.height }}
                 onClick={() => setSelectedId(block.id)}
               >
                 {/* 顶栏：类型 + 运行 + 引用 + 删除 */}
@@ -341,9 +418,9 @@ export default function FreeformCanvas({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-[1fr_1fr] gap-0 divide-x divide-white/10">
+                <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] divide-x divide-white/10">
                   {/* 左：设置 + 提示词 */}
-                  <div className="p-3">
+                  <div className="flex min-h-0 flex-col overflow-auto p-3">
                     <div className="mb-2 space-y-2 rounded-xl border border-white/10 bg-black/25 p-2">
                       <div className="text-[10px] uppercase tracking-wider text-white/40">方块设置</div>
                       {block.kind === "text" || block.kind === "copy_organize" ? (
@@ -429,8 +506,8 @@ export default function FreeformCanvas({
                     <textarea
                       value={block.prompt}
                       onChange={(e) => patchOne(block.id, { prompt: e.target.value })}
-                      rows={6}
-                      className="w-full resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
+                      rows={5}
+                      className="min-h-[88px] w-full flex-1 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
                         visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
                           ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
@@ -490,13 +567,13 @@ export default function FreeformCanvas({
                   </div>
 
                   {/* 右：输出预览 */}
-                  <div className="p-3">
+                  <div className="flex min-h-0 flex-col overflow-auto p-3">
                     <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">输出</div>
                     {block.status === "error" ? (
                       <div className="text-xs text-red-300">{block.error}</div>
                     ) : null}
                     {block.outputText ? (
-                      <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-white/85">
+                      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-white/85">
                         {block.outputText}
                       </pre>
                     ) : null}
@@ -516,12 +593,31 @@ export default function FreeformCanvas({
                       <video src={block.outputUrl} controls className="mt-1 max-h-[200px] w-full rounded-lg" />
                     ) : null}
                     {!block.outputText && !displayOutputs.length && block.status !== "error" ? (
-                      <div className="flex h-[180px] items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-white/30">
+                      <div className="flex min-h-[100px] flex-1 items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-white/30">
                         运行后显示结果
                       </div>
                     ) : null}
                   </div>
                 </div>
+
+                {selected ? (
+                  <button
+                    type="button"
+                    aria-label="缩放方块"
+                    className="absolute bottom-0 right-0 z-10 h-5 w-5 cursor-se-resize rounded-tl-lg border border-white/20 bg-white/15 hover:bg-white/25"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setResizeState({
+                        id: block.id,
+                        startW: block.width,
+                        startH: block.height,
+                        startPointerX: e.clientX,
+                        startPointerY: e.clientY,
+                      });
+                      e.preventDefault();
+                    }}
+                  />
+                ) : null}
               </div>
             );
           })}
@@ -553,8 +649,8 @@ export default function FreeformCanvas({
                     const parent = blockMap.get(spawnMenu.anchorBlockId);
                     addBlock(opt.kind, {
                       parentId: spawnMenu.anchorBlockId,
-                      x: (parent?.x ?? 0) + 460,
-                      y: (parent?.y ?? 0) + 40,
+                      x: (parent?.x ?? 0) + (parent?.width ?? CANVAS_BLOCK_DEFAULT_WIDTH) + 40,
+                      y: (parent?.y ?? 0) + 32,
                     });
                     setSpawnMenu(null);
                   }}
@@ -567,6 +663,56 @@ export default function FreeformCanvas({
                 </button>
               );
             })}
+          </div>
+        </>
+      ) : null}
+
+      {/* 左侧 + 功能菜单 */}
+      {toolbarMenu ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default bg-transparent"
+            aria-label="关闭菜单"
+            onClick={() => setToolbarMenu(null)}
+          />
+          <div
+            className="fixed z-50 w-60 rounded-2xl border border-white/15 bg-[#121826] p-2 shadow-2xl"
+            style={{ left: toolbarMenu.x, top: toolbarMenu.y }}
+          >
+            <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-white/40">添加方块</div>
+            {SPAWN_KIND_OPTIONS.map((opt) => {
+              const Icon = CANVAS_KIND_META[opt.kind].icon;
+              return (
+                <button
+                  key={opt.kind}
+                  type="button"
+                  className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/10"
+                  onClick={() => {
+                    addBlock(opt.kind);
+                    setToolbarMenu(null);
+                  }}
+                >
+                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <div>
+                    <div className="text-sm font-medium text-white">{opt.label}</div>
+                    <div className="text-[11px] text-white/45">{opt.hint}</div>
+                  </div>
+                </button>
+              );
+            })}
+            <div className="my-1 h-px bg-white/10" />
+            <button
+              type="button"
+              className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/10"
+              onClick={openToolbarUpload}
+            >
+              <Upload className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+              <div>
+                <div className="text-sm font-medium text-white">上传素材</div>
+                <div className="text-[11px] text-white/45">图片或视频，可多张</div>
+              </div>
+            </button>
           </div>
         </>
       ) : null}

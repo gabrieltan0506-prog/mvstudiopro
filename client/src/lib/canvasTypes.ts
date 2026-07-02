@@ -19,11 +19,20 @@ export type CanvasUploadedAsset = {
 
 export type CanvasImageBatchCount = 1 | 2 | 4;
 
+export const CANVAS_BLOCK_DEFAULT_WIDTH = 420;
+export const CANVAS_BLOCK_DEFAULT_HEIGHT = 360;
+export const CANVAS_BLOCK_MIN_WIDTH = 300;
+export const CANVAS_BLOCK_MIN_HEIGHT = 220;
+export const CANVAS_BLOCK_MAX_WIDTH = 960;
+export const CANVAS_BLOCK_MAX_HEIGHT = 800;
+
 export type CanvasBlock = {
   id: string;
   kind: CanvasBlockKind;
   x: number;
   y: number;
+  width: number;
+  height: number;
   prompt: string;
   textModel: CanvasTextModel;
   imageModel: CanvasImageModel;
@@ -123,6 +132,8 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     imageModel: "nano-banana-2",
     videoModel: "gemini-omni-flash",
     aspectRatio: "9:16",
+    width: CANVAS_BLOCK_DEFAULT_WIDTH,
+    height: CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: 1,
     uploadedAssets: [],
     outputUrls: [],
@@ -133,6 +144,8 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
 export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   return {
     ...block,
+    width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
+    height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: block.imageBatchCount ?? 1,
     uploadedAssets: block.uploadedAssets ?? [],
     outputUrls: block.outputUrls?.length
