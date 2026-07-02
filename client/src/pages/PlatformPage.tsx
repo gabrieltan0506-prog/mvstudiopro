@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
+import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
@@ -1874,7 +1875,7 @@ export default function PlatformPage() {
   const [customOptimizeResult, setCustomOptimizeResult] = useState<string | null>(null);
   const [customOptimizeSummary, setCustomOptimizeSummary] = useState<string | null>(null);
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
-  const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting">("copy");
+  const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting" | "assets">("copy");
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
   const [customTopicProtagonist, setCustomTopicProtagonist] = useState("");
@@ -6086,6 +6087,19 @@ export default function PlatformPage() {
             </button>
             <button
               type="button"
+              onClick={() => setCustomWorkspaceTab("assets")}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                customWorkspaceTab === "assets"
+                  ? "bg-[linear-gradient(135deg,#a3e635,#16a34a)] text-white shadow-sm"
+                  : "text-[#c9c0e6]/70 hover:text-white"
+              }`}
+            >
+              <Layers className="h-3.5 w-3.5 shrink-0" />
+              素材分析
+            </button>
+            <button
+              type="button"
               onClick={() => setCustomWorkspaceTab("matting")}
               disabled={customNoteBusy || customTopicBusy || customMattingBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
@@ -6637,6 +6651,12 @@ export default function PlatformPage() {
                 </div>
               )}
             </>
+          ) : customWorkspaceTab === "assets" ? (
+            <PlatformAssetAnalysisPanel
+              debugMode={debugMode}
+              supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+            />
           ) : (
             <>
               <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">

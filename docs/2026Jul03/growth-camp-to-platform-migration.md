@@ -59,36 +59,85 @@
 
 ---
 
-## 实施阶段（建议 2026-07-03 起）
+## 工期承诺（用户 2026-07-03）
 
-### Phase A — 入口与退役（0.5d）
+**2 个自然日全部完工**（非重写，接线 + 删错路径 + 验收）。
 
-- [ ] `/creator-growth-camp` 顶部 CTA 改为跳转 `/creator-growth-camp/platform#platform-custom-workspace`
-- [ ] 保留 REMIX 子路由或合并到 platform（产品确认）
-- [ ] Navbar「创作者成长营」可改为「平台创作」或双入口并存过渡期
+| 日 | 交付 |
+|----|------|
+| **D1** | Platform 上传封面/分镜 → `growth_analyze_images` Job → `optimizeCustomCopyWithAssets`（vision + **live 趋势**）→ 新结果 UI（无套话区块） |
+| **D2** | 成长营页跳转 platform、旧结果区下线、优化稿一键生 2×4/单页卡片、线上用你的封面+分镜验收 |
 
-### Phase B — 平台页素材上传（1d）
+---
 
-- [ ] 在 `PlatformPage` 自定义工作台增加「上传封面 / 分镜」区（复用 `MVAnalysis` 的 PNG 多选 + GCS 直传）
-- [ ] 调用 `growth_analyze_images` Job，debug 面板复用 PR #679 的 imagePipeline
-- [ ] **数据源白名单**：Job 输出 + 用户 context + `platformTrend` **live 窗口**（3/7/15 天）；**黑名单**：`growthSnapshot.titleExecutions`、`referenceExamples` 模板串、archived 真值条目
+## 数据怎么读（勿猜 · 已有稳定采集）
 
-### Phase C — 视觉绑定文案优化（1–2d）
+**Debug 面板所见 = 正式应接的数据源**（`MVAnalysis` 开 Debug → `getGrowthSystemStatus` + `getGrowthSnapshot` debug 块）。
 
-- [ ] 新 mutation：`optimizeCustomCopyWithAssets`（images[] + sourceText + brief）
-- [ ] Prompt：system 强制引用 vision 分析 JSON + 用户原文，禁止 unrelated 模板
-- [ ] **近期热点注入**：从 trend store / Stage1 样本取 **updatedAt 在窗口内** 的标题/标签/话题，写入 prompt；无 live 数据时明确告知「暂无近期样本，仅基于素材优化」，**禁止** fallback 到旧模板
-- [ ] 废弃 `getGrowthSnapshot` 驱动的 titleExecutions / referenceExamples 在**素材分析路径**上的调用
+| Debug 展示项 | 后端入口 | 迁移用法 |
+|-------------|---------|---------|
+| 真值口径 / 当前总量 / 各平台 items | `readTrendStore({ preferDerivedFiles: true })` · `truthStore.platforms` | 取 **collections[platform].items** 近期样本 |
+| 运行模式 / burst / scheduler | `readGrowthRuntimeControl` · `readTrendSchedulerState` | 仅 debug；分析 prompt 不依赖 |
+| backfillLive / backfillHistory | `getGrowthSystemStatus` 返回体 | 区分 live vs 历史；**prompt 只用 live 窗口内 items** |
+| 快照路由 / hasAnyLiveCollection / windowDays | `getGrowthSnapshot` 的 `debug` 字段 | 对照用；**新路径禁止走 mock** |
 
-### Phase D — 退役 MVAnalysis 结果 UI（1d）
+开发历程文档：`downloads/2026Jun27/`、`downloads/2026Jul02/`、`docs/growth-data-warehouse.md`（`readTrendStore` / `readTrendStoreForPlatforms` / `pnpm run rebuild:growth-store`）。
 
-- [ ] 删除或 feature-flag：`explosiveIndex` 全 0 区块、复读 reference cases、generic platform cards
-- [ ] `/creator-growth-camp` 路由 302 → platform（或只留 upload redirect）
+### 套话根因（一行）
 
-### Phase E — 闭环生图（0.5d）
+成长营图片分析完成后调用 `getGrowthSnapshot`（**未**设 `interactivePlatform: true`）→ store 超时或空时 **`buildMockGrowthSnapshot` + `personalizeGrowthSnapshot`** → 模板标题/复读参考案例。**迁移时此路径对素材分析永久禁用。**
 
-- [ ] 优化结果一键「用此文案生 2×4 / 单页卡片」
-- [ ] 积分展示：优化 25 + 生图 60/50 分项合计
+### 新路径数据白名单（复制即用）
+
+```ts
+// 与 platform 页 Stage1 / getGrowthSnapshot(interactivePlatform:true) 同源
+readTrendStoreForPlatforms(["douyin","xiaohongshu","bilibili","kuaishou"], {
+  preferDerivedFiles: true,
+  preferFlyLive: true,
+});
+// windowDays: 7（默认）或 15；只取 collectedAt 在窗口内的 items 标题/标签进 prompt
+// 无 live items → 文案写「暂无近期样本，仅基于上传素材优化」— 禁止 fallback mock
+```
+
+---
+
+## 实施阶段（2 日压缩版）
+
+### D1 上午 — 上传 + Job（复用，~3h）
+
+- [x] `PlatformPage` 自定义工作台：**素材分析** Tab — PNG 多选 + GCS + `growth_analyze_images`（`client/src/lib/growthCampImagePipeline.ts` + `PlatformAssetAnalysisPanel`）
+- [x] Debug 条：`imagePipeline` + `getGrowthSystemStatus`（supervisor/admin + Debug On）
+- [x] **不调用** `getGrowthSnapshot`（平台素材路径）
+
+**分支（待你开 PR）**：`feat/migrate-platform-image-upload-d1a`
+
+### D1 下午 — 优化 mutation + 热点（~4h）
+
+- [ ] `optimizeCustomCopyWithAssets`：vision JSON + user brief + **`readTrendStoreForPlatforms` 7d 样本摘要**
+- [ ] **删除**对 `getGrowthSnapshot` / `buildMockGrowthSnapshot` / `personalizeGrowthSnapshot` 的调用（素材路径）
+- [ ] 结果 UI：仅展示优化稿 + 可选近期热点引用（带来源平台+标题）
+
+### D2 上午 — 退役 + 跳转（~3h）
+
+- [ ] `/creator-growth-camp` → redirect `#platform-custom-workspace`（或顶栏 CTA）
+- [ ] `MVAnalysis` 结果区套话区块 feature-off（referenceExamples 复读、titleExecutions 模板、全 0 指数）
+
+### D2 下午 — 闭环 + 验收（~3h）
+
+- [ ] 优化结果 → 一键填入「自定义文案」→ 生 2×4 / 单页卡片
+- [ ] 积分：优化 25 + 生图 60/50 分项展示
+- [ ] 验收：苏轼封面+分镜素材；Debug 对照 live 样本数 > 0
+
+---
+
+## 实施阶段（原 5 日版 · 已作废）
+
+<details>
+<summary>旧排期（勿用）</summary>
+
+Phase A–E 合计 4–6 日 — 用户要求 2 日内完工，以上 D1/D2 为准。
+
+</details>
 
 ---
 
