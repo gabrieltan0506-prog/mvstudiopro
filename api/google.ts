@@ -350,7 +350,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const model = (s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
+      const model = (s(b.model || q.model || "") || s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
       const is31Pro = /gemini-3\.1.*pro/i.test(model);
       const is25Pro = /gemini-2\.5/i.test(model) && /pro/i.test(model) && !/flash/i.test(model);
       const is3Flash =
@@ -386,7 +386,74 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
 
       const raw = r.json ?? r.rawText;
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw });
+      return res.status(r.ok ? 200 : 502).json({ ok:r.ok, status:r.status, url:r.url, raw });
+    }
+
+    // ---------------- Canvas：多图视觉 → Markdown ----------------
+    if (op === "canvasVisionMarkdown") {
+      const prompt = s(b.prompt || q.prompt || "");
+      const legacyUrls = Array.isArray(b.imageUrls)
+        ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
+        : [];
+      const rawImages = Array.isArray(b.images) ? b.images : legacyUrls.map((url: string) => ({ url }));
+      const images = rawImages
+        .map((item: { url?: unknown; gcsUri?: unknown; mimeType?: unknown }) => ({
+          url: s(item?.url).trim(),
+          gcsUri: s(item?.gcsUri).trim(),
+          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
+        }))
+        .filter((item: { url: string; gcsUri: string }) => item.url || item.gcsUri);
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
+      if (!images.length) return res.status(400).json({ ok: false, error: "missing_image_urls" });
+
+      const model = (s(b.model || q.model || "") || "gemini-3.1-pro-preview").trim();
+      const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
+      const base = baseUrlFor(location);
+      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+
+      const parts: Array<{
+        text?: string;
+        inlineData?: { mimeType: string; data: string };
+        fileData?: { mimeType: string; fileUri: string };
+      }> = [
+        {
+          text: [
+            prompt,
+            "",
+            `（共 ${images.length} 张图）`,
+            "请输出 Markdown，不要 JSON 或多余解释。",
+          ].join("\n"),
+        },
+      ];
+
+      for (const item of images) {
+        if (item.gcsUri.startsWith("gs://")) {
+          parts.push({ fileData: { mimeType: item.mimeType, fileUri: item.gcsUri } });
+          continue;
+        }
+        const img = await fetchImageAsBase64(item.url);
+        parts.push({ inlineData: { mimeType: img.mimeType, data: img.b64 } });
+      }
+
+      const r = await fetchJson(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: {
+            maxOutputTokens: 65536,
+            temperature: 0.4,
+            topP: 0.95,
+            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
+          },
+        }),
+      });
+
+      const raw = r.json ?? r.rawText;
+      const markdown = String((raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+      if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "vision_failed", raw });
+      if (!markdown) return res.status(502).json({ ok: false, error: "empty_markdown", raw });
+      return res.status(200).json({ ok: true, markdown, imageCount: images.length });
     }
 
     // ---------------- Vertex：TestLab 翻译（gemini-3-flash-preview · locations/global；与 geminiScript 同为 IAM REST） ----------------
