@@ -3494,6 +3494,21 @@ export default function PlatformPage() {
     throw new Error("生成失敗，請重試");
   };
 
+  const mapCustomNoteError = (error: unknown): string => {
+    const message = String((error as { message?: string })?.message || "");
+    if (
+      message.includes("Unexpected end of JSON input") ||
+      message.includes("Unexpected token") ||
+      message.includes("is not valid JSON") ||
+      message.includes("An error o") ||
+      message.includes("模型返回格式异常") ||
+      message.includes("模型服务暂时异常")
+    ) {
+      return "文案优化请求超时或模型返回异常，请稍后重试；若刚部署完请等 1–2 分钟。";
+    }
+    return message || "生成失败，请稍后重试";
+  };
+
   const handleGenerateCustomNote = async () => {
     const trimmed = customNoteText.trim();
     if (!trimmed) {
@@ -3535,7 +3550,7 @@ export default function PlatformPage() {
         toast.success("分鏡圖已生成");
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
       toast.error(`生成失敗：${msg.slice(0, 120)}`);
     } finally {

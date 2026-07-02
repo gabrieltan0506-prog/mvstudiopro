@@ -6017,6 +6017,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const cost = CREDIT_COSTS.platformOptimizeCustomCopy;
+        let creditsCharged = false;
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -6031,19 +6032,38 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             "platformOptimizeCustomCopy",
             "自定义文案 · 深度优化",
           );
+          creditsCharged = true;
         }
 
-        const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
-        const result = await optimizeCustomCopy({
-          sourceText: input.sourceText,
-          optimizationBrief: input.optimizationBrief,
-        });
+        try {
+          const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
+          const result = await optimizeCustomCopy({
+            sourceText: input.sourceText,
+            optimizationBrief: input.optimizationBrief,
+          });
 
-        return {
-          success: true as const,
-          cost: isAdminUser ? 0 : cost,
-          result,
-        };
+          return {
+            success: true as const,
+            cost: isAdminUser ? 0 : cost,
+            result,
+          };
+        } catch (error) {
+          if (creditsCharged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "platformOptimizeCustomCopy 深度优化失败退还").catch(
+              (refundErr: unknown) => {
+                console.error("[optimizeCustomCopy] refund failed:", refundErr);
+              },
+            );
+          }
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: rawMessage.includes("is not valid JSON")
+              ? "文案优化请求超时或模型返回异常，积分已退回，请稍后重试"
+              : rawMessage || "文案优化失败，积分已退回，请稍后重试",
+          });
+        }
       }),
 
     getPlatformContent: publicProcedure
