@@ -5997,6 +5997,51 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return { jobId, status: "queued" as const };
       }),
 
+    /**
+     * 自定义创作工作台 · 深度优化文案（纯 LLM，无出图）。
+     * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
+     */
+    optimizeCustomCopy: protectedProcedure
+      .input(
+        z.object({
+          sourceText: z.string().min(10).max(12000),
+          optimizationBrief: z.string().max(4000).optional(),
+          supervisorToken: z.string().max(512).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformOptimizeCustomCopy;
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，深度优化文案需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(
+            userId,
+            "platformOptimizeCustomCopy",
+            "自定义文案 · 深度优化",
+          );
+        }
+
+        const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
+        const result = await optimizeCustomCopy({
+          sourceText: input.sourceText,
+          optimizationBrief: input.optimizationBrief,
+        });
+
+        return {
+          success: true as const,
+          cost: isAdminUser ? 0 : cost,
+          result,
+        };
+      }),
+
     getPlatformContent: publicProcedure
       .input(z.object({
         context: z.string().optional(),
