@@ -37,6 +37,10 @@ import {
 } from "@shared/plans";
 import type { PlatformMattingAspectRatio, PlatformMattingBatchCount } from "@shared/plans";
 import {
+  buildCustomCopyPdfHtml,
+  hasCustomCopyPdfContent,
+} from "@/lib/customCopyPdfExport";
+import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
 } from "@/lib/pdfHtmlOptimize";
@@ -1874,6 +1878,7 @@ export default function PlatformPage() {
   /** 深度优化结果（Markdown） */
   const [customOptimizeResult, setCustomOptimizeResult] = useState<string | null>(null);
   const [customOptimizeSummary, setCustomOptimizeSummary] = useState<string | null>(null);
+  const [isDownloadingCustomCopyPdf, setIsDownloadingCustomCopyPdf] = useState(false);
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting" | "assets">("copy");
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
@@ -4212,6 +4217,78 @@ export default function PlatformPage() {
     onError: (err) => { setIsDownloadingPdf(false); toast.error(err.message || "PDF 导出失败"); },
   });
 
+  const downloadCustomCopyPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation({
+    onSuccess: (result) => {
+      setIsDownloadingCustomCopyPdf(false);
+      if (!result.pdfBase64) {
+        toast.error("PDF 生成成功但内容为空，请重试");
+        return;
+      }
+      try {
+        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `custom-copy-${Date.now()}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        toast.success("自定义文案 PDF 已开始下载");
+      } catch {
+        toast.error("PDF 下载时出错，请重试");
+      }
+    },
+    onError: (err) => {
+      setIsDownloadingCustomCopyPdf(false);
+      toast.error(err.message || "PDF 导出失败");
+    },
+  });
+
+  const customCopyPdfPayload = useMemo(
+    () => ({
+      kind: customNoteKind,
+      sourceText: customNoteText,
+      optimizeBrief: customOptimizeBrief,
+      optimizeResult: customOptimizeResult,
+      optimizeSummary: customOptimizeSummary,
+      imageUpperUrl: customNoteImageUpper,
+      imageLowerUrl: customNoteImageLower,
+    }),
+    [
+      customNoteKind,
+      customNoteText,
+      customOptimizeBrief,
+      customOptimizeResult,
+      customOptimizeSummary,
+      customNoteImageUpper,
+      customNoteImageLower,
+    ],
+  );
+
+  const canExportCustomCopyPdf = useMemo(
+    () => hasCustomCopyPdfContent(customCopyPdfPayload),
+    [customCopyPdfPayload],
+  );
+
+  const handleExportCustomCopyPdf = useCallback(() => {
+    if (!canExportCustomCopyPdf) {
+      toast.error("请先输入文案或完成生成后再导出 PDF");
+      return;
+    }
+    try {
+      setIsDownloadingCustomCopyPdf(true);
+      let html = buildCustomCopyPdfHtml(customCopyPdfPayload);
+      html = optimizePdfSnapshotHtml(html);
+      toast.info("正在生成自定义文案 PDF，请稍候…", { duration: 8000 });
+      downloadCustomCopyPdfMutation.mutate({ html, token: "custom-copy-export" });
+    } catch (e) {
+      setIsDownloadingCustomCopyPdf(false);
+      toast.error(e instanceof Error ? e.message : "构建 PDF 快照失败，请重试");
+    }
+  }, [canExportCustomCopyPdf, customCopyPdfPayload, downloadCustomCopyPdfMutation]);
+
   // ── B 端 IP 基因库（拦截弹窗，共享组件 IpProfileModal）─────────────────────
   // 落地需求：handleAnalyze 启动前必须先填齐 IP 护城河 + 高客单锚点，
   // 否则弹「靛青色」拦截弹窗，强制用户校准战略预设。
@@ -6071,6 +6148,33 @@ export default function PlatformPage() {
             >
               <PenLine className="h-3.5 w-3.5 shrink-0" />
               自定义文案
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (customWorkspaceTab !== "copy") setCustomWorkspaceTab("copy");
+                void handleExportCustomCopyPdf();
+              }}
+              disabled={
+                customNoteBusy ||
+                customTopicBusy ||
+                customMattingBusy ||
+                isDownloadingCustomCopyPdf ||
+                !canExportCustomCopyPdf
+              }
+              title={
+                canExportCustomCopyPdf
+                  ? "导出当前自定义文案、优化结果与生成图片为 PDF"
+                  : "请先输入文案或完成生成"
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.08)] px-3 py-2 text-[12px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.16)] disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {isDownloadingCustomCopyPdf ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              ) : (
+                <FileText className="h-3.5 w-3.5 shrink-0" />
+              )}
+              导出 PDF
             </button>
             <button
               type="button"
