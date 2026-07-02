@@ -12,6 +12,13 @@ export function flatAnalysisCost(type: "GROWTH" | "REMIX"): number {
   return BASE_COST[type];
 }
 
+/** 图片素材分析：按张 × 单次分析单价 */
+export function flatImageAnalysisCost(type: "GROWTH" | "REMIX", imageCount: number): number {
+  const n = Math.max(0, Math.floor(Number(imageCount) || 0));
+  if (n <= 0) return 0;
+  return flatAnalysisCost(type) * n;
+}
+
 /** 60 分钟硬限制（秒） */
 export const MAX_DURATION_SECONDS = 3600;
 

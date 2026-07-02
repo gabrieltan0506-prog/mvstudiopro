@@ -300,6 +300,13 @@ export function platformCustomMattingTotalCredits(count: PlatformMattingBatchCou
   return Math.round(unit * 4 * 0.8);
 }
 
+/** 素材视觉分析合计积分：按张计费（与 {@link CREDIT_COSTS.growthCampGrowth} 同价） */
+export function platformAssetAnalysisTotalCredits(imageCount: number): number {
+  const n = Math.max(0, Math.floor(Number(imageCount) || 0));
+  if (n <= 0) return 0;
+  return n * CREDIT_COSTS.growthCampGrowth;
+}
+
 /** 一键套装·九折文案（按钮/说明统一后缀） */
 export const PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL = "（九折优惠）";
 

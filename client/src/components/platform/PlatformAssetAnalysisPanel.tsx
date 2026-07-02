@@ -12,6 +12,7 @@ import {
   type PlatformImageAsset,
 } from "@/lib/growthCampImagePipeline";
 import type { GrowthAnalysisScores } from "@shared/growth";
+import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { FileUp, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -48,6 +49,13 @@ export default function PlatformAssetAnalysisPanel({
     () => assets.length > 0 && assets.every((a) => a.ready),
     [assets],
   );
+
+  const readyAssetCount = useMemo(() => assets.filter((a) => a.ready).length, [assets]);
+  const analysisCost = useMemo(
+    () => platformAssetAnalysisTotalCredits(readyAssetCount),
+    [readyAssetCount],
+  );
+  const unitCost = CREDIT_COSTS.growthCampGrowth;
 
   const ingestImages = useCallback((files: File[]) => {
     const valid = files.filter((f) => isGrowthCampImageFile(f));
@@ -180,7 +188,8 @@ export default function PlatformAssetAnalysisPanel({
   return (
     <>
       <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-        上传封面、2×4 分镜等 PNG/JPG 素材，系统用 GPT-5.5 做视觉与商业战略分析。
+        上传封面、2×4 分镜等 PNG/JPG 素材（可多次添加，张数不限），系统用 GPT-5.5 做视觉与商业战略分析。
+        每张素材 <strong className="text-[#6ee7b7]">{unitCost} 积分</strong>，按实际上传张数合计。
         本步骤<strong className="text-[#6ee7b7]">不调用成长营套话快照</strong>，结果可直接用于后续「优化自定义文案」。
         {debugMode ? (
           <span className="block mt-2 text-[11px] text-emerald-200/70">{GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE}</span>
@@ -223,8 +232,18 @@ export default function PlatformAssetAnalysisPanel({
             <FileUp className="h-4 w-4" />
             添加 PNG / JPG
           </button>
-          <span className="text-xs text-[#c9c0e6]/50">可多选封面 + 分镜；建议单张 &lt; 8MB</span>
+          <span className="text-xs text-[#c9c0e6]/50">可多次添加封面、分镜等；建议单张 &lt; 8MB</span>
         </div>
+
+        {readyAssetCount > 0 ? (
+          <p className="mt-3 text-[11px] text-[#c9c0e6]/60">
+            当前 <strong className="text-white/85">{readyAssetCount}</strong> 张 · 合计{" "}
+            <strong className="text-[#6ee7b7]">{analysisCost} 积分</strong>
+            {readyAssetCount > 1 ? (
+              <span className="text-white/40">（{unitCost} × {readyAssetCount}）</span>
+            ) : null}
+          </p>
+        ) : null}
 
         {assets.length > 0 ? (
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -236,9 +255,15 @@ export default function PlatformAssetAnalysisPanel({
                 }`}
               >
                 {asset.previewUrl ? (
-                  <img src={asset.previewUrl} alt={asset.fileName} className="aspect-[4/5] w-full object-cover" />
+                  <div className="flex min-h-[100px] max-h-[220px] items-center justify-center bg-black/30 p-1.5">
+                    <img
+                      src={asset.previewUrl}
+                      alt={asset.fileName}
+                      className="max-h-[208px] w-full object-contain"
+                    />
+                  </div>
                 ) : (
-                  <div className="aspect-[4/5] flex items-center justify-center bg-black/40 text-xs text-red-300 px-2 text-center">
+                  <div className="flex min-h-[100px] items-center justify-center bg-black/40 px-2 py-8 text-center text-xs text-red-300">
                     {asset.readError || "读取失败"}
                   </div>
                 )}
@@ -267,6 +292,13 @@ export default function PlatformAssetAnalysisPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        {supervisorAccess ? (
+          <p className="text-[11px] text-emerald-200/80">Supervisor / Admin：本次分析免扣积分</p>
+        ) : readyAssetCount > 0 ? (
+          <p className="text-[11px] text-[#c9c0e6]/60">
+            开始分析将消耗 <strong className="text-[#6ee7b7]">{analysisCost} 积分</strong>
+          </p>
+        ) : null}
         <button
           type="button"
           onClick={() => void handleAnalyze()}
@@ -281,7 +313,9 @@ export default function PlatformAssetAnalysisPanel({
           ) : (
             <>
               <Sparkles className="h-4 w-4" />
-              开始视觉分析
+              {supervisorAccess || analysisCost <= 0
+                ? "开始视觉分析"
+                : `开始视觉分析（${analysisCost} 积分）`}
             </>
           )}
         </button>
