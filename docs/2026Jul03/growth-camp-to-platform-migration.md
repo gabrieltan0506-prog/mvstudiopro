@@ -130,9 +130,12 @@ readTrendStoreForPlatforms(["douyin","xiaohongshu","bilibili","kuaishou"], {
 
 ### D2 下午 — 闭环 + 验收（~3h）
 
-- [ ] 优化结果 → 一键填入「自定义文案」→ 生 2×4 / 单页卡片
-- [ ] 积分：优化 25 + 生图 60/50 分项展示
-- [ ] 验收：苏轼封面+分镜素材；Debug 对照 live 样本数 > 0
+- [x] 优化结果 → 一键填入「自定义文案」→ 生 2×4 / 单页卡片
+- [x] 导出：Markdown / Word（docx + 素材图）/ PDF（含封面分镜预览图）
+
+**分支（待你开 PR）**：
+- `feat/migrate-platform-optimize-to-image-d2b`（一键生图）
+- `feat/migrate-platform-export-copy-pr-e`（导出）
 
 ---
 

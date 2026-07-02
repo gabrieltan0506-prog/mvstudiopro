@@ -6147,6 +6147,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
+    exportOptimizedCopyWord: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().max(200).optional(),
+          markdown: z.string().min(10).max(80000),
+          imageUrls: z.array(z.string().max(8000)).max(8).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          const { exportOptimizedCopyToWord } = await import("./services/platformOptimizeCopyExport.js");
+          const result = await exportOptimizedCopyToWord({
+            title: input.title,
+            markdown: input.markdown,
+            imageUrls: input.imageUrls,
+          });
+          return { success: true as const, ...result };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg || "Word 导出失败" });
+        }
+      }),
+
     getPlatformContent: publicProcedure
       .input(z.object({
         context: z.string().optional(),

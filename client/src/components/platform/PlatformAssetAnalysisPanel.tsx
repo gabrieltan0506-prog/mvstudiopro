@@ -2,6 +2,12 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import {
+  buildOptimizedCopyPdfHtml,
+  downloadBase64File,
+  downloadTextFile,
+  triggerUrlDownload,
+} from "@/lib/platformOptimizedCopyExport";
+import {
   GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE,
   isGrowthCampImageFile,
   newPlatformImageAssetId,
@@ -13,7 +19,7 @@ import {
 } from "@/lib/growthCampImagePipeline";
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS } from "@shared/plans";
-import { FileText, FileUp, Film, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { FileText, FileUp, Film, Image, Loader2, Sparkles, Trash2, Download, X } from "lucide-react";
 import { toast } from "sonner";
 
 type PlatformAssetAnalysisPanelProps = {
@@ -62,7 +68,10 @@ export default function PlatformAssetAnalysisPanel({
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const optimizeWithAssetsMutation = trpc.mvAnalysis.optimizeCustomCopyWithAssets.useMutation();
+  const exportWordMutation = trpc.mvAnalysis.exportOptimizedCopyWord.useMutation();
+  const downloadPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation();
   const optimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
+  const [exportBusy, setExportBusy] = useState(false);
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
     enabled: debugMode && supervisorAccess,
     refetchInterval: debugMode ? 30_000 : false,
@@ -196,6 +205,56 @@ export default function PlatformAssetAnalysisPanel({
     supervisorAccess,
     user?.id,
   ]);
+
+  const assetImageUrls = useMemo(
+    () => assets.map((a) => a.previewUrl).filter((u): u is string => Boolean(u)),
+    [assets],
+  );
+
+  const handleExportMarkdown = useCallback(() => {
+    if (!optimizeResult?.optimizedMarkdown) return;
+    downloadTextFile(`platform-optimized-${Date.now()}.md`, optimizeResult.optimizedMarkdown);
+    toast.success("Markdown 已下载");
+  }, [optimizeResult?.optimizedMarkdown]);
+
+  const handleExportWord = useCallback(async () => {
+    if (!optimizeResult?.optimizedMarkdown) return;
+    setExportBusy(true);
+    try {
+      const res = await exportWordMutation.mutateAsync({
+        title: optimizeResult.summary?.slice(0, 80) || "平台优化文案",
+        markdown: optimizeResult.optimizedMarkdown,
+        imageUrls: assetImageUrls.slice(0, 8),
+      });
+      triggerUrlDownload(res.url, res.fileName);
+      toast.success("Word 文档已生成");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Word 导出失败");
+    } finally {
+      setExportBusy(false);
+    }
+  }, [assetImageUrls, exportWordMutation, optimizeResult]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!optimizeResult?.optimizedMarkdown) return;
+    setExportBusy(true);
+    try {
+      const html = buildOptimizedCopyPdfHtml({
+        title: optimizeResult.summary?.slice(0, 80) || "平台优化文案",
+        markdown: optimizeResult.optimizedMarkdown,
+        imageUrls: assetImageUrls.slice(0, 8),
+      });
+      const res = await downloadPdfMutation.mutateAsync({ html, token: "wait=120000" });
+      if (res.pdfBase64) {
+        downloadBase64File(`platform-optimized-${Date.now()}.pdf`, res.pdfBase64, "application/pdf");
+        toast.success("PDF 已下载");
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "PDF 导出失败");
+    } finally {
+      setExportBusy(false);
+    }
+  }, [assetImageUrls, downloadPdfMutation, optimizeResult]);
 
   const mapOptimizeError = (err: unknown): string => {
     const message = String((err as { message?: string })?.message || "");
@@ -576,6 +635,35 @@ export default function PlatformAssetAnalysisPanel({
                     一键生单页卡片
                   </button>
                 ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1 border-t border-white/10 mt-3 pt-3">
+                <button
+                  type="button"
+                  disabled={exportBusy || disabled}
+                  onClick={handleExportMarkdown}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/85 hover:bg-white/10 disabled:opacity-50"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  导出 Markdown
+                </button>
+                <button
+                  type="button"
+                  disabled={exportBusy || disabled}
+                  onClick={() => void handleExportWord()}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#60a5fa]/25 bg-[rgba(96,165,250,0.08)] px-3 py-1.5 text-xs font-semibold text-[#93c5fd] hover:bg-[rgba(96,165,250,0.15)] disabled:opacity-50"
+                >
+                  {exportBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                  导出 Word
+                </button>
+                <button
+                  type="button"
+                  disabled={exportBusy || disabled}
+                  onClick={() => void handleExportPdf()}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#f87171]/25 bg-[rgba(248,113,113,0.08)] px-3 py-1.5 text-xs font-semibold text-[#fca5a5] hover:bg-[rgba(248,113,113,0.15)] disabled:opacity-50"
+                >
+                  {exportBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                  导出 PDF（含素材图）
+                </button>
               </div>
             </div>
           ) : null}
