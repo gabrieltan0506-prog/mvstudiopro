@@ -14,6 +14,7 @@ import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
+import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
@@ -1218,14 +1219,13 @@ function buildCompositeImageGenPendingLines(input: {
   progressJobId?: string;
 }): string[] {
   const ts = new Date().toISOString();
-  const trLine =
-    "2×4／八格英文化：默认 GPT 5.4（最多 3 次）→ Gemini 3.5 Flash 兜底；生存模式由服端覆写。";
+  const trLine = "2×4／八格英文化：自动翻译与版式适配（多数 1～3 分钟内完成）。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
-      ? "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"
+      ? "小红书 2×4 八格图文笔记"
       : input.kind === "storyboard_sheet_landscape"
-        ? "视频向 2×4 分镜主表 · 横版（buildVideoStoryboardGeminiPrompt）"
-        : "视频向 2×4 分镜主表 · portrait API kind（buildVideoStoryboardGeminiPrompt）";
+        ? "视频向 2×4 分镜主表 · 横版"
+        : "视频向 2×4 分镜主表 · 竖版";
   const pid = String(input.progressJobId ?? "").trim();
   return [
     `${ts}  [客户端] 宽幅合成已发起 · ${kindLabel}`,
@@ -1249,10 +1249,10 @@ function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServer
     return "整链重试：重新英文化 + 生图，可能仍需数分钟…";
   }
   if (/\[2×4·NB2主路径]|Nano Banana|\[2×4·步骤3\] Vertex/.test(tail)) {
-    return "绘制中 · Vertex Nano Banana 2（宽幅 2K，偶需数分钟）…";
+    return "绘制中 · 宽幅分镜生成（偶需数分钟）…";
   }
   if (/\[GPT-IMAGE-2\]|GPT-IMAGE-2/.test(tail)) {
-    return "绘制中 · GPT-IMAGE-2（单尺寸偶需 3～5 分钟仍属正常）";
+    return "绘制中 · 高清封面生成（单尺寸偶需 3～5 分钟）…";
   }
   if (/\[2×4·步骤2|\[步骤2\]/.test(tail)) {
     return "准备生图（像素锁已定）…";
@@ -2235,7 +2235,7 @@ export default function PlatformPage() {
           jobId,
           label: "Stage 2 · platform_build_content",
           lines: [
-            `${new Date().toISOString()} 已入队 · 文案模型=GPT‑5.5`,
+            `${new Date().toISOString()} 已入队 · 专属文案生成`,
           ],
           pollCount: 0,
           currentStep: "已入队，等待轮询…",
@@ -2246,7 +2246,7 @@ export default function PlatformPage() {
         const msg = e instanceof Error ? e.message : String(e);
         setStage2Failed(true);
         setContentJobError(msg);
-        toast.error(`文案生成失败: ${msg}`);
+        toast.error(sanitizePlatformUserMessage(msg, "文案生成失败，请稍后重试"));
         setContentJobPollTrace((prev) =>
           prev
             ? {
@@ -2409,7 +2409,7 @@ export default function PlatformPage() {
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
               合计轮询{" "}
-              <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次（GPT 5.4 strict）
+              <span className="font-semibold tabular-nums text-white">{translationTotal}</span> 次
             </p>
             {translationStatsRows.length > 0 ? (
               <div className="mt-2 space-y-1.5 rounded-lg border border-[#c4b5fd]/20 bg-black/20 px-2.5 py-2">
@@ -2770,7 +2770,7 @@ export default function PlatformPage() {
         jobId,
         label: pollLabel,
         lines: [
-          `${new Date().toISOString()} 已入队 · 封面英文化=GPT 5.4`,
+          `${new Date().toISOString()} 已入队 · 封面英文化与出图`,
         ],
         pollCount: 0,
         currentStep: "已入队…",
@@ -7004,11 +7004,11 @@ export default function PlatformPage() {
                     <div>
                       <div className="text-sm font-semibold text-white">封面英文化</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        竖版封面翻译固定走 <strong className="text-white/80">GPT 5.4</strong>（reasoning=medium · max_tokens=64K · strict · 无 Flash 兜底）。
+                        竖版封面会先完成英文版式适配，再进入高清出图（多数 1～3 分钟内完成）。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                      GPT 5.4
+                      封面英文化
                     </div>
                   </div>
                 </div>
@@ -7020,12 +7020,11 @@ export default function PlatformPage() {
                     <div>
                       <div className="text-sm font-semibold text-white">文案模型（Stage 1 + Stage 2 + 深度追问）</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        战略看板、专属选题文案与<strong className="text-white/80">深度追问</strong>固定走{" "}
-                        <strong className="text-white/80">GPT‑5.5</strong>；Debug 会显示实际模型与 token。
+                        战略看板、专属选题文案与深度追问走平台文案引擎；Debug 会显示实际进度与 token。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                      GPT‑5.5
+                      文案引擎
                     </div>
                   </div>
                 </div>
@@ -7033,8 +7032,7 @@ export default function PlatformPage() {
 
               {canConfigureStage2CopyEngine && debugMode ? (
                 <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
-                  监管提示：文案与深度追问已固定 <span className="font-mono text-amber-100/80">openai / GPT‑5.5</span>
-                  ；封面与 2×4 英文化固定 GPT 5.4。
+                  监管提示：文案与深度追问已固定平台文案引擎；封面与 2×4 英文化走封面翻译引擎。
                 </div>
               ) : null}
 
@@ -7332,7 +7330,7 @@ export default function PlatformPage() {
                         </span>
                       </div>
                       <div className="break-words">
-                        3g. GPT‑5 reasoning 诊断:{" "}
+                        3g. 文案推理诊断:{" "}
                         <span className="font-mono text-[10px] text-[#d7d0ef]">
                           {(() => {
                             const r = (
@@ -9269,7 +9267,7 @@ export default function PlatformPage() {
                               </label>
                               <span className="mt-0.5 text-[10px] leading-tight text-gray-500">
                                 {coverReferencePhotoMap[item.id]
-                                  ? "已绑定人像 · 生成封面时由 GPT-Image-2 换成此人（保留排版与风格）"
+                                  ? "已绑定人像 · 生成封面时将换成此人（保留排版与风格）"
                                   : "可选 · 上传一张清晰正脸照，让封面主角换成你/指定人物"}
                               </span>
                               <span className="mt-0.5 text-[10px] leading-tight text-amber-300/70">

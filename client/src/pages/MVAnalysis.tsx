@@ -557,16 +557,16 @@ const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
 const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
 const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
 
-/** 成长营分析固定 GPT-5.5；语音 scan 在后台用 Gemini 3.5 Flash（仅 Debug 展示）。 */
+/** 成长营分析引擎（内部常量，不对用户展示模型名） */
 const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
 
-/** 仅 Debug 面板展示：提取模式模型分工说明 */
+/** 仅 Debug 面板展示：提取模式链路说明 */
 const EXTRACT_PIPELINE_DEBUG_NOTE =
-  "语音 scan：Gemini 3.5 Flash（覆盖不足时 fallback GPT-5.5）→ 关键点多次抽帧 + 其余约 50s 补帧 → 画面初判与 Markdown 总结：GPT-5.5";
+  "语音 scan → 关键点多次抽帧 + 补帧 → 画面初判与 Markdown 总结";
 
 /** 仅 Debug 面板展示：图片分析链路说明 */
 const IMAGE_PIPELINE_DEBUG_NOTE =
-  "PNG/JPG GCS 直传 → growth_analyze_images Job → analyzeGrowthCampImagesJob（GPT-5.5 视觉 + 商业战略）";
+  "PNG/JPG GCS 直传 → growth_analyze_images Job → 视觉与策略分析";
 
 function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
   try {
@@ -3997,7 +3997,7 @@ export default function MVAnalysisPage() {
                   <div>输入类型：{String(debugInfo?.inputKind || inputKind || "-")}</div>
                   <div>路由：{String(debugInfo?.route || "-")}</div>
                   <div>服务提供方：{String(debugInfo?.provider || "-")}</div>
-                  <div>降级补位：{String(debugInfo?.fallback ?? "-")}</div>
+                  <div>备用路径：{String(debugInfo?.fallback ?? "-")}</div>
                   <div>趋势数据来源：{String(growthSnapshot?.status.source || "-")}</div>
                   <div>真值口径：{formatTruthSource(growthSystemStatusQuery.data?.truthStore?.source)}</div>
                   <div>真值更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.truthStore?.updatedAt || ""))}</div>
@@ -4030,7 +4030,7 @@ export default function MVAnalysisPage() {
                     <div>请求模型：{growthCampAnalysisModel}</div>
                     {isImageOnlyInput || debugInfo?.route === "analyzeGrowthCampImagesJob" ? (
                       <>
-                        <div>主模型：{String(debugInfo?.model || (debugInfo as any)?.imagePipeline?.analysis?.model || "-")}</div>
+                        <div>分析引擎：{String(debugInfo?.model || (debugInfo as any)?.imagePipeline?.analysis?.model || "-")}</div>
                         <div>Provider：{String(debugInfo?.provider || (debugInfo as any)?.imagePipeline?.analysis?.provider || "-")}</div>
                         <div>图片数量：{String(debugInfo?.imageCount ?? (debugInfo as any)?.imagePipeline?.analysis?.imageCount ?? imageAssets.length)}</div>
                         <div>路由：{String(debugInfo?.route || "analyzeGrowthCampImagesJob")}</div>
@@ -4040,7 +4040,7 @@ export default function MVAnalysisPage() {
                       </>
                     ) : (
                       <>
-                        <div>主模型：{String(debugInfo?.model || (debugInfo as any)?.videoPipeline?.analysis?.model || "-")}</div>
+                        <div>分析引擎：{String(debugInfo?.model || (debugInfo as any)?.videoPipeline?.analysis?.model || "-")}</div>
                         <div>Stage 1 / 语音 scan：{String(debugInfo?.stageOneModel || (debugInfo as any)?.videoPipeline?.analysis?.stageOneModel || "-")}</div>
                         <div>Stage 2 / 总结：{String(debugInfo?.stageTwoModel || (debugInfo as any)?.videoPipeline?.analysis?.stageTwoModel || "-")}</div>
                         <div>视觉初判模型：{String((debugInfo as any)?.visualPassModel || (debugInfo as any)?.videoPipeline?.analysis?.visualPassModel || "-")}</div>
@@ -4100,7 +4100,7 @@ export default function MVAnalysisPage() {
                       <div>4. 派发：路由 {String((debugInfo as any)?.imagePipeline?.dispatch?.route || "growth_analyze_images")} / 模式 {String((debugInfo as any)?.imagePipeline?.dispatch?.mode || analysisMode)} / 状态 {String((debugInfo as any)?.imagePipeline?.dispatch?.status || "idle")}</div>
                       <div>5. Job：ID {String((debugInfo as any)?.imagePipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.imagePipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.imagePipeline?.job?.pollCount ?? "-")} 次</div>
                       <div>6. 分析：{String((debugInfo as any)?.imagePipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.imagePipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.imagePipeline?.analysis?.model || debugInfo?.model || "-")}</div>
-                      <div>7. 图片数：{String((debugInfo as any)?.imagePipeline?.analysis?.imageCount ?? debugInfo?.imageCount ?? imageAssets.length)} / 降级 {String((debugInfo as any)?.imagePipeline?.analysis?.fallback ?? debugInfo?.fallback ?? "-")}</div>
+                      <div>7. 图片数：{String((debugInfo as any)?.imagePipeline?.analysis?.imageCount ?? debugInfo?.imageCount ?? imageAssets.length)} / 备用 {String((debugInfo as any)?.imagePipeline?.analysis?.fallback ?? debugInfo?.fallback ?? "-")}</div>
                       <div>8. 失败原因：{String((debugInfo as any)?.imagePipeline?.analysis?.error || debugInfo?.failureReason || "-")}</div>
                     </div>
                   </div>
