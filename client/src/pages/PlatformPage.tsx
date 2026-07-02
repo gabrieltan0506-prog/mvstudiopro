@@ -3496,6 +3496,9 @@ export default function PlatformPage() {
 
   const mapCustomNoteError = (error: unknown): string => {
     const message = String((error as { message?: string })?.message || "");
+    if (message.includes("算力紧张")) {
+      return message;
+    }
     if (
       message.includes("Unexpected end of JSON input") ||
       message.includes("Unexpected token") ||
@@ -3504,7 +3507,7 @@ export default function PlatformPage() {
       message.includes("模型返回格式异常") ||
       message.includes("模型服务暂时异常")
     ) {
-      return "文案优化请求超时或模型返回异常，请稍后重试；若刚部署完请等 1–2 分钟。";
+      return "算力紧张，请稍后再试";
     }
     return message || "生成失败，请稍后重试";
   };
