@@ -22,6 +22,20 @@ type PlatformAssetAnalysisPanelProps = {
   disabled?: boolean;
 };
 
+/** 面向用户的错误文案：不暴露模型名、fallback、API 内部细节 */
+function sanitizeAssetAnalysisUserMessage(raw: string): string {
+  const text = String(raw || "").trim();
+  if (!text) return "图片分析失败，请稍后重试";
+  if (
+    /EVOLINK|OPENAI|VERTEX|GPT|Gemini|gemini|gpt-|主模型|备用模型|备用路径|fallback|analyzeGrowthCamp|growth_analyze/i.test(
+      text,
+    )
+  ) {
+    return "图片分析暂时不可用，请稍后重试";
+  }
+  return text;
+}
+
 export default function PlatformAssetAnalysisPanel({
   debugMode,
   supervisorAccess,
@@ -161,7 +175,8 @@ export default function PlatformAssetAnalysisPanel({
       setUploadProgress(100);
       toast.success("素材视觉分析完成");
     } catch (analysisError: unknown) {
-      const msg = analysisError instanceof Error ? analysisError.message : "图片分析失败";
+      const raw = analysisError instanceof Error ? analysisError.message : "图片分析失败";
+      const msg = sanitizeAssetAnalysisUserMessage(raw);
       setError(msg);
       setStage("error");
     } finally {
@@ -182,15 +197,14 @@ export default function PlatformAssetAnalysisPanel({
     stage === "uploading"
       ? `正在上传素材… ${uploadProgress}%`
       : stage === "analyzing"
-        ? "正在 GPT-5.5 视觉分析，约需 30–90 秒…"
+        ? "正在分析您的素材，约需 30–90 秒…"
         : null;
 
   return (
     <>
       <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-        上传封面、2×4 分镜等 PNG/JPG 素材（可多次添加，张数不限），系统用 GPT-5.5 做视觉与商业战略分析。
-        每张素材 <strong className="text-[#6ee7b7]">{unitCost} 积分</strong>，按实际上传张数合计。
-        本步骤<strong className="text-[#6ee7b7]">不调用成长营套话快照</strong>，结果可直接用于后续「优化自定义文案」。
+        上传封面、2×4 分镜等 PNG/JPG 素材（可多次添加，张数不限），系统将根据您的图片与业务背景生成视觉分析与策略建议。
+        每张素材 <strong className="text-[#6ee7b7]">{unitCost} 积分</strong>，按实际上传张数合计。完成后可继续「优化自定义文案」。
         {debugMode ? (
           <span className="block mt-2 text-[11px] text-emerald-200/70">{GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE}</span>
         ) : null}
@@ -353,17 +367,116 @@ export default function PlatformAssetAnalysisPanel({
       ) : null}
 
       {analysis ? (
-        <div className="mt-6 space-y-4 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5">
+        <div className="mt-6 space-y-5 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5">
           <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/80">视觉分析结果</div>
+
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            {[
+              ["构图", analysis.composition],
+              ["色彩", analysis.color],
+              ["冲击", analysis.impact],
+              ["传播", analysis.viralPotential],
+            ].map(([label, score]) => (
+              <span
+                key={String(label)}
+                className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[#c9c0e6]/80"
+              >
+                {label} {score}
+              </span>
+            ))}
+          </div>
+
           {analysis.summary ? (
             <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{analysis.summary}</p>
           ) : null}
+
+          {analysis.realityCheck ? (
+            <div>
+              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">现实查验</div>
+              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.realityCheck}</p>
+            </div>
+          ) : null}
+
           {analysis.visualSummary ? (
             <div>
               <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">画面摘要</div>
               <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.visualSummary}</p>
             </div>
           ) : null}
+
+          {analysis.reverseEngineering?.hookStrategy ||
+          analysis.reverseEngineering?.emotionalArc ||
+          analysis.reverseEngineering?.commercialLogic ? (
+            <div className="space-y-3 rounded-xl border border-white/10 bg-black/15 p-4">
+              <div className="text-[11px] font-semibold text-[#6ee7b7]/80">视觉拆解</div>
+              {analysis.reverseEngineering.hookStrategy ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">抓眼策略</div>
+                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                    {analysis.reverseEngineering.hookStrategy}
+                  </p>
+                </div>
+              ) : null}
+              {analysis.reverseEngineering.emotionalArc ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">浏览情绪曲线</div>
+                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                    {analysis.reverseEngineering.emotionalArc}
+                  </p>
+                </div>
+              ) : null}
+              {analysis.reverseEngineering.commercialLogic ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">商业承接</div>
+                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                    {analysis.reverseEngineering.commercialLogic}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {analysis.premiumContent?.actionableTopics?.length ? (
+            <div>
+              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-2">可执行选题</div>
+              <div className="space-y-3">
+                {analysis.premiumContent.actionableTopics.slice(0, 3).map((topic, i) => (
+                  <div key={`topic-${i}`} className="rounded-xl border border-white/10 bg-black/15 p-4">
+                    <div className="text-sm font-semibold text-[#fde047]/90">{topic.title || `选题 ${i + 1}`}</div>
+                    {topic.contentBrief ? (
+                      <p className="mt-2 text-sm leading-7 text-white/85 whitespace-pre-wrap">{topic.contentBrief}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {analysis.remixExecution?.imageTextNoteGuide?.titleOptions?.length ||
+          analysis.remixExecution?.imageTextNoteGuide?.structuredBody ||
+          analysis.remixExecution?.imageTextNoteGuide?.coverSetup ? (
+            <div className="space-y-3 rounded-xl border border-[#8cefff]/15 bg-[rgba(140,239,255,0.04)] p-4">
+              <div className="text-[11px] font-semibold text-[#8cefff]/80">图文笔记改法</div>
+              {analysis.remixExecution.imageTextNoteGuide.coverSetup ? (
+                <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                  {analysis.remixExecution.imageTextNoteGuide.coverSetup}
+                </p>
+              ) : null}
+              {analysis.remixExecution.imageTextNoteGuide.titleOptions?.length ? (
+                <ul className="space-y-1 text-sm text-[#fde047]/90">
+                  {analysis.remixExecution.imageTextNoteGuide.titleOptions.slice(0, 5).map((title, i) => (
+                    <li key={`note-title-${i}`}>· {title}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {analysis.remixExecution.imageTextNoteGuide.structuredBody ? (
+                <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                  {analysis.remixExecution.imageTextNoteGuide.structuredBody}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {analysis.strengths?.length ? (
             <div>
               <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势</div>
@@ -438,15 +551,16 @@ export default function PlatformAssetAnalysisPanel({
               {String(imagePipelineDebug.job?.pollCount ?? "-")} 次
             </div>
             <div>
-              6. 分析：{String(imagePipelineDebug.analysis?.status || "idle")} / Provider{" "}
-              {String(imagePipelineDebug.analysis?.provider || "-")} / Model{" "}
-              {String(imagePipelineDebug.analysis?.model || "-")}
+              6. 分析：{String(imagePipelineDebug.analysis?.status || "idle")}
             </div>
             <div>
-              7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)} / 降级{" "}
-              {String(imagePipelineDebug.analysis?.fallback ?? "-")}
+              7. 图片数：{String(imagePipelineDebug.analysis?.imageCount ?? assets.length)}
             </div>
-            <div>8. 失败原因：{String(imagePipelineDebug.analysis?.error || error || "-")}</div>
+            <div>
+              8. 失败原因：{sanitizeAssetAnalysisUserMessage(
+                String(imagePipelineDebug.analysis?.error || error || "-"),
+              )}
+            </div>
           </div>
 
           {growthSystemStatusQuery.data ? (

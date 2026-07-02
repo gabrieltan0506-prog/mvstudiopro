@@ -1,6 +1,6 @@
-import { type GrowthAnalysisMode, type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
-import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl } from "../services/gcs";
-import { storagePut } from "../storage";
+import { type GrowthAnalysisMode, type GrowthAnalysisScores } from "@shared/growth";
+import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl, uploadBufferToGcs } from "../services/gcs";
+import { resolveGrowthCampExtractScanEngine } from "./extractorPipeline";
 import { runGrowthCampStrategistForImages } from "./growthCampStrategistPass";
 
 export type GrowthCampImageAssetInput = {
@@ -18,9 +18,23 @@ export type GrowthCampImageAnalysisResult = {
     imageCount: number;
     provider: string;
     model: string;
+    /** true = 主模型失败后由 Gemini 3.5 Flash 重试成功 */
     fallback: boolean;
+    primaryError?: string;
   };
 };
+
+type ImageVisionRef = {
+  mime: "image/png" | "image/jpeg";
+  gcsUri: string;
+  signedReadUrl: string;
+  publicUrl: string;
+};
+
+type VisionUserContent = Array<
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "high" | "auto" | "low" } }
+>;
 
 function normalizeImageMime(mimeType: string, fileName?: string): "image/png" | "image/jpeg" | null {
   const mime = String(mimeType || "").trim().toLowerCase();
@@ -30,33 +44,32 @@ function normalizeImageMime(mimeType: string, fileName?: string): "image/png" | 
   return null;
 }
 
-function buildFallbackImageAnalysis(context: string, count: number) {
-  return growthAnalysisScoresSchema.parse({
-    composition: 70,
-    color: 72,
-    lighting: 68,
-    impact: 66,
-    viralPotential: 70,
-    strengths: [
-      `已接收 ${count} 张图片素材，视觉信息可用于包装与平台适配判断。`,
-      "建议明确图片所服务的商业场景与目标受众。",
-      "可进一步与口播/视频素材组合成完整 brief。",
-    ],
-    improvements: [
-      "补充更清晰的标题、卖点或 CTA 文案。",
-      "建议统一视觉风格与品牌识别元素。",
-      "最好说明图片将用于哪个平台与转化目标。",
-    ],
-    platforms: ["小红书", "抖音", "B站"],
-    summary: context.trim()
-      ? `基于 ${count} 张图片与业务背景「${context.trim().slice(0, 80)}」，当前更适合从视觉包装、信息清晰度与平台分发潜力做保守增长判断。`
-      : `基于 ${count} 张图片，当前更适合从视觉包装、信息清晰度与平台分发潜力做保守增长判断。`,
+async function ensureGcsUri(
+  img: GrowthCampImageAssetInput,
+  index: number,
+  mime: "image/png" | "image/jpeg",
+): Promise<string> {
+  const existing = String(img.gcsUri || "").trim();
+  if (existing) return existing;
+
+  const base64 = String(img.fileBase64 || "").trim();
+  if (!base64) {
+    throw new Error(`第 ${index + 1} 张图片缺少 gcsUri 或 fileBase64`);
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  const keyName = img.fileName || `image-${index + 1}.${mime === "image/png" ? "png" : "jpg"}`;
+  const uploaded = await uploadBufferToGcs({
+    objectName: `growth-camp/images/${Date.now()}-${index}-${keyName}`,
+    buffer,
+    contentType: mime,
   });
+  return uploaded.gcsUri;
 }
 
-async function resolveImageVisionUrls(images: GrowthCampImageAssetInput[]) {
-  const fileUrls: string[] = [];
-  const visionUrls: Array<{ mime: "image/png" | "image/jpeg"; url: string }> = [];
+/** 解析为 GCS 引用 + 短时签名 HTTPS 直链（不在服端转 base64） */
+async function resolveImageVisionRefs(images: GrowthCampImageAssetInput[]): Promise<ImageVisionRef[]> {
+  const refs: ImageVisionRef[] = [];
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i]!;
@@ -65,29 +78,67 @@ async function resolveImageVisionUrls(images: GrowthCampImageAssetInput[]) {
       throw new Error(`不支持的图片格式：${img.fileName || img.mimeType || "unknown"}`);
     }
 
-    const gcsUri = String(img.gcsUri || "").trim();
-    if (gcsUri) {
-      fileUrls.push(getPublicGcsHttpsUrl(gcsUri));
-      visionUrls.push({
-        mime,
-        url: signGsUriV4ReadUrl(gcsUri, 3600),
-      });
-      continue;
-    }
-
-    const base64 = String(img.fileBase64 || "").trim();
-    if (!base64) {
-      throw new Error(`第 ${i + 1} 张图片缺少 gcsUri 或 fileBase64`);
-    }
-
-    const buffer = Buffer.from(base64, "base64");
-    const keyName = img.fileName || `image-${i + 1}.${mime === "image/png" ? "png" : "jpg"}`;
-    const { url } = await storagePut(`growth-camp/images/${Date.now()}-${i}-${keyName}`, buffer, mime);
-    fileUrls.push(url);
-    visionUrls.push({ mime, url });
+    const gcsUri = await ensureGcsUri(img, i, mime);
+    refs.push({
+      mime,
+      gcsUri,
+      signedReadUrl: signGsUriV4ReadUrl(gcsUri, 3600),
+      publicUrl: getPublicGcsHttpsUrl(gcsUri),
+    });
   }
 
-  return { fileUrls, visionUrls };
+  return refs;
+}
+
+function buildAnalysisPromptText(imageCount: number, context?: string): string {
+  return [
+    `用户上传了 ${imageCount} 张图片（PNG/JPG），请基于画面内容做商业增长与视觉策略分析。`,
+    context?.trim() ? `业务背景：${context.trim()}` : "业务背景：未提供",
+    "请综合所有图片中的文字、人物、产品、场景、版式与视觉风格做判断，输出须具体、可执行，禁止空泛模板句。",
+  ].join("\n\n");
+}
+
+/** Evolink / GPT：传签名 HTTPS 直链，由上游自行拉取，请求体不含 base64 */
+function buildOpenAiVisionUserContent(refs: ImageVisionRef[], context?: string): VisionUserContent {
+  const userContent: VisionUserContent = [
+    { type: "text", text: buildAnalysisPromptText(refs.length, context) },
+  ];
+
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i]!;
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: ref.signedReadUrl,
+        detail: i < 2 ? "high" : "auto",
+      },
+    });
+  }
+
+  return userContent;
+}
+
+/** Vertex Gemini fallback：传 gs:// URI，由 Vertex 直读 GCS，不经服端 base64 */
+function buildVertexVisionUserContent(refs: ImageVisionRef[], context?: string): VisionUserContent {
+  const userContent: VisionUserContent = [
+    { type: "text", text: buildAnalysisPromptText(refs.length, context) },
+  ];
+
+  for (let i = 0; i < refs.length; i++) {
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: refs[i]!.gcsUri,
+        detail: i < 2 ? "high" : "auto",
+      },
+    });
+  }
+
+  return userContent;
+}
+
+function formatAnalysisError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function analyzeGrowthCampImages(params: {
@@ -103,61 +154,56 @@ export async function analyzeGrowthCampImages(params: {
     throw new Error("请至少上传一张 PNG 或 JPG 图片");
   }
 
+  const refs = await resolveImageVisionRefs(images);
+  const fileUrls = refs.map((ref) => ref.publicUrl);
+  const openAiUserContent = buildOpenAiVisionUserContent(refs, params.context);
+  const vertexUserContent = buildVertexVisionUserContent(refs, params.context);
+  const primaryModel = params.modelName || "gpt-5.5";
+
+  let analysis: GrowthAnalysisScores;
+  let fallback = false;
+  let provider = "growth-camp-strategist";
+  let model = primaryModel;
+  let primaryError: string | undefined;
+
   try {
-    const { fileUrls, visionUrls } = await resolveImageVisionUrls(images);
-
-    const userContent: Array<
-      | { type: "text"; text: string }
-      | { type: "image_url"; image_url: { url: string; detail?: "high" | "auto" | "low" } }
-    > = [
-      {
-        type: "text",
-        text: [
-          `用户上传了 ${images.length} 张图片（PNG/JPG），请做 Creator Growth Camp 商业增长分析。`,
-          params.context?.trim() ? `业务背景：${params.context.trim()}` : "业务背景：未提供",
-          "请综合所有图片中的文字、人物、产品、场景、版式与视觉风格做判断。",
-        ].join("\n\n"),
-      },
-    ];
-
-    for (let i = 0; i < visionUrls.length; i++) {
-      const item = visionUrls[i]!;
-      userContent.push({
-        type: "image_url",
-        image_url: {
-          url: item.url,
-          detail: i < 2 ? "high" : "auto",
-        },
-      });
-    }
-
-    const analysis = await runGrowthCampStrategistForImages({
-      userContent,
+    analysis = await runGrowthCampStrategistForImages({
+      userContent: openAiUserContent,
       context: params.context,
       mode: params.mode,
-      modelName: params.modelName,
+      modelName: primaryModel,
     });
-    return {
-      analysis,
-      imageMeta: {
-        fileUrls,
-        imageCount: images.length,
-        provider: "growth-camp-strategist",
-        model: params.modelName || "default",
-        fallback: false,
-      },
-    };
-  } catch (error) {
-    console.warn("[growth.analyzeGrowthCampImages] fallback:", error);
-    return {
-      analysis: buildFallbackImageAnalysis(params.context || "", images.length),
-      imageMeta: {
-        fileUrls: [],
-        imageCount: images.length,
-        provider: "fallback",
-        model: "deterministic",
-        fallback: true,
-      },
-    };
+  } catch (primaryFailure: unknown) {
+    primaryError = formatAnalysisError(primaryFailure);
+    console.warn("[growth.analyzeGrowthCampImages] primary failed, retry Gemini 3.5 Flash:", primaryError);
+
+    const geminiEngine = resolveGrowthCampExtractScanEngine();
+    try {
+      analysis = await runGrowthCampStrategistForImages({
+        userContent: vertexUserContent,
+        context: params.context,
+        mode: params.mode,
+        strategistEngine: geminiEngine,
+      });
+    } catch (fallbackFailure: unknown) {
+      console.warn("[growth.analyzeGrowthCampImages] fallback failed:", formatAnalysisError(fallbackFailure));
+      throw new Error("图片分析失败，请稍后重试");
+    }
+
+    fallback = true;
+    provider = "vertex-gemini-flash-fallback";
+    model = geminiEngine.modelName;
   }
+
+  return {
+    analysis,
+    imageMeta: {
+      fileUrls,
+      imageCount: images.length,
+      provider,
+      model,
+      fallback,
+      primaryError: fallback ? primaryError : undefined,
+    },
+  };
 }

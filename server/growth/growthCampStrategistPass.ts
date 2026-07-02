@@ -690,10 +690,12 @@ export async function runGrowthCampStrategistForImages(params: {
   context?: string;
   mode?: GrowthAnalysisMode;
   modelName?: string;
+  /** 覆写引擎（例如主路径失败后走 Gemini 3.5 Flash fallback） */
+  strategistEngine?: GrowthCampStrategistEngine;
 }): Promise<GrowthAnalysisScores> {
   const mode = params.mode || "GROWTH";
   const businessGoal = (params.context || "未提供").trim() || "未提供";
-  const strategistEngine = resolveGrowthCampStrategistEngine(params.modelName);
+  const strategistEngine = params.strategistEngine || resolveGrowthCampStrategistEngine(params.modelName);
   const systemMain = buildGrowthCampStrategistSystemMainForImages(mode, businessGoal);
   const result = await runGrowthCampStrategistMultimodalPass({
     systemMain,
@@ -703,5 +705,11 @@ export async function runGrowthCampStrategistForImages(params: {
     businessGoal,
     mediaKind: "image",
   });
-  return growthAnalysisScoresSchema.parse({ ...result, mode });
+  const parsed = growthAnalysisScoresSchema.safeParse({ ...result, mode });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "root";
+    throw new Error(`分析结果格式异常（${path}）：${issue?.message || "校验失败"}`);
+  }
+  return parsed.data;
 }

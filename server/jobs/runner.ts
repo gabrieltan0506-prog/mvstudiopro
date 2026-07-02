@@ -381,6 +381,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
             provider: result.imageMeta.provider,
             model: result.imageMeta.model,
             fallback: result.imageMeta.fallback,
+            primaryError: result.imageMeta.primaryError || null,
             imageCount: result.imageMeta.imageCount,
           },
         },

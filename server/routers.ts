@@ -2686,6 +2686,7 @@ export const appRouter = router({
             provider: result.imageMeta.provider,
             model: result.imageMeta.model,
             fallback: result.imageMeta.fallback,
+            primaryError: result.imageMeta.primaryError || null,
             imageCount: result.imageMeta.imageCount,
           },
         };
