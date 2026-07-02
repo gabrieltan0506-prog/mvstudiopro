@@ -84,11 +84,14 @@ export async function pollOmniInteractionUntilDone(
   throw new Error("Omni 任务超时，请稍后再试");
 }
 
-export async function runGeminiScript(prompt: string) {
+export async function runGeminiScript(prompt: string, model?: string) {
   const resp = await fetch("/api/google?op=geminiScript", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, model: "gemini-2.5-flash" }),
+    body: JSON.stringify({
+      prompt,
+      model: model || "gemini-3.1-pro-preview",
+    }),
   });
   const json = await parseJson(resp);
   if (!resp.ok || !json.ok) throw new Error(String(json.error || "文字生成失败"));
@@ -102,8 +105,12 @@ export async function runNanoImage(body: {
   aspectRatio?: string;
   imageUrl?: string;
   imageSize?: string;
+  model?: string;
+  tier?: "flash" | "pro";
 }) {
-  const resp = await fetch("/api/google?op=nanoImage", {
+  const tier = body.tier || "flash";
+  const model = body.model || "gemini-3.1-flash-image-preview";
+  const resp = await fetch(`/api/google?op=nanoImage&tier=${tier}&model=${encodeURIComponent(model)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -111,6 +118,9 @@ export async function runNanoImage(body: {
       aspectRatio: body.aspectRatio || "9:16",
       imageUrl: body.imageUrl || undefined,
       imageSize: body.imageSize || "1K",
+      tier,
+      model,
+      numberOfImages: 1,
     }),
   });
   const json = await parseJson(resp);

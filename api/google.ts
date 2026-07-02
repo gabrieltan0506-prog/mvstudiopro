@@ -350,7 +350,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const model = (s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
+      const model = (s(b.model || q.model || "") || s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
       const is31Pro = /gemini-3\.1.*pro/i.test(model);
       const is25Pro = /gemini-2\.5/i.test(model) && /pro/i.test(model) && !/flash/i.test(model);
       const is3Flash =
