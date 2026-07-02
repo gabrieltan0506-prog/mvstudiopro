@@ -182,7 +182,7 @@ export default function PlatformAssetAnalysisPanel({
     stage === "uploading"
       ? `正在上传素材… ${uploadProgress}%`
       : stage === "analyzing"
-        ? "正在 GPT-5.5 视觉分析，约需 30–90 秒…"
+        ? "正在分析您的素材，约需 30–90 秒…"
         : null;
 
   return (
