@@ -2671,23 +2671,10 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ input, ctx }) => {
-        if (ctx.user?.id) {
-          const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-          if (!isAdminUser) {
-            const mode = input.mode || "GROWTH";
-            const creditKey = mode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
-            const cost = CREDIT_COSTS[creditKey];
-            const creditsInfo = await getCredits(ctx.user.id);
-            if (creditsInfo.totalAvailable < cost) {
-              throw new Error(
-                `Credits 不足，${mode === "REMIX" ? "二創分析" : "成長營分析"}需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`,
-              );
-            }
-            await deductCredits(ctx.user.id, creditKey, `創作者成長營 ${mode} 分析（图片×${input.images.length}）`);
-          }
-        } else {
+        if (!ctx.user?.id) {
           throw new Error("請先登入，才能使用分析功能");
         }
+        // 积分在 growth_analyze_images Job 内扣除；此 mutation 仅供兼容/调试，勿在前端主路径调用
         const result = await analyzeGrowthCampImages(input);
         return {
           success: true,

@@ -45,6 +45,7 @@ import {
   type ProducerQuality,
 } from "../services/aimusic-producer";
 import { analyzeVideo as analyzeGrowthCampVideo } from "../growth/analyzeVideo";
+import { analyzeGrowthCampImages } from "../growth/analyzeGrowthCampImages";
 import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
 import { normalizePlatforms } from "../growth/growthSchema";
 import { readTrendStore, readTrendStoreForPlatforms } from "../growth/trendStore";
@@ -319,6 +320,76 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           numericUserId,
           creditDeducted,
           `创作者成长营 ${growthMode}·分析失败·退回已扣积分`,
+        ).catch((e) => console.error("[Credits] restore credits failed:", e));
+      }
+      throw err;
+    }
+  }
+
+  if (input.action === "growth_analyze_images") {
+    const numericUserId = userId ? Number(userId) : NaN;
+    const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+    const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
+    const cost = flatAnalysisCost(growthMode);
+    let creditDeducted = 0;
+
+    if (Number.isFinite(numericUserId)) {
+      const deductResult = await deductCreditsAmount(
+        numericUserId,
+        cost,
+        creditAction,
+        `创作者成长营 ${growthMode} 图片分析（单次 ${cost} 积分）`,
+      );
+      creditDeducted = deductResult.cost;
+    }
+
+    const rawImages = Array.isArray(params.images) ? params.images : [];
+    const images = rawImages
+      .map((item: unknown) => {
+        const row = item as Record<string, unknown>;
+        return {
+          gcsUri: typeof row.gcsUri === "string" ? row.gcsUri : undefined,
+          fileBase64: typeof row.fileBase64 === "string" ? row.fileBase64 : undefined,
+          mimeType: String(row.mimeType ?? ""),
+          fileName: typeof row.fileName === "string" ? row.fileName : undefined,
+        };
+      })
+      .filter((item) => String(item.gcsUri || "").trim() || String(item.fileBase64 || "").trim());
+
+    if (!images.length) {
+      throw new Error("请至少上传一张 PNG 或 JPG 图片");
+    }
+
+    try {
+      const result = await analyzeGrowthCampImages({
+        images,
+        context: typeof params.context === "string" ? params.context : undefined,
+        modelName: typeof params.modelName === "string" ? params.modelName : undefined,
+        mode: growthMode,
+      });
+
+      return {
+        provider: result.imageMeta.provider,
+        output: {
+          analysis: result.analysis,
+          fileUrls: result.imageMeta.fileUrls,
+          imageCount: result.imageMeta.imageCount,
+          debug: {
+            route: "analyzeGrowthCampImagesJob",
+            provider: result.imageMeta.provider,
+            model: result.imageMeta.model,
+            fallback: result.imageMeta.fallback,
+            imageCount: result.imageMeta.imageCount,
+          },
+        },
+      };
+    } catch (err) {
+      if (creditDeducted > 0 && Number.isFinite(numericUserId)) {
+        const { refundCredits } = await import("../credits");
+        await refundCredits(
+          numericUserId,
+          creditDeducted,
+          `创作者成长营 ${growthMode}·图片分析失败·退回已扣积分`,
         ).catch((e) => console.error("[Credits] restore credits failed:", e));
       }
       throw err;
@@ -659,7 +730,7 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   if (type !== "video") return defaultTimeout;
   try {
     const input = asEnvelope(inputRaw);
-    if (input.action === "growth_analyze_video") {
+    if (input.action === "growth_analyze_video" || input.action === "growth_analyze_images") {
       return GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS;
     }
   } catch {

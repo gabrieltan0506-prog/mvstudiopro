@@ -1034,7 +1034,7 @@ function mapAnalysisError(error: unknown) {
     || message.includes("is not valid JSON")
     || message.includes("An error o")
   ) {
-    return "分析请求失败（服务器返回异常）。请确认图片体积不要过大，或稍后再试。";
+    return "分析请求超时或服务器返回异常。图片/视频商业分析已在后台排队，若反复失败请稍后再试。";
   }
   if (message.includes("Failed to fetch") || message.includes("502")) {
     return "视频预处理失败，请重试或更换文档。";
@@ -1806,7 +1806,6 @@ export default function MVAnalysisPage() {
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
-  const analyzeGrowthCampImagesMutation = trpc.mvAnalysis.analyzeGrowthCampImages.useMutation();
   const synthesizeGrowthCampAnalysesMutation = trpc.mvAnalysis.synthesizeGrowthCampAnalyses.useMutation();
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -2196,6 +2195,46 @@ export default function MVAnalysisPage() {
       }
     }
 
+    const runGrowthImageAnalysis = async (
+      imageInputs: Array<{ gcsUri: string; mimeType: string; fileName: string }>,
+    ) => {
+      setUploadStage("analyzing");
+      setUploadProgress(60);
+
+      const analysisRunId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const { jobId } = await createJob({
+        type: "video",
+        userId: user?.id ? String(user.id) : "",
+        input: {
+          action: "growth_analyze_images",
+          params: {
+            images: imageInputs,
+            context: context || undefined,
+            modelName: growthCampAnalysisModel,
+            mode: analysisMode,
+            analysisRunId,
+          },
+        },
+      });
+
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 12 * 60_000) {
+        const job = await getJob(jobId);
+        if (job.status === "succeeded") {
+          return {
+            analysis: job.output?.analysis,
+            debug: job.output?.debug,
+          };
+        }
+        if (job.status === "failed") {
+          throw new Error(String(job.error || "图片分析失败"));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
+      }
+      throw new Error("图片分析超时，请稍后重试");
+    };
+
     const runGrowthVideoAnalysis = async (asset: GrowthCampAsset) => {
       const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
         fileName: asset.fileName || "video.mp4",
@@ -2329,16 +2368,12 @@ export default function MVAnalysisPage() {
 
         setUploadStage("analyzing");
         setUploadProgress(Math.round(((videoAssets.length + 0.5) / Math.max(1, totalSteps)) * 85));
-        const imgResult = await analyzeGrowthCampImagesMutation.mutateAsync({
-          images: imageInputs,
-          context: context || undefined,
-          modelName: growthCampAnalysisModel,
-          mode: analysisMode,
-        });
+        const imgResult = await runGrowthImageAnalysis(imageInputs);
         partials.push({
           label: imageAssets.length === 1 ? imageAssets[0]!.fileName || "图片" : `图片×${imageAssets.length}`,
           analysis: normalizeAnalysisScale(imgResult.analysis) as AnalysisResult,
         });
+        lastVideoDebug = (imgResult.debug as Record<string, unknown>) || lastVideoDebug;
       }
 
       let finalAnalysis = { ...partials[0]!.analysis, mode: analysisMode } as AnalysisResult;
@@ -2389,7 +2424,6 @@ export default function MVAnalysisPage() {
     supervisorAccess,
     checkAccessMutation,
     totalAssetBytes,
-    analyzeGrowthCampImagesMutation,
     synthesizeGrowthCampAnalysesMutation,
     getVideoUploadSignedUrlMutation,
     context,
