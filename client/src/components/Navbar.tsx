@@ -22,7 +22,7 @@ import {
 const NAV_ITEMS = [
   { label: "大师电影故事创作", href: "/workflow-nodes" },
   { label: "Omni 视频画布", href: "/canvas" },
-  { label: "创作者成长营", href: "/creator-growth-camp" },
+  { label: "创作者成长营", href: "/platform" },
   { label: "套餐", href: "/pricing" },
 ];
 

@@ -9,8 +9,8 @@ import { AmbientLocationPicker } from "@/components/AmbientLocationPicker";
 
 /** Hero 内一键直达：与产品 flagship 模块一致 */
 const HERO_FLAGSHIP_LINKS: { href: string; label: string }[] = [
-  { href: "/creator-growth-camp", label: "成长营 · 二创" },
-  { href: "/creator-growth-camp/platform", label: "全网流量雷达" },
+  { href: "/platform", label: "成长营 · 二创" },
+  { href: "/platform", label: "全网流量雷达" },
   { href: "/canvas", label: "Omni 视频画布" },
   { href: "/research", label: "竞品调研 · 60 点" },
   { href: "/god-view", label: "AI 战略智库" },
@@ -479,7 +479,7 @@ export default function HomeHero() {
               cta: "马上体验 →",
             },
             {
-              href: "/creator-growth-camp/platform",
+              href: "/platform",
               badge: "平台洞察",
               badgeColor: "rgba(96,165,250,0.9)",
               title: "全网流量雷达",
@@ -552,7 +552,7 @@ export default function HomeHero() {
       >
         {[
           {
-            href: "/creator-growth-camp",
+            href: "/platform",
             badge: "成长营 · 二创",
             badgeColor: "rgba(251,146,60,0.9)",
             title: "创作优化变现营 + 爆款解构尊享版",

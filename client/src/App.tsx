@@ -11,6 +11,10 @@ import { PWAInstallButton } from "@/components/PWAInstallButton";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
 import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
+import {
+  GrowthCampPlatformToPlatformRedirect,
+  GrowthCampToPlatformRedirect,
+} from "@/components/LegacyPathRedirect";
 
 import { captureSupervisorTokenFromUrl } from "@/lib/supervisorTrpcToken";
 
@@ -117,9 +121,9 @@ function Router() {
         <Route path={"/showcase"} component={Showcase} />
         <Route path={"/analysis"} component={GrowthCampPage} />
         <Route path={"/viral"} component={GrowthCampPage} />
-        <Route path={"/creator-growth-camp"} component={GrowthCampPage} />
+        <Route path={"/creator-growth-camp"} component={GrowthCampToPlatformRedirect} />
         <Route path={"/platform"} component={PlatformPage} />
-        <Route path={"/creator-growth-camp/platform"} component={PlatformPage} />
+        <Route path={"/creator-growth-camp/platform"} component={GrowthCampPlatformToPlatformRedirect} />
         <Route path={"/creator-growth-camp/premium-remix"} component={RemixLanding} />
         <Route path={"/storyboard"} component={Storyboard} />
         <Route path={"/vfx"} component={VFXEngine} />

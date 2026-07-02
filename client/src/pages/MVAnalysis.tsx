@@ -568,6 +568,9 @@ const EXTRACT_PIPELINE_DEBUG_NOTE =
 const IMAGE_PIPELINE_DEBUG_NOTE =
   "PNG/JPG GCS 直传 → growth_analyze_images Job → analyzeGrowthCampImagesJob（GPT-5.5 视觉 + 商业战略）";
 
+/** 迁移至 /platform 后：成长营全页不再展示 getGrowthSnapshot 套话区块 */
+const HIDE_LEGACY_GROWTH_SNAPSHOT_BLOCKS = true;
+
 function readGrowthCampAnalysisModelFromLs(): GrowthCampModel {
   try {
     localStorage.setItem(GROWTH_CAMP_ANALYSIS_MODEL_LS, GROWTH_CAMP_ANALYSIS_MODEL);
@@ -2501,16 +2504,18 @@ export default function MVAnalysisPage() {
       setAnalysis(finalAnalysis);
       setAnalysisTranscript(lastTranscript);
       setAnalyzedVideoUrl(lastVideoUrl);
-      void trpcUtils.mvAnalysis.getGrowthSnapshot
-        .fetch({
-          context: context || undefined,
-          modelName: growthCampAnalysisModel,
-          requestedPlatforms: [...FULL_PLATFORM_ORDER],
-          analysis: finalAnalysis,
-        })
-        .catch((snapshotError: unknown) => {
-          console.warn("[MVAnalysis] growth snapshot fetch failed:", snapshotError);
-        });
+      if (videoAssets.length > 0) {
+        void trpcUtils.mvAnalysis.getGrowthSnapshot
+          .fetch({
+            context: context || undefined,
+            modelName: growthCampAnalysisModel,
+            requestedPlatforms: [...FULL_PLATFORM_ORDER],
+            analysis: finalAnalysis,
+          })
+          .catch((snapshotError: unknown) => {
+            console.warn("[MVAnalysis] growth snapshot fetch failed:", snapshotError);
+          });
+      }
       setDebugInfo((prev) => ({
         ...(prev || {}),
         inputKind,
@@ -3607,7 +3612,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">数据库证据</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">扶持信号</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">发平台判断</div>
-                    <a href="/creator-growth-camp" className="rounded-2xl border border-[#ffcf92]/25 bg-[rgba(255,207,146,0.08)] px-4 py-3 text-sm text-[#fff0d4] transition hover:bg-[rgba(255,207,146,0.12)]">返回成长营全页</a>
+                    <a href="/platform" className="rounded-2xl border border-[#ffcf92]/25 bg-[rgba(255,207,146,0.08)] px-4 py-3 text-sm text-[#fff0d4] transition hover:bg-[rgba(255,207,146,0.12)]">进入平台页</a>
                     <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
                   </>
                 ) : (
@@ -3617,7 +3622,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">商业洞察</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
-                    <a href="/creator-growth-camp/platform" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
+                    <a href="/platform#platform-custom-workspace" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
                     <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
                   </>
                 )}
@@ -4941,7 +4946,7 @@ export default function MVAnalysisPage() {
                         >
                           进入创作画布，直接改首发脚本和镜头
                         </a>
-                        {titleExecutionCards.length ? (
+                        {titleExecutionCards.length && !HIDE_LEGACY_GROWTH_SNAPSHOT_BLOCKS ? (
                           <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div className="text-sm font-semibold text-white">直接可用的标题与文案</div>
@@ -5295,7 +5300,7 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {(referenceExamples.length || visibleTopicLibrary.length) ? (
+                  {(referenceExamples.length || visibleTopicLibrary.length) && !HIDE_LEGACY_GROWTH_SNAPSHOT_BLOCKS ? (
                     <div className="rounded-[28px] border border-[#7ee7ff]/18 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#7ee7ff]">
                         <ScanSearch className="h-5 w-5" />

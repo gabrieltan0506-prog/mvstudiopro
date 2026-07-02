@@ -153,7 +153,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(167,139,250,0.20)",
     borderColor: "rgba(167,139,250,0.30)",
     bgGradient: "linear-gradient(135deg, rgba(167,139,250,0.08) 0%, rgba(167,139,250,0.02) 100%)",
-    href: "/creator-growth-camp",
+    href: "/platform",
   },
   {
     isNew: false,
@@ -168,7 +168,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(56,189,248,0.18)",
     borderColor: "rgba(56,189,248,0.28)",
     bgGradient: "linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(56,189,248,0.02) 100%)",
-    href: "/creator-growth-camp/platform",
+    href: "/platform",
   },
   {
     isNew: false,

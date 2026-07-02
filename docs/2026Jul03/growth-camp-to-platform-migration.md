@@ -121,8 +121,12 @@ readTrendStoreForPlatforms(["douyin","xiaohongshu","bilibili","kuaishou"], {
 
 ### D2 上午 — 退役 + 跳转（~3h）
 
-- [ ] `/creator-growth-camp` → redirect `#platform-custom-workspace`（或顶栏 CTA）
-- [ ] `MVAnalysis` 结果区套话区块 feature-off（referenceExamples 复读、titleExecutions 模板、全 0 指数）
+- [x] `/creator-growth-camp` → redirect `/platform#platform-custom-workspace`
+- [x] `/creator-growth-camp/platform` → redirect `/platform`
+- [x] 主导航 / HomeHero 链接统一为 `/platform`
+- [x] `MVAnalysis`：纯图片分析不再调 `getGrowthSnapshot`；套话区块 `HIDE_LEGACY_GROWTH_SNAPSHOT_BLOCKS`
+
+**分支（待你开 PR）**：`feat/migrate-platform-redirect-d2a`
 
 ### D2 下午 — 闭环 + 验收（~3h）
 
