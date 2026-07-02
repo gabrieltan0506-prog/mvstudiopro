@@ -703,5 +703,11 @@ export async function runGrowthCampStrategistForImages(params: {
     businessGoal,
     mediaKind: "image",
   });
-  return growthAnalysisScoresSchema.parse({ ...result, mode });
+  const parsed = growthAnalysisScoresSchema.safeParse({ ...result, mode });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "root";
+    throw new Error(`分析结果格式异常（${path}）：${issue?.message || "校验失败"}`);
+  }
+  return parsed.data;
 }

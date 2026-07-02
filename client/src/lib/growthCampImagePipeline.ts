@@ -303,6 +303,10 @@ export async function runGrowthCampImageAnalysis(
     },
   }));
 
+  if (jobDebug.fallback === true) {
+    throw new Error("图片分析未完成，积分将退回，请稍后重试");
+  }
+
   const analysis = job.output?.analysis as GrowthAnalysisScores | undefined;
   if (!analysis) {
     throw new Error("图片分析完成但未返回结果");

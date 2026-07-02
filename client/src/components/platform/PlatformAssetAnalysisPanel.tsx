@@ -352,17 +352,116 @@ export default function PlatformAssetAnalysisPanel({
       ) : null}
 
       {analysis ? (
-        <div className="mt-6 space-y-4 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5">
+        <div className="mt-6 space-y-5 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5">
           <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/80">视觉分析结果</div>
+
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            {[
+              ["构图", analysis.composition],
+              ["色彩", analysis.color],
+              ["冲击", analysis.impact],
+              ["传播", analysis.viralPotential],
+            ].map(([label, score]) => (
+              <span
+                key={String(label)}
+                className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[#c9c0e6]/80"
+              >
+                {label} {score}
+              </span>
+            ))}
+          </div>
+
           {analysis.summary ? (
             <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{analysis.summary}</p>
           ) : null}
+
+          {analysis.realityCheck ? (
+            <div>
+              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">现实查验</div>
+              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.realityCheck}</p>
+            </div>
+          ) : null}
+
           {analysis.visualSummary ? (
             <div>
               <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">画面摘要</div>
               <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.visualSummary}</p>
             </div>
           ) : null}
+
+          {analysis.reverseEngineering?.hookStrategy ||
+          analysis.reverseEngineering?.emotionalArc ||
+          analysis.reverseEngineering?.commercialLogic ? (
+            <div className="space-y-3 rounded-xl border border-white/10 bg-black/15 p-4">
+              <div className="text-[11px] font-semibold text-[#6ee7b7]/80">视觉拆解</div>
+              {analysis.reverseEngineering.hookStrategy ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">抓眼策略</div>
+                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                    {analysis.reverseEngineering.hookStrategy}
+                  </p>
+                </div>
+              ) : null}
+              {analysis.reverseEngineering.emotionalArc ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">浏览情绪曲线</div>
+                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                    {analysis.reverseEngineering.emotionalArc}
+                  </p>
+                </div>
+              ) : null}
+              {analysis.reverseEngineering.commercialLogic ? (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">商业承接</div>
+                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                    {analysis.reverseEngineering.commercialLogic}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {analysis.premiumContent?.actionableTopics?.length ? (
+            <div>
+              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-2">可执行选题</div>
+              <div className="space-y-3">
+                {analysis.premiumContent.actionableTopics.slice(0, 3).map((topic, i) => (
+                  <div key={`topic-${i}`} className="rounded-xl border border-white/10 bg-black/15 p-4">
+                    <div className="text-sm font-semibold text-[#fde047]/90">{topic.title || `选题 ${i + 1}`}</div>
+                    {topic.contentBrief ? (
+                      <p className="mt-2 text-sm leading-7 text-white/85 whitespace-pre-wrap">{topic.contentBrief}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {analysis.remixExecution?.imageTextNoteGuide?.titleOptions?.length ||
+          analysis.remixExecution?.imageTextNoteGuide?.structuredBody ||
+          analysis.remixExecution?.imageTextNoteGuide?.coverSetup ? (
+            <div className="space-y-3 rounded-xl border border-[#8cefff]/15 bg-[rgba(140,239,255,0.04)] p-4">
+              <div className="text-[11px] font-semibold text-[#8cefff]/80">图文笔记改法</div>
+              {analysis.remixExecution.imageTextNoteGuide.coverSetup ? (
+                <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                  {analysis.remixExecution.imageTextNoteGuide.coverSetup}
+                </p>
+              ) : null}
+              {analysis.remixExecution.imageTextNoteGuide.titleOptions?.length ? (
+                <ul className="space-y-1 text-sm text-[#fde047]/90">
+                  {analysis.remixExecution.imageTextNoteGuide.titleOptions.slice(0, 5).map((title, i) => (
+                    <li key={`note-title-${i}`}>· {title}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {analysis.remixExecution.imageTextNoteGuide.structuredBody ? (
+                <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
+                  {analysis.remixExecution.imageTextNoteGuide.structuredBody}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {analysis.strengths?.length ? (
             <div>
               <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势</div>

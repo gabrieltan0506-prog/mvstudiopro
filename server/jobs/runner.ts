@@ -370,6 +370,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         mode: growthMode,
       });
 
+      if (result.imageMeta.fallback) {
+        throw new Error("图片分析未完成，请稍后重试");
+      }
+
       return {
         provider: result.imageMeta.provider,
         output: {
