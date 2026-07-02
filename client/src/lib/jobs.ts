@@ -1,4 +1,5 @@
-import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { withFlyHealthGate } from "@/lib/flyHealthGate";
+import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 
 export type JobType = "video" | "image" | "audio";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -14,14 +15,17 @@ export async function createJob(payload: {
   userId: string;
   input: Record<string, unknown>;
 }): Promise<{ jobId: string }> {
-  const response = await fetch(withLongJobsFlyDirect("/api/jobs"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify(payload),
-  });
+  const url = withLongJobsFlyDirect("/api/jobs");
+  const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    }),
+  );
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -32,10 +36,13 @@ export async function createJob(payload: {
 }
 
 export async function getJob(jobId: string): Promise<JobResponse> {
-  const response = await fetch(withLongJobsFlyDirect(`/api/jobs/${encodeURIComponent(jobId)}`), {
-    method: "GET",
-    credentials: "include",
-  });
+  const url = withLongJobsFlyDirect(`/api/jobs/${encodeURIComponent(jobId)}`);
+  const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>
+    fetch(url, {
+      method: "GET",
+      credentials: "include",
+    }),
+  );
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
