@@ -20,7 +20,8 @@ import {
   canvasImageBatchTotalCredits,
   canvasVisionTotalCredits,
 } from "@/lib/canvasCredits";
-import { runCanvasBlock, type CanvasRunDeps, uploadFileToSignedUrl, resolveOmniMaterialUrl } from "@/lib/canvasRunBlock";
+import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { CANVAS_UPLOAD_CONCURRENCY, uploadCanvasFilesParallel } from "@/lib/canvasUpload";
 import { trpc } from "@/lib/trpc";
 import {
   LoaderCircle,
@@ -138,43 +139,33 @@ export default function FreeformCanvas({
       setUploadBusyId(blockId);
       setUploadProgress({ blockId, done: 0, total: fileArr.length });
       const block = blocks.find((b) => b.id === blockId);
-      const nextAssets: CanvasUploadedAsset[] = [...(block?.uploadedAssets ?? [])];
 
       try {
-        for (let i = 0; i < fileArr.length; i++) {
-          const file = fileArr[i]!;
-          const kind = file.type.startsWith("video/") ? "video" : "image";
-          const safeName = file.name.replace(/[^a-z0-9._-]/gi, "-");
-          const signed = await getSignedUrlMutation.mutateAsync({
-            fileName: file.name,
-            mimeType: file.type || (kind === "video" ? "video/mp4" : "image/png"),
-            objectName: `canvas/${kind}/${Date.now()}-${i}-${safeName}`,
-          });
-          await uploadFileToSignedUrl({
-            file,
-            uploadUrl: signed.uploadUrl,
-            headers: signed.requiredHeaders,
-          });
-          if (!signed.gcsUri) throw new Error(`上传失败：${file.name}`);
-          const readUrl = await resolveOmniMaterialUrl(signed.gcsUri);
-          const previewUrl = kind === "image" ? URL.createObjectURL(file) : readUrl;
-          nextAssets.push({
-            id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
-            url: readUrl,
-            previewUrl,
-            fileName: file.name,
-            gcsUri: signed.gcsUri,
-          });
-          setUploadProgress({ blockId, done: i + 1, total: fileArr.length });
+        const { assets: uploaded, failed } = await uploadCanvasFilesParallel({
+          files: fileArr,
+          concurrency: CANVAS_UPLOAD_CONCURRENCY,
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+          onProgress: (done, total) => setUploadProgress({ blockId, done, total }),
+        });
+
+        if (!uploaded.length) {
+          throw new Error(failed[0]?.error || "全部上传失败");
         }
 
+        const nextAssets: CanvasUploadedAsset[] = [...(block?.uploadedAssets ?? []), ...uploaded];
         const firstImage = nextAssets.find((a) => !a.fileName.match(/\.mp4$/i));
+
         patchOne(blockId, {
           uploadedAssets: nextAssets,
           refImageUrl: firstImage?.url ?? block?.refImageUrl,
           outputUrl: firstImage?.url ?? block?.outputUrl,
         });
-        toast.success(`已上传 ${fileArr.length} 个素材`);
+
+        if (failed.length) {
+          toast.warning(`已上传 ${uploaded.length} 个，${failed.length} 个失败`);
+        } else {
+          toast.success(`已并行上传 ${uploaded.length} 个素材`);
+        }
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "上传失败");
       } finally {
@@ -289,7 +280,7 @@ export default function FreeformCanvas({
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
             const uploadLabel =
               uploadBusyId === block.id && uploadProgress?.blockId === block.id
-                ? `上传中 ${uploadProgress.done}/${uploadProgress.total}`
+                ? `并行上传 ${uploadProgress.done}/${uploadProgress.total}`
                 : "上传素材";
             return (
               <div
