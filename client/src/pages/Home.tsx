@@ -2,7 +2,6 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeNoticeBar from "../components/HomeNoticeBar";
 import HomeHero from "../components/HomeHero";
-import HomeRemixStrip from "../components/HomeRemixStrip";
 import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
 import HomeEducation from "../components/HomeEducation";
@@ -53,7 +52,7 @@ export default function HomePage() {
       <HomeFeatureCarousel />
 
       {/* 工具与作品（沉浸式浏览） */}
-      <HomeRemixStrip />
+      {/* HomeRemixStrip 已收入 /platform · 首页仅展示三主站 */}
 
       <HomeShowcase />
 

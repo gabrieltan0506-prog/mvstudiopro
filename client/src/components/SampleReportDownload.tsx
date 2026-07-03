@@ -696,7 +696,7 @@ export default function SampleReportDownload() {
 
       {/* 上传/生成入口提示卡 */}
       <div
-        onClick={() => navigate("/god-view")}
+        onClick={() => navigate("/research?tab=god-view")}
         style={{
           display: "flex",
           alignItems: "center",

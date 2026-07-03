@@ -13,10 +13,9 @@ import {
 
 const nav = [
   ["首页", "Home", "/"],
-  ["成长营", "Growth Camp", "/creator-growth-camp"],
-  ["平台趋势", "Platform", "/platform"],
+  ["平台创作", "Platform", "/platform"],
+  ["竞品调研", "Research", "/research"],
   ["Omni 画布", "Canvas", "/canvas"],
-  ["大师电影故事创作", "Master Movie", "/workflow-nodes"],
 ];
 
 export default function HomeNavbar() {
@@ -467,18 +466,18 @@ export default function HomeNavbar() {
                         📁 我的作品
                       </a>
                       <a
-                        href="/creator-growth-camp"
-                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
-                        onClick={() => setMenuOpen(false)}
-                      >
-                        进入成长营
-                      </a>
-                      <a
                         href="/platform"
                         style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >
-                        平台趋势分析
+                        平台创作
+                      </a>
+                      <a
+                        href="/research"
+                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
+                        onClick={() => setMenuOpen(false)}
+                      >
+                        竞品调研
                       </a>
                       <a
                         href="/canvas"
@@ -486,13 +485,6 @@ export default function HomeNavbar() {
                         onClick={() => setMenuOpen(false)}
                       >
                         Omni 视频画布
-                      </a>
-                      <a
-                        href="/workflow-nodes"
-                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
-                        onClick={() => setMenuOpen(false)}
-                      >
-                        大师电影故事创作
                       </a>
 
                       <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
