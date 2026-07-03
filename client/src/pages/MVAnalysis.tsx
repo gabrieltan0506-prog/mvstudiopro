@@ -3365,6 +3365,17 @@ export default function MVAnalysisPage() {
           />
         ) : null}
 
+          <div className="mb-6 rounded-2xl border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.08)] px-4 py-3 text-sm leading-relaxed text-[#ffd4ec]">
+            素材上传与视觉分析已迁移至{" "}
+            <a
+              href="/creator-growth-camp/platform#platform-custom-workspace-assets"
+              className="font-semibold text-[#ff9fe0] underline underline-offset-2"
+            >
+              平台页 · 自定义创作工作台 → 素材分析
+            </a>
+            。本页为旧版调试入口（<code className="text-xs">/creator-growth-camp/legacy</code>），新链路支持素材分析 → 深度优化 → 一键生图。
+          </div>
+
           <div className="mb-8 flex items-center justify-between">
           <button onClick={() => window.history.back()} className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10">
             <ArrowLeft className="h-5 w-5" />

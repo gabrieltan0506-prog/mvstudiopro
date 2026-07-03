@@ -12,6 +12,11 @@ import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashR
 export type OptimizeCustomCopyInput = {
   sourceText: string;
   optimizationBrief?: string;
+  /** 素材视觉分析摘要（来自 growth_analyze_images，禁止走 snapshot 模板） */
+  visionContext?: string;
+  /** 为 true 时附加 readTrendStoreForPlatforms 近期 live 样本 */
+  includeLiveTrends?: boolean;
+  liveTrendWindowDays?: number;
 };
 
 export type OptimizeCustomCopyResult = {
@@ -48,14 +53,15 @@ JSON schema:
   "coverNotes": "若涉及封面：主视觉/主标/副标/信息层级建议（可选）"
 }`;
 
-function buildUserBlock(input: OptimizeCustomCopyInput): string {
+function buildUserBlock(input: OptimizeCustomCopyInput, liveTrendBrief?: string): string {
   const sourceText = String(input.sourceText || "").trim();
   const brief = String(input.optimizationBrief || "").trim();
-  return [
-    "【待优化原文】",
-    sourceText,
-    brief ? "\n【用户优化要求】\n" + brief : "",
-  ].join("\n");
+  const vision = String(input.visionContext || "").trim();
+  const parts = ["【待优化原文】", sourceText];
+  if (brief) parts.push("\n【用户优化要求】\n" + brief);
+  if (vision) parts.push("\n【上传素材视觉分析（须紧扣，禁止忽略）】\n" + vision.slice(0, 8000));
+  if (liveTrendBrief?.trim()) parts.push("\n" + liveTrendBrief.trim());
+  return parts.join("\n");
 }
 
 function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
@@ -132,7 +138,15 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     throw new Error("请至少提供 10 字以上的待优化文案");
   }
 
-  const userBlock = buildUserBlock(input);
+  let liveTrendBrief: string | undefined;
+  if (input.includeLiveTrends) {
+    const { buildPlatformLiveTrendBriefForOptimize } = await import("./platformLiveTrendBrief.js");
+    liveTrendBrief = await buildPlatformLiveTrendBriefForOptimize({
+      windowDays: input.liveTrendWindowDays ?? 7,
+    });
+  }
+
+  const userBlock = buildUserBlock(input, liveTrendBrief);
   const primaryReasoning =
     resolvePlatformStage2OpenAiReasoningEffort() === "high" ||
     resolvePlatformStage2OpenAiReasoningEffort() === "xhigh"

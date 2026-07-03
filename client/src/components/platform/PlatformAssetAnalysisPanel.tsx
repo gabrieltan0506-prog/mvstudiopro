@@ -14,19 +14,24 @@ import {
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
-import { FileUp, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { formatAssetAnalysisForOptimize, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
+import { FileUp, FileText, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 type PlatformAssetAnalysisPanelProps = {
   debugMode: boolean;
   supervisorAccess: boolean;
   disabled?: boolean;
+  onHandoffToOptimize?: (payload: AssetAnalysisHandoffPayload) => void;
+  optimizeCopyCost?: number;
 };
 
 export default function PlatformAssetAnalysisPanel({
   debugMode,
   supervisorAccess,
   disabled = false,
+  onHandoffToOptimize,
+  optimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy,
 }: PlatformAssetAnalysisPanelProps) {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -487,6 +492,21 @@ export default function PlatformAssetAnalysisPanel({
           {analysis.platforms?.length ? (
             <div className="text-xs text-[#8cefff]/80">
               推荐平台：{analysis.platforms.join(" · ")}
+            </div>
+          ) : null}
+          {onHandoffToOptimize ? (
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                disabled={disabled || busy}
+                onClick={() => {
+                  onHandoffToOptimize(formatAssetAnalysisForOptimize(analysis, context));
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#fbbf24]/30 bg-[linear-gradient(135deg,#fbbf24,#f97316)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                填入并深度优化文案（{optimizeCopyCost} 积分 · 含近期热点）
+              </button>
             </div>
           ) : null}
           {analysis.titleSuggestions?.length ? (
