@@ -14,7 +14,7 @@ import {
 const nav = [
   ["首页", "Home", "/"],
   ["成长营", "Growth Camp", "/creator-growth-camp"],
-  ["平台趋势", "Platform", "/creator-growth-camp/platform"],
+  ["平台趋势", "Platform", "/platform"],
   ["Omni 画布", "Canvas", "/canvas"],
   ["大师电影故事创作", "Master Movie", "/workflow-nodes"],
 ];
@@ -474,7 +474,7 @@ export default function HomeNavbar() {
                         进入成长营
                       </a>
                       <a
-                        href="/creator-growth-camp/platform"
+                        href="/platform"
                         style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >

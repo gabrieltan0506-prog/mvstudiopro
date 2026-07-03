@@ -1468,7 +1468,7 @@ function ReportCoverCard({
               {isHtmlDownloading ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
             </button>
             <a
-              href={`/creator-growth-camp/platform?reportId=${report.id}`}
+              href={`/platform?reportId=${report.id}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{

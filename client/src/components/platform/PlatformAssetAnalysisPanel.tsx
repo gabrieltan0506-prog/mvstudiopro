@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import {
@@ -15,23 +15,35 @@ import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { formatAssetAnalysisForOptimize, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
-import { FileUp, FileText, Image, Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
+import { FileText, Film, FileUp, Image as ImageIcon, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 type PlatformAssetAnalysisPanelProps = {
   debugMode: boolean;
   supervisorAccess: boolean;
   disabled?: boolean;
-  onHandoffToOptimize?: (payload: AssetAnalysisHandoffPayload) => void;
+  onBusyChange?: (busy: boolean) => void;
+  onDeepOptimize?: (payload: AssetAnalysisHandoffPayload) => Promise<{ optimizedMarkdown: string; summary: string }>;
+  onGenerateFromText?: (
+    text: string,
+    kind: "storyboard_sheet_landscape" | "single_page_knowledge_card",
+  ) => Promise<void>;
   optimizeCopyCost?: number;
+  storyboardCost?: number;
+  cardCost?: number;
 };
 
 export default function PlatformAssetAnalysisPanel({
   debugMode,
   supervisorAccess,
   disabled = false,
-  onHandoffToOptimize,
+  onBusyChange,
+  onDeepOptimize,
+  onGenerateFromText,
   optimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy,
+  storyboardCost = 60,
+  cardCost = 50,
 }: PlatformAssetAnalysisPanelProps) {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,6 +55,14 @@ export default function PlatformAssetAnalysisPanel({
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<GrowthAnalysisScores | null>(null);
   const [imagePipelineDebug, setImagePipelineDebug] = useState<ImagePipelineDebugState>({});
+  const [optimizeBusy, setOptimizeBusy] = useState(false);
+  const [generateBusy, setGenerateBusy] = useState(false);
+  const [optimizedMarkdown, setOptimizedMarkdown] = useState<string | null>(null);
+  const [optimizeSummary, setOptimizeSummary] = useState<string | null>(null);
+
+  useEffect(() => {
+    onBusyChange?.(busy || optimizeBusy || generateBusy);
+  }, [busy, optimizeBusy, generateBusy, onBusyChange]);
 
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -194,13 +214,29 @@ export default function PlatformAssetAnalysisPanel({
 
   return (
     <>
-      <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-        上传封面、2×4 分镜等 PNG/JPG 素材（可多次添加，张数不限），系统将根据您的图片与业务背景生成视觉分析与策略建议。
-        每张素材 <strong className="text-[#6ee7b7]">{unitCost} 积分</strong>，按实际上传张数合计。完成后可继续「优化自定义文案」。
-        {debugMode ? (
-          <span className="block mt-2 text-[11px] text-emerald-200/70">{GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE}</span>
-        ) : null}
-      </p>
+      <div className="mb-5 grid gap-2 sm:grid-cols-3">
+        <PlatformWorkspaceStepHint
+          step={1}
+          title="上传并分析"
+          lines={["添加封面或分镜 PNG/JPG。", "点击「开始视觉分析」，结果只绑定你的素材。"]}
+          active={!analysis && !busy}
+          done={Boolean(analysis)}
+        />
+        <PlatformWorkspaceStepHint
+          step={2}
+          title="深度优化"
+          lines={["基于分析改写封面、分镜与发布稿。", `消耗 ${optimizeCopyCost} 积分，引用近期热点、不用旧套话。`]}
+          active={Boolean(analysis) && !optimizedMarkdown}
+          done={Boolean(optimizedMarkdown)}
+        />
+        <PlatformWorkspaceStepHint
+          step={3}
+          title="生成图片"
+          lines={["用优化稿直接出分镜或图文卡片。", `分镜 ${storyboardCost} 积分 · 卡片 ${cardCost} 积分。`]}
+          active={Boolean(optimizedMarkdown)}
+          done={false}
+        />
+      </div>
 
       <div className="mb-4">
         <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
@@ -291,7 +327,7 @@ export default function PlatformAssetAnalysisPanel({
           </div>
         ) : (
           <div className="mt-4 flex flex-col items-center justify-center gap-2 py-8 text-[#c9c0e6]/40">
-            <Image className="h-8 w-8 opacity-40" />
+            <ImageIcon className="h-8 w-8 opacity-40" />
             <span className="text-xs">尚未添加素材</span>
           </div>
         )}
@@ -336,6 +372,8 @@ export default function PlatformAssetAnalysisPanel({
               setImagePipelineDebug({});
               setStage("idle");
               setUploadProgress(0);
+              setOptimizedMarkdown(null);
+              setOptimizeSummary(null);
             }}
             className="inline-flex items-center gap-1 text-xs text-[#c9c0e6]/60 hover:text-white transition"
           >
@@ -494,18 +532,31 @@ export default function PlatformAssetAnalysisPanel({
               推荐平台：{analysis.platforms.join(" · ")}
             </div>
           ) : null}
-          {onHandoffToOptimize ? (
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-white/10">
+          {onDeepOptimize ? (
+            <div className="flex flex-wrap gap-2 pt-3 border-t border-white/10">
               <button
                 type="button"
-                disabled={disabled || busy}
+                disabled={disabled || busy || optimizeBusy || generateBusy}
                 onClick={() => {
-                  onHandoffToOptimize(formatAssetAnalysisForOptimize(analysis, context));
+                  void (async () => {
+                    setOptimizeBusy(true);
+                    try {
+                      const payload = formatAssetAnalysisForOptimize(analysis, context);
+                      const res = await onDeepOptimize(payload);
+                      setOptimizedMarkdown(res.optimizedMarkdown);
+                      setOptimizeSummary(res.summary);
+                      toast.success("深度优化完成");
+                    } catch (e: unknown) {
+                      toast.error(e instanceof Error ? e.message : "深度优化失败");
+                    } finally {
+                      setOptimizeBusy(false);
+                    }
+                  })();
                 }}
                 className="inline-flex items-center gap-1.5 rounded-full border border-[#fbbf24]/30 bg-[linear-gradient(135deg,#fbbf24,#f97316)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
-                <FileText className="h-3.5 w-3.5" />
-                填入并深度优化文案（{optimizeCopyCost} 积分 · 含近期热点）
+                {optimizeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                步骤 2 · 深度优化（{optimizeCopyCost} 积分）
               </button>
             </div>
           ) : null}
@@ -517,6 +568,61 @@ export default function PlatformAssetAnalysisPanel({
                   <li key={`title-${i}`}>· {title}</li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {optimizedMarkdown ? (
+        <div className="mt-5 space-y-3 rounded-2xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] p-5">
+          <div className="text-xs font-semibold text-[#fcd34d]/85">
+            步骤 2 完成{optimizeSummary ? ` · ${optimizeSummary}` : ""}
+          </div>
+          <div className="max-h-48 overflow-auto whitespace-pre-wrap text-sm leading-7 text-white/88">{optimizedMarkdown}</div>
+          {onGenerateFromText ? (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                disabled={disabled || busy || optimizeBusy || generateBusy}
+                onClick={() => {
+                  void (async () => {
+                    setGenerateBusy(true);
+                    try {
+                      await onGenerateFromText(optimizedMarkdown, "storyboard_sheet_landscape");
+                      toast.success("分镜图生成完成，请在本 Tab 下方查看");
+                    } catch (e: unknown) {
+                      toast.error(e instanceof Error ? e.message : "生成失败");
+                    } finally {
+                      setGenerateBusy(false);
+                    }
+                  })();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {generateBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
+                步骤 3 · 生成分镜（{storyboardCost} 积分）
+              </button>
+              <button
+                type="button"
+                disabled={disabled || busy || optimizeBusy || generateBusy}
+                onClick={() => {
+                  void (async () => {
+                    setGenerateBusy(true);
+                    try {
+                      await onGenerateFromText(optimizedMarkdown, "single_page_knowledge_card");
+                      toast.success("图文卡片生成完成，请在本 Tab 下方查看");
+                    } catch (e: unknown) {
+                      toast.error(e instanceof Error ? e.message : "生成失败");
+                    } finally {
+                      setGenerateBusy(false);
+                    }
+                  })();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {generateBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                步骤 3 · 生成图文卡片（{cardCost} 积分）
+              </button>
             </div>
           ) : null}
         </div>

@@ -3368,7 +3368,7 @@ export default function MVAnalysisPage() {
           <div className="mb-6 rounded-2xl border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.08)] px-4 py-3 text-sm leading-relaxed text-[#ffd4ec]">
             素材上传与视觉分析已迁移至{" "}
             <a
-              href="/creator-growth-camp/platform#platform-custom-workspace-assets"
+              href="/platform?tab=assets"
               className="font-semibold text-[#ff9fe0] underline underline-offset-2"
             >
               平台页 · 自定义创作工作台 → 素材分析
@@ -3628,7 +3628,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">商业洞察</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
-                    <a href="/creator-growth-camp/platform" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
+                    <a href="/platform" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
                     <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
                   </>
                 )}
