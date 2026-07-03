@@ -15,6 +15,7 @@ import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
+import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
@@ -1879,8 +1880,24 @@ export default function PlatformPage() {
   const [customOptimizeResult, setCustomOptimizeResult] = useState<string | null>(null);
   const [customOptimizeSummary, setCustomOptimizeSummary] = useState<string | null>(null);
   const [isDownloadingCustomCopyPdf, setIsDownloadingCustomCopyPdf] = useState(false);
+  /** 素材分析 → 深度优化：附带 vision 上下文与 live 趋势（一次性消费） */
+  const pendingOptimizeVisionRef = useRef<string | undefined>(undefined);
+  const pendingOptimizeLiveTrendsRef = useRef(false);
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting" | "assets">("copy");
+
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash.startsWith("platform-custom-workspace")) return;
+    requestAnimationFrame(() => {
+      document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    if (hash === "platform-custom-workspace-assets") {
+      setCustomWorkspaceTab("assets");
+    } else if (hash === "platform-custom-workspace-copy" || hash === "platform-custom-workspace") {
+      setCustomWorkspaceTab("copy");
+    }
+  }, []);
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
   const [customTopicProtagonist, setCustomTopicProtagonist] = useState("");
@@ -3518,8 +3535,13 @@ export default function PlatformPage() {
     return message || "生成失败，请稍后重试";
   };
 
-  const handleGenerateCustomNote = async () => {
-    const trimmed = customNoteText.trim();
+  const handleGenerateCustomNote = async (overrides?: {
+    text?: string;
+    kind?: typeof customNoteKind;
+    skipClearOptimize?: boolean;
+  }) => {
+    const kind = overrides?.kind ?? customNoteKind;
+    const trimmed = (overrides?.text ?? customNoteText).trim();
     if (!trimmed) {
       toast.error("请先输入中文文案");
       return;
@@ -3527,22 +3549,28 @@ export default function PlatformPage() {
     setCustomNoteImageUpper(null);
     setCustomNoteImageLower(null);
     setCustomNoteError(null);
-    setCustomOptimizeResult(null);
-    setCustomOptimizeSummary(null);
+    if (!overrides?.skipClearOptimize) {
+      setCustomOptimizeResult(null);
+      setCustomOptimizeSummary(null);
+    }
     setCustomNoteBusy(true);
     try {
-      if (customNoteKind === "optimize_custom_copy") {
+      if (kind === "optimize_custom_copy") {
         const res = await optimizeCustomCopyMutation.mutateAsync({
           sourceText: trimmed,
           optimizationBrief: customOptimizeBrief.trim() || undefined,
+          visionContext: pendingOptimizeVisionRef.current,
+          includeLiveTrends: pendingOptimizeLiveTrendsRef.current || Boolean(pendingOptimizeVisionRef.current),
+          liveTrendWindowDays: 7,
         });
+        pendingOptimizeVisionRef.current = undefined;
+        pendingOptimizeLiveTrendsRef.current = false;
         setCustomOptimizeResult(res.result.optimizedMarkdown);
         setCustomOptimizeSummary(res.result.summary);
         toast.success(`深度优化完成${res.cost > 0 ? `（已扣 ${res.cost} 积分）` : ""}`);
         return;
       }
-      if (customNoteKind === "single_page_knowledge_card") {
-        // 知識卡片：一次生成「上篇 + 下篇」兩張完整卡片（依序生成、各自顯示）
+      if (kind === "single_page_knowledge_card") {
         setCustomNotePartInFlight("upper");
         const upper = await generateCustomNoteOne(trimmed, "single_page_knowledge_card", "upper");
         setCustomNoteImageUpper(upper);
@@ -3552,7 +3580,6 @@ export default function PlatformPage() {
         setCustomNoteImageLower(lower);
         toast.success("上篇＋下篇已生成");
       } else {
-        // 分鏡圖：單張
         setCustomNotePartInFlight(null);
         const img = await generateCustomNoteOne(trimmed, "storyboard_sheet_landscape", undefined);
         setCustomNoteImageUpper(img);
@@ -3567,6 +3594,36 @@ export default function PlatformPage() {
       setCustomNotePartInFlight(null);
     }
   };
+
+  const handleAssetHandoffToOptimize = useCallback((payload: AssetAnalysisHandoffPayload) => {
+    pendingOptimizeVisionRef.current = payload.visionContext || undefined;
+    pendingOptimizeLiveTrendsRef.current = true;
+    setCustomWorkspaceTab("copy");
+    setCustomNoteKind("optimize_custom_copy");
+    setCustomNoteText(payload.sourceText);
+    setCustomOptimizeBrief(payload.optimizationBrief);
+    setCustomOptimizeResult(null);
+    setCustomOptimizeSummary(null);
+    setCustomNoteError(null);
+    requestAnimationFrame(() => {
+      document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    toast.success("已填入素材分析结果，请点击「深度优化文案」开始（含近期热点参考）");
+  }, []);
+
+  const handleGenerateFromOptimizedCopy = useCallback(
+    async (kind: "single_page_knowledge_card" | "storyboard_sheet_landscape") => {
+      const text = customOptimizeResult?.trim();
+      if (!text) {
+        toast.error("暂无优化稿可生图");
+        return;
+      }
+      setCustomNoteKind(kind);
+      setCustomNoteText(text);
+      await handleGenerateCustomNote({ text, kind, skipClearOptimize: true });
+    },
+    [customOptimizeResult],
+  );
 
   const handleUploadCustomTopicPhoto = useCallback(
     async (file: File) => {
@@ -6308,7 +6365,7 @@ export default function PlatformPage() {
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleGenerateCustomNote}
+                  onClick={() => void handleGenerateCustomNote()}
                   disabled={customNoteBusy || !customNoteText.trim()}
                   className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
                     customNoteKind === "optimize_custom_copy"
@@ -6364,6 +6421,26 @@ export default function PlatformPage() {
                     深度优化结果{customOptimizeSummary ? ` · ${customOptimizeSummary}` : ""}
                   </div>
                   <div className="whitespace-pre-wrap text-sm leading-7 text-white/88">{customOptimizeResult}</div>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <button
+                      type="button"
+                      disabled={customNoteBusy}
+                      onClick={() => void handleGenerateFromOptimizedCopy("storyboard_sheet_landscape")}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      <Film className="h-3.5 w-3.5" />
+                      用优化稿生成分镜（60 积分）
+                    </button>
+                    <button
+                      type="button"
+                      disabled={customNoteBusy}
+                      onClick={() => void handleGenerateFromOptimizedCopy("single_page_knowledge_card")}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      <Image className="h-3.5 w-3.5" />
+                      用优化稿生成图文卡片（50 积分）
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
@@ -6760,6 +6837,8 @@ export default function PlatformPage() {
               debugMode={debugMode}
               supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
               disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              onHandoffToOptimize={handleAssetHandoffToOptimize}
+              optimizeCopyCost={customOptimizeCopyCost}
             />
           ) : (
             <>
