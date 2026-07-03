@@ -10,6 +10,8 @@ import AgentJobMonitor from "@/components/AgentJobMonitor";
 import AgentInsufficientCreditsDialog from "@/components/AgentInsufficientCreditsDialog";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
 import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
+import { RESEARCH_HUB_GOD_VIEW_PATH } from "@/lib/researchHubRoutes";
+import { useResearchHubEmbed } from "@/lib/researchHubContext";
 
 const PRESET_DIMENSIONS = ["数据", "创意", "商业模式", "用户画像", "内容工业化能力", "IP 衍生品深度", "合规风险"];
 
@@ -17,6 +19,7 @@ interface BenchmarkRow { platform: string; handle: string; notes?: string }
 
 export default function CompetitorRadarPage() {
   const [, navigate] = useLocation();
+  const inHub = useResearchHubEmbed();
   const [profileOpen, setProfileOpen] = useState(false);
   const [benchmarks, setBenchmarks] = useState<BenchmarkRow[]>([
     { platform: "抖音", handle: "" },
@@ -95,9 +98,11 @@ export default function CompetitorRadarPage() {
     <div className="min-h-dvh bg-transparent text-[#f5ebd2]">
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px 80px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-          <button onClick={() => navigate("/god-view")} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 13, fontWeight: 700 }}>
-            <ChevronLeft size={14} /> 返回
-          </button>
+          {!inHub ? (
+            <button onClick={() => navigate(RESEARCH_HUB_GOD_VIEW_PATH)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 13, fontWeight: 700 }}>
+              <ChevronLeft size={14} /> 返回战略智库
+            </button>
+          ) : null}
           <button onClick={() => setProfileOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 12, fontWeight: 800 }}>
             <ShieldCheck size={12} /> 指挥官档案
           </button>

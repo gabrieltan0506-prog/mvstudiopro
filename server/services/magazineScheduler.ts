@@ -109,7 +109,7 @@ ${topicList}
   <ol style="color:#1c1407;line-height:2">
     ${topics.map((t) => `<li>${t}</li>`).join("")}
   </ol>
-  <a href="https://mvstudiopro.com/god-view" style="display:inline-block;margin-top:16px;padding:12px 28px;background:linear-gradient(135deg,#a8761b,#7a5410);color:#fff7df;border-radius:10px;text-decoration:none;font-weight:700">
+  <a href="https://mvstudiopro.com/research?tab=god-view" style="display:inline-block;margin-top:16px;padding:12px 28px;background:linear-gradient(135deg,#a8761b,#7a5410);color:#fff7df;border-radius:10px;text-decoration:none;font-weight:700">
     前往生成 →
   </a>
   <p style="margin-top:24px;color:#999;font-size:12px">MVStudioPro 战略研究中心 · 自动提醒</p>

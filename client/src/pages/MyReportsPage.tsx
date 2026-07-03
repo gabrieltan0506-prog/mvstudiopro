@@ -10,6 +10,7 @@ import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
+import { RESEARCH_HUB_GOD_VIEW_PATH } from "@/lib/researchHubRoutes";
 
 /** 作品库阅读模式：PDF 只克隆此容器（封面 + 正文），避免整页 document 带入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
@@ -1229,7 +1230,7 @@ export default function MyReportsPage() {
             <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 12, margin: "4px 0 0", fontWeight: 600 }}>AI 上帝视角 · 全景行业战报 · 历史数据资产</p>
           </div>
           <button
-            onClick={() => navigate("/god-view")}
+            onClick={() => navigate(RESEARCH_HUB_GOD_VIEW_PATH)}
             style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, padding: "11px 22px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: "pointer", boxShadow: "0 6px 20px rgba(168,118,27,0.30)", flexShrink: 0 }}
           >
             <Sparkles size={14} />发起新战报
@@ -1248,7 +1249,7 @@ export default function MyReportsPage() {
             <div style={{ fontSize: 52, marginBottom: 16 }}>📭</div>
             <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 15, marginBottom: 24, fontWeight: 600 }}>作品库还是空的，发起第一份战报吧</p>
             <button
-              onClick={() => navigate("/god-view")}
+              onClick={() => navigate(RESEARCH_HUB_GOD_VIEW_PATH)}
               style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 20px rgba(168,118,27,0.30)" }}
             >
               <Crown size={15} />立即发起首份战报

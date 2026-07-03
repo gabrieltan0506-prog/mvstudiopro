@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { ArrowLeft, BookOpen, Crown, Loader2, Radar, Search, Sparkles, Users } from "lucide-react";
+import { ResearchHubEmbedProvider } from "@/lib/researchHubContext";
 
 const ResearchPage = lazy(() => import("./ResearchPage"));
 const GodViewPage = lazy(() => import("./GodViewPage"));
@@ -83,13 +84,13 @@ export default function ResearchHubPage() {
             <BookOpen className="h-4 w-4 text-[#fb923c]" />
             <span className="text-sm font-black tracking-tight">竞品调研 Hub</span>
           </div>
-          <div className="flex flex-1 flex-wrap gap-1.5 md:justify-end">
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5 md:justify-end md:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map(({ id, label, hint, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => setTab(id)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-left transition ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-left transition ${
                   tab === id
                     ? "bg-[linear-gradient(135deg,#fb923c,#ea580c)] text-white shadow-sm"
                     : "border border-white/10 bg-black/30 text-white/75 hover:text-white"
@@ -111,7 +112,9 @@ export default function ResearchHubPage() {
           </div>
         }
       >
-        <TabPanel tab={tab} />
+        <ResearchHubEmbedProvider>
+          <TabPanel tab={tab} />
+        </ResearchHubEmbedProvider>
       </Suspense>
     </div>
   );
