@@ -31,7 +31,7 @@ export default function RemixLanding() {
 
   useEffect(() => {
     if (!loading && isAuthenticated) {
-      navigate("/creator-growth-camp", { replace: true });
+      navigate("/platform", { replace: true });
     }
   }, [loading, isAuthenticated, navigate]);
 

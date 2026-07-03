@@ -20,9 +20,9 @@ import {
 } from "@/components/ui/sheet";
 
 const NAV_ITEMS = [
-  { label: "大师电影故事创作", href: "/workflow-nodes" },
+  { label: "平台创作", href: "/platform" },
+  { label: "竞品调研", href: "/research" },
   { label: "Omni 视频画布", href: "/canvas" },
-  { label: "创作者成长营", href: "/creator-growth-camp" },
   { label: "套餐", href: "/pricing" },
 ];
 

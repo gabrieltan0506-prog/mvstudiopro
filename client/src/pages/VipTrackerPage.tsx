@@ -8,11 +8,14 @@ import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
 import ReportRenderer from "@/components/ReportRenderer";
+import { RESEARCH_HUB_GOD_VIEW_PATH } from "@/lib/researchHubRoutes";
+import { useResearchHubEmbed } from "@/lib/researchHubContext";
 
 type View = "list" | "create" | "detail";
 
 export default function VipTrackerPage() {
   const [, navigate] = useLocation();
+  const inHub = useResearchHubEmbed();
   const [profileOpen, setProfileOpen] = useState(false);
   const [view, setView] = useState<View>("list");
   const [activeVipId, setActiveVipId] = useState<string | null>(null);
@@ -23,9 +26,14 @@ export default function VipTrackerPage() {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px 80px" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-          <button onClick={() => (view === "list" ? navigate("/god-view") : setView("list"))} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 13, fontWeight: 700 }}>
-            <ChevronLeft size={14} /> {view === "list" ? "返回" : "返回档案列表"}
-          </button>
+          {(view !== "list" || !inHub) ? (
+            <button
+              onClick={() => (view === "list" ? navigate(RESEARCH_HUB_GOD_VIEW_PATH) : setView("list"))}
+              style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 13, fontWeight: 700 }}
+            >
+              <ChevronLeft size={14} /> {view === "list" ? "返回战略智库" : "返回档案列表"}
+            </button>
+          ) : null}
           <button onClick={() => setProfileOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 12, fontWeight: 800 }}>
             <ShieldCheck size={12} /> 指挥官档案
           </button>

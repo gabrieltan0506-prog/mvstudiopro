@@ -7,6 +7,7 @@ import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
 import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useResearchHubEmbed } from "@/lib/researchHubContext";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -46,6 +47,7 @@ function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
 
 export default function GodViewPage() {
   const [, navigate] = useLocation();
+  const inHub = useResearchHubEmbed();
   const isMobile = useIsMobile();
   const [topic, setTopic] = useState("");
   const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "awaiting_plan" | "done" | "failed">("idle");
@@ -488,7 +490,8 @@ export default function GodViewPage() {
         <div style={{ position: "absolute", inset: 0, opacity: 0.25, mixBlendMode: "overlay", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0 0.10  0 0 0 0.45 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")" }} />
       </div>
 
-      {/* 顶部导航 */}
+      {/* 顶部导航（Hub 内嵌时由 ResearchHubPage 顶栏承担） */}
+      {!inHub ? (
       <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: isMobile ? "10px 14px" : "14px 24px", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
         <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700, minHeight: 44, padding: "0 4px" }}>
           <ChevronLeft size={16} />首页
@@ -511,6 +514,7 @@ export default function GodViewPage() {
           )}
         </div>
       </div>
+      ) : null}
 
       <div style={{ maxWidth: isMobile ? 900 : 1150, margin: "0 auto", padding: isMobile ? "24px 16px 60px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
 
