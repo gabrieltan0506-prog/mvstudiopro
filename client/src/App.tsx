@@ -81,13 +81,10 @@ const SupervisorAccess = lazy(() => import("./pages/SupervisorAccess"));
 
 const MyWorks = lazy(() => import("./pages/MyWorks"));
 const AnalysisView = lazy(() => import("./pages/AnalysisView"));
-const ResearchPage = lazy(() => import("./pages/ResearchPage"));
-const GodViewPage = lazy(() => import("./pages/GodViewPage"));
+const ResearchHubPage = lazy(() => import("./pages/ResearchHubPage"));
+const ResearchHubRedirect = lazy(() => import("./pages/ResearchHubRedirect"));
 const MyReportsPage = lazy(() => import("./pages/MyReportsPage"));
 const SupervisorDeepResearchPage = lazy(() => import("./pages/SupervisorDeepResearchPage"));
-const PlatformIpMatrixPage = lazy(() => import("./pages/PlatformIpMatrixPage"));
-const CompetitorRadarPage = lazy(() => import("./pages/CompetitorRadarPage"));
-const VipTrackerPage = lazy(() => import("./pages/VipTrackerPage"));
 const EnterpriseAgentManager = lazy(() => import("./pages/EnterpriseAgentManager"));
 const EnterpriseAgentDetail = lazy(() => import("./pages/EnterpriseAgentDetail"));
 const EnterpriseAgentPlayground = lazy(() => import("./pages/EnterpriseAgentPlayground"));
@@ -143,13 +140,13 @@ function Router() {
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />
-        <Route path={"/research"} component={ResearchPage} />
-        <Route path={"/god-view"} component={GodViewPage} />
+        <Route path={"/research"} component={ResearchHubPage} />
+        <Route path={"/god-view"} component={ResearchHubRedirect} />
         <Route path={"/my-reports"} component={MyReportsPage} />
         <Route path={"/supervisor/deep-research"} component={SupervisorDeepResearchPage} />
-        <Route path={"/agent/platform-ip-matrix"} component={PlatformIpMatrixPage} />
-        <Route path={"/agent/competitor-radar"} component={CompetitorRadarPage} />
-        <Route path={"/agent/vip-tracker"} component={VipTrackerPage} />
+        <Route path={"/agent/platform-ip-matrix"} component={ResearchHubRedirect} />
+        <Route path={"/agent/competitor-radar"} component={ResearchHubRedirect} />
+        <Route path={"/agent/vip-tracker"} component={ResearchHubRedirect} />
         <Route path={"/enterprise-agent"} component={EnterpriseAgentManager} />
         <Route path={"/enterprise-agent/:agentId"} component={EnterpriseAgentDetail} />
         <Route path={"/enterprise-agent/:agentId/play"} component={EnterpriseAgentPlayground} />

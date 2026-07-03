@@ -32,9 +32,13 @@ const MAX_CHARS = 5000;
 
 export default function ResearchPage() {
   const [, navigate] = useLocation();
-  const [isEmbed] = useState(
-    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("embed") === "1",
-  );
+  const [isEmbed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("embed") === "1") return true;
+    const tab = params.get("tab");
+    return window.location.pathname === "/research" && (!tab || tab === "research");
+  });
   const [platform, setPlatform] = useState<Platform>("xiaohongshu");
   const [content, setContent] = useState("");
   const [showGuide, setShowGuide] = useState(false);

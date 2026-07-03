@@ -20,7 +20,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(236,72,153,0.20)",
     borderColor: "rgba(236,72,153,0.35)",
     bgGradient: "linear-gradient(135deg, rgba(236,72,153,0.10) 0%, rgba(236,72,153,0.03) 100%)",
-    href: "/creative",
+    href: "/canvas",
   },
   {
     isNew: false,
@@ -35,7 +35,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(34,211,238,0.18)",
     borderColor: "rgba(34,211,238,0.30)",
     bgGradient: "linear-gradient(135deg, rgba(34,211,238,0.08) 0%, rgba(34,211,238,0.02) 100%)",
-    href: "/analysis",
+    href: "/platform",
   },
   {
     isNew: true,
@@ -50,7 +50,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(245,200,80,0.20)",
     borderColor: "rgba(245,200,80,0.40)",
     bgGradient: "linear-gradient(135deg, rgba(245,200,80,0.10) 0%, rgba(200,160,0,0.04) 100%)",
-    href: "/god-view",
+    href: "/research?tab=god-view",
   },
   {
     isNew: true,
@@ -65,7 +65,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(249,115,22,0.20)",
     borderColor: "rgba(249,115,22,0.38)",
     bgGradient: "linear-gradient(135deg, rgba(249,115,22,0.10) 0%, rgba(249,115,22,0.03) 100%)",
-    href: "/god-view",
+    href: "/research?tab=god-view",
   },
   {
     isNew: true,
@@ -80,7 +80,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(52,211,153,0.18)",
     borderColor: "rgba(52,211,153,0.30)",
     bgGradient: "linear-gradient(135deg, rgba(52,211,153,0.08) 0%, rgba(52,211,153,0.02) 100%)",
-    href: "/god-view",
+    href: "/research?tab=god-view",
   },
   {
     isNew: true,
@@ -153,7 +153,7 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(167,139,250,0.20)",
     borderColor: "rgba(167,139,250,0.30)",
     bgGradient: "linear-gradient(135deg, rgba(167,139,250,0.08) 0%, rgba(167,139,250,0.02) 100%)",
-    href: "/creator-growth-camp",
+    href: "/platform",
   },
   {
     isNew: false,
@@ -183,18 +183,14 @@ const CAROUSEL_CARDS = [
     glowColor: "rgba(52,211,153,0.18)",
     borderColor: "rgba(52,211,153,0.28)",
     bgGradient: "linear-gradient(135deg, rgba(52,211,153,0.07) 0%, rgba(52,211,153,0.02) 100%)",
-    href: "/workflow-nodes",
+    href: "/canvas",
   },
 ];
 
 const WORKFLOW_LINKS: { href: string; label: string }[] = [
-  { href: "/creator-growth-camp", label: "成长营 · 二创" },
-  { href: "/platform", label: "全网流量雷达" },
-  { href: "/canvas", label: "Omni 视频画布" },
-  { href: "/research", label: "竞品调研 · 60 点" },
-  { href: "/god-view", label: "AI 战略智库" },
-  { href: "/workflow-nodes", label: "大师电影故事创作" },
-  { href: "/creative", label: "创意轻工坊 · 生图/视频" },
+  { href: "/platform", label: "平台创作" },
+  { href: "/research", label: "竞品调研" },
+  { href: "/canvas", label: "Omni 画布" },
 ];
 
 function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
@@ -212,7 +208,7 @@ function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
       }}
     >
       <a
-        href="/god-view"
+        href="/research?tab=god-view"
         style={{
           flex: 1,
           textDecoration: "none",
@@ -287,11 +283,11 @@ function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
               ))}
             </div>
             <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
-              <a href="/god-view" style={{ fontSize: 13, fontWeight: 800, color: "#fb923c", textDecoration: "none" }}>
-                进入上帝视角（含调研）→
+              <a href="/research?tab=god-view" style={{ fontSize: 13, fontWeight: 800, color: "#fb923c", textDecoration: "none" }}>
+                进入战略智库（Research Hub）→
               </a>
               <a href="/research" style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)", textDecoration: "underline" }}>
-                仅打开调研全屏页
+                打开竞品调研 Hub
               </a>
             </div>
           </div>

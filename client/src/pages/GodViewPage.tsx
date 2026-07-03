@@ -712,19 +712,19 @@ export default function GodViewPage() {
               {
                 title: "多平台 IP 矩阵",
                 desc: "四平台爆款交叉对比 + 跨界短影音脚本与分镜，开机即录的内容资产",
-                href: "/agent/platform-ip-matrix",
+                href: "/research?tab=ip-matrix",
                 icon: "🎬",
               },
               {
                 title: "竞品 / 赛道雷达",
                 desc: "对标账号长时间深潜分析，输出可作为「降维打击弹药」的高密度报告",
-                href: "/agent/competitor-radar",
+                href: "/research?tab=competitor-radar",
                 icon: "📡",
               },
               {
                 title: "VIP 客户身心抗衰",
                 desc: "高净值客户专属档案 · 用 previous_interaction_id 续接，每月动态调整处方",
-                href: "/agent/vip-tracker",
+                href: "/research?tab=vip-tracker",
                 icon: "👤",
               },
             ].map((c) => (

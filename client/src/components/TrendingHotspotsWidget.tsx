@@ -27,8 +27,8 @@ const PLATFORM_BADGE: Record<string, string> = {
 };
 
 const ROUTE_BY_TARGET: Record<AgentHandoffTarget, string> = {
-  platform_ip_matrix: "/agent/platform-ip-matrix",
-  competitor_radar: "/agent/competitor-radar",
+  platform_ip_matrix: "/research?tab=ip-matrix",
+  competitor_radar: "/research?tab=competitor-radar",
 };
 
 /** 增长率徽章颜色：+200% → 红炽热 / +100% → 橙 / +60% → 金 / 其他 → 绿 */

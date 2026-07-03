@@ -9,23 +9,15 @@ import { AmbientLocationPicker } from "@/components/AmbientLocationPicker";
 
 /** Hero 内一键直达：与产品 flagship 模块一致 */
 const HERO_FLAGSHIP_LINKS: { href: string; label: string }[] = [
-  { href: "/creator-growth-camp", label: "成长营 · 二创" },
-  { href: "/platform", label: "全网流量雷达" },
-  { href: "/canvas", label: "Omni 视频画布" },
-  { href: "/research", label: "竞品调研 · 60 点" },
-  { href: "/god-view", label: "AI 战略智库" },
-  { href: "/workflow-nodes", label: "大师电影故事创作" },
-  { href: "/creative", label: "创意轻工坊 · 生图/视频" },
+  { href: "/platform", label: "平台创作" },
+  { href: "/research", label: "竞品调研" },
+  { href: "/canvas", label: "Omni 画布" },
 ];
 
 const HERO_VIDEO_TAGS = [
-  "成长营 & 二创",
-  "全网流量雷达",
-  "竞品深潜调研",
-  "AI 战略智库",
-  "大师电影故事创作",
-  "尊享爆款解构",
-  "创意轻工坊",
+  "平台创作",
+  "竞品调研",
+  "Omni 画布",
 ];
 
 const slides = [
@@ -200,18 +192,18 @@ export default function HomeHero() {
                   <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>{slide.subtitle}</div>
                   <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>{slide.title}</div>
                   <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84, maxWidth: 560, lineHeight: 1.55 }}>
-                    先看成片；增长诊断、趋势雷达、对标调研、战略智库与爆款解构在同一产品闭环里，大师电影故事创作负责脚本 → 分镜 → 成片。
+                    先看成片；平台创作、竞品调研与 Omni 画布三站闭环，从洞察到出图同页完成。
                   </div>
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
                   <Link
-                    href="/workflow-nodes"
+                    href="/platform"
                     style={{
                       padding: "12px 18px",
                       borderRadius: 14,
-                      border: "1px solid rgba(255,138,91,0.38)",
-                      background: "rgba(255,138,91,0.14)",
+                      border: "none",
+                      background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
                       color: "white",
                       fontWeight: 900,
                       cursor: "pointer",
@@ -219,10 +211,10 @@ export default function HomeHero() {
                       textDecoration: "none",
                     }}
                   >
-                    进入视频基地
+                    进入平台创作
                   </Link>
                   <Link
-                    href="/creator-growth-camp"
+                    href="/research"
                     style={{
                       padding: "10px 16px",
                       borderRadius: 14,
@@ -236,7 +228,7 @@ export default function HomeHero() {
                       textDecoration: "none",
                     }}
                   >
-                    从成长营开始 →
+                    竞品调研 Hub →
                   </Link>
                 </div>
               </div>
@@ -421,7 +413,7 @@ export default function HomeHero() {
 
             <div style={{ display: "flex", gap: 12, marginTop: 22, flexWrap: "wrap" }}>
               <a
-                href="/creator-growth-camp"
+                href="/platform"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,
@@ -433,7 +425,7 @@ export default function HomeHero() {
                   textDecoration: "none",
                 }}
               >
-                进入成长营
+                进入平台创作
               </a>
               {!isAuthenticated && (
                 <a
@@ -460,7 +452,7 @@ export default function HomeHero() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(2, 1fr)",
+            gridTemplateColumns: "repeat(3, 1fr)",
             gap: 14,
             marginTop: 24,
           }}
@@ -468,26 +460,37 @@ export default function HomeHero() {
         >
           {[
             {
-              href: "/creative",
-              badge: "文字生图 · 图生视频",
-              badgeColor: "rgba(236,72,153,0.95)",
-              title: "创意轻工坊",
-              desc: "一站式生图与视频轻量化创作，Nano Banana 2 生图与 Seedance 引擎转化。",
-              gradient: "linear-gradient(135deg, rgba(236,72,153,0.18), rgba(219,39,119,0.08))",
-              border: "rgba(236,72,153,0.35)",
-              arrow: "rgba(244,114,182,1)",
-              cta: "马上体验 →",
-            },
-            {
               href: "/platform",
-              badge: "平台洞察",
+              badge: "平台创作",
               badgeColor: "rgba(96,165,250,0.9)",
-              title: "全网流量雷达",
-              desc: "小红书、抖音、B站、快手数据窗口与趋势承接，可导出长图。",
+              title: "全网流量雷达 · 自定义工作台",
+              desc: "趋势全案、素材分析、文案生图、选题与抠像，同页完成。",
               gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
               border: "rgba(96,165,250,0.30)",
               arrow: "rgba(96,165,250,1)",
-              cta: "查看趋势 →",
+              cta: "进入平台 →",
+            },
+            {
+              href: "/research",
+              badge: "竞品调研",
+              badgeColor: "rgba(249,115,22,0.95)",
+              title: "调研 · 智库 · 赛道雷达",
+              desc: "60 点深潜调研、战略智库、Agent 雷达与 IP 矩阵，一站切换。",
+              gradient: "linear-gradient(135deg, rgba(249,115,22,0.20), rgba(234,88,12,0.10))",
+              border: "rgba(249,115,22,0.38)",
+              arrow: "rgba(253,186,116,1)",
+              cta: "开始调研 →",
+            },
+            {
+              href: "/canvas",
+              badge: "Omni 画布",
+              badgeColor: "rgba(52,211,153,0.95)",
+              title: "Omni 视频创作画布",
+              desc: "节点式生图、视频、抠像与多方块连线传递，自由编排创作流。",
+              gradient: "linear-gradient(135deg, rgba(52,211,153,0.16), rgba(16,185,129,0.08))",
+              border: "rgba(52,211,153,0.35)",
+              arrow: "rgba(110,231,183,1)",
+              cta: "打开画布 →",
             },
           ].map((card) => (
             <Link
@@ -544,7 +547,7 @@ export default function HomeHero() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(3, 1fr)",
           gap: 14,
           marginTop: 16,
         }}
@@ -552,48 +555,37 @@ export default function HomeHero() {
       >
         {[
           {
-            href: "/creator-growth-camp",
-            badge: "成长营 · 二创",
-            badgeColor: "rgba(251,146,60,0.9)",
-            title: "创作优化变现营 + 爆款解构尊享版",
-            desc: "增长诊断与爆款逻辑无损拆解入口：同一平台涵盖先进成长营与二创分镜流程，实现对标分析及变现策略。",
-            gradient: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(139,92,246,0.12))",
-            border: "rgba(251,146,60,0.32)",
-            arrow: "rgba(251,146,60,1)",
-            cta: "进入成长营 →",
+            href: "/platform",
+            badge: "平台创作",
+            badgeColor: "rgba(96,165,250,0.9)",
+            title: "趋势 · 素材 · 生图",
+            desc: "全案分析、自定义工作台与成长营能力已并入；上传素材 → 优化 → 出图同页完成。",
+            gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.12))",
+            border: "rgba(96,165,250,0.32)",
+            arrow: "rgba(96,165,250,1)",
+            cta: "进入平台 →",
           },
           {
             href: "/research",
             badge: "竞品调研",
             badgeColor: "rgba(249,115,22,0.95)",
-            title: "竞品与对标分析",
-            desc: "四平台双引擎深潜，输出人设、脚本、视觉与 30 天增长路径（60 点/次）。",
+            title: "调研 · 智库 · 雷达",
+            desc: "四平台深潜调研、战略智库套餐、赛道雷达与 IP 矩阵，Hub 内 Tab 切换。",
             gradient: "linear-gradient(135deg, rgba(249,115,22,0.20), rgba(234,88,12,0.10))",
             border: "rgba(249,115,22,0.38)",
             arrow: "rgba(253,186,116,1)",
             cta: "开始调研 →",
           },
           {
-            href: "/god-view",
-            badge: "战略智库",
-            badgeColor: "rgba(245,200,80,0.95)",
-            title: "AI 上帝视角",
-            desc: "全景行业战报：半月刊、订阅与私人订制，附数据表与四平台对比矩阵。",
-            gradient: "linear-gradient(135deg, rgba(245,200,80,0.16), rgba(120,80,20,0.14))",
-            border: "rgba(212,175,55,0.42)",
-            arrow: "rgba(253,224,138,1)",
-            cta: "前往智库 →",
-          },
-          {
-            href: "/workflow-nodes",
-            badge: "脚本 · 分镜 · 成片",
+            href: "/canvas",
+            badge: "Omni 画布",
             badgeColor: "rgba(52,211,153,0.95)",
-            title: "大师电影故事创作",
-            desc: "Gemini 脚本 → GPT-image-2 分镜 → Seedance 成片；画布上继续配乐、配音与合成。",
+            title: "节点式视频创作",
+            desc: "生图、视频、抠像与 A→B→C 连线传递；自由编排，无需跳转多页。",
             gradient: "linear-gradient(135deg, rgba(52,211,153,0.16), rgba(16,185,129,0.08))",
             border: "rgba(52,211,153,0.35)",
             arrow: "rgba(110,231,183,1)",
-            cta: "进入视频基地 →",
+            cta: "打开画布 →",
           },
         ].map((card) => (
           <Link
