@@ -156,41 +156,100 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   };
 }
 
-export function collectVisionImages(
+export function resolveBlockHandoffText(block: CanvasBlock): string {
+  const output = block.outputText?.trim();
+  if (output) return output;
+  return block.prompt?.trim() || "";
+}
+
+function buildCanvasIncomingMap(
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): Map<string, string[]> {
+  const blockIds = new Set(blocks.map((b) => b.id));
+  const incoming = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (!blockIds.has(edge.fromId) || !blockIds.has(edge.toId)) continue;
+    incoming.set(edge.toId, [...(incoming.get(edge.toId) ?? []), edge.fromId]);
+  }
+  return incoming;
+}
+
+function getCanvasDirectPredecessors(
+  blockId: string,
+  blockMap: Map<string, CanvasBlock>,
+  incoming: Map<string, string[]>,
+): string[] {
+  const preds = [...(incoming.get(blockId) ?? [])];
+  const parentId = blockMap.get(blockId)?.parentId;
+  if (parentId && parentId !== blockId && blockMap.has(parentId)) {
+    preds.push(parentId);
+  }
+  return Array.from(new Set(preds));
+}
+
+/**
+ * 沿连线图递归收集所有上游方块 id（含多级 A→B→C… 与 parentId 链），
+ * 返回拓扑序：最远上游在前，直接相邻上游在后。
+ */
+export function collectUpstreamBlockIds(
   blockId: string,
   blocks: CanvasBlock[],
   edges: Array<{ fromId: string; toId: string }>,
-): Array<{ url: string; gcsUri?: string; mimeType?: string }> {
+): string[] {
   const blockMap = new Map(blocks.map((b) => [b.id, b]));
-  const seen = new Set<string>();
-  const items: Array<{ url: string; gcsUri?: string; mimeType?: string }> = [];
+  if (!blockMap.has(blockId)) return [];
 
-  const addAsset = (asset: CanvasUploadedAsset) => {
-    const key = asset.gcsUri || asset.url;
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    items.push({ url: asset.url, gcsUri: asset.gcsUri, mimeType: asset.fileName.match(/\.png$/i) ? "image/png" : "image/jpeg" });
-  };
+  const incoming = buildCanvasIncomingMap(blocks, edges);
+  const ordered: string[] = [];
+  const visited = new Set<string>();
 
-  const addUrl = (url: string) => {
-    if (!url || seen.has(url)) return;
-    seen.add(url);
-    items.push({ url });
-  };
+  const dfsUpstream = (id: string, stack: Set<string>) => {
+    if (stack.has(id)) return;
+    if (visited.has(id)) return;
+    stack.add(id);
 
-  const self = blockMap.get(blockId);
-  for (const asset of self?.uploadedAssets ?? []) addAsset(asset);
-
-  for (const edge of edges.filter((e) => e.toId === blockId)) {
-    const up = blockMap.get(edge.fromId);
-    if (!up) continue;
-    for (const asset of up.uploadedAssets ?? []) addAsset(asset);
-    if (up.outputUrls?.length) {
-      for (const u of up.outputUrls) addUrl(u);
-    } else if (up.outputUrl) {
-      addUrl(up.outputUrl);
+    for (const pred of getCanvasDirectPredecessors(id, blockMap, incoming)) {
+      dfsUpstream(pred, stack);
     }
-    if (up.refImageUrl) addUrl(up.refImageUrl);
+
+    stack.delete(id);
+    if (!visited.has(id)) {
+      visited.add(id);
+      ordered.push(id);
+    }
+  };
+
+  for (const pred of getCanvasDirectPredecessors(blockId, blockMap, incoming)) {
+    dfsUpstream(pred, new Set());
+  }
+
+  return ordered;
+}
+
+export type CanvasUpstreamHandoffItem = {
+  blockId: string;
+  kind: CanvasBlockKind;
+  text: string;
+};
+
+/** 收集所有上游方块可传递内容（outputText 优先，否则 prompt）。 */
+export function collectUpstreamHandoff(
+  blockId: string,
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): CanvasUpstreamHandoffItem[] {
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
+  const seenText = new Set<string>();
+  const items: CanvasUpstreamHandoffItem[] = [];
+
+  for (const upstreamId of collectUpstreamBlockIds(blockId, blocks, edges)) {
+    const block = blockMap.get(upstreamId);
+    if (!block) continue;
+    const text = resolveBlockHandoffText(block);
+    if (!text || seenText.has(text)) continue;
+    seenText.add(text);
+    items.push({ blockId: upstreamId, kind: block.kind, text });
   }
 
   return items;
@@ -201,15 +260,90 @@ export function collectUpstreamTexts(
   blocks: CanvasBlock[],
   edges: Array<{ fromId: string; toId: string }>,
 ): string[] {
-  const blockMap = new Map(blocks.map((b) => [b.id, b]));
-  const texts: string[] = [];
-  for (const edge of edges.filter((e) => e.toId === blockId)) {
-    const up = blockMap.get(edge.fromId);
-    if (up?.outputText?.trim()) texts.push(up.outputText.trim());
+  return collectUpstreamHandoff(blockId, blocks, edges).map((item) => item.text);
+}
+
+function appendVisionFromBlock(
+  block: CanvasBlock,
+  seen: Set<string>,
+  items: Array<{ url: string; gcsUri?: string; mimeType?: string }>,
+) {
+  const addAsset = (asset: CanvasUploadedAsset) => {
+    const key = asset.gcsUri || asset.url;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    items.push({
+      url: asset.url,
+      gcsUri: asset.gcsUri,
+      mimeType: asset.fileName.match(/\.png$/i) ? "image/png" : "image/jpeg",
+    });
+  };
+
+  const addUrl = (url: string) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    items.push({ url });
+  };
+
+  for (const asset of block.uploadedAssets ?? []) addAsset(asset);
+  if (block.outputUrls?.length) {
+    for (const u of block.outputUrls) addUrl(u);
+  } else if (block.outputUrl) {
+    addUrl(block.outputUrl);
   }
-  const parent = blockMap.get(blockId)?.parentId
-    ? blockMap.get(blockMap.get(blockId)!.parentId!)
-    : undefined;
-  if (parent?.outputText?.trim()) texts.unshift(parent.outputText.trim());
-  return texts;
+  if (block.refImageUrl) addUrl(block.refImageUrl);
+}
+
+export function collectVisionImages(
+  blockId: string,
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): Array<{ url: string; gcsUri?: string; mimeType?: string }> {
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
+  const seen = new Set<string>();
+  const items: Array<{ url: string; gcsUri?: string; mimeType?: string }> = [];
+
+  const self = blockMap.get(blockId);
+  if (self) appendVisionFromBlock(self, seen, items);
+
+  for (const upstreamId of collectUpstreamBlockIds(blockId, blocks, edges)) {
+    const upstream = blockMap.get(upstreamId);
+    if (upstream) appendVisionFromBlock(upstream, seen, items);
+  }
+
+  return items;
+}
+
+/** 沿连线 BFS 找最近一级上游的图片/视频输出，供图生图、图生视频作参考。 */
+export function resolveNearestUpstreamImageUrl(
+  blockId: string,
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): string | undefined {
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
+  const incoming = buildCanvasIncomingMap(blocks, edges);
+
+  const pickFromBlock = (block: CanvasBlock): string | undefined =>
+    block.outputUrls?.find(Boolean) || block.outputUrl || block.refImageUrl;
+
+  const queue: string[] = getCanvasDirectPredecessors(blockId, blockMap, incoming);
+  const seen = new Set<string>([blockId]);
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const block = blockMap.get(id);
+    if (!block) continue;
+
+    const url = pickFromBlock(block);
+    if (url) return url;
+
+    for (const pred of getCanvasDirectPredecessors(id, blockMap, incoming)) {
+      if (!seen.has(pred)) queue.push(pred);
+    }
+  }
+
+  return undefined;
 }
