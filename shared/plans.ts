@@ -301,10 +301,12 @@ export function platformCustomMattingTotalCredits(count: PlatformMattingBatchCou
 }
 
 /** 素材视觉分析合计积分：按张计费（与 {@link CREDIT_COSTS.growthCampGrowth} 同价） */
-export function platformAssetAnalysisTotalCredits(imageCount: number): number {
-  const n = Math.max(0, Math.floor(Number(imageCount) || 0));
-  if (n <= 0) return 0;
-  return n * CREDIT_COSTS.growthCampGrowth;
+export function platformAssetAnalysisTotalCredits(imageCount: number, videoCount = 0): number {
+  const images = Math.max(0, Math.floor(Number(imageCount) || 0));
+  const videos = Math.max(0, Math.floor(Number(videoCount) || 0));
+  const total = images + videos;
+  if (total <= 0) return 0;
+  return total * CREDIT_COSTS.growthCampGrowth;
 }
 
 /** 一键套装·九折文案（按钮/说明统一后缀） */
