@@ -7,11 +7,14 @@ import {
   CANVAS_BLOCK_MIN_HEIGHT,
   CANVAS_BLOCK_MIN_WIDTH,
   CANVAS_KIND_META,
+  collectUpstreamHandoff,
   collectUpstreamTexts,
   collectVisionImages,
   defaultCanvasBlock,
   IMAGE_MODEL_OPTIONS,
   makeCanvasBlockId,
+  resolveBlockHandoffText,
+  resolveNearestUpstreamImageUrl,
   SPAWN_KIND_OPTIONS,
   TEXT_MODEL_OPTIONS,
   VIDEO_MODEL_OPTIONS,
@@ -100,9 +103,17 @@ export default function FreeformCanvas({
       const block = defaultCanvasBlock(kind, 0, 0, opts?.parentId);
       block.id = id;
       const parent = opts?.parentId ? blockMap.get(opts.parentId) : undefined;
-      if (parent?.outputText) block.prompt = `${block.prompt}\n\n${parent.outputText.slice(0, 2000)}`;
+      const handoff = parent ? resolveBlockHandoffText(parent) : "";
+      if (handoff) {
+        const snippet = handoff.slice(0, 2000);
+        block.prompt = block.prompt.trim()
+          ? `${block.prompt.trim()}\n\n${snippet}`
+          : snippet;
+      }
       if (parent?.outputUrl && (kind === "image" || kind === "video")) {
         block.refImageUrl = parent.outputUrl;
+      } else if (parent?.outputUrls?.[0] && (kind === "image" || kind === "video")) {
+        block.refImageUrl = parent.outputUrls[0];
       }
 
       if (opts?.x != null && opts?.y != null) {
@@ -156,9 +167,17 @@ export default function FreeformCanvas({
       if (!block) return;
       const visionImages = collectVisionImages(blockId, blocks, edges);
       const texts = collectUpstreamTexts(blockId, blocks, edges);
+      const nearestRef =
+        block.kind === "image" || block.kind === "video"
+          ? block.refImageUrl || resolveNearestUpstreamImageUrl(blockId, blocks, edges)
+          : block.refImageUrl;
+      const runBlockPayload =
+        nearestRef && nearestRef !== block.refImageUrl
+          ? { ...block, refImageUrl: nearestRef }
+          : block;
       patchOne(blockId, { status: "running", error: undefined });
       try {
-        const out = await runCanvasBlock(runDeps, block, { visionImages, texts });
+        const out = await runCanvasBlock(runDeps, runBlockPayload, { visionImages, texts });
         patchOne(blockId, {
           status: "done",
           outputText: out.outputText,
@@ -343,6 +362,8 @@ export default function FreeformCanvas({
             const Icon = meta.icon;
             const selected = selectedId === block.id;
             const visionCount = collectVisionImages(block.id, blocks, edges).length;
+            const upstreamHandoff = collectUpstreamHandoff(block.id, blocks, edges);
+            const upstreamPreview = upstreamHandoff.map((item) => item.text).join(" · ").slice(0, 120);
             const displayOutputs =
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
             const uploadLabel =
@@ -514,6 +535,15 @@ export default function FreeformCanvas({
                           : meta.hint
                       }
                     />
+                    {upstreamHandoff.length ? (
+                      <div
+                        className="mt-2 rounded-lg border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-[10px] leading-5 text-sky-100/90"
+                        title={upstreamHandoff.map((item, i) => `[${i + 1}] ${item.text}`).join("\n\n")}
+                      >
+                        已连接 {upstreamHandoff.length} 个上游方块（含多级连线）· 运行时将自动引用
+                        {upstreamPreview ? `：${upstreamPreview}${upstreamHandoff.map((item) => item.text).join(" · ").length > 120 ? "…" : ""}` : ""}
+                      </div>
+                    ) : null}
                     <div className="mt-2 flex flex-wrap gap-2">
                       {(block.kind === "image" || block.kind === "video") && (
                         <select

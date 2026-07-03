@@ -151,6 +151,22 @@ async function runOmniFlash(prompt: string, imageUrl: string | undefined, aspect
   return outUrl;
 }
 
+export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: string[]): string {
+  const trimmed = basePrompt.trim();
+  const texts = upstreamTexts.map((t) => t.trim()).filter(Boolean);
+  if (!texts.length) return trimmed;
+
+  const upstreamSection = texts
+    .map((text, index) => `[上游 ${index + 1}]\n${text}`)
+    .join("\n\n---\n\n")
+    .slice(0, 12000);
+
+  if (!trimmed) {
+    return `【引用上游文本】\n${upstreamSection}`;
+  }
+  return `${trimmed}\n\n【引用上游文本】\n${upstreamSection}`;
+}
+
 export async function runCanvasBlock(
   deps: CanvasRunDeps,
   block: CanvasBlock,
@@ -160,15 +176,18 @@ export async function runCanvasBlock(
   outputUrl?: string;
   outputUrls?: string[];
 }> {
+  const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
-  if (!prompt) throw new Error("请先填写提示词");
+  if (!prompt && !refTexts.length) {
+    throw new Error("请先填写提示词，或连接上游方块传递内容");
+  }
+
+  const mergedPrompt = formatCanvasUpstreamPrompt(
+    prompt || "请根据上游内容完成本步骤生成。",
+    refTexts,
+  );
 
   const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
-  const refTexts = upstream.texts.filter(Boolean);
-  const mergedPrompt = refTexts.length
-    ? `${prompt}\n\n【引用上游文本】\n${refTexts.join("\n\n---\n\n").slice(0, 12000)}`
-    : prompt;
-
   const visionImages = upstream.visionImages.filter((i) => i.url || i.gcsUri);
 
   if (block.kind === "text" || block.kind === "copy_organize") {
