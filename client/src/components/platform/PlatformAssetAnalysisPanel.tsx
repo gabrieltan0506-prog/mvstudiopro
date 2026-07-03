@@ -2,14 +2,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import {
+  extractVideoPreview,
+  GROWTH_CAMP_ANALYSIS_MODEL,
   GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE,
   isGrowthCampImageFile,
+  isGrowthCampVideoFile,
   newPlatformImageAssetId,
   normalizeGrowthCampImageMime,
   readFileAsDataUrl,
-  runGrowthCampImageAnalysis,
+  runGrowthCampAssetAnalysis,
   type ImagePipelineDebugState,
   type PlatformImageAsset,
+  type PlatformVideoAsset,
 } from "@/lib/growthCampImagePipeline";
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
@@ -47,7 +51,9 @@ export default function PlatformAssetAnalysisPanel({
 }: PlatformAssetAnalysisPanelProps) {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
   const [assets, setAssets] = useState<PlatformImageAsset[]>([]);
+  const [videoAsset, setVideoAsset] = useState<PlatformVideoAsset | null>(null);
   const [context, setContext] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -65,23 +71,76 @@ export default function PlatformAssetAnalysisPanel({
   }, [busy, optimizeBusy, generateBusy, onBusyChange]);
 
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const synthesizeGrowthCampAnalysesMutation = trpc.mvAnalysis.synthesizeGrowthCampAnalyses.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
     enabled: debugMode && supervisorAccess,
     refetchInterval: debugMode ? 30_000 : false,
   });
 
-  const allAssetsReady = useMemo(
-    () => assets.length > 0 && assets.every((a) => a.ready),
+  const allImagesReady = useMemo(
+    () => assets.length === 0 || assets.every((a) => a.ready),
     [assets],
   );
+  const videoReady = Boolean(videoAsset?.ready);
+  const hasAnyAsset = assets.length > 0 || Boolean(videoAsset);
+  const allAssetsReady = hasAnyAsset && allImagesReady && (!videoAsset || videoReady);
 
   const readyAssetCount = useMemo(() => assets.filter((a) => a.ready).length, [assets]);
+  const readyVideoCount = videoReady ? 1 : 0;
   const analysisCost = useMemo(
-    () => platformAssetAnalysisTotalCredits(readyAssetCount),
-    [readyAssetCount],
+    () => platformAssetAnalysisTotalCredits(readyAssetCount, readyVideoCount),
+    [readyAssetCount, readyVideoCount],
   );
   const unitCost = CREDIT_COSTS.growthCampGrowth;
+
+  const ingestVideo = useCallback((file: File) => {
+    if (!isGrowthCampVideoFile(file)) {
+      setError("请上传 MP4 参考视频（每次 1 个）");
+      return;
+    }
+
+    setError(null);
+    setAnalysis(null);
+    setImagePipelineDebug({});
+
+    const assetId = newPlatformImageAssetId();
+    const pending: PlatformVideoAsset = {
+      id: assetId,
+      file,
+      fileName: file.name,
+      mimeType: file.type || "video/mp4",
+      size: file.size,
+      previewUrl: null,
+      durationSeconds: 0,
+      ready: false,
+    };
+    setVideoAsset(pending);
+
+    void (async () => {
+      try {
+        const { previewUrl, durationSeconds } = await extractVideoPreview(file);
+        setVideoAsset((prev) =>
+          prev?.id === assetId
+            ? { ...prev, previewUrl, durationSeconds, ready: true }
+            : prev,
+        );
+      } catch (videoError: unknown) {
+        const msg = videoError instanceof Error ? videoError.message : "视频读取失败";
+        setVideoAsset((prev) =>
+          prev?.id === assetId ? { ...prev, ready: false, readError: msg } : prev,
+        );
+        setError(msg);
+      }
+    })();
+  }, []);
+
+  const removeVideo = useCallback(() => {
+    setVideoAsset(null);
+    setError(null);
+    setAnalysis(null);
+    setImagePipelineDebug({});
+  }, []);
 
   const ingestImages = useCallback((files: File[]) => {
     const valid = files.filter((f) => isGrowthCampImageFile(f));
@@ -166,11 +225,20 @@ export default function PlatformAssetAnalysisPanel({
     setImagePipelineDebug({});
 
     try {
-      const result = await runGrowthCampImageAnalysis({
-        assets,
+      const result = await runGrowthCampAssetAnalysis({
+        images: assets,
+        video: videoAsset,
         context: context.trim() || undefined,
         userId: user?.id ? String(user.id) : undefined,
         getSignedUploadUrl: (input) => getVideoUploadSignedUrlMutation.mutateAsync(input),
+        synthesizeParts: async (parts) => {
+          const merged = await synthesizeGrowthCampAnalysesMutation.mutateAsync({
+            parts,
+            context: context.trim() || undefined,
+            modelName: GROWTH_CAMP_ANALYSIS_MODEL,
+          });
+          return merged.analysis;
+        },
         onUploadProgress: (percent) => {
           setUploadProgress(percent);
           if (percent >= 100) setStage("analyzing");
@@ -187,8 +255,8 @@ export default function PlatformAssetAnalysisPanel({
       setUploadProgress(100);
       toast.success("素材视觉分析完成");
     } catch (analysisError: unknown) {
-      const raw = analysisError instanceof Error ? analysisError.message : "图片分析失败";
-      const msg = sanitizePlatformUserMessage(raw, "图片分析暂时不可用，请稍后重试");
+      const raw = analysisError instanceof Error ? analysisError.message : "素材分析失败";
+      const msg = sanitizePlatformUserMessage(raw, "素材分析暂时不可用，请稍后重试");
       setError(msg);
       setStage("error");
     } finally {
@@ -202,7 +270,9 @@ export default function PlatformAssetAnalysisPanel({
     context,
     getVideoUploadSignedUrlMutation,
     supervisorAccess,
+    synthesizeGrowthCampAnalysesMutation,
     user?.id,
+    videoAsset,
   ]);
 
   const stageLabel =
@@ -218,7 +288,7 @@ export default function PlatformAssetAnalysisPanel({
         <PlatformWorkspaceStepHint
           step={1}
           title="上传并分析"
-          lines={["添加封面或分镜 PNG/JPG。", "点击「开始视觉分析」，结果只绑定你的素材。"]}
+          lines={["添加封面/分镜 PNG/JPG，或 1 个 MP4 参考视频。", "点击「开始视觉分析」，结果只绑定你的素材。"]}
           active={!analysis && !busy}
           done={Boolean(analysis)}
         />
@@ -264,6 +334,17 @@ export default function PlatformAssetAnalysisPanel({
             if (files.length) ingestImages(files);
           }}
         />
+        <input
+          ref={videoFileInputRef}
+          type="file"
+          accept="video/mp4,.mp4,video/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) ingestVideo(file);
+          }}
+        />
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
@@ -274,17 +355,84 @@ export default function PlatformAssetAnalysisPanel({
             <FileUp className="h-4 w-4" />
             添加 PNG / JPG
           </button>
-          <span className="text-xs text-[#c9c0e6]/50">可多次添加封面、分镜等；建议单张 &lt; 8MB</span>
+          <button
+            type="button"
+            onClick={() => videoFileInputRef.current?.click()}
+            disabled={busy || disabled}
+            className="inline-flex items-center gap-2 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.15)] disabled:opacity-50"
+          >
+            <Film className="h-4 w-4" />
+            添加 MP4 视频
+          </button>
+          <span className="text-xs text-[#c9c0e6]/50">
+            图片可多张；视频每次 1 个，可与图片一起分析
+          </span>
         </div>
 
-        {readyAssetCount > 0 ? (
+        {readyAssetCount + readyVideoCount > 0 ? (
           <p className="mt-3 text-[11px] text-[#c9c0e6]/60">
-            当前 <strong className="text-white/85">{readyAssetCount}</strong> 张 · 合计{" "}
-            <strong className="text-[#6ee7b7]">{analysisCost} 积分</strong>
-            {readyAssetCount > 1 ? (
-              <span className="text-white/40">（{unitCost} × {readyAssetCount}）</span>
+            当前{" "}
+            {readyAssetCount > 0 ? (
+              <>
+                <strong className="text-white/85">{readyAssetCount}</strong> 张图片
+              </>
+            ) : null}
+            {readyAssetCount > 0 && readyVideoCount > 0 ? " · " : null}
+            {readyVideoCount > 0 ? (
+              <>
+                <strong className="text-white/85">{readyVideoCount}</strong> 个视频
+              </>
+            ) : null}{" "}
+            · 合计 <strong className="text-[#6ee7b7]">{analysisCost} 积分</strong>
+            {readyAssetCount + readyVideoCount > 1 ? (
+              <span className="text-white/40">
+                （{unitCost} × {readyAssetCount + readyVideoCount}）
+              </span>
             ) : null}
           </p>
+        ) : null}
+
+        {videoAsset ? (
+          <div className="mt-4">
+            <div
+              className={`relative max-w-sm rounded-xl border overflow-hidden ${
+                videoAsset.ready ? "border-[#8cefff]/25" : "border-red-400/40"
+              }`}
+            >
+              {videoAsset.previewUrl ? (
+                <div className="relative flex min-h-[120px] max-h-[220px] items-center justify-center bg-black/30 p-1.5">
+                  <img
+                    src={videoAsset.previewUrl}
+                    alt={videoAsset.fileName}
+                    className="max-h-[208px] w-full object-contain"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <Film className="h-10 w-10 text-white/50" />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-[120px] items-center justify-center bg-black/40 px-2 py-8 text-center text-xs text-red-300">
+                  {videoAsset.readError || "视频读取中…"}
+                </div>
+              )}
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 py-2">
+                <div className="truncate text-[10px] text-white/80">{videoAsset.fileName}</div>
+                {videoAsset.durationSeconds > 0 ? (
+                  <div className="text-[10px] text-[#8cefff]/70">{videoAsset.durationSeconds}s</div>
+                ) : null}
+              </div>
+              {!busy && !disabled ? (
+                <button
+                  type="button"
+                  onClick={removeVideo}
+                  className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 hover:text-white"
+                  aria-label="移除视频"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          </div>
         ) : null}
 
         {assets.length > 0 ? (
@@ -325,18 +473,18 @@ export default function PlatformAssetAnalysisPanel({
               </div>
             ))}
           </div>
-        ) : (
+        ) : !videoAsset ? (
           <div className="mt-4 flex flex-col items-center justify-center gap-2 py-8 text-[#c9c0e6]/40">
             <ImageIcon className="h-8 w-8 opacity-40" />
             <span className="text-xs">尚未添加素材</span>
           </div>
-        )}
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         {supervisorAccess ? (
           <p className="text-[11px] text-emerald-200/80">Supervisor / Admin：本次分析免扣积分</p>
-        ) : readyAssetCount > 0 ? (
+        ) : readyAssetCount + readyVideoCount > 0 ? (
           <p className="text-[11px] text-[#c9c0e6]/60">
             开始分析将消耗 <strong className="text-[#6ee7b7]">{analysisCost} 积分</strong>
           </p>
@@ -361,11 +509,12 @@ export default function PlatformAssetAnalysisPanel({
             </>
           )}
         </button>
-        {(analysis || error || assets.length > 0) && !busy ? (
+        {(analysis || error || assets.length > 0 || videoAsset) && !busy ? (
           <button
             type="button"
             onClick={() => {
               setAssets([]);
+              setVideoAsset(null);
               setAnalysis(null);
               setError(null);
               setContext("");
