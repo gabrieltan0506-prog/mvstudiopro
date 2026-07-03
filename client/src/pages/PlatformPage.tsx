@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
+import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
@@ -6311,10 +6312,22 @@ export default function PlatformPage() {
 
           {customWorkspaceTab === "copy" ? (
             <>
-              <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-                粘贴中文文案或 Markdown，可直接生成单页图文卡片、2×4 分镜，或先做深度优化再出图。
-                各类型积分见下方按钮标注。
-              </p>
+              <div className="mb-5 grid gap-2 sm:grid-cols-2">
+                <PlatformWorkspaceStepHint
+                  step={1}
+                  title="粘贴文案"
+                  lines={["贴入 Markdown 或分镜脚本，并选择生成类型。", "可选「优化自定义文案」先深度改写再出图。"]}
+                  active={!customNoteText.trim()}
+                  done={Boolean(customNoteText.trim())}
+                />
+                <PlatformWorkspaceStepHint
+                  step={2}
+                  title="生成结果"
+                  lines={["点击生成按钮，等待任务完成。", "图片或优化稿直接显示在本 Tab 下方。"]}
+                  active={Boolean(customNoteText.trim()) && !customNoteImageUpper && !customOptimizeResult}
+                  done={Boolean(customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
+                />
+              </div>
 
               <div className="mb-4">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">生成类型</div>
@@ -6359,13 +6372,6 @@ export default function PlatformPage() {
                     优化自定义文案
                   </button>
                 </div>
-                <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
-                  {customNoteKind === "single_page_knowledge_card"
-                    ? "按小标题顺序对半拆成「上篇 + 下篇」两张完整单页卡片：手绘 + 写实 + 花卉装饰、书法标题、橙→淡紫渐变、印刷级清晰简体中文（非 2×4 八格网格）"
-                    : customNoteKind === "storyboard_sheet_landscape"
-                      ? "生成电影级 2×4 横幅分镜图（含景别、运镜、台词与音效字段）"
-                      : `按你的要求深度改写封面文案、分镜脚本与平台发布稿；扣 ${customOptimizeCopyCost} 积分/次，不出图`}
-                </p>
               </div>
 
               <textarea
@@ -6533,19 +6539,29 @@ export default function PlatformPage() {
             </>
           ) : customWorkspaceTab === "topic" ? (
             <>
-              <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-                填写主人公特质与专长、上传参考人像，勾选需要生成的内容。文案扩写
-                <strong className="text-[#8cefff]">首次免费</strong>
-                ；封面/分镜会融合上传的主人公相貌（分镜各格保持同一人，仅古人/历史角色等脚本明示时换脸）。
-                {(customTopicGenCover || customTopicGenStoryboard) && (
-                  <>
-                    {" "}
-                    本次图片
-                    <strong className="text-[#ff9fe0]"> {customTopicImageCost} 积分</strong>
-                    {customTopicGenCover && customTopicGenStoryboard ? PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL : ""}。
-                  </>
-                )}
-              </p>
+              <div className="mb-5 grid gap-2 sm:grid-cols-3">
+                <PlatformWorkspaceStepHint
+                  step={1}
+                  title="填写设定"
+                  lines={["写主人公特质与专长，可选填选题标题。", "勾选需要生成的文案、封面或分镜。"]}
+                  active={!customTopicProtagonist.trim()}
+                  done={Boolean(customTopicProtagonist.trim())}
+                />
+                <PlatformWorkspaceStepHint
+                  step={2}
+                  title="上传人像"
+                  lines={["上传参考人像，封面与分镜会融合相貌。", "生成封面/分镜时必填；仅文案可跳过。"]}
+                  active={Boolean(customTopicProtagonist.trim()) && !customTopicPhotoUrl && (customTopicGenCover || customTopicGenStoryboard)}
+                  done={Boolean(customTopicPhotoUrl) || (!customTopicGenCover && !customTopicGenStoryboard && Boolean(customTopicProtagonist.trim()))}
+                />
+                <PlatformWorkspaceStepHint
+                  step={3}
+                  title="一键生成"
+                  lines={["文案扩写首次免费，图片积分见按钮。", "结果在本 Tab 预览，可下载或设为参考。"]}
+                  active={Boolean(customTopicProtagonist.trim()) && !(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl)}
+                  done={Boolean(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl)}
+                />
+              </div>
 
               <div className="mb-5 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2.5">
@@ -6911,17 +6927,22 @@ export default function PlatformPage() {
             </>
           ) : (
             <>
-              <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
-                描述人物姿态、服装与背景场景（如
-                <strong className="text-[#6ee7b7]"> 坐姿 + 海边</strong>、
-                <strong className="text-[#6ee7b7]"> 站姿 + 书房</strong>），系统按你的提示词生成对应画面；
-                若需要
-                <strong className="text-[#6ee7b7]"> 自动去背景</strong>
-                ，请在描述中写明「去背景 / 自动去背景」（系统将直出干净白底主体图）。
-                可一次生成 1 / 2 / 4 张，单张原价
-                <strong className="text-[#6ee7b7]"> {CREDIT_COSTS.platformCustomMattingImage} 积分</strong>，
-                2 张九折、4 张八折（单独扣费）。
-              </p>
+              <div className="mb-5 grid gap-2 sm:grid-cols-2">
+                <PlatformWorkspaceStepHint
+                  step={1}
+                  title="描述场景"
+                  lines={["写人物姿态、服装与背景提示词。", "需要白底主体请在描述中注明「去背景」。"]}
+                  active={!customMattingPrompt.trim()}
+                  done={Boolean(customMattingPrompt.trim())}
+                />
+                <PlatformWorkspaceStepHint
+                  step={2}
+                  title="生成下载"
+                  lines={["选择比例与张数，点击开始生成。", `单张 ${CREDIT_COSTS.platformCustomMattingImage} 积分，2/4 张有折扣。`]}
+                  active={Boolean(customMattingPrompt.trim()) && customMattingImages.length === 0}
+                  done={customMattingImages.length > 0}
+                />
+              </div>
 
               <div className="space-y-4">
                 <div>
