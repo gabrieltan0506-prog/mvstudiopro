@@ -1883,21 +1883,18 @@ export default function PlatformPage() {
   /** 素材分析 → 深度优化：附带 vision 上下文与 live 趋势（一次性消费） */
   const pendingOptimizeVisionRef = useRef<string | undefined>(undefined);
   const pendingOptimizeLiveTrendsRef = useRef(false);
+  const [assetAnalysisBusy, setAssetAnalysisBusy] = useState(false);
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting" | "assets">("copy");
 
   useEffect(() => {
-    const hash = window.location.hash.replace(/^#/, "");
-    if (!hash.startsWith("platform-custom-workspace")) return;
-    requestAnimationFrame(() => {
-      document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    if (hash === "platform-custom-workspace-assets") {
-      setCustomWorkspaceTab("assets");
-    } else if (hash === "platform-custom-workspace-copy" || hash === "platform-custom-workspace") {
-      setCustomWorkspaceTab("copy");
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab === "assets" || tab === "copy" || tab === "topic" || tab === "matting") {
+      setCustomWorkspaceTab(tab);
     }
   }, []);
+
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
   const [customTopicProtagonist, setCustomTopicProtagonist] = useState("");
@@ -1919,6 +1916,8 @@ export default function PlatformPage() {
   const [customMattingImages, setCustomMattingImages] = useState<string[]>([]);
   const [customMattingTransparentCutout, setCustomMattingTransparentCutout] = useState(false);
   const [customMattingError, setCustomMattingError] = useState<string | null>(null);
+  const customWorkspaceOperating =
+    customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy;
   /** 自定义选题：勾选生成项（文案 / 封面 / 分镜） */
   const [customTopicGenCopy, setCustomTopicGenCopy] = useState(true);
   const [customTopicGenCover, setCustomTopicGenCover] = useState(true);
@@ -3595,21 +3594,57 @@ export default function PlatformPage() {
     }
   };
 
-  const handleAssetHandoffToOptimize = useCallback((payload: AssetAnalysisHandoffPayload) => {
-    pendingOptimizeVisionRef.current = payload.visionContext || undefined;
-    pendingOptimizeLiveTrendsRef.current = true;
-    setCustomWorkspaceTab("copy");
-    setCustomNoteKind("optimize_custom_copy");
-    setCustomNoteText(payload.sourceText);
-    setCustomOptimizeBrief(payload.optimizationBrief);
-    setCustomOptimizeResult(null);
-    setCustomOptimizeSummary(null);
-    setCustomNoteError(null);
-    requestAnimationFrame(() => {
-      document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    toast.success("已填入素材分析结果，请点击「深度优化文案」开始（含近期热点参考）");
-  }, []);
+  const handleAssetDeepOptimize = useCallback(
+    async (payload: AssetAnalysisHandoffPayload) => {
+      pendingOptimizeVisionRef.current = payload.visionContext || undefined;
+      pendingOptimizeLiveTrendsRef.current = true;
+      const res = await optimizeCustomCopyMutation.mutateAsync({
+        sourceText: payload.sourceText,
+        optimizationBrief: payload.optimizationBrief,
+        visionContext: payload.visionContext,
+        includeLiveTrends: true,
+        liveTrendWindowDays: 7,
+      });
+      pendingOptimizeVisionRef.current = undefined;
+      pendingOptimizeLiveTrendsRef.current = false;
+      return {
+        optimizedMarkdown: res.result.optimizedMarkdown,
+        summary: res.result.summary,
+      };
+    },
+    [optimizeCustomCopyMutation],
+  );
+
+  const handleAssetGenerateFromText = useCallback(
+    async (text: string, kind: "storyboard_sheet_landscape" | "single_page_knowledge_card") => {
+      setCustomNoteImageUpper(null);
+      setCustomNoteImageLower(null);
+      setCustomNoteError(null);
+      setCustomNoteBusy(true);
+      try {
+        if (kind === "single_page_knowledge_card") {
+          setCustomNotePartInFlight("upper");
+          const upper = await generateCustomNoteOne(text, "single_page_knowledge_card", "upper");
+          setCustomNoteImageUpper(upper);
+          setCustomNotePartInFlight("lower");
+          const lower = await generateCustomNoteOne(text, "single_page_knowledge_card", "lower");
+          setCustomNoteImageLower(lower);
+        } else {
+          setCustomNotePartInFlight(null);
+          const img = await generateCustomNoteOne(text, "storyboard_sheet_landscape", undefined);
+          setCustomNoteImageUpper(img);
+        }
+      } catch (e) {
+        const msg = mapCustomNoteError(e);
+        setCustomNoteError(msg);
+        throw new Error(msg);
+      } finally {
+        setCustomNoteBusy(false);
+        setCustomNotePartInFlight(null);
+      }
+    },
+    [generateCustomNoteOne, mapCustomNoteError],
+  );
 
   const handleGenerateFromOptimizedCopy = useCallback(
     async (kind: "single_page_knowledge_card" | "storyboard_sheet_landscape") => {
@@ -3622,7 +3657,7 @@ export default function PlatformPage() {
       setCustomNoteText(text);
       await handleGenerateCustomNote({ text, kind, skipClearOptimize: true });
     },
-    [customOptimizeResult],
+    [customOptimizeResult, handleGenerateCustomNote],
   );
 
   const handleUploadCustomTopicPhoto = useCallback(
@@ -6186,17 +6221,17 @@ export default function PlatformPage() {
             <PenLine className="h-5 w-5 text-[#ff4fb8]" />
             <h2 className="text-lg md:text-xl font-black tracking-tight text-white">自定义创作工作台</h2>
             <span className="ml-1 rounded-full border border-[#ff4fb8]/50 bg-[rgba(255,79,184,0.12)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#ff9fe0]">
-              快捷入口 · 独立生成
+              成长营已并入
             </span>
           </div>
-          <p className="mb-4 text-xs text-[#c9c0e6]/55">无需全案分析，可直接粘贴文案、自定义主人公选题或按描述生成人物/场景图</p>
+          <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、上传素材分析、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
 
           {/* 一级 Tab */}
           <div className="mb-5 inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
             <button
               type="button"
               onClick={() => setCustomWorkspaceTab("copy")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                 customWorkspaceTab === "copy"
                   ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
@@ -6236,7 +6271,7 @@ export default function PlatformPage() {
             <button
               type="button"
               onClick={() => setCustomWorkspaceTab("topic")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                 customWorkspaceTab === "topic"
                   ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
@@ -6249,7 +6284,7 @@ export default function PlatformPage() {
             <button
               type="button"
               onClick={() => setCustomWorkspaceTab("assets")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                 customWorkspaceTab === "assets"
                   ? "bg-[linear-gradient(135deg,#a3e635,#16a34a)] text-white shadow-sm"
@@ -6262,7 +6297,7 @@ export default function PlatformPage() {
             <button
               type="button"
               onClick={() => setCustomWorkspaceTab("matting")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
               className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                 customWorkspaceTab === "matting"
                   ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
@@ -6277,15 +6312,8 @@ export default function PlatformPage() {
           {customWorkspaceTab === "copy" ? (
             <>
               <p className="mb-4 text-sm leading-relaxed text-[#c9c0e6]/80">
-                粘贴中文文案 / Markdown，生成精致的简体中文图片，或先做深度文案优化。
-                「单页图文卡片」会把内容拆成
-                <strong className="text-[#ff9fe0]">上篇 + 下篇两张</strong>
-                完整卡片（标题自动标注「（上篇）/（下篇）」），
-                <strong className="text-[#ff9fe0]">共扣 50 积分</strong>
-                （上下篇各 25 · supervisor 免扣）；「2×4 分镜图」为单张；
-                「优化自定义文案」为纯 LLM 深度改写，
-                <strong className="text-[#ff9fe0]"> {customOptimizeCopyCost} 积分/次</strong>
-                （supervisor 免扣）。
+                粘贴中文文案或 Markdown，可直接生成单页图文卡片、2×4 分镜，或先做深度优化再出图。
+                各类型积分见下方按钮标注。
               </p>
 
               <div className="mb-4">
@@ -6833,13 +6861,54 @@ export default function PlatformPage() {
               )}
             </>
           ) : customWorkspaceTab === "assets" ? (
-            <PlatformAssetAnalysisPanel
-              debugMode={debugMode}
-              supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy}
-              onHandoffToOptimize={handleAssetHandoffToOptimize}
-              optimizeCopyCost={customOptimizeCopyCost}
-            />
+            <>
+              <PlatformAssetAnalysisPanel
+                debugMode={debugMode}
+                supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+                onBusyChange={setAssetAnalysisBusy}
+                onDeepOptimize={handleAssetDeepOptimize}
+                onGenerateFromText={handleAssetGenerateFromText}
+                optimizeCopyCost={customOptimizeCopyCost}
+              />
+              {(customNoteImageUpper || customNoteImageLower) && !customNoteBusy ? (
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  {customNoteImageUpper ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">
+                        {customNoteImageLower ? "上篇" : "生成结果"}
+                      </div>
+                      <img
+                        src={customNoteImageUpper}
+                        alt="素材流程生成图"
+                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                      />
+                    </div>
+                  ) : null}
+                  {customNoteImageLower ? (
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">下篇</div>
+                      <img
+                        src={customNoteImageLower}
+                        alt="素材流程生成图下篇"
+                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {customNoteBusy && customWorkspaceTab === "assets" ? (
+                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
+                  正在生成图片，约需 3–5 分钟，请勿关闭页面…
+                </div>
+              ) : null}
+              {customNoteError && customWorkspaceTab === "assets" ? (
+                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+                  ❌ {customNoteError}
+                </div>
+              ) : null}
+            </>
           ) : (
             <>
               <p className="mb-5 text-sm leading-relaxed text-[#c9c0e6]/80">
@@ -7016,6 +7085,13 @@ export default function PlatformPage() {
           )}
           </div>
         </section>
+
+        {customWorkspaceOperating ? (
+          <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
+            自定义创作进行中，下方全案分析区已收起以保持专注。
+          </p>
+        ) : null}
+        <div className={customWorkspaceOperating ? "hidden" : undefined} aria-hidden={customWorkspaceOperating}>
         <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
           <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -9769,6 +9845,7 @@ export default function PlatformPage() {
             )}
           </section>
         ) : null}
+        </div>
 
 
         {/* 邀请码管理已迁移至 /admin 页面 */}
