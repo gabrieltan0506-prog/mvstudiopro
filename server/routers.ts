@@ -6011,6 +6011,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           sourceText: z.string().min(10).max(12000),
           optimizationBrief: z.string().max(4000).optional(),
+          visionContext: z.string().max(8000).optional(),
+          includeLiveTrends: z.boolean().optional(),
+          liveTrendWindowDays: z.number().int().min(3).max(15).optional(),
           supervisorToken: z.string().max(512).optional(),
         }),
       )
@@ -6041,6 +6044,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const result = await optimizeCustomCopy({
             sourceText: input.sourceText,
             optimizationBrief: input.optimizationBrief,
+            visionContext: input.visionContext,
+            includeLiveTrends: input.includeLiveTrends,
+            liveTrendWindowDays: input.liveTrendWindowDays,
           });
 
           return {
