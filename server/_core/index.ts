@@ -11,7 +11,8 @@ import { registerStripeWebhook } from "../stripe-webhook";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
-import { processJobsOnce, startJobWorker } from "../jobs/runner";
+import { processGrowthAnalyzeJobsOnce, processJobsOnce, startJobWorker } from "../jobs/runner";
+import { isGrowthCampAnalyzeJobRecord } from "../jobs/repository";
 import { startStaleJobsReaper } from "../jobs/staleJobsReaper";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
@@ -284,6 +285,11 @@ async function startServer() {
         input,
       });
 
+      void processJobsOnce().catch(() => {});
+      if (action === "growth_analyze_video" || action === "growth_analyze_images") {
+        void processGrowthAnalyzeJobsOnce().catch(() => {});
+      }
+
       return res.status(200).json({ jobId, status: "queued" });
     } catch (error) {
       console.error("[Jobs] POST /api/jobs failed:", error);
@@ -324,6 +330,9 @@ async function startServer() {
 
       if (job.status === "queued") {
         void processJobsOnce().catch(() => {});
+        if (isGrowthCampAnalyzeJobRecord(job)) {
+          void processGrowthAnalyzeJobsOnce().catch(() => {});
+        }
       }
 
       const output = (job.output && typeof job.output === "object")
