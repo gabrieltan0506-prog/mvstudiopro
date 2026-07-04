@@ -2727,22 +2727,51 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw: rawOut });
     }
 
-    /** ByteDance Seedance 2.0（fal，單次 HTTP；訂閱完成後直接回 videoUrl） */
+    /** ByteDance Seedance 2.0（EvoLink 优先：文生/图生；无 EvoLink 时 fal 图生） */
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
-      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
-      if (!imageUrl) return res.status(400).json({ ok: false, error: "missing_image_url" });
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;
 
       const resolution = s(b.resolution || q.resolution || "720p") === "1080p" ? "1080p" : "720p";
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
-      const duration = parseSeedanceDurationInput(b.duration ?? q.duration ?? b.durationSec ?? 10);
+      const duration = parseSeedanceDurationInput(b.duration ?? q.duration ?? b.durationSec ?? 8);
       const generateAudio = !(String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false);
+      const preferEvolink = b.preferEvolink !== false && q.preferEvolink !== "0";
 
       try {
+        if (preferEvolink) {
+          const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
+            "../server/services/evolinkSeedanceVideo.js"
+          );
+          if (isEvolinkSeedanceConfigured()) {
+            const out = await runEvolinkSeedanceVideo({
+              prompt,
+              imageUrl,
+              quality: resolution,
+              aspectRatio,
+              duration: typeof duration === "number" ? duration : 8,
+              generateAudio,
+            });
+            return res.status(200).json({
+              ok: true,
+              videoUrl: out.videoUrl,
+              provider: out.provider,
+              model: out.model,
+            });
+          }
+        }
+
+        if (!imageUrl) {
+          return res.status(400).json({
+            ok: false,
+            error: "Seedance 文生视频需配置 EVOLINK_API_KEY，或请连接上游图片/上传参考图后使用图生视频",
+          });
+        }
+
         const { runSeedanceImageToVideo } = await import("../server/services/seedanceVideo.js");
         const out = await runSeedanceImageToVideo({
           prompt,

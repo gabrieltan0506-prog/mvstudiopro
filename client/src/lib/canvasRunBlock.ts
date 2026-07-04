@@ -89,51 +89,28 @@ async function runCanvasVisionMarkdown(prompt: string, images: CanvasVisionImage
   return md;
 }
 
-async function pollVeoTask(taskId: string): Promise<string> {
-  for (let i = 0; i < 90; i++) {
-    const res = await fetch(`/api/google?op=veoPoll&taskId=${encodeURIComponent(taskId)}`);
-    const json = (await res.json()) as { ok?: boolean; videoUrl?: string; status?: string; error?: string };
-    if (json.videoUrl) return json.videoUrl;
-    if (json.status === "failed") throw new Error(json.error || "Veo 生成失败");
-    await new Promise((r) => setTimeout(r, 4000));
-  }
-  throw new Error("Veo 任务超时");
-}
-
-async function runVeo31(prompt: string, imageUrl: string | undefined, aspectRatio: "9:16" | "16:9"): Promise<string> {
-  const createRes = await fetch(`/api/google?op=veoCreate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      imageUrl,
-      provider: "pro",
-      durationSeconds: 8,
-      aspectRatio,
-      resolution: "720p",
-    }),
-  });
-  const createJson = (await createRes.json()) as { taskId?: string; error?: string; message?: string };
-  const taskId = String(createJson.taskId || "").trim();
-  if (!taskId) throw new Error(createJson.error || createJson.message || "Veo 任务创建失败");
-  return pollVeoTask(taskId);
-}
-
-async function runSeedance20(prompt: string, imageUrl: string | undefined, aspectRatio: "9:16" | "16:9"): Promise<string> {
-  if (!imageUrl) throw new Error("Seedance 2.0 需要参考图片，请先从图片方块引用或上传");
+async function runSeedance20(
+  prompt: string,
+  imageUrl: string | undefined,
+  aspectRatio: "9:16" | "16:9",
+): Promise<string> {
   const res = await fetch(`/api/jobs?op=seedanceI2V`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt,
-      imageUrl,
+      imageUrl: imageUrl || undefined,
       resolution: "720p",
       aspectRatio,
-      duration: 10,
+      duration: 8,
+      generateAudio: true,
+      preferEvolink: true,
     }),
   });
   const json = (await res.json()) as { videoUrl?: string; error?: string; message?: string };
-  if (!res.ok || !json.videoUrl) throw new Error(json.error || json.message || "Seedance 2.0 生成失败");
+  if (!res.ok || !json.videoUrl) {
+    throw new Error(json.error || json.message || "Seedance 2.0 生成失败");
+  }
   return String(json.videoUrl);
 }
 
@@ -237,9 +214,7 @@ export async function runCanvasBlock(
   if (block.kind === "video") {
     const ar = block.aspectRatio;
     let url = "";
-    if (block.videoModel === "veo-3.1") {
-      url = await runVeo31(mergedPrompt, refUrl, ar);
-    } else if (block.videoModel === "seedance-2.0") {
+    if (block.videoModel === "seedance-2.0") {
       url = await runSeedance20(mergedPrompt, refUrl, ar);
     } else {
       url = await runOmniFlash(mergedPrompt, refUrl, ar);
