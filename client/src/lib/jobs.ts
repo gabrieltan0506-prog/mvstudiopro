@@ -127,9 +127,11 @@ export async function pollJobUntilTerminal(
   const maxInterval = opts?.maxIntervalMs ?? 8000;
   const t0 = Date.now();
   let attempt = 0;
+  let lastStatus: JobStatus = "queued";
   while (Date.now() - t0 < maxWait) {
     attempt += 1;
     const j = await getJobForPoll(jobId);
+    lastStatus = j.status;
     const out =
       j.output && typeof j.output === "object" && !Array.isArray(j.output)
         ? (j.output as Record<string, unknown>)
@@ -146,8 +148,20 @@ export async function pollJobUntilTerminal(
       attempt >= adaptiveAfter ? Math.min(maxInterval, interval * 2) : interval;
     await sleep(spacing);
   }
-  const waitedMin = Math.round(maxWait / 60_000);
-  throw new Error(`任务轮询已超过约 ${waitedMin} 分钟（${attempt} 次），请刷新或稍后再试`);
+  const elapsedSec = Math.max(1, Math.round((Date.now() - t0) / 1000));
+  const elapsedMin = Math.floor(elapsedSec / 60);
+  const elapsedRemSec = elapsedSec % 60;
+  const elapsedLabel =
+    elapsedMin > 0 ? `${elapsedMin} 分 ${elapsedRemSec} 秒` : `${elapsedSec} 秒`;
+  const queueHint =
+    lastStatus === "queued"
+      ? "（任务仍在排队，可能队列繁忙）"
+      : lastStatus === "running"
+        ? "（任务仍在执行中）"
+        : "";
+  throw new Error(
+    `任务轮询已等待 ${elapsedLabel}，状态仍为 ${lastStatus}（${attempt} 次）${queueHint}，请稍后重试或刷新页面`,
+  );
 }
 
 /** 将轮询步骤追加到阵列并截断长度，避免 Debug 面板无限变长 */

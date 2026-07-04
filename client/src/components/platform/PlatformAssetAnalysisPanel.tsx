@@ -275,7 +275,9 @@ export default function PlatformAssetAnalysisPanel({
     stage === "uploading"
       ? `正在上传素材… ${uploadProgress}%`
       : stage === "analyzing"
-        ? "正在分析您的素材，约需 30–90 秒…"
+        ? videoAsset?.ready && assets.some((a) => a.ready)
+          ? "正在分析您的素材（视频与图片分两步执行），约需 2–4 分钟…"
+          : "正在分析您的素材，约需 30–90 秒…"
         : null;
 
   return (
@@ -805,8 +807,11 @@ export default function PlatformAssetAnalysisPanel({
             </div>
             <div>
               5. Job：ID {String(imagePipelineDebug.job?.jobId || "-")} / 状态{" "}
-              {String(imagePipelineDebug.job?.status || "-")} / 轮询{" "}
+              {String(imagePipelineDebug.job?.serverStatus || imagePipelineDebug.job?.status || "-")} / 轮询{" "}
               {String(imagePipelineDebug.job?.pollCount ?? "-")} 次
+              {typeof imagePipelineDebug.job?.elapsedMs === "number"
+                ? ` / 已等待 ${Math.round(imagePipelineDebug.job.elapsedMs / 1000)} 秒`
+                : ""}
             </div>
             <div>
               6. 分析：{String(imagePipelineDebug.analysis?.status || "idle")}

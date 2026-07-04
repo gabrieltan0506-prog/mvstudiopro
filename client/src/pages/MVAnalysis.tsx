@@ -10,6 +10,7 @@ import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
+import { GROWTH_CAMP_JOB_MAX_WAIT_MS } from "@/lib/growthCampImagePipeline";
 import {
   readTopicCoverDeepResearchProFromLs,
   writeTopicCoverDeepResearchProToLs,
@@ -2223,7 +2224,7 @@ export default function MVAnalysisPage() {
       }));
 
       const job = await pollJobUntilTerminal(jobId, {
-        maxWaitMs: 12 * 60_000,
+        maxWaitMs: GROWTH_CAMP_JOB_MAX_WAIT_MS,
         onPoll: () => {
           pollCount += 1;
           setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
@@ -2314,7 +2315,7 @@ export default function MVAnalysisPage() {
       });
 
       const job = await pollJobUntilTerminal(jobId, {
-        maxWaitMs: 12 * 60_000,
+        maxWaitMs: GROWTH_CAMP_JOB_MAX_WAIT_MS,
         onPoll: () => {
           setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
         },
