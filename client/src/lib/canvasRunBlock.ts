@@ -89,6 +89,7 @@ async function runCanvasVisionMarkdown(prompt: string, images: CanvasVisionImage
   return md;
 }
 
+async function runSeedance20(
   prompt: string,
   imageUrl: string | undefined,
   aspectRatio: "9:16" | "16:9",

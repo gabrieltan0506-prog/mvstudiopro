@@ -2751,7 +2751,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             const out = await runEvolinkSeedanceVideo({
               prompt,
               imageUrl,
-              resolution,
+              quality: resolution,
               aspectRatio,
               duration: typeof duration === "number" ? duration : 8,
               generateAudio,
