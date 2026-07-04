@@ -1,5 +1,6 @@
 import { createJob, pollJobUntilTerminal, type JobStatus } from "@/lib/jobs";
 import type { GrowthAnalysisScores, GrowthCampModel } from "@shared/growth";
+import { mergeGrowthAnalysesDeterministic } from "@shared/growth";
 
 export const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
 
@@ -645,6 +646,13 @@ export async function runGrowthCampVideoAnalysis(
   return { analysis, debug: jobDebug };
 }
 
+export type GrowthCampPartialAnalysis = {
+  id: string;
+  label: string;
+  kind: "video" | "image";
+  analysis: GrowthAnalysisScores;
+};
+
 export type RunGrowthCampAssetAnalysisParams = {
   images: PlatformImageAsset[];
   video?: PlatformVideoAsset | null;
@@ -653,11 +661,14 @@ export type RunGrowthCampAssetAnalysisParams = {
   modelName?: GrowthCampModel;
   mode?: "GROWTH" | "REMIX";
   getSignedUploadUrl: SignedUrlMutation;
+  /** 默认 fast：本地确定性合并，跳过第三轮 LLM */
+  mergeStrategy?: "fast" | "llm";
   synthesizeParts?: (
     parts: Array<{ label: string; analysis: GrowthAnalysisScores }>,
   ) => Promise<GrowthAnalysisScores>;
   onUploadProgress?: (percent: number, assetIndex?: number) => void;
   onProgressUpdate?: (update: GrowthCampAnalysisProgressUpdate) => void;
+  onPartialResult?: (partial: GrowthCampPartialAnalysis) => void;
   onDebugUpdate?: (patch: ImagePipelineDebugState | ((prev: ImagePipelineDebugState) => ImagePipelineDebugState)) => void;
 };
 
@@ -672,9 +683,11 @@ export async function runGrowthCampAssetAnalysis(
     modelName = GROWTH_CAMP_ANALYSIS_MODEL,
     mode = "GROWTH",
     getSignedUploadUrl,
+    mergeStrategy = "fast",
     synthesizeParts,
     onUploadProgress,
     onProgressUpdate,
+    onPartialResult,
     onDebugUpdate,
   } = params;
 
@@ -684,17 +697,43 @@ export async function runGrowthCampAssetAnalysis(
     throw new Error("请先上传 PNG/JPG 图片或 MP4 参考视频");
   }
 
-  const partials: Array<{ label: string; analysis: GrowthAnalysisScores }> = [];
-  let lastOutcome: GrowthCampImageAnalysisOutcome | null = null;
   const hasImages = readyImages.length > 0;
-  const videoRange = hasVideo && hasImages ? { start: 2, end: 48 } : hasVideo ? { start: 2, end: 92 } : null;
-  const imageRange = hasVideo && hasImages ? { start: 50, end: 92 } : hasImages ? { start: 2, end: 92 } : null;
+  const runParallel = hasVideo && hasImages;
+  const progressTrack = { video: 2, image: 2 };
 
-  if (hasVideo && video) {
+  const emitCombinedProgress = (
+    phase: GrowthCampAnalysisProgressUpdate["phase"],
+    label: string,
+    detail?: string,
+  ) => {
+    const percent = runParallel
+      ? Math.round((progressTrack.video + progressTrack.image) / 2)
+      : Math.max(progressTrack.video, progressTrack.image);
+    onProgressUpdate?.({ percent, phase, label, detail });
+  };
+
+  const wrapProgress = (
+    key: "video" | "image",
+    range: ProgressRange,
+    phase: GrowthCampAnalysisProgressUpdate["phase"],
+  ) => ({
+    progressRange: range,
+    onProgressUpdate: (update: GrowthCampAnalysisProgressUpdate) => {
+      progressTrack[key] = update.percent;
+      emitCombinedProgress(phase, update.label, update.detail);
+    },
+  });
+
+  const partials: Array<{ label: string; analysis: GrowthAnalysisScores }> = [];
+  const outcomes: GrowthCampImageAnalysisOutcome[] = [];
+
+  const runVideoTask = async () => {
+    if (!hasVideo || !video) return;
+    const range = runParallel ? { start: 2, end: 90 } : { start: 2, end: 92 };
     onProgressUpdate?.({
-      percent: 1,
+      percent: range.start,
       phase: "video_analyze",
-      label: "开始分析参考视频",
+      label: runParallel ? "并行分析参考视频" : "开始分析参考视频",
       detail: video.fileName,
     });
     const videoResult = await runGrowthCampVideoAnalysis({
@@ -705,24 +744,29 @@ export async function runGrowthCampAssetAnalysis(
       mode,
       getSignedUploadUrl,
       onUploadProgress: (percent) => onUploadProgress?.(percent),
-      onProgressUpdate,
-      progressRange: videoRange ?? { start: 2, end: 92 },
+      ...wrapProgress("video", range, "video_analyze"),
       onDebugUpdate,
     });
-    partials.push({ label: video.fileName || "参考视频", analysis: videoResult.analysis });
-    lastOutcome = videoResult;
-    onProgressUpdate?.({
-      percent: videoRange?.end ?? 92,
-      phase: "video_analyze",
-      label: "视频分析完成",
+    const part = { label: video.fileName || "参考视频", analysis: videoResult.analysis };
+    partials.push(part);
+    outcomes.push(videoResult);
+    onPartialResult?.({
+      id: video.id,
+      label: part.label,
+      kind: "video",
+      analysis: part.analysis,
     });
-  }
+    progressTrack.video = range.end;
+    emitCombinedProgress("video_analyze", "视频分析完成", video.fileName);
+  };
 
-  if (readyImages.length > 0) {
+  const runImageTask = async () => {
+    if (readyImages.length === 0) return;
+    const range = runParallel ? { start: 2, end: 90 } : { start: 2, end: 92 };
     onProgressUpdate?.({
-      percent: imageRange?.start ?? 2,
+      percent: range.start,
       phase: "image_analyze",
-      label: hasVideo ? "开始分析图片素材" : "开始分析图片素材",
+      label: runParallel ? "并行分析图片素材" : "开始分析图片素材",
       detail: `${readyImages.length} 张`,
     });
     mergeDebug(onDebugUpdate, (prev) => ({
@@ -744,16 +788,40 @@ export async function runGrowthCampAssetAnalysis(
       mode,
       getSignedUploadUrl,
       onUploadProgress: (percent, assetIndex) => onUploadProgress?.(percent, assetIndex),
-      onProgressUpdate,
-      progressRange: imageRange ?? { start: 2, end: 92 },
+      ...wrapProgress("image", range, "image_analyze"),
       onDebugUpdate,
     });
-    partials.push({
+    const part = {
       label: readyImages.length === 1 ? readyImages[0]!.fileName || "图片" : `图片×${readyImages.length}`,
       analysis: imageResult.analysis,
+    };
+    partials.push(part);
+    outcomes.push(imageResult);
+    onPartialResult?.({
+      id: readyImages[0]!.id,
+      label: part.label,
+      kind: "image",
+      analysis: part.analysis,
     });
-    lastOutcome = imageResult;
+    progressTrack.image = range.end;
+    emitCombinedProgress("image_analyze", "图片分析完成", part.label);
+  };
+
+  if (runParallel) {
+    onProgressUpdate?.({
+      percent: 2,
+      phase: "video_analyze",
+      label: "视频与图片并行分析中",
+      detail: "哪份先完成就先展示结果",
+    });
+    await Promise.all([runVideoTask(), runImageTask()]);
+  } else if (hasVideo) {
+    await runVideoTask();
+  } else {
+    await runImageTask();
   }
+
+  const lastOutcome = outcomes[outcomes.length - 1]!;
 
   if (partials.length === 1) {
     onProgressUpdate?.({
@@ -761,28 +829,30 @@ export async function runGrowthCampAssetAnalysis(
       phase: "done",
       label: "素材视觉分析完成",
     });
-    return lastOutcome!;
-  }
-
-  if (!synthesizeParts) {
-    throw new Error("多素材分析需要合并结果，但未提供 synthesizeParts");
+    return lastOutcome;
   }
 
   onProgressUpdate?.({
     percent: 94,
     phase: "merge",
-    label: "合并视频与图片分析结果",
+    label: mergeStrategy === "llm" ? "合并视频与图片分析结果" : "正在汇总多素材结果",
     detail: `${partials.length} 份素材`,
   });
-  const mergedAnalysis = await synthesizeParts(partials);
+
+  const mergedAnalysis =
+    mergeStrategy === "llm" && synthesizeParts
+      ? await synthesizeParts(partials)
+      : mergeGrowthAnalysesDeterministic(partials);
+
   onProgressUpdate?.({
     percent: 100,
     phase: "done",
     label: "素材视觉分析完成",
   });
+
   return {
     analysis: mergedAnalysis,
-    debug: lastOutcome?.debug || {},
-    imageMeta: lastOutcome?.imageMeta,
+    debug: lastOutcome.debug || {},
+    imageMeta: lastOutcome.imageMeta,
   };
 }

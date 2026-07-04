@@ -74,7 +74,7 @@ export default function AssetAnalysisWaitPanel({ percent, label, detail, assets 
         </div>
 
         <p className="mt-4 text-[11px] leading-relaxed text-[#c9c0e6]/55">
-          混传时先视频后图片，单阶段最长约 20 分钟；进度条会随上传与云端 Job 状态实时更新。
+          视频与图片会并行分析；任一份完成即会在下方展示结果，无需等全部结束。
         </p>
       </div>
 
