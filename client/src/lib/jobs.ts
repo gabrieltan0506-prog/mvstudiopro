@@ -35,8 +35,39 @@ export async function createJob(payload: {
   return response.json() as Promise<{ jobId: string }>;
 }
 
-export async function getJob(jobId: string): Promise<JobResponse> {
-  const url = withLongJobsFlyDirect(`/api/jobs/${encodeURIComponent(jobId)}`);
+function jobApiPath(jobId: string): string {
+  return `/api/jobs/${encodeURIComponent(jobId)}`;
+}
+
+/** 跨域直连 Fly/api 子域时 Session Cookie 可能丢失；轮询改走同源（Vercel rewrite → Fly）。 */
+function resolveJobPollUrl(jobId: string): string {
+  const path = jobApiPath(jobId);
+  const directUrl = withLongJobsFlyDirect(path);
+  if (typeof window === "undefined") return directUrl;
+  try {
+    const resolved = directUrl.startsWith("http")
+      ? directUrl
+      : `${window.location.origin}${directUrl.startsWith("/") ? directUrl : `/${directUrl}`}`;
+    if (new URL(resolved).origin !== window.location.origin) {
+      return path;
+    }
+  } catch {
+    /* keep direct */
+  }
+  return directUrl;
+}
+
+function formatJobFetchError(status: number, detail: string): Error {
+  if (status === 401) {
+    return new Error(
+      "登录状态已失效，无法查询分析进度。请刷新页面重新登录后再试（后台任务可能仍在运行）",
+    );
+  }
+  // 始终带 (statusCode) 前缀，让 isTransientJobPollError 能正确分类（404 按瞬态处理）
+  return new Error(`(${status}) ${detail || "Failed to fetch job"}`);
+}
+
+async function fetchJob(url: string): Promise<JobResponse> {
   const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>
     fetch(url, {
       method: "GET",
@@ -46,11 +77,28 @@ export async function getJob(jobId: string): Promise<JobResponse> {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    // 始终带 (statusCode) 前缀，让 isTransientJobPollError 能正确分类（404 按瞬态处理）
-    throw new Error(`(${response.status}) ${detail || `Failed to fetch job`}`);
+    throw formatJobFetchError(response.status, detail);
   }
 
   return response.json() as Promise<JobResponse>;
+}
+
+export async function getJob(jobId: string): Promise<JobResponse> {
+  const path = jobApiPath(jobId);
+  const pollUrl = resolveJobPollUrl(jobId);
+  try {
+    return await fetchJob(pollUrl);
+  } catch (error) {
+    // 同源 404 时回退直连（Job 可能刚写入 Fly、尚未经 rewrite 可见）
+    const directUrl = withLongJobsFlyDirect(path);
+    const is404 =
+      error instanceof Error &&
+      (/\(404\)/.test(error.message) || /Job not found/i.test(error.message));
+    if (is404 && pollUrl !== directUrl) {
+      return fetchJob(directUrl);
+    }
+    throw error;
+  }
 }
 
 function sleep(ms: number): Promise<void> {

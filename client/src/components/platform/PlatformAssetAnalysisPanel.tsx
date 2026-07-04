@@ -42,7 +42,7 @@ type PlatformAssetAnalysisPanelProps = {
   disabled?: boolean;
   personaSummary?: string;
   ipProfile?: IpProfile;
-  /** 限定 trendStore 读取的平台（默认四大平台） */
+  /** 限定热点读取的平台（默认四大平台） */
   trendPlatforms?: Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "weixin_channels" | "toutiao">;
   onBusyChange?: (busy: boolean) => void;
   onDeepOptimize?: (payload: AssetAnalysisHandoffPayload) => Promise<{ optimizedMarkdown: string; summary: string }>;
@@ -260,30 +260,40 @@ export default function PlatformAssetAnalysisPanel({
     let receivedPartial = false;
     let instantHint = buildInstantFeedbackHint({ userContext: context, personaSummary, ipProfile });
 
-    try {
-      const hotspots = await trpcUtils.agent.listTrendHotspots
-        .fetch({ platforms: trendPlatforms, topN: 8 })
-        .catch(() => null);
-      const trendHints = formatTrendHotspotHints(hotspots?.entries || []);
-      const enrichedContext = buildPlatformAssetAnalysisContext({
-        userContext: context,
-        personaSummary,
-        ipProfile,
-        trendHints,
-        trendStoreMeta: hotspots?.meta,
-      });
+    const applyTrendHotspotHint = (entries: Array<{ platformLabel: string; title: string; growthPercentile?: number }>) => {
+      const trendHints = formatTrendHotspotHints(entries);
+      if (!trendHints.length) return;
       instantHint = buildInstantFeedbackHint({
         userContext: context,
         personaSummary,
         ipProfile,
         trendHints,
-        trendStoreMeta: hotspots?.meta,
+      });
+      setLiveSlots((prev) =>
+        prev.map((slot) =>
+          slot.status === "pending" ? { ...slot, contextHint: instantHint } : slot,
+        ),
+      );
+    };
+
+    void trpcUtils.agent.listTrendHotspots
+      .fetch({ platforms: trendPlatforms, topN: 8 })
+      .then((hotspots) => {
+        if (hotspots?.entries?.length) applyTrendHotspotHint(hotspots.entries);
+      })
+      .catch(() => {});
+
+    try {
+      const analysisContext = buildPlatformAssetAnalysisContext({
+        userContext: context,
+        personaSummary,
+        ipProfile,
       });
 
       const result = await runGrowthCampAssetAnalysis({
         images: assets,
         video: videoAsset,
-        context: enrichedContext,
+        context: analysisContext,
         userId: user?.id ? String(user.id) : undefined,
         mergeStrategy: "fast",
         getSignedUploadUrl: (input) => getVideoUploadSignedUrlMutation.mutateAsync(input),
@@ -309,7 +319,8 @@ export default function PlatformAssetAnalysisPanel({
                 {
                   id,
                   title: kind === "video" ? `参考视频 · ${label}` : `封面 / 图片 · ${label}`,
-                  badge: "上传完成 · 已注入 trendStore",
+                  badge:
+                    kind === "image" ? "上传完成 · 优先分析热词方向" : "上传完成 · 分析中",
                   status: "pending" as const,
                   contextHint: instantHint,
                 },

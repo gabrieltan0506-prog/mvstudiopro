@@ -166,7 +166,7 @@ export default function AssetAnalysisWaitPanel({
                           {partial.contextHint}
                         </pre>
                       ) : (
-                        <p className="text-xs text-[#c9c0e6]/60">正在结合人设与 trendStore 爬虫数据深析…</p>
+                        <p className="text-xs text-[#c9c0e6]/60">正在结合人设与各平台热词方向深析…</p>
                       )}
                     </div>
                   ) : (
@@ -190,7 +190,7 @@ export default function AssetAnalysisWaitPanel({
               <Loader2 className="h-6 w-6 animate-spin text-[#49e6ff]/60" />
               <p className="text-sm text-white/75">云端分析进行中…</p>
               <p className="max-w-md text-xs leading-relaxed text-[#c9c0e6]/55">
-                每份素材<strong className="text-[#8cefff]">上传完成即开始分析</strong>，并注入 trendStore 各平台爬虫热点；结果先出先显示。
+                封面 / 图片<strong className="text-[#8cefff]">传完立即开分析</strong>；视频并行上传，不挡图片结果。热词与方向先出先显示。
               </p>
             </motion.div>
           )}
