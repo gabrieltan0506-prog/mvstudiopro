@@ -7,6 +7,7 @@ import { promisify } from "util";
 import {
   type GrowthAnalysisScores,
   growthAnalysisScoresSchema,
+  parseGrowthAnalysisScores,
   growthLlmSchema,
   remixLlmSchema,
   growthPremiumContentSchema,
@@ -24,7 +25,7 @@ import {
   resolveGrowthCampStrategistEngine,
   type GrowthCampStrategistEngine,
 } from "./extractorPipeline";
-import { runGrowthCampStrategistMultimodalPass } from "./growthCampStrategistPass";
+import { runGrowthCampStrategistMultimodalPass, ensureGrowthCoreScores } from "./growthCampStrategistPass";
 
 const execFileAsync = promisify(execFile);
 
@@ -751,7 +752,7 @@ async function runExtractOnlyPipeline(params: {
   }));
 
   const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
-  const parsed = growthAnalysisScoresSchema.parse({
+  const parsed = parseGrowthAnalysisScores({
     ...extracted,
     mode: analysisMode,
     visualSummary: visualFirstPass.visualSummary || "",
@@ -2191,7 +2192,7 @@ export async function analyzeVideo(params: {
         ? pickStrategistFrames(allFrames).slice(0, remixLongVideoFrameCap)
         : pickStrategistFrames(allFrames);
 
-      const deepDive = await withGrowthAnalysisSlot(() => runDeepDivePass({
+      let deepDive = await withGrowthAnalysisSlot(() => runDeepDivePass({
         strategistEngine,
         sparseFrames: strategistFrames,
         audioFirstPass,
@@ -2202,7 +2203,7 @@ export async function analyzeVideo(params: {
         fileName: params.fileName,
         videoGcsUri,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
-      }));
+      })) as Record<string, unknown>;
 
       // 实作残留清洗 (Data Wiping)
       // 如果是二次创作（REMIX）模式，强制将所有可能导致 UI 重复渲染的字段物理清空
@@ -2241,10 +2242,25 @@ export async function analyzeVideo(params: {
         }
       }
 
+      deepDive = await ensureGrowthCoreScores(deepDive, {
+        strategistEngine,
+        context: params.context,
+        evidenceText: JSON.stringify({
+          durationSeconds: duration,
+          transcriptExcerpt: truncate(transcript, 3000),
+          audioFirstPass,
+          visualFirstPass,
+          realityCheck: deepDive.realityCheck,
+          summary: deepDive.summary,
+          platformScores: deepDive.platformScores,
+          reverseEngineering: deepDive.reverseEngineering,
+        }, null, 2),
+      });
+
       const strategistRefinement = null;
 
       const remixStripFirstPassVisual = analysisMode === "REMIX";
-      const parsed = growthAnalysisScoresSchema.parse({
+      const parsed = parseGrowthAnalysisScores({
         ...deepDive,
         mode: analysisMode,
         ...(strategistRefinement || {}),

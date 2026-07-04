@@ -287,6 +287,105 @@ export const growthAnalysisScoresSchema = z.object({
   followUpPrompt: z.string().default(""),
 });
 
+const GROWTH_CORE_SCORE_FIELDS = ["composition", "color", "lighting", "impact", "viralPotential"] as const;
+
+export type GrowthCoreScoreField = (typeof GROWTH_CORE_SCORE_FIELDS)[number];
+
+/** Strategist 主 pass 是否已返回完整五维评分（0 分也算有效）。 */
+export function hasGrowthCoreScores(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const obj = raw as Record<string, unknown>;
+  return GROWTH_CORE_SCORE_FIELDS.every(
+    (key) => typeof obj[key] === "number" && Number.isFinite(obj[key]),
+  );
+}
+
+/**
+ * 当专用评分 pass 也失败时，从 Strategist 已返回的 platformScores / explosiveIndex 推导五维分。
+ * 数值来源于 LLM 同轮输出，不是硬编码占位。
+ */
+export function deriveGrowthCoreScoresFromPartial(partial: unknown): Record<string, number> | null {
+  if (!partial || typeof partial !== "object" || Array.isArray(partial)) return null;
+  const obj = partial as Record<string, unknown>;
+  const platformScores = obj.platformScores;
+  const platformNums: number[] = [];
+  if (platformScores && typeof platformScores === "object" && !Array.isArray(platformScores)) {
+    for (const key of ["xiaohongshu", "douyin", "bilibili", "kuaishou"]) {
+      const v = Number((platformScores as Record<string, unknown>)[key]);
+      if (Number.isFinite(v)) {
+        platformNums.push(Math.min(100, Math.max(0, Math.round(v * 10))));
+      }
+    }
+  }
+  const explosiveRaw = Number(obj.explosiveIndex);
+  const explosiveIndex = Number.isFinite(explosiveRaw)
+    ? Math.min(10, Math.max(1, Math.round(explosiveRaw)))
+    : undefined;
+
+  if (platformNums.length >= 2) {
+    const avg = Math.round(platformNums.reduce((a, b) => a + b, 0) / platformNums.length);
+    return {
+      composition: avg,
+      color: Math.max(0, avg - 5),
+      lighting: avg,
+      impact: Math.min(100, avg + 3),
+      viralPotential: Math.min(100, avg + 5),
+      explosiveIndex: explosiveIndex ?? Math.min(10, Math.max(1, Math.round(avg / 10))),
+    };
+  }
+
+  if (explosiveIndex !== undefined) {
+    const base = Math.min(100, Math.max(0, explosiveIndex * 10));
+    return {
+      composition: base,
+      color: Math.max(0, base - 4),
+      lighting: Math.max(0, base - 2),
+      impact: Math.min(100, base + 2),
+      viralPotential: Math.min(100, base + 4),
+      explosiveIndex,
+    };
+  }
+
+  return null;
+}
+
+/** 将 LLM 可能返回的字符串转为 0–100 整数；无法解析时返回 fallback。 */
+export function normalizeGrowthAnalysisScoreValue(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.min(100, Math.max(0, Math.round(value)));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    const n = Number(trimmed);
+    if (Number.isFinite(n)) return Math.min(100, Math.max(0, Math.round(n)));
+  }
+  return fallback;
+}
+
+/** 仅对已存在的分数字段做类型校正，不伪造缺失值。 */
+export function coerceGrowthAnalysisScoresInput(raw: unknown): Record<string, unknown> {
+  const base =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? { ...(raw as Record<string, unknown>) }
+      : {};
+  for (const key of GROWTH_CORE_SCORE_FIELDS) {
+    const v = base[key];
+    if (v !== undefined && v !== null && v !== "") {
+      base[key] = normalizeGrowthAnalysisScoreValue(v, 0);
+    }
+  }
+  if (base.explosiveIndex !== undefined && base.explosiveIndex !== null && base.explosiveIndex !== "") {
+    const ei = normalizeGrowthAnalysisScoreValue(base.explosiveIndex, 0);
+    base.explosiveIndex = Math.min(10, Math.max(0, ei));
+  }
+  return base;
+}
+
+export function parseGrowthAnalysisScores(input: unknown): z.infer<typeof growthAnalysisScoresSchema> {
+  return growthAnalysisScoresSchema.parse(coerceGrowthAnalysisScoresInput(input));
+}
+
 export const growthMetricWindowSchema = z.object({
   postsAnalyzed: z.number().int().nonnegative(),
   creatorsTracked: z.number().int().nonnegative(),

@@ -2,6 +2,10 @@ import {
   type GrowthAnalysisMode,
   type GrowthAnalysisScores,
   growthAnalysisScoresSchema,
+  hasGrowthCoreScores,
+  deriveGrowthCoreScoresFromPartial,
+  normalizeGrowthAnalysisScoreValue,
+  parseGrowthAnalysisScores,
   growthLlmSchema,
   remixLlmSchema,
   growthPremiumContentSchema,
@@ -32,6 +36,125 @@ function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T
     return JSON.parse(extractJsonString(content)) as T;
   } catch {
     throw new Error(`LLM 返回内容无法解析为 JSON：${content.slice(0, 160)}`);
+  }
+}
+
+function growthCoreScoreJsonSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      composition: { type: "number", description: "画面构图 0-100" },
+      color: { type: "number", description: "色彩搭配 0-100" },
+      lighting: { type: "number", description: "灯光 0-100" },
+      impact: { type: "number", description: "视觉冲击力 0-100" },
+      viralPotential: { type: "number", description: "传播潜力 0-100" },
+      explosiveIndex: { type: "number", description: "综合爆款指数 1-10" },
+    },
+    required: ["composition", "color", "lighting", "impact", "viralPotential", "explosiveIndex"],
+  };
+}
+
+function serializeStrategistUserContent(content: StrategistUserContent): string {
+  return JSON.stringify(
+    content.map((part) => {
+      if (part.type === "text") return part;
+      return { type: part.type, image_url: { detail: part.image_url.detail ?? "auto" } };
+    }),
+    null,
+    2,
+  ).slice(0, 15000);
+}
+
+/** Strategist 主 pass 漏掉五维评分时，用已有证据单独补跑一轮评分（strict JSON schema）。 */
+export async function runGrowthCoreScorePass(params: {
+  strategistEngine: GrowthCampStrategistEngine;
+  evidenceText: string;
+  context?: string;
+}): Promise<Record<string, number>> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await invokeLLM({
+        ...strategistInvokeBase(params.strategistEngine),
+        temperature: attempt === 0 ? 0.3 : 0.5,
+        messages: [
+          {
+            role: "system",
+            content: `你是短视频/图文商业质检员。根据 user 提供的初判证据，只输出六项数值评分 JSON。
+composition/color/lighting/impact/viralPotential 为 0-100 整数；explosiveIndex 为 1-10 整数。
+必须基于证据差异化给分，禁止五项全部相同。`,
+          },
+          {
+            role: "user",
+            content: [
+              params.context?.trim() ? `业务背景：${params.context.trim()}` : "",
+              `初判证据：\n${params.evidenceText}`,
+            ].filter(Boolean).join("\n\n"),
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "growth_core_scores",
+            strict: true,
+            schema: growthCoreScoreJsonSchema(),
+          },
+        },
+      });
+      const parsed = parseLlmJsonResponse<Record<string, number>>(
+        String(response.choices[0]?.message?.content || "{}"),
+      );
+      if (!hasGrowthCoreScores(parsed)) {
+        throw new Error("评分补全失败：模型未返回完整五维分数");
+      }
+      const explosiveIndex = typeof parsed.explosiveIndex === "number" && Number.isFinite(parsed.explosiveIndex)
+        ? Math.min(10, Math.max(1, Math.round(parsed.explosiveIndex)))
+        : Math.min(
+          10,
+          Math.max(
+            1,
+            Math.round(
+              (parsed.composition + parsed.color + parsed.lighting + parsed.impact + parsed.viralPotential) / 50,
+            ),
+          ),
+        );
+      return {
+        composition: normalizeGrowthAnalysisScoreValue(parsed.composition, 0),
+        color: normalizeGrowthAnalysisScoreValue(parsed.color, 0),
+        lighting: normalizeGrowthAnalysisScoreValue(parsed.lighting, 0),
+        impact: normalizeGrowthAnalysisScoreValue(parsed.impact, 0),
+        viralPotential: normalizeGrowthAnalysisScoreValue(parsed.viralPotential, 0),
+        explosiveIndex,
+      };
+    } catch (err) {
+      lastError = err;
+      console.warn(`[growth.strategist] score pass attempt ${attempt + 1} failed:`, err);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || "评分补全失败"));
+}
+
+export async function ensureGrowthCoreScores(
+  partial: Record<string, unknown>,
+  params: {
+    strategistEngine: GrowthCampStrategistEngine;
+    evidenceText: string;
+    context?: string;
+  },
+): Promise<Record<string, unknown>> {
+  if (hasGrowthCoreScores(partial)) return partial;
+  console.warn("[growth.strategist] core scores missing after main pass, running dedicated score pass");
+  try {
+    const scores = await runGrowthCoreScorePass(params);
+    return { ...partial, ...scores };
+  } catch (err) {
+    const derived = deriveGrowthCoreScoresFromPartial(partial);
+    if (derived && hasGrowthCoreScores(derived)) {
+      console.warn("[growth.strategist] score pass failed, derived scores from platformScores/explosiveIndex");
+      return { ...partial, ...derived };
+    }
+    throw err;
   }
 }
 
@@ -300,6 +423,15 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
   };
 
   return {
+    ...(hasGrowthCoreScores(parsed)
+      ? {
+        composition: normalizeGrowthAnalysisScoreValue(parsed.composition, 0),
+        color: normalizeGrowthAnalysisScoreValue(parsed.color, 0),
+        lighting: normalizeGrowthAnalysisScoreValue(parsed.lighting, 0),
+        impact: normalizeGrowthAnalysisScoreValue(parsed.impact, 0),
+        viralPotential: normalizeGrowthAnalysisScoreValue(parsed.viralPotential, 0),
+      }
+      : {}),
     explosiveIndex: Number(parsed?.explosiveIndex || 0),
     platformScores,
     realityCheck: String(parsed?.realityCheck || ""),
@@ -569,6 +701,7 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
   const premiumPrompt = buildStrategistPremiumPrompts(mode, businessGoal, mediaKind);
   let strategistPassResult: Record<string, unknown> | undefined;
   let _retries = 3;
+  let _scoreRetries = 2;
   let _delayMs = 5000;
   while (_retries > 0) {
     try {
@@ -592,6 +725,11 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
       const parsedMain = parseLlmJsonResponse<Record<string, unknown>>(
         String(mainResponse.choices[0]?.message?.content || "{}"),
       );
+      if (!hasGrowthCoreScores(parsedMain) && _scoreRetries > 0) {
+        _scoreRetries--;
+        console.warn("[growth.strategist] main pass missing core scores, retrying strategist LLM");
+        continue;
+      }
       let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
       try {
         const premiumResp = await invokeLLM({
@@ -657,7 +795,11 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
   if (!strategistPassResult) {
     throw new Error("无法从 Vertex AI 获取分析结果，请稍后再试。");
   }
-  return strategistPassResult;
+  return ensureGrowthCoreScores(strategistPassResult, {
+    strategistEngine,
+    context: params.businessGoal,
+    evidenceText: serializeStrategistUserContent(params.userContent),
+  });
 }
 
 export function buildGrowthCampStrategistSystemMainForImages(
@@ -705,11 +847,13 @@ export async function runGrowthCampStrategistForImages(params: {
     businessGoal,
     mediaKind: "image",
   });
-  const parsed = growthAnalysisScoresSchema.safeParse({ ...result, mode });
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const path = issue?.path?.length ? issue.path.join(".") : "root";
-    throw new Error(`分析结果格式异常（${path}）：${issue?.message || "校验失败"}`);
-  }
-  return parsed.data;
+  const evidenceText = typeof params.userContent === "string"
+    ? params.userContent
+    : JSON.stringify(params.userContent, null, 2);
+  const withScores = await ensureGrowthCoreScores(result, {
+    strategistEngine,
+    context: params.context,
+    evidenceText,
+  });
+  return parseGrowthAnalysisScores({ ...withScores, mode });
 }
