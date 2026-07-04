@@ -46,7 +46,8 @@ export async function getJob(jobId: string): Promise<JobResponse> {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(detail || `Failed to fetch job (${response.status})`);
+    // 始终带 (statusCode) 前缀，让 isTransientJobPollError 能正确分类（404 按瞬态处理）
+    throw new Error(`(${response.status}) ${detail || `Failed to fetch job`}`);
   }
 
   return response.json() as Promise<JobResponse>;
@@ -63,7 +64,8 @@ function isTransientJobPollError(err: unknown): boolean {
   const paren = m.match(/\((\d{3})\)/);
   if (paren) {
     const code = Number(paren[1]);
-    return code === 429 || code === 502 || code === 503 || code === 504;
+    // 404：Job 尚未写入 DB（DB 写入竞争/延迟），按瞬态处理，最多重试 3 次
+    return code === 404 || code === 429 || code === 502 || code === 503 || code === 504;
   }
   if (/\b502\b|\b503\b|\b504\b|\b429\b/.test(m)) {
     return true;
@@ -74,17 +76,32 @@ function isTransientJobPollError(err: unknown): boolean {
   );
 }
 
+/** 404「Job not found」：DB 写入和首次轮询存在竞态，3 次内重试 */
+const MAX_404_RETRIES = 3;
+
 /**
  * 供轮询使用：对单次 GET 做有限次退避重试（不 increment poll attempt，由 pollJobUntilTerminal 外层计数）
  */
 export async function getJobForPoll(jobId: string): Promise<JobResponse> {
   const maxAttempts = 6;
+  let notFoundRetries = 0;
   let lastErr: Error | undefined;
   for (let a = 1; a <= maxAttempts; a++) {
     try {
       return await getJob(jobId);
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
+      const is404 = /\(404\)/.test(lastErr.message) || /Job not found/i.test(lastErr.message);
+      if (is404) {
+        notFoundRetries += 1;
+        if (notFoundRetries <= MAX_404_RETRIES) {
+          // 404 重试时间: 1s, 2s, 4s
+          await sleep(Math.min(4000, 1000 * 2 ** (notFoundRetries - 1)));
+          continue;
+        }
+        // 超过 3 次 404 仍未找到，改抛友好错误
+        throw new Error("素材分析任务不存在（Job not found），请重新上传素材重试");
+      }
       if (!isTransientJobPollError(lastErr) || a === maxAttempts) {
         throw lastErr;
       }
