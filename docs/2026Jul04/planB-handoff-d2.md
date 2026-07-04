@@ -2,19 +2,21 @@
 
 > 完整验收清单：`downloads/2026Jul04/planBscedule.md` §5
 
-## 已 merge（D1）
+## 已 merge（D1–D2）
 
 | PR | 内容 |
 |----|------|
 | #696 | Research Hub + 首页三主站 |
 | #697 | Platform MP4 视频分析 |
+| #698 | Research Hub 内链清扫 + legacy 成长营 supervisor 门禁（初版） |
 
-## D2 本 PR（#698 待开）
+## 本 PR（#699 待 merge）
 
 - Research Hub：Tab 横向滚动（mobile）；子页 `ResearchHubEmbedProvider` 隐藏重复顶栏
 - Agent 子页 / 作品库：`/god-view` → `/research?tab=god-view`；Hub 内隐藏「返回」
 - **Growth Debug 迁至 `/platform`**：`GrowthSystemDebugPanel`（live/回填/Burst/各平台累计）
-- **`/creator-growth-camp` 恢复 MVAnalysis 直达**（与 `/platform` 并存，主成长营页不再自动跳转）
+- **`/creator-growth-camp` 恢复 MVAnalysis 直达**（与 `/platform` 并存；取代 #698 的 `GrowthCampLegacyGate` 自动跳转）
+- **素材混传轮询**：MP4+图片串行两阶段 Job，轮询上限 20min/阶段，worker 优先拾取 growth 分析
 - `Navbar` 三主站；`RemixLanding` 登录后 → `/platform`
 - `docs/产品定价与使用说明.md` 三主站路径
 - 邮件 CTA：`magazineScheduler` → `/research?tab=god-view`
@@ -24,6 +26,7 @@
 | 路径 | 行为 |
 |------|------|
 | `/creator-growth-camp` | MVAnalysis（完整分析 + Debug） |
+| `/creator-growth-camp/legacy` | 同上（兼容旧链接） |
 | `/creator-growth-camp/platform` | redirect → `/platform` |
 | `/platform` | 页顶 Debug On → Growth 运行控制面板 |
 
