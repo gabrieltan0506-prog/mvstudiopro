@@ -5,7 +5,7 @@ export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize";
 
 export type CanvasTextModel = "gemini-3.1-pro" | "gpt-5.5" | "gpt-5.4";
 export type CanvasImageModel = "nano-banana-2" | "gpt-image-2";
-export type CanvasVideoModel = "veo-3.1" | "gemini-omni-flash" | "seedance-2.0";
+export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0";
 
 export type CanvasBlockStatus = "idle" | "running" | "done" | "error";
 
@@ -73,7 +73,7 @@ export const CANVAS_KIND_META: Record<
   },
   video: {
     label: "视频生成",
-    hint: "图生视频 / 文生视频",
+    hint: "Gemini Omini 或 Seedance 2.0 · 文生/图生视频",
     icon: Video,
     color: "from-sky-500/30 to-cyan-600/10",
   },
@@ -97,15 +97,14 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
 ];
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
-  { id: "veo-3.1", label: "Veo 3.1" },
-  { id: "gemini-omni-flash", label: "Gemini Omni Flash" },
+  { id: "gemini-omni-flash", label: "Gemini Omini" },
   { id: "seedance-2.0", label: "Seedance 2.0" },
 ];
 
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
   { kind: "image", label: "图片生成", hint: "生成插图、海报、封面" },
-  { kind: "video", label: "视频生成", hint: "图生视频 / 文生视频" },
+  { kind: "video", label: "视频生成", hint: "Gemini Omini / Seedance 2.0" },
   { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
 
@@ -142,8 +141,19 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
 }
 
 export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
+  const rawVideoModel = block.videoModel as string | undefined;
+  const videoModel: CanvasVideoModel =
+    rawVideoModel === "seedance-2.0"
+      ? "seedance-2.0"
+      : rawVideoModel === "veo-3.1"
+        ? "gemini-omni-flash"
+        : rawVideoModel === "gemini-omni-flash"
+          ? "gemini-omni-flash"
+          : "gemini-omni-flash";
+
   return {
     ...block,
+    videoModel,
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: block.imageBatchCount ?? 1,

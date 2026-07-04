@@ -546,22 +546,29 @@ export default function FreeformCanvas({
                         </>
                       ) : null}
                       {block.kind === "video" ? (
-                        <label className="flex items-center gap-2 text-[11px] text-white/70">
-                          <span className="shrink-0 text-white/45">模型</span>
-                          <select
-                            value={block.videoModel}
-                            onChange={(e) =>
-                              patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })
-                            }
-                            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
-                          >
-                            {VIDEO_MODEL_OPTIONS.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                        <>
+                          <label className="flex items-center gap-2 text-[11px] text-white/70">
+                            <span className="shrink-0 text-white/45">模型</span>
+                            <select
+                              value={block.videoModel}
+                              onChange={(e) =>
+                                patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })
+                              }
+                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                            >
+                              {VIDEO_MODEL_OPTIONS.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="text-[10px] leading-5 text-white/50">
+                            {block.videoModel === "seedance-2.0"
+                              ? "Seedance 2.0：文生/图生视频（EvoLink · 4–15s · 可带同步音频）"
+                              : "Gemini Omini：文生视频或图生视频"}
+                          </div>
+                        </>
                       ) : null}
                       {(block.kind === "text" || block.kind === "copy_organize") && visionCount > 0 ? (
                         <div className="text-[10px] text-white/50">已接入 {visionCount} 张图片</div>
