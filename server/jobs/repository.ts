@@ -29,6 +29,20 @@ function getPlatformJobAction(input: unknown): string | null {
   return typeof a === "string" ? a : null;
 }
 
+/** video 任務 input 頂層 action（growth 素材分析等） */
+function getVideoJobAction(input: unknown): string | null {
+  const v = parseMaybeJson(input);
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const a = (v as { action?: unknown }).action;
+  return typeof a === "string" ? a : null;
+}
+
+function isGrowthCampAnalyzeJob(job: Job): boolean {
+  if (job.type !== "video") return false;
+  const action = getVideoJobAction(job.input);
+  return action === "growth_analyze_video" || action === "growth_analyze_images";
+}
+
 /** 每次拾取時掃描前方若干個 queued，避免 Stage2 文案永遠卡在長時間 platform_topic_image 之後 */
 const QUEUE_SCAN_FOR_BUILD_CONTENT = 40;
 
@@ -211,7 +225,9 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const preferred =
     rows.find(
       (j) => j.type === "platform" && getPlatformJobAction(j.input) === "platform_build_content",
-    ) ?? rows[0];
+    ) ??
+    rows.find(isGrowthCampAnalyzeJob) ??
+    rows[0];
 
   try {
     await db

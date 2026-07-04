@@ -48,7 +48,7 @@ type FreeformCanvasProps = {
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
-type ToolbarMenuState = { x: number; y: number } | null;
+type ToolbarMenuState = { x: number; y: number; anchorCenterY: number } | null;
 type ResizeState = {
   id: string;
   startW: number;
@@ -97,6 +97,30 @@ export default function FreeformCanvas({
     return { x: Math.max(8, x), y: Math.max(8, y) };
   }, []);
 
+  /** 左侧 + 创建：方块出现在加号旁的可见区域，而非画布中央/下方 */
+  const getToolbarAdjacentSpawnPosition = useCallback(
+    (anchorCenterY: number, width: number, height: number, staggerIndex: number) => {
+      const canvas = canvasRef.current;
+      const stagger = staggerIndex % 5;
+      if (!canvas) {
+        return { x: 120 + stagger * 24, y: 120 + stagger * 20 };
+      }
+      const canvasRect = canvas.getBoundingClientRect();
+      const x = canvas.scrollLeft + 24 + stagger * 20;
+      const y =
+        canvas.scrollTop + (anchorCenterY - canvasRect.top) - height / 2 + stagger * 14;
+      const minX = canvas.scrollLeft + 8;
+      const minY = canvas.scrollTop + 8;
+      const maxX = canvas.scrollLeft + canvas.clientWidth - width - 8;
+      const maxY = canvas.scrollTop + canvas.clientHeight - height - 8;
+      return {
+        x: Math.max(minX, Math.min(x, maxX)),
+        y: Math.max(minY, Math.min(y, maxY)),
+      };
+    },
+    [],
+  );
+
   const addBlock = useCallback(
     (kind: CanvasBlockKind, opts?: { x?: number; y?: number; parentId?: string }) => {
       const id = makeCanvasBlockId(kind);
@@ -138,12 +162,29 @@ export default function FreeformCanvas({
     [blockMap, blocks, edges, getViewportSpawnPosition, onBlocksChange, onEdgesChange],
   );
 
+  const spawnFromToolbar = useCallback(
+    (kind: CanvasBlockKind) => {
+      const anchorY = toolbarMenu?.anchorCenterY;
+      const pos =
+        anchorY != null
+          ? getToolbarAdjacentSpawnPosition(
+              anchorY,
+              CANVAS_BLOCK_DEFAULT_WIDTH,
+              CANVAS_BLOCK_DEFAULT_HEIGHT,
+              blocks.length,
+            )
+          : undefined;
+      setToolbarMenu(null);
+      return addBlock(kind, pos ? { x: pos.x, y: pos.y } : undefined);
+    },
+    [addBlock, blocks.length, getToolbarAdjacentSpawnPosition, toolbarMenu],
+  );
+
   const openToolbarUpload = useCallback(() => {
-    setToolbarMenu(null);
-    const id = addBlock("text");
+    const id = spawnFromToolbar("text");
     pendingUploadBlockIdRef.current = id;
     window.setTimeout(() => toolbarFileInputRef.current?.click(), 0);
-  }, [addBlock]);
+  }, [spawnFromToolbar]);
 
   const patchOne = useCallback(
     (id: string, patch: Partial<CanvasBlock>) => {
@@ -335,7 +376,11 @@ export default function FreeformCanvas({
           title="添加功能"
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
-            setToolbarMenu({ x: rect.right + 8, y: rect.top });
+            setToolbarMenu({
+              x: rect.right + 8,
+              y: rect.top,
+              anchorCenterY: rect.top + rect.height / 2,
+            });
           }}
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:scale-105"
         >
@@ -352,7 +397,7 @@ export default function FreeformCanvas({
           {blocks.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-white/40">
               <Plus className="mb-3 h-10 w-10 opacity-30" />
-              <p className="text-sm">点击左侧 + 在画面中央创建方块</p>
+              <p className="text-sm">点击左侧 + 在加号旁创建方块</p>
               <p className="mt-1 text-xs">可拖动 · 右下角缩放 · 右侧 + 引用上游</p>
             </div>
           ) : null}
@@ -719,8 +764,7 @@ export default function FreeformCanvas({
                   type="button"
                   className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/10"
                   onClick={() => {
-                    addBlock(opt.kind);
-                    setToolbarMenu(null);
+                    spawnFromToolbar(opt.kind);
                   }}
                 >
                   <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />

@@ -71,7 +71,7 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   pdf_export: 55 * 60_000,
 };
 
-const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 12 * 60_000;
+const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 20 * 60_000;
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
 const POLL_INTERVAL_MS = 2_000;

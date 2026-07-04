@@ -58,7 +58,7 @@ function DomainRedirector() {
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 const Showcase = lazy(() => import("./pages/Showcase"));
-const GrowthCampLegacyGate = lazy(() => import("./pages/GrowthCampLegacyGate"));
+const GrowthCampPage = lazy(() => import("./pages/MVAnalysis"));
 const GrowthCampRedirect = lazy(() => import("./pages/GrowthCampRedirect"));
 const PlatformPage = lazy(() => import("./pages/PlatformPage"));
 const Storyboard = lazy(() => import("./pages/Storyboard"));
@@ -115,9 +115,9 @@ function Router() {
         <Route path={"/showcase"} component={Showcase} />
         <Route path={"/analysis"} component={GrowthCampRedirect} />
         <Route path={"/viral"} component={GrowthCampRedirect} />
-        <Route path={"/creator-growth-camp/legacy"} component={GrowthCampLegacyGate} />
+        <Route path={"/creator-growth-camp/legacy"} component={GrowthCampPage} />
         <Route path={"/creator-growth-camp/platform"} component={GrowthCampRedirect} />
-        <Route path={"/creator-growth-camp"} component={GrowthCampRedirect} />
+        <Route path={"/creator-growth-camp"} component={GrowthCampPage} />
         <Route path={"/platform"} component={PlatformPage} />
         <Route path={"/creator-growth-camp/premium-remix"} component={RemixLanding} />
         <Route path={"/storyboard"} component={Storyboard} />

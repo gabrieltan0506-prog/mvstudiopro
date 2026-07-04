@@ -1,10 +1,13 @@
-import { createJob, pollJobUntilTerminal } from "@/lib/jobs";
+import { createJob, pollJobUntilTerminal, type JobStatus } from "@/lib/jobs";
 import type { GrowthAnalysisScores, GrowthCampModel } from "@shared/growth";
 
 export const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
 
 export const GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE =
   "PNG/JPG 或 MP4 GCS 直传 → growth_analyze_images / growth_analyze_video → 视觉与策略分析";
+
+/** 单阶段（视频或图片 Job）客户端轮询上限；混传串行两阶段，总等待约为 2× */
+export const GROWTH_CAMP_JOB_MAX_WAIT_MS = 20 * 60_000;
 
 export type PlatformVideoAsset = {
   id: string;
@@ -45,7 +48,13 @@ export type ImagePipelineDebugState = {
     mode?: string;
     status?: string;
   };
-  job?: { jobId?: string; status?: string; pollCount?: number };
+  job?: {
+    jobId?: string;
+    status?: string;
+    pollCount?: number;
+    serverStatus?: string;
+    elapsedMs?: number;
+  };
   analysis?: {
     status?: string;
     provider?: unknown;
@@ -232,6 +241,26 @@ function mergeDebug(
   onDebugUpdate?.(patch);
 }
 
+function growthCampPollHandler(
+  jobId: string,
+  onDebugUpdate: RunGrowthCampImageAnalysisParams["onDebugUpdate"],
+): (tick: { status: JobStatus; elapsedMs: number }) => void {
+  let pollCount = 0;
+  return (tick) => {
+    pollCount += 1;
+    mergeDebug(onDebugUpdate, (prev) => ({
+      ...prev,
+      job: {
+        jobId,
+        status: "polling",
+        pollCount,
+        serverStatus: tick.status,
+        elapsedMs: tick.elapsedMs,
+      },
+    }));
+  };
+}
+
 export async function runGrowthCampImageAnalysis(
   params: RunGrowthCampImageAnalysisParams,
 ): Promise<GrowthCampImageAnalysisOutcome> {
@@ -360,14 +389,12 @@ export async function runGrowthCampImageAnalysis(
     job: { jobId, status: "queued", pollCount: 0 },
   }));
 
+  const onGrowthPoll = growthCampPollHandler(jobId, onDebugUpdate);
   const job = await pollJobUntilTerminal(jobId, {
-    maxWaitMs: 12 * 60_000,
-    onPoll: () => {
-      pollCount += 1;
-      mergeDebug(onDebugUpdate, (prev) => ({
-        ...prev,
-        job: { jobId, status: "polling", pollCount },
-      }));
+    maxWaitMs: GROWTH_CAMP_JOB_MAX_WAIT_MS,
+    onPoll: (tick) => {
+      pollCount = tick.attempt;
+      onGrowthPoll(tick);
     },
   });
 
@@ -493,14 +520,12 @@ export async function runGrowthCampVideoAnalysis(
     job: { jobId, status: "queued", pollCount: 0 },
   }));
 
+  const onGrowthPoll = growthCampPollHandler(jobId, onDebugUpdate);
   const job = await pollJobUntilTerminal(jobId, {
-    maxWaitMs: 12 * 60_000,
-    onPoll: () => {
-      pollCount += 1;
-      mergeDebug(onDebugUpdate, (prev) => ({
-        ...prev,
-        job: { jobId, status: "polling", pollCount },
-      }));
+    maxWaitMs: GROWTH_CAMP_JOB_MAX_WAIT_MS,
+    onPoll: (tick) => {
+      pollCount = tick.attempt;
+      onGrowthPoll(tick);
     },
   });
 
@@ -589,6 +614,17 @@ export async function runGrowthCampAssetAnalysis(
   }
 
   if (readyImages.length > 0) {
+    mergeDebug(onDebugUpdate, (prev) => ({
+      ...prev,
+      dispatch: {
+        route: "growth_analyze_images",
+        modelName,
+        mode,
+        status: "starting",
+      },
+      job: undefined,
+      analysis: undefined,
+    }));
     const imageResult = await runGrowthCampImageAnalysis({
       assets: readyImages,
       context,

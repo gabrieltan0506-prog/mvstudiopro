@@ -73,10 +73,6 @@ export default function PlatformAssetAnalysisPanel({
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const synthesizeGrowthCampAnalysesMutation = trpc.mvAnalysis.synthesizeGrowthCampAnalyses.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
-  const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
-    enabled: debugMode && supervisorAccess,
-    refetchInterval: debugMode ? 30_000 : false,
-  });
 
   const allImagesReady = useMemo(
     () => assets.length === 0 || assets.every((a) => a.ready),
@@ -279,7 +275,9 @@ export default function PlatformAssetAnalysisPanel({
     stage === "uploading"
       ? `正在上传素材… ${uploadProgress}%`
       : stage === "analyzing"
-        ? "正在分析您的素材，约需 30–90 秒…"
+        ? videoAsset?.ready && assets.some((a) => a.ready)
+          ? "正在分析您的素材（视频与图片分两步执行），约需 2–4 分钟…"
+          : "正在分析您的素材，约需 30–90 秒…"
         : null;
 
   return (
@@ -809,8 +807,11 @@ export default function PlatformAssetAnalysisPanel({
             </div>
             <div>
               5. Job：ID {String(imagePipelineDebug.job?.jobId || "-")} / 状态{" "}
-              {String(imagePipelineDebug.job?.status || "-")} / 轮询{" "}
+              {String(imagePipelineDebug.job?.serverStatus || imagePipelineDebug.job?.status || "-")} / 轮询{" "}
               {String(imagePipelineDebug.job?.pollCount ?? "-")} 次
+              {typeof imagePipelineDebug.job?.elapsedMs === "number"
+                ? ` / 已等待 ${Math.round(imagePipelineDebug.job.elapsedMs / 1000)} 秒`
+                : ""}
             </div>
             <div>
               6. 分析：{String(imagePipelineDebug.analysis?.status || "idle")}
@@ -824,25 +825,10 @@ export default function PlatformAssetAnalysisPanel({
                 "-",
               )}
             </div>
-          </div>
-
-          {growthSystemStatusQuery.data ? (
-            <div className="mt-4 rounded-xl border border-fuchsia-200/15 bg-black/20 px-3 py-2">
-              <div className="font-semibold text-fuchsia-100">Growth 系统状态</div>
-              <div className="mt-2 space-y-1 text-white/65">
-                <div>
-                  运行模式：{String(growthSystemStatusQuery.data.runtimeControl?.mode || "-")} / Burst{" "}
-                  {String(growthSystemStatusQuery.data.runtimeControl?.burst || "-")}
-                </div>
-                <div>
-                  服务健康：{String(growthSystemStatusQuery.data.serviceHealth?.label || "-")} · 真值来源{" "}
-                  {String(growthSystemStatusQuery.data.truthStore?.source || "-")}
-                </div>
-              </div>
+            <div className="mt-4 rounded-xl border border-fuchsia-200/10 bg-black/15 px-3 py-2 text-white/55">
+              Growth 运行控制（live / 回填 / 各平台累计）见页顶 Debug 面板。
             </div>
-          ) : growthSystemStatusQuery.isLoading ? (
-            <div className="mt-4 text-white/45">正在拉取 Growth 系统状态…</div>
-          ) : null}
+          </div>
         </div>
       ) : null}
     </>

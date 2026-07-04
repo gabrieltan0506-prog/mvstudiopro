@@ -22,7 +22,7 @@ import {
 const NAV_ITEMS = [
   { label: "平台创作", href: "/platform" },
   { label: "竞品调研", href: "/research" },
-  { label: "Omni 视频画布", href: "/canvas" },
+  { label: "Omini，Seedance 2.X画布", href: "/canvas" },
   { label: "套餐", href: "/pricing" },
 ];
 

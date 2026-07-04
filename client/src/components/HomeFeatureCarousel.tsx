@@ -190,7 +190,7 @@ const CAROUSEL_CARDS = [
 const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/platform", label: "平台创作" },
   { href: "/research", label: "竞品调研" },
-  { href: "/canvas", label: "Omni 画布" },
+  { href: "/canvas", label: "Omini，Seedance 2.X画布" },
 ];
 
 function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
