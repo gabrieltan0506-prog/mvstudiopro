@@ -22,11 +22,15 @@ type StrategistUserContent = Array<
 >;
 
 function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
-  return {
+  const base = {
     model: "pro" as const,
     provider: engine.provider,
     modelName: engine.modelName,
   };
+  if (engine.provider === "openai" && engine.modelName === "gpt-5.5") {
+    return { ...base, reasoningEffort: "medium" as const };
+  }
+  return base;
 }
 
 function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T {
@@ -696,8 +700,10 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
   strategistEngine: GrowthCampStrategistEngine;
   businessGoal: string;
   mediaKind: "video" | "image";
+  /** Platform 素材区：仅 main pass，跳过 premium 第二轮（约省 3–8 分钟） */
+  skipPremiumPass?: boolean;
 }): Promise<Record<string, unknown>> {
-  const { mode, strategistEngine, businessGoal, mediaKind } = params;
+  const { mode, strategistEngine, businessGoal, mediaKind, skipPremiumPass } = params;
   const premiumPrompt = buildStrategistPremiumPrompts(mode, businessGoal, mediaKind);
   let strategistPassResult: Record<string, unknown> | undefined;
   let _retries = 3;
@@ -705,9 +711,11 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
   let _delayMs = 5000;
   while (_retries > 0) {
     try {
-      // ── 速度優化：main + premium 並行發出（兩個獨立請求，無先後依賴） ──
-      const [mainResponse, premiumResult] = await Promise.all([
-        invokeLLM({
+      let mainResponse: Awaited<ReturnType<typeof invokeLLM>>;
+      let premiumResult: Awaited<ReturnType<typeof invokeLLM>> | null = null;
+
+      if (skipPremiumPass) {
+        mainResponse = await invokeLLM({
           ...strategistInvokeBase(strategistEngine),
           temperature: 0.7,
           topP: 0.9,
@@ -723,30 +731,49 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
               schema: growthCampStrategistMainJsonSchema(),
             },
           },
-        }),
-        invokeLLM({
-          ...strategistInvokeBase(strategistEngine),
-          temperature: 0.7,
-          topP: 0.9,
-          messages: [
-            { role: "system", content: premiumPrompt },
-            { role: "user", content: params.userContent },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: mode === "GROWTH" ? "growth_camp_premium_growth" : "growth_camp_premium_remix",
-              strict: true,
-              schema: strategistPremiumVertexSchema(mode),
+        });
+      } else {
+        [mainResponse, premiumResult] = await Promise.all([
+          invokeLLM({
+            ...strategistInvokeBase(strategistEngine),
+            temperature: 0.7,
+            topP: 0.9,
+            messages: [
+              { role: "system", content: params.systemMain },
+              { role: "user", content: params.userContent },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "growth_camp_strategist_output",
+                strict: true,
+                schema: growthCampStrategistMainJsonSchema(),
+              },
             },
-          },
-        }).catch((premiumErr: unknown) => {
-          // premium 失敗不阻斷主流程，降級為空
-          const errMsg = premiumErr instanceof Error ? premiumErr.message : String(premiumErr);
-          console.error(`[${mode} Premium LLM] 并行分析失败，降级为空内容:`, errMsg);
-          return null;
-        }),
-      ]);
+          }),
+          invokeLLM({
+            ...strategistInvokeBase(strategistEngine),
+            temperature: 0.7,
+            topP: 0.9,
+            messages: [
+              { role: "system", content: premiumPrompt },
+              { role: "user", content: params.userContent },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: mode === "GROWTH" ? "growth_camp_premium_growth" : "growth_camp_premium_remix",
+                strict: true,
+                schema: strategistPremiumVertexSchema(mode),
+              },
+            },
+          }).catch((premiumErr: unknown) => {
+            const errMsg = premiumErr instanceof Error ? premiumErr.message : String(premiumErr);
+            console.error(`[${mode} Premium LLM] 并行分析失败，降级为空内容:`, errMsg);
+            return null;
+          }),
+        ]);
+      }
 
       const parsedMain = parseLlmJsonResponse<Record<string, unknown>>(
         String(mainResponse.choices[0]?.message?.content || "{}"),
@@ -758,6 +785,12 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
       }
 
       let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+      const emptyPremium = {
+        summary: "", strategy: "", actionableTopics: [], topics: [],
+        explosiveTopicAnalysis: "", musicAndExpressionAnalysis: "",
+        remixVisualAnalysis: "", remixExpressionAnalysis: "", musicPrompt: "",
+      } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+
       if (premiumResult !== null) {
         try {
           const premiumRaw = parseLlmJsonResponse<Record<string, unknown>>(
@@ -774,11 +807,7 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
           } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
         }
       } else {
-        premiumContent = {
-          summary: "", strategy: "", actionableTopics: [], topics: [],
-          explosiveTopicAnalysis: "", musicAndExpressionAnalysis: "",
-          remixVisualAnalysis: "", remixExpressionAnalysis: "", musicPrompt: "",
-        } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+        premiumContent = emptyPremium;
       }
 
       const withPremium = { ...parsedMain, premiumContent };
@@ -847,6 +876,8 @@ export async function runGrowthCampStrategistForImages(params: {
   modelName?: string;
   /** 覆写引擎（例如主路径失败后走 Gemini 3.5 Flash fallback） */
   strategistEngine?: GrowthCampStrategistEngine;
+  /** Platform 素材区：跳过 premium 专模，先出主报告 */
+  skipPremiumPass?: boolean;
 }): Promise<GrowthAnalysisScores> {
   const mode = params.mode || "GROWTH";
   const businessGoal = (params.context || "未提供").trim() || "未提供";
@@ -859,6 +890,7 @@ export async function runGrowthCampStrategistForImages(params: {
     strategistEngine,
     businessGoal,
     mediaKind: "image",
+    skipPremiumPass: params.skipPremiumPass,
   });
   const evidenceText = typeof params.userContent === "string"
     ? params.userContent

@@ -21,6 +21,7 @@ import {
 import AssetAnalysisWaitPanel from "@/components/platform/AssetAnalysisWaitPanel";
 import AssetAnalysisResultBlock from "@/components/platform/AssetAnalysisResultBlock";
 import type { GrowthAnalysisScores } from "@shared/growth";
+import { mergeGrowthAnalysesDeterministic } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { formatAssetAnalysisForOptimize, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
@@ -57,6 +58,8 @@ export default function PlatformAssetAnalysisPanel({
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const partialLiveRef = useRef<HTMLDivElement>(null);
+  const partialSnapshotRef = useRef<GrowthCampPartialAnalysis[]>([]);
   const [assets, setAssets] = useState<PlatformImageAsset[]>([]);
   const [videoAsset, setVideoAsset] = useState<PlatformVideoAsset | null>(null);
   const [context, setContext] = useState("");
@@ -232,6 +235,7 @@ export default function PlatformAssetAnalysisPanel({
     setError(null);
     setAnalysis(null);
     setPartialAnalyses([]);
+    partialSnapshotRef.current = [];
     setMergePending(false);
     setPartialFailure(null);
     setImagePipelineDebug({});
@@ -264,8 +268,13 @@ export default function PlatformAssetAnalysisPanel({
           flushSync(() => {
             setPartialAnalyses((prev) => {
               if (prev.some((p) => p.id === partial.id)) return prev;
-              return [...prev, partial];
+              const next = [...prev, partial];
+              partialSnapshotRef.current = next;
+              return next;
             });
+          });
+          requestAnimationFrame(() => {
+            partialLiveRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
           });
         },
         onDebugUpdate: (patch) => {
@@ -293,13 +302,23 @@ export default function PlatformAssetAnalysisPanel({
     } catch (analysisError: unknown) {
       const raw = analysisError instanceof Error ? analysisError.message : "素材分析失败";
       const msg = sanitizePlatformUserMessage(raw, "素材分析暂时不可用，请稍后重试");
-      if (partialAnalyses.length > 0) {
+      const snapshots = partialSnapshotRef.current;
+      if (snapshots.length > 0) {
         setPartialFailure(msg);
-        toast.warning("部分素材分析失败，可先阅读已完成的结果");
+        setError(null);
+        setAnalysis(
+          snapshots.length === 1
+            ? snapshots[0]!.analysis
+            : mergeGrowthAnalysesDeterministic(
+                snapshots.map((item) => ({ label: item.label, analysis: item.analysis })),
+              ),
+        );
+        setStage("done");
+        toast.warning("部分素材分析失败，已展示先完成的结果");
       } else {
         setError(msg);
+        setStage("error");
       }
-      setStage("error");
     } finally {
       setBusy(false);
       setMergePending(false);
@@ -358,7 +377,8 @@ export default function PlatformAssetAnalysisPanel({
     [partialAnalyses, busy, stage],
   );
 
-  const showWaitPanel = busy && stage !== "done";
+  const showWaitPanel = busy && stage !== "done" && stage !== "error";
+  const showLivePartials = partialAnalyses.length > 0 && !analysis;
 
   return (
     <>
@@ -612,11 +632,42 @@ export default function PlatformAssetAnalysisPanel({
         ) : null}
       </div>
 
+      {showLivePartials ? (
+        <div
+          ref={partialLiveRef}
+          className="mt-5 space-y-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6ee7b7]/80">
+              已完成 · 可先阅读
+            </span>
+            <span className="h-px flex-1 bg-white/10" />
+            {busy ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin text-[#c9c0e6]/50" />
+                <span className="text-[11px] text-[#c9c0e6]/50">其余素材后台继续中…</span>
+              </>
+            ) : null}
+          </div>
+          {partialAnalyses.map((partial) => (
+            <AssetAnalysisResultBlock
+              key={`live-${partial.id}`}
+              variant="full"
+              title={partial.kind === "video" ? "参考视频 · 分析完成" : "封面 / 图片 · 分析完成"}
+              badge="先行可读"
+              analysis={partial.analysis}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {showWaitPanel ? (
         <AssetAnalysisWaitPanel
           percent={displayPercent}
           label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传全部素材…" : "正在分析您的素材…")}
           detail={analysisProgress.detail}
+          phase={stage === "uploading" ? "upload" : "analyze"}
+          tracks={analysisProgress.tracks}
           assets={analysisPreviewAssets}
           livePartials={livePartials}
           mergePending={mergePending}

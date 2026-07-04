@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Film, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
-import { GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES } from "@/lib/growthCampImagePipeline";
+import { GROWTH_ASSET_ANALYSIS_ANALYZE_MESSAGES, GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES, type AssetAnalysisTrackProgress } from "@/lib/growthCampImagePipeline";
 import AssetAnalysisResultBlock from "@/components/platform/AssetAnalysisResultBlock";
 import type { GrowthAnalysisScores } from "@shared/growth";
 
@@ -23,6 +23,8 @@ type AssetAnalysisWaitPanelProps = {
   percent: number;
   label: string;
   detail?: string;
+  phase?: "upload" | "analyze";
+  tracks?: AssetAnalysisTrackProgress[];
   assets: AssetAnalysisPreviewItem[];
   livePartials?: AssetAnalysisLivePartial[];
   mergePending?: boolean;
@@ -33,6 +35,8 @@ export default function AssetAnalysisWaitPanel({
   percent,
   label,
   detail,
+  phase = "analyze",
+  tracks = [],
   assets,
   livePartials = [],
   mergePending = false,
@@ -59,17 +63,20 @@ export default function AssetAnalysisWaitPanel({
     return () => window.clearInterval(id);
   }, [previewItems.length]);
 
+  const statusMessages =
+    phase === "upload" ? GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES : GROWTH_ASSET_ANALYSIS_ANALYZE_MESSAGES;
+
   useEffect(() => {
     const id = window.setInterval(
-      () => setMessageIndex((i) => (i + 1) % GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES.length),
+      () => setMessageIndex((i) => (i + 1) % statusMessages.length),
       5500,
     );
     return () => window.clearInterval(id);
-  }, []);
+  }, [statusMessages.length]);
 
   const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
   const activePreview = previewItems[assetIndex] ?? previewItems[0];
-  const statusMessage = GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES[messageIndex] ?? GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES[0];
+  const statusMessage = statusMessages[messageIndex] ?? statusMessages[0];
   const hasLivePartials = livePartials.length > 0;
 
   useEffect(() => {
@@ -78,6 +85,36 @@ export default function AssetAnalysisWaitPanel({
       liveStreamRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [livePartials.length]);
+
+  const hasDualTracks = tracks.length >= 2;
+
+  function TrackBar({ track }: { track: AssetAnalysisTrackProgress }) {
+    const pct = Math.max(0, Math.min(100, Math.round(track.percent)));
+    const isVideo = track.kind === "video";
+    const statusLabel =
+      track.done ? "已完成" : track.jobStatus === "queued" ? "排队中" : track.jobStatus === "running" ? "分析中" : "进行中";
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2 text-[11px]">
+          <span className="flex items-center gap-1.5 font-medium text-white/85">
+            {isVideo ? <Film className="h-3.5 w-3.5 text-[#8cefff]" /> : <ImageIcon className="h-3.5 w-3.5 text-[#6ee7b7]" />}
+            {isVideo ? "参考视频" : "封面 / 图片"}
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${track.done ? "bg-[#6ee7b7]/15 text-[#6ee7b7]" : "bg-white/8 text-[#c9c0e6]/70"}`}>
+              {statusLabel}
+            </span>
+          </span>
+          <span className="font-bold tabular-nums text-[#6ee7b7]">{pct}%</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-white/[0.08]">
+          <div
+            className={`h-full rounded-full transition-[width] duration-500 ease-out ${track.done ? "bg-[#6ee7b7]" : isVideo ? "bg-gradient-to-r from-[#49e6ff] to-[#8cefff]" : "bg-gradient-to-r from-[#34d399] to-[#6ee7b7]"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        {track.detail ? <p className="text-[10px] text-[#c9c0e6]/55 truncate">{track.detail}</p> : null}
+      </div>
+    );
+  }
 
   return (
     <div className="mt-5 space-y-4">
@@ -114,7 +151,7 @@ export default function AssetAnalysisWaitPanel({
                   transition={{ duration: 0.45, ease: "easeOut" }}
                 >
                   <AssetAnalysisResultBlock
-                    variant="preview"
+                    variant="full"
                     title={partial.title}
                     badge={partial.badge ?? "刚完成 · 可先阅读"}
                     analysis={partial.analysis}
@@ -166,17 +203,23 @@ export default function AssetAnalysisWaitPanel({
         {detail ? <p className="mt-1 text-xs text-[#c9c0e6]/70">{detail}</p> : null}
         <p className="mt-3 text-xs leading-relaxed text-[#8cefff]/85">{statusMessage}</p>
 
-        <div className="mt-5">
-          <div className="mb-2 flex items-center justify-between text-[11px] text-[#c9c0e6]/70">
-            <span>整体进度</span>
-            <span className="font-bold tabular-nums text-[#6ee7b7]">{safePercent}%</span>
-          </div>
-          <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]" role="progressbar" aria-valuenow={safePercent} aria-valuemin={0} aria-valuemax={100}>
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-[#34d399] via-[#6ee7b7] to-[#49e6ff] transition-[width] duration-500 ease-out"
-              style={{ width: `${safePercent}%` }}
-            />
-          </div>
+        <div className="mt-5 space-y-4">
+          {hasDualTracks ? (
+            tracks.map((track) => <TrackBar key={track.kind} track={track} />)
+          ) : (
+            <div>
+              <div className="mb-2 flex items-center justify-between text-[11px] text-[#c9c0e6]/70">
+                <span>整体进度</span>
+                <span className="font-bold tabular-nums text-[#6ee7b7]">{safePercent}%</span>
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]" role="progressbar" aria-valuenow={safePercent} aria-valuemin={0} aria-valuemax={100}>
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-[#34d399] via-[#6ee7b7] to-[#49e6ff] transition-[width] duration-500 ease-out"
+                  style={{ width: `${safePercent}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <p className="mt-4 text-[11px] leading-relaxed text-[#c9c0e6]/55">
