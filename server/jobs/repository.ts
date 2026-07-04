@@ -1,4 +1,4 @@
-import { and, asc, eq, notInArray } from "drizzle-orm";
+import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
@@ -43,6 +43,11 @@ function isGrowthCampAnalyzeJob(job: Job): boolean {
   return job.type === "video" || job.type === "image";
 }
 
+/** 供 API 轮询唤醒 growth 专用 worker */
+export function isGrowthCampAnalyzeJobRecord(job: Pick<Job, "type" | "input">): boolean {
+  return isGrowthCampAnalyzeJob(job as Job);
+}
+
 /** 成长营素材分析专用拾取：与平台 Stage2 / 选题生图等长任务分池，避免 queued 长时间无人认领。 */
 export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
@@ -53,16 +58,21 @@ export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | n
     rows = await db
       .select()
       .from(jobs)
-      .where(eq(jobs.status, "queued"))
+      .where(
+        and(
+          eq(jobs.status, "queued"),
+          sql`(${jobs.input}::jsonb->>'action') in ('growth_analyze_video', 'growth_analyze_images')`,
+        ),
+      )
       .orderBy(asc(jobs.createdAt))
-      .limit(QUEUE_SCAN_FOR_BUILD_CONTENT);
+      .limit(1);
   } catch (error) {
     console.error("[JobsRepo] claimNextGrowthCampAnalyzeJob select failed:", error);
     return null;
   }
 
-  const next = rows.find(isGrowthCampAnalyzeJob);
-  if (!next) return null;
+  const next = rows[0];
+  if (!next || !isGrowthCampAnalyzeJob(next)) return null;
 
   try {
     await db

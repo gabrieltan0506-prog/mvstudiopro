@@ -23,6 +23,8 @@ export type GrowthCampAnalysisProgressUpdate = {
   phase: "upload" | "video_analyze" | "image_analyze" | "merge" | "done";
   label: string;
   detail?: string;
+  /** 云端 Job 真实状态（queued / running），供并行素材合并展示 */
+  jobStatus?: JobStatus;
 };
 
 export const GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES = [
@@ -73,11 +75,26 @@ function mapUploadPercent(uploadPct: number, range: ProgressRange): number {
   return Math.round(range.start + (uploadPct / 100) * slice);
 }
 
-function mapPollPercent(elapsedMs: number, maxWaitMs: number, range: ProgressRange): number {
+function mapPollPercent(
+  elapsedMs: number,
+  maxWaitMs: number,
+  range: ProgressRange,
+  jobStatus: JobStatus = "running",
+): number {
   const pollStart = range.start + (range.end - range.start) * 0.22;
   const pollEnd = range.end - (range.end - range.start) * 0.03;
-  const ratio = Math.min(0.96, elapsedMs / Math.max(maxWaitMs, 1));
+  // queued 时不按等待时长虚涨进度，避免「排队中却显示 95%」
+  const maxRatio = jobStatus === "queued" ? 0.28 : 0.96;
+  const ratio = Math.min(maxRatio, elapsedMs / Math.max(maxWaitMs, 1));
   return Math.round(pollStart + ratio * (pollEnd - pollStart));
+}
+
+function growthJobStatusLabel(status: JobStatus): string {
+  if (status === "queued") return "排队中";
+  if (status === "running") return "分析中";
+  if (status === "succeeded") return "已完成";
+  if (status === "failed") return "失败";
+  return status;
 }
 
 export type PlatformVideoAsset = {
@@ -534,12 +551,13 @@ export async function runGrowthCampImageAnalysis(
       pollCount = tick.attempt;
       onGrowthPoll(tick);
       onProgressUpdate?.({
-        percent: mapPollPercent(tick.elapsedMs, imageMaxWaitMs, progressRange),
+        percent: mapPollPercent(tick.elapsedMs, imageMaxWaitMs, progressRange, tick.status),
         phase: "image_analyze",
         label: tick.status === "queued"
           ? growthQueuedLabel(tick.elapsedMs, "图片")
           : "图片视觉分析进行中",
         detail: `已等待 ${Math.round(tick.elapsedMs / 1000)} 秒 · ${tick.status}`,
+        jobStatus: tick.status,
       });
     },
   });
@@ -702,12 +720,13 @@ export async function runGrowthCampVideoAnalysis(
       pollCount = tick.attempt;
       onGrowthPoll(tick);
       onProgressUpdate?.({
-        percent: mapPollPercent(tick.elapsedMs, videoMaxWaitMs, progressRange),
+        percent: mapPollPercent(tick.elapsedMs, videoMaxWaitMs, progressRange, tick.status),
         phase: "video_analyze",
         label: tick.status === "queued"
           ? growthQueuedLabel(tick.elapsedMs, "视频")
           : "视频商业分析进行中",
         detail: `已等待 ${Math.round(tick.elapsedMs / 1000)} 秒 · ${tick.status}`,
+        jobStatus: tick.status,
       });
     },
   });
@@ -966,10 +985,11 @@ async function dispatchGrowthCampVideoAnalysisJob(params: {
       pollCount = tick.attempt;
       onGrowthPoll(tick);
       onProgressUpdate?.({
-        percent: mapPollPercent(tick.elapsedMs, maxWaitMs, progressRange),
+        percent: mapPollPercent(tick.elapsedMs, maxWaitMs, progressRange, tick.status),
         phase: "video_analyze",
         label: tick.status === "queued" ? growthQueuedLabel(tick.elapsedMs, "视频") : "视频视觉分析进行中",
         detail: `已等待 ${Math.round(tick.elapsedMs / 1000)} 秒 · ${tick.status}`,
+        jobStatus: tick.status,
       });
     },
   });
@@ -1069,10 +1089,11 @@ async function dispatchGrowthCampImageAnalysisJob(params: {
       pollCount = tick.attempt;
       onGrowthPoll(tick);
       onProgressUpdate?.({
-        percent: mapPollPercent(tick.elapsedMs, maxWaitMs, progressRange),
+        percent: mapPollPercent(tick.elapsedMs, maxWaitMs, progressRange, tick.status),
         phase: "image_analyze",
         label: tick.status === "queued" ? growthQueuedLabel(tick.elapsedMs, "图片") : "图片视觉分析进行中",
         detail: `已等待 ${Math.round(tick.elapsedMs / 1000)} 秒 · ${tick.status}`,
+        jobStatus: tick.status,
       });
     },
   });
@@ -1159,23 +1180,65 @@ export async function runGrowthCampAssetAnalysis(
   const uploadTrack = { video: 0, image: 0 };
   const analyzeTrack = { video: 0, image: 0 };
 
+  type AnalyzeTrackPollState = {
+    label: string;
+    detail?: string;
+    percent: number;
+    jobStatus?: JobStatus;
+  };
+  const analyzePollState: { video?: AnalyzeTrackPollState; image?: AnalyzeTrackPollState } = {};
+
+  const emitMergedAnalyzeProgress = (phase: "video_analyze" | "image_analyze") => {
+    const segments: string[] = [];
+    if (hasVideo && analyzePollState.video) {
+      segments.push(`视频 ${growthJobStatusLabel(analyzePollState.video.jobStatus ?? "running")}`);
+    }
+    if (hasImages && analyzePollState.image) {
+      segments.push(`图片 ${growthJobStatusLabel(analyzePollState.image.jobStatus ?? "running")}`);
+    }
+
+    const percents = [
+      hasVideo && analyzePollState.video ? analyzePollState.video.percent : null,
+      hasImages && analyzePollState.image ? analyzePollState.image.percent : null,
+    ].filter((v): v is number => v != null);
+    const mergedPercent = percents.length
+      ? Math.round(percents.reduce((sum, v) => sum + v, 0) / percents.length)
+      : ANALYZE_PROGRESS.start;
+
+    const detailParts = [
+      hasVideo && analyzePollState.video?.detail ? analyzePollState.video.detail : null,
+      hasImages && analyzePollState.image?.detail ? analyzePollState.image.detail : null,
+    ].filter(Boolean);
+
+    const dualTrack = hasVideo && hasImages;
+    onProgressUpdate?.({
+      percent: mergedPercent,
+      phase,
+      label: dualTrack
+        ? `全部素材已上传 · ${segments.join(" · ")}`
+        : analyzePollState.video?.label || analyzePollState.image?.label || "分析进行中",
+      detail: detailParts.length ? detailParts.join(" | ") : undefined,
+      jobStatus: dualTrack ? undefined : analyzePollState.video?.jobStatus || analyzePollState.image?.jobStatus,
+    });
+  };
+
+  const bindAnalyzeTrackProgress =
+    (track: "video" | "image", phase: "video_analyze" | "image_analyze") =>
+    (update: GrowthCampAnalysisProgressUpdate) => {
+      analyzeTrack[track] = update.percent;
+      analyzePollState[track] = {
+        label: update.label,
+        detail: update.detail,
+        percent: update.percent,
+        jobStatus: update.jobStatus,
+      };
+      emitMergedAnalyzeProgress(phase);
+    };
+
   const emitUploadProgress = (label: string, detail?: string) => {
     onProgressUpdate?.({
       percent: mapCombinedTrackPercent(uploadTrack, hasVideo, hasImages, UPLOAD_PROGRESS),
       phase: "upload",
-      label,
-      detail,
-    });
-  };
-
-  const emitAnalyzeProgress = (
-    phase: "video_analyze" | "image_analyze",
-    label: string,
-    detail?: string,
-  ) => {
-    onProgressUpdate?.({
-      percent: mapCombinedTrackPercent(analyzeTrack, hasVideo, hasImages, ANALYZE_PROGRESS),
-      phase,
       label,
       detail,
     });
@@ -1256,7 +1319,13 @@ export async function runGrowthCampAssetAnalysis(
   const runVideoAnalyzeTask = async () => {
     if (!uploadedVideo || !video) return;
     analyzeTrack.video = ANALYZE_PROGRESS.start;
-    emitAnalyzeProgress("video_analyze", "开始分析参考视频", video.fileName);
+    analyzePollState.video = {
+      label: "视频分析任务已入队",
+      detail: video.fileName,
+      percent: ANALYZE_PROGRESS.start,
+      jobStatus: "queued",
+    };
+    emitMergedAnalyzeProgress("video_analyze");
 
     const videoResult = await dispatchGrowthCampVideoAnalysisJob({
       uploaded: uploadedVideo,
@@ -1266,10 +1335,7 @@ export async function runGrowthCampAssetAnalysis(
       mode,
       platformAssetLite: true,
       progressRange: { start: ANALYZE_PROGRESS.start, end: ANALYZE_PROGRESS.end },
-      onProgressUpdate: (update) => {
-        analyzeTrack.video = update.percent;
-        emitAnalyzeProgress("video_analyze", update.label, update.detail);
-      },
+      onProgressUpdate: bindAnalyzeTrackProgress("video", "video_analyze"),
       onDebugUpdate,
     });
 
@@ -1284,13 +1350,25 @@ export async function runGrowthCampAssetAnalysis(
     });
     await yieldToUiPaint();
     analyzeTrack.video = ANALYZE_PROGRESS.end;
-    emitAnalyzeProgress("video_analyze", "视频分析完成", video.fileName);
+    analyzePollState.video = {
+      label: "视频分析完成",
+      detail: video.fileName,
+      percent: ANALYZE_PROGRESS.end,
+      jobStatus: "succeeded",
+    };
+    emitMergedAnalyzeProgress("video_analyze");
   };
 
   const runImageAnalyzeTask = async () => {
     if (uploadedImages.length === 0) return;
     analyzeTrack.image = ANALYZE_PROGRESS.start;
-    emitAnalyzeProgress("image_analyze", "开始分析图片素材", `${uploadedImages.length} 张`);
+    analyzePollState.image = {
+      label: "图片分析任务已入队",
+      detail: `${uploadedImages.length} 张`,
+      percent: ANALYZE_PROGRESS.start,
+      jobStatus: "queued",
+    };
+    emitMergedAnalyzeProgress("image_analyze");
 
     const imageResult = await dispatchGrowthCampImageAnalysisJob({
       uploaded: uploadedImages,
@@ -1299,10 +1377,7 @@ export async function runGrowthCampAssetAnalysis(
       modelName,
       mode,
       progressRange: { start: ANALYZE_PROGRESS.start, end: ANALYZE_PROGRESS.end },
-      onProgressUpdate: (update) => {
-        analyzeTrack.image = update.percent;
-        emitAnalyzeProgress("image_analyze", update.label, update.detail);
-      },
+      onProgressUpdate: bindAnalyzeTrackProgress("image", "image_analyze"),
       onDebugUpdate,
     });
 
@@ -1320,7 +1395,13 @@ export async function runGrowthCampAssetAnalysis(
     });
     await yieldToUiPaint();
     analyzeTrack.image = ANALYZE_PROGRESS.end;
-    emitAnalyzeProgress("image_analyze", "图片分析完成", part.label);
+    analyzePollState.image = {
+      label: "图片分析完成",
+      detail: part.label,
+      percent: ANALYZE_PROGRESS.end,
+      jobStatus: "succeeded",
+    };
+    emitMergedAnalyzeProgress("image_analyze");
   };
 
   const taskErrors: string[] = [];
@@ -1330,7 +1411,7 @@ export async function runGrowthCampAssetAnalysis(
       onProgressUpdate?.({
         percent: ANALYZE_PROGRESS.start,
         phase: "video_analyze",
-        label: "上传已完成，视频与图片并行分析",
+        label: "全部素材已上传 · 视频排队中 · 图片排队中",
         detail: "哪份先完成就先展示先行摘要",
       });
       const [videoSettled, imageSettled] = await Promise.allSettled([
