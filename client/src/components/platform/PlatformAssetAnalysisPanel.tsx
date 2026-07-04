@@ -76,6 +76,7 @@ export default function PlatformAssetAnalysisPanel({
   const [optimizeBusy, setOptimizeBusy] = useState(false);
   const [generateBusy, setGenerateBusy] = useState(false);
   const [partialFailure, setPartialFailure] = useState<string | null>(null);
+  const [optimizedMarkdown, setOptimizedMarkdown] = useState<string | null>(null);
   const [optimizeSummary, setOptimizeSummary] = useState<string | null>(null);
 
   useEffect(() => {
