@@ -9,6 +9,7 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
+import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import {
   readTopicCoverDeepResearchProFromLs,
   writeTopicCoverDeepResearchProToLs,
@@ -1900,27 +1901,8 @@ export default function MVAnalysisPage() {
     refetchOnReconnect: false,
     retry: false,
   });
-  const setGrowthRuntimeModeMutation = trpc.mvAnalysis.setGrowthRuntimeMode.useMutation({
-    onSuccess: async () => {
-      await growthSystemStatusQuery.refetch();
-      toast.success("运行模式已切换");
-    },
-    onError: (error) => {
-      toast.error(error.message || "运行模式切换失败");
-    },
-  });
-  const setGrowthBurstControlMutation = trpc.mvAnalysis.setGrowthBurstControl.useMutation({
-    onSuccess: async () => {
-      await growthSystemStatusQuery.refetch();
-      toast.success("burst 模式已切换");
-    },
-    onError: (error) => {
-      toast.error(error.message || "burst 模式切换失败");
-    },
-  });
   const growthAnomalies = growthSystemStatusQuery.data?.anomalies || [];
   const growthHealthState = growthAnomalies.length ? "异常" : "正常";
-  const hasCriticalGrowthAnomaly = growthAnomalies.some((item) => item?.level === "critical");
   const rotatingPlatformActivities = useMemo(() => {
     const rows = (growthSystemStatusQuery.data?.currentSupportActivities || []) as Array<{
       platform?: string;
@@ -1942,17 +1924,6 @@ export default function MVAnalysisPage() {
   const activeCarouselActivity = rotatingPlatformActivities.length
     ? rotatingPlatformActivities[activityCarouselIndex % rotatingPlatformActivities.length]
     : null;
-
-  const trySetBurstControl = useCallback((payload: {
-    burst: "auto" | "manual" | "off";
-    platforms: Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao">;
-  }) => {
-    if (payload.burst !== "off" && hasCriticalGrowthAnomaly) {
-      toast.error("当前系统状态异常，不建议执行 burst。请先恢复健康度。");
-      return;
-    }
-    setGrowthBurstControlMutation.mutate(payload);
-  }, [hasCriticalGrowthAnomaly, setGrowthBurstControlMutation]);
 
   useEffect(() => {
     setSupervisorAccess(hasSupervisorAccess());
@@ -4116,208 +4087,13 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 ) : null}
-                <div className="mt-4 rounded-2xl border border-fuchsia-200/15 bg-black/15 p-4 text-xs text-white/75">
-                  <div className="font-semibold text-fuchsia-100">运行控制</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {[
-                      { mode: "auto", label: "自动" },
-                      { mode: "live", label: "只跑 live" },
-                      { mode: "backfill", label: "只跑回填" },
-                    ].map((item) => {
-                      const active = growthSystemStatusQuery.data?.runtimeControl?.mode === item.mode;
-                      return (
-                        <button
-                          key={item.mode}
-                          type="button"
-                          onClick={() => setGrowthRuntimeModeMutation.mutate({ mode: item.mode as "auto" | "live" | "backfill" })}
-                          disabled={setGrowthRuntimeModeMutation.isPending}
-                          className={`rounded-full border px-3 py-1.5 transition ${
-                            active
-                              ? "border-fuchsia-300 bg-fuchsia-400/20 text-fuchsia-100"
-                              : "border-white/15 bg-white/5 text-white/75 hover:border-fuchsia-200/30 hover:text-white"
-                          } ${setGrowthRuntimeModeMutation.isPending ? "opacity-60" : ""}`}
-                        >
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-4 font-semibold text-fuchsia-100">Burst 控制</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {[
-                      { burst: "auto", label: "自动" },
-                      { burst: "off", label: "全部关闭" },
-                      { burst: "manual", label: "手动平台" },
-                    ].map((item) => {
-                      const active = growthSystemStatusQuery.data?.runtimeControl?.burst === item.burst;
-                      return (
-                        <button
-                          key={item.burst}
-                          type="button"
-                          onClick={() => trySetBurstControl({
-                            burst: item.burst as "auto" | "manual" | "off",
-                            platforms: item.burst === "manual"
-                              ? (((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao"> | undefined) || []))
-                              : [],
-                          })}
-                          disabled={setGrowthBurstControlMutation.isPending}
-                          className={`rounded-full border px-3 py-1.5 transition ${
-                            active
-                              ? "border-fuchsia-300 bg-fuchsia-400/20 text-fuchsia-100"
-                              : "border-white/15 bg-white/5 text-white/75 hover:border-fuchsia-200/30 hover:text-white"
-                          } ${setGrowthBurstControlMutation.isPending ? "opacity-60" : ""}`}
-                        >
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {(["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"] as const).map((platform) => {
-                      const selected = ((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []).includes(platform);
-                      const manual = growthSystemStatusQuery.data?.runtimeControl?.burst === "manual";
-                      return (
-                        <button
-                          key={platform}
-                          type="button"
-                          onClick={() => {
-                            const current = new Set(((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []));
-                            if (current.has(platform)) current.delete(platform);
-                            else current.add(platform);
-                            trySetBurstControl({
-                              burst: "manual",
-                              platforms: Array.from(current) as Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao">,
-                            });
-                          }}
-                          disabled={setGrowthBurstControlMutation.isPending}
-                          className={`rounded-full border px-3 py-1.5 transition ${
-                            manual && selected
-                              ? "border-amber-300 bg-amber-400/20 text-amber-100"
-                              : "border-white/15 bg-white/5 text-white/75 hover:border-amber-200/30 hover:text-white"
-                          } ${setGrowthBurstControlMutation.isPending ? "opacity-60" : ""}`}
-                        >
-                          {getPlatformLabel(platform)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {hasCriticalGrowthAnomaly ? (
-                    <div className="mt-3 text-xs font-semibold text-red-200">
-                      当前系统状态异常，不建议开启 burst。
-                    </div>
-                  ) : null}
-                </div>
-                {growthSystemStatusQuery.data?.truthStore?.platforms?.length ? (
-                  <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">
-                    <div className="font-semibold text-sky-100">各平台真值拆分</div>
-                    <div className="space-y-2">
-                      {growthSystemStatusQuery.data.truthStore.platforms.map((item) => (
-                        <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} live 当前量：{String(item.currentItems || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} historical 历史量：{String(item.archivedItems || 0)}</div>
-                          <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {growthSnapshotDebug ? (
-                  <div className="mt-4 space-y-2 rounded-2xl border border-emerald-200/15 bg-black/15 p-4 text-xs text-white/72">
-                    <div className="font-semibold text-emerald-100">Growth Snapshot Debug</div>
-                    <div className="grid gap-1 md:grid-cols-2">
-                      <div>快照路由：{String(growthSnapshotDebug.route || "-")}</div>
-                      <div>基础来源：{String(growthSnapshotDebug.baseSource || "-")}</div>
-                      <div>最终来源：{String(growthSnapshotDebug.finalSource || "-")}</div>
-                      <div>分析窗口天数：{String(growthSnapshotDebug.windowDays || "-")}</div>
-                      <div>是否有实时样本：{String(growthSnapshotDebug.hasAnyLiveCollection ?? "-")}</div>
-                      <div>是否应用个性化：{String(growthSnapshotDebug.personalizedApplied ?? "-")}</div>
-                      <div>状态备注数：{String(growthSnapshotDebug.notesCount || 0)}</div>
-                      <div>请求平台：{formatPlatformList(growthSnapshotDebug.requestedPlatforms)}</div>
-                      <div>过期平台：{formatPlatformList(growthSnapshotDebug.stalePlatforms)}</div>
-                      <div>趋势层数量：{String(growthSnapshotDebug.trendLayerCount || 0)}</div>
-                      <div>选题库数量：{String(growthSnapshotDebug.topicLibraryCount || 0)}</div>
-                      <div>平台快照数：{String(growthSnapshotDebug.platformSnapshotCount || 0)}</div>
-                      <div>商业化轨道数：{String(growthSnapshotDebug.monetizationTrackCount || 0)}</div>
-                      <div>平台建议数：{String(growthSnapshotDebug.recommendationCount || 0)}</div>
-                      <div>商业洞察数：{String(growthSnapshotDebug.businessInsightCount || 0)}</div>
-                      <div>增长步骤数：{String(growthSnapshotDebug.growthPlanCount || 0)}</div>
-                      <div>资产扩展数：{String(growthSnapshotDebug.creationAssetExtensionCount || 0)}</div>
-                    </div>
-                    {growthSnapshot?.status?.notes?.length ? (
-                      <div className="space-y-1 rounded-xl border border-emerald-200/15 bg-emerald-400/5 p-3 leading-6">
-                        {growthSnapshot.status.notes.slice(0, 8).map((note, index) => (
-                          <div key={`snapshot-note-${index}`}>{String(note)}</div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-                {growthSystemStatusQuery.data?.scheduler?.length && growthSystemStatusQuery.data?.runtimeControl?.mode !== "backfill" ? (
-                  <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
-                    <div className="font-semibold text-cyan-100">抓取调度状态</div>
-                    <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
-                      <div>全部平台 live：统一每 30 分钟抓取一次</div>
-                      <div>burst 控制：{String(growthSystemStatusQuery.data?.runtimeControl?.burst || "auto")}</div>
-                      <div>burst 平台：{(((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []).map((item) => getPlatformLabel(item)).join("、")) || "-"}</div>
-                      <div>历史回填：仍按独立 backfill 节奏执行，不跟 live 共用频率</div>
-                    </div>
-                    {growthSystemStatusQuery.data.scheduler.map((item) => (
-                      <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近成功：{formatShanghaiDateTime(String(item.lastSuccessAt || ""))}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次执行：{formatShanghaiDateTime(String(item.nextRunAt || ""))}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 失败次数：{String(item.failureCount ?? 0)}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发模式：{String(item.burstMode ?? false)}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量：{String(item.lastCollectedCount ?? 0)}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发开始：{formatShanghaiDateTime(String(item.burstTriggeredAt || ""))}</div>
-                        <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
-                        <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.lastError || "-")}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {[{
-                  key: "live",
-                  title: "近期回填进度",
-                  data: growthSystemStatusQuery.data?.backfillLive,
-                }, {
-                  key: "history",
-                  title: "历史回填进度",
-                  data: growthSystemStatusQuery.data?.backfillHistory,
-                }].map((section) => {
-                  const sectionData = section.data;
-                  return sectionData ? (
-                  <div key={section.key} className="mt-4 space-y-2 rounded-2xl border border-amber-200/15 bg-black/15 p-4 text-xs text-white/72">
-                    <div className="font-semibold text-amber-100">{section.title}</div>
-                    <div className="grid gap-1 md:grid-cols-2">
-                      <div>status: {String(sectionData.status || "-")}</div>
-                      <div>active: {String(sectionData.active ?? false)}</div>
-                      <div>window days: {String(sectionData.selectedWindowDays || "-")}</div>
-                      <div>回填模式：{section.key === "history" ? "夜间 burst / 每 15 分钟" : "夜间 live 回填 / 每 15 分钟"}</div>
-                      <div>开始时间：{formatShanghaiDateTime(String(sectionData.startedAt || ""))}</div>
-                      <div>下一次回填：{formatShanghaiDateTime(String(sectionData.nextRunAt || ""))}</div>
-                      <div>更新时间：{formatShanghaiDateTime(String(sectionData.updatedAt || ""))}</div>
-                      <div>结束时间：{formatShanghaiDateTime(String(sectionData.finishedAt || ""))}</div>
-                    </div>
-                    <div className="rounded-xl border border-amber-200/15 bg-amber-400/5 p-3 leading-6">
-                      {String(sectionData.note || "-")}
-                    </div>
-                    <div className="space-y-2">
-                      {sectionData.platforms?.map((item) => (
-                        <div key={`${section.key}-${String(item.platform)}`} className="grid gap-1 md:grid-cols-2">
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 状态：{String(item.status || "-")}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 历史量：{String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 开始回填：{formatShanghaiDateTime(String(item.startedAt || sectionData.startedAt || ""))}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次回填：{formatShanghaiDateTime(String(item.nextRunAt || sectionData.nextRunAt || ""))}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 当前量：{String(item.currentTotal || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 添加：{String(item.addedCount || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 合并：{String(item.mergedCount || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 平台停滞轮数：{String(item.plateauCount || 0)}</div>
-                          <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.error || "-")}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null})}
+                <GrowthSystemDebugPanel
+                  enabled={debugMode}
+                  pollActive={debugMode || uploadStage === "analyzing"}
+                  growthSnapshotDebug={growthSnapshotDebug}
+                  growthSnapshotNotes={growthSnapshot?.status?.notes}
+                  className="mt-4"
+                />
               </div>
           </section>
         ) : null}

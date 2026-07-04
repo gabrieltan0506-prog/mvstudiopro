@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
+import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
@@ -6208,6 +6209,15 @@ export default function PlatformPage() {
             )}
           </div>
         )}
+        {debugMode ? (
+          <GrowthSystemDebugPanel
+            enabled={debugMode}
+            pollActive={debugMode || isAnalyzing}
+            growthSnapshotDebug={snapshotDebug}
+            growthSnapshotNotes={snapshot?.status?.notes}
+            className="mb-6"
+          />
+        ) : null}
 
         {/* ── 自定义创作工作台 · 页面顶部快捷入口（不依赖 Stage 1/2） ── */}
         <section
