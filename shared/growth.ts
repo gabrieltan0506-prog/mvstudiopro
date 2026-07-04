@@ -386,6 +386,75 @@ export function parseGrowthAnalysisScores(input: unknown): z.infer<typeof growth
   return growthAnalysisScoresSchema.parse(coerceGrowthAnalysisScoresInput(input));
 }
 
+/** 多素材快速合并（无 LLM），Platform 混传默认用此路径以省掉第三轮等待。 */
+export function mergeGrowthAnalysesDeterministic(
+  parts: Array<{ label?: string; analysis: z.infer<typeof growthAnalysisScoresSchema> }>,
+): z.infer<typeof growthAnalysisScoresSchema> {
+  if (parts.length === 0) {
+    throw new Error("无可合并的分析结果");
+  }
+  if (parts.length === 1) {
+    return parts[0]!.analysis;
+  }
+
+  const analyses = parts.map((p) => p.analysis);
+  const avgScore = (key: GrowthCoreScoreField) => {
+    const nums = analyses
+      .map((a) => (typeof a[key] === "number" ? a[key] : NaN))
+      .filter((n) => Number.isFinite(n));
+    return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : 0;
+  };
+  const uniq = (items: string[]) =>
+    Array.from(new Set(items.map((s) => s.trim()).filter(Boolean))).slice(0, 6);
+
+  const explosiveNums = analyses
+    .map((a) => a.explosiveIndex)
+    .filter((n) => typeof n === "number" && Number.isFinite(n));
+  const explosiveIndex = explosiveNums.length
+    ? Math.min(10, Math.max(1, Math.round(explosiveNums.reduce((a, b) => a + b, 0) / explosiveNums.length)))
+    : Math.min(10, Math.max(1, Math.round(avgScore("impact") / 10)));
+
+  const primary = analyses[0]!;
+  const secondary = analyses[1];
+  const summary = parts
+    .map((p) => {
+      const s = p.analysis.summary?.trim();
+      if (!s) return "";
+      return p.label ? `【${p.label}】\n${s}` : s;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  return parseGrowthAnalysisScores({
+    composition: avgScore("composition"),
+    color: avgScore("color"),
+    lighting: avgScore("lighting"),
+    impact: avgScore("impact"),
+    viralPotential: avgScore("viralPotential"),
+    explosiveIndex,
+    summary,
+    realityCheck: primary.realityCheck || secondary?.realityCheck || "",
+    visualSummary: [primary.visualSummary, secondary?.visualSummary].filter(Boolean).join("\n\n"),
+    reverseEngineering: primary.reverseEngineering ?? secondary?.reverseEngineering,
+    strengths: uniq(analyses.flatMap((a) => a.strengths || [])).slice(0, 4),
+    improvements: uniq(analyses.flatMap((a) => a.improvements || [])).slice(0, 4),
+    platforms: uniq(analyses.flatMap((a) => a.platforms || [])).slice(0, 4),
+    titleSuggestions: uniq(analyses.flatMap((a) => a.titleSuggestions || [])).slice(0, 5),
+    premiumContent: {
+      ...(primary.premiumContent ?? {}),
+      topics: [
+        ...(primary.premiumContent?.topics ?? []),
+        ...(secondary?.premiumContent?.topics ?? []),
+      ].slice(0, 6),
+      actionableTopics: [
+        ...(primary.premiumContent?.actionableTopics ?? []),
+        ...(secondary?.premiumContent?.actionableTopics ?? []),
+      ].slice(0, 6),
+    },
+    remixExecution: primary.remixExecution ?? secondary?.remixExecution,
+  });
+}
+
 export const growthMetricWindowSchema = z.object({
   postsAnalyzed: z.number().int().nonnegative(),
   creatorsTracked: z.number().int().nonnegative(),

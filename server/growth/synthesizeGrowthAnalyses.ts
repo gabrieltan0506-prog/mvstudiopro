@@ -1,28 +1,13 @@
-import { type GrowthAnalysisScores, parseGrowthAnalysisScores } from "@shared/growth";
+import { type GrowthAnalysisScores, mergeGrowthAnalysesDeterministic, parseGrowthAnalysisScores } from "@shared/growth";
 import { invokeLLM } from "../_core/llm";
 import { resolveGrowthCampStrategistEngine } from "./extractorPipeline";
 import { ensureGrowthCoreScores } from "./growthCampStrategistPass";
 
 function mergeDeterministic(parts: GrowthAnalysisScores[]): GrowthAnalysisScores {
-  const avg = (key: keyof GrowthAnalysisScores) => {
-    const nums = parts
-      .map((p) => (typeof p[key] === "number" ? (p[key] as number) : NaN))
-      .filter((n) => Number.isFinite(n));
-    return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : 70;
-  };
-  const uniq = (items: string[]) => Array.from(new Set(items.map((s) => s.trim()).filter(Boolean))).slice(0, 6);
-
-  return parseGrowthAnalysisScores({
-    composition: avg("composition"),
-    color: avg("color"),
-    lighting: avg("lighting"),
-    impact: avg("impact"),
-    viralPotential: avg("viralPotential"),
-    strengths: uniq(parts.flatMap((p) => p.strengths || [])).slice(0, 4),
-    improvements: uniq(parts.flatMap((p) => p.improvements || [])).slice(0, 4),
-    platforms: uniq(parts.flatMap((p) => p.platforms || [])).slice(0, 4),
-    summary: parts.map((p) => p.summary?.trim()).filter(Boolean).join("\n\n"),
-  });
+  return mergeGrowthAnalysesDeterministic(parts.map((analysis, index) => ({
+    label: `素材 ${index + 1}`,
+    analysis,
+  })));
 }
 
 /** 将多段素材（视频/图片）分析结果合成为一份商业分析报告 */

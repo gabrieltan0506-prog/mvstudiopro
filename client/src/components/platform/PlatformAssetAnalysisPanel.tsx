@@ -12,11 +12,13 @@ import {
   readFileAsDataUrl,
   runGrowthCampAssetAnalysis,
   type GrowthCampAnalysisProgressUpdate,
+  type GrowthCampPartialAnalysis,
   type ImagePipelineDebugState,
   type PlatformImageAsset,
   type PlatformVideoAsset,
 } from "@/lib/growthCampImagePipeline";
 import AssetAnalysisWaitPanel from "@/components/platform/AssetAnalysisWaitPanel";
+import AssetAnalysisResultBlock from "@/components/platform/AssetAnalysisResultBlock";
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -67,6 +69,8 @@ export default function PlatformAssetAnalysisPanel({
   const [stage, setStage] = useState<"idle" | "uploading" | "analyzing" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<GrowthAnalysisScores | null>(null);
+  const [partialAnalyses, setPartialAnalyses] = useState<GrowthCampPartialAnalysis[]>([]);
+  const [mergePending, setMergePending] = useState(false);
   const [imagePipelineDebug, setImagePipelineDebug] = useState<ImagePipelineDebugState>({});
   const [optimizeBusy, setOptimizeBusy] = useState(false);
   const [generateBusy, setGenerateBusy] = useState(false);
@@ -78,7 +82,6 @@ export default function PlatformAssetAnalysisPanel({
   }, [busy, optimizeBusy, generateBusy, onBusyChange]);
 
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
-  const synthesizeGrowthCampAnalysesMutation = trpc.mvAnalysis.synthesizeGrowthCampAnalyses.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
 
   const allImagesReady = useMemo(
@@ -226,6 +229,8 @@ export default function PlatformAssetAnalysisPanel({
     setAnalysisProgress({ percent: 0, phase: "upload", label: "准备上传素材" });
     setError(null);
     setAnalysis(null);
+    setPartialAnalyses([]);
+    setMergePending(false);
     setImagePipelineDebug({});
 
     try {
@@ -234,22 +239,23 @@ export default function PlatformAssetAnalysisPanel({
         video: videoAsset,
         context: context.trim() || undefined,
         userId: user?.id ? String(user.id) : undefined,
+        mergeStrategy: "fast",
         getSignedUploadUrl: (input) => getVideoUploadSignedUrlMutation.mutateAsync(input),
-        synthesizeParts: async (parts) => {
-          const merged = await synthesizeGrowthCampAnalysesMutation.mutateAsync({
-            parts,
-            context: context.trim() || undefined,
-            modelName: GROWTH_CAMP_ANALYSIS_MODEL,
-          });
-          return merged.analysis;
-        },
         onUploadProgress: (percent) => {
           setUploadProgress(percent);
           if (percent >= 100) setStage("analyzing");
         },
         onProgressUpdate: (update) => {
           setAnalysisProgress(update);
+          if (update.phase === "merge") setMergePending(true);
+          if (update.phase === "done") setMergePending(false);
           if (update.phase !== "upload") setStage("analyzing");
+        },
+        onPartialResult: (partial) => {
+          setPartialAnalyses((prev) => {
+            if (prev.some((p) => p.id === partial.id)) return prev;
+            return [...prev, partial];
+          });
         },
         onDebugUpdate: (patch) => {
           setImagePipelineDebug((prev) => {
@@ -278,7 +284,6 @@ export default function PlatformAssetAnalysisPanel({
     context,
     getVideoUploadSignedUrlMutation,
     supervisorAccess,
-    synthesizeGrowthCampAnalysesMutation,
     user?.id,
     videoAsset,
   ]);
@@ -546,6 +551,8 @@ export default function PlatformAssetAnalysisPanel({
               setAssets([]);
               setVideoAsset(null);
               setAnalysis(null);
+              setPartialAnalyses([]);
+              setMergePending(false);
               setError(null);
               setContext("");
               setImagePipelineDebug({});
@@ -584,92 +591,40 @@ export default function PlatformAssetAnalysisPanel({
         </div>
       ) : null}
 
-      {analysis ? (
-        <div className="mt-6 space-y-5 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5">
-          <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/80">视觉分析结果</div>
-
-          <div className="flex flex-wrap gap-2 text-[11px]">
-            {[
-              ["构图", analysis.composition],
-              ["色彩", analysis.color],
-              ["冲击", analysis.impact],
-              ["传播", analysis.viralPotential],
-            ].map(([label, score]) => (
-              <span
-                key={String(label)}
-                className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[#c9c0e6]/80"
-              >
-                {label} {score}
-              </span>
-            ))}
-          </div>
-
-          {analysis.summary ? (
-            <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{analysis.summary}</p>
-          ) : null}
-
-          {analysis.realityCheck ? (
-            <div>
-              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">现实查验</div>
-              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.realityCheck}</p>
+      {partialAnalyses.length > 1 || (busy && partialAnalyses.length > 0) ? (
+        <div className="mt-5 space-y-4">
+          {partialAnalyses.map((partial) => (
+            <AssetAnalysisResultBlock
+              key={partial.id}
+              title={partial.kind === "video" ? "参考视频分析" : "封面 / 图片分析"}
+              badge={busy ? "已完成 · 可先阅读" : undefined}
+              analysis={partial.analysis}
+            />
+          ))}
+          {mergePending ? (
+            <div className="flex items-center gap-2 rounded-xl border border-[#49e6ff]/20 bg-[#49e6ff]/5 px-4 py-3 text-sm text-[#8cefff]/90">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              正在汇总综合报告…
             </div>
           ) : null}
+        </div>
+      ) : null}
 
-          {analysis.visualSummary ? (
-            <div>
-              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">画面摘要</div>
-              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.visualSummary}</p>
-            </div>
-          ) : null}
+      {analysis && partialAnalyses.length > 1 ? (
+        <AssetAnalysisResultBlock
+          title="综合报告"
+          badge="视频 + 图片汇总"
+          analysis={analysis}
+          className="mt-5"
+        />
+      ) : null}
 
-          {analysis.reverseEngineering?.hookStrategy ||
-          analysis.reverseEngineering?.emotionalArc ||
-          analysis.reverseEngineering?.commercialLogic ? (
-            <div className="space-y-3 rounded-xl border border-white/10 bg-black/15 p-4">
-              <div className="text-[11px] font-semibold text-[#6ee7b7]/80">视觉拆解</div>
-              {analysis.reverseEngineering.hookStrategy ? (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">抓眼策略</div>
-                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
-                    {analysis.reverseEngineering.hookStrategy}
-                  </p>
-                </div>
-              ) : null}
-              {analysis.reverseEngineering.emotionalArc ? (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">浏览情绪曲线</div>
-                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
-                    {analysis.reverseEngineering.emotionalArc}
-                  </p>
-                </div>
-              ) : null}
-              {analysis.reverseEngineering.commercialLogic ? (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">商业承接</div>
-                  <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
-                    {analysis.reverseEngineering.commercialLogic}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+      {analysis && partialAnalyses.length <= 1 && !busy ? (
+        <AssetAnalysisResultBlock analysis={analysis} className="mt-6" />
+      ) : null}
 
-          {analysis.premiumContent?.actionableTopics?.length ? (
-            <div>
-              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-2">可执行选题</div>
-              <div className="space-y-3">
-                {analysis.premiumContent.actionableTopics.slice(0, 3).map((topic, i) => (
-                  <div key={`topic-${i}`} className="rounded-xl border border-white/10 bg-black/15 p-4">
-                    <div className="text-sm font-semibold text-[#fde047]/90">{topic.title || `选题 ${i + 1}`}</div>
-                    {topic.contentBrief ? (
-                      <p className="mt-2 text-sm leading-7 text-white/85 whitespace-pre-wrap">{topic.contentBrief}</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
+      {analysis && !busy ? (
+        <div className="mt-4 space-y-5">
           {analysis.remixExecution?.imageTextNoteGuide?.titleOptions?.length ||
           analysis.remixExecution?.imageTextNoteGuide?.structuredBody ||
           analysis.remixExecution?.imageTextNoteGuide?.coverSetup ? (
@@ -695,33 +650,8 @@ export default function PlatformAssetAnalysisPanel({
             </div>
           ) : null}
 
-          {analysis.strengths?.length ? (
-            <div>
-              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势</div>
-              <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
-                {analysis.strengths.map((item, i) => (
-                  <li key={`strength-${i}`}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {analysis.improvements?.length ? (
-            <div>
-              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">改进建议</div>
-              <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
-                {analysis.improvements.map((item, i) => (
-                  <li key={`improve-${i}`}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {analysis.platforms?.length ? (
-            <div className="text-xs text-[#8cefff]/80">
-              推荐平台：{analysis.platforms.join(" · ")}
-            </div>
-          ) : null}
           {onDeepOptimize ? (
-            <div className="flex flex-wrap gap-2 pt-3 border-t border-white/10">
+            <div className="flex flex-wrap gap-2 pt-1 border-t border-white/10">
               <button
                 type="button"
                 disabled={disabled || busy || optimizeBusy || generateBusy}
@@ -746,16 +676,6 @@ export default function PlatformAssetAnalysisPanel({
                 {optimizeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
                 步骤 2 · 深度优化（{optimizeCopyCost} 积分）
               </button>
-            </div>
-          ) : null}
-          {analysis.titleSuggestions?.length ? (
-            <div>
-              <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">标题建议</div>
-              <ul className="space-y-1 text-sm text-[#fde047]/90">
-                {analysis.titleSuggestions.slice(0, 5).map((title, i) => (
-                  <li key={`title-${i}`}>· {title}</li>
-                ))}
-              </ul>
             </div>
           ) : null}
         </div>
