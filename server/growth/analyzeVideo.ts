@@ -189,11 +189,15 @@ function resolveGrowthCampFinalModel(modelName?: string): string {
 }
 
 function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
-  return {
+  const base = {
     model: "pro" as const,
     provider: engine.provider,
     modelName: engine.modelName,
   };
+  if (engine.provider === "openai" && engine.modelName === "gpt-5.5") {
+    return { ...base, reasoningEffort: "medium" as const };
+  }
+  return base;
 }
 
 function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T {
@@ -1918,7 +1922,7 @@ function emptyVisualFirstPass(): VisualFirstPass {
   };
 }
 
-/** Platform 素材区参考视频：跳过口播/BGM 多 pass，单次 Strategist 深析（与封面分析同级耗时） */
+/** Platform 素材区参考视频：Gemini Flash 语音扫描 → GPT-5.5 抽针深析（跳过完整多 chunk 管线） */
 async function runPlatformReferenceAssetPipeline(params: {
   videoPath: string;
   duration: number;
@@ -1928,7 +1932,40 @@ async function runPlatformReferenceAssetPipeline(params: {
   context?: string;
   fileName?: string;
   mode: GrowthAnalysisMode;
+  uploadedObjects?: string[];
 }) {
+  let transcript = "";
+  let audioFirstPass = emptyAudioFirstPass();
+
+  const audioBuffer = await extractAudioTrackFromPath(params.videoPath, 0, params.duration).catch((error) => {
+    console.warn("[growth.analyzeVideo] platform reference audio extraction failed:", error);
+    return null;
+  });
+
+  if (audioBuffer) {
+    transcript = await transcribeVideoAudio(audioBuffer).catch((error) => {
+      console.warn("[growth.analyzeVideo] platform reference transcript failed:", error);
+      return "";
+    });
+
+    const audioStorage = await uploadBufferToGcs({
+      objectName: `growth-camp/audio/${Date.now()}-platform-ref-${params.safeName.replace(/\.[^.]+$/, "")}.mp3`,
+      buffer: audioBuffer,
+      contentType: "audio/mpeg",
+    });
+    params.uploadedObjects?.push(audioStorage.objectName);
+
+    audioFirstPass = await withGrowthAnalysisSlot(() =>
+      runAudioFirstPass({
+        audioGcsUri: audioStorage.gcsUri,
+        transcript,
+        duration: params.duration,
+        context: params.context,
+        fileName: params.fileName,
+      }),
+    );
+  }
+
   const sparseFrames = await extractSparseFramesFromPath(
     params.videoPath,
     0,
@@ -1948,9 +1985,9 @@ async function runPlatformReferenceAssetPipeline(params: {
     runDeepDivePass({
       strategistEngine: params.strategistEngine,
       sparseFrames: strategistFrames,
-      audioFirstPass: emptyAudioFirstPass(),
+      audioFirstPass,
       visualFirstPass: emptyVisualFirstPass(),
-      transcript: "",
+      transcript: transcript || audioFirstPass.transcriptSummary || "",
       duration: params.duration,
       context: params.context,
       fileName: params.fileName,
@@ -1985,9 +2022,11 @@ async function runPlatformReferenceAssetPipeline(params: {
 
   return {
     analysis: parsed,
-    transcript: "",
+    transcript: transcript || audioFirstPass.transcriptSummary || "",
     sparseFrameCount: strategistFrames.length,
     costProfile: estimateTokenProfile(params.duration, strategistFrames.length),
+    stageOneModel: growthCampFirstPassModel(),
+    stageTwoModel: params.strategistEngine.modelName,
   };
 }
 
@@ -2203,6 +2242,7 @@ export async function analyzeVideo(params: {
           context: params.context,
           fileName: params.fileName,
           mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
+          uploadedObjects,
         });
         return {
           analysis: liteResult.analysis,
@@ -2214,9 +2254,9 @@ export async function analyzeVideo(params: {
             provider: strategistEngine.provider,
             model: strategistEngine.modelName,
             fallback: false,
-            pipeline: "platform_reference_lite",
-            stageOneModel: strategistEngine.modelName,
-            stageTwoModel: strategistEngine.modelName,
+            pipeline: "platform_reference_flash_scan_gpt55_frames",
+            stageOneModel: liteResult.stageOneModel,
+            stageTwoModel: liteResult.stageTwoModel,
             sparseFrameCount: liteResult.sparseFrameCount,
             estimatedCostProfile: liteResult.costProfile,
             failureStage: undefined,

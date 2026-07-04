@@ -16,13 +16,12 @@ function clamp(min: number, max: number, value: number): number {
 /**
  * 客户端 pollJobUntilTerminal 上限：随视频时长弹性伸缩，不写死 35 分钟。
  *
- * Platform 轻量参考视频：约 5min 起 + 每视频分钟 45s，上限 25min。
+ * Platform 轻量参考视频：约 8min 起 + 每视频分钟 60s，下限 20min（GPT 实测常超 8min）。
  * 成长营完整管线：约 10min 起 + 每视频分钟 90s，上限 45min。
- * 纯图片：固定 8min（与时长无关）。
+ * 纯图片：固定 20min（GPT-5.5 实测 10–15min）。
  */
 export function resolveGrowthCampJobMaxWaitMs(input: GrowthCampJobTimingInput): number {
   if (input.assetKind === "image") {
-    // GPT-5.5 图片视觉分析实测常需 10-15 分钟；提升至 20 分钟避免轮询超时报错
     return 20 * MIN;
   }
 
@@ -30,8 +29,8 @@ export function resolveGrowthCampJobMaxWaitMs(input: GrowthCampJobTimingInput): 
   const durationMin = durationSec / 60;
 
   if (input.platformAssetLite) {
-    const ms = (5 * MIN + durationMin * 60 * MS) | 0;
-    return clamp(8 * MIN, 25 * MIN, ms);
+    const ms = (8 * MIN + durationMin * 60 * MS) | 0;
+    return clamp(20 * MIN, 25 * MIN, ms);
   }
 
   const ms = (10 * MIN + durationMin * 90 * MS) | 0;

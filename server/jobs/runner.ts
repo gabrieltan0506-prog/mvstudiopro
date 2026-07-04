@@ -1710,12 +1710,8 @@ async function processOneGrowthAnalyzeJob(): Promise<boolean> {
 }
 
 export async function processGrowthAnalyzeJobsOnce() {
-  let claimed = 0;
-  while (
-    growthAnalyzeJobsActive + claimed < GROWTH_CAMP_JOB_WORKER_CONCURRENCY
-    && (await processOneGrowthAnalyzeJob())
-  ) {
-    claimed += 1;
+  while (await processOneGrowthAnalyzeJob()) {
+    // 直到队列空或达到 GROWTH_CAMP_JOB_WORKER_CONCURRENCY
   }
 }
 
