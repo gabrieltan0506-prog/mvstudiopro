@@ -22,19 +22,20 @@ function clamp(min: number, max: number, value: number): number {
  */
 export function resolveGrowthCampJobMaxWaitMs(input: GrowthCampJobTimingInput): number {
   if (input.assetKind === "image") {
-    return 8 * MIN;
+    // GPT-5.5 图片视觉分析实测常需 10-15 分钟；提升至 20 分钟避免轮询超时报错
+    return 20 * MIN;
   }
 
   const durationSec = Math.max(0, Number(input.durationSeconds) || 0);
   const durationMin = durationSec / 60;
 
   if (input.platformAssetLite) {
-    const ms = (4 * MIN + durationMin * 45 * MS) | 0;
-    return clamp(5 * MIN, 25 * MIN, ms);
+    const ms = (5 * MIN + durationMin * 60 * MS) | 0;
+    return clamp(8 * MIN, 25 * MIN, ms);
   }
 
-  const ms = (8 * MIN + durationMin * 90 * MS) | 0;
-  return clamp(10 * MIN, 45 * MIN, ms);
+  const ms = (10 * MIN + durationMin * 90 * MS) | 0;
+  return clamp(12 * MIN, 45 * MIN, ms);
 }
 
 /** Worker 端 withTimeout：比客户端多 ~15% + 60s，避免客户端先超时而 Job 仍 running */
