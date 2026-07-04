@@ -3,6 +3,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
+import PlatformSignalsCarouselPanel, {
+  type PlatformSignalsCarouselItem,
+} from "@/components/platform/PlatformSignalsCarouselPanel";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
@@ -1525,158 +1528,6 @@ function Stage2BlueprintProgress({
   );
 }
 
-type PlatformSignalsCarouselTone = "platform" | "topic" | "action";
-
-type PlatformSignalsCarouselItem = {
-  title: string;
-  summary: string;
-  detail: string;
-  tone: PlatformSignalsCarouselTone;
-  /** 平台卡：引导购买趋势分析额度 / 积分加值包 */
-  purchaseCta?: { href: string; label: string };
-};
-
-function toneGlowFrom(tone: PlatformSignalsCarouselTone): string {
-  switch (tone) {
-    case "platform":
-      return "from-[#49e6ff]/50 via-[#7d73ff]/35 to-transparent";
-    case "topic":
-      return "from-[#ff4fb8]/50 via-[#ff7fd5]/38 to-transparent";
-    default:
-      return "from-[#ffdd44]/52 via-[#ffb020]/40 to-transparent";
-  }
-}
-
-/** 分析报告轮播大卡：与「分析中」「分镜／封面区」共用。 */
-function PlatformSignalsCarouselPanel(props: {
-  items: PlatformSignalsCarouselItem[];
-  activeIndex: number;
-  onPickIndex: (i: number) => void;
-  subtitle: string;
-  eyebrow?: string;
-}) {
-  const { items, activeIndex, onPickIndex, subtitle, eyebrow = "战略信号 · 自动轮播" } = props;
-  if (!items.length) return null;
-  const safeIdx = activeIndex % items.length;
-  const active = items[safeIdx] ?? items[0];
-  const toneCn =
-    active.tone === "platform" ? "平台信号" : active.tone === "topic" ? "热点切口" : "动作建议";
-
-  return (
-    <div
-      className={`${shellCardClasses("relative overflow-hidden p-6 md:p-8")}`}
-      role="region"
-      aria-roledescription="carousel"
-      aria-label="平台与热点信号轮播"
-    >
-      <div className={`pointer-events-none absolute inset-x-0 top-0 h-[4px] bg-gradient-to-r ${toneGlowFrom(active.tone)}`} />
-      <div className="pointer-events-none absolute -right-20 -top-24 h-52 w-52 rounded-full bg-[radial-gradient(circle,rgba(73,230,255,0.16),transparent_65%)] motion-safe:opacity-75 motion-safe:animate-[platformCarouselGlow_10s_ease-in-out_infinite]" />
-
-      <div className="relative flex flex-col gap-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Sparkles className="h-5 w-5 shrink-0 text-[#ffdd44] motion-safe:animate-pulse" />
-              <span className="text-base font-black tracking-tight text-white md:text-lg">{eyebrow}</span>
-              <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.09)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">
-                LIVE
-              </span>
-            </div>
-            <p className="mt-3 max-w-lg text-sm leading-7 text-[#c8bfe7] md:text-[15px]">{subtitle}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 self-start rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-[11px] text-[#dfe6ff]">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#49e6ff]/50" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#49e6ff]" />
-            </span>
-            每 <span className="mx-1 font-bold text-[#8cefff]">4.5</span> 秒自动切换 · 亦可点下方卡片预览
-          </div>
-        </div>
-
-        <div className="h-2 overflow-hidden rounded-full bg-white/[0.08]" aria-hidden>
-          <div
-            key={`prog-${safeIdx}`}
-            className="h-full w-full origin-left scale-x-0 bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]"
-            style={{
-              animation: "platformCarouselProg 4.5s linear forwards",
-            }}
-          />
-        </div>
-
-        <div className="relative min-h-[clamp(220px,32vw,340px)]">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={`${toneCn}-${safeIdx}-${active.title}`}
-              initial={{ opacity: 0, y: 16, scale: 0.985 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -12, scale: 0.99 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-[28px] border border-white/14 bg-[linear-gradient(135deg,rgba(73,230,255,0.11),rgba(125,115,255,0.07),rgba(255,117,189,0.09))] p-6 md:p-8 shadow-[0_28px_80px_rgba(0,0,0,0.35)] backdrop-blur-sm"
-            >
-              <div
-                className={`text-[12px] font-bold uppercase tracking-[0.26em] ${
-                  toneCn === "平台信号" ? "text-[#8cefff]" : toneCn === "热点切口" ? "text-[#ff98d9]" : "text-[#ffe77a]"
-                }`}
-              >
-                {toneCn}
-              </div>
-              <div className="mt-5 text-[1.65rem] font-black leading-[1.08] tracking-tight text-white md:text-4xl xl:text-[2.35rem]">
-                {active.title}
-              </div>
-              <div className="mt-5 whitespace-pre-line text-base font-medium leading-relaxed text-[#eef6ff] md:text-lg">
-                {active.summary}
-              </div>
-              <div className="mt-6 rounded-[22px] border border-white/12 bg-[rgba(8,6,22,0.55)] px-5 py-4 text-sm leading-8 text-[#d9d1f5] md:text-[15px]">
-                {active.detail}
-              </div>
-              {active.purchaseCta ? (
-                <a
-                  href={active.purchaseCta.href}
-                  className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-[#8cefff] underline-offset-4 hover:text-[#49e6ff] hover:underline"
-                >
-                  {active.purchaseCta.label}
-                  <ChevronRight className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
-                </a>
-              ) : null}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-
-        <div className="flex gap-2.5 overflow-x-auto pb-1 custom-scrollbar [-webkit-overflow-scrolling:touch]">
-          {items.map((item, idx) => {
-            const selected = idx === safeIdx;
-            return (
-              <button
-                key={`${item.title}-${idx}-${item.tone}`}
-                type="button"
-                onClick={() => onPickIndex(idx)}
-                title={item.title}
-                className={`min-w-[7.25rem] max-w-[min(11rem,calc((100vw-4rem)/2))] shrink-0 rounded-2xl border px-3 py-2.5 text-left transition hover:border-[#49e6ff]/35 hover:bg-[rgba(73,230,255,0.06)] md:min-w-[8.75rem] ${
-                  selected
-                    ? "border-[#49e6ff]/50 bg-[rgba(73,230,255,0.12)] shadow-[0_0_28px_-8px_rgba(73,230,255,0.55)]"
-                    : "border-white/12 bg-black/25"
-                }`}
-              >
-                <div
-                  className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${
-                    item.tone === "platform"
-                      ? "text-[#7ceaff]"
-                      : item.tone === "topic"
-                        ? "text-[#ff94d9]"
-                        : "text-[#ffe07a]"
-                  }`}
-                >
-                  {item.tone === "platform" ? "平台" : item.tone === "topic" ? "热点" : "动作"}
-                </div>
-                <div className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-white">{item.title}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /** 3A：五维度 IP 引导面板（与 buildPlatformContent 硬约束对齐） */
 function PlatformIpDimensionGuide() {
@@ -1919,7 +1770,7 @@ export default function PlatformPage() {
   const [customMattingTransparentCutout, setCustomMattingTransparentCutout] = useState(false);
   const [customMattingError, setCustomMattingError] = useState<string | null>(null);
   const customWorkspaceOperating =
-    customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy;
+    customNoteBusy || customTopicBusy || customMattingBusy;
   /** 自定义选题：勾选生成项（文案 / 封面 / 分镜） */
   const [customTopicGenCopy, setCustomTopicGenCopy] = useState(true);
   const [customTopicGenCover, setCustomTopicGenCover] = useState(true);
@@ -4572,9 +4423,8 @@ export default function PlatformPage() {
    */
   const decisionIntelInputReady = useMemo(() => {
     if (!snapshot || !platformDashboard) return false;
-    if (isContentLoading) return false;
     return true;
-  }, [snapshot, platformDashboard, isContentLoading]);
+  }, [snapshot, platformDashboard]);
   const strategicMapTopic = useMemo(() => {
     const raw = (platformDashboard?.headline || platformDashboard?.subheadline || "").trim();
     return raw.slice(0, 160) || "个性化战略选题";
@@ -4788,14 +4638,8 @@ export default function PlatformPage() {
         menu0?.whyNow || "先做最容易拿到正反馈的平台版本。",
       );
       
-      // Task 1: 彻底物理消灭"电商带货"幽灵 — 严格的 Skeleton 状态，不显示任何兜底文本
-      const sig2 = isContentLoading
-        ? { isLoadingSkeleton: true, value: "正在推演专属商业变现路径...", detail: "深度定制，请稍候。" }
-        : getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
-      
-      const sig3 = isContentLoading
-        ? { isLoadingSkeleton: true, value: "正在生成首发微小行动指令...", detail: "保姆级拆解，请稍候。" }
-        : getSignal(3, "先写出第一条内容", "先做一轮验证，再决定是否放大。");
+      const sig2 = getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
+      const sig3 = getSignal(3, "先写出第一条内容", "先做一轮验证，再决定是否放大。");
 
       const ipScarcity = (platformDashboard as any)?.ipScarcity;
       const trafficForecast = (platformDashboard as any)?.trafficForecast;
@@ -7114,12 +6958,93 @@ export default function PlatformPage() {
               )}
             </>
           )}
+
+          {(snapshot || platformDashboard || isDashboardLoading || isAnalyzing) ? (
+            <div className="mt-8 border-t border-white/10 pt-6 space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-[#8cefff]" />
+                    <h3 className="text-base font-bold text-white md:text-lg">平台趋势分析报表</h3>
+                    {platformDashboard && isContentLoading ? (
+                      <span className="rounded-full border border-[#c4b5fd]/35 bg-[rgba(196,181,253,0.12)] px-2.5 py-0.5 text-[10px] font-semibold text-[#ddd6fe]">
+                        看板已就绪 · 专属文案生成中
+                      </span>
+                    ) : platformDashboard ? (
+                      <span className="rounded-full border border-[#6ee7b7]/35 bg-[rgba(52,211,153,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#6ee7b7]">
+                        已出报告 · 无需等全案文案
+                      </span>
+                    ) : isAnalyzing || isDashboardLoading ? (
+                      <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#8cefff]">
+                        生成中
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
+                    Stage 1 战略看板完成后即可在此查看四格摘要与信号轮播；专属长文案仍在后台接续，不必干等。
+                  </p>
+                </div>
+                {platformDashboard ? (
+                  <button
+                    type="button"
+                    onClick={() => void scrollToPaidPlatformTrends()}
+                    className="text-xs font-semibold text-[#8cefff] underline-offset-4 hover:underline"
+                  >
+                    跳至完整趋势区 ↓
+                  </button>
+                ) : null}
+              </div>
+
+              {(isDashboardLoading || isAnalyzing) && !platformDashboard ? (
+                <div className="rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
+                  <div className="flex items-center gap-2 text-sm text-[#8cefff]">
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                    正在读取近 {selectedWindowDays} 天窗口样本并生成战略看板…
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+                    <div className="h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]" />
+                  </div>
+                </div>
+              ) : null}
+
+              {(platformDashboard || snapshot) ? (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {resultSummaryCards.map((item, index) => (
+                    <div key={`custom-trend-${item.label}-${index}`} className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                      {item.isLoadingSkeleton ? (
+                        <div className="animate-pulse space-y-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]/50" />
+                          <div className="text-sm font-semibold text-white/70">{item.value}</div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-[#8cefff]/70">{item.label}</div>
+                          <div className="mt-2 text-sm font-bold leading-snug text-white">{item.value}</div>
+                          <p className="mt-2 text-[11px] leading-relaxed text-[#c9c0e6]/65">{item.detail}</p>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {immersiveRotatingCards.length > 0 && (platformDashboard || isAnalyzing || snapshot) ? (
+                <PlatformSignalsCarouselPanel
+                  eyebrow="自定义区 · 信号轮播"
+                  items={immersiveRotatingCards}
+                  activeIndex={rotatingCardIndex}
+                  onPickIndex={setRotatingCardIndex}
+                  subtitle="在素材分析或专属文案后台运行时，仍可对照当前窗口的平台脉搏、热点切口与可先执行的动作。"
+                />
+              ) : null}
+            </div>
+          ) : null}
           </div>
         </section>
 
         {customWorkspaceOperating ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义创作进行中，下方全案分析区已收起以保持专注。
+            自定义文案/选题/抠像进行中，下方全案分析区已收起；素材分析与平台趋势报表仍可在上方工作台查看。
           </p>
         ) : null}
         <div className={customWorkspaceOperating ? "hidden" : undefined} aria-hidden={customWorkspaceOperating}>
@@ -7908,9 +7833,11 @@ export default function PlatformPage() {
                     </span>
                     {!decisionIntelInputReady ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
-                        {isContentLoading
-                          ? "专属文案生成中，完成后再解锁可一并纳入选题（价格已标示于上）。"
-                          : "请先完成快照与战略看板（点「开始全案分析」），即可独立解锁本报告。"}
+                        请先完成快照与战略看板（点「开始全案分析」），即可独立解锁本报告；无需等待专属文案。
+                      </span>
+                    ) : isContentLoading ? (
+                      <span className="max-w-[14rem] text-[10px] leading-snug text-[#8cefff]/90 md:text-right">
+                        专属文案生成中；趋势看板与战略地图可先解锁，完成后选题会自动纳入。
                       </span>
                     ) : null}
                     <button

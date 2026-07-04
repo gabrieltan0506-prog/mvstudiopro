@@ -1,6 +1,7 @@
-import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
+import { type GrowthAnalysisScores, parseGrowthAnalysisScores } from "@shared/growth";
 import { invokeLLM } from "../_core/llm";
 import { resolveGrowthCampStrategistEngine } from "./extractorPipeline";
+import { ensureGrowthCoreScores } from "./growthCampStrategistPass";
 
 function mergeDeterministic(parts: GrowthAnalysisScores[]): GrowthAnalysisScores {
   const avg = (key: keyof GrowthAnalysisScores) => {
@@ -11,7 +12,7 @@ function mergeDeterministic(parts: GrowthAnalysisScores[]): GrowthAnalysisScores
   };
   const uniq = (items: string[]) => Array.from(new Set(items.map((s) => s.trim()).filter(Boolean))).slice(0, 6);
 
-  return growthAnalysisScoresSchema.parse({
+  return parseGrowthAnalysisScores({
     composition: avg("composition"),
     color: avg("color"),
     lighting: avg("lighting"),
@@ -81,7 +82,12 @@ export async function synthesizeGrowthAnalyses(params: {
       response_format: { type: "json_object" },
     });
     const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
-    return growthAnalysisScoresSchema.parse(parsed);
+    const withScores = await ensureGrowthCoreScores(parsed as Record<string, unknown>, {
+      strategistEngine,
+      context: params.context,
+      evidenceText: JSON.stringify(payload, null, 2).slice(0, 12000),
+    });
+    return parseGrowthAnalysisScores(withScores);
   } catch (error) {
     console.warn("[growth.synthesizeGrowthAnalyses] fallback merge:", error);
     return mergeDeterministic(parts.map((p) => p.analysis));

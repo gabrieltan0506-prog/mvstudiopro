@@ -1,8 +1,9 @@
-import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
+import { type GrowthAnalysisScores, parseGrowthAnalysisScores } from "@shared/growth";
 import { invokeLLM } from "../_core/llm";
 import { storagePut } from "../storage";
 import { extractDocumentText } from "./documentExtract";
 import { resolveGrowthCampStrategistEngine } from "./extractorPipeline";
+import { ensureGrowthCoreScores } from "./growthCampStrategistPass";
 
 type DocumentAnalysisResult = {
   analysis: GrowthAnalysisScores;
@@ -28,7 +29,7 @@ function buildFallbackDocumentAnalysis(text: string, context: string) {
   const isCommercial = /品牌|招商|服务|客户|案例|转化/.test(`${normalized}\n${context}`);
   const isEducation = /课程|教学|培训|教程|知识|方法/.test(`${normalized}\n${context}`);
 
-  return growthAnalysisScoresSchema.parse({
+  return parseGrowthAnalysisScores({
     composition: normalized ? 78 : 64,
     color: normalized ? 72 : 60,
     lighting: normalized ? 80 : 66,
@@ -135,8 +136,13 @@ export async function analyzeDocument(params: {
     });
 
     const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+    const withScores = await ensureGrowthCoreScores(parsed as Record<string, unknown>, {
+      strategistEngine,
+      context: params.context,
+      evidenceText: truncate(extractedPreview, 8000),
+    });
     return {
-      analysis: growthAnalysisScoresSchema.parse(parsed),
+      analysis: parseGrowthAnalysisScores(withScores),
       documentMeta: {
         fileUrl,
         extractionMethod: extracted.method,
