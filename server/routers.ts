@@ -9209,6 +9209,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return loadFreshPlatformBriefing({
           platforms: input.platforms as any,
           topN: input.topN,
+          preferFlyLive: true,
         });
       }),
 
@@ -9223,6 +9224,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return listFreshTrendItems({
           platforms: input?.platforms as any,
           topN: input?.topN,
+          preferFlyLive: true,
         });
       }),
 

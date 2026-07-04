@@ -1,5 +1,5 @@
-import React from "react";
-import type { GrowthAnalysisScores } from "@shared/growth";
+import React, { useMemo } from "react";
+import { coerceDisplayText, parseGrowthAnalysisScores, type GrowthAnalysisScores } from "@shared/growth";
 
 type AssetAnalysisResultBlockProps = {
   analysis: GrowthAnalysisScores;
@@ -10,14 +10,36 @@ type AssetAnalysisResultBlockProps = {
   className?: string;
 };
 
+function textOrNull(value: unknown): string | null {
+  const t = coerceDisplayText(value);
+  return t.length > 0 ? t : null;
+}
+
 export default function AssetAnalysisResultBlock({
-  analysis,
+  analysis: rawAnalysis,
   title = "视觉分析结果",
   badge,
   variant = "full",
   className = "",
 }: AssetAnalysisResultBlockProps) {
+  const analysis = useMemo(() => parseGrowthAnalysisScores(rawAnalysis), [rawAnalysis]);
   const isPreview = variant === "preview";
+
+  const hookStrategy = textOrNull(analysis.reverseEngineering?.hookStrategy);
+  const emotionalArc = textOrNull(analysis.reverseEngineering?.emotionalArc);
+  const commercialLogic = textOrNull(analysis.reverseEngineering?.commercialLogic);
+  const hasVisualBreakdown = Boolean(hookStrategy || emotionalArc || commercialLogic);
+
+  const strengths = (analysis.strengths || []).map((s) => textOrNull(s)).filter(Boolean) as string[];
+  const improvements = (analysis.improvements || []).map((s) => textOrNull(s)).filter(Boolean) as string[];
+  const bgmAnalysis = textOrNull(analysis.bgmAnalysis);
+  const musicRecommendation = textOrNull(analysis.musicRecommendation);
+  const summary = textOrNull(analysis.summary);
+  const realityCheck = textOrNull(analysis.realityCheck);
+  const visualSummary = textOrNull(analysis.visualSummary);
+  const platforms = (analysis.platforms || []).map((p) => textOrNull(p)).filter(Boolean) as string[];
+  const titleSuggestions = (analysis.titleSuggestions || []).map((t) => textOrNull(t)).filter(Boolean) as string[];
+
   return (
     <div className={`space-y-5 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5 ${className}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -46,29 +68,29 @@ export default function AssetAnalysisResultBlock({
         ))}
       </div>
 
-      {analysis.summary ? (
-        <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{analysis.summary}</p>
+      {summary ? (
+        <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{summary}</p>
       ) : null}
 
-      {analysis.realityCheck ? (
+      {realityCheck ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">现实查验</div>
-          <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.realityCheck}</p>
+          <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{realityCheck}</p>
         </div>
       ) : null}
 
-      {analysis.visualSummary ? (
+      {visualSummary ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">画面摘要</div>
-          <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{analysis.visualSummary}</p>
+          <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{visualSummary}</p>
         </div>
       ) : null}
 
-      {isPreview && analysis.strengths?.length ? (
+      {isPreview && strengths.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势（节选）</div>
           <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
-            {analysis.strengths.slice(0, 2).map((item, i) => (
+            {strengths.slice(0, 2).map((item, i) => (
               <li key={`preview-strength-${i}`}>{item}</li>
             ))}
           </ul>
@@ -79,35 +101,36 @@ export default function AssetAnalysisResultBlock({
         <p className="text-[11px] text-[#8cefff]/55">完整拆解、选题与改法将在分析结束后展示 ↓</p>
       ) : null}
 
-      {!isPreview &&
-      (analysis.reverseEngineering?.hookStrategy ||
-      analysis.reverseEngineering?.emotionalArc ||
-      analysis.reverseEngineering?.commercialLogic) ? (
+      {!isPreview && hasVisualBreakdown ? (
         <div className="space-y-3 rounded-xl border border-white/10 bg-black/15 p-4">
           <div className="text-[11px] font-semibold text-[#6ee7b7]/80">视觉拆解</div>
-          {analysis.reverseEngineering.hookStrategy ? (
+          {hookStrategy ? (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">抓眼策略</div>
-              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
-                {analysis.reverseEngineering.hookStrategy}
-              </p>
+              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{hookStrategy}</p>
             </div>
           ) : null}
-          {analysis.reverseEngineering.emotionalArc ? (
+          {emotionalArc ? (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">浏览情绪曲线</div>
-              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
-                {analysis.reverseEngineering.emotionalArc}
-              </p>
+              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{emotionalArc}</p>
             </div>
           ) : null}
-          {analysis.reverseEngineering.commercialLogic ? (
+          {commercialLogic ? (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">商业承接</div>
-              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">
-                {analysis.reverseEngineering.commercialLogic}
-              </p>
+              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{commercialLogic}</p>
             </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!isPreview && bgmAnalysis ? (
+        <div className="space-y-2 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.06)] p-4">
+          <div className="text-[11px] font-semibold text-[#8cefff]/85">BGM / 配乐分析</div>
+          <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{bgmAnalysis}</p>
+          {musicRecommendation ? (
+            <p className="text-sm leading-7 text-[#c9c0e6]/75 whitespace-pre-wrap">{musicRecommendation}</p>
           ) : null}
         </div>
       ) : null}
@@ -116,49 +139,56 @@ export default function AssetAnalysisResultBlock({
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-2">可执行选题</div>
           <div className="space-y-3">
-            {analysis.premiumContent.actionableTopics.slice(0, 3).map((topic, i) => (
-              <div key={`topic-${i}`} className="rounded-xl border border-white/10 bg-black/15 p-4">
-                <div className="text-sm font-semibold text-[#fde047]/90">{topic.title || `选题 ${i + 1}`}</div>
-                {topic.contentBrief ? (
-                  <p className="mt-2 text-sm leading-7 text-white/85 whitespace-pre-wrap">{topic.contentBrief}</p>
-                ) : null}
-              </div>
-            ))}
+            {analysis.premiumContent.actionableTopics.slice(0, 3).map((topic, i) => {
+              const topicTitle = textOrNull(topic.title);
+              const brief = textOrNull(topic.contentBrief);
+              if (!topicTitle && !brief) return null;
+              return (
+                <div key={`topic-${i}`} className="rounded-xl border border-white/10 bg-black/15 p-4">
+                  {topicTitle ? (
+                    <div className="text-sm font-semibold text-[#fde047]/90">{topicTitle}</div>
+                  ) : null}
+                  {brief ? (
+                    <p className="mt-2 text-sm leading-7 text-white/85 whitespace-pre-wrap">{brief}</p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
 
-      {!isPreview && analysis.strengths?.length ? (
+      {!isPreview && strengths.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势</div>
           <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
-            {analysis.strengths.map((item, i) => (
+            {strengths.map((item, i) => (
               <li key={`strength-${i}`}>{item}</li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {!isPreview && analysis.improvements?.length ? (
+      {!isPreview && improvements.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">改进建议</div>
           <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
-            {analysis.improvements.map((item, i) => (
+            {improvements.map((item, i) => (
               <li key={`improve-${i}`}>{item}</li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {!isPreview && analysis.platforms?.length ? (
-        <div className="text-xs text-[#8cefff]/80">推荐平台：{analysis.platforms.join(" · ")}</div>
+      {!isPreview && platforms.length ? (
+        <div className="text-xs text-[#8cefff]/80">推荐平台：{platforms.join(" · ")}</div>
       ) : null}
 
-      {!isPreview && analysis.titleSuggestions?.length ? (
+      {!isPreview && titleSuggestions.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">标题建议</div>
           <ul className="space-y-1 text-sm text-[#fde047]/90">
-            {analysis.titleSuggestions.slice(0, 5).map((t, i) => (
+            {titleSuggestions.slice(0, 5).map((t, i) => (
               <li key={`title-${i}`}>· {t}</li>
             ))}
           </ul>

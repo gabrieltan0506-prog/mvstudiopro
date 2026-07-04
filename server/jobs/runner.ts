@@ -46,6 +46,7 @@ import {
 } from "../services/aimusic-producer";
 import { analyzeVideo as analyzeGrowthCampVideo } from "../growth/analyzeVideo";
 import { analyzeGrowthCampImages } from "../growth/analyzeGrowthCampImages";
+import { enrichPlatformAssetAnalysisContext } from "../growth/platformAssetTrendContext";
 import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
 import { normalizePlatforms } from "../growth/growthSchema";
 import { readTrendStore, readTrendStoreForPlatforms } from "../growth/trendStore";
@@ -281,13 +282,23 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     }
 
     try {
+      const isPlatformAsset =
+        params.platformAssetLite === true || params.platformAssetAnalysis === true;
+      let analysisContext = typeof params.context === "string" ? params.context : undefined;
+      let trendMeta: string | undefined;
+      if (isPlatformAsset) {
+        const enriched = await enrichPlatformAssetAnalysisContext(analysisContext);
+        analysisContext = enriched.context;
+        trendMeta = enriched.trendMeta;
+      }
+
       const result = await analyzeGrowthCampVideo({
         gcsUri: typeof params.gcsUri === "string" ? params.gcsUri : undefined,
         fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
         fileKey: typeof params.fileKey === "string" ? params.fileKey : undefined,
         mimeType: String(params.mimeType ?? "video/mp4"),
         fileName: typeof params.fileName === "string" ? params.fileName : undefined,
-        context: typeof params.context === "string" ? params.context : undefined,
+        context: analysisContext,
         modelName: typeof params.modelName === "string" ? params.modelName : undefined,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
         analysisProfile: params.analysisProfile === "extract_only" ? "extract_only" : "full",
@@ -318,6 +329,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
             videoDuration: result.videoMeta.videoDuration,
             failureStage: result.videoMeta.failureStage || null,
             failureReason: result.videoMeta.failureReason || null,
+            trendStoreMeta: trendMeta || null,
           },
         },
       };
@@ -372,9 +384,18 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     }
 
     try {
+      const isPlatformAsset = params.platformAssetAnalysis === true;
+      let analysisContext = typeof params.context === "string" ? params.context : undefined;
+      let trendMeta: string | undefined;
+      if (isPlatformAsset) {
+        const enriched = await enrichPlatformAssetAnalysisContext(analysisContext);
+        analysisContext = enriched.context;
+        trendMeta = enriched.trendMeta;
+      }
+
       const result = await analyzeGrowthCampImages({
         images,
-        context: typeof params.context === "string" ? params.context : undefined,
+        context: analysisContext,
         modelName: typeof params.modelName === "string" ? params.modelName : undefined,
         mode: growthMode,
       });
@@ -392,6 +413,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
             fallback: result.imageMeta.fallback,
             primaryError: result.imageMeta.primaryError || null,
             imageCount: result.imageMeta.imageCount,
+            trendStoreMeta: trendMeta || null,
           },
         },
       };

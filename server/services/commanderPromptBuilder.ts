@@ -66,12 +66,16 @@ function formatScoredItem(s: { item: TrendItem; growthPercentile: number; catego
 export async function loadFreshPlatformBriefing(opts?: {
   platforms?: GrowthPlatform[];
   topN?: number;
+  preferFlyLive?: boolean;
 }): Promise<{ briefingText: string; coveredPlatforms: GrowthPlatform[]; meta: string }> {
   const platforms = opts?.platforms?.length ? opts.platforms : DEFAULT_PLATFORMS;
   const topN = opts?.topN ?? 8;
 
   try {
-    const store = await readTrendStoreForPlatforms(platforms, { preferDerivedFiles: true });
+    const store = await readTrendStoreForPlatforms(platforms, {
+      preferDerivedFiles: true,
+      preferFlyLive: opts?.preferFlyLive === true,
+    });
     const sections: string[] = [];
     const covered: GrowthPlatform[] = [];
 
@@ -144,12 +148,16 @@ export interface TrendHotspotEntry {
 export async function listFreshTrendItems(opts?: {
   platforms?: GrowthPlatform[];
   topN?: number;
+  preferFlyLive?: boolean;
 }): Promise<{ entries: TrendHotspotEntry[]; coveredPlatforms: GrowthPlatform[]; meta: string }> {
   const platforms = opts?.platforms?.length ? opts.platforms : DEFAULT_PLATFORMS;
   const topN = opts?.topN ?? 5;
 
   try {
-    const store = await readTrendStoreForPlatforms(platforms, { preferDerivedFiles: true });
+    const store = await readTrendStoreForPlatforms(platforms, {
+      preferDerivedFiles: true,
+      preferFlyLive: opts?.preferFlyLive === true,
+    });
     const entries: TrendHotspotEntry[] = [];
     const covered: GrowthPlatform[] = [];
     const debugSummary: string[] = [];

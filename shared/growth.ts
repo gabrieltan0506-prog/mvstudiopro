@@ -363,30 +363,56 @@ export function normalizeGrowthAnalysisScoreValue(value: unknown, fallback: numb
   return fallback;
 }
 
-/** 仅对已存在的分数字段做类型校正，不伪造缺失值。 */
-function coerceDisplayText(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (value && typeof value === "object" && !Array.isArray(value)) {
+/** 将 LLM 可能返回的 object/array 转为可展示文本；过滤 [object Object] */
+export function coerceDisplayText(value: unknown): string {
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t || t === "[object Object]") return "";
+    return t;
+  }
+  if (Array.isArray(value)) {
+    const parts = value.map((item) => coerceDisplayText(item)).filter(Boolean);
+    return parts.join(" · ");
+  }
+  if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    for (const key of ["text", "summary", "detail", "description", "title", "value", "arc", "content"]) {
+    for (const key of [
+      "text", "summary", "detail", "description", "title", "value", "arc", "content",
+      "opening", "middle", "peak", "closing", "hook", "body", "cta",
+    ]) {
       const candidate = obj[key];
       if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
     }
+    if (obj.opening || obj.middle || obj.peak || obj.closing) {
+      return [obj.opening, obj.middle, obj.peak, obj.closing]
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean)
+        .join(" → ");
+    }
+    if (Array.isArray(obj.phases)) {
+      return obj.phases.map((p) => coerceDisplayText(p)).filter(Boolean).join(" → ");
+    }
+    const stringValues = Object.values(obj)
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter(Boolean);
+    if (stringValues.length) return stringValues.join(" · ");
     try {
-      return JSON.stringify(value);
+      const json = JSON.stringify(value);
+      return json === "{}" ? "" : json;
     } catch {
       return "";
     }
   }
   if (value == null) return "";
-  return String(value).trim();
+  const s = String(value).trim();
+  return s === "[object Object]" ? "" : s;
 }
 
-function coerceStringList(items: unknown): string[] {
+export function coerceStringList(items: unknown): string[] {
   if (!Array.isArray(items)) return [];
   return items
     .map((item) => coerceDisplayText(item))
-    .filter(Boolean);
+    .filter((s) => s.length > 0);
 }
 
 function coerceReverseEngineeringFields(re: unknown): unknown {
@@ -425,8 +451,9 @@ export function coerceGrowthAnalysisScoresInput(raw: unknown): Record<string, un
   else if (base.summary !== undefined) base.summary = coerceDisplayText(base.summary);
   if (typeof base.realityCheck === "string") base.realityCheck = coerceDisplayText(base.realityCheck);
   else if (base.realityCheck !== undefined) base.realityCheck = coerceDisplayText(base.realityCheck);
-  if (typeof base.visualSummary === "string") base.visualSummary = coerceDisplayText(base.visualSummary);
-  else if (base.visualSummary !== undefined) base.visualSummary = coerceDisplayText(base.visualSummary);
+  if (base.visualSummary !== undefined) base.visualSummary = coerceDisplayText(base.visualSummary);
+  if (base.bgmAnalysis !== undefined) base.bgmAnalysis = coerceDisplayText(base.bgmAnalysis);
+  if (base.musicRecommendation !== undefined) base.musicRecommendation = coerceDisplayText(base.musicRecommendation);
   return base;
 }
 
@@ -473,6 +500,16 @@ export function mergeGrowthAnalysesDeterministic(
     .filter(Boolean)
     .join("\n\n");
 
+  const mergeReField = (key: "hookStrategy" | "emotionalArc" | "commercialLogic") => {
+    const parts = analyses
+      .map((a) => coerceDisplayText(a.reverseEngineering?.[key]))
+      .filter(Boolean);
+    return parts.length ? parts.join("\n\n") : "";
+  };
+
+  const bgmAnalysis =
+    analyses.map((a) => coerceDisplayText(a.bgmAnalysis)).find(Boolean) || "";
+
   return parseGrowthAnalysisScores({
     composition: avgScore("composition"),
     color: avgScore("color"),
@@ -483,7 +520,12 @@ export function mergeGrowthAnalysesDeterministic(
     summary,
     realityCheck: primary.realityCheck || secondary?.realityCheck || "",
     visualSummary: [primary.visualSummary, secondary?.visualSummary].filter(Boolean).join("\n\n"),
-    reverseEngineering: primary.reverseEngineering ?? secondary?.reverseEngineering,
+    reverseEngineering: {
+      hookStrategy: mergeReField("hookStrategy"),
+      emotionalArc: mergeReField("emotionalArc"),
+      commercialLogic: mergeReField("commercialLogic"),
+    },
+    bgmAnalysis,
     strengths: uniq(analyses.flatMap((a) => a.strengths || [])).slice(0, 4),
     improvements: uniq(analyses.flatMap((a) => a.improvements || [])).slice(0, 4),
     platforms: uniq(analyses.flatMap((a) => a.platforms || [])).slice(0, 4),
