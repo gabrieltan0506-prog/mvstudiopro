@@ -8,6 +8,8 @@ import {
   type GrowthAnalysisScores,
   growthAnalysisScoresSchema,
   parseGrowthAnalysisScores,
+  coerceDisplayText,
+  coerceStringList,
   growthLlmSchema,
   remixLlmSchema,
   growthPremiumContentSchema,
@@ -1293,9 +1295,9 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
     kuaishou: Number(parsed?.platformScores?.kuaishou || 0),
   };
   const reverseEngineering = {
-    hookStrategy: String(parsed?.reverseEngineering?.hookStrategy || ""),
-    emotionalArc: String(parsed?.reverseEngineering?.emotionalArc || ""),
-    commercialLogic: String(parsed?.reverseEngineering?.commercialLogic || ""),
+    hookStrategy: coerceDisplayText(parsed?.reverseEngineering?.hookStrategy),
+    emotionalArc: coerceDisplayText(parsed?.reverseEngineering?.emotionalArc),
+    commercialLogic: coerceDisplayText(parsed?.reverseEngineering?.commercialLogic),
   };
   const basePremium =
     parsed?.premiumContent && typeof parsed.premiumContent === "object" && !Array.isArray(parsed.premiumContent)
@@ -1357,11 +1359,11 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
       || "",
     ),
     strengths: Array.isArray(parsed?.strengths) && parsed.strengths.length
-      ? parsed.strengths.map(String)
+      ? coerceStringList(parsed.strengths)
       : [reverseEngineering.hookStrategy, reverseEngineering.emotionalArc].filter(Boolean),
     improvements: Array.isArray(parsed?.improvements) && parsed.improvements.length
-      ? parsed.improvements.map(String)
-      : [String(parsed?.realityCheck || ""), reverseEngineering.commercialLogic].filter(Boolean),
+      ? coerceStringList(parsed.improvements)
+      : [coerceDisplayText(parsed?.realityCheck), reverseEngineering.commercialLogic].filter(Boolean),
     titleSuggestions: Array.isArray(parsed?.titleSuggestions) && parsed.titleSuggestions.length
       ? parsed.titleSuggestions.map(String)
       : premiumTopics.slice(0, 4).map((item) => item.title).filter(Boolean),

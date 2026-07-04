@@ -18,6 +18,13 @@ import {
   type PlatformImageAsset,
   type PlatformVideoAsset,
 } from "@/lib/growthCampImagePipeline";
+import {
+  buildInstantFeedbackHint,
+  buildPlatformAssetAnalysisContext,
+  formatTrendHotspotHints,
+} from "@/lib/platformAssetAnalysisContext";
+import type { IpProfile } from "@/components/IpProfileModal";
+import type { AssetAnalysisLivePartial } from "@/components/platform/AssetAnalysisWaitPanel";
 import AssetAnalysisWaitPanel from "@/components/platform/AssetAnalysisWaitPanel";
 import AssetAnalysisResultBlock from "@/components/platform/AssetAnalysisResultBlock";
 import type { GrowthAnalysisScores } from "@shared/growth";
@@ -33,6 +40,10 @@ type PlatformAssetAnalysisPanelProps = {
   debugMode: boolean;
   supervisorAccess: boolean;
   disabled?: boolean;
+  personaSummary?: string;
+  ipProfile?: IpProfile;
+  /** 限定 trendStore 读取的平台（默认四大平台） */
+  trendPlatforms?: Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "weixin_channels" | "toutiao">;
   onBusyChange?: (busy: boolean) => void;
   onDeepOptimize?: (payload: AssetAnalysisHandoffPayload) => Promise<{ optimizedMarkdown: string; summary: string }>;
   onGenerateFromText?: (
@@ -48,6 +59,9 @@ export default function PlatformAssetAnalysisPanel({
   debugMode,
   supervisorAccess,
   disabled = false,
+  personaSummary = "",
+  ipProfile,
+  trendPlatforms,
   onBusyChange,
   onDeepOptimize,
   onGenerateFromText,
@@ -56,6 +70,7 @@ export default function PlatformAssetAnalysisPanel({
   cardCost = 50,
 }: PlatformAssetAnalysisPanelProps) {
   const { user } = useAuth();
+  const trpcUtils = trpc.useUtils();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
   const partialLiveRef = useRef<HTMLDivElement>(null);
@@ -74,6 +89,7 @@ export default function PlatformAssetAnalysisPanel({
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<GrowthAnalysisScores | null>(null);
   const [partialAnalyses, setPartialAnalyses] = useState<GrowthCampPartialAnalysis[]>([]);
+  const [liveSlots, setLiveSlots] = useState<AssetAnalysisLivePartial[]>([]);
   const [mergePending, setMergePending] = useState(false);
   const [imagePipelineDebug, setImagePipelineDebug] = useState<ImagePipelineDebugState>({});
   const [optimizeBusy, setOptimizeBusy] = useState(false);
@@ -235,18 +251,39 @@ export default function PlatformAssetAnalysisPanel({
     setError(null);
     setAnalysis(null);
     setPartialAnalyses([]);
+    setLiveSlots([]);
     partialSnapshotRef.current = [];
     setMergePending(false);
     setPartialFailure(null);
     setImagePipelineDebug({});
 
     let receivedPartial = false;
+    let instantHint = buildInstantFeedbackHint({ userContext: context, personaSummary, ipProfile });
 
     try {
+      const hotspots = await trpcUtils.agent.listTrendHotspots
+        .fetch({ platforms: trendPlatforms, topN: 8 })
+        .catch(() => null);
+      const trendHints = formatTrendHotspotHints(hotspots?.entries || []);
+      const enrichedContext = buildPlatformAssetAnalysisContext({
+        userContext: context,
+        personaSummary,
+        ipProfile,
+        trendHints,
+        trendStoreMeta: hotspots?.meta,
+      });
+      instantHint = buildInstantFeedbackHint({
+        userContext: context,
+        personaSummary,
+        ipProfile,
+        trendHints,
+        trendStoreMeta: hotspots?.meta,
+      });
+
       const result = await runGrowthCampAssetAnalysis({
         images: assets,
         video: videoAsset,
-        context: context.trim() || undefined,
+        context: enrichedContext,
         userId: user?.id ? String(user.id) : undefined,
         mergeStrategy: "fast",
         getSignedUploadUrl: (input) => getVideoUploadSignedUrlMutation.mutateAsync(input),
@@ -263,15 +300,66 @@ export default function PlatformAssetAnalysisPanel({
             setStage("analyzing");
           }
         },
+        onAssetAnalyzeStarted: ({ id, kind, label }) => {
+          flushSync(() => {
+            setLiveSlots((prev) => {
+              if (prev.some((p) => p.id === id)) return prev;
+              return [
+                ...prev,
+                {
+                  id,
+                  title: kind === "video" ? `参考视频 · ${label}` : `封面 / 图片 · ${label}`,
+                  badge: "上传完成 · 已注入 trendStore",
+                  status: "pending" as const,
+                  contextHint: instantHint,
+                },
+              ];
+            });
+            setStage("analyzing");
+          });
+        },
         onPartialResult: (partial) => {
           receivedPartial = true;
           flushSync(() => {
+            setLiveSlots((prev) => {
+              const exists = prev.some((p) => p.id === partial.id);
+              const next = exists
+                ? prev.map((p) =>
+                    p.id === partial.id
+                      ? {
+                          ...p,
+                          status: "ready" as const,
+                          analysis: partial.analysis,
+                          badge: "刚完成 · 可先阅读",
+                        }
+                      : p,
+                  )
+                : [
+                    ...prev,
+                    {
+                      id: partial.id,
+                      title:
+                        partial.kind === "video"
+                          ? `参考视频 · ${partial.label}`
+                          : `封面 / 图片 · ${partial.label}`,
+                      badge: "刚完成 · 可先阅读",
+                      status: "ready" as const,
+                      analysis: partial.analysis,
+                    },
+                  ];
+              return next;
+            });
             setPartialAnalyses((prev) => {
               if (prev.some((p) => p.id === partial.id)) return prev;
               const next = [...prev, partial];
               partialSnapshotRef.current = next;
               return next;
             });
+            const trackCount =
+              (videoAsset?.ready ? 1 : 0) + (assets.some((a) => a.ready) ? 1 : 0);
+            if (trackCount === 1) {
+              setAnalysis(partial.analysis);
+            }
           });
           requestAnimationFrame(() => {
             partialLiveRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -290,8 +378,12 @@ export default function PlatformAssetAnalysisPanel({
         typeof result.debug?.partialFailure === "string" ? result.debug.partialFailure.trim() : "";
       setPartialFailure(failureNote || null);
       if (receivedPartial) {
-        setStage("revealing");
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 1400));
+        const trackCount =
+          (videoAsset?.ready ? 1 : 0) + (assets.some((a) => a.ready) ? 1 : 0);
+        if (trackCount > 1) {
+          setStage("revealing");
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
+        }
       }
       setStage("done");
       if (failureNote) {
@@ -330,7 +422,11 @@ export default function PlatformAssetAnalysisPanel({
     checkAccessMutation,
     context,
     getVideoUploadSignedUrlMutation,
+    ipProfile,
+    personaSummary,
     supervisorAccess,
+    trendPlatforms,
+    trpcUtils.agent.listTrendHotspots,
     user?.id,
     videoAsset,
   ]);
@@ -366,19 +462,18 @@ export default function PlatformAssetAnalysisPanel({
         ? Math.max(1, Math.min(38, Math.round(uploadProgress * 0.38)))
         : 0;
 
-  const livePartials = useMemo(
-    () =>
-      partialAnalyses.map((partial) => ({
-        id: partial.id,
-        title: partial.kind === "video" ? "参考视频 · 先行摘要" : "封面 / 图片 · 先行摘要",
-        badge: stage === "revealing" ? "刚完成 · 可先阅读" : busy ? "刚完成 · 可先阅读" : "先行摘要",
-        analysis: partial.analysis,
-      })),
-    [partialAnalyses, busy, stage],
+  const expectedAssetTracks = (videoAsset?.ready ? 1 : 0) + (assets.some((a) => a.ready) ? 1 : 0);
+  const hasMultipleTracks = expectedAssetTracks > 1;
+  const pendingLivePartials = useMemo(
+    () => liveSlots.filter((slot) => slot.status === "pending" || !slot.analysis),
+    [liveSlots],
   );
 
   const showWaitPanel = busy && stage !== "done" && stage !== "error";
-  const showLivePartials = partialAnalyses.length > 0 && !analysis;
+  const showEarlyResults = partialAnalyses.length > 0;
+  const showIntegratedReport = Boolean(analysis) && !busy && hasMultipleTracks;
+  const showSingleFinalReport =
+    Boolean(analysis) && !busy && !hasMultipleTracks && partialAnalyses.length <= 1;
 
   return (
     <>
@@ -632,29 +727,31 @@ export default function PlatformAssetAnalysisPanel({
         ) : null}
       </div>
 
-      {showLivePartials ? (
+      {showEarlyResults ? (
         <div
           ref={partialLiveRef}
-          className="mt-5 space-y-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-500"
+          className="mt-5 space-y-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
         >
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6ee7b7]/80">
-              已完成 · 可先阅读
+              {busy ? "先行结果 · 边分析边展示" : "分段结果"}
             </span>
             <span className="h-px flex-1 bg-white/10" />
             {busy ? (
               <>
                 <Loader2 className="h-3 w-3 animate-spin text-[#c9c0e6]/50" />
-                <span className="text-[11px] text-[#c9c0e6]/50">其余素材后台继续中…</span>
+                <span className="text-[11px] text-[#c9c0e6]/50">
+                  已完成 {partialAnalyses.length}/{expectedAssetTracks} · 其余继续中…
+                </span>
               </>
             ) : null}
           </div>
           {partialAnalyses.map((partial) => (
             <AssetAnalysisResultBlock
-              key={`live-${partial.id}`}
+              key={`early-${partial.id}`}
               variant="full"
-              title={partial.kind === "video" ? "参考视频 · 分析完成" : "封面 / 图片 · 分析完成"}
-              badge="先行可读"
+              title={partial.kind === "video" ? `参考视频 · ${partial.label}` : `封面 / 图片 · ${partial.label}`}
+              badge={busy ? "刚完成 · 可先阅读" : "分段摘要"}
               analysis={partial.analysis}
             />
           ))}
@@ -664,12 +761,12 @@ export default function PlatformAssetAnalysisPanel({
       {showWaitPanel ? (
         <AssetAnalysisWaitPanel
           percent={displayPercent}
-          label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传全部素材…" : "正在分析您的素材…")}
+          label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传素材…" : "正在分析您的素材…")}
           detail={analysisProgress.detail}
           phase={stage === "uploading" ? "upload" : "analyze"}
           tracks={analysisProgress.tracks}
           assets={analysisPreviewAssets}
-          livePartials={livePartials}
+          livePartials={pendingLivePartials}
           mergePending={mergePending}
           revealingFull={stage === "revealing"}
         />
@@ -687,32 +784,35 @@ export default function PlatformAssetAnalysisPanel({
         </div>
       ) : null}
 
-      {analysis && !busy ? (
+      {showIntegratedReport && analysis ? (
         <div className="mt-5 space-y-4">
-          {partialAnalyses.length > 1 ? (
-            <>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#c9c0e6]/55">
-                分段结果
-              </div>
-              {partialAnalyses.map((partial) => (
-                <AssetAnalysisResultBlock
-                  key={`segment-${partial.id}`}
-                  variant="preview"
-                  title={partial.kind === "video" ? "参考视频分析" : "封面 / 图片分析"}
-                  badge="分段摘要"
-                  analysis={partial.analysis}
-                />
-              ))}
-            </>
-          ) : partialAnalyses.length === 1 ? (
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#49e6ff]/80">
+            整合版 · 视频 + 图片汇总
+          </div>
+          <AssetAnalysisResultBlock
+            title="完整综合报告"
+            badge="整合版"
+            variant="full"
+            analysis={analysis}
+          />
+        </div>
+      ) : null}
+
+      {showSingleFinalReport && analysis ? (
+        <div className="mt-5 space-y-4">
+          {!showEarlyResults ? (
             <AssetAnalysisResultBlock
-              variant="preview"
-              title="先行摘要"
-              badge="可先阅读"
-              analysis={partialAnalyses[0]!.analysis}
+              title="完整分析报告"
+              badge="分析完成"
+              variant="full"
+              analysis={analysis}
             />
           ) : null}
+        </div>
+      ) : null}
 
+      {analysis && !busy && !showIntegratedReport && !showSingleFinalReport ? (
+        <div className="mt-5 space-y-4">
           <AssetAnalysisResultBlock
             title={partialAnalyses.length > 1 ? "完整综合报告" : "完整分析报告"}
             badge={partialAnalyses.length > 1 ? "视频 + 图片汇总" : "分析完成"}

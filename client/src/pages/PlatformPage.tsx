@@ -6880,6 +6880,16 @@ export default function PlatformPage() {
                 debugMode={debugMode}
                 supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+                personaSummary={personaSummary}
+                ipProfile={ipProfile}
+                trendPlatforms={
+                  snapshot?.platformSnapshots
+                    ?.slice(0, 4)
+                    .map((p) => p.platform)
+                    .filter(Boolean) as Array<
+                    "douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "weixin_channels" | "toutiao"
+                  >
+                }
                 onBusyChange={setAssetAnalysisBusy}
                 onDeepOptimize={handleAssetDeepOptimize}
                 onGenerateFromText={handleAssetGenerateFromText}

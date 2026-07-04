@@ -16,7 +16,9 @@ export type AssetAnalysisLivePartial = {
   id: string;
   title: string;
   badge?: string;
-  analysis: GrowthAnalysisScores;
+  status?: "pending" | "ready";
+  contextHint?: string;
+  analysis?: GrowthAnalysisScores;
 };
 
 type AssetAnalysisWaitPanelProps = {
@@ -150,12 +152,31 @@ export default function AssetAnalysisWaitPanel({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.45, ease: "easeOut" }}
                 >
-                  <AssetAnalysisResultBlock
-                    variant="full"
-                    title={partial.title}
-                    badge={partial.badge ?? "刚完成 · 可先阅读"}
-                    analysis={partial.analysis}
-                  />
+                  {partial.status === "pending" || !partial.analysis ? (
+                    <div className="rounded-xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.06)] p-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]" />
+                        <span className="text-sm font-semibold text-white">{partial.title}</span>
+                        <span className="rounded-full border border-[#8cefff]/30 bg-[#8cefff]/10 px-2 py-0.5 text-[10px] text-[#8cefff]">
+                          {partial.badge ?? "上传完成 · 分析中"}
+                        </span>
+                      </div>
+                      {partial.contextHint ? (
+                        <pre className="whitespace-pre-wrap text-xs leading-relaxed text-[#c9c0e6]/75 font-sans">
+                          {partial.contextHint}
+                        </pre>
+                      ) : (
+                        <p className="text-xs text-[#c9c0e6]/60">正在结合人设与 trendStore 爬虫数据深析…</p>
+                      )}
+                    </div>
+                  ) : (
+                    <AssetAnalysisResultBlock
+                      variant="full"
+                      title={partial.title}
+                      badge={partial.badge ?? "刚完成 · 可先阅读"}
+                      analysis={partial.analysis}
+                    />
+                  )}
                 </motion.div>
               ))}
             </div>
@@ -169,7 +190,7 @@ export default function AssetAnalysisWaitPanel({
               <Loader2 className="h-6 w-6 animate-spin text-[#49e6ff]/60" />
               <p className="text-sm text-white/75">云端分析进行中…</p>
               <p className="max-w-md text-xs leading-relaxed text-[#c9c0e6]/55">
-                评分、摘要与优势会在<strong className="text-[#8cefff]">每份素材 Job 完成时</strong>立刻出现在此，无需等全部结束。
+                每份素材<strong className="text-[#8cefff]">上传完成即开始分析</strong>，并注入 trendStore 各平台爬虫热点；结果先出先显示。
               </p>
             </motion.div>
           )}
