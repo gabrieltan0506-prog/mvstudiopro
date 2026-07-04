@@ -11,13 +11,13 @@ import { AmbientLocationPicker } from "@/components/AmbientLocationPicker";
 const HERO_FLAGSHIP_LINKS: { href: string; label: string }[] = [
   { href: "/platform", label: "平台创作" },
   { href: "/research", label: "竞品调研" },
-  { href: "/canvas", label: "Omni 画布" },
+  { href: "/canvas", label: "Omini，Seedance 2.X画布" },
 ];
 
 const HERO_VIDEO_TAGS = [
   "平台创作",
   "竞品调研",
-  "Omni 画布",
+  "Omini，Seedance 2.X画布",
 ];
 
 const slides = [
@@ -192,7 +192,7 @@ export default function HomeHero() {
                   <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>{slide.subtitle}</div>
                   <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>{slide.title}</div>
                   <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84, maxWidth: 560, lineHeight: 1.55 }}>
-                    先看成片；平台创作、竞品调研与 Omni 画布三站闭环，从洞察到出图同页完成。
+                    先看成片；平台创作、竞品调研与 Omini，Seedance 2.X画布三站闭环，从洞察到出图同页完成。
                   </div>
                 </div>
 
@@ -483,9 +483,9 @@ export default function HomeHero() {
             },
             {
               href: "/canvas",
-              badge: "Omni 画布",
+              badge: "Omini，Seedance 2.X画布",
               badgeColor: "rgba(52,211,153,0.95)",
-              title: "Omni 视频创作画布",
+              title: "Omini，Seedance 2.X画布",
               desc: "节点式生图、视频、抠像与多方块连线传递，自由编排创作流。",
               gradient: "linear-gradient(135deg, rgba(52,211,153,0.16), rgba(16,185,129,0.08))",
               border: "rgba(52,211,153,0.35)",
@@ -578,7 +578,7 @@ export default function HomeHero() {
           },
           {
             href: "/canvas",
-            badge: "Omni 画布",
+            badge: "Omini，Seedance 2.X画布",
             badgeColor: "rgba(52,211,153,0.95)",
             title: "节点式视频创作",
             desc: "生图、视频、抠像与 A→B→C 连线传递；自由编排，无需跳转多页。",

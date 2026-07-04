@@ -76,7 +76,7 @@ export default function OmniCanvas() {
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Omni 创作画布</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
-              点击左侧 + 在画面中央创建方块；可选文本 / 图片 / 视频 / 整理文案 / 上传素材。选中方块后拖动右下角可放大缩小。
+              点击左侧 + 在加号旁创建方块；可选文本 / 图片 / 视频 / 整理文案 / 上传素材。选中方块后拖动右下角可放大缩小。
             </p>
           </div>
 

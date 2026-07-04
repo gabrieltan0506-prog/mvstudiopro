@@ -15,7 +15,7 @@ const nav = [
   ["首页", "Home", "/"],
   ["平台创作", "Platform", "/platform"],
   ["竞品调研", "Research", "/research"],
-  ["Omni 画布", "Canvas", "/canvas"],
+  ["Omini，Seedance 2.X画布", "Canvas", "/canvas"],
 ];
 
 export default function HomeNavbar() {
@@ -484,7 +484,7 @@ export default function HomeNavbar() {
                         style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >
-                        Omni 视频画布
+                        Omini，Seedance 2.X画布
                       </a>
 
                       <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
