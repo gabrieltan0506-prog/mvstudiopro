@@ -27,8 +27,8 @@ export async function enrichPlatformAssetAnalysisContext(
   }
 
   const trendBlock = [
-    "【各平台抓取趋势库 · trendStore 实时数据】",
-    "以下条目来自抖音/小红书/B站/快手等爬虫样本，仅供钩子结构与节奏参考；",
+    "【各平台近期热点参考】",
+    "以下条目来自抖音/小红书/B站/快手等平台近期样本，仅供钩子结构与节奏参考；",
     "须结合用户人设改写，禁止字面抄袭标题或正文。",
     "",
     briefing.briefingText,

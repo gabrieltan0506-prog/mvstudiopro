@@ -5,8 +5,8 @@ export type PlatformAssetContextInput = {
   personaSummary?: string;
   ipProfile?: IpProfile;
   trendHints?: string[];
-  /** listTrendHotspots 返回的 meta（如「18 天窗口爆款 · 抖音:…」） */
-  trendStoreMeta?: string;
+  /** 内部 meta，勿直接展示给用户 */
+  platformTrendMeta?: string;
 };
 
 export function formatTrendHotspotHints(
@@ -25,7 +25,11 @@ export function formatTrendHotspotHints(
     .filter(Boolean);
 }
 
-/** 注入 LLM 的完整背景：用户补充 + 仪表盘人设 + IP 基因库 + 趋势库参考 */
+function stripPlatformTag(hint: string): string {
+  return String(hint || "").replace(/^\[[^\]]+\]\s*/, "").trim();
+}
+
+/** 注入 LLM 的完整背景：用户补充 + 仪表盘人设 + IP 基因库 + 平台热点参考 */
 export function buildPlatformAssetAnalysisContext(input: PlatformAssetContextInput): string {
   const parts: string[] = [];
   const user = String(input.userContext || "").trim();
@@ -43,16 +47,15 @@ export function buildPlatformAssetAnalysisContext(input: PlatformAssetContextInp
 
   const trends = (input.trendHints || []).map((t) => String(t || "").trim()).filter(Boolean);
   if (trends.length) {
-    const metaLine = input.trendStoreMeta ? `（${input.trendStoreMeta}）` : "";
     parts.push(
-      `【各平台抓取趋势库 · trendStore 实时数据${metaLine}】\n须结合人设改写，禁止抄袭。\n${trends.slice(0, 8).map((t, i) => `${i + 1}. ${t}`).join("\n")}`,
+      `【各平台近期热点参考】\n须结合人设改写，禁止抄袭。\n${trends.slice(0, 8).map((t, i) => `${i + 1}. ${t}`).join("\n")}`,
     );
   }
 
   return parts.join("\n\n").slice(0, 8000);
 }
 
-/** 上传完成、分析尚未返回时，给用户看的即时反馈文案 */
+/** 上传完成、分析尚未返回时，给用户看的即时反馈（仅热词与方向，无后台名词） */
 export function buildInstantFeedbackHint(input: PlatformAssetContextInput): string {
   const lines: string[] = [];
   const persona = String(input.personaSummary || "").trim();
@@ -60,17 +63,14 @@ export function buildInstantFeedbackHint(input: PlatformAssetContextInput): stri
 
   const ip = input.ipProfile;
   if (ip && isIpProfileReady(ip)) {
-    lines.push(`IP 基因：${ip.industry.trim()} · 受众 ${ip.audience.trim()}`);
+    lines.push(`IP 定位：${ip.industry.trim()} · 受众 ${ip.audience.trim()}`);
   }
 
   const trends = (input.trendHints || []).map((t) => String(t || "").trim()).filter(Boolean);
-  if (trends[0]) lines.push(`趋势库（爬虫）对齐：${trends[0]}`);
-  if (trends[1]) lines.push(`同期参考：${trends[1]}`);
-  if (input.trendStoreMeta && input.trendStoreMeta !== "no_data") {
-    lines.push(`数据源：${input.trendStoreMeta}`);
-  }
+  if (trends[0]) lines.push(`热词方向：${stripPlatformTag(trends[0])}`);
+  if (trends[1]) lines.push(`同期参考：${stripPlatformTag(trends[1])}`);
 
   return lines.length
     ? lines.join("\n")
-    : "正在读取各平台 trendStore 爬虫数据并结合你的背景设定分析…";
+    : "封面 / 图片已优先开分析，正在结合各平台热词与你的背景设定生成方向…";
 }

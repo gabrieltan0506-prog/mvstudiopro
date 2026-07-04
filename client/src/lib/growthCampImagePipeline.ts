@@ -39,8 +39,8 @@ export type GrowthCampAnalysisProgressUpdate = {
 };
 
 export const GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES = [
-  "正在一次性上传全部素材到安全存储…",
-  "上传完成，正在入队云端视觉分析…",
+  "封面 / 图片优先上传，传完立即开分析…",
+  "正在对齐各平台热词与内容方向…",
   "正在识别画面构图与色彩层次…",
   "正在分析镜头节奏与视觉钩子…",
   "正在提取传播潜力与商业承接点…",
@@ -1224,8 +1224,14 @@ export async function runGrowthCampAssetAnalysis(
 
   const emitPipelineProgress = (label: string, detail?: string) => {
     const tracks: AssetAnalysisTrackProgress[] = [];
-    const collectPercent = (values: number[]) =>
-      values.length ? Math.round(values.reduce((sum, v) => sum + v, 0) / values.length) : 0;
+    const collectPercent = (values: number[]) => {
+      if (!values.length) return 0;
+      // 图片优先：图片已在分析时，整体进度跟图片轨，不被视频上传拖慢
+      if (hasImages && analyzePollState.image && hasVideo && !analyzePollState.video) {
+        return Math.round(analyzePollState.image.percent);
+      }
+      return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
+    };
 
     const percents: number[] = [];
     let phase: GrowthCampAnalysisProgressUpdate["phase"] = "upload";
@@ -1414,7 +1420,7 @@ export async function runGrowthCampAssetAnalysis(
     analyzeTrack.image = ANALYZE_PROGRESS.end;
   };
 
-  // 图片优先上传+分析（封面快），视频后传；分析 Job 并行
+  // 图片优先：传完立刻入队分析；视频上传与之并行，不阻塞图片分析
   const analyzePromises: Promise<void>[] = [];
 
   if (hasImages) {
@@ -1452,36 +1458,39 @@ export async function runGrowthCampAssetAnalysis(
     }
   }
 
-  if (hasVideo && video) {
-    try {
-      const uploaded = await uploadGrowthCampVideoAsset({
-        asset: video,
-        getSignedUploadUrl,
-        onUploadProgress: (percent) => {
-          uploadTrack.video = percent;
-          emitPipelineProgress("上传参考视频", `${percent}%`);
-          onUploadProgress?.(percent);
-        },
-        onProgressUpdate: (update) => {
-          uploadTrack.video = update.percent;
-          onProgressUpdate?.(update);
-        },
-        onDebugUpdate,
-      });
-      uploadTrack.video = 100;
-      onAssetAnalyzeStarted?.({
-        id: video.id,
-        kind: "video",
-        label: video.fileName || "参考视频",
-      });
-      analyzePromises.push(
-        runVideoAnalyzeTask(uploaded).catch((err: unknown) => {
-          taskErrors.push(err instanceof Error ? err.message : String(err));
-        }),
-      );
-    } catch (err: unknown) {
-      taskErrors.push(err instanceof Error ? err.message : String(err));
-    }
+  const videoUploadAndAnalyze =
+    hasVideo && video
+      ? (async () => {
+          try {
+            const uploaded = await uploadGrowthCampVideoAsset({
+              asset: video,
+              getSignedUploadUrl,
+              onUploadProgress: (percent) => {
+                uploadTrack.video = percent;
+                emitPipelineProgress("上传参考视频", `${percent}%`);
+                onUploadProgress?.(percent);
+              },
+              onProgressUpdate: (update) => {
+                uploadTrack.video = update.percent;
+                onProgressUpdate?.(update);
+              },
+              onDebugUpdate,
+            });
+            uploadTrack.video = 100;
+            onAssetAnalyzeStarted?.({
+              id: video.id,
+              kind: "video",
+              label: video.fileName || "参考视频",
+            });
+            await runVideoAnalyzeTask(uploaded);
+          } catch (err: unknown) {
+            taskErrors.push(err instanceof Error ? err.message : String(err));
+          }
+        })()
+      : null;
+
+  if (videoUploadAndAnalyze) {
+    analyzePromises.push(videoUploadAndAnalyze);
   }
 
   await Promise.allSettled(analyzePromises);
