@@ -705,34 +705,26 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
   let _delayMs = 5000;
   while (_retries > 0) {
     try {
-      const mainResponse = await invokeLLM({
-        ...strategistInvokeBase(strategistEngine),
-        temperature: 0.7,
-        topP: 0.9,
-        messages: [
-          { role: "system", content: params.systemMain },
-          { role: "user", content: params.userContent },
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "growth_camp_strategist_output",
-            strict: true,
-            schema: growthCampStrategistMainJsonSchema(),
+      // ── 速度優化：main + premium 並行發出（兩個獨立請求，無先後依賴） ──
+      const [mainResponse, premiumResult] = await Promise.all([
+        invokeLLM({
+          ...strategistInvokeBase(strategistEngine),
+          temperature: 0.7,
+          topP: 0.9,
+          messages: [
+            { role: "system", content: params.systemMain },
+            { role: "user", content: params.userContent },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "growth_camp_strategist_output",
+              strict: true,
+              schema: growthCampStrategistMainJsonSchema(),
+            },
           },
-        },
-      });
-      const parsedMain = parseLlmJsonResponse<Record<string, unknown>>(
-        String(mainResponse.choices[0]?.message?.content || "{}"),
-      );
-      if (!hasGrowthCoreScores(parsedMain) && _scoreRetries > 0) {
-        _scoreRetries--;
-        console.warn("[growth.strategist] main pass missing core scores, retrying strategist LLM");
-        continue;
-      }
-      let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
-      try {
-        const premiumResp = await invokeLLM({
+        }),
+        invokeLLM({
           ...strategistInvokeBase(strategistEngine),
           temperature: 0.7,
           topP: 0.9,
@@ -748,26 +740,47 @@ export async function runGrowthCampStrategistMultimodalPass(params: {
               schema: strategistPremiumVertexSchema(mode),
             },
           },
-        });
-        const premiumRaw = parseLlmJsonResponse<Record<string, unknown>>(
-          String(premiumResp.choices[0]?.message?.content || "{}"),
-        );
-        premiumContent = mapStrategistPremiumLlmToPremiumContent(mode, premiumRaw);
-      } catch (premiumErr: unknown) {
-        const errMsg = premiumErr instanceof Error ? premiumErr.message : String(premiumErr);
-        console.error(`[${mode} Premium LLM] 分析失败，降级为空内容:`, errMsg);
+        }).catch((premiumErr: unknown) => {
+          // premium 失敗不阻斷主流程，降級為空
+          const errMsg = premiumErr instanceof Error ? premiumErr.message : String(premiumErr);
+          console.error(`[${mode} Premium LLM] 并行分析失败，降级为空内容:`, errMsg);
+          return null;
+        }),
+      ]);
+
+      const parsedMain = parseLlmJsonResponse<Record<string, unknown>>(
+        String(mainResponse.choices[0]?.message?.content || "{}"),
+      );
+      if (!hasGrowthCoreScores(parsedMain) && _scoreRetries > 0) {
+        _scoreRetries--;
+        console.warn("[growth.strategist] main pass missing core scores, retrying strategist LLM");
+        continue;
+      }
+
+      let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+      if (premiumResult !== null) {
+        try {
+          const premiumRaw = parseLlmJsonResponse<Record<string, unknown>>(
+            String(premiumResult.choices[0]?.message?.content || "{}"),
+          );
+          premiumContent = mapStrategistPremiumLlmToPremiumContent(mode, premiumRaw);
+        } catch (parseErr: unknown) {
+          const errMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          console.error(`[${mode} Premium LLM] parse失败，降级为空内容:`, errMsg);
+          premiumContent = {
+            summary: "", strategy: "", actionableTopics: [], topics: [],
+            explosiveTopicAnalysis: "", musicAndExpressionAnalysis: "",
+            remixVisualAnalysis: "", remixExpressionAnalysis: "", musicPrompt: "",
+          } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+        }
+      } else {
         premiumContent = {
-          summary: "",
-          strategy: "",
-          actionableTopics: [],
-          topics: [],
-          explosiveTopicAnalysis: "",
-          musicAndExpressionAnalysis: "",
-          remixVisualAnalysis: "",
-          remixExpressionAnalysis: "",
-          musicPrompt: "",
+          summary: "", strategy: "", actionableTopics: [], topics: [],
+          explosiveTopicAnalysis: "", musicAndExpressionAnalysis: "",
+          remixVisualAnalysis: "", remixExpressionAnalysis: "", musicPrompt: "",
         } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
       }
+
       const withPremium = { ...parsedMain, premiumContent };
       strategistPassResult = {
         ...withPremium,

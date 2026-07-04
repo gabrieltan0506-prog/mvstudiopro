@@ -981,6 +981,10 @@ async function dispatchGrowthCampVideoAnalysisJob(params: {
   const onGrowthPoll = growthCampPollHandler(jobId, onDebugUpdate, "video");
   const job = await pollJobUntilTerminal(jobId, {
     maxWaitMs,
+    // 速度優化：視頻任務初始間隔 1.5s（前 20 次），之後退背至 5s，避免過度輪詢
+    intervalMs: 1500,
+    adaptiveBackoffAfterAttempts: 20,
+    maxIntervalMs: 5000,
     onPoll: (tick) => {
       pollCount = tick.attempt;
       onGrowthPoll(tick);
@@ -1085,6 +1089,10 @@ async function dispatchGrowthCampImageAnalysisJob(params: {
   const onGrowthPoll = growthCampPollHandler(jobId, onDebugUpdate, "image");
   const job = await pollJobUntilTerminal(jobId, {
     maxWaitMs,
+    // 速度優化：圖片任務初始間隔 1.5s（前 20 次），之後退背至 5s
+    intervalMs: 1500,
+    adaptiveBackoffAfterAttempts: 20,
+    maxIntervalMs: 5000,
     onPoll: (tick) => {
       pollCount = tick.attempt;
       onGrowthPoll(tick);

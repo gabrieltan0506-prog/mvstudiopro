@@ -67,27 +67,24 @@ async function ensureGcsUri(
   return uploaded.gcsUri;
 }
 
-/** 解析为 GCS 引用 + 短时签名 HTTPS 直链（不在服端转 base64） */
+/** 解析为 GCS 引用 + 短时签名 HTTPS 直链（并行处理，不在服端转 base64） */
 async function resolveImageVisionRefs(images: GrowthCampImageAssetInput[]): Promise<ImageVisionRef[]> {
-  const refs: ImageVisionRef[] = [];
-
-  for (let i = 0; i < images.length; i++) {
-    const img = images[i]!;
-    const mime = normalizeImageMime(img.mimeType, img.fileName);
-    if (!mime) {
-      throw new Error(`不支持的图片格式：${img.fileName || img.mimeType || "unknown"}`);
-    }
-
-    const gcsUri = await ensureGcsUri(img, i, mime);
-    refs.push({
-      mime,
-      gcsUri,
-      signedReadUrl: signGsUriV4ReadUrl(gcsUri, 3600),
-      publicUrl: getPublicGcsHttpsUrl(gcsUri),
-    });
-  }
-
-  return refs;
+  // 速度優化：並行 ensureGcsUri（多圖上傳從串行變並行）
+  return Promise.all(
+    images.map(async (img, i) => {
+      const mime = normalizeImageMime(img.mimeType, img.fileName);
+      if (!mime) {
+        throw new Error(`不支持的图片格式：${img.fileName || img.mimeType || "unknown"}`);
+      }
+      const gcsUri = await ensureGcsUri(img, i, mime);
+      return {
+        mime,
+        gcsUri,
+        signedReadUrl: signGsUriV4ReadUrl(gcsUri, 3600),
+        publicUrl: getPublicGcsHttpsUrl(gcsUri),
+      } satisfies ImageVisionRef;
+    }),
+  );
 }
 
 function buildAnalysisPromptText(imageCount: number, context?: string): string {
