@@ -74,7 +74,7 @@ export default function OmniCanvas() {
               <Clapperboard className="h-3.5 w-3.5" />
               自由画布 · 可创建 / 拖动 / 引用生成
             </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Omni 创作画布</h1>
+            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Gemini Omini 创作画布</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
               点击左侧 + 在加号旁创建方块；可选文本 / 图片 / 视频 / 整理文案 / 上传素材。选中方块后拖动右下角可放大缩小。
             </p>
