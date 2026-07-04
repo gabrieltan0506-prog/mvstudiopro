@@ -70,7 +70,7 @@ function isAlreadyGcsSignedReadUrl(u: string): boolean {
   return s.includes("x-goog-signature") || s.includes("x-goog-algorithm");
 }
 
-async function mirrorSeedanceMp4ToGcsSignedUrl(sourceVideoUrl: string): Promise<string> {
+export async function mirrorSeedanceMp4ToGcsSignedUrl(sourceVideoUrl: string): Promise<string> {
   const u = String(sourceVideoUrl || "").trim();
   if (!u) throw new Error("seedance_mirror_empty_url");
   if (isAlreadyGcsSignedReadUrl(u)) return u;
