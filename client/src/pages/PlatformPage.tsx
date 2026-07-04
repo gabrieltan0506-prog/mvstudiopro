@@ -6081,6 +6081,150 @@ export default function PlatformPage() {
           </div>
           <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、上传素材分析、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
 
+          {/* 平台趋势分析 · 常驻在工作台顶部，不依赖下方全案区是否展开 */}
+          <div
+            id="platform-custom-workspace-trends"
+            className="mb-6 rounded-2xl border border-[#49e6ff]/20 bg-[linear-gradient(180deg,rgba(73,230,255,0.08),rgba(12,8,28,0.35))] p-5 scroll-mt-24"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-[#8cefff]" />
+                  <h3 className="text-base font-bold text-white md:text-lg">平台趋势分析报表</h3>
+                  {platformDashboard && isContentLoading ? (
+                    <span className="rounded-full border border-[#c4b5fd]/35 bg-[rgba(196,181,253,0.12)] px-2.5 py-0.5 text-[10px] font-semibold text-[#ddd6fe]">
+                      看板已就绪 · 专属文案生成中
+                    </span>
+                  ) : platformDashboard ? (
+                    <span className="rounded-full border border-[#6ee7b7]/35 bg-[rgba(52,211,153,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#6ee7b7]">
+                      已出报告 · 无需等全案文案
+                    </span>
+                  ) : isAnalyzing || isDashboardLoading ? (
+                    <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#8cefff]">
+                      生成中
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-0.5 text-[10px] font-semibold text-[#c9c0e6]/70">
+                      可在此直接启动
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
+                  四格战略摘要与信号轮播常驻本工作台；Stage 1 看板完成后即可对照，素材分析或专属文案在后台跑时不必干等。
+                </p>
+              </div>
+              {platformDashboard ? (
+                <button
+                  type="button"
+                  onClick={() => void scrollToPaidPlatformTrends()}
+                  className="text-xs font-semibold text-[#8cefff] underline-offset-4 hover:underline"
+                >
+                  跳至完整趋势区 ↓
+                </button>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析窗口</span>
+              {WINDOW_OPTIONS.map((item) => {
+                const active = item.days === selectedWindowDays;
+                return (
+                  <button
+                    key={`custom-ws-window-${item.days}`}
+                    type="button"
+                    onClick={() => setSelectedWindowDays(item.days)}
+                    disabled={isAnalyzing || isDashboardLoading}
+                    title={item.description}
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      active
+                        ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
+                        : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {!platformDashboard && !isAnalyzing && !isDashboardLoading ? (
+              <div className="mt-4 space-y-3">
+                <textarea
+                  value={focusPrompt}
+                  onChange={(event) => setFocusPrompt(event.target.value)}
+                  placeholder="例如：先做小红书还是抖音？图文还是短视频？（可选，与下方全案区共用）"
+                  className="min-h-[72px] w-full rounded-xl border border-white/10 bg-[#0c061e] px-3 py-2.5 text-sm leading-6 text-white outline-none transition focus:border-[#49e6ff]/35"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalyze()}
+                    disabled={growthSnapshotQuery.isFetching}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(73,230,255,0.16)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {growthSnapshotQuery.isFetching ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    开始平台趋势分析
+                  </button>
+                  <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
+                    {CREDIT_COSTS.platformStage2Copywriting} 积分/次
+                  </span>
+                  <span className="text-[11px] text-[#c9c0e6]/50">含战略看板 + 专属文案入队</span>
+                </div>
+              </div>
+            ) : null}
+
+            {(isDashboardLoading || isAnalyzing) && !platformDashboard ? (
+              <div className="mt-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
+                <div className="flex items-center gap-2 text-sm text-[#8cefff]">
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                  正在读取近 {selectedWindowDays} 天窗口样本并生成战略看板…
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+                  <div className="h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]" />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {resultSummaryCards.map((item, index) => (
+                <div key={`custom-ws-trend-${item.label}-${index}`} className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                  {item.isLoadingSkeleton ? (
+                    <div className="animate-pulse space-y-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]/50" />
+                      <div className="text-sm font-semibold text-white/70">{item.value}</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-[#8cefff]/70">{item.label}</div>
+                      <div className="mt-2 text-sm font-bold leading-snug text-white">{item.value}</div>
+                      <p className="mt-2 text-[11px] leading-relaxed text-[#c9c0e6]/65">{item.detail}</p>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {immersiveRotatingCards.length > 0 ? (
+              <div className="mt-4">
+                <PlatformSignalsCarouselPanel
+                  eyebrow="自定义工作台 · 信号轮播"
+                  items={immersiveRotatingCards}
+                  activeIndex={rotatingCardIndex}
+                  onPickIndex={setRotatingCardIndex}
+                  subtitle="对照当前窗口的平台脉搏、热点切口与可先执行的动作；与素材分析同屏进行。"
+                />
+              </div>
+            ) : !platformDashboard && !snapshot && !isAnalyzing && !isDashboardLoading ? (
+              <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
+                启动分析后，信号轮播将在此展示热点与可执行动作；上方四格会先出战略摘要。
+              </p>
+            ) : null}
+          </div>
+
           {/* 一级 Tab */}
           <div className="mb-5 inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
             <button
@@ -6958,93 +7102,12 @@ export default function PlatformPage() {
               )}
             </>
           )}
-
-          {(snapshot || platformDashboard || isDashboardLoading || isAnalyzing) ? (
-            <div className="mt-8 border-t border-white/10 pt-6 space-y-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-[#8cefff]" />
-                    <h3 className="text-base font-bold text-white md:text-lg">平台趋势分析报表</h3>
-                    {platformDashboard && isContentLoading ? (
-                      <span className="rounded-full border border-[#c4b5fd]/35 bg-[rgba(196,181,253,0.12)] px-2.5 py-0.5 text-[10px] font-semibold text-[#ddd6fe]">
-                        看板已就绪 · 专属文案生成中
-                      </span>
-                    ) : platformDashboard ? (
-                      <span className="rounded-full border border-[#6ee7b7]/35 bg-[rgba(52,211,153,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#6ee7b7]">
-                        已出报告 · 无需等全案文案
-                      </span>
-                    ) : isAnalyzing || isDashboardLoading ? (
-                      <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#8cefff]">
-                        生成中
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                    Stage 1 战略看板完成后即可在此查看四格摘要与信号轮播；专属长文案仍在后台接续，不必干等。
-                  </p>
-                </div>
-                {platformDashboard ? (
-                  <button
-                    type="button"
-                    onClick={() => void scrollToPaidPlatformTrends()}
-                    className="text-xs font-semibold text-[#8cefff] underline-offset-4 hover:underline"
-                  >
-                    跳至完整趋势区 ↓
-                  </button>
-                ) : null}
-              </div>
-
-              {(isDashboardLoading || isAnalyzing) && !platformDashboard ? (
-                <div className="rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
-                  <div className="flex items-center gap-2 text-sm text-[#8cefff]">
-                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                    正在读取近 {selectedWindowDays} 天窗口样本并生成战略看板…
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
-                    <div className="h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]" />
-                  </div>
-                </div>
-              ) : null}
-
-              {(platformDashboard || snapshot) ? (
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  {resultSummaryCards.map((item, index) => (
-                    <div key={`custom-trend-${item.label}-${index}`} className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                      {item.isLoadingSkeleton ? (
-                        <div className="animate-pulse space-y-2">
-                          <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]/50" />
-                          <div className="text-sm font-semibold text-white/70">{item.value}</div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="text-[10px] uppercase tracking-[0.16em] text-[#8cefff]/70">{item.label}</div>
-                          <div className="mt-2 text-sm font-bold leading-snug text-white">{item.value}</div>
-                          <p className="mt-2 text-[11px] leading-relaxed text-[#c9c0e6]/65">{item.detail}</p>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {immersiveRotatingCards.length > 0 && (platformDashboard || isAnalyzing || snapshot) ? (
-                <PlatformSignalsCarouselPanel
-                  eyebrow="自定义区 · 信号轮播"
-                  items={immersiveRotatingCards}
-                  activeIndex={rotatingCardIndex}
-                  onPickIndex={setRotatingCardIndex}
-                  subtitle="在素材分析或专属文案后台运行时，仍可对照当前窗口的平台脉搏、热点切口与可先执行的动作。"
-                />
-              ) : null}
-            </div>
-          ) : null}
           </div>
         </section>
 
         {customWorkspaceOperating ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义文案/选题/抠像进行中，下方全案分析区已收起；素材分析与平台趋势报表仍可在上方工作台查看。
+            自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与素材分析仍可在上方工作台查看。
           </p>
         ) : null}
         <div className={customWorkspaceOperating ? "hidden" : undefined} aria-hidden={customWorkspaceOperating}>

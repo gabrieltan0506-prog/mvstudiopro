@@ -364,6 +364,41 @@ export function normalizeGrowthAnalysisScoreValue(value: unknown, fallback: numb
 }
 
 /** 仅对已存在的分数字段做类型校正，不伪造缺失值。 */
+function coerceDisplayText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const key of ["text", "summary", "detail", "description", "title", "value", "arc", "content"]) {
+      const candidate = obj[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  if (value == null) return "";
+  return String(value).trim();
+}
+
+function coerceStringList(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => coerceDisplayText(item))
+    .filter(Boolean);
+}
+
+function coerceReverseEngineeringFields(re: unknown): unknown {
+  if (!re || typeof re !== "object" || Array.isArray(re)) return re;
+  const obj = { ...(re as Record<string, unknown>) };
+  for (const key of ["hookStrategy", "emotionalArc", "commercialLogic"]) {
+    if (obj[key] !== undefined) obj[key] = coerceDisplayText(obj[key]);
+  }
+  return obj;
+}
+
+/** 仅对已存在的分数字段做类型校正，不伪造缺失值。 */
 export function coerceGrowthAnalysisScoresInput(raw: unknown): Record<string, unknown> {
   const base =
     raw && typeof raw === "object" && !Array.isArray(raw)
@@ -379,6 +414,19 @@ export function coerceGrowthAnalysisScoresInput(raw: unknown): Record<string, un
     const ei = normalizeGrowthAnalysisScoreValue(base.explosiveIndex, 0);
     base.explosiveIndex = Math.min(10, Math.max(0, ei));
   }
+  if (base.strengths !== undefined) base.strengths = coerceStringList(base.strengths);
+  if (base.improvements !== undefined) base.improvements = coerceStringList(base.improvements);
+  if (base.titleSuggestions !== undefined) base.titleSuggestions = coerceStringList(base.titleSuggestions);
+  if (base.platforms !== undefined) base.platforms = coerceStringList(base.platforms);
+  if (base.reverseEngineering !== undefined) {
+    base.reverseEngineering = coerceReverseEngineeringFields(base.reverseEngineering);
+  }
+  if (typeof base.summary === "string") base.summary = coerceDisplayText(base.summary);
+  else if (base.summary !== undefined) base.summary = coerceDisplayText(base.summary);
+  if (typeof base.realityCheck === "string") base.realityCheck = coerceDisplayText(base.realityCheck);
+  else if (base.realityCheck !== undefined) base.realityCheck = coerceDisplayText(base.realityCheck);
+  if (typeof base.visualSummary === "string") base.visualSummary = coerceDisplayText(base.visualSummary);
+  else if (base.visualSummary !== undefined) base.visualSummary = coerceDisplayText(base.visualSummary);
   return base;
 }
 

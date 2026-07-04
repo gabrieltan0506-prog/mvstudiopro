@@ -5,6 +5,8 @@ type AssetAnalysisResultBlockProps = {
   analysis: GrowthAnalysisScores;
   title?: string;
   badge?: string;
+  /** preview：评分与核心摘要；full：完整报告含拆解、选题与改法 */
+  variant?: "preview" | "full";
   className?: string;
 };
 
@@ -12,8 +14,10 @@ export default function AssetAnalysisResultBlock({
   analysis,
   title = "视觉分析结果",
   badge,
+  variant = "full",
   className = "",
 }: AssetAnalysisResultBlockProps) {
+  const isPreview = variant === "preview";
   return (
     <div className={`space-y-5 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5 ${className}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -60,9 +64,25 @@ export default function AssetAnalysisResultBlock({
         </div>
       ) : null}
 
-      {analysis.reverseEngineering?.hookStrategy ||
+      {isPreview && analysis.strengths?.length ? (
+        <div>
+          <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势（节选）</div>
+          <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
+            {analysis.strengths.slice(0, 2).map((item, i) => (
+              <li key={`preview-strength-${i}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {isPreview ? (
+        <p className="text-[11px] text-[#8cefff]/55">完整拆解、选题与改法将在分析结束后展示 ↓</p>
+      ) : null}
+
+      {!isPreview &&
+      (analysis.reverseEngineering?.hookStrategy ||
       analysis.reverseEngineering?.emotionalArc ||
-      analysis.reverseEngineering?.commercialLogic ? (
+      analysis.reverseEngineering?.commercialLogic) ? (
         <div className="space-y-3 rounded-xl border border-white/10 bg-black/15 p-4">
           <div className="text-[11px] font-semibold text-[#6ee7b7]/80">视觉拆解</div>
           {analysis.reverseEngineering.hookStrategy ? (
@@ -92,7 +112,7 @@ export default function AssetAnalysisResultBlock({
         </div>
       ) : null}
 
-      {analysis.premiumContent?.actionableTopics?.length ? (
+      {!isPreview && analysis.premiumContent?.actionableTopics?.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-2">可执行选题</div>
           <div className="space-y-3">
@@ -108,7 +128,7 @@ export default function AssetAnalysisResultBlock({
         </div>
       ) : null}
 
-      {analysis.strengths?.length ? (
+      {!isPreview && analysis.strengths?.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势</div>
           <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
@@ -119,7 +139,7 @@ export default function AssetAnalysisResultBlock({
         </div>
       ) : null}
 
-      {analysis.improvements?.length ? (
+      {!isPreview && analysis.improvements?.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">改进建议</div>
           <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
@@ -130,11 +150,11 @@ export default function AssetAnalysisResultBlock({
         </div>
       ) : null}
 
-      {analysis.platforms?.length ? (
+      {!isPreview && analysis.platforms?.length ? (
         <div className="text-xs text-[#8cefff]/80">推荐平台：{analysis.platforms.join(" · ")}</div>
       ) : null}
 
-      {analysis.titleSuggestions?.length ? (
+      {!isPreview && analysis.titleSuggestions?.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">标题建议</div>
           <ul className="space-y-1 text-sm text-[#fde047]/90">

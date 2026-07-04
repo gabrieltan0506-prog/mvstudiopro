@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import {
@@ -66,7 +67,7 @@ export default function PlatformAssetAnalysisPanel({
     phase: "upload",
     label: "",
   });
-  const [stage, setStage] = useState<"idle" | "uploading" | "analyzing" | "done" | "error">("idle");
+  const [stage, setStage] = useState<"idle" | "uploading" | "analyzing" | "revealing" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<GrowthAnalysisScores | null>(null);
   const [partialAnalyses, setPartialAnalyses] = useState<GrowthCampPartialAnalysis[]>([]);
@@ -74,7 +75,7 @@ export default function PlatformAssetAnalysisPanel({
   const [imagePipelineDebug, setImagePipelineDebug] = useState<ImagePipelineDebugState>({});
   const [optimizeBusy, setOptimizeBusy] = useState(false);
   const [generateBusy, setGenerateBusy] = useState(false);
-  const [optimizedMarkdown, setOptimizedMarkdown] = useState<string | null>(null);
+  const [partialFailure, setPartialFailure] = useState<string | null>(null);
   const [optimizeSummary, setOptimizeSummary] = useState<string | null>(null);
 
   useEffect(() => {
@@ -231,7 +232,10 @@ export default function PlatformAssetAnalysisPanel({
     setAnalysis(null);
     setPartialAnalyses([]);
     setMergePending(false);
+    setPartialFailure(null);
     setImagePipelineDebug({});
+
+    let receivedPartial = false;
 
     try {
       const result = await runGrowthCampAssetAnalysis({
@@ -243,18 +247,24 @@ export default function PlatformAssetAnalysisPanel({
         getSignedUploadUrl: (input) => getVideoUploadSignedUrlMutation.mutateAsync(input),
         onUploadProgress: (percent) => {
           setUploadProgress(percent);
-          if (percent >= 100) setStage("analyzing");
         },
         onProgressUpdate: (update) => {
           setAnalysisProgress(update);
           if (update.phase === "merge") setMergePending(true);
           if (update.phase === "done") setMergePending(false);
-          if (update.phase !== "upload") setStage("analyzing");
+          if (update.phase === "upload") {
+            setStage("uploading");
+          } else {
+            setStage("analyzing");
+          }
         },
         onPartialResult: (partial) => {
-          setPartialAnalyses((prev) => {
-            if (prev.some((p) => p.id === partial.id)) return prev;
-            return [...prev, partial];
+          receivedPartial = true;
+          flushSync(() => {
+            setPartialAnalyses((prev) => {
+              if (prev.some((p) => p.id === partial.id)) return prev;
+              return [...prev, partial];
+            });
           });
         },
         onDebugUpdate: (patch) => {
@@ -265,16 +275,33 @@ export default function PlatformAssetAnalysisPanel({
         },
       });
       setAnalysis(result.analysis);
-      setStage("done");
       setUploadProgress(100);
-      toast.success("素材视觉分析完成");
+      const failureNote =
+        typeof result.debug?.partialFailure === "string" ? result.debug.partialFailure.trim() : "";
+      setPartialFailure(failureNote || null);
+      if (receivedPartial) {
+        setStage("revealing");
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 1400));
+      }
+      setStage("done");
+      if (failureNote) {
+        toast.warning("部分素材未完成，已展示已完成的结果");
+      } else {
+        toast.success("素材视觉分析完成");
+      }
     } catch (analysisError: unknown) {
       const raw = analysisError instanceof Error ? analysisError.message : "素材分析失败";
       const msg = sanitizePlatformUserMessage(raw, "素材分析暂时不可用，请稍后重试");
-      setError(msg);
+      if (partialAnalyses.length > 0) {
+        setPartialFailure(msg);
+        toast.warning("部分素材分析失败，可先阅读已完成的结果");
+      } else {
+        setError(msg);
+      }
       setStage("error");
     } finally {
       setBusy(false);
+      setMergePending(false);
     }
   }, [
     allAssetsReady,
@@ -313,9 +340,24 @@ export default function PlatformAssetAnalysisPanel({
   );
 
   const displayPercent =
-    stage === "uploading"
-      ? Math.max(1, Math.min(12, Math.round(uploadProgress * 0.12)))
-      : analysisProgress.percent;
+    analysisProgress.percent > 0
+      ? analysisProgress.percent
+      : stage === "uploading"
+        ? Math.max(1, Math.min(38, Math.round(uploadProgress * 0.38)))
+        : 0;
+
+  const livePartials = useMemo(
+    () =>
+      partialAnalyses.map((partial) => ({
+        id: partial.id,
+        title: partial.kind === "video" ? "参考视频 · 先行摘要" : "封面 / 图片 · 先行摘要",
+        badge: stage === "revealing" ? "刚完成 · 可先阅读" : busy ? "刚完成 · 可先阅读" : "先行摘要",
+        analysis: partial.analysis,
+      })),
+    [partialAnalyses, busy, stage],
+  );
+
+  const showWaitPanel = busy && stage !== "done";
 
   return (
     <>
@@ -569,19 +611,15 @@ export default function PlatformAssetAnalysisPanel({
         ) : null}
       </div>
 
-      {busy && stage === "uploading" && stageLabel ? (
-        <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#6ee7b7]/15 bg-[rgba(52,211,153,0.05)] px-4 py-3 text-sm text-[#6ee7b7]/80">
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#34d399]" />
-          {stageLabel}
-        </div>
-      ) : null}
-
-      {busy && stage === "analyzing" ? (
+      {showWaitPanel ? (
         <AssetAnalysisWaitPanel
           percent={displayPercent}
-          label={analysisProgress.label || stageLabel || "正在分析您的素材…"}
+          label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传全部素材…" : "正在分析您的素材…")}
           detail={analysisProgress.detail}
           assets={analysisPreviewAssets}
+          livePartials={livePartials}
+          mergePending={mergePending}
+          revealingFull={stage === "revealing"}
         />
       ) : null}
 
@@ -591,36 +629,45 @@ export default function PlatformAssetAnalysisPanel({
         </div>
       ) : null}
 
-      {partialAnalyses.length > 1 || (busy && partialAnalyses.length > 0) ? (
-        <div className="mt-5 space-y-4">
-          {partialAnalyses.map((partial) => (
-            <AssetAnalysisResultBlock
-              key={partial.id}
-              title={partial.kind === "video" ? "参考视频分析" : "封面 / 图片分析"}
-              badge={busy ? "已完成 · 可先阅读" : undefined}
-              analysis={partial.analysis}
-            />
-          ))}
-          {mergePending ? (
-            <div className="flex items-center gap-2 rounded-xl border border-[#49e6ff]/20 bg-[#49e6ff]/5 px-4 py-3 text-sm text-[#8cefff]/90">
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-              正在汇总综合报告…
-            </div>
-          ) : null}
+      {partialFailure ? (
+        <div className="mt-5 rounded-2xl border border-amber-500/30 bg-[rgba(251,191,36,0.08)] px-4 py-3 text-sm text-amber-100">
+          ⚠️ {partialFailure}
         </div>
       ) : null}
 
-      {analysis && partialAnalyses.length > 1 ? (
-        <AssetAnalysisResultBlock
-          title="综合报告"
-          badge="视频 + 图片汇总"
-          analysis={analysis}
-          className="mt-5"
-        />
-      ) : null}
+      {analysis && !busy ? (
+        <div className="mt-5 space-y-4">
+          {partialAnalyses.length > 1 ? (
+            <>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#c9c0e6]/55">
+                分段结果
+              </div>
+              {partialAnalyses.map((partial) => (
+                <AssetAnalysisResultBlock
+                  key={`segment-${partial.id}`}
+                  variant="preview"
+                  title={partial.kind === "video" ? "参考视频分析" : "封面 / 图片分析"}
+                  badge="分段摘要"
+                  analysis={partial.analysis}
+                />
+              ))}
+            </>
+          ) : partialAnalyses.length === 1 ? (
+            <AssetAnalysisResultBlock
+              variant="preview"
+              title="先行摘要"
+              badge="可先阅读"
+              analysis={partialAnalyses[0]!.analysis}
+            />
+          ) : null}
 
-      {analysis && partialAnalyses.length <= 1 && !busy ? (
-        <AssetAnalysisResultBlock analysis={analysis} className="mt-6" />
+          <AssetAnalysisResultBlock
+            title={partialAnalyses.length > 1 ? "完整综合报告" : "完整分析报告"}
+            badge={partialAnalyses.length > 1 ? "视频 + 图片汇总" : "分析完成"}
+            variant="full"
+            analysis={analysis}
+          />
+        </div>
       ) : null}
 
       {analysis && !busy ? (
