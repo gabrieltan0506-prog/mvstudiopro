@@ -11,10 +11,12 @@ import {
   normalizeGrowthCampImageMime,
   readFileAsDataUrl,
   runGrowthCampAssetAnalysis,
+  type GrowthCampAnalysisProgressUpdate,
   type ImagePipelineDebugState,
   type PlatformImageAsset,
   type PlatformVideoAsset,
 } from "@/lib/growthCampImagePipeline";
+import AssetAnalysisWaitPanel from "@/components/platform/AssetAnalysisWaitPanel";
 import type { GrowthAnalysisScores } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -57,6 +59,11 @@ export default function PlatformAssetAnalysisPanel({
   const [context, setContext] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [analysisProgress, setAnalysisProgress] = useState<GrowthCampAnalysisProgressUpdate>({
+    percent: 0,
+    phase: "upload",
+    label: "",
+  });
   const [stage, setStage] = useState<"idle" | "uploading" | "analyzing" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<GrowthAnalysisScores | null>(null);
@@ -216,6 +223,7 @@ export default function PlatformAssetAnalysisPanel({
     setBusy(true);
     setStage("uploading");
     setUploadProgress(0);
+    setAnalysisProgress({ percent: 0, phase: "upload", label: "准备上传素材" });
     setError(null);
     setAnalysis(null);
     setImagePipelineDebug({});
@@ -238,6 +246,10 @@ export default function PlatformAssetAnalysisPanel({
         onUploadProgress: (percent) => {
           setUploadProgress(percent);
           if (percent >= 100) setStage("analyzing");
+        },
+        onProgressUpdate: (update) => {
+          setAnalysisProgress(update);
+          if (update.phase !== "upload") setStage("analyzing");
         },
         onDebugUpdate: (patch) => {
           setImagePipelineDebug((prev) => {
@@ -275,10 +287,30 @@ export default function PlatformAssetAnalysisPanel({
     stage === "uploading"
       ? `正在上传素材… ${uploadProgress}%`
       : stage === "analyzing"
-        ? videoAsset?.ready && assets.some((a) => a.ready)
-          ? "正在分析您的素材（视频与图片分两步执行），约需 2–4 分钟…"
-          : "正在分析您的素材，约需 30–90 秒…"
+        ? `${analysisProgress.label}${analysisProgress.detail ? ` · ${analysisProgress.detail}` : ""}`
         : null;
+
+  const analysisPreviewAssets = useMemo(
+    () => [
+      ...(videoAsset?.previewUrl
+        ? [{ id: videoAsset.id, previewUrl: videoAsset.previewUrl, fileName: videoAsset.fileName, kind: "video" as const }]
+        : []),
+      ...assets
+        .filter((a) => a.previewUrl)
+        .map((a) => ({
+          id: a.id,
+          previewUrl: a.previewUrl,
+          fileName: a.fileName,
+          kind: "image" as const,
+        })),
+    ],
+    [assets, videoAsset],
+  );
+
+  const displayPercent =
+    stage === "uploading"
+      ? Math.max(1, Math.min(12, Math.round(uploadProgress * 0.12)))
+      : analysisProgress.percent;
 
   return (
     <>
@@ -530,11 +562,20 @@ export default function PlatformAssetAnalysisPanel({
         ) : null}
       </div>
 
-      {busy && stageLabel ? (
+      {busy && stage === "uploading" && stageLabel ? (
         <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#6ee7b7]/15 bg-[rgba(52,211,153,0.05)] px-4 py-3 text-sm text-[#6ee7b7]/80">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#34d399]" />
           {stageLabel}
         </div>
+      ) : null}
+
+      {busy && stage === "analyzing" ? (
+        <AssetAnalysisWaitPanel
+          percent={displayPercent}
+          label={analysisProgress.label || stageLabel || "正在分析您的素材…"}
+          detail={analysisProgress.detail}
+          assets={analysisPreviewAssets}
+        />
       ) : null}
 
       {error ? (
