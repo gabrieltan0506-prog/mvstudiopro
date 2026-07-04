@@ -249,6 +249,17 @@ const WINDOW_OPTIONS = [
   { days: 45 as const, label: "45天", description: "看更长窗口的沉淀与长期可做性" },
 ] as const;
 
+type TrendPlatformKey = "xiaohongshu" | "bilibili" | "douyin" | "kuaishou";
+
+const TREND_PLATFORM_OPTIONS: { key: TrendPlatformKey; label: string }[] = [
+  { key: "xiaohongshu", label: "小红书" },
+  { key: "bilibili", label: "B站" },
+  { key: "douyin", label: "抖音" },
+  { key: "kuaishou", label: "快手" },
+];
+
+const ALL_TREND_PLATFORM_KEYS = TREND_PLATFORM_OPTIONS.map((item) => item.key);
+
 const EMPTY_ANALYSIS: GrowthAnalysisScores = {
   composition: 0,
   color: 0,
@@ -1578,6 +1589,9 @@ export default function PlatformPage() {
   const queryClient = useQueryClient();
   const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<PlatformWindowDays>(15);
+  const [selectedTrendPlatforms, setSelectedTrendPlatforms] = useState<TrendPlatformKey[]>([
+    ...ALL_TREND_PLATFORM_KEYS,
+  ]);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
   const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
@@ -1871,7 +1885,7 @@ export default function PlatformPage() {
     {
       context: focusPrompt || undefined,
       modelName: "gemini-3.5-flash",
-      requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
+      requestedPlatforms: selectedTrendPlatforms,
       analysis: EMPTY_ANALYSIS,
       windowDays: selectedWindowDays,
       interactivePlatform: true,
@@ -5538,10 +5552,20 @@ export default function PlatformPage() {
       return;
     }
 
+    if (!selectedTrendPlatforms.length) {
+      toast.error("请至少选择一个分析平台");
+      return;
+    }
+
+    const selectedPlatformLabels = selectedTrendPlatforms
+      .map((key) => TREND_PLATFORM_OPTIONS.find((item) => item.key === key)?.label)
+      .filter(Boolean)
+      .join("、");
+
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `【平台全案分析】将基于四平台实时样本与你的 IP 背景，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
+        `【平台全案分析】将基于${selectedPlatformLabels}实时样本与你的 IP 背景，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
           `专属文案任务入队时扣除 ${cost} 积分；全程约数分钟，请勿关闭页面。是否开始？`,
       )
     ) {
@@ -6147,14 +6171,40 @@ export default function PlatformPage() {
               })}
             </div>
 
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析平台</span>
+              {TREND_PLATFORM_OPTIONS.map((item) => {
+                const active = selectedTrendPlatforms.includes(item.key);
+                const isLastSelected = active && selectedTrendPlatforms.length === 1;
+                return (
+                  <button
+                    key={`custom-ws-platform-${item.key}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedTrendPlatforms((prev) => {
+                        if (prev.includes(item.key)) {
+                          if (prev.length === 1) return prev;
+                          return prev.filter((platform) => platform !== item.key);
+                        }
+                        return [...prev, item.key];
+                      });
+                    }}
+                    disabled={isAnalyzing || isDashboardLoading || isLastSelected}
+                    title={isLastSelected ? "至少保留一个平台" : undefined}
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      active
+                        ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
+                        : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+
             {!platformDashboard && !isAnalyzing && !isDashboardLoading ? (
-              <div className="mt-4 space-y-3">
-                <textarea
-                  value={focusPrompt}
-                  onChange={(event) => setFocusPrompt(event.target.value)}
-                  placeholder="例如：先做小红书还是抖音？图文还是短视频？（可选，与下方全案区共用）"
-                  className="min-h-[72px] w-full rounded-xl border border-white/10 bg-[#0c061e] px-3 py-2.5 text-sm leading-6 text-white outline-none transition focus:border-[#49e6ff]/35"
-                />
+              <div className="mt-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
