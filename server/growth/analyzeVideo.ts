@@ -1891,6 +1891,106 @@ async function runContentExtractPass(params: {
   };
 }
 
+function emptyAudioFirstPass(): AudioFirstPass {
+  return {
+    valueTier: "medium",
+    contentSummary: "",
+    hookSummary: "",
+    audiencePromise: "",
+    commercialPotential: 0,
+    creatorSignals: [],
+    priorityMoments: [],
+    riskMoments: [],
+    deepDiveBrief: "",
+    transcriptSummary: "",
+    bgmAnalysis: { detected: false },
+  };
+}
+
+function emptyVisualFirstPass(): VisualFirstPass {
+  return {
+    visualSummary: "",
+    openingFrameAssessment: "",
+    sceneConsistency: "",
+    trustSignals: [],
+    visualRisks: [],
+    keyFrames: [],
+  };
+}
+
+/** Platform 素材区参考视频：跳过口播/BGM 多 pass，单次 Strategist 深析（与封面分析同级耗时） */
+async function runPlatformReferenceAssetPipeline(params: {
+  videoPath: string;
+  duration: number;
+  safeName: string;
+  strategistEngine: GrowthCampStrategistEngine;
+  videoGcsUri: string;
+  context?: string;
+  fileName?: string;
+  mode: GrowthAnalysisMode;
+}) {
+  const sparseFrames = await extractSparseFramesFromPath(
+    params.videoPath,
+    0,
+    params.duration,
+    "slim",
+  ).catch((error) => {
+    console.warn("[growth.analyzeVideo] platform reference frame extraction failed:", error);
+    throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
+  });
+
+  const strategistFrames = pickStrategistFrames(sparseFrames.frames).slice(0, 5);
+  if (!strategistFrames.length) {
+    throw new VideoAnalysisFailure("frame_extraction", "未能从参考视频中抽取有效画面帧");
+  }
+
+  let deepDive = await withGrowthAnalysisSlot(() =>
+    runDeepDivePass({
+      strategistEngine: params.strategistEngine,
+      sparseFrames: strategistFrames,
+      audioFirstPass: emptyAudioFirstPass(),
+      visualFirstPass: emptyVisualFirstPass(),
+      transcript: "",
+      duration: params.duration,
+      context: params.context,
+      fileName: params.fileName,
+      videoGcsUri: params.videoGcsUri,
+      mode: params.mode,
+    }),
+  );
+
+  deepDive = await ensureGrowthCoreScores(deepDive, {
+    strategistEngine: params.strategistEngine,
+    context: params.context,
+    evidenceText: JSON.stringify(
+      {
+        pipeline: "platform_reference_lite",
+        durationSeconds: params.duration,
+        sparseFrameCount: strategistFrames.length,
+        summary: deepDive.summary,
+        realityCheck: deepDive.realityCheck,
+        reverseEngineering: deepDive.reverseEngineering,
+      },
+      null,
+      2,
+    ),
+  });
+
+  const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+  const parsed = parseGrowthAnalysisScores({
+    ...deepDive,
+    mode: analysisMode,
+    visualSummary: String(deepDive?.visualSummary || ""),
+  });
+
+  return {
+    analysis: parsed,
+    transcript: "",
+    sparseFrameCount: strategistFrames.length,
+    costProfile: estimateTokenProfile(params.duration, strategistFrames.length),
+  };
+}
+
 async function runDeepDivePass(params: {
   strategistEngine: GrowthCampStrategistEngine;
   sparseFrames: SparseFrame[];
@@ -2033,6 +2133,8 @@ export async function analyzeVideo(params: {
   forceRefresh?: boolean;
   analysisProfile?: GrowthAnalysisProfile;
   extractPrompt?: string;
+  /** Platform 素材区参考视频：轻量单次 Strategist，跳过口播/BGM 多 pass */
+  platformAssetLite?: boolean;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
   try {
@@ -2043,8 +2145,8 @@ export async function analyzeVideo(params: {
     if (typeof params.gcsUri === "string" && isGsUri(params.gcsUri)) {
       const storedObject = await downloadGcsObject({ gcsUri: params.gcsUri });
       buffer = storedObject.buffer;
-      // 每次分析都复制到新 GCS 路径，避免 Vertex 对同一 gs:// 对象的多模态缓存导致结果串台
-      videoGcsUri = "";
+      // Platform 参考视频复用已上传 gs://，避免重复上传拖慢 worker
+      videoGcsUri = params.platformAssetLite ? params.gcsUri : "";
     } else if (typeof params.fileKey === "string" && params.fileKey.trim()) {
       const storedBuffer = await storageRead(params.fileKey).catch(() => null);
       if (storedBuffer?.length) {
@@ -2089,6 +2191,39 @@ export async function analyzeVideo(params: {
 
       const chunkRanges = buildChunkRanges(duration);
       const isExtractOnly = params.analysisProfile === "extract_only";
+      const isPlatformReference = params.platformAssetLite === true;
+
+      if (isPlatformReference) {
+        const liteResult = await runPlatformReferenceAssetPipeline({
+          videoPath,
+          duration,
+          safeName,
+          strategistEngine,
+          videoGcsUri,
+          context: params.context,
+          fileName: params.fileName,
+          mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
+        });
+        return {
+          analysis: liteResult.analysis,
+          videoMeta: {
+            videoUrl: videoGcsUri,
+            audioUrl: "",
+            transcript: liteResult.transcript,
+            videoDuration: duration,
+            provider: strategistEngine.provider,
+            model: strategistEngine.modelName,
+            fallback: false,
+            pipeline: "platform_reference_lite",
+            stageOneModel: strategistEngine.modelName,
+            stageTwoModel: strategistEngine.modelName,
+            sparseFrameCount: liteResult.sparseFrameCount,
+            estimatedCostProfile: liteResult.costProfile,
+            failureStage: undefined,
+            failureReason: undefined,
+          },
+        };
+      }
 
       if (isExtractOnly) {
         const extractResult = await runExtractOnlyPipeline({

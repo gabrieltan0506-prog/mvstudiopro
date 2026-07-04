@@ -50,6 +50,7 @@ import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
 import { normalizePlatforms } from "../growth/growthSchema";
 import { readTrendStore, readTrendStoreForPlatforms } from "../growth/trendStore";
 import {
+  claimNextGrowthCampAnalyzeJob,
   claimNextQueuedJob,
   claimNextPdfExportJob,
   markJobFailed,
@@ -59,7 +60,7 @@ import {
   type JobType,
 } from "./repository";
 import { processPdfExportJob } from "./pdfExportJob";
-import { reapStaleJobsOnce } from "./staleJobsReaper";
+import { resolveGrowthCampJobServerTimeoutMs } from "../../shared/growthCampJobTiming.js";
 
 const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
@@ -71,9 +72,9 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   pdf_export: 55 * 60_000,
 };
 
-const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 20 * 60_000;
-const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
+import { reapStaleJobsOnce } from "./staleJobsReaper";
 
+const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 const POLL_INTERVAL_MS = 2_000;
 
 let klingInitialized = false;
@@ -82,6 +83,13 @@ let processing = false;
 let timer: NodeJS.Timeout | null = null;
 let pdfProcessing = false;
 let pdfTimer: NodeJS.Timeout | null = null;
+/** 成长营素材分析专用 worker 并发（与平台长 Job 分池，默认 2） */
+const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
+  1,
+  Math.min(4, Number(process.env.GROWTH_CAMP_JOB_WORKER_CONCURRENCY || 2) || 2),
+);
+let growthAnalyzeJobsActive = 0;
+let growthAnalyzeTimer: NodeJS.Timeout | null = null;
 
 type JobEnvelope = {
   action: string;
@@ -284,6 +292,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
         analysisProfile: params.analysisProfile === "extract_only" ? "extract_only" : "full",
         extractPrompt: typeof params.extractPrompt === "string" ? params.extractPrompt : undefined,
+        platformAssetLite: params.platformAssetLite === true,
       });
 
       return {
@@ -734,7 +743,16 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   try {
     const input = asEnvelope(inputRaw);
     if (input.action === "growth_analyze_video" || input.action === "growth_analyze_images") {
-      return GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS;
+      const params = input.params ?? {};
+      const durationSeconds =
+        typeof params.durationSeconds === "number" && Number.isFinite(params.durationSeconds)
+          ? params.durationSeconds
+          : 0;
+      return resolveGrowthCampJobServerTimeoutMs({
+        durationSeconds,
+        platformAssetLite: params.platformAssetLite === true,
+        assetKind: input.action === "growth_analyze_images" ? "image" : "video",
+      });
     }
   } catch {
     return defaultTimeout;
@@ -1645,23 +1663,18 @@ async function executeJob(
   return processAudioJob(input, timeoutMs, userId);
 }
 
-async function processOneJob() {
-  await reapStaleJobsOnce();
-  const job = await claimNextQueuedJob();
-  if (!job) return false;
-
+async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object) {
+  if (!job) return;
   try {
     const jobType = job.type as JobType;
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
-      `${job.type} job timed out after ${timeoutMs}ms`
+      `${job.type} job timed out after ${timeoutMs}ms`,
     );
     await markJobSucceeded(job.id, output, provider);
   } catch (error) {
-    // For platform jobs, processPlatformJob already builds a descriptive error via buildPlatformJobError
-    // (user-facing message + original error embedded). Use it directly so job.error is diagnostic.
     const message =
       job.type === "platform" && error instanceof Error
         ? error.message
@@ -1672,8 +1685,38 @@ async function processOneJob() {
       await markJobFailed(job.id, message);
     }
   }
+}
 
+async function processOneJob() {
+  await reapStaleJobsOnce();
+  const job = await claimNextQueuedJob();
+  if (!job) return false;
+
+  await runClaimedJob(job);
   return true;
+}
+
+async function processOneGrowthAnalyzeJob(): Promise<boolean> {
+  if (growthAnalyzeJobsActive >= GROWTH_CAMP_JOB_WORKER_CONCURRENCY) return false;
+  await reapStaleJobsOnce();
+  const job = await claimNextGrowthCampAnalyzeJob();
+  if (!job) return false;
+
+  growthAnalyzeJobsActive += 1;
+  void runClaimedJob(job).finally(() => {
+    growthAnalyzeJobsActive = Math.max(0, growthAnalyzeJobsActive - 1);
+  });
+  return true;
+}
+
+export async function processGrowthAnalyzeJobsOnce() {
+  let claimed = 0;
+  while (
+    growthAnalyzeJobsActive + claimed < GROWTH_CAMP_JOB_WORKER_CONCURRENCY
+    && (await processOneGrowthAnalyzeJob())
+  ) {
+    claimed += 1;
+  }
 }
 
 async function processOnePdfExportJob(): Promise<boolean> {
@@ -1734,8 +1777,12 @@ export function startJobWorker() {
 
   void processJobsOnce();
   void processPdfJobsOnce();
+  void processGrowthAnalyzeJobsOnce();
   timer = setInterval(() => {
     void processJobsOnce();
+  }, 1_000);
+  growthAnalyzeTimer = setInterval(() => {
+    void processGrowthAnalyzeJobsOnce();
   }, 1_000);
   pdfTimer = setInterval(() => {
     void processPdfJobsOnce();
@@ -1743,6 +1790,9 @@ export function startJobWorker() {
 
   if (typeof timer.unref === "function") {
     timer.unref();
+  }
+  if (growthAnalyzeTimer && typeof growthAnalyzeTimer.unref === "function") {
+    growthAnalyzeTimer.unref();
   }
   if (pdfTimer && typeof pdfTimer.unref === "function") {
     pdfTimer.unref();
@@ -1752,6 +1802,8 @@ export function startJobWorker() {
 export function stopJobWorker() {
   if (timer) clearInterval(timer);
   timer = null;
+  if (growthAnalyzeTimer) clearInterval(growthAnalyzeTimer);
+  growthAnalyzeTimer = null;
   if (pdfTimer) clearInterval(pdfTimer);
   pdfTimer = null;
   workerStarted = false;

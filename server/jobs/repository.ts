@@ -38,9 +38,47 @@ function getVideoJobAction(input: unknown): string | null {
 }
 
 function isGrowthCampAnalyzeJob(job: Job): boolean {
-  if (job.type !== "video") return false;
   const action = getVideoJobAction(job.input);
-  return action === "growth_analyze_video" || action === "growth_analyze_images";
+  if (action !== "growth_analyze_video" && action !== "growth_analyze_images") return false;
+  return job.type === "video" || job.type === "image";
+}
+
+/** 成长营素材分析专用拾取：与平台 Stage2 / 选题生图等长任务分池，避免 queued 长时间无人认领。 */
+export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  let rows: Job[] = [];
+  try {
+    rows = await db
+      .select()
+      .from(jobs)
+      .where(eq(jobs.status, "queued"))
+      .orderBy(asc(jobs.createdAt))
+      .limit(QUEUE_SCAN_FOR_BUILD_CONTENT);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextGrowthCampAnalyzeJob select failed:", error);
+    return null;
+  }
+
+  const next = rows.find(isGrowthCampAnalyzeJob);
+  if (!next) return null;
+
+  try {
+    await db
+      .update(jobs)
+      .set({
+        status: "running",
+        attempts: (next.attempts ?? 0) + 1,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.id, next.id), eq(jobs.status, "queued")));
+
+    return await getJobById(next.id);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextGrowthCampAnalyzeJob update failed:", error);
+    return null;
+  }
 }
 
 /** 每次拾取時掃描前方若干個 queued，避免 Stage2 文案永遠卡在長時間 platform_topic_image 之後 */
@@ -222,12 +260,13 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
 
   if (rows.length === 0) return null;
 
+  const nonGrowthRows = rows.filter((j) => !isGrowthCampAnalyzeJob(j));
   const preferred =
-    rows.find(
+    nonGrowthRows.find(
       (j) => j.type === "platform" && getPlatformJobAction(j.input) === "platform_build_content",
-    ) ??
-    rows.find(isGrowthCampAnalyzeJob) ??
-    rows[0];
+    ) ?? nonGrowthRows[0];
+
+  if (!preferred) return null;
 
   try {
     await db

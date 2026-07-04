@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Film, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Film, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
 import { GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES } from "@/lib/growthCampImagePipeline";
+import AssetAnalysisResultBlock from "@/components/platform/AssetAnalysisResultBlock";
+import type { GrowthAnalysisScores } from "@shared/growth";
 
 export type AssetAnalysisPreviewItem = {
   id: string;
@@ -10,14 +12,34 @@ export type AssetAnalysisPreviewItem = {
   kind: "image" | "video";
 };
 
+export type AssetAnalysisLivePartial = {
+  id: string;
+  title: string;
+  badge?: string;
+  analysis: GrowthAnalysisScores;
+};
+
 type AssetAnalysisWaitPanelProps = {
   percent: number;
   label: string;
   detail?: string;
   assets: AssetAnalysisPreviewItem[];
+  livePartials?: AssetAnalysisLivePartial[];
+  mergePending?: boolean;
+  revealingFull?: boolean;
 };
 
-export default function AssetAnalysisWaitPanel({ percent, label, detail, assets }: AssetAnalysisWaitPanelProps) {
+export default function AssetAnalysisWaitPanel({
+  percent,
+  label,
+  detail,
+  assets,
+  livePartials = [],
+  mergePending = false,
+  revealingFull = false,
+}: AssetAnalysisWaitPanelProps) {
+  const liveStreamRef = useRef<HTMLDivElement>(null);
+  const prevPartialCountRef = useRef(0);
   const [assetIndex, setAssetIndex] = useState(0);
   const [messageIndex, setMessageIndex] = useState(0);
 
@@ -48,9 +70,93 @@ export default function AssetAnalysisWaitPanel({ percent, label, detail, assets 
   const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
   const activePreview = previewItems[assetIndex] ?? previewItems[0];
   const statusMessage = GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES[messageIndex] ?? GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES[0];
+  const hasLivePartials = livePartials.length > 0;
+
+  useEffect(() => {
+    if (livePartials.length > prevPartialCountRef.current) {
+      prevPartialCountRef.current = livePartials.length;
+      liveStreamRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [livePartials.length]);
 
   return (
-    <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,420px)]">
+    <div className="mt-5 space-y-4">
+      <div
+        ref={liveStreamRef}
+        className={`rounded-2xl border p-4 md:p-5 transition-colors ${
+          hasLivePartials
+            ? "border-[#49e6ff]/35 bg-[linear-gradient(180deg,rgba(73,230,255,0.12),rgba(52,211,153,0.06))] shadow-[0_0_40px_rgba(73,230,255,0.08)]"
+            : "border-white/10 bg-black/20"
+        }`}
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Sparkles className={`h-4 w-4 ${hasLivePartials ? "text-[#49e6ff]" : "text-[#c9c0e6]/40"}`} />
+          <div className="text-sm font-bold text-white">
+            {hasLivePartials ? "实时结果 · 边分析边展示" : "实时结果区"}
+          </div>
+          {hasLivePartials ? (
+            <span className="rounded-full border border-[#6ee7b7]/40 bg-[rgba(52,211,153,0.12)] px-2.5 py-0.5 text-[10px] font-semibold text-[#6ee7b7] animate-pulse">
+              已出 {livePartials.length} 份
+            </span>
+          ) : (
+            <span className="text-[11px] text-[#c9c0e6]/50">首个分镜完成后立即显示于此</span>
+          )}
+        </div>
+
+        <AnimatePresence initial={false}>
+          {hasLivePartials ? (
+            <div className="space-y-4">
+              {livePartials.map((partial) => (
+                <motion.div
+                  key={partial.id}
+                  initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.45, ease: "easeOut" }}
+                >
+                  <AssetAnalysisResultBlock
+                    variant="preview"
+                    title={partial.title}
+                    badge={partial.badge ?? "刚完成 · 可先阅读"}
+                    analysis={partial.analysis}
+                  />
+                </motion.div>
+              ))}
+            </div>
+          ) : (
+            <motion.div
+              key="live-placeholder"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#49e6ff]/20 bg-[rgba(73,230,255,0.04)] px-4 py-8 text-center"
+            >
+              <Loader2 className="h-6 w-6 animate-spin text-[#49e6ff]/60" />
+              <p className="text-sm text-white/75">云端分析进行中…</p>
+              <p className="max-w-md text-xs leading-relaxed text-[#c9c0e6]/55">
+                评分、摘要与优势会在<strong className="text-[#8cefff]">每份素材 Job 完成时</strong>立刻出现在此，无需等全部结束。
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {mergePending ? (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#49e6ff]/25 bg-[#49e6ff]/8 px-4 py-3 text-sm text-[#8cefff]">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            分段结果已就绪，正在汇总完整综合报告…
+          </div>
+        ) : revealingFull ? (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.08)] px-4 py-3 text-sm text-[#6ee7b7]">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            先行摘要已展示，正在展开完整报告…
+          </div>
+        ) : hasLivePartials ? (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#6ee7b7]/15 bg-[rgba(52,211,153,0.05)] px-4 py-3 text-sm text-[#6ee7b7]/85">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            其余素材仍在分析，完整报告随后自动展开
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,420px)]">
       <div className="rounded-2xl border border-[#6ee7b7]/20 bg-[rgba(52,211,153,0.05)] p-5">
         <div className="flex items-center gap-2 text-sm font-semibold text-[#6ee7b7]">
           <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -74,7 +180,7 @@ export default function AssetAnalysisWaitPanel({ percent, label, detail, assets 
         </div>
 
         <p className="mt-4 text-[11px] leading-relaxed text-[#c9c0e6]/55">
-          视频与图片会并行分析；任一份完成即会在下方展示结果，无需等全部结束。
+          上方「实时结果区」会在每份素材分析完成时立即更新；完整报告在所有分段就绪后展开。
         </p>
       </div>
 
@@ -145,6 +251,7 @@ export default function AssetAnalysisWaitPanel({ percent, label, detail, assets 
             ))}
           </div>
         ) : null}
+      </div>
       </div>
     </div>
   );
