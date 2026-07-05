@@ -787,6 +787,44 @@ export type GrowthCampAssetAnalyzeStarted = {
   kind: "video" | "image";
 };
 
+export type GrowthCampPartialAnalysisStream = {
+  id: string;
+  kind: "video" | "image";
+  partial?: Partial<GrowthAnalysisScores>;
+  stageLabel?: string;
+};
+
+function readJobPartialProgress(output?: Record<string, unknown>) {
+  if (!output) return null;
+  const partial = output.partialAnalysis;
+  const stageLabel =
+    typeof output.analysisStageLabel === "string" ? output.analysisStageLabel.trim() : "";
+  if (!partial && !stageLabel) return null;
+  return {
+    partial:
+      partial && typeof partial === "object" && !Array.isArray(partial)
+        ? (partial as Partial<GrowthAnalysisScores>)
+        : undefined,
+    stageLabel: stageLabel || undefined,
+  };
+}
+
+function attachPollPartialStream(
+  tick: { output?: Record<string, unknown> },
+  onStream?: (update: GrowthCampPartialAnalysisStream) => void,
+  meta?: { id: string; kind: "video" | "image" },
+) {
+  if (!onStream || !meta) return;
+  const stream = readJobPartialProgress(tick.output);
+  if (!stream) return;
+  onStream({
+    id: meta.id,
+    kind: meta.kind,
+    partial: stream.partial,
+    stageLabel: stream.stageLabel,
+  });
+}
+
 async function uploadGrowthCampVideoAsset(params: {
   asset: PlatformVideoAsset;
   getSignedUploadUrl: SignedUrlMutation;
@@ -931,6 +969,7 @@ async function uploadGrowthCampImageAssets(params: {
 
 async function dispatchGrowthCampVideoAnalysisJob(params: {
   uploaded: GrowthCampUploadedVideo;
+  assetId: string;
   context?: string;
   userId?: string;
   modelName?: GrowthCampModel;
@@ -939,10 +978,12 @@ async function dispatchGrowthCampVideoAnalysisJob(params: {
   maxWaitMs?: number;
   platformAssetLite?: boolean;
   onProgressUpdate?: (update: GrowthCampAnalysisProgressUpdate) => void;
+  onPartialAnalysisStream?: (update: GrowthCampPartialAnalysisStream) => void;
   onDebugUpdate?: RunGrowthCampVideoAnalysisParams["onDebugUpdate"];
 }): Promise<GrowthCampImageAnalysisOutcome> {
   const {
     uploaded,
+    assetId,
     context,
     userId,
     modelName = GROWTH_CAMP_ANALYSIS_MODEL,
@@ -955,6 +996,7 @@ async function dispatchGrowthCampVideoAnalysisJob(params: {
       assetKind: "video",
     }),
     onProgressUpdate,
+    onPartialAnalysisStream,
     onDebugUpdate,
   } = params;
 
@@ -1008,6 +1050,7 @@ async function dispatchGrowthCampVideoAnalysisJob(params: {
     onPoll: (tick) => {
       pollCount = tick.attempt;
       onGrowthPoll(tick);
+      attachPollPartialStream(tick, onPartialAnalysisStream, { id: assetId, kind: "video" });
       onProgressUpdate?.({
         percent: mapPollPercent(tick.elapsedMs, maxWaitMs, progressRange, tick.status),
         phase: "video_analyze",
@@ -1049,6 +1092,7 @@ async function dispatchGrowthCampVideoAnalysisJob(params: {
 
 async function dispatchGrowthCampImageAnalysisJob(params: {
   uploaded: GrowthCampUploadedImage[];
+  assetId: string;
   context?: string;
   userId?: string;
   modelName?: GrowthCampModel;
@@ -1057,10 +1101,12 @@ async function dispatchGrowthCampImageAnalysisJob(params: {
   progressRange?: ProgressRange;
   maxWaitMs?: number;
   onProgressUpdate?: (update: GrowthCampAnalysisProgressUpdate) => void;
+  onPartialAnalysisStream?: (update: GrowthCampPartialAnalysisStream) => void;
   onDebugUpdate?: RunGrowthCampImageAnalysisParams["onDebugUpdate"];
 }): Promise<GrowthCampImageAnalysisOutcome> {
   const {
     uploaded,
+    assetId,
     context,
     userId,
     modelName = GROWTH_CAMP_ANALYSIS_MODEL,
@@ -1069,6 +1115,7 @@ async function dispatchGrowthCampImageAnalysisJob(params: {
     progressRange = { start: ANALYZE_PROGRESS.start, end: ANALYZE_PROGRESS.end },
     maxWaitMs = resolveGrowthCampJobMaxWaitMs({ assetKind: "image" }),
     onProgressUpdate,
+    onPartialAnalysisStream,
     onDebugUpdate,
   } = params;
 
@@ -1119,6 +1166,7 @@ async function dispatchGrowthCampImageAnalysisJob(params: {
     onPoll: (tick) => {
       pollCount = tick.attempt;
       onGrowthPoll(tick);
+      attachPollPartialStream(tick, onPartialAnalysisStream, { id: assetId, kind: "image" });
       onProgressUpdate?.({
         percent: mapPollPercent(tick.elapsedMs, maxWaitMs, progressRange, tick.status),
         phase: "image_analyze",
@@ -1179,6 +1227,8 @@ export type RunGrowthCampAssetAnalysisParams = {
   onUploadProgress?: (percent: number, assetIndex?: number) => void;
   onProgressUpdate?: (update: GrowthCampAnalysisProgressUpdate) => void;
   onPartialResult?: (partial: GrowthCampPartialAnalysis) => void;
+  /** Job 轮询中的分段 partial（滚动展示） */
+  onPartialAnalysisStream?: (update: GrowthCampPartialAnalysisStream) => void;
   /** 单份素材上传完成、分析 Job 即将入队（用于即时 UI 反馈） */
   onAssetAnalyzeStarted?: (info: GrowthCampAssetAnalyzeStarted) => void;
   onDebugUpdate?: (patch: ImagePipelineDebugState | ((prev: ImagePipelineDebugState) => ImagePipelineDebugState)) => void;
@@ -1200,6 +1250,7 @@ export async function runGrowthCampAssetAnalysis(
     onUploadProgress,
     onProgressUpdate,
     onPartialResult,
+    onPartialAnalysisStream,
     onAssetAnalyzeStarted,
     onDebugUpdate,
   } = params;
@@ -1345,6 +1396,7 @@ export async function runGrowthCampAssetAnalysis(
 
     const videoResult = await dispatchGrowthCampVideoAnalysisJob({
       uploaded,
+      assetId: video.id,
       context,
       userId,
       modelName,
@@ -1352,6 +1404,7 @@ export async function runGrowthCampAssetAnalysis(
       platformAssetLite: true,
       progressRange: { start: ANALYZE_PROGRESS.start, end: ANALYZE_PROGRESS.end },
       onProgressUpdate: bindAnalyzeTrackProgress("video"),
+      onPartialAnalysisStream,
       onDebugUpdate,
     });
 
@@ -1390,6 +1443,7 @@ export async function runGrowthCampAssetAnalysis(
 
     const imageResult = await dispatchGrowthCampImageAnalysisJob({
       uploaded,
+      assetId: readyImages[0]!.id,
       context,
       userId,
       modelName,
@@ -1397,6 +1451,7 @@ export async function runGrowthCampAssetAnalysis(
       platformAssetAnalysis: true,
       progressRange: { start: ANALYZE_PROGRESS.start, end: ANALYZE_PROGRESS.end },
       onProgressUpdate: bindAnalyzeTrackProgress("image"),
+      onPartialAnalysisStream,
       onDebugUpdate,
     });
 

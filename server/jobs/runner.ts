@@ -251,8 +251,10 @@ async function runFalOmniFallback(
   };
 }
 
-async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: string): Promise<{ output: unknown; provider?: string }> {
+async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: string, jobId?: string): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
+  const { createAssetAnalysisProgressReporter } = await import("../growth/assetAnalysisJobProgress");
+  const progress = createAssetAnalysisProgressReporter(jobId);
 
   if (input.action === "growth_analyze_video") {
     const numericUserId = userId ? Number(userId) : NaN;
@@ -304,6 +306,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         analysisProfile: params.analysisProfile === "extract_only" ? "extract_only" : "full",
         extractPrompt: typeof params.extractPrompt === "string" ? params.extractPrompt : undefined,
         platformAssetLite: params.platformAssetLite === true,
+        progress,
       });
 
       return {
@@ -398,6 +401,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         context: analysisContext,
         modelName: typeof params.modelName === "string" ? params.modelName : undefined,
         mode: growthMode,
+        progress,
       });
 
       return {
@@ -1678,7 +1682,7 @@ async function executeJob(
   jobId?: string,
 ): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
-  if (type === "video") return processVideoJob(input, timeoutMs, userId);
+  if (type === "video") return processVideoJob(input, timeoutMs, userId, jobId);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
   if (type === "platform") return processPlatformJob(input, jobId, userId);
   if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);

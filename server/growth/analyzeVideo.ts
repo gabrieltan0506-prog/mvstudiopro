@@ -28,6 +28,10 @@ import {
   type GrowthCampStrategistEngine,
 } from "./extractorPipeline";
 import { runGrowthCampStrategistMultimodalPass, ensureGrowthCoreScores } from "./growthCampStrategistPass";
+import {
+  buildPartialFromAudioScan,
+  type AssetAnalysisProgressReporter,
+} from "./assetAnalysisJobProgress";
 
 const execFileAsync = promisify(execFile);
 
@@ -1935,9 +1939,15 @@ async function runPlatformReferenceAssetPipeline(params: {
   fileName?: string;
   mode: GrowthAnalysisMode;
   uploadedObjects?: string[];
+  progress?: AssetAnalysisProgressReporter;
 }) {
   let transcript = "";
   let audioFirstPass = emptyAudioFirstPass();
+
+  await params.progress?.patch({
+    analysisStage: "audio",
+    analysisStageLabel: "正在听取口播与节奏…",
+  });
 
   const audioBuffer = await extractAudioTrackFromPath(params.videoPath, 0, params.duration).catch((error) => {
     console.warn("[growth.analyzeVideo] platform reference audio extraction failed:", error);
@@ -1966,6 +1976,12 @@ async function runPlatformReferenceAssetPipeline(params: {
         fileName: params.fileName,
       }),
     );
+
+    await params.progress?.patch({
+      analysisStage: "audio_done",
+      analysisStageLabel: "口播扫描完成，正在抽取关键画面…",
+      partialAnalysis: buildPartialFromAudioScan(audioFirstPass),
+    });
   }
 
   const sparseFrames = await extractSparseFramesFromPath(
@@ -1982,6 +1998,11 @@ async function runPlatformReferenceAssetPipeline(params: {
   if (!strategistFrames.length) {
     throw new VideoAnalysisFailure("frame_extraction", "未能从参考视频中抽取有效画面帧");
   }
+
+  await params.progress?.patch({
+    analysisStage: "frames",
+    analysisStageLabel: `已锁定 ${strategistFrames.length} 个关键画面，深度解读中…`,
+  });
 
   let deepDive = await withGrowthAnalysisSlot(() =>
     runDeepDivePass({
@@ -2020,6 +2041,12 @@ async function runPlatformReferenceAssetPipeline(params: {
     ...deepDive,
     mode: analysisMode,
     visualSummary: String(deepDive?.visualSummary || ""),
+  });
+
+  await params.progress?.patch({
+    analysisStage: "done",
+    analysisStageLabel: "解读完成",
+    partialAnalysis: parsed,
   });
 
   return {
@@ -2176,6 +2203,7 @@ export async function analyzeVideo(params: {
   extractPrompt?: string;
   /** Platform 素材区参考视频：轻量单次 Strategist，跳过口播/BGM 多 pass */
   platformAssetLite?: boolean;
+  progress?: AssetAnalysisProgressReporter;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
   try {
@@ -2245,6 +2273,7 @@ export async function analyzeVideo(params: {
           fileName: params.fileName,
           mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
           uploadedObjects,
+          progress: params.progress,
         });
         return {
           analysis: liteResult.analysis,

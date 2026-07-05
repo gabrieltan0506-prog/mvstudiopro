@@ -379,6 +379,7 @@ export function coerceDisplayText(value: unknown): string {
     for (const key of [
       "text", "summary", "detail", "description", "title", "value", "arc", "content",
       "opening", "middle", "peak", "closing", "hook", "body", "cta",
+      "rhythm", "insight", "comment", "point", "highlight", "note", "analysis",
     ]) {
       const candidate = obj[key];
       if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
@@ -406,6 +407,22 @@ export function coerceDisplayText(value: unknown): string {
   if (value == null) return "";
   const s = String(value).trim();
   return s === "[object Object]" ? "" : s;
+}
+
+/** 去重相似文案（合并多轨报告、展示列表时用） */
+export function dedupeSimilarTexts(items: unknown[], maxItems = 6): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const t = coerceDisplayText(item).trim();
+    if (!t) continue;
+    const key = t.replace(/[\s\u00a0]+/g, "").slice(0, 48).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= maxItems) break;
+  }
+  return out;
 }
 
 export function coerceStringList(items: unknown): string[] {
@@ -479,8 +496,7 @@ export function mergeGrowthAnalysesDeterministic(
       .filter((n) => Number.isFinite(n));
     return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : 0;
   };
-  const uniq = (items: string[]) =>
-    Array.from(new Set(items.map((s) => s.trim()).filter(Boolean))).slice(0, 6);
+  const uniq = (items: unknown[], max = 6) => dedupeSimilarTexts(items, max);
 
   const explosiveNums = analyses
     .map((a) => a.explosiveIndex)
@@ -526,10 +542,10 @@ export function mergeGrowthAnalysesDeterministic(
       commercialLogic: mergeReField("commercialLogic"),
     },
     bgmAnalysis,
-    strengths: uniq(analyses.flatMap((a) => a.strengths || [])).slice(0, 4),
-    improvements: uniq(analyses.flatMap((a) => a.improvements || [])).slice(0, 4),
-    platforms: uniq(analyses.flatMap((a) => a.platforms || [])).slice(0, 4),
-    titleSuggestions: uniq(analyses.flatMap((a) => a.titleSuggestions || [])).slice(0, 5),
+    strengths: uniq(analyses.flatMap((a) => a.strengths || []), 4),
+    improvements: uniq(analyses.flatMap((a) => a.improvements || []), 4),
+    platforms: uniq(analyses.flatMap((a) => a.platforms || []), 4),
+    titleSuggestions: uniq(analyses.flatMap((a) => a.titleSuggestions || []), 5),
     premiumContent: {
       ...(primary.premiumContent ?? {}),
       topics: [

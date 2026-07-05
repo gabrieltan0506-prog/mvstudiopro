@@ -323,6 +323,26 @@
   animation: glowPulse 2s ease-in-out infinite;
 }
 
+/* 素材分析 · 核心观点浅蓝荧光高亮 */
+@keyframes insightHighlightPulse {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(73, 230, 255, 0.14);
+    border-color: rgba(73, 230, 255, 0.32);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(73, 230, 255, 0.28);
+    border-color: rgba(73, 230, 255, 0.52);
+  }
+}
+.insight-highlight {
+  border: 1px solid rgba(73, 230, 255, 0.38);
+  background: rgba(73, 230, 255, 0.12);
+  box-shadow: 0 0 14px rgba(73, 230, 255, 0.16);
+}
+.insight-highlight-pulse {
+  animation: insightHighlightPulse 2.8s ease-in-out infinite;
+}
+
 /* Section divider with glow */
 .section-divider {
   height: 1px;

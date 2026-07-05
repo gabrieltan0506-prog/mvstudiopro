@@ -1,5 +1,10 @@
 import React, { useMemo } from "react";
-import { coerceDisplayText, parseGrowthAnalysisScores, type GrowthAnalysisScores } from "@shared/growth";
+import {
+  coerceDisplayText,
+  dedupeSimilarTexts,
+  parseGrowthAnalysisScores,
+  type GrowthAnalysisScores,
+} from "@shared/growth";
 
 type AssetAnalysisResultBlockProps = {
   analysis: GrowthAnalysisScores;
@@ -13,6 +18,24 @@ type AssetAnalysisResultBlockProps = {
 function textOrNull(value: unknown): string | null {
   const t = coerceDisplayText(value);
   return t.length > 0 ? t : null;
+}
+
+function InsightHighlight({
+  children,
+  pulse = false,
+  className = "",
+}: {
+  children: React.ReactNode;
+  pulse?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`insight-highlight rounded-lg px-3.5 py-2.5 ${pulse ? "insight-highlight-pulse" : ""} ${className}`}
+    >
+      {children}
+    </div>
+  );
 }
 
 export default function AssetAnalysisResultBlock({
@@ -30,15 +53,15 @@ export default function AssetAnalysisResultBlock({
   const commercialLogic = textOrNull(analysis.reverseEngineering?.commercialLogic);
   const hasVisualBreakdown = Boolean(hookStrategy || emotionalArc || commercialLogic);
 
-  const strengths = (analysis.strengths || []).map((s) => textOrNull(s)).filter(Boolean) as string[];
-  const improvements = (analysis.improvements || []).map((s) => textOrNull(s)).filter(Boolean) as string[];
+  const strengths = dedupeSimilarTexts(analysis.strengths || [], 6);
+  const improvements = dedupeSimilarTexts(analysis.improvements || [], 6);
   const bgmAnalysis = textOrNull(analysis.bgmAnalysis);
   const musicRecommendation = textOrNull(analysis.musicRecommendation);
   const summary = textOrNull(analysis.summary);
   const realityCheck = textOrNull(analysis.realityCheck);
   const visualSummary = textOrNull(analysis.visualSummary);
-  const platforms = (analysis.platforms || []).map((p) => textOrNull(p)).filter(Boolean) as string[];
-  const titleSuggestions = (analysis.titleSuggestions || []).map((t) => textOrNull(t)).filter(Boolean) as string[];
+  const platforms = dedupeSimilarTexts(analysis.platforms || [], 6);
+  const titleSuggestions = dedupeSimilarTexts(analysis.titleSuggestions || [], 6);
 
   return (
     <div className={`space-y-5 rounded-2xl border border-[#6ee7b7]/25 bg-[rgba(52,211,153,0.06)] p-5 ${className}`}>
@@ -69,7 +92,12 @@ export default function AssetAnalysisResultBlock({
       </div>
 
       {summary ? (
-        <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{summary}</p>
+        <InsightHighlight pulse>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#49e6ff]/85 mb-1.5">
+            核心判断
+          </div>
+          <p className="text-sm leading-7 text-white/92 whitespace-pre-wrap">{summary}</p>
+        </InsightHighlight>
       ) : null}
 
       {realityCheck ? (
@@ -90,7 +118,7 @@ export default function AssetAnalysisResultBlock({
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势（节选）</div>
           <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
-            {strengths.slice(0, 2).map((item, i) => (
+            {strengths.slice(0, 1).map((item, i) => (
               <li key={`preview-strength-${i}`}>{item}</li>
             ))}
           </ul>
@@ -105,10 +133,10 @@ export default function AssetAnalysisResultBlock({
         <div className="space-y-3 rounded-xl border border-white/10 bg-black/15 p-4">
           <div className="text-[11px] font-semibold text-[#6ee7b7]/80">视觉拆解</div>
           {hookStrategy ? (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-[#c9c0e6]/50 mb-1">抓眼策略</div>
-              <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{hookStrategy}</p>
-            </div>
+            <InsightHighlight pulse>
+              <div className="text-[10px] uppercase tracking-wide text-[#49e6ff]/75 mb-1">抓眼策略</div>
+              <p className="text-sm leading-7 text-white/90 whitespace-pre-wrap">{hookStrategy}</p>
+            </InsightHighlight>
           ) : null}
           {emotionalArc ? (
             <div>
@@ -126,13 +154,13 @@ export default function AssetAnalysisResultBlock({
       ) : null}
 
       {!isPreview && bgmAnalysis ? (
-        <div className="space-y-2 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.06)] p-4">
-          <div className="text-[11px] font-semibold text-[#8cefff]/85">BGM / 配乐分析</div>
-          <p className="text-sm leading-7 text-white/85 whitespace-pre-wrap">{bgmAnalysis}</p>
+        <InsightHighlight>
+          <div className="text-[11px] font-semibold text-[#49e6ff]/90 mb-1">BGM / 配乐分析</div>
+          <p className="text-sm leading-7 text-white/88 whitespace-pre-wrap">{bgmAnalysis}</p>
           {musicRecommendation ? (
-            <p className="text-sm leading-7 text-[#c9c0e6]/75 whitespace-pre-wrap">{musicRecommendation}</p>
+            <p className="mt-2 text-sm leading-7 text-[#c9c0e6]/80 whitespace-pre-wrap">{musicRecommendation}</p>
           ) : null}
-        </div>
+        </InsightHighlight>
       ) : null}
 
       {!isPreview && analysis.premiumContent?.actionableTopics?.length ? (
@@ -144,14 +172,14 @@ export default function AssetAnalysisResultBlock({
               const brief = textOrNull(topic.contentBrief);
               if (!topicTitle && !brief) return null;
               return (
-                <div key={`topic-${i}`} className="rounded-xl border border-white/10 bg-black/15 p-4">
+                <InsightHighlight key={`topic-${i}`} pulse={i === 0}>
                   {topicTitle ? (
-                    <div className="text-sm font-semibold text-[#fde047]/90">{topicTitle}</div>
+                    <div className="text-sm font-semibold text-[#fde047]/95">{topicTitle}</div>
                   ) : null}
                   {brief ? (
-                    <p className="mt-2 text-sm leading-7 text-white/85 whitespace-pre-wrap">{brief}</p>
+                    <p className="mt-2 text-sm leading-7 text-white/88 whitespace-pre-wrap">{brief}</p>
                   ) : null}
-                </div>
+                </InsightHighlight>
               );
             })}
           </div>
@@ -161,9 +189,17 @@ export default function AssetAnalysisResultBlock({
       {!isPreview && strengths.length ? (
         <div>
           <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">优势</div>
-          <ul className="list-disc pl-5 space-y-1 text-sm text-white/85">
+          <ul className="space-y-2 text-sm text-white/88">
             {strengths.map((item, i) => (
-              <li key={`strength-${i}`}>{item}</li>
+              <li key={`strength-${i}`}>
+                {i === 0 ? (
+                  <InsightHighlight pulse>
+                    <span className="leading-7 whitespace-pre-wrap">{item}</span>
+                  </InsightHighlight>
+                ) : (
+                  <span className="block pl-1 leading-7 whitespace-pre-wrap">· {item}</span>
+                )}
+              </li>
             ))}
           </ul>
         </div>
@@ -186,10 +222,14 @@ export default function AssetAnalysisResultBlock({
 
       {!isPreview && titleSuggestions.length ? (
         <div>
-          <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-1">标题建议</div>
-          <ul className="space-y-1 text-sm text-[#fde047]/90">
+          <div className="text-[11px] font-semibold text-[#c9c0e6]/60 mb-2">标题建议</div>
+          <ul className="space-y-2 text-sm">
             {titleSuggestions.slice(0, 5).map((t, i) => (
-              <li key={`title-${i}`}>· {t}</li>
+              <li key={`title-${i}`}>
+                <InsightHighlight pulse={i === 0}>
+                  <span className="text-[#fde047]/95">{t}</span>
+                </InsightHighlight>
+              </li>
             ))}
           </ul>
         </div>
