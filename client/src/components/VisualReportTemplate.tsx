@@ -18,6 +18,8 @@ export type VisualReportData = {
     trafficBoosters: string[];
     cashRewards: string[];
     hotTopics: string[];
+    /** 蓝海词：一级词（父级大词）+ 二级词（子词，从评论区/下拉联想词挖掘） */
+    blueOceanWords?: Array<{ primary: string; secondary: string[] }>;
   }>;
 };
 
@@ -340,6 +342,33 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     })}
                   </>
                 )}
+                {/* ── 蓝海词 · Blue Ocean Keywords ── */}
+                {pl.blueOceanWords && pl.blueOceanWords.length > 0 && (
+                  <div style={{ marginTop: "14px", borderTop: `1px solid ${isDark ? "#1e3a4a" : "#b8e8f0"}`, paddingTop: "12px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#3eedff", marginBottom: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
+                      🌊 蓝海词 · Blue Ocean Keywords
+                      <span style={{ fontSize: "10px", color: isDark ? "#7ab8c5" : "#4a8a9a", fontWeight: 400 }}>搜索量大 · 同类笔记少 · 离成交近</span>
+                    </div>
+                    {pl.blueOceanWords.map((bow, bi) => (
+                      <div key={bi} style={{ marginBottom: "10px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" }}>
+                          <span style={{ fontSize: "12px", fontWeight: 800, color: "#3eedff", background: "rgba(62,237,255,0.1)", border: "1px solid rgba(62,237,255,0.35)", borderRadius: "6px", padding: "2px 10px", whiteSpace: "nowrap" }}>
+                            一级：{bow.primary}
+                          </span>
+                        </div>
+                        {bow.secondary && bow.secondary.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", paddingLeft: "8px" }}>
+                            {bow.secondary.map((s2, si) => (
+                              <span key={si} style={{ fontSize: "11px", color: isDark ? "#a5f3fc" : "#1e7a8a", background: "rgba(62,237,255,0.06)", border: "1px solid rgba(62,237,255,0.22)", borderRadius: "4px", padding: "1px 8px", whiteSpace: "nowrap" }}>
+                                {s2}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -413,6 +442,31 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                           );
                         })}
                       </>
+                    )}
+                    {/* ── 蓝海词 · Blue Ocean Keywords ── */}
+                    {pl.blueOceanWords && pl.blueOceanWords.length > 0 && (
+                      <div style={{ marginTop: "12px", borderTop: `1px solid ${isDark ? "#1e3a4a" : "#b8e8f0"}`, paddingTop: "10px" }}>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: "#3eedff", marginBottom: "7px", display: "flex", alignItems: "center", gap: "5px" }}>
+                          🌊 蓝海词
+                          <span style={{ fontSize: "10px", color: isDark ? "#7ab8c5" : "#4a8a9a", fontWeight: 400 }}>搜索量大·同类笔记少·离成交近</span>
+                        </div>
+                        {pl.blueOceanWords.map((bow, bi) => (
+                          <div key={bi} style={{ marginBottom: "8px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: 800, color: "#3eedff", background: "rgba(62,237,255,0.08)", border: "1px solid rgba(62,237,255,0.3)", borderRadius: "5px", padding: "1px 8px", display: "inline-block", marginBottom: "4px" }}>
+                              一级：{bow.primary}
+                            </span>
+                            {bow.secondary && bow.secondary.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", paddingLeft: "6px" }}>
+                                {bow.secondary.map((s2, si) => (
+                                  <span key={si} style={{ fontSize: "10px", color: isDark ? "#a5f3fc" : "#1e7a8a", background: "rgba(62,237,255,0.05)", border: "1px solid rgba(62,237,255,0.18)", borderRadius: "3px", padding: "1px 6px" }}>
+                                    {s2}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 );

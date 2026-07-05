@@ -73,6 +73,17 @@ export default function ReportGeneratorPanel({ supervisorAccess, personaContext 
           trafficBoosters: p.trafficBoosters || [],
           cashRewards: p.cashRewards || [],
           hotTopics: p.hotTopics || [],
+          // 蓝海词：支持 LLM 返回 [{primary, secondary}] 数组
+          blueOceanWords: Array.isArray(p.blueOceanWords)
+            ? p.blueOceanWords
+                .filter((b: any) => b && typeof b === "object" && b.primary)
+                .map((b: any) => ({
+                  primary: String(b.primary || ""),
+                  secondary: Array.isArray(b.secondary)
+                    ? b.secondary.map((s: unknown) => String(s)).filter(Boolean)
+                    : [],
+                }))
+            : [],
         })),
       });
     },

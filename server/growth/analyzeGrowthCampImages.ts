@@ -2,7 +2,6 @@ import { type GrowthAnalysisMode, type GrowthAnalysisScores } from "@shared/grow
 import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl, uploadBufferToGcs } from "../services/gcs";
 import { resolveGrowthCampExtractScanEngine } from "./extractorPipeline";
 import { runGrowthCampStrategistForImages } from "./growthCampStrategistPass";
-import type { AssetAnalysisProgressReporter } from "./assetAnalysisJobProgress";
 import {
   createAssetAnalysisProgressReporter,
   type AssetAnalysisProgressReporter,
