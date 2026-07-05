@@ -1,4 +1,4 @@
-import { coerceDisplayText, type GrowthAnalysisScores } from "@shared/growth";
+import { coerceDisplayText, dedupeSimilarTexts, type GrowthAnalysisScores } from "@shared/growth";
 
 export type AssetAnalysisRollingSection = {
   id: string;
@@ -89,7 +89,7 @@ export function buildRollingSections(
     });
   }
 
-  const strengths = (raw.strengths || []).map((s) => textOrNull(s)).filter(Boolean) as string[];
+  const strengths = dedupeSimilarTexts(raw.strengths || [], 5);
   if (strengths.length) {
     sections.push({
       id: "strengths",
@@ -124,7 +124,7 @@ export function buildRollingSections(
     sections.push({ id: "realityCheck", label: "现实查验", kind: "text", content: realityCheck });
   }
 
-  const improvements = (raw.improvements || []).map((s) => textOrNull(s)).filter(Boolean) as string[];
+  const improvements = dedupeSimilarTexts(raw.improvements || [], 5);
   if (improvements.length) {
     sections.push({
       id: "improvements",

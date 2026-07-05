@@ -21,7 +21,7 @@ import {
 import {
   buildInstantFeedbackHint,
   buildPlatformAssetAnalysisContext,
-  formatTrendHotspotHints,
+  formatRelevantTrendHotspotHints,
 } from "@/lib/platformAssetAnalysisContext";
 import { mergePartialAnalysis } from "@/lib/assetAnalysisRolling";
 import type { IpProfile } from "@/components/IpProfileModal";
@@ -261,8 +261,14 @@ export default function PlatformAssetAnalysisPanel({
     let receivedPartial = false;
     let instantHint = buildInstantFeedbackHint({ userContext: context, personaSummary, ipProfile });
 
-    const applyTrendHotspotHint = (entries: Array<{ platformLabel: string; title: string; growthPercentile?: number }>) => {
-      const trendHints = formatTrendHotspotHints(entries);
+    const applyTrendHotspotHint = (
+      entries: Array<{ platformLabel: string; title: string; growthPercentile?: number; tags?: string[]; category?: string }>,
+    ) => {
+      const trendHints = formatRelevantTrendHotspotHints(entries, {
+        userContext: context,
+        personaSummary,
+        ipProfile,
+      });
       if (!trendHints.length) return;
       instantHint = buildInstantFeedbackHint({
         userContext: context,
@@ -278,7 +284,7 @@ export default function PlatformAssetAnalysisPanel({
     };
 
     void trpcUtils.agent.listTrendHotspots
-      .fetch({ platforms: trendPlatforms, topN: 8 })
+      .fetch({ platforms: trendPlatforms, topN: 15 })
       .then((hotspots) => {
         if (hotspots?.entries?.length) applyTrendHotspotHint(hotspots.entries);
       })
@@ -498,10 +504,9 @@ export default function PlatformAssetAnalysisPanel({
   const expectedAssetTracks = (videoAsset?.ready ? 1 : 0) + (assets.some((a) => a.ready) ? 1 : 0);
   const hasMultipleTracks = expectedAssetTracks > 1;
   const showWaitPanel = busy && stage !== "done" && stage !== "error";
-  const showEarlyResults = !busy && partialAnalyses.length > 0;
-  const showIntegratedReport = Boolean(analysis) && !busy && hasMultipleTracks;
-  const showSingleFinalReport =
-    Boolean(analysis) && !busy && !hasMultipleTracks && partialAnalyses.length <= 1;
+  /** 综合报告就绪后不再重复展示各轨完整分段卡片（分析过程中已在滚动区展示过） */
+  const showPartialSegmentCards = !busy && partialAnalyses.length > 1 && !analysis;
+  const showFinalReport = Boolean(analysis) && !busy;
 
   return (
     <>
@@ -516,7 +521,10 @@ export default function PlatformAssetAnalysisPanel({
         <PlatformWorkspaceStepHint
           step={2}
           title="深度优化"
-          lines={["基于分析改写封面、分镜与发布稿。", `消耗 ${optimizeCopyCost} 积分，引用近期热点、不用旧套话。`]}
+          lines={[
+            "把步骤 1 的点评改写成可发布的封面文案、分镜脚本与各平台稿件。",
+            `消耗 ${optimizeCopyCost} 积分；完成后可用步骤 3 直接出分镜或图文卡片。`,
+          ]}
           active={Boolean(analysis) && !optimizedMarkdown}
           done={Boolean(optimizedMarkdown)}
         />
@@ -771,21 +779,21 @@ export default function PlatformAssetAnalysisPanel({
         </div>
       ) : null}
 
-      {!showWaitPanel && showEarlyResults ? (
+      {!showWaitPanel && showPartialSegmentCards ? (
         <div
           ref={partialLiveRef}
           className="mt-5 space-y-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
         >
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6ee7b7]/80">
-              分段结果
+              分段结果（汇总中）
             </span>
             <span className="h-px flex-1 bg-white/10" />
           </div>
           {partialAnalyses.map((partial) => (
             <AssetAnalysisResultBlock
               key={`early-${partial.id}`}
-              variant="full"
+              variant="preview"
               title={partial.kind === "video" ? `参考视频 · ${partial.label}` : `封面 / 图片 · ${partial.label}`}
               badge="分段摘要"
               analysis={partial.analysis}
@@ -806,38 +814,16 @@ export default function PlatformAssetAnalysisPanel({
         </div>
       ) : null}
 
-      {showIntegratedReport && analysis ? (
+      {showFinalReport && analysis ? (
         <div className="mt-5 space-y-4">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#49e6ff]/80">
-            整合版 · 视频 + 图片汇总
-          </div>
-          <AssetAnalysisResultBlock
-            title="完整综合报告"
-            badge="整合版"
-            variant="full"
-            analysis={analysis}
-          />
-        </div>
-      ) : null}
-
-      {showSingleFinalReport && analysis ? (
-        <div className="mt-5 space-y-4">
-          {!showEarlyResults ? (
-            <AssetAnalysisResultBlock
-              title="完整分析报告"
-              badge="分析完成"
-              variant="full"
-              analysis={analysis}
-            />
+          {hasMultipleTracks ? (
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#49e6ff]/80">
+              整合版 · 视频 + 图片汇总
+            </div>
           ) : null}
-        </div>
-      ) : null}
-
-      {analysis && !busy && !showIntegratedReport && !showSingleFinalReport ? (
-        <div className="mt-5 space-y-4">
           <AssetAnalysisResultBlock
-            title={partialAnalyses.length > 1 ? "完整综合报告" : "完整分析报告"}
-            badge={partialAnalyses.length > 1 ? "视频 + 图片汇总" : "分析完成"}
+            title={hasMultipleTracks ? "完整综合报告" : "完整分析报告"}
+            badge={hasMultipleTracks ? "整合版" : "分析完成"}
             variant="full"
             analysis={analysis}
           />
@@ -872,7 +858,13 @@ export default function PlatformAssetAnalysisPanel({
           ) : null}
 
           {onDeepOptimize ? (
-            <div className="flex flex-wrap gap-2 pt-1 border-t border-white/10">
+            <div className="space-y-2 pt-1 border-t border-white/10">
+              <p className="text-xs leading-relaxed text-[#c9c0e6]/75">
+                <span className="font-semibold text-[#fcd34d]/90">步骤 2 · 深度优化</span>
+                {" "}会把上方视觉点评改写成可直接发布的封面主副标、2×4 分镜叙事与各平台文案（含近期热词），
+                不是重复分析。完成后可用步骤 3 一键出分镜图或图文卡片。
+              </p>
+              <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={disabled || busy || optimizeBusy || generateBusy}
@@ -897,6 +889,7 @@ export default function PlatformAssetAnalysisPanel({
                 {optimizeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
                 步骤 2 · 深度优化（{optimizeCopyCost} 积分）
               </button>
+              </div>
             </div>
           ) : null}
         </div>

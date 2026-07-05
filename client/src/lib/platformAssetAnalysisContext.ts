@@ -1,4 +1,10 @@
 import { isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
+import {
+  formatTrendHotspotEntry,
+  pickRelevantTrendHotspots,
+  type TrendHotspotLike,
+  type TrendRelevanceInput,
+} from "../../../shared/platformTrendRelevance";
 
 export type PlatformAssetContextInput = {
   userContext?: string;
@@ -9,20 +15,32 @@ export type PlatformAssetContextInput = {
   platformTrendMeta?: string;
 };
 
-export function formatTrendHotspotHints(
-  entries: Array<{ platformLabel: string; title: string; growthPercentile?: number }>,
+export function toTrendRelevanceInput(input: PlatformAssetContextInput): TrendRelevanceInput {
+  const ip = input.ipProfile;
+  return {
+    userContext: input.userContext,
+    personaSummary: input.personaSummary,
+    ipIndustry: ip?.industry,
+    ipAdvantage: ip?.advantage,
+    ipAudience: ip?.audience,
+    ipFlagship: ip?.flagship,
+  };
+}
+
+export function formatTrendHotspotHints(entries: TrendHotspotLike[]): string[] {
+  return entries.map(formatTrendHotspotEntry).filter(Boolean);
+}
+
+/** 按选题/人设/IP 背景筛选 2–3 条相关热词后再格式化 */
+export function formatRelevantTrendHotspotHints(
+  entries: TrendHotspotLike[],
+  input: PlatformAssetContextInput,
 ): string[] {
-  return entries
-    .map((e) => {
-      const title = String(e.title || "").trim();
-      if (!title) return "";
-      const boost =
-        typeof e.growthPercentile === "number" && e.growthPercentile > 0
-          ? ` (+${e.growthPercentile}%↑)`
-          : "";
-      return `[${e.platformLabel}] ${title}${boost}`;
-    })
-    .filter(Boolean);
+  const picked = pickRelevantTrendHotspots(entries, toTrendRelevanceInput(input), {
+    minCount: 2,
+    maxCount: 3,
+  });
+  return formatTrendHotspotHints(picked);
 }
 
 function stripPlatformTag(hint: string): string {
@@ -48,7 +66,7 @@ export function buildPlatformAssetAnalysisContext(input: PlatformAssetContextInp
   const trends = (input.trendHints || []).map((t) => String(t || "").trim()).filter(Boolean);
   if (trends.length) {
     parts.push(
-      `【各平台近期热点参考】\n须结合人设改写，禁止抄袭。\n${trends.slice(0, 8).map((t, i) => `${i + 1}. ${t}`).join("\n")}`,
+      `【各平台近期热点参考（与本轮选题相关）】\n须结合人设改写，禁止抄袭。\n${trends.slice(0, 3).map((t, i) => `${i + 1}. ${t}`).join("\n")}`,
     );
   }
 
@@ -66,9 +84,11 @@ export function buildInstantFeedbackHint(input: PlatformAssetContextInput): stri
     lines.push(`IP 定位：${ip.industry.trim()} · 受众 ${ip.audience.trim()}`);
   }
 
-  const trends = (input.trendHints || []).map((t) => String(t || "").trim()).filter(Boolean);
-  if (trends[0]) lines.push(`热词方向：${stripPlatformTag(trends[0])}`);
-  if (trends[1]) lines.push(`同期参考：${stripPlatformTag(trends[1])}`);
+  const trends = (input.trendHints || []).map((t) => String(t || "").trim()).filter(Boolean).slice(0, 3);
+  if (trends.length) {
+    lines.push(`选题相关热词（${trends.length} 条）：`);
+    trends.forEach((t, i) => lines.push(`${i + 1}. ${stripPlatformTag(t)}`));
+  }
 
   return lines.length
     ? lines.join("\n")

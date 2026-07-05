@@ -15,8 +15,8 @@ type AssetAnalysisRollingBlockProps = {
 };
 
 function SectionBody({ section }: { section: AssetAnalysisRollingSection }) {
-  if (section.kind === "scores") {
-    return (
+  const inner =
+    section.kind === "scores" ? (
       <div className="flex flex-wrap gap-2">
         {section.content.split(" · ").map((chip) => (
           <span
@@ -27,10 +27,7 @@ function SectionBody({ section }: { section: AssetAnalysisRollingSection }) {
           </span>
         ))}
       </div>
-    );
-  }
-  if (section.kind === "list") {
-    return (
+    ) : section.kind === "list" ? (
       <ul className="space-y-1.5 text-sm leading-7 text-white/88">
         {section.content.split("\n").filter(Boolean).map((line, i) => (
           <li key={`${section.id}-${i}`} className="whitespace-pre-wrap">
@@ -38,9 +35,31 @@ function SectionBody({ section }: { section: AssetAnalysisRollingSection }) {
           </li>
         ))}
       </ul>
+    ) : (
+      <p className="text-sm leading-7 text-white/88 whitespace-pre-wrap">{section.content}</p>
+    );
+
+  return <SectionShell section={section}>{inner}</SectionShell>;
+}
+
+const HIGHLIGHT_SECTION_IDS = new Set(["summary", "hookStrategy", "strengths", "titleSuggestions", "bgm"]);
+
+function SectionShell({
+  section,
+  children,
+}: {
+  section: AssetAnalysisRollingSection;
+  children: React.ReactNode;
+}) {
+  if (HIGHLIGHT_SECTION_IDS.has(section.id)) {
+    const pulse = section.id === "summary" || section.id === "hookStrategy";
+    return (
+      <div className={`insight-highlight rounded-lg px-3 py-2 ${pulse ? "insight-highlight-pulse" : ""}`}>
+        {children}
+      </div>
     );
   }
-  return <p className="text-sm leading-7 text-white/88 whitespace-pre-wrap">{section.content}</p>;
+  return <>{children}</>;
 }
 
 export default function AssetAnalysisRollingBlock({
