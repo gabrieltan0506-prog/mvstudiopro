@@ -6357,6 +6357,14 @@ export default function PlatformPage() {
                 启动分析后，信号轮播将在此展示热点与可执行动作；上方四格会先出战略摘要。
               </p>
             ) : null}
+
+            {/* 平台趋势分析报表生成器 — 常驻，不依赖全案，直接生成图文报表 */}
+            <div className="mt-6">
+              <ReportGeneratorPanel
+                supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
+                personaContext={personaSummary}
+              />
+            </div>
           </div>
 
           {/* 一级 Tab */}
@@ -8634,11 +8642,8 @@ export default function PlatformPage() {
                                   </div>
                                 </div>
                               ) : null}
-                            </div>
-              <div className="min-h-0">
-                <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
-              </div>
-            </div>
+                          </div>
+          </div>
 
             <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="专属选题与文案状态">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
