@@ -67,6 +67,17 @@ export default function ReportGeneratorPanel({ supervisorAccess, personaContext 
         topicExamples: result.report.topicExamples || [],
         trafficSupport: result.report.trafficSupport || [],
         hotFestivals: result.report.hotFestivals || [],
+        // 全局蓝海词（一/二级分级）：从 LLM 结果直接提取
+        globalBlueOceanWords: Array.isArray(result.report.globalBlueOceanWords)
+          ? result.report.globalBlueOceanWords
+              .filter((b: any) => b && typeof b === "object" && b.primary)
+              .map((b: any) => ({
+                primary: String(b.primary || ""),
+                secondary: Array.isArray(b.secondary)
+                  ? b.secondary.map((s: unknown) => String(s)).filter(Boolean)
+                  : [],
+              }))
+          : [],
         platformDetails: (result.report.platformDetails || []).map((p: any) => ({
           platform: p.platform,
           displayName: PLATFORM_NAMES[p.platform as PlatformKey] || p.platform,

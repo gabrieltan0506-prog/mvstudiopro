@@ -12,6 +12,12 @@ export type VisualReportData = {
   // New global fields from upgraded prompt
   trafficSupport?: string[];
   hotFestivals?: string[];
+  /**
+   * 全局蓝海词（一/二级分级）：在核心洞察下方展示，每条平台 2-4 组。
+   * 格式：[{ primary: "一级蓝海词", secondary: ["二级词1","二级词2",...] }]
+   * 不区分平台，聚合各平台高价值词条。
+   */
+  globalBlueOceanWords?: Array<{ primary: string; secondary: string[] }>;
   platformDetails: Array<{
     platform: string;
     displayName: string;
@@ -147,6 +153,38 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                   </div>
                 );
               })}
+            </div>
+          </>
+        )}
+
+        {/* ── 蓝海词 · Blue Ocean Keywords（全局）── */}
+        {data.globalBlueOceanWords && data.globalBlueOceanWords.length > 0 && (
+          <>
+            <div style={sec}>🌊 蓝海词 · Blue Ocean Keywords</div>
+            <div style={{ background: isDark ? "rgba(62,237,255,0.05)" : "rgba(14,120,140,0.05)", border: `1px solid ${isDark ? "rgba(62,237,255,0.22)" : "rgba(14,120,140,0.3)"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+              <div style={{ fontSize: "11px", color: isDark ? "rgba(165,243,252,0.65)" : "#1a6a78", marginBottom: "12px", lineHeight: "1.6" }}>
+                定义：搜索量大（&gt;10万次/月）+ 同类笔记少（&lt;200篇）+ 用户意图精准（离成交近）。二级词来自搜索下拉联想词 + 评论区高赞高频词（点赞 &gt;1万 / 收藏 &gt;5000）。
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "14px" }}>
+                {data.globalBlueOceanWords.map((bow, bi) => (
+                  <div key={bi} style={{ background: isDark ? "rgba(62,237,255,0.04)" : "rgba(14,120,140,0.04)", border: `1px solid ${isDark ? "rgba(62,237,255,0.18)" : "rgba(14,120,140,0.2)"}`, borderRadius: "8px", padding: "12px 14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <span style={{ fontSize: "10px", color: isDark ? "rgba(62,237,255,0.6)" : "#1a8a9a", fontWeight: 600, letterSpacing: "0.06em" }}>一级</span>
+                      <span style={{ fontSize: "13px", fontWeight: 800, color: isDark ? "#3eedff" : "#0e788c", background: isDark ? "rgba(62,237,255,0.12)" : "rgba(14,120,140,0.1)", border: `1px solid ${isDark ? "rgba(62,237,255,0.35)" : "rgba(14,120,140,0.35)"}`, borderRadius: "5px", padding: "2px 10px" }}>{bow.primary}</span>
+                    </div>
+                    {bow.secondary && bow.secondary.length > 0 && (
+                      <>
+                        <div style={{ fontSize: "10px", color: isDark ? "rgba(165,243,252,0.5)" : "#1a6a78", marginBottom: "5px", letterSpacing: "0.06em" }}>二级词（下拉联想 + 评论高频）</div>
+                        <div style={{ display: "flex", flexWrap: "wrap" as const, gap: "5px" }}>
+                          {bow.secondary.map((s2, si) => (
+                            <span key={si} style={{ fontSize: "11px", color: isDark ? "#a5f3fc" : "#1a6a78", background: isDark ? "rgba(62,237,255,0.07)" : "rgba(14,120,140,0.07)", border: `1px solid ${isDark ? "rgba(62,237,255,0.2)" : "rgba(14,120,140,0.2)"}`, borderRadius: "4px", padding: "2px 8px" }}>{s2}</span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </>
         )}
