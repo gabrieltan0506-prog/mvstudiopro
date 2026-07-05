@@ -2,6 +2,11 @@ import { type GrowthAnalysisMode, type GrowthAnalysisScores } from "@shared/grow
 import { getPublicGcsHttpsUrl, signGsUriV4ReadUrl, uploadBufferToGcs } from "../services/gcs";
 import { resolveGrowthCampExtractScanEngine } from "./extractorPipeline";
 import { runGrowthCampStrategistForImages } from "./growthCampStrategistPass";
+import type { AssetAnalysisProgressReporter } from "./assetAnalysisJobProgress";
+import {
+  createAssetAnalysisProgressReporter,
+  type AssetAnalysisProgressReporter,
+} from "./assetAnalysisJobProgress";
 
 export type GrowthCampImageAssetInput = {
   /** @deprecated 优先使用 gcsUri（客户端 GCS 直传，避免 tRPC 请求体过大） */
@@ -143,6 +148,7 @@ export async function analyzeGrowthCampImages(params: {
   context?: string;
   modelName?: string;
   mode?: GrowthAnalysisMode;
+  progress?: AssetAnalysisProgressReporter;
 }): Promise<GrowthCampImageAnalysisResult> {
   const images = (params.images || []).filter(
     (img) => String(img.gcsUri || "").trim() || String(img.fileBase64 || "").trim(),
@@ -151,7 +157,17 @@ export async function analyzeGrowthCampImages(params: {
     throw new Error("请至少上传一张 PNG 或 JPG 图片");
   }
 
+  await params.progress?.patch({
+    analysisStage: "vision",
+    analysisStageLabel: "正在解读封面构图与色彩…",
+  });
+
   const refs = await resolveImageVisionRefs(images);
+
+  await params.progress?.patch({
+    analysisStage: "model",
+    analysisStageLabel: "正在生成热词与内容方向…",
+  });
   const fileUrls = refs.map((ref) => ref.publicUrl);
   const openAiUserContent = buildOpenAiVisionUserContent(refs, params.context);
   const vertexUserContent = buildVertexVisionUserContent(refs, params.context);
@@ -191,6 +207,12 @@ export async function analyzeGrowthCampImages(params: {
     provider = "vertex-gemini-flash-fallback";
     model = geminiEngine.modelName;
   }
+
+  await params.progress?.patch({
+    analysisStage: "done",
+    analysisStageLabel: "解读完成",
+    partialAnalysis: analysis,
+  });
 
   return {
     analysis,

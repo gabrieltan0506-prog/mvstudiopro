@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Film, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
 import { GROWTH_ASSET_ANALYSIS_ANALYZE_MESSAGES, GROWTH_ASSET_ANALYSIS_STATUS_MESSAGES, type AssetAnalysisTrackProgress } from "@/lib/growthCampImagePipeline";
-import AssetAnalysisResultBlock from "@/components/platform/AssetAnalysisResultBlock";
+import AssetAnalysisRollingBlock from "@/components/platform/AssetAnalysisRollingBlock";
 import type { GrowthAnalysisScores } from "@shared/growth";
 
 export type AssetAnalysisPreviewItem = {
@@ -18,6 +18,8 @@ export type AssetAnalysisLivePartial = {
   badge?: string;
   status?: "pending" | "ready";
   contextHint?: string;
+  stageLabel?: string;
+  partialAnalysis?: Partial<GrowthAnalysisScores>;
   analysis?: GrowthAnalysisScores;
 };
 
@@ -152,31 +154,18 @@ export default function AssetAnalysisWaitPanel({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.45, ease: "easeOut" }}
                 >
-                  {partial.status === "pending" || !partial.analysis ? (
-                    <div className="rounded-xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.06)] p-4 space-y-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]" />
-                        <span className="text-sm font-semibold text-white">{partial.title}</span>
-                        <span className="rounded-full border border-[#8cefff]/30 bg-[#8cefff]/10 px-2 py-0.5 text-[10px] text-[#8cefff]">
-                          {partial.badge ?? "上传完成 · 分析中"}
-                        </span>
-                      </div>
-                      {partial.contextHint ? (
-                        <pre className="whitespace-pre-wrap text-xs leading-relaxed text-[#c9c0e6]/75 font-sans">
-                          {partial.contextHint}
-                        </pre>
-                      ) : (
-                        <p className="text-xs text-[#c9c0e6]/60">正在结合人设与各平台热词方向深析…</p>
-                      )}
-                    </div>
-                  ) : (
-                    <AssetAnalysisResultBlock
-                      variant="full"
-                      title={partial.title}
-                      badge={partial.badge ?? "刚完成 · 可先阅读"}
-                      analysis={partial.analysis}
-                    />
-                  )}
+                  <AssetAnalysisRollingBlock
+                    title={partial.title}
+                    badge={partial.badge ?? (partial.status === "ready" ? "刚完成 · 可先阅读" : "分析中")}
+                    partialAnalysis={
+                      partial.status === "ready" && partial.analysis
+                        ? partial.analysis
+                        : partial.partialAnalysis
+                    }
+                    stageLabel={partial.stageLabel}
+                    isComplete={partial.status === "ready"}
+                    contextHint={partial.contextHint}
+                  />
                 </motion.div>
               ))}
             </div>
@@ -190,7 +179,7 @@ export default function AssetAnalysisWaitPanel({
               <Loader2 className="h-6 w-6 animate-spin text-[#49e6ff]/60" />
               <p className="text-sm text-white/75">云端分析进行中…</p>
               <p className="max-w-md text-xs leading-relaxed text-[#c9c0e6]/55">
-                封面 / 图片<strong className="text-[#8cefff]">传完立即开分析</strong>；视频并行上传，不挡图片结果。热词与方向先出先显示。
+                封面 / 图片<strong className="text-[#8cefff]">传完立即开分析</strong>；解读会<strong className="text-[#6ee7b7]">逐段滚入</strong>上方实时区，无需等整份报告。
               </p>
             </motion.div>
           )}

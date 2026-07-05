@@ -23,6 +23,7 @@ import {
   buildPlatformAssetAnalysisContext,
   formatTrendHotspotHints,
 } from "@/lib/platformAssetAnalysisContext";
+import { mergePartialAnalysis } from "@/lib/assetAnalysisRolling";
 import type { IpProfile } from "@/components/IpProfileModal";
 import type { AssetAnalysisLivePartial } from "@/components/platform/AssetAnalysisWaitPanel";
 import AssetAnalysisWaitPanel from "@/components/platform/AssetAnalysisWaitPanel";
@@ -323,10 +324,29 @@ export default function PlatformAssetAnalysisPanel({
                     kind === "image" ? "上传完成 · 优先分析热词方向" : "上传完成 · 分析中",
                   status: "pending" as const,
                   contextHint: instantHint,
+                  partialAnalysis: {},
                 },
               ];
             });
             setStage("analyzing");
+          });
+        },
+        onPartialAnalysisStream: ({ id, partial, stageLabel }) => {
+          flushSync(() => {
+            setLiveSlots((prev) =>
+              prev.map((slot) =>
+                slot.id === id
+                  ? {
+                      ...slot,
+                      partialAnalysis: mergePartialAnalysis(slot.partialAnalysis, partial),
+                      stageLabel: stageLabel || slot.stageLabel,
+                    }
+                  : slot,
+              ),
+            );
+          });
+          requestAnimationFrame(() => {
+            partialLiveRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
           });
         },
         onPartialResult: (partial) => {
@@ -341,6 +361,7 @@ export default function PlatformAssetAnalysisPanel({
                           ...p,
                           status: "ready" as const,
                           analysis: partial.analysis,
+                          partialAnalysis: partial.analysis,
                           badge: "刚完成 · 可先阅读",
                         }
                       : p,
@@ -356,6 +377,7 @@ export default function PlatformAssetAnalysisPanel({
                       badge: "刚完成 · 可先阅读",
                       status: "ready" as const,
                       analysis: partial.analysis,
+                      partialAnalysis: partial.analysis,
                     },
                   ];
               return next;
@@ -475,13 +497,8 @@ export default function PlatformAssetAnalysisPanel({
 
   const expectedAssetTracks = (videoAsset?.ready ? 1 : 0) + (assets.some((a) => a.ready) ? 1 : 0);
   const hasMultipleTracks = expectedAssetTracks > 1;
-  const pendingLivePartials = useMemo(
-    () => liveSlots.filter((slot) => slot.status === "pending" || !slot.analysis),
-    [liveSlots],
-  );
-
   const showWaitPanel = busy && stage !== "done" && stage !== "error";
-  const showEarlyResults = partialAnalyses.length > 0;
+  const showEarlyResults = !busy && partialAnalyses.length > 0;
   const showIntegratedReport = Boolean(analysis) && !busy && hasMultipleTracks;
   const showSingleFinalReport =
     Boolean(analysis) && !busy && !hasMultipleTracks && partialAnalyses.length <= 1;
@@ -738,49 +755,43 @@ export default function PlatformAssetAnalysisPanel({
         ) : null}
       </div>
 
-      {showEarlyResults ? (
+      {showWaitPanel ? (
+        <div ref={partialLiveRef}>
+          <AssetAnalysisWaitPanel
+            percent={displayPercent}
+            label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传素材…" : "正在分析您的素材…")}
+            detail={analysisProgress.detail}
+            phase={stage === "uploading" ? "upload" : "analyze"}
+            tracks={analysisProgress.tracks}
+            assets={analysisPreviewAssets}
+            livePartials={liveSlots}
+            mergePending={mergePending}
+            revealingFull={stage === "revealing"}
+          />
+        </div>
+      ) : null}
+
+      {!showWaitPanel && showEarlyResults ? (
         <div
           ref={partialLiveRef}
           className="mt-5 space-y-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
         >
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6ee7b7]/80">
-              {busy ? "先行结果 · 边分析边展示" : "分段结果"}
+              分段结果
             </span>
             <span className="h-px flex-1 bg-white/10" />
-            {busy ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin text-[#c9c0e6]/50" />
-                <span className="text-[11px] text-[#c9c0e6]/50">
-                  已完成 {partialAnalyses.length}/{expectedAssetTracks} · 其余继续中…
-                </span>
-              </>
-            ) : null}
           </div>
           {partialAnalyses.map((partial) => (
             <AssetAnalysisResultBlock
               key={`early-${partial.id}`}
               variant="full"
               title={partial.kind === "video" ? `参考视频 · ${partial.label}` : `封面 / 图片 · ${partial.label}`}
-              badge={busy ? "刚完成 · 可先阅读" : "分段摘要"}
+              badge="分段摘要"
               analysis={partial.analysis}
             />
           ))}
         </div>
-      ) : null}
-
-      {showWaitPanel ? (
-        <AssetAnalysisWaitPanel
-          percent={displayPercent}
-          label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传素材…" : "正在分析您的素材…")}
-          detail={analysisProgress.detail}
-          phase={stage === "uploading" ? "upload" : "analyze"}
-          tracks={analysisProgress.tracks}
-          assets={analysisPreviewAssets}
-          livePartials={pendingLivePartials}
-          mergePending={mergePending}
-          revealingFull={stage === "revealing"}
-        />
       ) : null}
 
       {error ? (
