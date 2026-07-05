@@ -249,16 +249,18 @@ const WINDOW_OPTIONS = [
   { days: 45 as const, label: "45天", description: "看更长窗口的沉淀与长期可做性" },
 ] as const;
 
-type TrendPlatformKey = "xiaohongshu" | "bilibili" | "douyin" | "kuaishou";
+type TrendPlatformKey = "xiaohongshu" | "bilibili" | "douyin" | "kuaishou" | "weixin_channels";
 
-const TREND_PLATFORM_OPTIONS: { key: TrendPlatformKey; label: string }[] = [
+const TREND_PLATFORM_OPTIONS: { key: TrendPlatformKey; label: string; comingSoon?: boolean }[] = [
   { key: "xiaohongshu", label: "小红书" },
   { key: "bilibili", label: "B站" },
   { key: "douyin", label: "抖音" },
   { key: "kuaishou", label: "快手" },
+  { key: "weixin_channels", label: "视频号", comingSoon: true },
 ];
 
-const ALL_TREND_PLATFORM_KEYS = TREND_PLATFORM_OPTIONS.map((item) => item.key);
+/** Only include platforms that are live (not comingSoon) in the default selection */
+const ALL_TREND_PLATFORM_KEYS = TREND_PLATFORM_OPTIONS.filter((item) => !item.comingSoon).map((item) => item.key);
 
 const EMPTY_ANALYSIS: GrowthAnalysisScores = {
   composition: 0,
@@ -4722,6 +4724,13 @@ export default function PlatformPage() {
             index,
             snapshotNameHint || undefined,
           );
+          // Extract blueOceanWords array from dashboard output
+          const blueOceanRaw = item.blueOceanWords || item.blue_ocean_words || item["蓝海词"] || [];
+          const blueOceanWords: string[] = Array.isArray(blueOceanRaw)
+            ? blueOceanRaw.map((w: unknown) => renderSafeText(w)).filter(Boolean)
+            : typeof blueOceanRaw === "string" && blueOceanRaw.trim()
+            ? blueOceanRaw.split(/[,，、;；\n]+/).map((s) => s.trim()).filter(Boolean)
+            : [];
           return {
             id: `${menuLabel}-${index}`,
             name: menuLabel,
@@ -4737,6 +4746,7 @@ export default function PlatformPage() {
             ipUniqueness: item.ipUniqueness || "",
             commercialConversion: item.commercialConversion || "",
             trafficBoosters: boosters,
+            blueOceanWords,
           };
         });
       }
@@ -5544,6 +5554,76 @@ export default function PlatformPage() {
     return () => window.clearInterval(timer);
   }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
+  /**
+   * 轻量版趋势分析：仅跑 Stage 1（快照 + 战略看板），不强制 IP 档案，不入队 Stage 2 专属文案。
+   * 供工作台顶部「平台趋势分析报表」区块独立启动，无需等全案分析。
+   */
+  const handleTrendStandaloneAnalyze = async () => {
+    if (!selectedTrendPlatforms.length) {
+      toast.error("请至少选择一个分析平台");
+      return;
+    }
+    const selectedPlatformLabels = selectedTrendPlatforms
+      .filter((k) => k !== "weixin_channels")
+      .map((key) => TREND_PLATFORM_OPTIONS.find((item) => item.key === key)?.label)
+      .filter(Boolean)
+      .join("、");
+
+    const cost = CREDIT_COSTS.platformTrend ?? 50;
+    if (!window.confirm(`【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成优先级看板与热点信号。\n\n扣除 ${cost} 积分，不含专属文案（需另行「开始全案分析」）。是否开始？`)) {
+      return;
+    }
+
+    platformAnalysisEpochRef.current += 1;
+    void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
+    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+
+    setAskResult(null);
+    setPlatformDashboard(null);
+    setDashboardDebug(null);
+    setIsDashboardLoading(false);
+    setPlatformContent(null);
+    setContentDebug(null);
+    setIsContentLoading(false);
+    setStage2Failed(false);
+    setContentJobError(null);
+    setContentJobPollTrace(null);
+    setElapsedTime(0);
+    setRotatingCardIndex(0);
+
+    const result = await growthSnapshotQuery.refetch();
+    if (!result.data?.snapshot) {
+      toast.error("平台趋势分析暂时没有返回结果");
+      return;
+    }
+    setHasAnalyzed(true);
+    toast.success("快照已就绪，正在生成平台趋势看板…");
+
+    const snap = result.data.snapshot;
+    setIsDashboardLoading(true);
+    try {
+      const dashResult = await getPlatformDashboardMutation.mutateAsync({
+        context: focusPrompt || undefined,
+        windowDays: selectedWindowDays,
+        snapshotSummary: snap as any,
+        copyLlmMode: "openai" as const,
+      });
+
+      if (!dashResult.platformDashboard) {
+        toast.error(`趋势看板生成失败：AI 数据格式异常，请重试`);
+        return;
+      }
+      const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
+      setPlatformDashboard(dash);
+      toast.success("平台趋势看板已就绪！如需专属文案请点「开始全案分析」。");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(sanitizePlatformUserMessage(msg, "趋势看板生成失败，请稍后重试"));
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  };
+
   const handleAnalyze = async () => {
     // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
     if (!isIpProfileReady(ipProfile)) {
@@ -6176,11 +6256,13 @@ export default function PlatformPage() {
               {TREND_PLATFORM_OPTIONS.map((item) => {
                 const active = selectedTrendPlatforms.includes(item.key);
                 const isLastSelected = active && selectedTrendPlatforms.length === 1;
+                const isComingSoon = Boolean(item.comingSoon);
                 return (
                   <button
                     key={`custom-ws-platform-${item.key}`}
                     type="button"
                     onClick={() => {
+                      if (isComingSoon) return;
                       setSelectedTrendPlatforms((prev) => {
                         if (prev.includes(item.key)) {
                           if (prev.length === 1) return prev;
@@ -6189,15 +6271,17 @@ export default function PlatformPage() {
                         return [...prev, item.key];
                       });
                     }}
-                    disabled={isAnalyzing || isDashboardLoading || isLastSelected}
-                    title={isLastSelected ? "至少保留一个平台" : undefined}
+                    disabled={isAnalyzing || isDashboardLoading || isLastSelected || isComingSoon}
+                    title={isComingSoon ? "即将开放视频号数据抓取" : isLastSelected ? "至少保留一个平台" : undefined}
                     className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      active
+                      isComingSoon
+                        ? "border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] text-[#fef08a]/50"
+                        : active
                         ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
                         : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
                     }`}
                   >
-                    {item.label}
+                    {item.label}{isComingSoon ? " ✦" : ""}
                   </button>
                 );
               })}
@@ -6208,7 +6292,7 @@ export default function PlatformPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => void handleAnalyze()}
+                    onClick={() => void handleTrendStandaloneAnalyze()}
                     disabled={growthSnapshotQuery.isFetching}
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(73,230,255,0.16)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -6220,9 +6304,9 @@ export default function PlatformPage() {
                     开始平台趋势分析
                   </button>
                   <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
-                    {CREDIT_COSTS.platformStage2Copywriting} 积分/次
+                    {(CREDIT_COSTS as any).platformTrend ?? 50} 积分/次
                   </span>
-                  <span className="text-[11px] text-[#c9c0e6]/50">含战略看板 + 专属文案入队</span>
+                  <span className="text-[11px] text-[#c9c0e6]/50">仅趋势看板·不含专属文案</span>
                 </div>
               </div>
             ) : null}
@@ -8373,6 +8457,22 @@ export default function PlatformPage() {
                                 </div>
                               );
                             })}
+                          </div>
+                        </div>
+                      ) : null}
+                      {/* 蓝海词 — Blue Ocean Keywords */}
+                      {Array.isArray((item as any).blueOceanWords) && (item as any).blueOceanWords.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-[#22d3ee]/30 bg-[rgba(34,211,238,0.06)] p-3">
+                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#67e8f9]">
+                            <Globe className="h-3 w-3" />蓝海词 · Blue Ocean Keywords
+                          </div>
+                          <p className="mt-1 text-[10px] leading-4 text-[#a5f3fc]/60">搜索量大 · 同类笔记少 · 离成交近</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(item as any).blueOceanWords.map((w: string, wi: number) => (
+                              <span key={wi} className="inline-flex items-center gap-1 rounded-full border border-[#22d3ee]/40 bg-[rgba(34,211,238,0.12)] px-3 py-1 text-[11px] font-semibold text-[#a5f3fc]">
+                                {w}
+                              </span>
+                            ))}
                           </div>
                         </div>
                       ) : null}

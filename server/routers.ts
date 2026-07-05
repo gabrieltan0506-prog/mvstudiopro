@@ -835,6 +835,7 @@ async function buildPlatformDashboard(params: {
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清人设各维度中的身份与商业价值（职业、身份、兴趣、爱好、专长中至少点到 2～3 维，禁止只写「博主」）。
 3. platformMenu：**必须输出至少 3 条、至多 4 条**。凡是上方 \`platforms\` 数组中出现的抖音 / 快手 / 小红书 / B站，只要带有 summary 或动量/适配分数，就应各占一条 platformMenu（**快手样本稀疏也必须写 nextMove**，不得以「数据少」整条省略；顺位仍可 1→4 排序）。**严禁只输出 2 条就结束。** 每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
+   每条 platformMenu 还须包含 **blueOceanWords（蓝海词）**：从该平台在 \`snapshot\` 热点/关键词中，挑选 3-5 个符合蓝海词定义的词条（搜索量大 >10万/月、同类笔记少 <200篇、用户意图精准离成交近）。如果该平台是小红书，优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取。格式：字符串数组，每项为 2-8 字，例如 ["同城相亲攻略","油皮抗老水乳","家庭急救技巧"]。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向（须说明如何经人设各维——职业、身份、兴趣、爱好、专长——改写落地，禁止纯泛热榜）；actionCards：3 个立刻能做的动作。
    【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
 5. conversationStarters：3 个让用户愿意继续追问的问题。
@@ -845,7 +846,7 @@ async function buildPlatformDashboard(params: {
 【绝对警告 — JSON 输出规范】：
 请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
 输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
-字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`;
+字段为：headline、subheadline、personaSummary、topSignals、platformMenu（每项含 blueOceanWords 字符串数组）、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`;
 
   const dashboardUserPayload = JSON.stringify({
           context: params.context || "",

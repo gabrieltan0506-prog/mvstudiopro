@@ -3165,6 +3165,16 @@ export async function collectPlatformTrends(platform: GrowthPlatform): Promise<P
       return collectToutiao();
     case "xiaohongshu":
       return collectXiaohongshu();
+    case "weixin_channels":
+      // 视频号数据抓取即将启动 — 当前以 seed 模式占位，不采集，等微信公众号 API 打通后接入
+      return finalizeCollection(platform, "seed", [], ["weixin_channels: collector not yet configured — data ingestion roadmap Q3 2026."], {
+        collectorMode: "seed",
+        requestCount: 0,
+        pageDepth: 0,
+        targetPerRun: 0,
+        referenceMinItems: 0,
+        referenceMaxItems: 0,
+      });
     default:
       return finalizeCollection(platform, "seed", [], [`No live collector configured for ${platform}.`], {
         collectorMode: "seed",
