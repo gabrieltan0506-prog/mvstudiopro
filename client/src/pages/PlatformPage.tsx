@@ -5569,6 +5569,7 @@ export default function PlatformPage() {
 
   /**
    * 轻量版趋势分析：Stage 1 看板 + 可下载 PNG 图文报表（generateVisualReport），不入队 Stage 2。
+   * 供工作台顶部「平台趋势分析报表」区块独立启动，无需等全案分析。
    */
   const handleTrendStandaloneAnalyze = async () => {
     if (!selectedTrendPlatforms.length) {
