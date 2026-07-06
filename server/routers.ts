@@ -4227,6 +4227,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 : rawDescription;
             return { title, description };
           };
+          const normalizeBlueOceanWords = (raw: unknown): Array<{ primary: string; secondary: string[] }> => {
+            if (!Array.isArray(raw)) return [];
+            return raw
+              .filter((b) => b && typeof b === "object" && (b as { primary?: unknown }).primary)
+              .map((b) => {
+                const item = b as { primary?: unknown; secondary?: unknown };
+                return {
+                  primary: safeStr(item.primary),
+                  secondary: Array.isArray(item.secondary)
+                    ? item.secondary.map((s) => safeStr(s)).filter(Boolean)
+                    : [],
+                };
+              })
+              .filter((b) => b.primary);
+          };
           appendRuntimeMetric("visual.report", {
             ok: true,
             engineEnv: visualReportEngineRaw || "openai(default)",
@@ -4250,6 +4265,27 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             industryGrowthHintMap,
           );
           const displayTrackGrowth = filterTrackGrowthHotOnly(repairedTrackGrowth);
+          const platformDetails = Array.isArray(parsed.platformDetails)
+            ? parsed.platformDetails.map((p: any) => ({
+                platform: safeStr(p?.platform || ""),
+                trafficBoosters: Array.isArray(p?.trafficBoosters) ? p.trafficBoosters.map(safeStr) : [],
+                cashRewards: Array.isArray(p?.cashRewards) ? p.cashRewards.map(safeStr) : [],
+                hotTopics: reconcilePlatformHotTopicsWithGlobalTrackGrowth(
+                  Array.isArray(p?.hotTopics) ? p.hotTopics.map(safeStr) : [],
+                  repairedTrackGrowth,
+                  industryGrowthHintMap,
+                ),
+                blueOceanWords: normalizeBlueOceanWords(p?.blueOceanWords),
+              }))
+            : [];
+          let globalBlueOceanWords = normalizeBlueOceanWords(parsed.globalBlueOceanWords);
+          if (globalBlueOceanWords.length === 0) {
+            const aggregated = platformDetails.flatMap(
+              (p: { blueOceanWords?: Array<{ primary: string; secondary: string[] }> }) =>
+                p.blueOceanWords || [],
+            );
+            globalBlueOceanWords = aggregated.slice(0, 6);
+          }
           return {
             success: true,
             report: {
@@ -4268,18 +4304,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               // New global fields: trafficSupport, hotFestivals
               trafficSupport: Array.isArray(parsed.trafficSupport) ? parsed.trafficSupport.map(safeStr) : [],
               hotFestivals: Array.isArray(parsed.hotFestivals) ? parsed.hotFestivals.map(safeStr) : [],
-              platformDetails: Array.isArray(parsed.platformDetails)
-                ? parsed.platformDetails.map((p: any) => ({
-                    platform: safeStr(p?.platform || ""),
-                    trafficBoosters: Array.isArray(p?.trafficBoosters) ? p.trafficBoosters.map(safeStr) : [],
-                    cashRewards: Array.isArray(p?.cashRewards) ? p.cashRewards.map(safeStr) : [],
-                    hotTopics: reconcilePlatformHotTopicsWithGlobalTrackGrowth(
-                      Array.isArray(p?.hotTopics) ? p.hotTopics.map(safeStr) : [],
-                      repairedTrackGrowth,
-                      industryGrowthHintMap,
-                    ),
-                  }))
-                : [],
+              globalBlueOceanWords,
+              platformDetails,
             },
           };
         } catch (error) {
