@@ -1715,7 +1715,7 @@ export default function PlatformPage() {
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `点击「开始全案分析」将一次跑完战略看板与专属文案（入队时扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分）。`;
+    return `点击「开始全案分析」将基于你的背景生成平台优先级、切入方向、选题文案与分镜脚本（入队时扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分；不含封面图、分镜图与决策智库报告）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -4625,9 +4625,9 @@ export default function PlatformPage() {
 
   const heroTrustPoints = useMemo(
     () => [
-      { label: "交付内容", value: "平台优先级 + 热点赛道 + 商业化建议" },
-      { label: "分析方式", value: `${getWindowLabel(selectedWindowDays)} 时间窗口，不做泛建议` },
-      { label: "使用场景", value: "适合你决定先做哪个平台、发什么形式、怎么承接时使用" },
+      { label: "全案交付", value: "平台优先级、切入方向、选题文案与分镜脚本" },
+      { label: "不含在内", value: "封面图、分镜图、MV Studio Pro AI 决策智库报告（均需另购）" },
+      { label: "分析方式", value: `${getWindowLabel(selectedWindowDays)} 窗口 + 人物背景与诉求，不做泛建议` },
     ],
     [selectedWindowDays],
   );
@@ -5400,7 +5400,7 @@ export default function PlatformPage() {
     () =>
       cleanUserCopy(
         platformDashboard?.personaSummary || "",
-        "选择分析窗口，并在右侧用一两句话说明你这轮最想判断什么；我们会结合实时样本与你的企业 IP 基因，给出平台优先级与可落地建议。",
+        "在右侧填写人物背景与创作诉求，并载入 IP 基因；我们会结合近窗口样本，给出平台优先级、切入方向与可落地建议。",
       ),
     [platformDashboard],
   );
@@ -5723,8 +5723,10 @@ export default function PlatformPage() {
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `【平台全案分析】将基于${selectedPlatformLabels}实时样本与你的 IP 背景，一次性交付：战略优先级看板 + 专属选题与可拍摄长文案／分镜级内容（结构化落地稿，而非 ChatGPT 式泛泛建议）。\n\n` +
-          `专属文案任务入队时扣除 ${cost} 积分；全程约数分钟，请勿关闭页面。是否开始？`,
+        `【平台全案分析】将基于${selectedPlatformLabels}近 ${selectedWindowDays} 天样本，以及你在右侧填写的人物背景与创作诉求（含 IP 基因），交付：\n` +
+          `· 平台优先级与切入方向（战略看板）\n` +
+          `· 差异化选题文案与分镜脚本\n\n` +
+          `任务入队时扣除 ${cost} 积分。不含封面图、分镜图、MV Studio Pro AI 决策智库报告（均需另购）。全程约数分钟，请勿关闭页面。是否开始？`,
       )
     ) {
       return;
@@ -6114,7 +6116,7 @@ export default function PlatformPage() {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("请先完成全案分析：右侧「开始全案分析」入队后，待专属文案写入即可在本页解锁决策智库视图。");
+    toast.message("请先完成全案分析：填写人物背景并点「开始全案分析」，生成看板与文案后，可在此单独加购决策智库报告。");
     document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -6133,7 +6135,7 @@ export default function PlatformPage() {
       document.getElementById(PLATFORM_SECTION_TREND_SIGNALS_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("平台趋势来自当前窗口快照：请在右侧选择天数与判断焦点，并点击「开始全案分析」。");
+    toast.message("平台趋势来自当前窗口快照：请在右侧选择天数、填写人物背景，并点击「开始全案分析」。");
     document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [snapshot]);
 
@@ -7390,7 +7392,7 @@ export default function PlatformPage() {
                           {CREDIT_COSTS.platformTrend} 积分/次
                         </span>
                       </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">全案入队读取窗口样本、热点与平台信号</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">填写背景后生成平台优先级、切入方向、选题文案与分镜脚本</p>
                     </div>
                   </button>
                   <button
@@ -7409,12 +7411,12 @@ export default function PlatformPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">个人战略全景</span>
+                        <span className="text-base font-bold text-white md:text-lg">MV Studio Pro AI 决策智库</span>
                         <span className="rounded-full border border-[#f472b6]/45 bg-[rgba(244,114,182,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fbcfe8]">
-                          智库加购
+                          单独加购
                         </span>
                       </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">专属文案就绪后可解锁一页可视化决策地图</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">基于全案背景生成可视化决策报告；不含在全案积分内</p>
                     </div>
                   </button>
                   <button
@@ -7568,13 +7570,16 @@ export default function PlatformPage() {
               <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Target className="h-4 w-4 text-[#ffdd44]" />
-                  你这轮最想判断什么
+                  人物背景与创作诉求
                 </div>
+                <p className="mt-2 text-xs leading-relaxed text-[#b7add8]">
+                  请写清职业、专长、兴趣与商业目标；系统将据此生成<strong className="text-white">平台优先级与切入方向</strong>，并写入选题文案与分镜脚本（不含封面图、分镜图与决策智库报告）。
+                </p>
                 <div className="relative mt-4">
                   <textarea
                     value={focusPrompt}
                     onChange={(event) => setFocusPrompt(event.target.value)}
-                    placeholder="例如：我现在是做女性健康/本地服务，想知道先做小红书还是抖音；应该先做图文、短视频，还是先验证某个商业化切口。"
+                    placeholder="例如：我是哈佛医学博士，擅长心脑血管慢病与中西医养生，热爱爵士乐与旅行。希望打造高价值商业 IP，结合黄帝内经等典籍与西医观点，规划差异化选题、赛道方向、产品矩阵与适合发布的平台。"
                     className="min-h-[136px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
                   />
                   <div className="absolute right-3 top-3">
@@ -7608,7 +7613,7 @@ export default function PlatformPage() {
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
-                    title="已含专属选题与长文案／分镜稿；任务入队时扣除右侧积分（与通用聊天不同，结合当前窗口样本与 IP 基因）"
+                    title="含平台优先级、切入方向、选题文案与分镜脚本；任务入队时扣除右侧积分（不含封面图、分镜图与决策智库报告）"
                   >
                     {CREDIT_COSTS.platformStage2Copywriting} 积分
                   </span>
@@ -7629,7 +7634,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-2 max-w-xl text-[11px] leading-5 text-white/38">
-                  点击后会<strong className="text-white/80">自动接续</strong>生成专属选题与长文案／分镜稿；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>，金额即右侧标示。
+                  点击后会基于你的背景生成<strong className="text-white/80">平台优先级、切入方向、选题文案与分镜脚本</strong>；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>。封面图、分镜图与决策智库报告需<strong className="text-white/70">另行加购</strong>。
                   {hasAnalyzed ? (
                     <>
                       {" "}
@@ -7944,7 +7949,7 @@ export default function PlatformPage() {
                 <div>
                   <div className="text-sm font-semibold text-white">平台样本已就绪，正在生成战略优先级看板…</div>
                   <div className="mt-1 text-xs text-[#b7add8]">
-                    通常 30–90 秒。看板就绪后将<strong className="text-[#d4d4ff]">自动接续</strong>专属选题与长文案／分镜稿（结合实时样本与你的 IP，非泛泛建议），全程请勿关闭页面。
+                    通常 30–90 秒生成<strong className="text-[#d4d4ff]">平台优先级与切入方向</strong>，随后自动入队选题文案与分镜脚本（不含出图与决策智库报告）。请勿关闭页面。
                   </div>
                 </div>
               </div>
@@ -7976,16 +7981,16 @@ export default function PlatformPage() {
                         {CREDIT_COSTS.platformTrend} 积分/次
                       </span>
                     </div>
-                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">全案入队读取窗口样本、热点与平台信号</p>
+                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">填写背景后生成交付：平台优先级、切入方向、选题文案与分镜脚本</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-bold text-white">个人战略全景</span>
+                      <span className="text-sm font-bold text-white">MV Studio Pro AI 决策智库</span>
                       <span className="rounded-full border border-[#f472b6]/45 bg-[rgba(244,114,182,0.15)] px-2 py-0.5 text-[10px] font-semibold text-[#fbcfe8]">
-                        智库加购
+                        单独加购
                       </span>
                     </div>
-                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">专属文案就绪后可解锁一页可视化决策地图</p>
+                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">基于全案背景的可视化决策报告，不含在全案积分内</p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -8045,12 +8050,10 @@ export default function PlatformPage() {
                   <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣费说明</span>
                 </div>
                 <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                  首次「开始全案分析」确认后，系统会接续入队专属文案；任务<strong className="text-white">入队时</strong>扣除{" "}
-                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>
-                  并由后台结合当前窗口样本与你的背景写入<strong className="text-white">可执行长稿／分镜</strong>
-                  。任务失败、逾时或结果不满意，
-                  <strong className="text-red-200">积分不予退还</strong>。若之后点「重新生成」，
-                  <strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
+                  「开始全案分析」会基于你填写的人物背景与 IP 基因，结合近 {selectedWindowDays} 天窗口样本，写入<strong className="text-white">平台优先级、切入方向、选题文案与分镜脚本</strong>。任务<strong className="text-white">入队时</strong>扣除{" "}
+                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
+                  <strong className="text-white">不含</strong>封面图、分镜图与 MV Studio Pro AI 决策智库报告（均需另购）。
+                  任务失败、逾时或结果不满意，<strong className="text-red-200">积分不予退还</strong>。若之后点「重新生成」，<strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
                 </div>
               </div>
             </div>
@@ -8066,7 +8069,8 @@ export default function PlatformPage() {
                     </span>
                   </div>
                   <p className="text-[11px] leading-relaxed text-[#b7add8]">
-                    基于「近 {selectedWindowDays} 天」窗口的热点切口。点「扩写并出图」即把该选题扩写成可执行文案（同一选题<strong className="text-white">首次免费</strong>），随后可直接在下方执行区生成<strong className="text-white">封面 / 2×4·3×4 分镜</strong>，无需先跑专属文案。
+                    基于当前窗口热点切口，可将选题<strong className="text-white">扩写为文案与分镜脚本</strong>（同一选题<strong className="text-white">首次免费</strong>）。
+                    <strong className="text-white">封面图与分镜图</strong>需在下方执行区<strong className="text-white">另行加购</strong>出图积分。
                   </p>
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -8126,14 +8130,14 @@ export default function PlatformPage() {
                     <Lock className="h-5 w-5 text-[#8cefff]" aria-hidden />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white md:text-lg">个性化战略地图（决策智库视图）</h3>
+                    <h3 className="text-base font-bold text-white md:text-lg">MV Studio Pro AI 决策智库报告</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      <strong className="text-white">独立模块</strong>：只要完成<strong className="text-white">快照 + 战略看板</strong>即可解锁，<strong className="text-white">无需先跑专属文案</strong>；将本页战略看板与热点要点<strong className="text-white">收敛成一页可视化报告</strong>
-                      （雷达、执行向建议与阅读用排行条；均为<strong className="text-white">辅助决策的模型推演</strong>，不构成效果承诺）。若已生成专属文案，其选题会一并纳入分析。解锁为
-                      <strong className="text-white"> 加购模块</strong>
-                      ，与全案入队扣点分开计：首次体验{" "}
+                      <strong className="text-white">单独加购模块</strong>：需先完成全案分析（填写人物背景并生成看板与文案），再付费解锁本报告。
+                      报告将把你的背景、平台优先级与选题<strong className="text-white">收敛为一页可视化决策地图</strong>（雷达、执行建议与阅读向排行；均为模型辅助推演，不构成效果承诺）。
+                      与全案入队扣点<strong className="text-white">分开计费</strong>：首次体验{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
+                      <strong className="text-white">不含</strong>封面图、分镜图（出图需在执行区另购）。
                       扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
                   </div>
@@ -8147,7 +8151,7 @@ export default function PlatformPage() {
                     </span>
                     {!decisionIntelInputReady ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
-                        请先完成快照与战略看板（点「开始全案分析」），即可独立解锁本报告；无需等待专属文案。
+                        请先填写人物背景并完成「开始全案分析」，生成看板与文案后，可在此单独加购决策智库报告。
                       </span>
                     ) : isContentLoading ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-[#8cefff]/90 md:text-right">
@@ -8177,7 +8181,7 @@ export default function PlatformPage() {
                         }
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于当前「战略看板${platformContent ? " + 已写入的专属文案" : ""}」与「近 ${selectedWindowDays} 天」窗口生成决策智库报告并存档。\n\n报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与分镜图。报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
                           );
                           if (!ok) return;
                         }
@@ -8252,26 +8256,25 @@ export default function PlatformPage() {
                     <DecisionIntelLockedDemoPreview
                       footnote={
                         strategicMapPreviewReport
-                          ? "上为匿名化演示样张（英文与品牌区已打码）。解锁后将依您当前战略看板与专属文案生成清晰专属版并存档。"
-                          : "上为匿名化演示样张（英文与品牌区已打码）。完成专属文案后即可付费解锁，获取基于您数据的完整报告。"
+                          ? "上为匿名化演示样张（英文与品牌区已打码）。加购后将依你的全案背景与看板结果生成清晰专属版并存档。"
+                          : "上为匿名化演示样张（英文与品牌区已打码）。完成全案分析后可单独加购，获取基于你背景与数据的完整报告。"
                       }
                     />
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
                       <div className="flex max-w-lg flex-col items-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[#070a12]/90 px-4 py-3 text-center shadow-[0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md">
                         <Lock className="h-7 w-7 text-[#8cefff]/90" aria-hidden />
                         <p className="text-sm font-semibold text-white">
-                          {strategicMapPreviewReport ? "试读样张 · 解锁拿专属高清版" : "试读样张 · 完成文案后可解锁"}
+                          {strategicMapPreviewReport ? "试读样张 · 加购拿专属高清版" : "试读样张 · 完成全案后可加购"}
                         </p>
                         <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
                           {strategicMapPreviewReport ? (
                             <>
-                              解锁后版式与演示一致，但数字与建议均来自<strong className="text-[#fde047]">您的全案结果</strong>
+                              加购后版式与演示一致，但数字与建议均来自<strong className="text-[#fde047]">你的全案背景与看板结果</strong>
                               ，非示意样张。
                             </>
                           ) : (
                             <>
-                              请先完成本页<strong className="text-[#fde047]">专属文案</strong>
-                              ；解锁价格已列于上方。
+                              请先完成<strong className="text-[#fde047]">全案分析</strong>（填写背景并生成看板与文案）；本报告与全案积分分开计费，价格见上方。
                             </>
                           )}
                         </p>
@@ -8479,6 +8482,9 @@ export default function PlatformPage() {
                   <TrendingUp className="h-4 w-4 text-[#49e6ff]" />
                   平台优先级与切入方式
                 </div>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
+                  基于你在上方填写的人物背景与创作诉求，结合近 {selectedWindowDays} 天窗口样本，给出各平台优先顺序与具体切入动作（不含封面图、分镜图与决策智库报告）。
+                </p>
                 <div className="mt-5 grid gap-4">
                   {platformDecisionRows.map((item, index) => (
                     <div key={item.id} className="rounded-[24px] border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
@@ -8573,7 +8579,6 @@ export default function PlatformPage() {
                           <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#67e8f9]">
                             <Globe className="h-3 w-3" />蓝海词 · Blue Ocean Keywords
                           </div>
-                          <p className="mt-1 text-[10px] leading-4 text-[#a5f3fc]/60">搜索量大 · 同类笔记少 · 离成交近</p>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {(item as any).blueOceanWords.map((w: string, wi: number) => (
                               <span key={wi} className="inline-flex items-center gap-1 rounded-full border border-[#22d3ee]/40 bg-[rgba(34,211,238,0.12)] px-3 py-1 text-[11px] font-semibold text-[#a5f3fc]">
