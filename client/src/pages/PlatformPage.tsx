@@ -8,8 +8,14 @@ import PlatformSignalsCarouselPanel, {
 } from "@/components/platform/PlatformSignalsCarouselPanel";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
-import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
+import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
+import {
+  mapGenerateVisualReportResult,
+  toVisualReportPlatforms,
+  toVisualReportWindowDays,
+  type VisualReportTheme,
+} from "@/lib/visualReportMapper";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
@@ -1659,6 +1665,11 @@ export default function PlatformPage() {
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
+  const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(null);
+  const [visualReportTheme] = useState<VisualReportTheme>("dark");
+  const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
+  const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
+  const visualReportRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
@@ -2187,6 +2198,8 @@ export default function PlatformPage() {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
     },
   });
+
+  const generateVisualReportMutation = trpc.mvAnalysis.generateVisualReport.useMutation();
 
   const askPlatformFollowUpMutation = trpc.mvAnalysis.askPlatformFollowUp.useMutation({
     onSuccess: (result) => {
@@ -5555,12 +5568,17 @@ export default function PlatformPage() {
   }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
   /**
-   * 轻量版趋势分析：仅跑 Stage 1（快照 + 战略看板），不强制 IP 档案，不入队 Stage 2 专属文案。
+   * 轻量版趋势分析：Stage 1 看板 + 可下载 PNG 图文报表（generateVisualReport），不入队 Stage 2。
    * 供工作台顶部「平台趋势分析报表」区块独立启动，无需等全案分析。
    */
   const handleTrendStandaloneAnalyze = async () => {
     if (!selectedTrendPlatforms.length) {
       toast.error("请至少选择一个分析平台");
+      return;
+    }
+    const visualPlatforms = toVisualReportPlatforms(selectedTrendPlatforms);
+    if (!visualPlatforms.length) {
+      toast.error("当前所选平台暂不支持图文报表（视频号即将开放）");
       return;
     }
     const selectedPlatformLabels = selectedTrendPlatforms
@@ -5570,7 +5588,16 @@ export default function PlatformPage() {
       .join("、");
 
     const cost = CREDIT_COSTS.platformTrend ?? 50;
-    if (!window.confirm(`【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成优先级看板与热点信号。\n\n扣除 ${cost} 积分，不含专属文案（需另行「开始全案分析」）。是否开始？`)) {
+    const reportWindowDays = toVisualReportWindowDays(selectedWindowDays);
+    const windowNote =
+      selectedWindowDays === 45
+        ? "（45 天窗口的 PNG 报表按 30 天口径生成）"
+        : "";
+    if (
+      !window.confirm(
+        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、信号轮播、Stage 1 看板，并同步生成含蓝海词的可下载 PNG 图文报表${windowNote}。\n\n扣除 ${cost} 积分，不含专属文案（需另行「开始全案分析」）。是否开始？`,
+      )
+    ) {
       return;
     }
 
@@ -5582,6 +5609,8 @@ export default function PlatformPage() {
     setPlatformDashboard(null);
     setDashboardDebug(null);
     setIsDashboardLoading(false);
+    setVisualReportData(null);
+    setIsVisualReportLoading(false);
     setPlatformContent(null);
     setContentDebug(null);
     setIsContentLoading(false);
@@ -5597,30 +5626,79 @@ export default function PlatformPage() {
       return;
     }
     setHasAnalyzed(true);
-    toast.success("快照已就绪，正在生成平台趋势看板…");
+    toast.success("快照已就绪，正在生成看板与 PNG 图文报表…");
 
     const snap = result.data.snapshot;
+    const personaContext = String(focusPrompt || "").trim().slice(0, 4000);
     setIsDashboardLoading(true);
+    setIsVisualReportLoading(true);
     try {
-      const dashResult = await getPlatformDashboardMutation.mutateAsync({
-        context: focusPrompt || undefined,
-        windowDays: selectedWindowDays,
-        snapshotSummary: snap as any,
-        copyLlmMode: "openai" as const,
-      });
+      const [dashResult, visualResult] = await Promise.all([
+        getPlatformDashboardMutation.mutateAsync({
+          context: focusPrompt || undefined,
+          windowDays: selectedWindowDays,
+          snapshotSummary: snap as any,
+          copyLlmMode: "openai" as const,
+        }),
+        generateVisualReportMutation.mutateAsync({
+          windowDays: reportWindowDays,
+          theme: visualReportTheme,
+          platforms: visualPlatforms,
+          ...(personaContext ? { personaContext } : {}),
+        }),
+      ]);
 
       if (!dashResult.platformDashboard) {
         toast.error(`趋势看板生成失败：AI 数据格式异常，请重试`);
-        return;
+      } else {
+        const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
+        setPlatformDashboard(dash);
       }
-      const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
-      setPlatformDashboard(dash);
-      toast.success("平台趋势看板已就绪！如需专属文案请点「开始全案分析」。");
+
+      const mappedReport = mapGenerateVisualReportResult(visualResult, {
+        windowDays: reportWindowDays,
+        theme: visualReportTheme,
+      });
+      if (!mappedReport) {
+        toast.error("PNG 图文报表生成失败，请重试");
+      } else {
+        setVisualReportData(mappedReport);
+      }
+
+      if (dashResult.platformDashboard && mappedReport) {
+        toast.success("平台趋势看板与 PNG 图文报表已就绪！可在此下载长图。");
+      } else if (dashResult.platformDashboard) {
+        toast.success("平台趋势看板已就绪；PNG 报表未生成成功，请重试。");
+      } else if (mappedReport) {
+        toast.success("PNG 图文报表已就绪，可下载长图。");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(sanitizePlatformUserMessage(msg, "趋势看板生成失败，请稍后重试"));
+      toast.error(sanitizePlatformUserMessage(msg, "趋势分析失败，请稍后重试"));
     } finally {
       setIsDashboardLoading(false);
+      setIsVisualReportLoading(false);
+    }
+  };
+
+  const handleDownloadVisualReport = async () => {
+    if (!visualReportRef.current || !visualReportData) return;
+    setIsVisualReportDownloading(true);
+    try {
+      const reportWindowDays = toVisualReportWindowDays(selectedWindowDays);
+      const dataUrl = await toPng(visualReportRef.current, {
+        pixelRatio: 2,
+        backgroundColor: visualReportTheme === "dark" ? "#080618" : "#fff5f0",
+      });
+      const link = document.createElement("a");
+      link.download = `mvstudiopro-trend-report-${reportWindowDays}d-${visualReportTheme}.png`;
+      link.href = dataUrl;
+      link.click();
+      toast.success("PNG 图文报表已下载");
+    } catch {
+      toast.error("下载失败，请重试");
+    } finally {
+      setIsVisualReportDownloading(false);
     }
   };
 
@@ -6214,7 +6292,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  四格战略摘要与信号轮播常驻本工作台；Stage 1 看板完成后即可对照，素材分析或专属文案在后台跑时不必干等。
+                  一次启动即可得到四格战略摘要、信号轮播、Stage 1 看板，以及含蓝海词的可下载 PNG 图文报表；素材分析或专属文案在后台跑时不必干等。
                 </p>
               </div>
               {platformDashboard ? (
@@ -6287,7 +6365,7 @@ export default function PlatformPage() {
               })}
             </div>
 
-            {!platformDashboard && !isAnalyzing && !isDashboardLoading ? (
+            {!platformDashboard && !isAnalyzing && !isDashboardLoading && !isVisualReportLoading ? (
               <div className="mt-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -6306,16 +6384,16 @@ export default function PlatformPage() {
                   <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
                     {(CREDIT_COSTS as any).platformTrend ?? 50} 积分/次
                   </span>
-                  <span className="text-[11px] text-[#c9c0e6]/50">仅趋势看板·不含专属文案</span>
+                  <span className="text-[11px] text-[#c9c0e6]/50">含 PNG 图文报表 · 不含专属文案</span>
                 </div>
               </div>
             ) : null}
 
-            {(isDashboardLoading || isAnalyzing) && !platformDashboard ? (
+            {(isDashboardLoading || isVisualReportLoading || isAnalyzing) && !platformDashboard && !visualReportData ? (
               <div className="mt-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[#8cefff]">
                   <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                  正在读取近 {selectedWindowDays} 天窗口样本并生成战略看板…
+                  正在读取近 {selectedWindowDays} 天样本，生成战略看板与含蓝海词的 PNG 图文报表…
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
                   <div className="h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]" />
@@ -6352,19 +6430,40 @@ export default function PlatformPage() {
                   subtitle="对照当前窗口的平台脉搏、热点切口与可先执行的动作；与素材分析同屏进行。"
                 />
               </div>
-            ) : !platformDashboard && !snapshot && !isAnalyzing && !isDashboardLoading ? (
+            ) : !platformDashboard && !snapshot && !isAnalyzing && !isDashboardLoading && !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动分析后，信号轮播将在此展示热点与可执行动作；上方四格会先出战略摘要。
+                启动分析后，信号轮播将展示热点与可执行动作；上方四格会先出战略摘要，完成后可下载含蓝海词的 PNG 长图。
               </p>
             ) : null}
 
-            {/* 平台趋势分析报表生成器 — 常驻，不依赖全案，直接生成图文报表 */}
-            <div className="mt-6">
-              <ReportGeneratorPanel
-                supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
-                personaContext={personaSummary}
-              />
-            </div>
+            {visualReportData ? (
+              <div className="mt-4 rounded-2xl border border-[#6fffb0]/20 bg-[rgba(111,255,176,0.06)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[#6fffb0]">PNG 图文报表已就绪</div>
+                    <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
+                      含全局与各平台蓝海词区块；点击下载保存长图。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadVisualReport()}
+                    disabled={isVisualReportDownloading}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#6fffb0]/25 bg-[rgba(111,255,176,0.10)] px-4 py-2 text-sm font-semibold text-[#6fffb0] transition hover:bg-[rgba(111,255,176,0.18)] disabled:opacity-60"
+                  >
+                    {isVisualReportDownloading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    下载 PNG 图文报表
+                  </button>
+                </div>
+                <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
+                  <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* 一级 Tab */}
