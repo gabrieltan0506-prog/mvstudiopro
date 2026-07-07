@@ -9,6 +9,7 @@ import {
   stopGrowthTrendLiveBackfillWorker,
 } from "./trendBackfill";
 import {
+  bootstrapTrendHistoryFromColdStore,
   ensureGrowthStoreSplitGzipLayout,
   readTrendSchedulerState,
   mergeTrendCollections,
@@ -65,6 +66,9 @@ const DISABLE_BACKFILL_ON_LARGE_STORE = !/^(0|false|no)$/i.test(
 const BACKFILL_STORE_SIZE_LIMIT_MB = Math.max(
   64,
   Number(process.env.GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB || 128) || 128,
+);
+const BACKFILL_FAST_START_ENABLED = !/^(0|false|no)$/i.test(
+  String(process.env.GROWTH_BACKFILL_FAST_START || "1").trim(),
 );
 const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
@@ -564,6 +568,10 @@ async function shouldBootstrapBackfill() {
   return true;
 }
 
+function shouldRunBackfillWorkersNow() {
+  return isBackfillWindow() || BACKFILL_FAST_START_ENABLED;
+}
+
 export async function bootstrapGrowthTrendScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
@@ -577,6 +585,13 @@ export async function bootstrapGrowthTrendScheduler() {
   if (!/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "").trim())) {
     await reconcileTrendHistoryState().catch((error) => {
       console.warn("[growth.history] reconcile on bootstrap failed:", error);
+    });
+    await bootstrapTrendHistoryFromColdStore().catch((error) => {
+      console.warn("[growth.history] cold-store bootstrap failed:", error);
+    }).then((result) => {
+      if (result?.note && !result.skipped) {
+        console.info(`[growth.history] ${result.note}`);
+      }
     });
   }
 
@@ -604,7 +619,7 @@ export async function bootstrapGrowthTrendScheduler() {
   }
 
   if (await shouldBootstrapBackfill()) {
-    if (isBackfillWindow()) {
+    if (shouldRunBackfillWorkersNow()) {
       bootstrapGrowthTrendBackfillWorker().catch((error) => {
         console.warn("[growth.backfill] bootstrap failed:", error);
       });
@@ -628,7 +643,7 @@ export async function bootstrapGrowthTrendScheduler() {
     refreshRuntimeModeOverride().catch((error) => {
       console.warn("[growth.scheduler] runtime mode refresh failed:", error);
     });
-    if (isBackfillWindow()) {
+    if (shouldRunBackfillWorkersNow()) {
       bootstrapGrowthTrendBackfillWorker().catch((error) => {
         console.warn("[growth.backfill] periodic bootstrap failed:", error);
       });

@@ -673,6 +673,141 @@ async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string
   );
 }
 
+function mergeHistoryLedgerEntries(
+  local: Record<string, TrendHistoryLedgerEntry>,
+  remote: Record<string, TrendHistoryLedgerEntry>,
+) {
+  const merged = { ...local };
+  for (const [key, entry] of Object.entries(remote)) {
+    const current = merged[key];
+    if (!current) {
+      merged[key] = entry;
+      continue;
+    }
+    merged[key] = {
+      ...current,
+      bucket: entry.bucket || current.bucket,
+      industryLabels: normalizeLabels([...(current.industryLabels || []), ...(entry.industryLabels || [])]),
+      ageLabels: normalizeLabels([...(current.ageLabels || []), ...(entry.ageLabels || [])]),
+      contentLabels: normalizeLabels([...(current.contentLabels || []), ...(entry.contentLabels || [])]),
+      firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
+      lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+    };
+  }
+  return merged;
+}
+
+const REPO_SNAPSHOT_LEDGER_DIR = path.resolve(process.cwd(), "data", "growth-snapshots", "latest", "history-ledger");
+const HISTORY_BOOTSTRAP_MIN_ARCHIVED_PER_PLATFORM = Math.max(
+  100,
+  Number(process.env.GROWTH_HISTORY_BOOTSTRAP_MIN_ARCHIVED || 500) || 500,
+);
+
+async function readHistoryLedgerFromRepoSnapshot(platform: GrowthPlatform) {
+  const plainPath = path.join(REPO_SNAPSHOT_LEDGER_DIR, `${platform}.json`);
+  const parsed = await readLocalJsonOrGzip<{ items?: Record<string, TrendHistoryLedgerEntry> }>(plainPath);
+  return parsed?.items && Object.keys(parsed.items).length ? parsed.items : {};
+}
+
+async function readHistoryLedgerFromColdStoreOnly(platform: GrowthPlatform) {
+  const assetName = `history-ledger-${platform}.json.gz`;
+  const downloaded = await downloadColdStoreAsset(
+    assetName,
+    path.join("history-ledger", `${platform}.json.gz`),
+  );
+  if (!downloaded) return {};
+  try {
+    const { stdout } = await execFileAsync("gzip", ["-dfc", downloaded], { maxBuffer: 64 * 1024 * 1024 });
+    const parsed = JSON.parse(stdout) as { items?: Record<string, TrendHistoryLedgerEntry> };
+    return parsed?.items || {};
+  } catch {
+    return {};
+  }
+}
+
+export type TrendHistoryBootstrapResult = {
+  mergedPlatforms: GrowthPlatform[];
+  sources: Partial<Record<GrowthPlatform, Array<"local" | "github-cold" | "repo-snapshot">>>;
+  archivedBefore: Partial<Record<GrowthPlatform, number>>;
+  archivedAfter: Partial<Record<GrowthPlatform, number>>;
+  skipped: boolean;
+  note?: string;
+};
+
+export async function bootstrapTrendHistoryFromColdStore(): Promise<TrendHistoryBootstrapResult> {
+  const result: TrendHistoryBootstrapResult = {
+    mergedPlatforms: [],
+    sources: {},
+    archivedBefore: {},
+    archivedAfter: {},
+    skipped: true,
+  };
+  if (DISABLE_HISTORY_LEDGER_UPDATES) {
+    result.note = "history-ledger updates disabled; skipped cold-store bootstrap.";
+    return result;
+  }
+
+  const store = await readTrendStore({ preferDerivedFiles: true });
+  const targetPlatforms = growthPlatformValues.filter((platform): platform is GrowthPlatform => platform !== "weixin_channels");
+  const needsBootstrap = targetPlatforms.some((platform) => {
+    const summary = store.history?.platforms?.[platform];
+    const archived = summary?.archivedItems || 0;
+    result.archivedBefore[platform] = archived;
+    return archived < HISTORY_BOOTSTRAP_MIN_ARCHIVED_PER_PLATFORM;
+  });
+  if (!needsBootstrap && store.history?.source === "ledger") {
+    result.note = "local history-ledger already satisfies bootstrap threshold.";
+    for (const platform of targetPlatforms) {
+      result.archivedAfter[platform] = result.archivedBefore[platform] || 0;
+    }
+    return result;
+  }
+
+  result.skipped = false;
+  for (const platform of targetPlatforms) {
+    const localLedger = await readHistoryLedger(platform);
+    const localCount = Object.keys(localLedger).length;
+    result.archivedBefore[platform] = Math.max(result.archivedBefore[platform] || 0, localCount);
+
+    let merged = { ...localLedger };
+    const sources: Array<"local" | "github-cold" | "repo-snapshot"> = localCount ? ["local"] : [];
+
+    const repoLedger = await readHistoryLedgerFromRepoSnapshot(platform);
+    if (Object.keys(repoLedger).length) {
+      merged = mergeHistoryLedgerEntries(merged, repoLedger);
+      sources.push("repo-snapshot");
+    }
+
+    if (canUseGithubColdStore()) {
+      const coldLedger = await readHistoryLedgerFromColdStoreOnly(platform);
+      if (Object.keys(coldLedger).length) {
+        merged = mergeHistoryLedgerEntries(merged, coldLedger);
+        sources.push("github-cold");
+      }
+    }
+
+    const mergedCount = Object.keys(merged).length;
+    if (mergedCount > localCount) {
+      await writeHistoryLedger(platform, merged);
+      result.mergedPlatforms.push(platform);
+      result.sources[platform] = sources;
+    }
+    result.archivedAfter[platform] = mergedCount;
+  }
+
+  if (result.mergedPlatforms.length) {
+    await reconcileTrendHistoryState({ force: true });
+    result.note = `Merged history-ledger for ${result.mergedPlatforms.join(", ")} from GitHub/repo snapshot before backfill.`;
+  } else {
+    result.skipped = true;
+    result.note = "No additional history-ledger entries found in GitHub cold store or repo snapshot.";
+    for (const platform of targetPlatforms) {
+      result.archivedAfter[platform] = result.archivedBefore[platform] || 0;
+    }
+  }
+  return result;
+}
+
 async function readAllHistoryLedgers(platforms: GrowthPlatform[]) {
   const ledgers = new Map<GrowthPlatform, Record<string, TrendHistoryLedgerEntry>>();
   for (const platform of platforms) {
@@ -1152,9 +1287,29 @@ export async function resetTrendRuntimeForDeploy(deployId: string) {
   if (currentRelease?.value?.deployId === deployId) return false;
   const updatedAt = nowShanghaiIso();
   const emptyStore = createEmptyStore();
+  const fastRestartDelayMs = Math.max(
+    60 * 1000,
+    Number(process.env.GROWTH_BACKFILL_INITIAL_DELAY_MS || 60 * 1000) || 60 * 1000,
+  );
+  const fastRestartNote = `Deploy 后快速回填：${Math.round(fastRestartDelayMs / 1000)} 秒内首跑，pending 平台最长 ${Math.round((Number(process.env.GROWTH_BACKFILL_PENDING_RETRY_MS || 5 * 60 * 1000) || 5 * 60 * 1000) / 1000)} 秒重试。`;
+  const seedBackfillProgress = (mode: "live" | "history"): TrendBackfillProgress => ({
+    ...(mode === "live" ? emptyStore.backfillLive! : emptyStore.backfillHistory!),
+    active: true,
+    status: "running",
+    startedAt: updatedAt,
+    nextRunAt: nowShanghaiIso(Date.now() + fastRestartDelayMs),
+    note: fastRestartNote,
+    platforms: Array.from(BACKFILL_PLATFORMS).map((platform) => ({
+      platform,
+      target: 0,
+      currentTotal: 0,
+      archivedTotal: 0,
+      status: "pending",
+    })),
+  });
   await writeRuntimeSegment(RUNTIME_RELEASE_FILE, { deployId }, updatedAt);
-  await writeRuntimeSegment(RUNTIME_BACKFILL_LIVE_FILE, emptyStore.backfillLive, updatedAt);
-  await writeRuntimeSegment(RUNTIME_BACKFILL_HISTORY_FILE, emptyStore.backfillHistory, updatedAt);
+  await writeRuntimeSegment(RUNTIME_BACKFILL_LIVE_FILE, seedBackfillProgress("live"), updatedAt);
+  await writeRuntimeSegment(RUNTIME_BACKFILL_HISTORY_FILE, seedBackfillProgress("history"), updatedAt);
   await writeRuntimeMetaSnapshot(updatedAt);
   return true;
 }

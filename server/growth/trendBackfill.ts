@@ -13,13 +13,28 @@ const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
 const BACKFILL_ACTIVE_INTERVAL_MS = Math.max(
   1 * 60 * 1000,
-  Number(process.env.GROWTH_BACKFILL_ACTIVE_INTERVAL_MS || 10 * 60 * 1000) || 10 * 60 * 1000,
+  Number(process.env.GROWTH_BACKFILL_ACTIVE_INTERVAL_MS || 5 * 60 * 1000) || 5 * 60 * 1000,
+);
+const BACKFILL_PENDING_RETRY_MS = Math.max(
+  60 * 1000,
+  Number(process.env.GROWTH_BACKFILL_PENDING_RETRY_MS || 5 * 60 * 1000) || 5 * 60 * 1000,
+);
+const BACKFILL_INITIAL_DELAY_MS = Math.max(
+  30 * 1000,
+  Number(process.env.GROWTH_BACKFILL_INITIAL_DELAY_MS || 60 * 1000) || 60 * 1000,
+);
+const BACKFILL_FAST_START_ENABLED = !/^(0|false|no)$/i.test(
+  String(process.env.GROWTH_BACKFILL_FAST_START || "1").trim(),
+);
+const BACKFILL_FAST_START_MAX_ROUNDS = Math.max(
+  1,
+  Number(process.env.GROWTH_BACKFILL_FAST_START_MAX_ROUNDS || 2) || 2,
 );
 const BACKFILL_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_START_HOUR || 1) || 1));
 const BACKFILL_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_END_HOUR || 6) || 6));
 const HISTORY_BASE_INTERVAL_MS = Math.max(
-  30 * 60 * 1000,
-  Number(process.env.GROWTH_HISTORY_BACKFILL_INTERVAL_MS || 30 * 60 * 1000) || 30 * 60 * 1000,
+  1 * 60 * 1000,
+  Number(process.env.GROWTH_HISTORY_BACKFILL_INTERVAL_MS || 5 * 60 * 1000) || 5 * 60 * 1000,
 );
 const HISTORY_STAGE_ONE_THRESHOLD = Math.max(
   150_000,
@@ -54,8 +69,8 @@ const LIVE_FINE_GAP_BUCKET_MINUTES = Math.max(
   Number(process.env.GROWTH_LIVE_BACKFILL_FINE_BUCKET_MINUTES || Math.max(5, Math.floor(LIVE_GAP_BUCKET_MINUTES / 2))) || Math.max(5, Math.floor(LIVE_GAP_BUCKET_MINUTES / 2)),
 );
 const LIVE_FINE_PENDING_LIMIT = Math.max(
-  1,
-  Number(process.env.GROWTH_LIVE_BACKFILL_FINE_PENDING_LIMIT || 2) || 2,
+  2,
+  Number(process.env.GROWTH_LIVE_BACKFILL_FINE_PENDING_LIMIT || 4) || 4,
 );
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
 const BACKFILL_EXCLUDE_PLATFORMS = new Set<GrowthPlatform>(
@@ -72,6 +87,10 @@ const BACKFILL_PLATFORM_TIMEOUT_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS || 60 * 1000) || 60 * 1000,
 );
+const BACKFILL_PLATFORM_CONCURRENCY = Math.max(
+  1,
+  Math.min(4, Number(process.env.GROWTH_BACKFILL_PLATFORM_CONCURRENCY || 2) || 2),
+);
 
 type WorkerState = {
   started: boolean;
@@ -80,6 +99,9 @@ type WorkerState = {
   plateau: Map<GrowthPlatform, number>;
   previous: Map<GrowthPlatform, number>;
   startedAt: string;
+  fastStartRoundsDone: number;
+  lastHadPendingPlatforms: boolean;
+  bootstrapStepsDone: number;
 };
 
 const workerState: Record<BackfillKind, WorkerState> = {
@@ -90,6 +112,9 @@ const workerState: Record<BackfillKind, WorkerState> = {
     plateau: new Map<GrowthPlatform, number>(),
     previous: new Map<GrowthPlatform, number>(),
     startedAt: "",
+    fastStartRoundsDone: 0,
+    lastHadPendingPlatforms: false,
+    bootstrapStepsDone: 0,
   },
   history: {
     started: false,
@@ -98,6 +123,9 @@ const workerState: Record<BackfillKind, WorkerState> = {
     plateau: new Map<GrowthPlatform, number>(),
     previous: new Map<GrowthPlatform, number>(),
     startedAt: "",
+    fastStartRoundsDone: 0,
+    lastHadPendingPlatforms: false,
+    bootstrapStepsDone: 0,
   },
 };
 
@@ -118,6 +146,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function canRunBackfillNow(kind: BackfillKind) {
+  if (isBackfillWindow()) return true;
+  if (!BACKFILL_FAST_START_ENABLED) return false;
+  return workerState[kind].fastStartRoundsDone < BACKFILL_FAST_START_MAX_ROUNDS;
+}
+
+function getBackfillDelayMs(kind: BackfillKind, options?: { pendingPlatforms?: boolean; bootstrapStep?: boolean }) {
+  if (options?.bootstrapStep) return BACKFILL_INITIAL_DELAY_MS;
+  if (options?.pendingPlatforms) return BACKFILL_PENDING_RETRY_MS;
+  if (kind === "history") return BACKFILL_ACTIVE_INTERVAL_MS;
+  return BACKFILL_ACTIVE_INTERVAL_MS;
 }
 
 function nextHistoryDelayMs() {
@@ -151,6 +192,74 @@ function isBackfillWindow(now = new Date()) {
 
 function getHistoricalCadenceMs(_totalArchivedItems: number) {
   return BACKFILL_ACTIVE_INTERVAL_MS;
+}
+
+async function runBackfillPlatformTasks(
+  pending: GrowthPlatform[],
+  kind: BackfillKind,
+  label: string,
+  nextRound: number,
+  stepTarget: number,
+  stepFallback: number,
+  windowDays: number,
+  statsBefore: BackfillRuntimeSnapshot,
+) {
+  const mergedStats: Record<string, { addedCount?: number; mergedCount?: number }> = {};
+  const collectedErrors: Record<string, string | undefined> = {};
+
+  process.env.GROWTH_BACKFILL_ACTIVE = "1";
+  process.env.GROWTH_BACKFILL_MODE = kind;
+  process.env.GROWTH_BACKFILL_STEP_TARGET = String(stepTarget);
+  process.env.GROWTH_BACKFILL_STEP_FALLBACK = String(stepFallback);
+  process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
+
+  const tasks = pending.map((platform) => async () => {
+    try {
+      const collected = await withTimeout(
+        collectTrendPlatforms([platform]),
+        BACKFILL_PLATFORM_TIMEOUT_MS,
+        `[${label}] ${platform}`,
+      );
+      if (collected.errors[platform]) {
+        collectedErrors[platform] = collected.errors[platform];
+      }
+      const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
+        deferHistoryLedger: kind === "history",
+      });
+      if (merged.mergeStats?.[platform]) {
+        mergedStats[platform] = merged.mergeStats[platform];
+      }
+      const collection = collected.collections[platform];
+      if (collection?.source === "live" && collection.items.length) {
+        await notifyGrowthCollectionUpdate({
+          platform,
+          itemCount: collection.items.length,
+          addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
+          mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
+          collectedAt: collection.collectedAt,
+          nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
+          frequencyLabel: kind === "live"
+            ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
+            : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
+          burstMode: false,
+          live: true,
+          collection,
+        }).catch((error) => {
+          console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+        });
+      }
+    } catch (error) {
+      collectedErrors[platform] = error instanceof Error ? error.message : String(error);
+      console.warn(`[${label}] ${platform} failed:`, error);
+    }
+  });
+
+  for (let index = 0; index < tasks.length; index += BACKFILL_PLATFORM_CONCURRENCY) {
+    const batch = tasks.slice(index, index + BACKFILL_PLATFORM_CONCURRENCY);
+    await Promise.allSettled(batch.map((task) => task()));
+  }
+
+  return { mergedStats, collectedErrors };
 }
 
 function getWorkerLabel(kind: BackfillKind) {
@@ -198,18 +307,27 @@ async function scheduleNextBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (!state.started) return;
   if (state.timer) clearTimeout(state.timer);
-  let delayMs = nextHistoryDelayMs();
+  let delayMs = getBackfillDelayMs(kind, {
+    pendingPlatforms: state.lastHadPendingPlatforms,
+    bootstrapStep: state.bootstrapStepsDone <= 1,
+  });
   if (kind === "history") {
     try {
       const stats = await readBackfillSnapshotFor("history");
       const totalArchivedItems = stats.platforms.reduce((sum, item) => sum + (item.archivedTotal || 0), 0);
       delayMs = getHistoricalCadenceMs(totalArchivedItems);
+      if (state.lastHadPendingPlatforms) {
+        delayMs = Math.min(delayMs, BACKFILL_PENDING_RETRY_MS);
+      }
+      if (state.bootstrapStepsDone <= 1) {
+        delayMs = Math.min(delayMs, BACKFILL_INITIAL_DELAY_MS);
+      }
     } catch {
       delayMs = HISTORY_BASE_INTERVAL_MS;
     }
   }
-  if (!isBackfillWindow()) {
-    delayMs = BACKFILL_ACTIVE_INTERVAL_MS;
+  if (!isBackfillWindow() && !canRunBackfillNow(kind)) {
+    delayMs = Math.max(delayMs, BACKFILL_PENDING_RETRY_MS);
   }
   await updateTrendBackfillProgress({
     mode: kind,
@@ -307,12 +425,17 @@ function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot)
 async function runBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (state.inFlight) return;
-  if (!isBackfillWindow()) return;
+  if (!canRunBackfillNow(kind)) return;
   state.inFlight = true;
   const roundStartedAt = nowShanghaiIso();
   try {
     const statsBefore = await readBackfillSnapshotFor(kind);
     const pending = getPendingPlatforms(kind, statsBefore);
+    state.lastHadPendingPlatforms = pending.length > 0;
+    if (!isBackfillWindow() && BACKFILL_FAST_START_ENABLED) {
+      state.fastStartRoundsDone += 1;
+    }
+    state.bootstrapStepsDone += 1;
     const label = getWorkerLabel(kind);
     const stepTarget = getWorkerStepTarget(kind);
     const stepFallback = getWorkerStepFallback(kind);
@@ -323,10 +446,12 @@ async function runBackfillStep(kind: BackfillKind) {
         mode: kind,
         active: true,
         status: "running",
+        startedAt: state.startedAt || roundStartedAt,
+        nextRunAt: nowShanghaiIso(Date.now() + getBackfillDelayMs(kind, { pendingPlatforms: true })),
         selectedWindowDays: statsBefore.selectedWindowDays,
         note: kind === "live"
-          ? `近 ${windowDays} 天回填运行中：当前未发现硬缺口，worker 保持运行，等待更细时间桶进入补齐窗口，并继续复用跨平台关键词/话题种子。`
-          : "历史回填运行中：所有平台暂时进入低产出平台期，worker 保持运行，等待下一轮继续抓取。",
+          ? `近 ${windowDays} 天回填运行中：当前未发现硬缺口，worker 保持运行，${formatMinutes(Math.round(BACKFILL_PENDING_RETRY_MS / (60 * 1000)))} 内重试细桶扫描，并继续复用跨平台关键词/话题种子。`
+          : `历史回填运行中：所有平台暂时进入低产出平台期，worker 保持运行，${formatMinutes(Math.round(BACKFILL_PENDING_RETRY_MS / (60 * 1000)))} 内重试下一轮。`,
         platforms: PLATFORMS.map((platform) => {
           const row = statsBefore.platforms.find((item) => item.platform === platform);
           return {
@@ -371,56 +496,16 @@ async function runBackfillStep(kind: BackfillKind) {
       }),
     });
 
-    process.env.GROWTH_BACKFILL_ACTIVE = kind;
-    process.env.GROWTH_BACKFILL_STEP_TARGET = String(stepTarget);
-    process.env.GROWTH_BACKFILL_STEP_FALLBACK = String(stepFallback);
-    process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
-    const mergedCollections: Partial<Record<GrowthPlatform, Awaited<ReturnType<typeof collectTrendPlatforms>>["collections"][GrowthPlatform]>> = {};
-    const mergedStats: Record<string, any> = {};
-    const collectedErrors: Record<string, string | undefined> = {};
-    for (const platform of pending) {
-      try {
-        const collected = await withTimeout(
-          collectTrendPlatforms([platform]),
-          BACKFILL_PLATFORM_TIMEOUT_MS,
-          `[${label}] ${platform}`,
-        );
-        if (collected.collections[platform]) {
-          mergedCollections[platform] = collected.collections[platform];
-        }
-        if (collected.errors[platform]) {
-          collectedErrors[platform] = collected.errors[platform];
-        }
-        const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
-          deferHistoryLedger: kind === "history",
-        });
-        if (merged.mergeStats?.[platform]) {
-          mergedStats[platform] = merged.mergeStats[platform];
-        }
-        const collection = collected.collections[platform];
-        if (collection?.source === "live" && collection.items.length) {
-          await notifyGrowthCollectionUpdate({
-            platform,
-            itemCount: collection.items.length,
-            addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
-            mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
-            collectedAt: collection.collectedAt,
-            nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
-            frequencyLabel: kind === "live"
-              ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
-              : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
-            burstMode: false,
-            live: true,
-            collection,
-          }).catch((error) => {
-            console.warn(`[${label}] email notify skipped for ${platform}:`, error);
-          });
-        }
-      } catch (error) {
-        collectedErrors[platform] = error instanceof Error ? error.message : String(error);
-        console.warn(`[${label}] ${platform} failed:`, error);
-      }
-    }
+    const { mergedStats, collectedErrors } = await runBackfillPlatformTasks(
+      pending,
+      kind,
+      label,
+      nextRound,
+      stepTarget,
+      stepFallback,
+      windowDays,
+      statsBefore,
+    );
     if (kind === "history" && nextRound % HISTORY_LEDGER_BATCH_ROUNDS === 0) {
       await reconcileTrendHistoryState({ force: true }).catch((error) => {
         console.warn(`[${label}] delayed history reconcile skipped:`, error);
@@ -431,9 +516,11 @@ async function runBackfillStep(kind: BackfillKind) {
     for (const platform of pending) {
       const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedTotal || 0;
       const prev = state.previous.get(platform) || 0;
+      const added = mergedStats?.[platform]?.addedCount || 0;
       state.previous.set(platform, total);
       if (collectedErrors[platform]) continue;
-      state.plateau.set(platform, total <= prev ? (state.plateau.get(platform) || 0) + 1 : 0);
+      const madeProgress = added > 0 || total > prev;
+      state.plateau.set(platform, madeProgress ? 0 : (state.plateau.get(platform) || 0) + 1);
     }
 
     await updateTrendBackfillProgress({
@@ -447,7 +534,7 @@ async function runBackfillStep(kind: BackfillKind) {
       status: "running",
       note: kind === "live"
         ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，优先按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描硬缺口；无硬缺口时退到 ${LIVE_FINE_GAP_BUCKET_MINUTES} 分钟细桶继续补齐，并复用跨平台关键词/话题种子。`
-        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天，夜间模式；按有数据的平台优先回填，单平台逐一执行，小步长抓取，history-ledger 每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮再批量刷新。`,
+        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；并发 ${BACKFILL_PLATFORM_CONCURRENCY} 平台/step，按 merge addedCount 判断产出，history-ledger 每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮批量刷新。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (state.plateau.get(platform) || 0) >= PLATEAU_LIMIT;
@@ -510,6 +597,26 @@ async function bootstrapWorker(kind: BackfillKind) {
   const state = workerState[kind];
   if (state.started) return;
   state.started = true;
+  state.startedAt = nowShanghaiIso();
+  state.fastStartRoundsDone = 0;
+  state.bootstrapStepsDone = 0;
+  await updateTrendBackfillProgress({
+    mode: kind,
+    active: true,
+    status: "running",
+    startedAt: state.startedAt,
+    nextRunAt: nowShanghaiIso(Date.now() + BACKFILL_INITIAL_DELAY_MS),
+    note: kind === "live"
+      ? `近期 live 回填启动：部署后 ${formatMinutes(Math.round(BACKFILL_INITIAL_DELAY_MS / (60 * 1000)))} 内首跑，pending 平台最长 ${formatMinutes(Math.round(BACKFILL_PENDING_RETRY_MS / (60 * 1000)))} 重试。`
+      : `历史回填启动：部署后 ${formatMinutes(Math.round(BACKFILL_INITIAL_DELAY_MS / (60 * 1000)))} 内首跑，pending 平台最长 ${formatMinutes(Math.round(BACKFILL_PENDING_RETRY_MS / (60 * 1000)))} 重试；优先合并 GitHub 冷备 history-ledger。`,
+    platforms: PLATFORMS.map((platform) => ({
+      platform,
+      target: 0,
+      currentTotal: 0,
+      archivedTotal: 0,
+      status: BACKFILL_EXCLUDE_PLATFORMS.has(platform) ? "plateau" : "pending",
+    })),
+  }).catch(() => undefined);
   await runBackfillStep(kind);
   await scheduleNextBackfillStep(kind);
 }
@@ -522,6 +629,9 @@ function stopWorker(kind: BackfillKind) {
   }
   state.started = false;
   state.startedAt = "";
+  state.fastStartRoundsDone = 0;
+  state.lastHadPendingPlatforms = false;
+  state.bootstrapStepsDone = 0;
   void updateTrendBackfillProgress({
     mode: kind,
     active: false,

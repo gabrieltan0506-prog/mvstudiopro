@@ -316,6 +316,11 @@ function parsePairPoolEnv(name: string) {
     .filter((entry) => entry.left);
 }
 
+function isBackfillCollectorActive() {
+  const raw = String(process.env.GROWTH_BACKFILL_ACTIVE || "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "live" || raw === "history";
+}
+
 function parseCookiePool(primaryName: string, backupName?: string) {
   const raw = [
     String(process.env[primaryName] || "").trim(),
@@ -327,7 +332,7 @@ function parseCookiePool(primaryName: string, backupName?: string) {
   ].filter(Boolean);
   const deduped = Array.from(new Set(raw));
   const rotateOffset = Math.max(0, Number(process.env.GROWTH_BACKFILL_COOKIE_OFFSET || 0) || 0);
-  const shouldRotate = process.env.GROWTH_BACKFILL_ACTIVE === "1" && deduped.length > 1 && rotateOffset > 0;
+  const shouldRotate = isBackfillCollectorActive() && deduped.length > 1 && rotateOffset > 0;
   if (!shouldRotate) return deduped;
   const offset = rotateOffset % deduped.length;
   return [...deduped.slice(offset), ...deduped.slice(0, offset)];
@@ -2432,20 +2437,22 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   // Kuaishou crawl intensity increased: count, pages, keyword limit
   const count = Math.max(6, Math.min(40, Number(process.env.KUAISHOU_TREND_COUNT || 36) || 36));
-  const defaultPrivatePages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_PAGES || 3) || 3));
-  const privateConcurrency = Math.max(1, Math.min(1, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 1) || 1));
+  const defaultPrivatePages = Math.max(1, Math.min(6, parsePreferredNumberEnv("GROWTH_KUAISHOU_PRIVATE_PAGES", "KUAISHOU_PRIVATE_PAGES", 4)));
+  const privateConcurrency = Math.max(1, Math.min(3, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 2) || 2));
   const privateRetryLimit = Math.max(0, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_RETRY_LIMIT || 2) || 2));
   const privateRetryDelayMs = Math.max(500, Math.min(8000, Number(process.env.KUAISHOU_PRIVATE_RETRY_DELAY_MS || 1500) || 1500));
   const publicPages = Math.max(1, Math.min(16, Number(process.env.KUAISHOU_TREND_PAGES || 12) || 12));
+  const recoPages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_RECO_PAGES || 3) || 3));
+  const visionGraphqlEndpoint = String(process.env.KUAISHOU_VISION_GRAPHQL_URL || "https://www.kuaishou.com/graphql").trim();
   const discoveryKeywords = getKuaishouDiscoveryKeywords();
-  const defaultSearchKeywordLimit = Math.max(8, Math.min(24, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 20) || 20));
+  const defaultSearchKeywordLimit = Math.max(1, Math.min(24, parsePreferredNumberEnv("GROWTH_KUAISHOU_SEARCH_KEYWORD_LIMIT", "KUAISHOU_TREND_KEYWORD_LIMIT", 16)));
   const creatorSeeds = getKuaishouCreatorSeeds();
-  const defaultSearchPages = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_PAGES || 6) || 6));
-  const searchConcurrency = Math.max(1, Math.min(2, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 2) || 2));
-  const searchUserPages = Math.max(1, Math.min(2, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 2) || 2));
-  const searchUserLimit = Math.max(5, Math.min(10, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 10) || 10));
-  const searchUserKeywordLimit = Math.max(4, Math.min(6, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 6) || 6));
-  const publicProfileLimit = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 8) || 8));
+  const defaultSearchPages = Math.max(1, Math.min(8, parsePreferredNumberEnv("GROWTH_KUAISHOU_SEARCH_PAGES", "KUAISHOU_SEARCH_PAGES", 6)));
+  const searchConcurrency = Math.max(2, Math.min(4, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 3) || 3));
+  const searchUserPages = Math.max(1, Math.min(3, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 2) || 2));
+  const searchUserLimit = Math.max(8, Math.min(16, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 16) || 16));
+  const searchUserKeywordLimit = Math.max(6, Math.min(12, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 10) || 10));
+  const publicProfileLimit = Math.max(4, Math.min(12, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 12) || 12));
   const privateRoute = await getAdaptiveRouteDecision("kuaishou", "private_list", {
     pageCount: defaultPrivatePages,
     concurrency: privateConcurrency,
@@ -2472,6 +2479,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   let searchRequestCount = 0;
   let searchPageDepth = 0;
   let discoveryRequestCount = 0;
+  let recoRequestCount = 0;
   const discoveredCreators = new Map<string, { userId: string; keyword: string; name: string }>();
 
   creatorSeeds.forEach((creator) => {
@@ -2494,6 +2502,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     if (sourceLabel.startsWith("search:")) return "kuaishou_search_feed";
     if (sourceLabel.startsWith("profile-feed:")) return "kuaishou_profile_feed";
     if (sourceLabel.startsWith("public-feed:")) return "kuaishou_public_feed";
+    if (sourceLabel.startsWith("reco:")) return "kuaishou_reco_feed";
     return "kuaishou_feed";
   };
 
@@ -2649,6 +2658,75 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
       routeKey: "private_list",
       yieldCount: Math.max(0, items.length - privateStartCount),
       requestCount: privateRequestCount,
+    });
+  }
+
+  if (cookies.length && recoPages > 0) {
+    const recoStartCount = items.length;
+    const recoQuery = `query visionFeedRecommend($pcursor: String, $count: Int) {
+      visionFeedRecommend(pcursor: $pcursor, count: $count) {
+        pcursor
+        feeds {
+          author { id name }
+          photo { id caption timestamp likeCount viewCount commentCount expTag }
+        }
+      }
+    }`;
+    for (const [cookieIndex, cookie] of cookies.slice(0, 2).entries()) {
+      let pcursor = "";
+      for (let page = 0; page < recoPages; page += 1) {
+        try {
+          const response = await fetch(visionGraphqlEndpoint, {
+            method: "POST",
+            headers: {
+              accept: "application/json,text/plain,*/*",
+              "content-type": "application/json",
+              cookie,
+              referer: "https://www.kuaishou.com/new-reco",
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+              kpn: "KUAISHOU_VISION",
+              kpf: "PC_WEB",
+            },
+            body: JSON.stringify({
+              operationName: "visionFeedRecommend",
+              query: recoQuery,
+              variables: { pcursor, count },
+            }),
+          });
+          recoRequestCount += 1;
+          if (!response.ok) {
+            notes.push(`Kuaishou visionFeedRecommend cookie ${cookieIndex + 1} page ${page + 1} responded with ${response.status}.`);
+            break;
+          }
+          const payload = await response.json() as {
+            data?: {
+              visionFeedRecommend?: {
+                pcursor?: string;
+                feeds?: Array<Record<string, any>>;
+              };
+            };
+            errors?: Array<{ message?: string }>;
+          };
+          if (payload.errors?.length) {
+            notes.push(`Kuaishou visionFeedRecommend cookie ${cookieIndex + 1} page ${page + 1} errored: ${payload.errors.map((item) => item.message || "unknown").join("; ")}`);
+            break;
+          }
+          const feeds = payload.data?.visionFeedRecommend?.feeds ?? [];
+          feeds.forEach((feed) => pushKuaishouItem(feed, `reco:${cookieIndex + 1}:${page + 1}`));
+          notes.push(`Fetched ${feeds.length} Kuaishou visionFeedRecommend items for cookie ${cookieIndex + 1} page ${page + 1}.`);
+          pcursor = String(payload.data?.visionFeedRecommend?.pcursor || "").trim();
+          if (!pcursor || !feeds.length) break;
+        } catch (error) {
+          notes.push(`Kuaishou visionFeedRecommend cookie ${cookieIndex + 1} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+          break;
+        }
+      }
+    }
+    await recordAdaptiveRouteRun({
+      platform: "kuaishou",
+      routeKey: "reco_feed",
+      yieldCount: Math.max(0, items.length - recoStartCount),
+      requestCount: recoRequestCount,
     });
   }
 
@@ -2952,26 +3030,29 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
 
   const sourceCounts = getBucketCounts(items);
   notes.push(
-    `Kuaishou source counts before merge: ${Object.entries(sourceCounts)
+    `Kuaishou source counts before dedupe: ${Object.entries(sourceCounts)
       .map(([bucket, count]) => `${bucket}=${count}`)
       .join(", ") || "none"}.`,
   );
 
-  return finalizeCollection("kuaishou", "live", items, notes, {
-    collectorMode: searchRequestCount
-      ? cookies.length || principalCandidates.length
-        ? "warehouse"
-        : "public_feed"
-      : cookies.length && principalCandidates.length
-        ? "hybrid"
-        : cookies.length
-          ? "authenticated_feed"
-          : "public_feed",
-    requestCount: privateRequestCount + publicRequestCount + searchRequestCount + discoveryRequestCount,
-    pageDepth: Math.max(privatePageDepth, searchPageDepth, principalCandidates.length ? publicPages : 0),
-    targetPerRun: Math.max((cookies.length ? cookies.length * privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
-    referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
-    referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
+  const rawFetchedCount = items.length;
+  const dedupedItems = dedupeById(items);
+  notes.push(`Kuaishou pipeline pre-finalize: rawFetched=${rawFetchedCount} afterDedup=${dedupedItems.length}.`);
+
+  return finalizeCollection("kuaishou", "live", dedupedItems, notes, {
+    collectorMode: "warehouse",
+    rawFetchedCount,
+    requestCount: privateRequestCount + recoRequestCount + publicRequestCount + searchRequestCount + discoveryRequestCount,
+    pageDepth: Math.max(privatePageDepth, searchPageDepth, recoPages, principalCandidates.length ? publicPages : 0),
+    targetPerRun: Math.max(
+      (cookies.length ? cookies.length * privatePages * count : 0)
+        + recoRequestCount * count
+        + publicTargetCount
+        + searchTargetCount,
+      getPlatformTargetItemCount("kuaishou"),
+    ),
+    referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 20,
+    referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 80,
   });
 }
 
