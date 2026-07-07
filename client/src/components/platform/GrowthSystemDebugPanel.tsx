@@ -225,22 +225,47 @@ export function GrowthSystemDebugPanel({
 
           {data.truthStore?.platforms?.length ? (
             <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">
-              <div className="font-semibold text-sky-100">各平台真值拆分</div>
-              <div className="space-y-2">
+              <div className="font-semibold text-sky-100">各平台真值拆分（同口径库存）</div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-white/10 text-[10px] uppercase tracking-wider text-white/45">
+                      <th className="py-1.5 pr-3">平台</th>
+                      <th className="py-1.5 pr-3">仓库总量</th>
+                      <th className="py-1.5 pr-3">15天窗口</th>
+                      <th className="py-1.5 pr-3">30天窗口</th>
+                      <th className="py-1.5 pr-3">历史归档</th>
+                      <th className="py-1.5">最近 Pipeline</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.truthStore.platforms.map((item) => {
+                      const pipeline = (item as { lastPipeline?: Record<string, unknown> }).lastPipeline;
+                      return (
+                        <tr key={String(item.platform)} className="border-b border-white/5">
+                          <td className="py-2 pr-3 font-medium text-white/85">
+                            {String(item.platformLabel || getPlatformLabel(item.platform))}
+                          </td>
+                          <td className="py-2 pr-3">{String((item as { warehouseTotal?: number }).warehouseTotal ?? item.currentItems ?? 0)}</td>
+                          <td className="py-2 pr-3">{String((item as { windowItems15d?: number }).windowItems15d ?? "-")}</td>
+                          <td className="py-2 pr-3">{String((item as { windowItems30d?: number }).windowItems30d ?? "-")}</td>
+                          <td className="py-2 pr-3">{String(item.archivedItems || 0)}</td>
+                          <td className="py-2 font-mono text-[10px] leading-5 text-white/60">
+                            {pipeline
+                              ? `raw=${String(pipeline.rawFetched ?? "-")} dedup=${String(pipeline.afterDedup ?? "-")} win=${String(pipeline.afterWindowFilter ?? "-")} add=${String(pipeline.mergedAdded ?? "-")}`
+                              : "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="space-y-2 pt-2">
                 {data.truthStore.platforms.map((item) => (
-                  <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
-                    <div>
-                      {String(item.platformLabel || getPlatformLabel(item.platform))} live 当前量：
-                      {String(item.currentItems || 0)}
-                    </div>
-                    <div>
-                      {String(item.platformLabel || getPlatformLabel(item.platform))} historical 历史量：
-                      {String(item.archivedItems || 0)}
-                    </div>
-                    <div className="md:col-span-2">
-                      {String(item.platformLabel || getPlatformLabel(item.platform))} 说明：
-                      {String(item.platformDescription || getPlatformDescription(item.platform))}
-                    </div>
+                  <div key={`desc-${String(item.platform)}`} className="text-[10px] leading-5 text-white/45">
+                    {String(item.platformLabel || getPlatformLabel(item.platform))}：
+                    {String(item.platformDescription || getPlatformDescription(item.platform))}
                   </div>
                 ))}
               </div>
@@ -261,6 +286,38 @@ export function GrowthSystemDebugPanel({
                 <div>过期平台：{formatPlatformList(growthSnapshotDebug.stalePlatforms)}</div>
                 <div>平台快照数：{String(growthSnapshotDebug.platformSnapshotCount || 0)}</div>
               </div>
+              {growthSnapshotDebug.platformInventory &&
+              typeof growthSnapshotDebug.platformInventory === "object" ? (
+                <div className="mt-2 overflow-x-auto rounded-xl border border-emerald-200/15 bg-emerald-400/5 p-3">
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-emerald-100">
+                    四平台同口径库存（仓库总量 / 窗口过滤）
+                  </div>
+                  <table className="w-full min-w-[520px] border-collapse text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-white/10 text-white/45">
+                        <th className="py-1 pr-2">平台</th>
+                        <th className="py-1 pr-2">仓库</th>
+                        <th className="py-1 pr-2">15d</th>
+                        <th className="py-1">选中窗口</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(growthSnapshotDebug.platformInventory as Record<string, Record<string, unknown>>).map(
+                        ([platform, row]) => (
+                          <tr key={platform} className="border-b border-white/5">
+                            <td className="py-1 pr-2">{getPlatformLabel(platform)}</td>
+                            <td className="py-1 pr-2">{String(row.warehouseTotal ?? "-")}</td>
+                            <td className="py-1 pr-2">{String(row.window15d ?? "-")}</td>
+                            <td className="py-1">
+                              {String(row.selectedWindowFiltered ?? "-")} / {String(row.selectedWindowDays ?? "-")}d
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
               {growthSnapshotNotes?.length ? (
                 <div className="space-y-1 rounded-xl border border-emerald-200/15 bg-emerald-400/5 p-3 leading-6">
                   {growthSnapshotNotes.slice(0, 8).map((note, index) => (
@@ -304,8 +361,15 @@ export function GrowthSystemDebugPanel({
                     {String(item.burstMode ?? false)}
                   </div>
                   <div>
-                    {String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量：
+                    {String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量（仓库）：
                     {String(item.lastCollectedCount ?? 0)}
+                  </div>
+                  <div>
+                    {String(item.platformLabel || getPlatformLabel(item.platform))} Pipeline：
+                    raw={String((item as { lastRawFetchedCount?: number }).lastRawFetchedCount ?? "-")} dedup=
+                    {String((item as { lastAfterDedupCount?: number }).lastAfterDedupCount ?? "-")} win=
+                    {String((item as { lastAfterWindowFilterCount?: number }).lastAfterWindowFilterCount ?? "-")} add=
+                    {String((item as { lastAddedCount?: number }).lastAddedCount ?? 0)}
                   </div>
                   <div>
                     {String(item.platformLabel || getPlatformLabel(item.platform))} 爆发开始：

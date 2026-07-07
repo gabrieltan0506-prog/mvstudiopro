@@ -70,6 +70,7 @@ import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/prem
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
+import { summarizeTrendWindowCounts } from "./growth/trendWindow";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
@@ -3022,6 +3023,21 @@ export const appRouter = router({
             },
           ]),
         ) as Partial<Record<typeof requestedPlatforms[number], { currentTotal?: number; archivedTotal?: number }>>;
+        const platformInventory = Object.fromEntries(
+          requestedPlatforms.map((platform) => {
+            const items = store.collections?.[platform]?.items || [];
+            const warehouseTotal = items.length;
+            const window15 = summarizeTrendWindowCounts(items, 15);
+            const window30 = summarizeTrendWindowCounts(items, selectedWindowDays);
+            return [platform, {
+              warehouseTotal,
+              window15d: window15.windowFiltered,
+              window30d: window30.windowFiltered,
+              selectedWindowDays: selectedWindowDays,
+              selectedWindowFiltered: window30.windowFiltered,
+            }];
+          }),
+        );
         const stalePlatforms = requestedPlatforms.filter((platform) =>
           isTrendCollectionStale(store.collections[platform]?.collectedAt, 6),
         );
@@ -3199,6 +3215,7 @@ export const appRouter = router({
             trendLayerCount: snapshot.trendLayers.length,
             topicLibraryCount: snapshot.topicLibrary.length,
             platformSnapshotCount: snapshot.platformSnapshots.length,
+            platformInventory,
             monetizationTrackCount: snapshot.monetizationTracks.length,
             recommendationCount: snapshot.platformRecommendations.length,
             businessInsightCount: snapshot.businessInsights.length,
@@ -6354,6 +6371,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             burstMode: item?.burstMode ?? false,
             burstTriggeredAt: item?.burstTriggeredAt,
             lastCollectedCount: item?.lastCollectedCount ?? 0,
+            lastAddedCount: item?.lastAddedCount ?? 0,
+            lastMergedCount: item?.lastMergedCount ?? 0,
+            lastRawFetchedCount: item?.lastRawFetchedCount,
+            lastAfterDedupCount: item?.lastAfterDedupCount,
+            lastAfterWindowFilterCount: item?.lastAfterWindowFilterCount,
             lastError: item?.lastError,
           }));
         const anomalies: Array<{ level: "warning" | "critical"; title: string; message: string }> = [];
@@ -6429,13 +6451,30 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             archivedItems: debugSummary?.totals.archivedItems || 0,
             platforms: growthPlatformValues
               .filter((platform) => platform !== "weixin_channels")
-              .map((platform) => ({
-                platform,
-                platformLabel: getGrowthPlatformMeta(platform).label,
-                platformDescription: getGrowthPlatformMeta(platform).description,
-                currentItems: Number(debugSummary?.platforms?.[platform]?.currentTotal || 0),
-                archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
-              })),
+              .map((platform) => {
+                const items = store?.collections?.[platform]?.items || [];
+                const w15 = summarizeTrendWindowCounts(items, 15);
+                const w30 = summarizeTrendWindowCounts(items, 30);
+                const sched = runtimeMeta.scheduler?.[platform];
+                return {
+                  platform,
+                  platformLabel: getGrowthPlatformMeta(platform).label,
+                  platformDescription: getGrowthPlatformMeta(platform).description,
+                  currentItems: Number(debugSummary?.platforms?.[platform]?.currentTotal || w30.warehouseTotal || 0),
+                  archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
+                  warehouseTotal: w30.warehouseTotal,
+                  windowItems15d: w15.windowFiltered,
+                  windowItems30d: w30.windowFiltered,
+                  lastPipeline: sched
+                    ? {
+                        rawFetched: sched.lastRawFetchedCount,
+                        afterDedup: sched.lastAfterDedupCount,
+                        afterWindowFilter: sched.lastAfterWindowFilterCount,
+                        mergedAdded: sched.lastAddedCount,
+                      }
+                    : undefined,
+                };
+              }),
           },
           runtimeControl: {
             mode: runtimeControl?.mode || "auto",

@@ -4,6 +4,7 @@ import {
   type GrowthPlatform,
 } from "@shared/growth";
 import { classifyTrendItem, countLabels } from "./trendTaxonomy";
+import { filterTrendItemsByWindowDays, getTrendItemAgeDays } from "./trendWindow";
 import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds } from "./trendSeedLibrary";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
@@ -145,6 +146,14 @@ export type TrendCollectionStats = {
   industryCounts: Record<string, number>;
   ageCounts: Record<string, number>;
   contentCounts: Record<string, number>;
+  /** 本轮抓取原始条数（去重前，由 collector 传入） */
+  rawFetchedCount?: number;
+  /** 去重后条数（传入 finalize 的 items 长度） */
+  afterDedupCount?: number;
+  /** 若应用入库窗口裁剪后的条数（warehouse 模式仅作观测，不入库） */
+  afterWindowFilterCount?: number;
+  /** warehouse 模式：true 表示全量入库、读取时再按窗口过滤 */
+  warehouseIngest?: boolean;
 };
 
 export type PlatformTrendCollection = {
@@ -1650,18 +1659,12 @@ async function collectDouyinCreatorIndexItems(
   return { items: dedupeById(items), notes, requestCount };
 }
 
-function getAgeDays(iso?: string) {
-  if (!iso) return undefined;
-  const timestamp = new Date(iso).getTime();
-  if (!Number.isFinite(timestamp)) return undefined;
-  return Math.max(0, Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000)));
+function getItemsWithinDays(items: TrendItem[], days: number) {
+  return filterTrendItemsByWindowDays(items, days);
 }
 
-function getItemsWithinDays(items: TrendItem[], days: number) {
-  return items.filter((item) => {
-    const ageDays = getAgeDays(item.publishedAt);
-    return ageDays === undefined || ageDays <= days;
-  });
+function getAgeDays(iso?: string) {
+  return getTrendItemAgeDays(iso);
 }
 
 function resolveCollectionWindow(items: TrendItem[], referenceMinItems: number, platform: GrowthPlatform) {
@@ -1683,26 +1686,37 @@ function finalizeCollection(
   source: TrendSource,
   items: TrendItem[],
   notes: string[],
-  statsInput: Omit<TrendCollectionStats, "platform" | "itemCount" | "uniqueAuthorCount" | "bucketCounts" | "industryCounts" | "ageCounts" | "contentCounts">,
+  statsInput: Omit<TrendCollectionStats, "platform" | "itemCount" | "uniqueAuthorCount" | "bucketCounts" | "industryCounts" | "ageCounts" | "contentCounts"> & {
+    rawFetchedCount?: number;
+  },
 ): PlatformTrendCollection {
   const normalizedItems = items.map((item) => ({
     ...item,
     bucket: normalizeTrendBucket(platform, item.bucket, item.contentType),
     ...classifyTrendItem(item),
   }));
+  const warehouseIngest = statsInput.collectorMode === "warehouse";
   const resolvedWindow = resolveCollectionWindow(
     normalizedItems,
     statsInput.referenceMinItems,
     platform,
   );
   const windowFilteredItems = getItemsWithinDays(normalizedItems, resolvedWindow.windowDays);
+  const storedItems = warehouseIngest ? normalizedItems : windowFilteredItems;
+  const afterDedupCount = normalizedItems.length;
+  const afterWindowFilterCount = windowFilteredItems.length;
+  const rawFetchedCount = statsInput.rawFetchedCount ?? afterDedupCount;
   const uniqueAuthorCount = new Set(
-    windowFilteredItems.map((item) => String(item.author || "").trim()).filter(Boolean),
+    storedItems.map((item) => String(item.author || "").trim()).filter(Boolean),
   ).size;
   const enrichedNotes = [
     ...notes,
+    `Pipeline: rawFetched=${rawFetchedCount} afterDedup=${afterDedupCount} afterWindowFilter=${afterWindowFilterCount} mergedAdded=(see mergeStats) warehouseIngest=${warehouseIngest ? "yes" : "no"}.`,
     `Target lookback: ${getTargetWindowDays()} days; fallback windows: ${getFallbackWindowDays(platform).join(", ")} days.`,
     `Selected ${resolvedWindow.windowDays}-day window for ${platform}; sample counts by window: ${resolvedWindow.windows.map((item) => `${item.days}d=${item.count}`).join(", ")}.`,
+    warehouseIngest
+      ? `Warehouse ingest: storing all ${storedItems.length} deduped items; window filter applies at snapshot/dashboard read time.`
+      : `Window-filtered ingest: storing ${storedItems.length} items within ${resolvedWindow.windowDays} days.`,
     `Target item floor for ${platform}: ${getPlatformTargetItemCount(platform)}.`,
   ];
   return {
@@ -1710,16 +1724,20 @@ function finalizeCollection(
     source,
     collectedAt: nowShanghaiIso(),
     windowDays: resolvedWindow.windowDays,
-    items: windowFilteredItems,
+    items: storedItems,
     notes: enrichedNotes,
     stats: {
       platform,
-      itemCount: windowFilteredItems.length,
+      itemCount: storedItems.length,
       uniqueAuthorCount,
-      bucketCounts: getBucketCounts(windowFilteredItems),
-      industryCounts: countLabels(windowFilteredItems, "industryLabels"),
-      ageCounts: countLabels(windowFilteredItems, "ageLabels"),
-      contentCounts: countLabels(windowFilteredItems, "contentLabels"),
+      bucketCounts: getBucketCounts(storedItems),
+      industryCounts: countLabels(storedItems, "industryLabels"),
+      ageCounts: countLabels(storedItems, "ageLabels"),
+      contentCounts: countLabels(storedItems, "contentLabels"),
+      rawFetchedCount,
+      afterDedupCount,
+      afterWindowFilterCount,
+      warehouseIngest,
       ...statsInput,
     },
   };
@@ -1773,9 +1791,20 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const popularPages = Math.max(1, Math.min(6, parsePreferredNumberEnv("GROWTH_BILIBILI_TREND_PAGES", "BILIBILI_TREND_PAGES", 6)));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
-  const defaultSearchPages = Math.max(1, Math.min(2, parsePreferredNumberEnv("GROWTH_BILIBILI_SEARCH_PAGES", "BILIBILI_SEARCH_PAGES", 2)));
+  const defaultSearchPages = Math.max(4, Math.min(6, parsePreferredNumberEnv("GROWTH_BILIBILI_SEARCH_PAGES", "BILIBILI_SEARCH_PAGES", 5)));
   const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
-  const defaultKeywordLimit = Math.max(8, Math.min(12, parsePreferredNumberEnv("GROWTH_BILIBILI_SEARCH_KEYWORD_LIMIT", "BILIBILI_SEARCH_KEYWORD_LIMIT", 12)));
+  const defaultKeywordLimit = Math.max(16, Math.min(20, parsePreferredNumberEnv("GROWTH_BILIBILI_SEARCH_KEYWORD_LIMIT", "BILIBILI_SEARCH_KEYWORD_LIMIT", 16)));
+  const rankingRids = (parseCsvEnv("BILIBILI_RANKING_RIDS").length
+    ? parseCsvEnv("BILIBILI_RANKING_RIDS")
+    : ["0", "1", "4", "5", "36", "188"])
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item));
+  const regionRids = (parseCsvEnv("BILIBILI_REGION_RIDS").length
+    ? parseCsvEnv("BILIBILI_REGION_RIDS")
+    : ["1", "3", "4", "5"])
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item));
+  const regionPageSize = Math.max(10, Math.min(30, Number(process.env.BILIBILI_REGION_PAGE_SIZE || 20) || 20));
   const searchRoute = await getAdaptiveRouteDecision("bilibili", "search_feed", {
     pageCount: defaultSearchPages,
     keywordLimit: defaultKeywordLimit,
@@ -1790,39 +1819,43 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   );
   const searchOrders = Array.from(new Set((parseCsvEnv("BILIBILI_SEARCH_ORDERS").length
     ? parseCsvEnv("BILIBILI_SEARCH_ORDERS")
-    : ["", "click", "pubdate", "dm", "scores"])
+    : ["pubdate", "click"])
     .map((item) => item.trim())
-    .filter((item) => ["", "click", "pubdate", "dm", "scores"].includes(item))));
+    .filter((item) => ["pubdate", "click"].includes(item))));
   const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
+  let requestCount = 0;
 
-  const pushBilibiliItem = (item: Record<string, any>) => {
+  const pushBilibiliItem = (item: Record<string, any>, bucket = "bilibili_feed") => {
     const title = String(item.title ?? "").trim();
     if (!title) return;
     items.push({
       id: String(item.aid ?? item.id ?? item.bvid ?? `bili-${items.length}`),
       title,
-      bucket: "bilibili_feed",
-      author: String(item.owner?.name ?? "").trim() || undefined,
+      bucket,
+      author: String(item.owner?.name ?? item.author ?? "").trim() || undefined,
       url: item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : undefined,
       publishedAt: safeDateFromUnix(Number(item.pubdate)),
-      likes: Number(item.stat?.like ?? 0) || undefined,
-      comments: Number(item.stat?.reply ?? 0) || undefined,
+      likes: Number(item.stat?.like ?? item.like ?? 0) || undefined,
+      comments: Number(item.stat?.reply ?? item.review ?? 0) || undefined,
       shares: Number(item.stat?.share ?? 0) || undefined,
-      views: Number(item.stat?.view ?? 0) || undefined,
-      hotValue: Number(item.stat?.like ?? 0) + Number(item.stat?.reply ?? 0),
+      views: Number(item.stat?.view ?? item.play ?? 0) || undefined,
+      hotValue: Number(item.stat?.like ?? item.like ?? 0) + Number(item.stat?.reply ?? item.review ?? 0),
       contentType: "video",
-      tags: [String(item.tname ?? "").trim()].filter(Boolean),
+      tags: [String(item.tname ?? item.tag ?? "").trim()].filter(Boolean),
     });
   };
 
+  const bilibiliHeaders = (referer: string) => ({
+    accept: "application/json,text/plain,*/*",
+    referer,
+    "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+    ...(cookie ? { cookie } : {}),
+  });
+
   if (cookie) {
+    requestCount += 1;
     const response = await fetch(`https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=${authPageSize}&fresh_type=4&fresh_idx=1&fresh_idx_1h=1`, {
-      headers: {
-        accept: "application/json,text/plain,*/*",
-        cookie,
-        referer: "https://www.bilibili.com/",
-        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-      },
+      headers: bilibiliHeaders("https://www.bilibili.com/"),
     });
     if (!response.ok) {
       throw new Error(`Bilibili recommend API responded with ${response.status}`);
@@ -1831,14 +1864,15 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
       data?: { item?: Array<Record<string, any>> };
     };
     const list = payload.data?.item ?? [];
-    list.forEach(pushBilibiliItem);
+    list.forEach((item) => pushBilibiliItem(item, "bilibili_feed"));
     notes.push(`Fetched ${list.length} authenticated Bilibili recommended videos.`);
   }
 
   const popularResults = await runBatches(
     Array.from({ length: popularPages }, (_, index) => index + 1).map((page) => async () => {
+      requestCount += 1;
       const response = await fetch(`https://api.bilibili.com/x/web-interface/popular?pn=${page}&ps=${popularPageSize}`, {
-        headers: { "user-agent": "mvstudiopro-growth-collector/1.0" },
+        headers: bilibiliHeaders("https://www.bilibili.com/v/popular/all"),
       });
       if (!response.ok) return { page, list: [] as Array<Record<string, any>> };
       const payload = await response.json() as {
@@ -1849,13 +1883,55 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     concurrency,
   );
   for (const result of popularResults) {
-    result.list.forEach(pushBilibiliItem);
+    result.list.forEach((item) => pushBilibiliItem(item, "bilibili_popular"));
     notes.push(`Fetched ${result.list.length} Bilibili popular videos on page ${result.page}.`);
+  }
+
+  const rankingResults = await runBatches(
+    rankingRids.map((rid) => async () => {
+      requestCount += 1;
+      const response = await fetch(`https://api.bilibili.com/x/web-interface/ranking/v2?rid=${rid}&type=all`, {
+        headers: bilibiliHeaders("https://www.bilibili.com/v/popular/rank/all"),
+      });
+      if (!response.ok) return { rid, list: [] as Array<Record<string, any>> };
+      const payload = await response.json() as {
+        data?: { list?: Array<Record<string, any>> };
+      };
+      return { rid, list: payload.data?.list ?? [] };
+    }),
+    concurrency,
+  );
+  for (const result of rankingResults) {
+    result.list.forEach((item) => pushBilibiliItem(item, `bilibili_ranking_${result.rid}`));
+    notes.push(`Fetched ${result.list.length} Bilibili ranking videos for rid=${result.rid}.`);
+  }
+
+  const regionResults = await runBatches(
+    regionRids.map((rid) => async () => {
+      requestCount += 1;
+      const response = await fetch(`https://api.bilibili.com/x/web-interface/dynamic/region?ps=${regionPageSize}&rid=${rid}`, {
+        headers: bilibiliHeaders(`https://www.bilibili.com/v/popular/all?rid=${rid}`),
+      });
+      if (!response.ok) return { rid, list: [] as Array<Record<string, any>> };
+      const payload = await response.json() as {
+        data?: { items?: Array<Record<string, any>> };
+      };
+      const list = (payload.data?.items ?? [])
+        .map((row) => row?.modules?.module_dynamic?.major?.archive ?? row?.archive ?? row)
+        .filter(Boolean) as Array<Record<string, any>>;
+      return { rid, list };
+    }),
+    concurrency,
+  );
+  for (const result of regionResults) {
+    result.list.forEach((item) => pushBilibiliItem(item, `bilibili_region_${result.rid}`));
+    notes.push(`Fetched ${result.list.length} Bilibili region dynamic videos for rid=${result.rid}.`);
   }
 
   const searchTasks = searchKeywords.flatMap((keyword) =>
     searchOrders.flatMap((order) =>
       Array.from({ length: searchPages }, (_, index) => index + 1).map((page) => async () => {
+        requestCount += 1;
         const searchUrl = new URL("https://api.bilibili.com/x/web-interface/search/type");
         searchUrl.searchParams.set("search_type", "video");
         searchUrl.searchParams.set("keyword", keyword);
@@ -1863,12 +1939,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
         searchUrl.searchParams.set("page_size", String(searchPageSize));
         if (order) searchUrl.searchParams.set("order", order);
         const response = await fetch(searchUrl.toString(), {
-          headers: {
-            accept: "application/json,text/plain,*/*",
-            referer: "https://search.bilibili.com/",
-            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-            ...(cookie ? { cookie } : {}),
-          },
+          headers: bilibiliHeaders("https://search.bilibili.com/"),
         });
         if (!response.ok) return { keyword, order, page, list: [] as Array<Record<string, any>> };
         const payload = await response.json() as {
@@ -1895,7 +1966,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
           share: 0,
         },
         tname: item.tag,
-      });
+      }, "bilibili_search");
     });
     notes.push(`Fetched ${result.list.length} Bilibili search videos for keyword ${result.keyword} ${result.order || "default"} page ${result.page}.`);
   }
@@ -1912,13 +1983,22 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     yieldedCount: searchResults.reduce((sum, item) => sum + item.list.length, 0),
   });
 
+  const rawFetchedCount = items.length;
   const dedupedItems = dedupeById(items);
-  notes.push(`Fetched ${dedupedItems.length} total Bilibili videos after merging feed, popular, and search.`);
+  notes.push(`Fetched ${rawFetchedCount} raw Bilibili videos; ${dedupedItems.length} after dedupe (popular+ranking+region+search).`);
   return finalizeCollection("bilibili", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
-    requestCount: popularPages + (cookie ? 1 : 0) + searchKeywords.length * searchPages * searchOrders.length,
+    rawFetchedCount,
+    requestCount,
     pageDepth: Math.max(popularPages, searchPages),
-    targetPerRun: Math.max(popularPages * popularPageSize + (cookie ? authPageSize : 0) + searchKeywords.length * searchPages * searchOrders.length * searchPageSize, getPlatformTargetItemCount("bilibili")),
+    targetPerRun: Math.max(
+      popularPages * popularPageSize
+        + (cookie ? authPageSize : 0)
+        + rankingRids.length * 50
+        + regionRids.length * regionPageSize
+        + searchKeywords.length * searchPages * searchOrders.length * searchPageSize,
+      getPlatformTargetItemCount("bilibili"),
+    ),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.bilibili?.min || 40,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.bilibili?.max || 80,
   });
@@ -2312,6 +2392,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     yieldedCount: searchResults.reduce((sum, item) => sum + item.items.length, 0),
   });
 
+  const rawFetchedCount = items.length;
   const dedupedItems = dedupeById(items);
   if (cookie && xhsCommentItemLimit > 0 && xhsCommentSampleLimit > 0) {
     const commentTargets = dedupedItems
@@ -2335,6 +2416,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
 
   return finalizeCollection("xiaohongshu", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
+    rawFetchedCount,
     requestCount: Math.min(pageLimit, explorePaths.length) + (searchKeywords.length * searchSorts.length * searchPages),
     pageDepth: Math.max(Math.min(pageLimit, explorePaths.length), searchPages),
     targetPerRun: Math.max(items.length, 20 * Math.min(pageLimit, explorePaths.length), getPlatformTargetItemCount("xiaohongshu")),

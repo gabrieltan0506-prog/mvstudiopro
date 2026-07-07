@@ -79,10 +79,55 @@ function matchLabels(text: string, rules: LabelRule[], fallback: string) {
   return labels.length ? labels : [fallback];
 }
 
+const BILIBILI_PARTITION_TO_INDUSTRY: Record<string, string> = {
+  动画: "文娱剧情",
+  番剧: "文娱剧情",
+  国创: "文娱剧情",
+  电影: "文娱剧情",
+  电视剧: "文娱剧情",
+  纪录片: "知识观点",
+  游戏: "数码科技",
+  科技: "数码科技",
+  数码: "数码科技",
+  知识: "教育培训",
+  科学科普: "教育培训",
+  财经: "财经理财",
+  美食: "文旅探店",
+  旅游: "文旅探店",
+  时尚: "美妆穿搭",
+  美妆: "美妆穿搭",
+  健身: "健康管理",
+  运动: "健康管理",
+  汽车: "汽车出行",
+  生活: "生活记录",
+  日常: "生活记录",
+  搞笑: "情绪表达",
+  娱乐: "文娱剧情",
+  舞蹈: "文娱剧情",
+  音乐: "文娱剧情",
+  鬼畜: "文娱剧情",
+  影视: "文娱剧情",
+};
+
+function enrichIndustryLabelsForPlatform(item: TrendItem): string[] {
+  const base = matchLabels(collectText(item), INDUSTRY_RULES, "待判定行业");
+  if (!item.tags?.length) return base;
+  for (const tag of item.tags) {
+    const partition = String(tag || "").trim();
+    const mapped = BILIBILI_PARTITION_TO_INDUSTRY[partition];
+    if (mapped && !base.includes(mapped)) {
+      return [mapped, ...base.filter((label) => label !== "待判定行业")];
+    }
+  }
+  return base;
+}
+
 export function classifyTrendItem(item: TrendItem) {
   const text = collectText(item);
+  const bucket = String(item.bucket || "");
+  const isBilibili = bucket.startsWith("bilibili");
   return {
-    industryLabels: matchLabels(text, INDUSTRY_RULES, "待判定行业"),
+    industryLabels: isBilibili ? enrichIndustryLabelsForPlatform(item) : matchLabels(text, INDUSTRY_RULES, "待判定行业"),
     ageLabels: matchLabels(text, AGE_RULES, "泛年龄"),
     contentLabels: matchLabels(text, CONTENT_RULES, item.contentType === "topic" ? "热点话题" : "泛内容"),
   };

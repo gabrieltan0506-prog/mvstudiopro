@@ -26,10 +26,11 @@ import {
 } from "@shared/growth";
 import { matchIndustryTemplate } from "./industryTemplates";
 import { getPlatformTemplate } from "./platformTemplates";
-import type { PlatformTrendCollection } from "./trendCollector";
+import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { normalizeStringList } from "./trendNormalize";
 import { buildGrowthDataAnalystSummary } from "./growthDataAnalyst";
 import { selectByGrowthPotential } from "./trendGrowthScoring";
+import { filterTrendItemsByWindowDays, summarizeTrendWindowCounts } from "./trendWindow";
 
 export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   douyin: "抖音",
@@ -597,12 +598,18 @@ function buildPlatformSummaryFromCollection(
   return `${baseSummary} ${dominantContent} 当前更值得参考的话题方向是「${topItem}」，说明最近更适合用高相关度表达，而不是追无关热点。${reliability.summary}`;
 }
 
-function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: GrowthAnalysisScores, collection: PlatformTrendCollection) {
-  const likes = collection.items.map((item) => item.likes || item.hotValue || 0).filter(Boolean);
-  const comments = collection.items.map((item) => item.comments || 0).filter(Boolean);
-  const shares = collection.items.map((item) => item.shares || 0).filter(Boolean);
-  const views = collection.items.map((item) => item.views || 0).filter(Boolean);
-  const creators = new Set(collection.items.map((item) => item.author).filter(Boolean));
+function collectionItemsForWindow(collection: PlatformTrendCollection, windowDays: number): TrendItem[] {
+  const filtered = filterTrendItemsByWindowDays(collection.items, windowDays);
+  return filtered.length > 0 ? filtered : collection.items;
+}
+
+function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: GrowthAnalysisScores, collection: PlatformTrendCollection, windowDays?: number) {
+  const items = windowDays ? collectionItemsForWindow(collection, windowDays) : collection.items;
+  const likes = items.map((item) => item.likes || item.hotValue || 0).filter(Boolean);
+  const comments = items.map((item) => item.comments || 0).filter(Boolean);
+  const shares = items.map((item) => item.shares || 0).filter(Boolean);
+  const views = items.map((item) => item.views || 0).filter(Boolean);
+  const creators = new Set(items.map((item) => item.author).filter(Boolean));
   const engagementBase = median(likes) + median(comments) * 4 + median(shares) * 6;
   const reliability = assessCollectionReliability(platform, collection);
   const engagementRateMedian = clamp(Number(((engagementBase || analysis.viralPotential * 100) / Math.max(median(views) || 50_000, 10_000) * 100).toFixed(1)), 1.6, 18.5);
@@ -610,8 +617,8 @@ function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: Gro
   const saveRateMedian = clamp(Number((((median(likes) || analysis.color * 100) / Math.max(median(views) || 50_000, 10_000)) * 100).toFixed(1)), 0.6, 12.5);
 
   return {
-    postsAnalyzed: collection.items.length,
-    creatorsTracked: creators.size || Math.round(collection.items.length * 0.65),
+    postsAnalyzed: items.length,
+    creatorsTracked: creators.size || Math.round(items.length * 0.65),
     avgViews: Math.round((median(views) || (analysis.impact + analysis.viralPotential) * 900) * reliability.multiplier),
     avgLikes: Math.round((median(likes) || analysis.color * 120) * reliability.multiplier),
     avgComments: Math.round((median(comments) || analysis.composition * 3) * reliability.multiplier),
@@ -2529,13 +2536,19 @@ export function buildGrowthSnapshotFromCollections(params: {
     });
   }
 
+  const detectedWindowDays = Math.max(DEFAULT_GROWTH_WINDOW_DAYS, ...activeCollections.map((collection) => collection.windowDays || 0));
+  const windowDays = params.windowDaysOverride
+    ? Math.max(3, Number(params.windowDaysOverride) || detectedWindowDays)
+    : detectedWindowDays;
+
   const platformSnapshots = requestedPlatforms.map((platform) => {
     const collection = params.collections[platform];
     if (!collection || !collection.items.length) {
       return buildPlatformSnapshot(platform, params.analysis, context);
     }
     const base = buildPlatformSnapshot(platform, params.analysis, context);
-    const metricWindow = buildMetricWindowFromCollection(platform, params.analysis, collection);
+    const windowItems = collectionItemsForWindow(collection, windowDays);
+    const metricWindow = buildMetricWindowFromCollection(platform, params.analysis, collection, windowDays);
     return {
       ...base,
       summary: buildPlatformSummaryFromCollection(platform, params.analysis, collection, context),
@@ -2547,11 +2560,11 @@ export function buildGrowthSnapshotFromCollections(params: {
         metricWindow.avgLikes >= 8_000 ? "medium" :
         "low",
       sampleTopics: (() => {
-        const rankedPool = collection.items.filter((item) => item.title && item.contentType !== "topic");
-        const pool = rankedPool.length ? rankedPool : collection.items.filter((item) => Boolean(item.title));
-        const { selected: sampleScored } = selectByGrowthPotential(pool, { topN: 12, windowDays: 30 });
+        const rankedPool = windowItems.filter((item) => item.title && item.contentType !== "topic");
+        const pool = rankedPool.length ? rankedPool : windowItems.filter((item) => Boolean(item.title));
+        const { selected: sampleScored } = selectByGrowthPotential(pool, { topN: 12, windowDays });
         const ordered = sampleScored.map((s) => s.item.title).filter(Boolean);
-        const fallback = collection.items.map((item) => item.title).filter(Boolean);
+        const fallback = windowItems.map((item) => item.title).filter(Boolean);
         return filterRelevantTopics(ordered.length ? ordered : fallback, context);
       })(),
     } satisfies GrowthPlatformSnapshot;
@@ -2559,11 +2572,6 @@ export function buildGrowthSnapshotFromCollections(params: {
 
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
-  const detectedWindowDays = Math.max(DEFAULT_GROWTH_WINDOW_DAYS, ...activeCollections.map((collection) => collection.windowDays || 0));
-  // 显式 override（如平台页 3/7 天）优先且不被下限顶回；未传 override 时仍走 detectedWindowDays（≥默认）。
-  const windowDays = params.windowDaysOverride
-    ? Math.max(3, Number(params.windowDaysOverride) || detectedWindowDays)
-    : detectedWindowDays;
   const industryTemplate = matchIndustryTemplate(context, [
     params.analysis.summary,
     ...params.analysis.strengths,

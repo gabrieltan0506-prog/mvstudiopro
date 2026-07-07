@@ -262,6 +262,7 @@ export async function notifyGrowthCollectionUpdate(params: {
     `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
     `最新触发平台：${params.platform}\n` +
     `最新抓取时间：${params.collectedAt}\n` +
+    `Pipeline rawFetched=${params.collection.stats?.rawFetchedCount ?? "-"} afterDedup=${params.collection.stats?.afterDedupCount ?? params.itemCount} afterWindowFilter=${params.collection.stats?.afterWindowFilterCount ?? "-"} mergedAdded=${params.addedCount}\n` +
     `最新添加数量：${params.addedCount}\n` +
     `最新合并数量：${params.mergedCount}\n` +
     `该平台当前总样本数：${params.itemCount}\n` +
@@ -278,6 +279,7 @@ export async function notifyGrowthCollectionUpdate(params: {
     `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
     `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
     `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
+    `<p><strong>Pipeline：</strong>rawFetched=${params.collection.stats?.rawFetchedCount ?? "-"} · afterDedup=${params.collection.stats?.afterDedupCount ?? params.itemCount} · afterWindowFilter=${params.collection.stats?.afterWindowFilterCount ?? "-"} · mergedAdded=${params.addedCount}</p>` +
     `<p><strong>本次添加：</strong>${params.addedCount}</p>` +
     `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
     `<p><strong>该平台当前总样本数：</strong>${params.itemCount}</p>` +
