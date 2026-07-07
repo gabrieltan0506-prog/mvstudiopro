@@ -7,6 +7,8 @@ import {
   CANVAS_BLOCK_MIN_HEIGHT,
   CANVAS_BLOCK_MIN_WIDTH,
   CANVAS_KIND_META,
+  CANVAS_UPLOAD_ACCEPT,
+  CANVAS_UPLOAD_FORMAT_HINT,
   collectUpstreamHandoff,
   collectUpstreamTexts,
   collectVisionImages,
@@ -27,8 +29,8 @@ import {
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
+import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, uploadCanvasFilesParallel, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
-import { CANVAS_UPLOAD_CONCURRENCY, uploadCanvasFilesParallel } from "@/lib/canvasUpload";
 import { trpc } from "@/lib/trpc";
 import {
   LoaderCircle,
@@ -36,6 +38,10 @@ import {
   Sparkles,
   Upload,
   X,
+  FileText,
+  Film,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -63,6 +69,39 @@ function blockEdgeAnchor(block: CanvasBlock) {
 
 function patchBlock(blocks: CanvasBlock[], id: string, patch: Partial<CanvasBlock>) {
   return blocks.map((b) => (b.id === id ? { ...b, ...patch } : b));
+}
+
+function assetKindLabel(kind: ReturnType<typeof inferCanvasAssetKindFromFileName>) {
+  if (kind === "video") return "视频";
+  if (kind === "document") return "文档";
+  return "图片";
+}
+
+function CanvasUploadedAssetRow({ asset }: { asset: CanvasUploadedAsset }) {
+  const kind = asset.kind ?? inferCanvasAssetKindFromFileName(asset.fileName) ?? "image";
+  return (
+    <div
+      className="flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5"
+      title={asset.fileName}
+    >
+      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden />
+      {kind === "image" ? (
+        <img
+          src={asset.previewUrl || asset.url}
+          alt=""
+          className="h-7 w-7 shrink-0 rounded object-cover"
+        />
+      ) : kind === "video" ? (
+        <Film className="h-4 w-4 shrink-0 text-sky-300" aria-hidden />
+      ) : (
+        <FileText className="h-4 w-4 shrink-0 text-amber-200" aria-hidden />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[11px] font-medium text-white/90">{asset.fileName}</div>
+        <div className="text-[10px] text-emerald-300/80">上传成功 · {assetKindLabel(kind)}</div>
+      </div>
+    </div>
+  );
 }
 
 export default function FreeformCanvas({
@@ -237,11 +276,15 @@ export default function FreeformCanvas({
 
   const uploadFilesForBlock = useCallback(
     async (blockId: string, files: FileList | File[]) => {
-      const fileArr = Array.from(files).filter(
-        (f) => f.type.startsWith("image/") || f.type.startsWith("video/") || /\.(png|jpe?g|webp|mp4)$/i.test(f.name),
-      );
+      const allFiles = Array.from(files);
+      const fileArr = allFiles.filter(isCanvasUploadableFile);
+      const rejected = allFiles.filter((f) => !isCanvasUploadableFile(f));
+
+      if (rejected.length) {
+        toast.error(`以下文件格式不支持：${rejected.map((f) => f.name).join("、")}`);
+      }
       if (!fileArr.length) {
-        toast.error("请选择图片或视频文件");
+        if (!rejected.length) toast.error("请选择可上传的文件");
         return;
       }
 
@@ -257,23 +300,22 @@ export default function FreeformCanvas({
           onProgress: (done, total) => setUploadProgress({ blockId, done, total }),
         });
 
-        if (!uploaded.length) {
-          throw new Error(failed[0]?.error || "全部上传失败");
-        }
-
         const nextAssets: CanvasUploadedAsset[] = [...(block?.uploadedAssets ?? []), ...uploaded];
-        const firstImage = nextAssets.find((a) => !a.fileName.match(/\.mp4$/i));
+        const firstImage = nextAssets.find((a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image");
 
         patchOne(blockId, {
           uploadedAssets: nextAssets,
+          uploadFailures: failed,
           refImageUrl: firstImage?.url ?? block?.refImageUrl,
           outputUrl: firstImage?.url ?? block?.outputUrl,
         });
 
-        if (failed.length) {
-          toast.warning(`已上传 ${uploaded.length} 个，${failed.length} 个失败`);
+        if (!uploaded.length && failed.length) {
+          toast.error(`全部上传失败（${failed.length} 个）`);
+        } else if (failed.length) {
+          toast.warning(`成功 ${uploaded.length} 个，失败 ${failed.length} 个`);
         } else {
-          toast.success(`已上传 ${uploaded.length} 个素材`);
+          toast.success(`已成功上传 ${uploaded.length} 个文件`);
         }
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "上传失败");
@@ -357,7 +399,7 @@ export default function FreeformCanvas({
       <input
         ref={toolbarFileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept={CANVAS_UPLOAD_ACCEPT}
         multiple
         className="hidden"
         onChange={(e) => {
@@ -614,7 +656,7 @@ export default function FreeformCanvas({
                         {uploadLabel}
                         <input
                           type="file"
-                          accept="image/*,video/*"
+                          accept={CANVAS_UPLOAD_ACCEPT}
                           multiple
                           className="hidden"
                           disabled={uploadBusyId === block.id}
@@ -625,25 +667,26 @@ export default function FreeformCanvas({
                           }}
                         />
                       </label>
-                      {block.uploadedAssets.length > 0 ? (
-                        <span className="self-center text-[10px] text-emerald-300/80">
-                          已上传 {block.uploadedAssets.length} 个
-                        </span>
-                      ) : null}
                     </div>
-                    {block.uploadedAssets.length > 0 ? (
-                      <div className="mt-2 max-h-24 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
-                        <div className="flex flex-wrap gap-1">
-                          {block.uploadedAssets.map((asset) => (
-                            <img
-                              key={asset.id}
-                              src={asset.previewUrl || asset.url}
-                              alt={asset.fileName}
-                              title={asset.fileName}
-                              className="h-8 w-8 shrink-0 rounded object-cover"
-                            />
-                          ))}
-                        </div>
+                    <p className="mt-1.5 text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
+                    {(block.uploadedAssets.length > 0 || (block.uploadFailures?.length ?? 0) > 0) ? (
+                      <div className="mt-2 max-h-36 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
+                        {block.uploadedAssets.map((asset) => (
+                          <CanvasUploadedAssetRow key={asset.id} asset={asset} />
+                        ))}
+                        {(block.uploadFailures ?? []).map((fail) => (
+                          <div
+                            key={`fail-${fail.fileName}`}
+                            className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-500/5 px-2 py-1.5"
+                            title={fail.error}
+                          >
+                            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" aria-hidden />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[11px] font-medium text-white/90">{fail.fileName}</div>
+                              <div className="text-[10px] text-red-300/90">上传失败 · {fail.error}</div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : null}
                   </div>
@@ -791,7 +834,7 @@ export default function FreeformCanvas({
               <Upload className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
               <div>
                 <div className="text-sm font-medium text-white">上传素材</div>
-                <div className="text-[11px] text-white/45">图片或视频，可多张</div>
+                <div className="text-[11px] text-white/45">图片、视频或文档（PDF/TXT/MD）</div>
               </div>
             </button>
           </div>

@@ -9,13 +9,29 @@ export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0";
 
 export type CanvasBlockStatus = "idle" | "running" | "done" | "error";
 
+export type CanvasAssetKind = "image" | "video" | "document";
+
 export type CanvasUploadedAsset = {
   id: string;
   url: string;
   previewUrl: string;
   fileName: string;
   gcsUri?: string;
+  kind?: CanvasAssetKind;
+  mimeType?: string;
 };
+
+export type CanvasUploadFailure = {
+  fileName: string;
+  error: string;
+};
+
+/** 画布上传：input accept + 用户可见格式说明 */
+export const CANVAS_UPLOAD_ACCEPT =
+  "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.markdown";
+
+export const CANVAS_UPLOAD_FORMAT_HINT =
+  "支持 JPG / PNG / WebP / GIF、MP4 / MOV / WebM；文档 PDF / TXT / MD（供文本·整理文案方块引用）";
 
 export type CanvasImageBatchCount = 1 | 2 | 4;
 
@@ -42,6 +58,8 @@ export type CanvasBlock = {
   imageBatchCount: CanvasImageBatchCount;
   /** 本地上传素材（可多张，供下游文本/视频引用） */
   uploadedAssets: CanvasUploadedAsset[];
+  /** 最近一次批量上传的失败项（便于在方块内展示） */
+  uploadFailures?: CanvasUploadFailure[];
   parentId?: string;
   refImageUrl?: string;
   refVideoUrl?: string;
@@ -158,6 +176,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: block.imageBatchCount ?? 1,
     uploadedAssets: block.uploadedAssets ?? [],
+    uploadFailures: block.uploadFailures ?? [],
     outputUrls: block.outputUrls?.length
       ? block.outputUrls
       : block.outputUrl

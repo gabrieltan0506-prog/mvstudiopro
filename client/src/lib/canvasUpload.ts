@@ -1,5 +1,30 @@
-import type { CanvasUploadedAsset } from "./canvasTypes";
+import type { CanvasAssetKind, CanvasUploadedAsset } from "./canvasTypes";
 import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "./omniCanvasApi";
+
+const DOCUMENT_EXT = /\.(pdf|txt|md|markdown)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif)$/i;
+const VIDEO_EXT = /\.(mp4|mov|webm|m4v)$/i;
+
+export function inferCanvasAssetKind(file: File): CanvasAssetKind | null {
+  const mime = String(file.type || "").toLowerCase();
+  const name = file.name.toLowerCase();
+  if (mime.startsWith("image/") || IMAGE_EXT.test(name)) return "image";
+  if (mime.startsWith("video/") || VIDEO_EXT.test(name)) return "video";
+  if (mime === "application/pdf" || mime.startsWith("text/") || DOCUMENT_EXT.test(name)) return "document";
+  return null;
+}
+
+export function isCanvasUploadableFile(file: File): boolean {
+  return inferCanvasAssetKind(file) !== null;
+}
+
+export function inferCanvasAssetKindFromFileName(fileName: string): CanvasAssetKind | null {
+  const lower = fileName.toLowerCase();
+  if (IMAGE_EXT.test(lower)) return "image";
+  if (VIDEO_EXT.test(lower)) return "video";
+  if (DOCUMENT_EXT.test(lower)) return "document";
+  return null;
+}
 
 /** 并行上传路数：GCS 直传 + 签名 URL 并发 */
 export const CANVAS_UPLOAD_CONCURRENCY = 10;
@@ -51,9 +76,12 @@ export async function uploadOneCanvasAsset(params: {
   getSignedUploadUrl: SignedUrlMutation;
 }): Promise<CanvasUploadedAsset> {
   const { file, index, getSignedUploadUrl } = params;
-  const kind = file.type.startsWith("video/") ? "video" : "image";
+  const kind = inferCanvasAssetKind(file);
+  if (!kind) throw new Error(`不支持的文件格式：${file.name}`);
   const safeName = file.name.replace(/[^a-z0-9._-]/gi, "-");
-  const mimeType = file.type || (kind === "video" ? "video/mp4" : "image/png");
+  const mimeType =
+    file.type ||
+    (kind === "video" ? "video/mp4" : kind === "document" ? "application/octet-stream" : "image/png");
 
   const signed = await getSignedUploadUrl({
     fileName: file.name,
@@ -78,6 +106,8 @@ export async function uploadOneCanvasAsset(params: {
     previewUrl,
     fileName: file.name,
     gcsUri: signed.gcsUri,
+    kind,
+    mimeType,
   };
 }
 
