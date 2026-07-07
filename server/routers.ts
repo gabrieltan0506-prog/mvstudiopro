@@ -6316,7 +6316,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const selectedWindowDays = Number(backfill.selectedWindowDays || 0) || (backfill.mode === "live" ? 30 : 90);
           const configuredMinutes = Math.max(
             1,
-            Math.round((Number(process.env.GROWTH_BACKFILL_ACTIVE_INTERVAL_MS || 10 * 60 * 1000) || 10 * 60 * 1000) / (60 * 1000)),
+            Math.round((Number(process.env.GROWTH_BACKFILL_ACTIVE_INTERVAL_MS || 5 * 60 * 1000) || 5 * 60 * 1000) / (60 * 1000)),
           );
           const nextRunAt = backfill.nextRunAt || addMinutesToIso(backfill.updatedAt || backfill.startedAt, configuredMinutes);
           const startedAt = backfill.startedAt || backfill.updatedAt;
