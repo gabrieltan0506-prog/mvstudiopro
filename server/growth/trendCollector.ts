@@ -2672,7 +2672,8 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
         }
       }
     }`;
-    for (const [cookieIndex, cookie] of cookies.slice(0, 2).entries()) {
+    for (let cookieIndex = 0; cookieIndex < Math.min(cookies.length, 2); cookieIndex += 1) {
+      const cookie = cookies[cookieIndex];
       let pcursor = "";
       for (let page = 0; page < recoPages; page += 1) {
         try {
