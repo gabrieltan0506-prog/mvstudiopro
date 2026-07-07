@@ -25,6 +25,9 @@ export type TrendSchedulerState = {
   lastCollectedCount?: number;
   lastAddedCount?: number;
   lastMergedCount?: number;
+  lastRawFetchedCount?: number;
+  lastAfterDedupCount?: number;
+  lastAfterWindowFilterCount?: number;
   burstMode?: boolean;
   burstTriggeredAt?: string;
   burstEnterCount?: number;
@@ -65,6 +68,10 @@ export type TrendMergeStats = {
   live: boolean;
   buckets: Record<string, number>;
   collectedAt: string;
+  rawFetched?: number;
+  afterDedup?: number;
+  afterWindowFilter?: number;
+  mergedAdded?: number;
 };
 
 export type TrendBackfillPlatformProgress = {
@@ -2004,6 +2011,10 @@ export async function mergeTrendCollectionsWithOptions(
       live: incoming.source === "live",
       buckets: getBucketCounts(merged.collection.items),
       collectedAt: incoming.collectedAt,
+      rawFetched: incoming.stats?.rawFetchedCount,
+      afterDedup: incoming.stats?.afterDedupCount ?? incoming.items.length,
+      afterWindowFilter: incoming.stats?.afterWindowFilterCount,
+      mergedAdded: merged.addedCount,
     };
   }
 
