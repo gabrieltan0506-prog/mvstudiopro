@@ -45,10 +45,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
+
 type FreeformCanvasProps = {
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
-  onBlocksChange: (blocks: CanvasBlock[]) => void;
+  onBlocksChange: (blocks: BlocksUpdater) => void;
   onEdgesChange: (edges: CanvasEdge[]) => void;
   runDeps: CanvasRunDeps;
 };
@@ -227,9 +229,9 @@ export default function FreeformCanvas({
 
   const patchOne = useCallback(
     (id: string, patch: Partial<CanvasBlock>) => {
-      onBlocksChange(patchBlock(blocks, id, patch));
+      onBlocksChange((prev) => patchBlock(prev, id, patch));
     },
-    [blocks, onBlocksChange],
+    [onBlocksChange],
   );
 
   const removeBlock = useCallback(
@@ -281,6 +283,13 @@ export default function FreeformCanvas({
       const rejected = allFiles.filter((f) => !isCanvasUploadableFile(f));
 
       if (rejected.length) {
+        const rejectedFailures = rejected.map((f) => ({
+          fileName: f.name,
+          error: "不支持的文件格式",
+        }));
+        onBlocksChange((prev) =>
+          patchBlock(prev, blockId, { uploadFailures: rejectedFailures }),
+        );
         toast.error(`以下文件格式不支持：${rejected.map((f) => f.name).join("、")}`);
       }
       if (!fileArr.length) {
@@ -290,7 +299,6 @@ export default function FreeformCanvas({
 
       setUploadBusyId(blockId);
       setUploadProgress({ blockId, done: 0, total: fileArr.length });
-      const block = blocks.find((b) => b.id === blockId);
 
       try {
         const { assets: uploaded, failed } = await uploadCanvasFilesParallel({
@@ -300,14 +308,18 @@ export default function FreeformCanvas({
           onProgress: (done, total) => setUploadProgress({ blockId, done, total }),
         });
 
-        const nextAssets: CanvasUploadedAsset[] = [...(block?.uploadedAssets ?? []), ...uploaded];
-        const firstImage = nextAssets.find((a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image");
-
-        patchOne(blockId, {
-          uploadedAssets: nextAssets,
-          uploadFailures: failed,
-          refImageUrl: firstImage?.url ?? block?.refImageUrl,
-          outputUrl: firstImage?.url ?? block?.outputUrl,
+        onBlocksChange((prev) => {
+          const block = prev.find((b) => b.id === blockId);
+          if (!block) return prev;
+          const nextAssets: CanvasUploadedAsset[] = [...(block.uploadedAssets ?? []), ...uploaded];
+          const firstImage = nextAssets.find(
+            (a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image",
+          );
+          return patchBlock(prev, blockId, {
+            uploadedAssets: nextAssets,
+            uploadFailures: failed.length ? failed : undefined,
+            refImageUrl: firstImage?.url ?? block.refImageUrl,
+          });
         });
 
         if (!uploaded.length && failed.length) {
@@ -318,13 +330,19 @@ export default function FreeformCanvas({
           toast.success(`已成功上传 ${uploaded.length} 个文件`);
         }
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "上传失败");
+        const msg = e instanceof Error ? e.message : "上传失败";
+        onBlocksChange((prev) =>
+          patchBlock(prev, blockId, {
+            uploadFailures: fileArr.map((f) => ({ fileName: f.name, error: msg })),
+          }),
+        );
+        toast.error(msg);
       } finally {
         setUploadBusyId(null);
         setUploadProgress(null);
       }
     },
-    [blocks, getSignedUrlMutation, patchOne],
+    [getSignedUrlMutation, onBlocksChange],
   );
 
   useEffect(() => {
@@ -335,8 +353,8 @@ export default function FreeformCanvas({
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left - dragState.offsetX + canvas.scrollLeft;
       const y = e.clientY - rect.top - dragState.offsetY + canvas.scrollTop;
-      onBlocksChange(
-        patchBlock(blocks, dragState.id, {
+      onBlocksChange((prev) =>
+        patchBlock(prev, dragState.id, {
           x: Math.max(8, x),
           y: Math.max(8, y),
         }),
@@ -349,7 +367,7 @@ export default function FreeformCanvas({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [blocks, dragState, onBlocksChange]);
+  }, [dragState, onBlocksChange]);
 
   useEffect(() => {
     if (!resizeState) return;
@@ -364,7 +382,7 @@ export default function FreeformCanvas({
         CANVAS_BLOCK_MAX_HEIGHT,
         Math.max(CANVAS_BLOCK_MIN_HEIGHT, Math.round(resizeState.startH + dh)),
       );
-      onBlocksChange(patchBlock(blocks, resizeState.id, { width, height }));
+      onBlocksChange((prev) => patchBlock(prev, resizeState.id, { width, height }));
     };
     const onUp = () => setResizeState(null);
     window.addEventListener("pointermove", onMove);
@@ -373,7 +391,7 @@ export default function FreeformCanvas({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [blocks, onBlocksChange, resizeState]);
+  }, [onBlocksChange, resizeState]);
 
   const renderEdge = (fromId: string, toId: string) => {
     const a = blockMap.get(fromId);
@@ -453,10 +471,18 @@ export default function FreeformCanvas({
             const upstreamPreview = upstreamHandoff.map((item) => item.text).join(" · ").slice(0, 120);
             const displayOutputs =
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
-            const uploadLabel =
-              uploadBusyId === block.id && uploadProgress?.blockId === block.id
-                ? `上传中 ${uploadProgress.done}/${uploadProgress.total}`
-                : "上传素材";
+            const uploadedRefImages = block.uploadedAssets.filter(
+              (a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image",
+            );
+            const refPreviewUrl =
+              uploadedRefImages[0]?.previewUrl ||
+              uploadedRefImages[0]?.url ||
+              block.refImageUrl ||
+              undefined;
+            const isUploading = uploadBusyId === block.id;
+            const uploadLabel = isUploading
+              ? `上传中 ${uploadProgress?.blockId === block.id ? `${uploadProgress.done}/${uploadProgress.total}` : "…"}`
+              : "上传素材";
             return (
               <div
                 key={block.id}
@@ -651,15 +677,25 @@ export default function FreeformCanvas({
                           <option value="16:9">16:9</option>
                         </select>
                       )}
-                      <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white/70 hover:text-white">
-                        <Upload className="h-3 w-3" />
+                      <label
+                        className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white ${
+                          isUploading
+                            ? "border-amber-400/35 bg-amber-500/10 text-amber-100"
+                            : "border-white/10 bg-black/40 text-white/70"
+                        }`}
+                      >
+                        {isUploading ? (
+                          <LoaderCircle className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Upload className="h-3 w-3" />
+                        )}
                         {uploadLabel}
                         <input
                           type="file"
                           accept={CANVAS_UPLOAD_ACCEPT}
                           multiple
                           className="hidden"
-                          disabled={uploadBusyId === block.id}
+                          disabled={isUploading}
                           onChange={(e) => {
                             const list = e.target.files;
                             e.target.value = "";
@@ -668,7 +704,18 @@ export default function FreeformCanvas({
                         />
                       </label>
                     </div>
-                    <p className="mt-1.5 text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
+                    {isUploading ? (
+                      <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-2 py-1.5">
+                        <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-300" aria-hidden />
+                        <span className="text-[11px] text-amber-100">
+                          正在上传
+                          {uploadProgress?.blockId === block.id
+                            ? ` ${uploadProgress.done}/${uploadProgress.total}`
+                            : "…"}
+                          ，请稍候
+                        </span>
+                      </div>
+                    ) : null}
                     {(block.uploadedAssets.length > 0 || (block.uploadFailures?.length ?? 0) > 0) ? (
                       <div className="mt-2 max-h-36 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
                         {block.uploadedAssets.map((asset) => (
@@ -689,6 +736,7 @@ export default function FreeformCanvas({
                         ))}
                       </div>
                     ) : null}
+                    <p className="mt-1.5 text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
                   </div>
 
                   {/* 右：输出预览 */}
@@ -701,6 +749,21 @@ export default function FreeformCanvas({
                       <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-white/85">
                         {block.outputText}
                       </pre>
+                    ) : null}
+                    {block.kind === "image" && refPreviewUrl && !displayOutputs.length ? (
+                      <div className="mb-2 rounded-xl border border-emerald-400/20 bg-emerald-500/5 p-2">
+                        <div className="mb-1.5 text-[10px] uppercase tracking-wider text-emerald-300/80">
+                          参考素材
+                        </div>
+                        <img
+                          src={refPreviewUrl}
+                          alt="参考素材"
+                          className="max-h-[140px] w-full rounded-lg object-contain"
+                        />
+                        <p className="mt-1.5 text-[10px] text-emerald-300/90">
+                          已上传 {uploadedRefImages.length || 1} 张，点击运行开始生成
+                        </p>
+                      </div>
                     ) : null}
                     {block.kind === "image" && displayOutputs.length > 0 ? (
                       <div className={`mt-1 grid gap-1 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
@@ -717,7 +780,7 @@ export default function FreeformCanvas({
                     {block.outputUrl && block.kind === "video" ? (
                       <video src={block.outputUrl} controls className="mt-1 max-h-[200px] w-full rounded-lg" />
                     ) : null}
-                    {!block.outputText && !displayOutputs.length && block.status !== "error" ? (
+                    {!block.outputText && !displayOutputs.length && !refPreviewUrl && block.status !== "error" ? (
                       <div className="flex min-h-[100px] flex-1 items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-white/30">
                         运行后显示结果
                       </div>
