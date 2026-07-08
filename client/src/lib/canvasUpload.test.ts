@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CANVAS_UPLOAD_CONCURRENCY,
   mapWithConcurrency,
+  takeFilesFromInput,
   uploadCanvasFilesParallel,
 } from "@/lib/canvasUpload";
 
@@ -33,6 +34,47 @@ describe("canvasUpload", () => {
     expect(results[29]).toBe(30);
     expect(maxActive).toBeLessThanOrEqual(10);
     expect(maxActive).toBeGreaterThanOrEqual(2);
+  });
+
+  it("takeFilesFromInput 在清空 value 后仍保留已选文件", () => {
+    const file = new File([new Blob(["x"])], "demo.jpg", { type: "image/jpeg" });
+    const originalList = {
+      0: file,
+      length: 1,
+      item: (i: number) => (i === 0 ? file : null),
+      [Symbol.iterator]: function* () {
+        yield file;
+      },
+    } as unknown as FileList;
+
+    const emptyList = {
+      length: 0,
+      item: () => null,
+      [Symbol.iterator]: function* () {
+        /* empty */
+      },
+    } as unknown as FileList;
+
+    let current = originalList;
+    let value = "";
+    const input = {
+      get files() {
+        return current;
+      },
+      get value() {
+        return value;
+      },
+      set value(next: string) {
+        value = next;
+        if (next === "") current = emptyList;
+      },
+    } as HTMLInputElement;
+
+    const picked = takeFilesFromInput(input);
+    expect(picked).toHaveLength(1);
+    expect(picked[0]?.name).toBe("demo.jpg");
+    expect(input.value).toBe("");
+    expect(input.files?.length ?? 0).toBe(0);
   });
 
   it("uploadCanvasFilesParallel 10 路并行上传并汇总结果", async () => {

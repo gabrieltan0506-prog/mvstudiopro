@@ -18,6 +18,13 @@ export function isCanvasUploadableFile(file: File): boolean {
   return inferCanvasAssetKind(file) !== null;
 }
 
+/** 必须先复制 File[] 再清空 input，否则部分浏览器会把 FileList 引用一并清空 */
+export function takeFilesFromInput(input: HTMLInputElement): File[] {
+  const files = Array.from(input.files ?? []);
+  input.value = "";
+  return files;
+}
+
 export function inferCanvasAssetKindFromFileName(fileName: string): CanvasAssetKind | null {
   const lower = fileName.toLowerCase();
   if (IMAGE_EXT.test(lower)) return "image";

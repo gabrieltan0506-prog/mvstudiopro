@@ -29,7 +29,7 @@ import {
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
-import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, uploadCanvasFilesParallel, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
+import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { trpc } from "@/lib/trpc";
 import {
@@ -449,7 +449,7 @@ export default function FreeformCanvas({
 
   const uploadFilesForBlock = useCallback(
     async (blockId: string, files: FileList | File[]) => {
-      const allFiles = Array.from(files);
+      const allFiles = Array.isArray(files) ? [...files] : Array.from(files);
       const fileArr = allFiles.filter(isCanvasUploadableFile);
       const rejected = allFiles.filter((f) => !isCanvasUploadableFile(f));
 
@@ -628,11 +628,10 @@ export default function FreeformCanvas({
         multiple
         className="hidden"
         onChange={(e) => {
-          const list = e.target.files;
-          e.target.value = "";
+          const picked = takeFilesFromInput(e.target);
           const blockId = pendingUploadBlockIdRef.current;
           pendingUploadBlockIdRef.current = null;
-          if (blockId && list?.length) void uploadFilesForBlock(blockId, list);
+          if (blockId && picked.length) void uploadFilesForBlock(blockId, picked);
         }}
       />
 
@@ -859,16 +858,13 @@ export default function FreeformCanvas({
                             <option value="16:9">16:9</option>
                           </select>
                         )}
-                        <button
-                          type="button"
-                          disabled={isUploading}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            document.getElementById(`canvas-upload-${block.id}`)?.click();
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white disabled:opacity-60 ${
+                        <label
+                          htmlFor={`canvas-upload-${block.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white ${
                             isUploading
-                              ? "border-amber-400/35 bg-amber-500/10 text-amber-100"
+                              ? "border-amber-400/35 bg-amber-500/10 text-amber-100 pointer-events-none opacity-60"
                               : "border-white/10 bg-black/40 text-white/70"
                           }`}
                         >
@@ -878,19 +874,18 @@ export default function FreeformCanvas({
                             <Upload className="h-3 w-3" />
                           )}
                           {uploadLabel}
-                        </button>
+                        </label>
                         <input
                           id={`canvas-upload-${block.id}`}
                           type="file"
                           accept={CANVAS_UPLOAD_ACCEPT}
                           multiple
-                          className="hidden"
+                          className="sr-only"
                           disabled={isUploading}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
-                            const list = e.target.files;
-                            e.target.value = "";
-                            if (list?.length) void uploadFilesForBlock(block.id, list);
+                            const picked = takeFilesFromInput(e.target);
+                            if (picked.length) void uploadFilesForBlock(block.id, picked);
                           }}
                         />
                       </div>
