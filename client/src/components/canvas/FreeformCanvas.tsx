@@ -29,7 +29,7 @@ import {
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
-import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, uploadCanvasFilesParallel, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
+import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { trpc } from "@/lib/trpc";
 import {
@@ -70,13 +70,6 @@ function blockEdgeAnchor(block: CanvasBlock) {
 
 function patchBlock(blocks: CanvasBlock[], id: string, patch: Partial<CanvasBlock>) {
   return blocks.map((b) => (b.id === id ? { ...b, ...patch } : b));
-}
-
-/** 必须先复制 File[] 再清空 input，否则 macOS Chrome 会把 FileList 一并清空导致上传 0 文件 */
-function takeFilesFromInput(event: React.ChangeEvent<HTMLInputElement>): File[] {
-  const files = Array.from(event.target.files ?? []);
-  event.target.value = "";
-  return files;
 }
 
 function assetKindLabel(kind: ReturnType<typeof inferCanvasAssetKindFromFileName>) {
@@ -635,7 +628,7 @@ export default function FreeformCanvas({
         multiple
         className="hidden"
         onChange={(e) => {
-          const picked = takeFilesFromInput(e);
+          const picked = takeFilesFromInput(e.target);
           const blockId = pendingUploadBlockIdRef.current;
           pendingUploadBlockIdRef.current = null;
           if (blockId && picked.length) void uploadFilesForBlock(blockId, picked);
@@ -891,7 +884,7 @@ export default function FreeformCanvas({
                           disabled={isUploading}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
-                            const picked = takeFilesFromInput(e);
+                            const picked = takeFilesFromInput(e.target);
                             if (picked.length) void uploadFilesForBlock(block.id, picked);
                           }}
                         />
