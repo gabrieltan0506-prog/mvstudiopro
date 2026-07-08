@@ -2,7 +2,7 @@ import type { CanvasAssetKind, CanvasUploadedAsset } from "./canvasTypes";
 import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "./omniCanvasApi";
 
 const DOCUMENT_EXT = /\.(pdf|txt|md|markdown)$/i;
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v)$/i;
 
 export function inferCanvasAssetKind(file: File): CanvasAssetKind | null {

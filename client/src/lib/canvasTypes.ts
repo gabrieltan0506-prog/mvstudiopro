@@ -28,10 +28,10 @@ export type CanvasUploadFailure = {
 
 /** 画布上传：input accept + 用户可见格式说明 */
 export const CANVAS_UPLOAD_ACCEPT =
-  "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.markdown";
+  "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.markdown,.heic,.heif";
 
 export const CANVAS_UPLOAD_FORMAT_HINT =
-  "支持 JPG / PNG / WebP / GIF、MP4 / MOV / WebM；文档 PDF / TXT / MD（供文本·整理文案方块引用）";
+  "支持 JPG / PNG / WebP / GIF / HEIC、MP4 / MOV / WebM；文档 PDF / TXT / MD（供文本·整理文案方块引用）";
 
 export type CanvasImageBatchCount = 1 | 2 | 4;
 

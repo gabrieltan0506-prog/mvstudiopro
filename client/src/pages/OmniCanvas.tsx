@@ -48,13 +48,19 @@ export default function OmniCanvas() {
     [optimizeCopyMutation],
   );
 
-  const handleBlocksChange = useCallback((next: CanvasBlock[]) => {
-    setBlocks(next);
-    setEdges((cur) => {
-      saveCanvasState(next, cur);
-      return cur;
-    });
-  }, []);
+  const handleBlocksChange = useCallback(
+    (next: CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[])) => {
+      setBlocks((cur) => {
+        const resolved = typeof next === "function" ? next(cur) : next;
+        setEdges((edges) => {
+          saveCanvasState(resolved, edges);
+          return edges;
+        });
+        return resolved;
+      });
+    },
+    [],
+  );
 
   const handleEdgesChange = useCallback((next: CanvasEdge[]) => {
     setEdges(next);
