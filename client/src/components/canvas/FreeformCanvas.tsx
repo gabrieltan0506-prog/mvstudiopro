@@ -39,7 +39,6 @@ import {
   Upload,
   X,
   FileText,
-  Film,
   CheckCircle2,
   XCircle,
 } from "lucide-react";
@@ -122,29 +121,155 @@ function CanvasBlockUploadBanner({ block }: { block: CanvasBlock }) {
   return null;
 }
 
-function CanvasUploadedAssetRow({ asset }: { asset: CanvasUploadedAsset }) {
-  const kind = asset.kind ?? inferCanvasAssetKindFromFileName(asset.fileName) ?? "image";
+function CanvasBlockPreviewPanel({
+  block,
+  isUploading,
+  displayOutputs,
+}: {
+  block: CanvasBlock;
+  isUploading: boolean;
+  displayOutputs: string[];
+}) {
+  const phase = block.uploadPhase ?? "idle";
+  const uploading = isUploading || phase === "uploading";
+  const done = block.uploadProgressDone ?? 0;
+  const total = block.uploadProgressTotal ?? 0;
+  const message = block.uploadStatusMessage?.trim();
+  const failures = block.uploadFailures ?? [];
+  const assets = block.uploadedAssets;
+  const hasGeneratedOutput =
+    Boolean(block.outputText?.trim()) ||
+    displayOutputs.length > 0 ||
+    (block.kind === "video" && Boolean(block.outputUrl));
+  const hasUploadContent = uploading || assets.length > 0 || failures.length > 0;
+  const progressPct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+
   return (
-    <div
-      className="flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/5 px-2 py-1.5"
-      title={asset.fileName}
-    >
-      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden />
-      {kind === "image" ? (
-        <img
-          src={asset.previewUrl || asset.url}
-          alt=""
-          className="h-7 w-7 shrink-0 rounded object-cover"
-        />
-      ) : kind === "video" ? (
-        <Film className="h-4 w-4 shrink-0 text-sky-300" aria-hidden />
-      ) : (
-        <FileText className="h-4 w-4 shrink-0 text-amber-200" aria-hidden />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[11px] font-medium text-white/90">{asset.fileName}</div>
-        <div className="text-[10px] text-emerald-300/80">上传成功 · {assetKindLabel(kind)}</div>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
+      {uploading ? (
+        <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-amber-400/45 bg-amber-500/15 px-4 py-6 text-center">
+          <LoaderCircle className="h-10 w-10 animate-spin text-amber-100" aria-hidden />
+          <div className="text-sm font-semibold text-amber-50">
+            {message || (total > 0 ? `正在上传 ${done}/${total}` : "正在上传…")}
+          </div>
+          {total > 0 ? (
+            <div className="w-full max-w-[200px]">
+              <div className="h-2 overflow-hidden rounded-full bg-amber-950/60">
+                <div
+                  className="h-full rounded-full bg-amber-300 transition-all duration-300"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              <div className="mt-1 text-[10px] text-amber-200/80">{progressPct}%</div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!uploading && failures.length > 0 ? (
+        <div className="space-y-1.5 rounded-xl border border-red-400/35 bg-red-500/15 p-2.5">
+          <div className="text-[11px] font-semibold text-red-100">上传失败</div>
+          {failures.map((fail) => (
+            <div key={`preview-fail-${fail.fileName}`} className="text-[10px] leading-5 text-red-50/95">
+              <span className="font-medium">{fail.fileName}</span>
+              <span className="text-red-200/90"> · {fail.error}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {!uploading && assets.length > 0 ? (
+        <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold text-emerald-100">已上传素材</div>
+            <div className="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] text-emerald-100">
+              {assets.length} 个
+            </div>
+          </div>
+          <div className="space-y-2">
+            {assets.map((asset) => {
+              const kind = asset.kind ?? inferCanvasAssetKindFromFileName(asset.fileName) ?? "image";
+              const previewSrc = asset.previewUrl || asset.url;
+              return (
+                <div
+                  key={asset.id}
+                  className="overflow-hidden rounded-lg border border-emerald-400/20 bg-black/40"
+                >
+                  {kind === "image" ? (
+                    <img
+                      src={previewSrc}
+                      alt={asset.fileName}
+                      className="max-h-[180px] w-full bg-black/50 object-contain"
+                    />
+                  ) : kind === "video" ? (
+                    <video
+                      src={previewSrc}
+                      controls
+                      playsInline
+                      className="max-h-[180px] w-full bg-black"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-3 px-3 py-5">
+                      <FileText className="h-9 w-9 shrink-0 text-amber-200" aria-hidden />
+                      <div className="min-w-0">
+                        <div className="truncate text-[12px] font-medium text-white/95">{asset.fileName}</div>
+                        <div className="text-[10px] text-amber-200/80">文档 · 已上传成功</div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="border-t border-white/10 bg-black/30 px-2 py-1 text-[10px] text-white/65">
+                    <span className="truncate">{asset.fileName}</span>
+                    <span className="text-emerald-300/90"> · 上传成功</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {(block.kind === "image" || block.kind === "video") && !hasGeneratedOutput ? (
+            <p className="text-center text-[10px] text-emerald-200/90">素材已就绪，点击顶部「运行」开始生成</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {block.status === "error" && block.error ? (
+        <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-2.5 py-2 text-[11px] text-red-100">
+          生成失败：{block.error}
+        </div>
+      ) : null}
+
+      {hasGeneratedOutput ? (
+        <div className="space-y-2">
+          <div className="text-[10px] uppercase tracking-wider text-white/40">生成结果</div>
+          {block.outputText ? (
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] leading-5 text-white/85">
+              {block.outputText}
+            </pre>
+          ) : null}
+          {block.kind === "image" && displayOutputs.length > 0 ? (
+            <div className={`grid gap-1.5 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+              {displayOutputs.map((url, idx) => (
+                <img
+                  key={`${url}-${idx}`}
+                  src={url}
+                  alt={`output-${idx + 1}`}
+                  className="max-h-[160px] w-full rounded-lg border border-white/10 object-contain"
+                />
+              ))}
+            </div>
+          ) : null}
+          {block.outputUrl && block.kind === "video" ? (
+            <video src={block.outputUrl} controls className="max-h-[180px] w-full rounded-lg border border-white/10" />
+          ) : null}
+        </div>
+      ) : null}
+
+      {!uploading && !hasUploadContent && !hasGeneratedOutput && block.status !== "error" ? (
+        <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/15 bg-black/25 px-4 text-center">
+          <Upload className="h-9 w-9 text-white/25" aria-hidden />
+          <p className="text-xs font-medium text-white/45">上传后在此预览</p>
+          <p className="text-[10px] leading-5 text-white/30">左侧点「上传素材」· 支持图片 / 视频 / 文档</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -381,12 +506,16 @@ export default function FreeformCanvas({
           const firstImage = nextAssets.find(
             (a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image",
           );
+          const firstVideo = nextAssets.find(
+            (a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "video",
+          );
           const allFailed = !uploaded.length && failed.length > 0;
           const partialFailed = uploaded.length > 0 && failed.length > 0;
           return patchBlock(prev, blockId, {
             uploadedAssets: nextAssets,
             uploadFailures: failed.length ? failed : undefined,
             refImageUrl: firstImage?.url ?? block.refImageUrl,
+            refVideoUrl: firstVideo?.url ?? block.refVideoUrl,
             uploadPhase: allFailed ? "error" : "done",
             uploadProgressDone: undefined,
             uploadProgressTotal: undefined,
@@ -549,14 +678,6 @@ export default function FreeformCanvas({
             const upstreamPreview = upstreamHandoff.map((item) => item.text).join(" · ").slice(0, 120);
             const displayOutputs =
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
-            const uploadedRefImages = block.uploadedAssets.filter(
-              (a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image",
-            );
-            const refPreviewUrl =
-              uploadedRefImages[0]?.previewUrl ||
-              uploadedRefImages[0]?.url ||
-              block.refImageUrl ||
-              undefined;
             const isUploading = uploadBusyId === block.id;
             const uploadLabel = isUploading
               ? `上传中 ${uploadProgress?.blockId === block.id ? `${uploadProgress.done}/${uploadProgress.total}` : "…"}`
@@ -773,26 +894,6 @@ export default function FreeformCanvas({
                           }}
                         />
                       </div>
-                      {(block.uploadedAssets.length > 0 || (block.uploadFailures?.length ?? 0) > 0) ? (
-                        <div className="max-h-28 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
-                          {block.uploadedAssets.map((asset) => (
-                            <CanvasUploadedAssetRow key={asset.id} asset={asset} />
-                          ))}
-                          {(block.uploadFailures ?? []).map((fail) => (
-                            <div
-                              key={`fail-${fail.fileName}`}
-                              className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-500/5 px-2 py-1.5"
-                              title={fail.error}
-                            >
-                              <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" aria-hidden />
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-[11px] font-medium text-white/90">{fail.fileName}</div>
-                                <div className="text-[10px] text-red-300/90">上传失败 · {fail.error}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
                       <p className="text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
                     </div>
 
@@ -819,52 +920,20 @@ export default function FreeformCanvas({
                     ) : null}
                   </div>
 
-                  {/* 右：输出预览 */}
-                  <div className="flex min-h-0 flex-col overflow-auto p-3">
-                    <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">输出</div>
-                    {block.status === "error" ? (
-                      <div className="text-xs text-red-300">{block.error}</div>
-                    ) : null}
-                    {block.outputText ? (
-                      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-white/85">
-                        {block.outputText}
-                      </pre>
-                    ) : null}
-                    {block.kind === "image" && refPreviewUrl && !displayOutputs.length ? (
-                      <div className="mb-2 rounded-xl border border-emerald-400/20 bg-emerald-500/5 p-2">
-                        <div className="mb-1.5 text-[10px] uppercase tracking-wider text-emerald-300/80">
-                          参考素材
-                        </div>
-                        <img
-                          src={refPreviewUrl}
-                          alt="参考素材"
-                          className="max-h-[140px] w-full rounded-lg object-contain"
-                        />
-                        <p className="mt-1.5 text-[10px] text-emerald-300/90">
-                          已上传 {uploadedRefImages.length || 1} 张，点击运行开始生成
-                        </p>
-                      </div>
-                    ) : null}
-                    {block.kind === "image" && displayOutputs.length > 0 ? (
-                      <div className={`mt-1 grid gap-1 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
-                        {displayOutputs.map((url, idx) => (
-                          <img
-                            key={`${url}-${idx}`}
-                            src={url}
-                            alt={`output-${idx + 1}`}
-                            className="max-h-[120px] w-full rounded-lg object-contain"
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                    {block.outputUrl && block.kind === "video" ? (
-                      <video src={block.outputUrl} controls className="mt-1 max-h-[200px] w-full rounded-lg" />
-                    ) : null}
-                    {!block.outputText && !displayOutputs.length && !refPreviewUrl && block.status !== "error" ? (
-                      <div className="flex min-h-[100px] flex-1 items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-white/30">
-                        运行后显示结果
-                      </div>
-                    ) : null}
+                  {/* 右：素材预览 + 生成结果（方块内主视觉） */}
+                  <div className="flex min-h-0 flex-col p-3">
+                    <div className="mb-2 shrink-0 text-[10px] uppercase tracking-wider text-white/40">
+                      {isUploading || (block.uploadPhase ?? "idle") === "uploading"
+                        ? "上传中"
+                        : block.uploadedAssets.length > 0
+                          ? "素材预览"
+                          : "预览 / 输出"}
+                    </div>
+                    <CanvasBlockPreviewPanel
+                      block={block}
+                      isUploading={isUploading}
+                      displayOutputs={displayOutputs}
+                    />
                   </div>
                 </div>
 
