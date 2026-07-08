@@ -1,7 +1,6 @@
 /**
  * 選題封面可選「企劃大腦」：**Vertex @google/genai · 預設 global** 輸出**中文**高階生圖企劃（JSON），
- * 再交既有鏈 {@link runPlatformTopicImagePipeline}：`buildPlatformTopicReferenceGeminiTask`
- * → **GPT 5.4（OpenAI）英文化** → GPT-IMAGE-2 / Nano Banana。**不取代**長任務 Deep Research Interactions。
+ * 再交 {@link runPlatformTopicImagePipeline}：**中文直送** → GPT-IMAGE-2 / Nano Banana。**不取代**長任務 Deep Research Interactions。
  *
  * 環境：`PLATFORM_COVER_AGENTIC_BRAIN=1|true` 啟用。
  * `PLATFORM_COVER_STRATEGIST_MODEL`（預設 `gemini-3-flash-preview`）、

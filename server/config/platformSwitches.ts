@@ -1,6 +1,6 @@
 /**
- * 默认：Creator Growth **Stage 1 战略看板** 与 **Stage 2 文案** = **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）；**封面英文化** = **GPT‑5.4**（`OPENAI_GPT54_MODEL`）。**平台图 = GCS**。
- * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）；**封面英文化 64K**（`GPT54_COVER_TRANSLATION_MAX_OUTPUT_TOKENS`）；**2×4 英文化 32K**（`GPT54_COMPOSITE_TRANSLATION_MAX_OUTPUT_TOKENS`）。
+ * 默认：Creator Growth **Stage 1 战略看板** 与 **Stage 2 文案** = **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）。**平台选题生图** = **中文直送**（封面 / 2×4）。**平台图 = GCS**。
+ * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
  * OpenAI 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL`（默认 gpt-5.5，仅在 `PLATFORM_STAGE2_LLM=openai` 时使用）。
  *

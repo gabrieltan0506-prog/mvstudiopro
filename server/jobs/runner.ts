@@ -1370,12 +1370,6 @@ async function processPlatformJob(
           secondarySceneId: drProSecondarySceneId,
         });
       }
-      const rawBatchIdx = (params as { batchSceneSlotIndex?: unknown }).batchSceneSlotIndex;
-      const rawBatchTot = (params as { batchSceneSlotTotal?: unknown }).batchSceneSlotTotal;
-      const batchSceneDiversity =
-        typeof rawBatchIdx === "number" && typeof rawBatchTot === "number" && rawBatchTot >= 2
-          ? { slotIndex: Math.max(0, Math.floor(rawBatchIdx)), slotTotal: Math.floor(rawBatchTot) }
-          : undefined;
       const rawRefPhoto = (params as { referencePhotoUrl?: unknown }).referencePhotoUrl;
       const referencePhotoUrl =
         typeof rawRefPhoto === "string" && rawRefPhoto.trim() ? rawRefPhoto.trim() : undefined;
@@ -1394,7 +1388,6 @@ async function processPlatformJob(
         coverProEngine,
         enableTopicCoverDeepResearchPro,
         drProSecondaryCoverInputs,
-        batchSceneDiversity,
         trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
         referencePhotoUrl,
       });
@@ -1534,13 +1527,6 @@ async function processPlatformJob(
       let sheetUrl: string | null = null;
       let sheetErr: unknown = null;
 
-      const rawBatchIdxB = (params as { batchSceneSlotIndex?: unknown }).batchSceneSlotIndex;
-      const rawBatchTotB = (params as { batchSceneSlotTotal?: unknown }).batchSceneSlotTotal;
-      const batchSceneDiversityBundle =
-        typeof rawBatchIdxB === "number" && typeof rawBatchTotB === "number" && rawBatchTotB >= 2
-          ? { slotIndex: Math.max(0, Math.floor(rawBatchIdxB)), slotTotal: Math.floor(rawBatchTotB) }
-          : undefined;
-
       const rawRefPhotoBundle = (params as { referencePhotoUrl?: unknown }).referencePhotoUrl;
       const referencePhotoUrlBundle =
         typeof rawRefPhotoBundle === "string" && rawRefPhotoBundle.trim()
@@ -1563,7 +1549,6 @@ async function processPlatformJob(
           coverProEngine,
           enableTopicCoverDeepResearchPro,
           drProSecondaryCoverInputs,
-          batchSceneDiversity: batchSceneDiversityBundle,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
           referencePhotoUrl: referencePhotoUrlBundle,
         });
@@ -1645,7 +1630,7 @@ async function processPlatformJob(
 
       const coverLog = Array.isArray(coverResult?.imageGenFlowLog) ? coverResult!.imageGenFlowLog! : [];
       const mergedLog = [
-        `${new Date().toISOString()} [套裝] 封面與 2×4 並行完成 · sceneId=${sceneIdRaw} · compositeKind=${compositeKind} · 封面英文化=GPT5.4 · 2×4英文化=${imagePromptTranslator}`,
+        `${new Date().toISOString()} [套裝] 封面與 2×4 並行完成 · sceneId=${sceneIdRaw} · compositeKind=${compositeKind} · 封面=中文直送 · 2×4=中文直送`,
         ...coverLog,
         ...compositeFlowLog,
       ];

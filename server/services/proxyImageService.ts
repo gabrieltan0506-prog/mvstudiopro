@@ -1296,11 +1296,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
-  /** 與單幀一致：分鏡/八格 **英文化** 預設 **GPT 5.4**（Gemini 3.5 Flash 兜底）；生存模式由服端覆寫 */
+  /** @deprecated 保留欄位僅兼容舊 job 入參，已忽略（2×4 固定中文直送）。 */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
   flowLog?: string[];
-  /** 管理員：與選題封面同源，在中文骨架 / 英文化前插入 Deep Research Pro（Interactions） */
+  /** 管理員：與選題封面同源，在中文骨架 / 中文直送前插入 Deep Research Pro（Interactions） */
   enableCompositeDeepResearchPro?: boolean;
   /** 套裝路徑：強制關閉 2×4 側 DR-Pro（與封面鏈併發時避免同題重複貴價 Interactions） */
   forceSkipCompositeDeepResearchPro?: boolean;
@@ -1356,17 +1356,17 @@ export async function generatePlatformCompositeSheetImage(options: {
   const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
     L,
-    `[2×4·英文化机制] **固定 GPT 5.4**（OpenAI · 最多 3 轮 · strict · **无 Flash 兜底**）${
-      survival ? " · 生存模式已开启（仍仅 GPT 5.4）" : ""
+    `[2×4·中文直送] 封面/分镜/八格均跳过英文化 · 中文主体 + 英文像素锁送 GPT-IMAGE-2${
+      survival ? " · 生存模式已开启" : ""
     }`,
   );
   appendImageFlowLog(
     L,
-    `[2×4·中文骨架] extractChineseVisualBrief 始终用 **GPT 5.4 JSON** 从中文剧本抽「视觉骨架」（日志标签 [骨架·中文视觉]），与下行「英文化」不是同一步。`,
+    `[2×4·中文骨架] 封面链可选 extractChineseVisualBrief（GPT 5.4 JSON）；2×4 主体由 buildCompositeSheetDirectChineseBody 直送`,
   );
   appendImageFlowLog(
     L,
-    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（buildVideoStoryboardGeminiPrompt）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·取消英文翻译·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（buildXhsNoteGeminiPrompt）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（中文直送）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（中文直送）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
   appendImageFlowLog(
     L,
@@ -1374,7 +1374,7 @@ export async function generatePlatformCompositeSheetImage(options: {
       compositeImageEngine === "nano_banana_2"
         ? "**Nano Banana 2 主路径**（略过 GPT‑Image‑2；请求 `compositeImageEngine=gpt_image2` 或部署 `PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2` 可恢复）"
         : "**OhMyGPT→fal GPT‑Image‑2** → 可选 NB2 兜底"
-    }；英文化=**GPT 5.4** strict）：① extractChineseVisualBrief（中文骨架）→ ② ${isStoryboard ? "buildVideoStoryboardGeminiPrompt" : "buildXhsNoteGeminiPrompt"} → ③ translatePlatformCompositeToEnglishPrompt（GPT 5.4，见 [GPT54·英文化]）→ ④ 像素锁 → ⑤ 送生图`,
+    }）：① 中文主体（buildCompositeSheetDirectChineseBody）→ ② 英文像素锁 → ③ 送生图`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1382,7 +1382,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试；環境變數未設時預設 3，與英文化/GPT-IMAGE-2 單段預設次數一致）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **英文化子链**（生存模式下为 GPT 5.4；否则见步骤1）与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
+    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **中文直送主体** 与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
@@ -1437,18 +1437,18 @@ export async function generatePlatformCompositeSheetImage(options: {
   if (runCompositeDrPro) {
     appendImageFlowLog(
       L,
-      `[管线·阶段顺序·2×4] A/Deep Research Pro 段已结束 → B/中文骨架 extractChineseVisualBrief 与英文化`,
+      `[管线·阶段顺序·2×4] A/Deep Research Pro 段已结束 → B/中文直送主体组装`,
     );
   } else {
     appendImageFlowLog(
       L,
-      `[管线·阶段顺序·2×4] 未启用 A/Deep Research Pro → 直接 B/中文骨架与英文化`,
+      `[管线·阶段顺序·2×4] 未启用 A/Deep Research Pro → 直接 B/中文直送主体组装`,
     );
   }
 
   let lastFailure: unknown = null;
   // 内容审核拦截属「用户可纠正错误」（OpenAI 文档：moderation_blocked / image_generation_user_error 不应自动重试）。
-  // 命中后立即停手，不再空跑后续整链重试（重新英文化 + 再次送审都会再次被同样内容拦截）。
+  // 命中后立即停手，不再空跑后续整链重试（重新组装主体 + 再次送审都会再次被同样内容拦截）。
   let moderationBlocked = false;
 
   for (let attempt = 1; attempt <= compositeMaxAttempts; attempt++) {
@@ -1458,82 +1458,46 @@ export async function generatePlatformCompositeSheetImage(options: {
     );
     appendImageFlowLog(
       L,
-      `[2×4·步骤1] 英文生图 prompt（translatePlatformCompositeToEnglishPrompt）· **GPT 5.4 strict（无 Flash 兜底）** …`,
+      `[2×4·步骤1] 中文直送主体（buildCompositeSheetDirectChineseBody）…`,
     );
 
     try {
       let promptForImage: string;
 
       if (isKnowledgeCard) {
-        // 单页连贯图文知识卡片（自定义文案专用）：**取消英文翻译**，直接用中文 directive + Markdown 原文送 GPT-IMAGE-2，
-        // 以保留书法标题 / 文艺复兴手绘 + 大师写实摄影 / 山茶花蝴蝶洋牡丹装饰 / 宣纸暖色底等细腻美学（英文化会压缩丢失这些质感）。
         const { buildSinglePageKnowledgeCardImagePrompt } = await import("./geminiPlatformCompositeTranslation.js");
         promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline, options.notePart);
         appendImageFlowLog(
           L,
-          `[单页知识卡片·步骤1] 已取消英文翻译 → 直接用中文 directive + Markdown 送 GPT-IMAGE-2（无像素锁/无写实修饰）· 分页=${options.notePart ?? "整篇"} · 约 ${promptForImage.length} 字符`,
+          `[单页知识卡片·步骤1] 中文 directive + Markdown 送 GPT-IMAGE-2 · 分页=${options.notePart ?? "整篇"} · 约 ${promptForImage.length} 字符`,
         );
         appendImageFlowLog(
           L,
           `[单页知识卡片·预览] ${promptForImage.replace(/\s+/g, " ").slice(0, 180)}…`,
         );
       } else {
-        const {
-          translatePlatformCompositeToEnglishPrompt,
-          buildCompositeSheetDirectChineseBody,
-          isPlatformImageChineseDirectEnabled,
-        } = await import("./geminiPlatformCompositeTranslation.js");
+        const { buildCompositeSheetDirectChineseBody } = await import("./geminiPlatformCompositeTranslation.js");
 
-        let englishCore = "";
-        const chineseDirect = isPlatformImageChineseDirectEnabled();
-        if (chineseDirect) {
-          try {
-            englishCore = buildCompositeSheetDirectChineseBody(
-              k as "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
-              scriptContextForPipeline,
-            );
-            appendImageFlowLog(
-              L,
-              `[2×4·步骤1·中文直送] 已跳过 GPT 5.4 英文化 → 直接用中文主体 + 英文像素锁送 GPT-IMAGE-2（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 约 ${englishCore.length} 字符`,
-            );
-          } catch (e: unknown) {
-            englishCore = "";
-            appendImageFlowLog(
-              L,
-              `[2×4·步骤1·中文直送] 组装失败，回退 GPT 5.4 英文化: ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
+        const chineseCore = buildCompositeSheetDirectChineseBody(
+          k as "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
+          scriptContextForPipeline,
+        ).trim();
+        if (!chineseCore) {
+          appendImageFlowLog(L, "[2×4·步骤1] 中文主体为空");
+          throw new Error("宽幅合成中文主体为空");
         }
-
-        if (!String(englishCore || "").trim()) {
-          englishCore = await translatePlatformCompositeToEnglishPrompt({
-            kind: k,
-            scriptContext: scriptContextForPipeline,
-            translator: options.imagePromptTranslator,
-            flowLog: L,
-            compositeSheetAttempt: attempt,
-            compositeSheetMaxAttempts: compositeMaxAttempts,
-            neonProgressJobId: options.progressJobId,
-          });
-        }
-
-        if (!String(englishCore || "").trim()) {
-          appendImageFlowLog(L, "[2×4·步骤1] 主体为空（中文直送与英文化均无结果）");
-          throw new Error("宽幅合成主体为空");
-        }
-
         appendImageFlowLog(
           L,
-          chineseDirect && String(englishCore).trim()
-            ? "[2×4·步骤1·完成] 主体就绪（中文直送优先），直接进入像素锁与送生图"
-            : "[2×4·步骤1·完成] 英文化成功，直接进入像素锁与送生图",
-        );
-        appendImageFlowLog(
-          L,
-          `[2×4·步骤1] 英文主体约 ${englishCore.length} 字符（预览）: ${englishCore.replace(/\s+/g, " ").slice(0, 180)}…`,
+          `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 约 ${chineseCore.length} 字符`,
         );
 
-        const trimmedEnglishCore = String(englishCore).trim();
+        appendImageFlowLog(L, "[2×4·步骤1·完成] 主体就绪，直接进入像素锁与送生图");
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤1] 主体约 ${chineseCore.length} 字符（预览）: ${chineseCore.replace(/\s+/g, " ").slice(0, 180)}…`,
+        );
+
+        const trimmedEnglishCore = chineseCore;
         // 3×4 分段（gridSection）时改用「单横排 4 格」锁，避免每段又被画成完整 2×4 → 拼出来仍像 2×4。
         const useRowBandLock = Boolean(options.gridSection);
         const pixelLock = useRowBandLock
@@ -1716,7 +1680,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         break;
       }
       const backoff = attempt === 1 ? 4000 : attempt === 2 ? 8000 : 12_000;
-      appendImageFlowLog(L, `[2×4·整链] ${backoff}ms 后整链重试（重新英文化+生图）…`);
+      appendImageFlowLog(L, `[2×4·整链] ${backoff}ms 后整链重试（重新组装主体+生图）…`);
       await sleepMs(backoff);
     }
   }
