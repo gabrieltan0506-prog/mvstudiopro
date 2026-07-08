@@ -26,6 +26,8 @@ export type CanvasUploadFailure = {
   error: string;
 };
 
+export type CanvasUploadPhase = "idle" | "uploading" | "done" | "error";
+
 /** 画布上传：input accept + 用户可见格式说明 */
 export const CANVAS_UPLOAD_ACCEPT =
   "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.markdown,.heic,.heif";
@@ -60,6 +62,11 @@ export type CanvasBlock = {
   uploadedAssets: CanvasUploadedAsset[];
   /** 最近一次批量上传的失败项（便于在方块内展示） */
   uploadFailures?: CanvasUploadFailure[];
+  /** 上传阶段（写入 block 以便顶栏/持久化可见，不依赖组件本地 state） */
+  uploadPhase?: CanvasUploadPhase;
+  uploadProgressDone?: number;
+  uploadProgressTotal?: number;
+  uploadStatusMessage?: string;
   parentId?: string;
   refImageUrl?: string;
   refVideoUrl?: string;
@@ -177,6 +184,10 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     imageBatchCount: block.imageBatchCount ?? 1,
     uploadedAssets: block.uploadedAssets ?? [],
     uploadFailures: block.uploadFailures ?? [],
+    uploadPhase: block.uploadPhase ?? "idle",
+    uploadProgressDone: block.uploadProgressDone,
+    uploadProgressTotal: block.uploadProgressTotal,
+    uploadStatusMessage: block.uploadStatusMessage,
     outputUrls: block.outputUrls?.length
       ? block.outputUrls
       : block.outputUrl

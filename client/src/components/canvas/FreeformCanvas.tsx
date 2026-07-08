@@ -79,6 +79,49 @@ function assetKindLabel(kind: ReturnType<typeof inferCanvasAssetKindFromFileName
   return "图片";
 }
 
+function CanvasBlockUploadBanner({ block }: { block: CanvasBlock }) {
+  const phase = block.uploadPhase ?? "idle";
+  const message = block.uploadStatusMessage?.trim();
+  const done = block.uploadProgressDone ?? 0;
+  const total = block.uploadProgressTotal ?? 0;
+  const successCount = block.uploadedAssets.length;
+  const failCount = block.uploadFailures?.length ?? 0;
+
+  if (phase === "uploading") {
+    return (
+      <div className="flex shrink-0 items-center gap-2 border-b border-amber-400/25 bg-amber-500/15 px-3 py-1.5">
+        <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-200" aria-hidden />
+        <span className="text-[11px] font-medium text-amber-50">
+          {message || (total > 0 ? `正在上传 ${done}/${total}…` : "正在上传…")}
+        </span>
+      </div>
+    );
+  }
+  if (phase === "done" && successCount > 0) {
+    return (
+      <div className="flex shrink-0 items-center gap-2 border-b border-emerald-400/25 bg-emerald-500/15 px-3 py-1.5">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" aria-hidden />
+        <span className="truncate text-[11px] font-medium text-emerald-50">
+          {message || `上传成功 · ${successCount} 个文件`}
+        </span>
+      </div>
+    );
+  }
+  if (phase === "error" || failCount > 0) {
+    const firstFail = block.uploadFailures?.[0];
+    return (
+      <div className="flex shrink-0 items-start gap-2 border-b border-red-400/25 bg-red-500/15 px-3 py-1.5">
+        <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-300" aria-hidden />
+        <span className="text-[11px] leading-5 text-red-50">
+          {message || firstFail?.error || "上传失败"}
+          {firstFail?.fileName ? ` · ${firstFail.fileName}` : ""}
+        </span>
+      </div>
+    );
+  }
+  return null;
+}
+
 function CanvasUploadedAssetRow({ asset }: { asset: CanvasUploadedAsset }) {
   const kind = asset.kind ?? inferCanvasAssetKindFromFileName(asset.fileName) ?? "image";
   return (
@@ -193,7 +236,10 @@ export default function FreeformCanvas({
         block.y = pos.y;
       }
 
-      onBlocksChange([...blocks, block]);
+      onBlocksChange((prev) => {
+        const next = [...prev, block];
+        return next;
+      });
       if (opts?.parentId) {
         onEdgesChange([...edges, { fromId: opts.parentId, toId: id }]);
       }
@@ -282,14 +328,20 @@ export default function FreeformCanvas({
       const fileArr = allFiles.filter(isCanvasUploadableFile);
       const rejected = allFiles.filter((f) => !isCanvasUploadableFile(f));
 
+      const patchUpload = (patch: Partial<CanvasBlock>) => {
+        onBlocksChange((prev) => patchBlock(prev, blockId, patch));
+      };
+
       if (rejected.length) {
         const rejectedFailures = rejected.map((f) => ({
           fileName: f.name,
           error: "不支持的文件格式",
         }));
-        onBlocksChange((prev) =>
-          patchBlock(prev, blockId, { uploadFailures: rejectedFailures }),
-        );
+        patchUpload({
+          uploadPhase: "error",
+          uploadFailures: rejectedFailures,
+          uploadStatusMessage: `格式不支持：${rejected.map((f) => f.name).join("、")}`,
+        });
         toast.error(`以下文件格式不支持：${rejected.map((f) => f.name).join("、")}`);
       }
       if (!fileArr.length) {
@@ -299,13 +351,27 @@ export default function FreeformCanvas({
 
       setUploadBusyId(blockId);
       setUploadProgress({ blockId, done: 0, total: fileArr.length });
+      patchUpload({
+        uploadPhase: "uploading",
+        uploadProgressDone: 0,
+        uploadProgressTotal: fileArr.length,
+        uploadStatusMessage: `正在上传 0/${fileArr.length}…`,
+        uploadFailures: undefined,
+      });
 
       try {
         const { assets: uploaded, failed } = await uploadCanvasFilesParallel({
           files: fileArr,
           concurrency: CANVAS_UPLOAD_CONCURRENCY,
           getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
-          onProgress: (done, total) => setUploadProgress({ blockId, done, total }),
+          onProgress: (done, total) => {
+            setUploadProgress({ blockId, done, total });
+            patchUpload({
+              uploadProgressDone: done,
+              uploadProgressTotal: total,
+              uploadStatusMessage: `正在上传 ${done}/${total}…`,
+            });
+          },
         });
 
         onBlocksChange((prev) => {
@@ -315,10 +381,20 @@ export default function FreeformCanvas({
           const firstImage = nextAssets.find(
             (a) => (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image",
           );
+          const allFailed = !uploaded.length && failed.length > 0;
+          const partialFailed = uploaded.length > 0 && failed.length > 0;
           return patchBlock(prev, blockId, {
             uploadedAssets: nextAssets,
             uploadFailures: failed.length ? failed : undefined,
             refImageUrl: firstImage?.url ?? block.refImageUrl,
+            uploadPhase: allFailed ? "error" : "done",
+            uploadProgressDone: undefined,
+            uploadProgressTotal: undefined,
+            uploadStatusMessage: allFailed
+              ? `全部上传失败（${failed.length} 个）`
+              : partialFailed
+                ? `成功 ${uploaded.length} 个，失败 ${failed.length} 个`
+                : `已成功上传 ${uploaded.length} 个文件`,
           });
         });
 
@@ -331,11 +407,13 @@ export default function FreeformCanvas({
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "上传失败";
-        onBlocksChange((prev) =>
-          patchBlock(prev, blockId, {
-            uploadFailures: fileArr.map((f) => ({ fileName: f.name, error: msg })),
-          }),
-        );
+        patchUpload({
+          uploadPhase: "error",
+          uploadFailures: fileArr.map((f) => ({ fileName: f.name, error: msg })),
+          uploadProgressDone: undefined,
+          uploadProgressTotal: undefined,
+          uploadStatusMessage: msg,
+        });
         toast.error(msg);
       } finally {
         setUploadBusyId(null);
@@ -496,7 +574,7 @@ export default function FreeformCanvas({
                 <div
                   className="flex cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing"
                   onPointerDown={(e) => {
-                    if ((e.target as HTMLElement).closest("button,select,textarea,input")) return;
+                    if ((e.target as HTMLElement).closest("button,select,textarea,input,label")) return;
                     const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
                     const canvas = canvasRef.current!;
                     setDragState({
@@ -551,6 +629,8 @@ export default function FreeformCanvas({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
+
+                <CanvasBlockUploadBanner block={block} />
 
                 <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] divide-x divide-white/10">
                   {/* 左：设置 + 提示词 */}
@@ -643,12 +723,85 @@ export default function FreeformCanvas({
                       ) : null}
                     </div>
 
+                    <div className="mb-2 shrink-0 space-y-2">
+                      <div className="text-[10px] uppercase tracking-wider text-white/40">素材上传</div>
+                      <div className="flex flex-wrap gap-2">
+                        {(block.kind === "image" || block.kind === "video") && (
+                          <select
+                            value={block.aspectRatio}
+                            onChange={(e) =>
+                              patchOne(block.id, { aspectRatio: e.target.value as "9:16" | "16:9" })
+                            }
+                            className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
+                          >
+                            <option value="9:16">9:16</option>
+                            <option value="16:9">16:9</option>
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isUploading}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            document.getElementById(`canvas-upload-${block.id}`)?.click();
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white disabled:opacity-60 ${
+                            isUploading
+                              ? "border-amber-400/35 bg-amber-500/10 text-amber-100"
+                              : "border-white/10 bg-black/40 text-white/70"
+                          }`}
+                        >
+                          {isUploading ? (
+                            <LoaderCircle className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Upload className="h-3 w-3" />
+                          )}
+                          {uploadLabel}
+                        </button>
+                        <input
+                          id={`canvas-upload-${block.id}`}
+                          type="file"
+                          accept={CANVAS_UPLOAD_ACCEPT}
+                          multiple
+                          className="hidden"
+                          disabled={isUploading}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const list = e.target.files;
+                            e.target.value = "";
+                            if (list?.length) void uploadFilesForBlock(block.id, list);
+                          }}
+                        />
+                      </div>
+                      {(block.uploadedAssets.length > 0 || (block.uploadFailures?.length ?? 0) > 0) ? (
+                        <div className="max-h-28 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
+                          {block.uploadedAssets.map((asset) => (
+                            <CanvasUploadedAssetRow key={asset.id} asset={asset} />
+                          ))}
+                          {(block.uploadFailures ?? []).map((fail) => (
+                            <div
+                              key={`fail-${fail.fileName}`}
+                              className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-500/5 px-2 py-1.5"
+                              title={fail.error}
+                            >
+                              <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" aria-hidden />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[11px] font-medium text-white/90">{fail.fileName}</div>
+                                <div className="text-[10px] text-red-300/90">上传失败 · {fail.error}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <p className="text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
+                    </div>
+
                     <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
                     <textarea
                       value={block.prompt}
                       onChange={(e) => patchOne(block.id, { prompt: e.target.value })}
-                      rows={5}
-                      className="min-h-[88px] w-full flex-1 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
+                      rows={4}
+                      className="min-h-[72px] w-full shrink-0 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
                         visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
                           ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
@@ -664,79 +817,6 @@ export default function FreeformCanvas({
                         {upstreamPreview ? `：${upstreamPreview}${upstreamHandoff.map((item) => item.text).join(" · ").length > 120 ? "…" : ""}` : ""}
                       </div>
                     ) : null}
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {(block.kind === "image" || block.kind === "video") && (
-                        <select
-                          value={block.aspectRatio}
-                          onChange={(e) =>
-                            patchOne(block.id, { aspectRatio: e.target.value as "9:16" | "16:9" })
-                          }
-                          className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
-                        >
-                          <option value="9:16">9:16</option>
-                          <option value="16:9">16:9</option>
-                        </select>
-                      )}
-                      <label
-                        className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white ${
-                          isUploading
-                            ? "border-amber-400/35 bg-amber-500/10 text-amber-100"
-                            : "border-white/10 bg-black/40 text-white/70"
-                        }`}
-                      >
-                        {isUploading ? (
-                          <LoaderCircle className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Upload className="h-3 w-3" />
-                        )}
-                        {uploadLabel}
-                        <input
-                          type="file"
-                          accept={CANVAS_UPLOAD_ACCEPT}
-                          multiple
-                          className="hidden"
-                          disabled={isUploading}
-                          onChange={(e) => {
-                            const list = e.target.files;
-                            e.target.value = "";
-                            if (list?.length) void uploadFilesForBlock(block.id, list);
-                          }}
-                        />
-                      </label>
-                    </div>
-                    {isUploading ? (
-                      <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-2 py-1.5">
-                        <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-300" aria-hidden />
-                        <span className="text-[11px] text-amber-100">
-                          正在上传
-                          {uploadProgress?.blockId === block.id
-                            ? ` ${uploadProgress.done}/${uploadProgress.total}`
-                            : "…"}
-                          ，请稍候
-                        </span>
-                      </div>
-                    ) : null}
-                    {(block.uploadedAssets.length > 0 || (block.uploadFailures?.length ?? 0) > 0) ? (
-                      <div className="mt-2 max-h-36 space-y-1 overflow-auto rounded-lg border border-white/10 bg-black/20 p-1.5">
-                        {block.uploadedAssets.map((asset) => (
-                          <CanvasUploadedAssetRow key={asset.id} asset={asset} />
-                        ))}
-                        {(block.uploadFailures ?? []).map((fail) => (
-                          <div
-                            key={`fail-${fail.fileName}`}
-                            className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-500/5 px-2 py-1.5"
-                            title={fail.error}
-                          >
-                            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" aria-hidden />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-[11px] font-medium text-white/90">{fail.fileName}</div>
-                              <div className="text-[10px] text-red-300/90">上传失败 · {fail.error}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <p className="mt-1.5 text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
                   </div>
 
                   {/* 右：输出预览 */}
