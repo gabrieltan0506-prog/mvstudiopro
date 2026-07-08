@@ -1,11 +1,11 @@
 /**
- * 測試：Deep Research Pro **兩條**各一次（或失敗條再試）→ 定界後各調一趟 **GPT‑5.4** 英文化（腳本內獨立演示）。
+ * 測試：Deep Research Pro **兩條**各一次（或失敗條再試）。
  * 線上封面管線若有副選題，則 {@link runCoverDeepResearchBriefPreferDual} 要求**兩條簡報皆有效**才注入 DR，否則整段不啟用 DR。
  *
  * 運行（專案根目錄）:
  *   pnpm exec tsx scripts/test-dr-pro-dual-gpt54.ts
  *
- * 依賴：`GEMINI_API_KEY`；英文化另需 OpenAI / 平台翻譯相關 env（與線上 `callGemini31ProForImagePrompt` 相同）。
+ * 依賴：`GEMINI_API_KEY`
  */
 import { config } from "dotenv";
 import { resolve } from "path";
@@ -15,10 +15,6 @@ config({ path: resolve(process.cwd(), ".env.local") });
 
 import type { CoverTaskInput } from "../server/services/agenticCoverWorkflow.js";
 import { runCoverDeepResearchDualBatchBrief } from "../server/services/coverDeepResearchProBrief.js";
-import {
-  buildPlatformTopicReferenceGeminiTask,
-  callGemini31ProForImagePrompt,
-} from "../server/services/geminiPlatformCompositeTranslation.js";
 import { requireGeminiApiKey } from "../server/services/googleDeepResearchInteractions.js";
 
 const taskA: CoverTaskInput = {
@@ -60,7 +56,7 @@ async function main() {
   }
 
   const flowLog: string[] = [];
-  console.log("── DR-Pro 双条 batch（腳本仍逐條試 GPT‑5.4；線上 PreferDual 須雙條皆成功才注 DR）──\n");
+  console.log("── DR-Pro 双条 batch ──\n");
 
   const { results, mode } = await runCoverDeepResearchDualBatchBrief([taskA, taskB], flowLog, {
     logPrefix: "測試·DR-Pro·双条",
@@ -69,31 +65,6 @@ async function main() {
   console.log(`mode: ${mode}`);
   console.log(`batch A zh: ${results[0]?.length ?? 0} chars`);
   console.log(`batch B zh: ${results[1]?.length ?? 0} chars\n`);
-
-  for (let i = 0; i < 2; i++) {
-    const zh = results[i];
-    const task = i === 0 ? taskA : taskB;
-    if (!zh?.trim()) {
-      console.log(`── batch ${i + 1}：無简体简报，跳過 GPT‑5.4 ──`);
-      continue;
-    }
-    console.log(`── batch ${i + 1} → GPT‑5.4（topic: ${task.topicTitle.slice(0, 24)}…）──`);
-    const geminiTask = buildPlatformTopicReferenceGeminiTask({
-      topicHook: task.topicTitle,
-      context: zh.slice(0, 6500),
-      variant: task.format === "图文" ? "graphic" : "video",
-    });
-    try {
-      const en = await callGemini31ProForImagePrompt(geminiTask, {
-        translator: "gpt54",
-        flowLog,
-        pipelineStatCtx: { pipeline: "test_dr_dual" },
-      });
-      console.log(`英文 prompt ${en.length} chars · 預覽:\n${en.slice(0, 420)}…\n`);
-    } catch (e) {
-      console.error(`batch ${i + 1} GPT‑5.4 失敗:`, e instanceof Error ? e.message : e);
-    }
-  }
 
   console.log("── flowLog（最後 12 行）──");
   for (const line of flowLog.slice(-12)) console.log(line);

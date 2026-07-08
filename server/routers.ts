@@ -5207,11 +5207,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const {
-          buildPlatformTopicReferenceGeminiTask,
           extractChineseVisualBrief,
-          translatePlatformTopicCoverToEnglishGpt54,
           buildPlatformTopicCoverDirectChinesePrompt,
-          isPlatformImageChineseDirectEnabled,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
           buildImagePromptStats,
@@ -5219,7 +5216,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendImageFlowLog,
         } = await import("./services/proxyImageService.js");
         const geminiVariant = isVideo ? ("video" as const) : ("graphic" as const);
-        const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
         /** 逐張串行：降低同題多張對 Vertex 生圖的尖峰失敗率。 */
         const pool = 1;
         const batchHeader = `${new Date().toISOString()}  [批量单帧] 开始 · platformType=${input.platformType}（${isVideo ? "短视频·分镜参考" : "图文·封面参考"}）· 选题数=${input.scenes.length} · 串行（并发=1）· 单价=${costPerImage}点`;
@@ -5267,11 +5263,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           appendImageFlowLog(
             flowLog,
-            `[主路径] buildPlatformTopicReferenceGeminiTask（variant=${geminiVariant}）→ ${coverTranslatorLogLabel} → 豎封像素引擎（預設 GPT‑Image‑2 / NB2）`,
+            `[主路径] 中文直送封面指令 → 豎封像素引擎（預設 GPT‑Image‑2 / NB2）`,
           );
           appendImageFlowLog(
             flowLog,
-            `说明: 豎封英文化 GPT 5.4；出图依 PLATFORM_TOPIC_COVER_PIXEL_ENGINE / 监管覆写`,
+            `说明: 豎封中文直送；出图依 PLATFORM_TOPIC_COVER_PIXEL_ENGINE / 监管覆写`,
           );
           let url: string | null = null;
           let fallbackUsed = false;
@@ -5282,47 +5278,19 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           try {
             const coverContextZh =
               (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000);
-            let safePrompt = "";
-            const coverChineseDirect = isPlatformImageChineseDirectEnabled();
-            if (coverChineseDirect) {
-              try {
-                safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
-                  topicHook: opt.topicHook,
-                  context: coverContextZh,
-                  variant: geminiVariant,
-                  coverPersonaContext: batchCoverPersona || undefined,
-                }).trim();
-                appendImageFlowLog(
-                  flowLog,
-                  `[步骤1·中文直送] 已跳过 GPT 5.4 英文化 → 直接用中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
-                );
-              } catch (e: unknown) {
-                safePrompt = "";
-                appendImageFlowLog(
-                  flowLog,
-                  `[步骤1·中文直送] 组装失败，回退 GPT 5.4 英文化: ${e instanceof Error ? e.message : String(e)}`,
-                );
-              }
-            }
+            const safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
+              topicHook: opt.topicHook,
+              context: coverContextZh,
+              variant: geminiVariant,
+              coverPersonaContext: batchCoverPersona || undefined,
+            }).trim();
             if (!safePrompt) {
-              const geminiTask = buildPlatformTopicReferenceGeminiTask({
-                topicHook: opt.topicHook,
-                context: coverContextZh,
-                variant: geminiVariant,
-                coverPersonaContext: batchCoverPersona || undefined,
-                batchSceneDiversity:
-                  input.scenes.length >= 2 ? { slotIndex: idx, slotTotal: input.scenes.length } : undefined,
-              });
-              appendImageFlowLog(flowLog, `[步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`);
-              const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(geminiTask, flowLog);
-              appendImageFlowLog(flowLog, `[步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-              const trimmedEn = String(englishPrompt || "").trim();
-              if (!trimmedEn) {
-                appendImageFlowLog(flowLog, `${new Date().toISOString()}  [步骤1] 翻译结果为空，不注入模版英文`);
-                throw new Error("英文 prompt 为空");
-              }
-              safePrompt = trimmedEn;
+              throw new Error("中文封面指令为空");
             }
+            appendImageFlowLog(
+              flowLog,
+              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+            );
             appendImageFlowLog(
               flowLog,
               `[步骤1b] 无智能提炼 · 主体直接进封面像素链路（NB2 / Imagen 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${safePrompt.length}）`,
@@ -5341,7 +5309,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             const msg = e instanceof Error ? e.message : String(e);
             appendImageFlowLog(flowLog, `[步骤1/2] 主路径异常: ${msg}`);
             console.warn(
-              `[mvAnalysis.generateAllPlatformTopicImages] 英文化主路径失败 scene=${s.id}:`,
+              `[mvAnalysis.generateAllPlatformTopicImages] 封面主路径失败 scene=${s.id}:`,
               e instanceof Error ? e.message : e,
             );
           }

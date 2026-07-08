@@ -1,12 +1,11 @@
 /**
- * 平台单帧生图（英文化 → **Vertex Nano Banana 2** 為主；暫不調 GPT‑Image‑2；失敗則版式 NB2）——供 tRPC / jobs worker 共用。
+ * 平台单帧生图（中文直送 → GPT‑Image‑2 / Nano Banana 2）——供 tRPC / jobs worker 共用。
  */
 import { eq } from "drizzle-orm";
 import * as db from "../db";
 import { patchJobRunningProgress } from "../jobs/repository.js";
 import {
   type PlatformImagePromptTranslator,
-  type PlatformTopicBatchSceneDiversity,
 } from "./geminiPlatformCompositeTranslation.js";
 import {
   appendStagingCoverToFlowLog,
@@ -85,7 +84,7 @@ export type RunPlatformTopicImagePipelineInput = {
   sceneId?: string;
   /** 與 topicHook 同源的開場鉤子（簡中），供點擊率檔位估計 */
   appealHook?: string;
-  /** @deprecated 封面單幀英文化**固定 GPT 5.4**；保留欄位僅兼容舊 job 入參，會被忽略。 */
+  /** @deprecated 保留欄位僅兼容舊 job 入參，已忽略（封面固定中文直送）。 */
   imagePromptTranslator?: PlatformImagePromptTranslator;
   creationIdOut: number | null | undefined;
   isFreeRetry: boolean;
@@ -106,10 +105,6 @@ export type RunPlatformTopicImagePipelineInput = {
    * **僅當兩條均**產出有效簡報時才注入主條 DR；**任一條失敗/逾時**則**整段不注入** DR，改由主選題快照語境 + GPT 5.4（不採單條殘報）。
    */
   drProSecondaryCoverInputs?: { topicHook: string; context?: string };
-  /**
-   * 批量同窗（如一鍵多選題）：**不同選題，建議採用不同場景**；傳 `slotIndex`/`slotTotal` 則注入對應軟提示（例：四個選題→四個不同場景）。
-   */
-  batchSceneDiversity?: PlatformTopicBatchSceneDiversity;
   /**
    * 可選：與當前快照 **platformsKey** 對齊的 trendStore **高互動樣本**簡中摘要（服端注入；非帳號實測 CTR）。
    */
@@ -162,13 +157,9 @@ export async function runPlatformTopicImagePipeline(
   const { userCreations } = await import("../../drizzle/schema-creations.js");
 
   const {
-    buildPlatformTopicReferenceGeminiTask,
     extractChineseVisualBrief,
-    translatePlatformTopicCoverToEnglishGpt54,
     buildPlatformTopicCoverDirectChinesePrompt,
-    isPlatformImageChineseDirectEnabled,
   } = await import("./geminiPlatformCompositeTranslation.js");
-  const coverTranslatorLogLabel = "GPT 5.4（OpenAI · 封面英文化）";
   const {
     buildCoverTaskInputFromPipeline,
     isPlatformCoverAgenticBrainEnabled,
@@ -199,7 +190,7 @@ export async function runPlatformTopicImagePipeline(
       `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [主路径] GPT 5.4 英文化 → 豎封像素（${coverPixelEngineOverride ?? "預設：EvoLink/GPT‑Image‑2（有 EVOLINK_API_KEY）或 Nano Banana 2"}）· 无版式二次生圖`,
+      `${platformFlowLogTimestamp()}  [主路径] 中文直送 → 豎封像素（${coverPixelEngineOverride ?? "預設：EvoLink/GPT‑Image‑2（有 EVOLINK_API_KEY）或 Nano Banana 2"}）· 无版式二次生圖`,
     );
 
     if (trendBrief) {
@@ -296,11 +287,11 @@ export async function runPlatformTopicImagePipeline(
 
     if (runCoverDrPro) {
       topicImageCondenseLog.push(
-        `${platformFlowLogTimestamp()}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/GPT 5.4 英文化（步骤1 及以下）`,
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] A/Deep Research Pro 段已结束（见上方 [步骤0.5·DR-Pro] 明细）→ B/中文直送封面指令（步骤1 及以下）`,
       );
     } else {
       topicImageCondenseLog.push(
-        `${platformFlowLogTimestamp()}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/GPT 5.4 英文化`,
+        `${platformFlowLogTimestamp()}  [管线·阶段顺序] 未启用 A/Deep Research Pro（管理员入参与环境均为关）→ 直接 B/中文直送封面指令`,
       );
     }
 
@@ -325,49 +316,18 @@ export async function runPlatformTopicImagePipeline(
 
         void persistCoverChineseStagingToRunningJob(input.progressJobId ?? null, staging);
 
-        let safePrompt = "";
-        const coverChineseDirect = isPlatformImageChineseDirectEnabled();
-        if (coverChineseDirect) {
-          try {
-            safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
-              topicHook: staging.topicHookZh,
-              context: staging.optimizedChineseBlob,
-              variant: isGraphic ? "graphic" : "video",
-              coverPersonaContext: coverPersona || undefined,
-            }).trim();
-            topicImageCondenseLog.push(
-              `${platformFlowLogTimestamp()}  [步骤1·中文直送] 已跳过 GPT 5.4 英文化 → 直接用中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
-            );
-          } catch (e: unknown) {
-            safePrompt = "";
-            topicImageCondenseLog.push(
-              `${platformFlowLogTimestamp()}  [步骤1·中文直送] 组装失败，回退 GPT 5.4 英文化: ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
-        }
+        const safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
+          topicHook: staging.topicHookZh,
+          context: staging.optimizedChineseBlob,
+          variant: isGraphic ? "graphic" : "video",
+          coverPersonaContext: coverPersona || undefined,
+        }).trim();
         if (!safePrompt) {
-          const geminiTask = buildPlatformTopicReferenceGeminiTask({
-            topicHook: staging.topicHookZh,
-            context: staging.optimizedChineseBlob,
-            variant: isGraphic ? "graphic" : "video",
-            coverPersonaContext: coverPersona || undefined,
-            batchSceneDiversity: input.batchSceneDiversity,
-          });
-          topicImageCondenseLog.push(
-            `${platformFlowLogTimestamp()}  [步骤1] 调用 ${coverTranslatorLogLabel} 生成英文 prompt …`,
-          );
-          const englishPrompt = await translatePlatformTopicCoverToEnglishGpt54(
-            geminiTask,
-            topicImageCondenseLog,
-          );
-          topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 完成 · 英文 prompt 约 ${englishPrompt.length} 字符`);
-          const trimmedEn = String(englishPrompt || "").trim();
-          if (!trimmedEn) {
-            topicImageCondenseLog.push(`${platformFlowLogTimestamp()}  [步骤1] 翻译结果为空（不注入模版英文）`);
-            throw new Error("英文 prompt 为空");
-          }
-          safePrompt = trimmedEn;
+          throw new Error("中文封面指令为空");
         }
+        topicImageCondenseLog.push(
+          `${platformFlowLogTimestamp()}  [步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+        );
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 主体直接进封面像素链路（GPT‑Image‑2 / NB2 / NBP 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${safePrompt.length}）`,
         );
