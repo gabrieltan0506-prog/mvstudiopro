@@ -24,3 +24,4 @@ alwaysApply: true
 ## PR
 
 - 與 [`git-pr-workflow-always.mdc`](./git-pr-workflow-always.mdc) 一致：常規走分支 + PR，非緊急不直推 `main`。
+- **推送前硬邊界**：必須本地 `npx tsc --noEmit` 通過，見 [`pre-push-tsc-always.mdc`](./pre-push-tsc-always.mdc)。

@@ -1,0 +1,22 @@
+---
+description: 硬邊界 — git push / 開 PR 前必須本地 tsc 通過
+alwaysApply: true
+---
+
+# 推送前型別檢證（不可違背）
+
+源自 #731 合併後 Deploy 因 `tsc` 失敗；**以後一律遵守，不得跳過**。
+
+## 硬邊界
+
+在執行 **`git push`**（含 `-u`）、**`gh pr create`**、或任何會觸發遠端 Deploy / CI 的推送之前：
+
+1. 必須在倉庫根目錄跑通本地型別檢證：`npx tsc --noEmit`（exit code **0**）。
+2. **未通過 → 禁止 push / 禁止開依賴該提交的 PR**；先修錯再重跑，通過後才推。
+3. 不得以「CI 會再跑」「先推再修」「時間緊」為由跳過。
+4. 若 `tsc` 失敗：在回覆中列出錯誤摘要與修復，**不要**假裝已可部署。
+
+## 與既有流程的關係
+
+- 仍遵守 [`git-pr-workflow-always.mdc`](./git-pr-workflow-always.mdc)：功能分支 + PR，不直推 `main`。
+- 仍遵守 [`deployment-boundaries-always.mdc`](./deployment-boundaries-always.mdc)：要線上生效須真正 push；但 **push 前必須先過本條 tsc**。

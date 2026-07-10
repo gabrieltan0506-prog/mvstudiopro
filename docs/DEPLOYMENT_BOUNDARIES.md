@@ -19,6 +19,7 @@
 ## 3. Git / PR（與本倉庫 `.cursor/rules` 對齊）
 
 - 改動落在 **功能分支**，**push 分支** 並以 **PR 合併 `main`** 為常規路徑（除非對方聲明緊急直推）。
+- **硬邊界（不可違背）**：`git push` / 開 PR / 觸發 Deploy 之前，必須本地 **`npx tsc --noEmit` 通過**；未通過禁止推送。見 [`.cursor/rules/pre-push-tsc-always.mdc`](../.cursor/rules/pre-push-tsc-always.mdc)。
 
 ## 4. 任務完整性
 
@@ -28,6 +29,7 @@
 ## 5. 與本倉庫其他規則的關係
 
 - **PR 工作流**：見 [`.cursor/rules/git-pr-workflow-always.mdc`](../.cursor/rules/git-pr-workflow-always.mdc)。
+- **推送前 tsc**：見 [`.cursor/rules/pre-push-tsc-always.mdc`](../.cursor/rules/pre-push-tsc-always.mdc)。
 - **AI 自動提醒**：見 [`.cursor/rules/deployment-boundaries-always.mdc`](../.cursor/rules/deployment-boundaries-always.mdc)。
 
 ---
