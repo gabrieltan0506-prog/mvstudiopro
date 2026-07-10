@@ -13,6 +13,8 @@
  * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
 
+import { normalizeEvolinkChatModel } from "../services/evolinkChatModel.js";
+
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
 
@@ -306,9 +308,9 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
  * Gemini 3.5 Flash 退路：`PLATFORM_STAGE2_LLM=vertex`；英文化见 geminiPlatformCompositeTranslation（封面 GPT‑5.4）。
  */
 export function getPlatformStage2OpenAiModel(): string {
-  if (isPlatformWeekendGcpEscape()) return "gpt-5.5";
-  const m = String(process.env.PLATFORM_STAGE2_OPENAI_MODEL || "gpt-5.5").trim();
-  return m || "gpt-5.5";
+  // 统一走 EvoLink 白名单规范化，避免 env 拼写错误导致 Azure deployment 404
+  if (isPlatformWeekendGcpEscape()) return normalizeEvolinkChatModel("gpt-5.5");
+  return normalizeEvolinkChatModel(process.env.PLATFORM_STAGE2_OPENAI_MODEL || "gpt-5.5");
 }
 
 /** Stage 1 / Stage 2 文案 GPT‑5.5 推理强度：默认 **medium**。 */
@@ -374,9 +376,8 @@ export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
  */
 export function getPlatformStage2StructureOpenAiModel(): string {
   const explicit = String(process.env.PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL || "").trim();
-  if (explicit) return explicit;
-  const from54 = String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim();
-  return from54 || "gpt-5.4";
+  if (explicit) return normalizeEvolinkChatModel(explicit, "gpt-5.4");
+  return normalizeEvolinkChatModel(process.env.OPENAI_GPT54_MODEL || "gpt-5.4", "gpt-5.4");
 }
 
 /**

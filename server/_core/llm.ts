@@ -7,6 +7,13 @@ import {
   getCometApiBaseUrl,
   getCometApiKey,
 } from "../services/cometapi";
+import {
+  EVOLINK_CHAT_MODEL_GPT54,
+  formatEvolinkChatApiError,
+  isEvolinkChatModelNotFoundError,
+  normalizeEvolinkChatModel,
+  toEvolinkChatUserMessage,
+} from "../services/evolinkChatModel";
 
 export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
@@ -444,9 +451,13 @@ const EVOLINK_CHAT_COMPLETIONS_URL = "https://direct.evolink.ai/v1/chat/completi
 
 function getOpenAiModelName(modelTier: ModelTier | undefined) {
   if (modelTier === "gpt54" || modelTier === "gpt5") {
-    return String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim() || "gpt-5.4";
+    return normalizeEvolinkChatModel(
+      process.env.OPENAI_GPT54_MODEL || EVOLINK_CHAT_MODEL_GPT54,
+      EVOLINK_CHAT_MODEL_GPT54,
+    );
   }
-  return String(process.env.OPENAI_GPT54_MODEL || "gpt-5.4").trim() || "gpt-5.4";
+  // 未指定 modelName 时默认走 gpt-5.5（与 PLATFORM_STAGE2_OPENAI_MODEL 一致）
+  return normalizeEvolinkChatModel(process.env.PLATFORM_STAGE2_OPENAI_MODEL || process.env.OPENAI_GPT54_MODEL);
 }
 
 function getEvolinkApiKey(): string {
@@ -525,8 +536,12 @@ const resolveTarget = (
   explicitModelName?: string,
 ): LlmTarget => {
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
-    const resolvedModelName =
-      String(explicitModelName || getOpenAiModelName(modelTier)).trim() || getOpenAiModelName(modelTier);
+    const fallback =
+      modelTier === "gpt54" || modelTier === "gpt5" ? EVOLINK_CHAT_MODEL_GPT54 : undefined;
+    const resolvedModelName = normalizeEvolinkChatModel(
+      explicitModelName || getOpenAiModelName(modelTier),
+      fallback,
+    );
 
     /**
      * Both GPT-5.4 and GPT-5.5 use Evolink API key (EVOLINK_API_KEY) and Evolink base URL.
@@ -1134,19 +1149,48 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetch(String(target.apiUrl), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${target.apiKey}`,
-    },
-    signal: mergeWithLlmTimeout(params.abortSignal),
-    body: JSON.stringify(payload),
-  });
+  const postOnce = async (modelName: string): Promise<Response> => {
+    const body = { ...payload, model: modelName };
+    return fetch(String(target.apiUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${target.apiKey}`,
+      },
+      signal: mergeWithLlmTimeout(params.abortSignal),
+      body: JSON.stringify(body),
+    });
+  };
 
-  if (!response.ok) {
+  let activeModel = String(target.modelName || "").trim();
+  let response = await postOnce(activeModel);
+
+  // 404「Could not find an existing deployment…」：非积分问题；若主模型不可用则回退 gpt-5.4 再试一次。
+  if (!response.ok && response.status === 404) {
     const errorText = await response.text();
-    throw new Error(`Evolink API error ${response.status}: ${response.statusText} – ${errorText.slice(0, 400)}`);
+    const fallbackModel = EVOLINK_CHAT_MODEL_GPT54;
+    if (
+      isEvolinkChatModelNotFoundError(response.status, errorText) &&
+      activeModel !== fallbackModel
+    ) {
+      console.warn(
+        `[invokeOpenAI] model "${activeModel}" not found on Evolink (404), retrying with ${fallbackModel}`,
+      );
+      activeModel = fallbackModel;
+      response = await postOnce(activeModel);
+      if (!response.ok) {
+        const retryText = await response.text();
+        throw new Error(toEvolinkChatUserMessage(response.status, retryText));
+      }
+    } else {
+      throw new Error(toEvolinkChatUserMessage(response.status, errorText));
+    }
+  } else if (!response.ok) {
+    const errorText = await response.text();
+    // 402 = 积分不足；其余保留服务端日志细节，同时抛出用户可读文案
+    const userMsg = toEvolinkChatUserMessage(response.status, errorText);
+    console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
+    throw new Error(userMsg);
   }
 
   // Guard against Cloudflare / proxy returning an HTML error page with status 200
