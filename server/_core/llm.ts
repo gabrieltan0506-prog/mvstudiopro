@@ -10,7 +10,6 @@ import {
 import {
   EVOLINK_CHAT_MODEL_GPT54,
   formatEvolinkChatApiError,
-  isEvolinkChatModelNotFoundError,
   normalizeEvolinkChatModel,
   toEvolinkChatUserMessage,
 } from "../services/evolinkChatModel";
@@ -1149,45 +1148,19 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     payload.response_format = normalizedResponseFormat;
   }
 
-  const postOnce = async (modelName: string): Promise<Response> => {
-    const body = { ...payload, model: modelName };
-    return fetch(String(target.apiUrl), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${target.apiKey}`,
-      },
-      signal: mergeWithLlmTimeout(params.abortSignal),
-      body: JSON.stringify(body),
-    });
-  };
+  const response = await fetch(String(target.apiUrl), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${target.apiKey}`,
+    },
+    signal: mergeWithLlmTimeout(params.abortSignal),
+    body: JSON.stringify(payload),
+  });
 
-  let activeModel = String(target.modelName || "").trim();
-  let response = await postOnce(activeModel);
-
-  // 404「Could not find an existing deployment…」：非积分问题；若主模型不可用则回退 gpt-5.4 再试一次。
-  if (!response.ok && response.status === 404) {
+  if (!response.ok) {
     const errorText = await response.text();
-    const fallbackModel = EVOLINK_CHAT_MODEL_GPT54;
-    if (
-      isEvolinkChatModelNotFoundError(response.status, errorText) &&
-      activeModel !== fallbackModel
-    ) {
-      console.warn(
-        `[invokeOpenAI] model "${activeModel}" not found on Evolink (404), retrying with ${fallbackModel}`,
-      );
-      activeModel = fallbackModel;
-      response = await postOnce(activeModel);
-      if (!response.ok) {
-        const retryText = await response.text();
-        throw new Error(toEvolinkChatUserMessage(response.status, retryText));
-      }
-    } else {
-      throw new Error(toEvolinkChatUserMessage(response.status, errorText));
-    }
-  } else if (!response.ok) {
-    const errorText = await response.text();
-    // 402 = 积分不足；其余保留服务端日志细节，同时抛出用户可读文案
+    // 402 = 积分不足；404 = 模型不可用（不回退 gpt-5.4，文案固定 gpt-5.5）
     const userMsg = toEvolinkChatUserMessage(response.status, errorText);
     console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
     throw new Error(userMsg);

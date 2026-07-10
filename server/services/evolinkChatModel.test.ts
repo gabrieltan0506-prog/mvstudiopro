@@ -30,7 +30,7 @@ describe("evolink error classification", () => {
       '{"error":{"message":"Could not find an existing deployment to match the model in the request.","type":"invalid_request_error"}}';
     expect(isEvolinkChatModelNotFoundError(404, body)).toBe(true);
     expect(isEvolinkInsufficientQuotaError(404, body)).toBe(false);
-    expect(toEvolinkChatUserMessage(404, body)).toMatch(/非积分问题/);
+    expect(toEvolinkChatUserMessage(404, body)).toMatch(/GPT-5\.5.*非积分问题/);
   });
 
   it("detects 402 insufficient quota", () => {
