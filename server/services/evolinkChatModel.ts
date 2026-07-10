@@ -47,7 +47,7 @@ export function toEvolinkChatUserMessage(status: number, errorText: string): str
     return "EvoLink 账户积分不足，请前往控制台充值后再试（https://evolink.ai/dashboard/billing）";
   }
   if (isEvolinkChatModelNotFoundError(status, errorText)) {
-    return "文案模型暂不可用（非积分问题），请稍后重试；若持续失败请联系管理员检查 EvoLink 模型配置";
+    return "GPT-5.5 文案模型暂不可用（非积分问题），请确认 EvoLink 账户已开通 gpt-5.5 deployment";
   }
   if (status === 401 || /invalid or expired token|authentication_error/i.test(errorText)) {
     return "模型服务鉴权失败，请联系管理员检查 EvoLink API Key";

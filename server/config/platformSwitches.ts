@@ -304,13 +304,11 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
 }
 
 /**
- * Creator Growth **Stage 1 / Stage 2 / 战略看板 / 深度追问** 預設 **OpenAI GPT‑5.5**（`PLATFORM_STAGE2_OPENAI_MODEL`）。  
- * Gemini 3.5 Flash 退路：`PLATFORM_STAGE2_LLM=vertex`；英文化见 geminiPlatformCompositeTranslation（封面 GPT‑5.4）。
+ * Creator Growth **Stage 1 / Stage 2 / 战略看板 / 深度追问 / 自定义选题文案** 固定 **OpenAI GPT‑5.5**。  
+ * 不因 env 或 404 回退到 gpt-5.4。Gemini 退路：`PLATFORM_STAGE2_LLM=vertex`。
  */
 export function getPlatformStage2OpenAiModel(): string {
-  // 统一走 EvoLink 白名单规范化，避免 env 拼写错误导致 Azure deployment 404
-  if (isPlatformWeekendGcpEscape()) return normalizeEvolinkChatModel("gpt-5.5");
-  return normalizeEvolinkChatModel(process.env.PLATFORM_STAGE2_OPENAI_MODEL || "gpt-5.5");
+  return normalizeEvolinkChatModel("gpt-5.5");
 }
 
 /** Stage 1 / Stage 2 文案 GPT‑5.5 推理强度：默认 **medium**。 */
@@ -372,12 +370,10 @@ export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
 }
 
 /**
- * Stage 2 OpenAI **第二階** JSON 封裝：預設 gpt‑5.4（成本較低），可用 `PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL` / `OPENAI_GPT54_MODEL` 覆蓋。
+ * Stage 2 OpenAI **第二階** JSON 封裝：与文案主路径一致，固定 **gpt-5.5**（不回退 gpt-5.4）。
  */
 export function getPlatformStage2StructureOpenAiModel(): string {
-  const explicit = String(process.env.PLATFORM_STAGE2_STRUCTURE_OPENAI_MODEL || "").trim();
-  if (explicit) return normalizeEvolinkChatModel(explicit, "gpt-5.4");
-  return normalizeEvolinkChatModel(process.env.OPENAI_GPT54_MODEL || "gpt-5.4", "gpt-5.4");
+  return normalizeEvolinkChatModel("gpt-5.5");
 }
 
 /**
