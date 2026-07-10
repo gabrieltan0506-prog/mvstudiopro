@@ -1343,13 +1343,13 @@ export async function buildPlatformContent(params: {
         .map(([bucket, count]) => ({ bucket, count })),
     };
   });
-  const allTagCandidates = [
-    ...new Set(
+  const allTagCandidates = Array.from(
+    new Set(
       dynamicDecisionChain.flatMap((row) =>
         Array.isArray(row.tagCandidates) ? row.tagCandidates.map(String) : [],
       ),
     ),
-  ].slice(0, 20);
+  ).slice(0, 20);
   const blueOceanLexicon = buildBlueOceanLexicon({
     platformMenu: params.platformMenu,
     globalBlueOceanWords: params.globalBlueOceanWords,
@@ -3774,6 +3774,14 @@ export const appRouter = router({
           windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]).optional(),
           /** 每次「全案分析」由前端递增，写入 requestHash，避免命中 user_creations 中上一份同参报告缓存。 */
           platformAnalysisEpoch: z.number().int().min(0).max(1_000_000_000).optional(),
+          /** 可选：平台蓝海词词表，注入赠送选题扩写 */
+          blueOceanLexicon: z
+            .object({
+              flat: z.array(z.string()).optional(),
+              grouped: z.array(z.any()).optional(),
+              tagCandidates: z.array(z.string()).optional(),
+            })
+            .optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -3834,6 +3842,7 @@ export const appRouter = router({
               contentBlueprint,
               topic,
               platformHint,
+              blueOceanLexicon: input.blueOceanLexicon,
               abortSignal: ctx.clientDisconnected,
             });
             await persistExecutionBlueprintsToSnapshot(bonus);
