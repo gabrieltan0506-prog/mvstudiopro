@@ -11,11 +11,17 @@ const EVOLINK_CHAT_MODEL_ALIASES: Record<string, string> = {
   "gpt-5-4": EVOLINK_CHAT_MODEL_GPT54,
 };
 
+export type EvolinkChatModelId = typeof EVOLINK_CHAT_MODEL_GPT55 | typeof EVOLINK_CHAT_MODEL_GPT54;
+
 /**
  * 将 env / 调用方传入的模型名规范为 EvoLink 支持的 chat model。
  * 未知值回退 `gpt-5.5`，避免 Azure deployment 404。
+ * `fallback` 显式放宽为 `string`，避免默认字面量 `"gpt-5.5"` 导致传入 `"gpt-5.4"` 时 TS2345。
  */
-export function normalizeEvolinkChatModel(raw?: string, fallback = EVOLINK_CHAT_MODEL_GPT55): string {
+export function normalizeEvolinkChatModel(
+  raw?: string,
+  fallback: string = EVOLINK_CHAT_MODEL_GPT55,
+): string {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return fallback;
   const key = trimmed.toLowerCase();

@@ -22,6 +22,11 @@ describe("normalizeEvolinkChatModel", () => {
     expect(normalizeEvolinkChatModel("gpt-5.5-preview")).toBe("gpt-5.5");
     expect(normalizeEvolinkChatModel("")).toBe("gpt-5.5");
   });
+
+  it("accepts gpt-5.4 as explicit fallback (Fly tsc regression)", () => {
+    expect(normalizeEvolinkChatModel("", "gpt-5.4")).toBe("gpt-5.4");
+    expect(normalizeEvolinkChatModel("unknown-model", "gpt-5.4")).toBe("gpt-5.4");
+  });
 });
 
 describe("evolink error classification", () => {
