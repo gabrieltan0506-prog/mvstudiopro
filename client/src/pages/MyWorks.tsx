@@ -1,10 +1,11 @@
 import React, { useState } from "react";
+import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
   Download, Trash2, Clock, Star, Loader2, Image as ImageIcon,
-  Music, Video, Layers, Box, Sparkles, FileText, ChevronLeft, ChevronRight,
+  Music, Video, Layers, Box, Sparkles, FileText, ChevronLeft, ChevronRight, BarChart2,
 } from "lucide-react";
 import { FavoriteButton } from "@/components/CreationManager";
 import { formatDateGMT8 } from "@/lib/utils";
@@ -19,6 +20,10 @@ const TYPE_LABELS: Record<string, string> = {
   kling_lipsync: "Kling 对嘴",
   kling_motion: "Kling 动作",
   kling_image: "Kling 图片",
+  platform_session_bundle: "平台全案",
+  advanced_decision_report: "战略全景",
+  platform_topic_frame: "平台封面",
+  deep_research_report: "深潜研报",
 };
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
@@ -31,18 +36,37 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
   kling_lipsync: Video,
   kling_motion: Video,
   kling_image: ImageIcon,
+  platform_session_bundle: Sparkles,
+  advanced_decision_report: BarChart2,
+  platform_topic_frame: ImageIcon,
+  deep_research_report: FileText,
 };
 
 const FILTER_TABS = [
   { label: "全部", value: "" },
+  { label: "平台全案", value: "platform_session_bundle" },
   { label: "图片", value: "idol_image" },
   { label: "脚本/分镜", value: "storyboard" },
   { label: "视频", value: "kling_video" },
   { label: "音乐", value: "music" },
 ];
 
+function parseItemMeta(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === "object") return raw as Record<string, unknown>;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 export default function MyWorks() {
   const { user, isAuthenticated, loading } = useAuth({ autoFetch: true, redirectOnUnauthenticated: true, redirectPath: "/login" });
+  const [, navigate] = useLocation();
   const [activeType, setActiveType] = useState<string>("");
   const [page, setPage] = useState(1);
   const [showFavOnly, setShowFavOnly] = useState(false);
@@ -157,17 +181,42 @@ export default function MyWorks() {
               {items.map((item: any) => {
                 const Icon = TYPE_ICONS[item.type] || Sparkles;
                 const isVideo = item.type?.includes("video") || item.type?.includes("kling");
-                const isAnalysis = item.metadata && (() => { try { const m = JSON.parse(item.metadata ?? "{}"); return m?.isSnapshot; } catch { return false; } })();
+                const meta = parseItemMeta(item.metadata);
+                const isAnalysis = Boolean(meta.isSnapshot || meta.isPlatformSessionBundle);
+                const isBundle =
+                  item.type === "platform_session_bundle" || meta.isPlatformSessionBundle === true;
+                const isViewable =
+                  isAnalysis ||
+                  isBundle ||
+                  item.type === "advanced_decision_report" ||
+                  item.type === "deep_research_report";
                 const isExpiringSoon = item.expiresAt && new Date(item.expiresAt).getTime() - Date.now() < 2 * 24 * 60 * 60 * 1000;
-                const scriptPreview = (() => {
-                  try { const m = JSON.parse(item.metadata ?? "{}"); return m?.script || m?.summary || null; } catch { return null; }
-                })();
+                const scriptPreview = (meta.script || meta.summary || null) as string | null;
 
                 return (
                   <div
                     key={item.id}
+                    role={isViewable ? "button" : undefined}
+                    tabIndex={isViewable ? 0 : undefined}
+                    onClick={() => {
+                      if (isViewable) navigate(`/my-works/${item.id}`);
+                    }}
+                    onKeyDown={(e) => {
+                      if (isViewable && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault();
+                        navigate(`/my-works/${item.id}`);
+                      }
+                    }}
                     className={`bg-white/[0.04] rounded-2xl overflow-hidden border transition group ${
-                      isExpiringSoon ? "border-amber-600/40" : isVideo ? "border-blue-600/30" : "border-white/8 hover:border-white/16"
+                      isExpiringSoon
+                        ? "border-amber-600/40"
+                        : isBundle
+                          ? "border-cyan-500/35 hover:border-cyan-400/50 cursor-pointer"
+                          : isVideo
+                            ? "border-blue-600/30"
+                            : isViewable
+                              ? "border-white/8 hover:border-white/16 cursor-pointer"
+                              : "border-white/8 hover:border-white/16"
                     }`}
                   >
                     {/* Thumbnail */}
@@ -201,7 +250,10 @@ export default function MyWorks() {
                       )}
 
                       {/* Hover actions */}
-                      <div className="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2">
+                      <div
+                        className="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {item.outputUrl && (
                           <a href={item.outputUrl} target="_blank" rel="noopener noreferrer"
                             className="p-2 bg-blue-600 rounded-full text-white hover:bg-blue-500">
@@ -226,11 +278,15 @@ export default function MyWorks() {
                           <Clock className="h-2.5 w-2.5" /><span>即将过期</span>
                         </div>
                       )}
-                      {isAnalysis && (
+                      {isBundle ? (
+                        <div className="absolute bottom-1.5 left-1.5 bg-cyan-600/90 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                          全案作品包
+                        </div>
+                      ) : isAnalysis ? (
                         <div className="absolute bottom-1.5 left-1.5 bg-purple-600/80 text-white text-[10px] px-1.5 py-0.5 rounded-full">
                           分析快照
                         </div>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Info */}

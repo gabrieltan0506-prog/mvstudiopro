@@ -186,3 +186,28 @@ export function appendFashionEditorialCharacterGuidance(base, opts?): string;
 4. 无 EvoLink 时打警告（续接段无法像素锁）
 
 若线上仍大量漂脸，再考虑隐藏 3×4 UI；当前以像素参考锁优先于直接下线。
+
+---
+
+## 续：我的作品全案包 + 战略全景静态可读图（2026-07-11）
+
+> 分支：`feat/my-works-full-session-and-panorama-charts`
+
+### 1. 战略全景两图（PDF / HTML 常显）
+
+**文件**：`client/src/components/PlatformReportDashboard.tsx`
+
+- 「选题预估播放量对比」：改为排名条 + **标题与播放量常显**（不再依赖 Recharts hover）
+- 「封面 / 转化 / 契合 三维对比」：每选题卡片 + **环形百分比中心数字常显**
+
+### 2. 平台全案 →「我的作品」
+
+| 层 | 文件 | 说明 |
+|----|------|------|
+| 类型 | `shared/platformSessionBundle.ts` | bundle schema + 摘要 |
+| API | `mvAnalysis.savePlatformSessionBundle` | 写入 `platform_session_bundle` |
+| 触发 | `PlatformPage.tsx` | PDF 导出 / 战略解锁 / 战略 PNG 导出 |
+| 列表 | `MyWorks.tsx` / `HomeMyWorks.tsx` | 标签、筛选、点击进详情 |
+| 详情 | `AnalysisView.tsx` | 渲染战略全景 + 文案/分镜/追问/自定义/趋势摘要 |
+
+保存内容含：执行卡文案与封面/分镜 URL、深度追问、自定义文案、趋势看板、决策智库整页数据。

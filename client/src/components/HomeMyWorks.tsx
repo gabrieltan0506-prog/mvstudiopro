@@ -26,6 +26,10 @@ const TYPE_LABELS: Record<string, string> = {
   kling_lipsync: "对嘴",
   kling_motion: "动作",
   storyboard: "脚本",
+  platform_session_bundle: "平台全案",
+  advanced_decision_report: "战略全景",
+  platform_topic_frame: "平台封面",
+  deep_research_report: "深潜研报",
 };
 
 const SNAPSHOT_GRADIENTS: Record<string, string> = {
@@ -36,6 +40,7 @@ const SNAPSHOT_GRADIENTS: Record<string, string> = {
 const SNAPSHOT_LABELS: Record<string, string> = {
   growth_camp: "成长营分析",
   platform: "平台趋势分析",
+  platform_session_bundle: "平台全案作品包",
 };
 
 export default function HomeMyWorks() {
@@ -84,11 +89,19 @@ export default function HomeMyWorks() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {items.map((item: any) => {
-            const isSnapshot = item.metadata?.isSnapshot === true;
-            const analysisType: string = item.metadata?.analysisType ?? "growth_camp";
+            const isBundle =
+              item.type === "platform_session_bundle" || item.metadata?.isPlatformSessionBundle === true;
+            const isSnapshot = item.metadata?.isSnapshot === true || isBundle;
+            const analysisType: string = isBundle
+              ? "platform_session_bundle"
+              : (item.metadata?.analysisType ?? "growth_camp");
             const summary: string = item.metadata?.summary ?? "";
-            const snapshotLabel = SNAPSHOT_LABELS[analysisType] ?? "分析快照";
-            const snapshotGrad = SNAPSHOT_GRADIENTS[analysisType] ?? SNAPSHOT_GRADIENTS.growth_camp;
+            const snapshotLabel =
+              SNAPSHOT_LABELS[analysisType] ??
+              (isBundle ? "平台全案作品包" : "分析快照");
+            const snapshotGrad =
+              SNAPSHOT_GRADIENTS[analysisType === "platform_session_bundle" ? "platform" : analysisType] ??
+              SNAPSHOT_GRADIENTS.growth_camp;
             const Icon = TYPE_ICONS[item.type] ?? FolderOpen;
             const label = TYPE_LABELS[item.type] ?? item.type;
             const isVideo = item.type?.includes("video") || item.type?.includes("lipsync") || item.type?.includes("motion");

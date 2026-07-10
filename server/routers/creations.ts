@@ -208,6 +208,12 @@ const creationTypeSchema = z.enum([
   "enterprise_agent_session",
   /** 平台頁增值：決策智庫／個性化戰略地圖（扣點後寫入，供用戶查看與平台數據沉澱） */
   "advanced_decision_report",
+  /** 平台封面单帧 */
+  "platform_topic_frame",
+  /** 深潜研报 */
+  "deep_research_report",
+  /** 平台全案会话包：文案+分镜+追问+趋势+战略全景 */
+  "platform_session_bundle",
 ]);
 
 export type CreationType = z.infer<typeof creationTypeSchema>;
