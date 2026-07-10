@@ -7,6 +7,10 @@ import {
 } from "./gemini35FlashRuntime.js";
 import { isPlatformImageOpenAiAllowed } from "../config/platformSwitches.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
+import {
+  appendFashionEditorialCharacterGuidance,
+  PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH,
+} from "../../shared/platformFashionEditorialCharacter.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -512,6 +516,7 @@ export function buildCompositeSheetDirectChineseBody(
 - 每一格自上而下：① 本格分镜主题（一行加粗简体中文）；② 该镜头电影级写实剧照（高细节，约占 70–75%）；③ 格内底部约 25–30% 为简体中文四栏小表，表头固定【景别 / 运镜 / 画面内容 / 台词与音效】四栏都要填。
 - 风格：电影感、8k、精致布光、统一高级色调；所有屏内文字一律**简体中文、印刷清晰、不可乱码/缺笔**。
 - 若脚本含【光影与机位约束·拍摄手法】或【上传素材拍摄技法】，八格的景别/运镜/布光/走位须对齐该约束（教学演示类优先固定中远景、前景操作物、背景大屏同步）。
+- 现代主讲/主人公人物造型须对齐【人物造型·国际时尚大片】：配合场景的高雅/高贵时装，VOGUE·ELLE·Harper's Bazaar·好莱坞时尚编辑气质；妆发皮肤高级真实，配饰可点缀勿硬配；跨格服装可随场景微调但须保持同一人与同一阶层气质。
 
 【中文脚本】：
 ${slice}`;
@@ -536,13 +541,17 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 120);
   const ctx = String(input.context || "").slice(0, SCRIPT_SLICE);
-  const persona = String(input.coverPersonaContext || "").trim();
+  const persona = appendFashionEditorialCharacterGuidance(
+    String(input.coverPersonaContext || "").trim(),
+    { maxChars: 2200, lang: "zh" },
+  );
   const personaBlock = persona
-    ? `【身份锚点】（人物服装 / 道具 / 环境须与此一致）：\n${persona.slice(0, 1200)}\n\n`
-    : "";
+    ? `【身份锚点】（人物服装 / 道具 / 环境须与此一致）：\n${persona}\n\n`
+    : `【身份锚点】\n${PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH}\n\n`;
   return `${personaBlock}请直接据下方选题与语境生成**一张竖版 9:16 单帧信息流封面**（单一主体、满版主视觉，不要做成 2×4 网格或多格分镜）：
 - 主标题用**简体中文**，大而清晰、印刷级，紧扣「${hook}」；可有次级简中辅标，英文仅作极少量点缀。
 - 场景随文案多样化、贴合选题，避免千篇一律的书房 / 办公室 / 沙发电视等套路；高级 editorial / 杂志质感，统一受光、克制配色 + 一处鲜明强调色。
+- 人物须呈国际时尚大片感：配合场景的高雅/高贵穿搭，VOGUE·ELLE·Harper's Bazaar·好莱坞时尚编辑气质；皮肤纹理真实、妆发高级、配饰可点缀勿硬配。
 - 加 2–4 个与主题呼应的精致线描小图标，各配 4–8 字简体中文辅标，自然融入场景光影、不要硬框贴纸感，且不可压过主标题。
 - masterpiece、8k、视觉冲击力强；所有屏内文字一律**简体中文、清晰不乱码**。
 

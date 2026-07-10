@@ -101,7 +101,10 @@ export function buildCoverTaskInputFromPipeline(params: {
 }): CoverTaskInput {
   const topicTitle = String(params.topicHook || "").trim().slice(0, 300);
   const baseCopywriting = [
-    String(params.coverPersonaContext || "").trim() ? `【身份美学锚点】\n${String(params.coverPersonaContext).trim()}` : "",
+    String(params.coverPersonaContext || "").trim()
+      ? `【身份美学锚点】\n${String(params.coverPersonaContext).trim()}`
+      : "",
+    "【人物造型】配合场景的高雅/高贵时装；VOGUE / ELLE / Harper's Bazaar / 好莱坞时尚编辑气质；皮肤纹理真实、妆发高级；配饰可点缀勿硬配。",
     String(params.context || "").trim(),
   ]
     .filter(Boolean)

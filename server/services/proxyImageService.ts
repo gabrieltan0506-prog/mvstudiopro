@@ -21,6 +21,7 @@ import {
 } from "./platformTopicCoverPrompt.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
+import { appendFashionEditorialCharacterGuidance } from "../../shared/platformFashionEditorialCharacter.js";
 import {
   isEvolinkGptImage2Configured,
   isEvolinkModerationFailure,
@@ -1033,11 +1034,15 @@ const STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN = [
 ].join("\n");
 
 function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverPersonaContext?: string): string {
+  const persona = appendFashionEditorialCharacterGuidance(
+    String(coverPersonaContext || "").trim(),
+    { maxChars: 2800, lang: "zh" },
+  );
   const anchor = [
     "【视觉锚点·主人公】",
     "分镜各格中的现代主讲/主人公须与上传参考人像为同一人（五官、发型、气质跨格一致，禁止换成陌生面孔）。",
     "仅当脚本明确描写古人、历史人物、古代场景、顾客/路人等独立角色时，才使用不同人物造型。",
-    coverPersonaContext?.trim() ? coverPersonaContext.trim() : "",
+    persona,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1397,6 +1402,11 @@ export async function generatePlatformCompositeSheetImage(options: {
     scriptContextForPipeline = `${String(scriptContextForPipeline || "").trim()}\n\n【光影与机位约束·拍摄手法】\n${stagingBits.join("\n\n")}`;
     appendImageFlowLog(L, `[2×4·拍摄手法] 已注入 executionDetails/shootingTechniqueBrief（${stagingBits.join(" · ").length} chars）`);
   }
+  // 全案 / 自定义分镜：无论是否有参考人像，均注入国际时尚大片人物造型约束
+  scriptContextForPipeline = appendFashionEditorialCharacterGuidance(scriptContextForPipeline, {
+    maxChars: 14000,
+    lang: "zh",
+  });
   const referencePhotoUrl = String(options.referencePhotoUrl || "").trim() || undefined;
   if (referencePhotoUrl) {
     scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(

@@ -123,5 +123,44 @@ pnpm exec vitest run server/services/buildBlueOceanLexicon.test.ts
 
 ## 交付
 
-- 功能分支 push + PR → `main`（见本会话 `gh pr create` 输出）
+- 功能分支 push + PR → `main`：https://github.com/gabrieltan0506-prog/mvstudiopro/pull/731
 - 本文件副本：`docs/2026Jul10/grokjobs-and-codes.md` 与 `~/Downloads/2026Jul10/grokjobs-and-codes.md`
+
+---
+
+## 续：封面 / 分镜人物造型优化（国际时尚大片）
+
+> 追加于同分支 PR #731 · 覆盖**全案选题**与**自定义选题**的封面单帧 + 2×4 分镜人物生成
+
+### 人物生成要求（产品口径）
+
+1. 配合场景生成合适且高雅/高贵的穿搭  
+2. 整体风格参考《VOGUE》《ELLE》《Harper's Bazaar》、好莱坞时尚编辑  
+3. 人物：高级、时尚、自信、明星感；自然微笑或冷淡高级表情；妆容干净、皮肤细腻通透有真实纹理；头发自然舒展带电影空气感  
+4. 服装：深蓝/黑/奶油白/灰等高级配色；西装、礼服、西装裙、高定外套、丝绸衬衫等；羊毛/丝绸/缎面/天鹅绒质感；轻奢配饰可点缀勿硬配，男女款式区分  
+
+### 代码
+
+**共享常量**：`shared/platformFashionEditorialCharacter.ts`
+
+```ts
+export const PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH = `【人物造型·国际时尚大片】...`;
+export const PLATFORM_FASHION_EDITORIAL_CHARACTER_EN = "VOGUE / ELLE / Harper's Bazaar / ...";
+export function appendFashionEditorialCharacterGuidance(base, opts?): string;
+```
+
+| 注入点 | 文件 | 作用 |
+|--------|------|------|
+| 全案封面 persona | `PlatformPage.buildCoverPersonaContextForImageGen` | IP/人设后叠加时装大片块 |
+| 自定义封面/分镜 persona | `PlatformPage` 自定义选题 `coverPersona` | 主人公特质 + 时装大片块 |
+| 封面中文直送 | `buildPlatformTopicCoverDirectChinesePrompt` | 身份锚点强制含时装约束 |
+| 封面管线兜底 | `runPlatformTopicImagePipeline` | `coverPersona` 再 append 一次（去重） |
+| 企划大脑 | `agenticCoverWorkflow.buildCoverTaskInputFromPipeline` | 文案侧提醒时装气质 |
+| 摄影英文 modifiers | `PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS` | 英文链叠加入时装编辑语汇 |
+| 2×4 分镜 | `generatePlatformCompositeSheetImage` + `appendStoryboardProtagonistAnchorToScript` | 无论是否有参考人像均注入；中文八格模板要求对齐 |
+| Stage2 文案 | `buildPlatformContent` environmentAndWardrobe 示例 | 引导脚本写出高定穿搭 |
+
+### 手测补充
+
+4. 全案执行卡生成封面 → 人物穿搭贴合场景、杂志大片气质  
+5. 自定义选题上传人像生成封面+分镜 → 同脸 + 高级时装造型，配饰不堆砌  

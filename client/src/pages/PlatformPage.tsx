@@ -28,6 +28,7 @@ import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon } from "@shared/blueOceanLexicon";
+import { appendFashionEditorialCharacterGuidance } from "@shared/platformFashionEditorialCharacter";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
@@ -858,7 +859,7 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，供 GPT 5.4 锁定人设（此前仅传选题文案时模型无法看到身份设定） */
+/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，并叠加国际时尚大片人物造型 */
 function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
@@ -868,7 +869,7 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: 
       `【IP 视觉与商业基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌（绝对避让）：${ipProfile.taboos.trim()}` : ""}`,
     );
   }
-  return parts.join("\n").trim().slice(0, 3800);
+  return appendFashionEditorialCharacterGuidance(parts.join("\n").trim(), { maxChars: 3800, lang: "zh" });
 }
 
 /** 供分镜表 / 小红书 2×4 八格图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
@@ -3738,14 +3739,15 @@ export default function PlatformPage() {
     const storyboardRefUrl =
       opts?.coverReferenceUrl ?? customTopicCoverUrl ?? customTopicPhotoUrl ?? undefined;
     const refFromApprovedCover = Boolean(opts?.coverReferenceUrl ?? customTopicCoverUrl);
-    const coverPersona = [
-      `【主人公特质与专长】\n${protagonist || card.title}`,
-      refFromApprovedCover
-        ? "【视觉锚点】分镜各格须与已生成竖版封面为同一人（以封面人脸为唯一标准，跨格禁止换脸）；仅脚本明确描写古人/历史角色等时才使用不同人物。"
-        : "【视觉锚点】分镜各格须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；仅脚本明确描写古人/历史角色等时才使用不同人物。",
-    ]
-      .join("\n\n")
-      .slice(0, 3800);
+    const coverPersona = appendFashionEditorialCharacterGuidance(
+      [
+        `【主人公特质与专长】\n${protagonist || card.title}`,
+        refFromApprovedCover
+          ? "【视觉锚点】分镜各格须与已生成竖版封面为同一人（以封面人脸为唯一标准，跨格禁止换脸）；仅脚本明确描写古人/历史角色等时才使用不同人物。"
+          : "【视觉锚点】分镜各格须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；仅脚本明确描写古人/历史角色等时才使用不同人物。",
+      ].join("\n\n"),
+      { maxChars: 3800, lang: "zh" },
+    );
     const progressJobId = newPlatformCompositeProgressJobId();
     const shootBrief = lastShootingTechniqueBriefRef.current.trim() || undefined;
     const res = await generatePlatformCompositeSheetMutation.mutateAsync({
@@ -3883,12 +3885,13 @@ export default function PlatformPage() {
 
       if (!supervisorAccess && !window.confirm(confirmMsg)) return;
 
-      const coverPersona = [
-        `【主人公特质与专长】\n${protagonist || card.title}`,
-        "【视觉锚点】封面与分镜须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；分镜各格跨格同一人，仅古人/历史角色等脚本明示时换脸。",
-      ]
-        .join("\n\n")
-        .slice(0, 3800);
+      const coverPersona = appendFashionEditorialCharacterGuidance(
+        [
+          `【主人公特质与专长】\n${protagonist || card.title}`,
+          "【视觉锚点】封面与分镜须融合用户上传的主人公参考人像，保持相貌、气质与造型一致；分镜各格跨格同一人，仅古人/历史角色等脚本明示时换脸。",
+        ].join("\n\n"),
+        { maxChars: 3800, lang: "zh" },
+      );
       const storyboardCompositeEngine = customTopicPhotoUrl ? ("gpt_image2" as const) : platformComposite2x4Engine;
 
       if (customTopicGenCover && customTopicGenStoryboard) {

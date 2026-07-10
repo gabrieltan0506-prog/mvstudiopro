@@ -176,7 +176,13 @@ export async function runPlatformTopicImagePipeline(
   const trendBrief = String(input.trendEngagementVisualBrief || "").trim();
   const userContext = String(input.context || "").trim();
   const ctxStr = [trendBrief, userContext].filter(Boolean).join("\n\n");
-  const coverPersona = String(input.coverPersonaContext || "").trim();
+  const { appendFashionEditorialCharacterGuidance } = await import(
+    "../../shared/platformFashionEditorialCharacter.js",
+  );
+  const coverPersona = appendFashionEditorialCharacterGuidance(
+    String(input.coverPersonaContext || "").trim(),
+    { maxChars: 3800, lang: "zh" },
+  );
   const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
 
   const topicImageCondenseLog: string[] = [];

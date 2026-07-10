@@ -2,12 +2,15 @@
  * 與 Vertex（Nano Banana Pro / Nano Banana 2）與 OhMyGPT **gpt-image-2** 共用的鏡頭·光影·材質語彙；
  * 與比例鎖、2×4 像素鎖、版式指令可同條 prompt 並存，一般不衝突。
  */
+import { PLATFORM_FASHION_EDITORIAL_CHARACTER_EN } from "../../shared/platformFashionEditorialCharacter.js";
+
 export const PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS = [
   "Shot on 35mm lens, f/1.4 aperture",
   "cinematic lighting, soft volumetric light",
   "hyper-detailed textures, ultra-photorealistic, 8k",
   "award-winning photography: deliberate background—generous negative space for hero type OR a rich contextual set; avoid generic gray voids",
   "color grade with chromatic intent—punchy contrast or luxe muted blocking… not default stock gray",
+  PLATFORM_FASHION_EDITORIAL_CHARACTER_EN,
 ].join(", ");
 
 /**
