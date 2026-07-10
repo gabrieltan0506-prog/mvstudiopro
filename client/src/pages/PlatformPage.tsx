@@ -3903,8 +3903,9 @@ export default function PlatformPage() {
       void queryClient.invalidateQueries({ queryKey: [["credits"]] });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setCustomTopicError(msg);
-      toast.error(msg.slice(0, 120));
+      const friendly = sanitizePlatformUserMessage(msg, "生成失败，请稍后重试");
+      setCustomTopicError(friendly);
+      toast.error(friendly.slice(0, 120));
     } finally {
       setCustomTopicBusy(false);
       setCustomTopicPhase("idle");
@@ -7044,7 +7045,7 @@ export default function PlatformPage() {
 
               {customTopicError && (
                 <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customTopicError}
+                  ❌ {sanitizePlatformUserMessage(customTopicError, "生成失败，请稍后重试")}
                 </div>
               )}
 
