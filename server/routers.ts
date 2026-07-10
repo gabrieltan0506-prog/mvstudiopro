@@ -501,18 +501,18 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
 /** Stage 1 / Stage 2 取樣溫度（GPT‑5 系 OpenAI 可能忽略 temperature，见 llm.ts）。 */
 const STAGE2_LLM_TEMPERATURE = 0.8;
 
-/** Stage 1 / Stage 2 / 深度追问：固定 OpenAI GPT‑5.5（忽略 env `PLATFORM_STAGE2_LLM=vertex` 与 UI 历史选项）。 */
+/** Stage 1 / Stage 2 / 深度追问：固定 OhMyGPT GPT‑5.6 Sol（忽略 env `PLATFORM_STAGE2_LLM=vertex` 与 UI 历史选项）。 */
 function resolvePlatformCopyLlmMode(_input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
   return "openai";
 }
 
-/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（Gemini 3.5 Flash 或 GPT‑5.5）。 */
+/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（Gemini 3.5 Flash 或 GPT‑5.6 Sol）。 */
 async function invokePlatformStructuredCopyLlm(options: {
   copyLlmMode: PlatformStage2LlmMode;
   systemInstruction: string;
   userText: string;
   abortSignal?: AbortSignal;
-  /** 覆寫 GPT‑5.5 推理檔位：空回重試時降到 low/minimal，逼模型把预算用于直接输出 JSON 而非耗尽在推理。 */
+  /** 覆寫 GPT‑5.6 推理檔位：空回重試時降到 low/minimal，逼模型把预算用于直接输出 JSON 而非耗尽在推理。 */
   reasoningEffortOverride?: ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
 }): Promise<string> {
   if (options.copyLlmMode === "openai") {
@@ -1453,7 +1453,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
   const stage2LlmMode: PlatformStage2LlmMode = "openai";
   diagnostics.stage2LlmMode = stage2LlmMode;
-  diagnostics.stage2LlmModeSource = "fixed_gpt55";
+  diagnostics.stage2LlmModeSource = "fixed_gpt56_sol";
   const openaiCreativeModel = getPlatformStage2OpenAiModel();
   const stage2ReasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
   diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
