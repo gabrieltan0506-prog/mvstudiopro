@@ -32,7 +32,7 @@ import type { GrowthAnalysisScores } from "@shared/growth";
 import { mergeGrowthAnalysesDeterministic } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
-import { formatAssetAnalysisForOptimize, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
+import { formatAssetAnalysisForOptimize, formatShootingTechniqueBrief, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import { FileText, Film, FileUp, Image as ImageIcon, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -47,6 +47,8 @@ type PlatformAssetAnalysisPanelProps = {
   trendPlatforms?: Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "weixin_channels" | "toutiao">;
   onBusyChange?: (busy: boolean) => void;
   onDeepOptimize?: (payload: AssetAnalysisHandoffPayload) => Promise<{ optimizedMarkdown: string; summary: string }>;
+  /** 分析完成后回传拍摄手法摘要，供分镜生成注入 */
+  onShootingTechniqueReady?: (brief: string) => void;
   onGenerateFromText?: (
     text: string,
     kind: "storyboard_sheet_landscape" | "single_page_knowledge_card",
@@ -65,6 +67,7 @@ export default function PlatformAssetAnalysisPanel({
   trendPlatforms,
   onBusyChange,
   onDeepOptimize,
+  onShootingTechniqueReady,
   onGenerateFromText,
   optimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy,
   storyboardCost = 60,
@@ -412,6 +415,8 @@ export default function PlatformAssetAnalysisPanel({
         },
       });
       setAnalysis(result.analysis);
+      const shootBrief = formatShootingTechniqueBrief(result.analysis);
+      if (shootBrief) onShootingTechniqueReady?.(shootBrief);
       setUploadProgress(100);
       const failureNote =
         typeof result.debug?.partialFailure === "string" ? result.debug.partialFailure.trim() : "";
@@ -468,6 +473,7 @@ export default function PlatformAssetAnalysisPanel({
     trpcUtils.agent.listTrendHotspots,
     user?.id,
     videoAsset,
+    onShootingTechniqueReady,
   ]);
 
   const stageLabel =

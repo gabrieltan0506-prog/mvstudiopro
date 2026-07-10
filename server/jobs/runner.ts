@@ -1170,6 +1170,9 @@ async function processPlatformJob(
       const context = String(params.context || "");
       const windowDays = Number(params.windowDays ?? 15);
       const platformMenu = Array.isArray(params.platformMenu) ? params.platformMenu : [];
+      const globalBlueOceanWords = Array.isArray((params as Record<string, unknown>).globalBlueOceanWords)
+        ? ((params as Record<string, unknown>).globalBlueOceanWords as unknown[])
+        : [];
       const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
       const strategicDashboard = (params as Record<string, unknown>).strategicDashboard;
       const stage1Handoff = buildStage1StrategicHandoffForStage2(strategicDashboard, snapshotSummary);
@@ -1223,6 +1226,7 @@ async function processPlatformJob(
         store,
         abortSignal: undefined,
         stage1Handoff,
+        globalBlueOceanWords,
         stage2LlmModeOverride: stage2LlmModeOverride ?? null,
         onBlueprintGenerated: platformJobId
           ? async (blueprint, dimIndex) => {

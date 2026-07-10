@@ -27,6 +27,7 @@ import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
+import { buildBlueOceanLexicon } from "@shared/blueOceanLexicon";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
@@ -871,20 +872,23 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: 
 }
 
 /** 供分镜表 / 小红书 2×4 八格图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
-function buildPlatformSheetScriptContext(item: {
-  title: string;
-  hook: string;
-  copywriting: string;
-  production?: string;
-  detailedScript?: string;
-  publishingAdvice?: string;
-  actionableSteps?: string[];
-  executionDetails?: {
-    environmentAndWardrobe?: string;
-    lightingAndCamera?: string;
-    stepByStepScript?: string[];
-  };
-}): string {
+function buildPlatformSheetScriptContext(
+  item: {
+    title: string;
+    hook: string;
+    copywriting: string;
+    production?: string;
+    detailedScript?: string;
+    publishingAdvice?: string;
+    actionableSteps?: string[];
+    executionDetails?: {
+      environmentAndWardrobe?: string;
+      lightingAndCamera?: string;
+      stepByStepScript?: string[];
+    };
+  },
+  opts?: { shootingTechniqueBrief?: string },
+): string {
   const parts: string[] = [];
   parts.push(`【选题】${item.title}`);
   if (item.hook) parts.push(`【钩子】${item.hook}`);
@@ -901,6 +905,8 @@ function buildPlatformSheetScriptContext(item: {
   }
   if (item.detailedScript) parts.push(`【详细脚本】${item.detailedScript}`);
   if (item.publishingAdvice) parts.push(`【发布建议】${item.publishingAdvice}`);
+  const shoot = String(opts?.shootingTechniqueBrief || "").trim();
+  if (shoot) parts.push(`【上传素材拍摄技法】\n${shoot}`);
   return parts.join("\n\n").slice(0, 12000);
 }
 
@@ -999,6 +1005,8 @@ type PlatformContentExecutionCard = {
     stepByStepScript: string[];
   };
   titleVariants: PlatformTitleVariant[];
+  /** 蓝海词 / 高亮搜索词（推演文案） */
+  highlightKeywords?: string[];
   /** 战略地图当次赠送选题（刷新后不再展示） */
   isDecisionIntelBonus?: boolean;
   /** 战略地图用户点选扩写（刷新后不再展示） */
@@ -1067,6 +1075,18 @@ function mapContentBlueprintToExecutionCard(
     `内容方案 ${index + 1}`,
   );
 
+  const highlightRaw =
+    item.highlightKeywords ?? item.blueOceanKeywords ?? item.keywords ?? item["高亮词"] ?? item["蓝海词"];
+  const highlightKeywords: string[] = Array.isArray(highlightRaw)
+    ? highlightRaw.map((x) => renderSafeText(x)).filter(Boolean).slice(0, 8)
+    : typeof highlightRaw === "string" && highlightRaw.trim()
+      ? highlightRaw
+          .split(/[,，、/\s]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 8)
+      : [];
+
   return {
     id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
     title: baseTitle,
@@ -1090,6 +1110,7 @@ function mapContentBlueprintToExecutionCard(
       stepByStepScript: scriptSteps,
     },
     titleVariants,
+    highlightKeywords,
     isDecisionIntelBonus: opts?.isDecisionIntelBonus,
     isDecisionIntelPicked: opts?.isDecisionIntelPicked,
   };
@@ -1764,6 +1785,8 @@ export default function PlatformPage() {
   const pendingOptimizeVisionRef = useRef<string | undefined>(undefined);
   const pendingOptimizeLiveTrendsRef = useRef(false);
   const [assetAnalysisBusy, setAssetAnalysisBusy] = useState(false);
+  /** 素材分析完成后的拍摄手法摘要，注入分镜 scriptContext */
+  const lastShootingTechniqueBriefRef = useRef<string>("");
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting" | "assets">("copy");
 
@@ -2127,6 +2150,7 @@ export default function PlatformPage() {
           context: ctxForJob,
           windowDays,
           platformMenu: dash.platformMenu || [],
+          globalBlueOceanWords: visualReportData?.globalBlueOceanWords ?? [],
           snapshotSummary,
           strategicDashboard: dash as unknown as Record<string, unknown>,
           stage2LlmMode: "openai" as const,
@@ -2161,7 +2185,7 @@ export default function PlatformPage() {
         setIsContentLoading(false);
       }
     },
-    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine],
+    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine, visualReportData],
   );
 
   /** 用户确认后入队 Stage 2（后端立即扣积分）并轮询直至完成 */
@@ -3478,6 +3502,9 @@ export default function PlatformPage() {
 
   const handleAssetDeepOptimize = useCallback(
     async (payload: AssetAnalysisHandoffPayload) => {
+      if (payload.shootingTechniqueBrief?.trim()) {
+        lastShootingTechniqueBriefRef.current = payload.shootingTechniqueBrief.trim();
+      }
       pendingOptimizeVisionRef.current = payload.visionContext || undefined;
       pendingOptimizeLiveTrendsRef.current = true;
       const res = await optimizeCustomCopyMutation.mutateAsync({
@@ -3504,16 +3531,20 @@ export default function PlatformPage() {
       setCustomNoteError(null);
       setCustomNoteBusy(true);
       try {
+        const shoot = lastShootingTechniqueBriefRef.current.trim();
+        const scriptWithShoot = shoot
+          ? `${text.trim()}\n\n【上传素材拍摄技法】\n${shoot}`.slice(0, 12000)
+          : text;
         if (kind === "single_page_knowledge_card") {
           setCustomNotePartInFlight("upper");
-          const upper = await generateCustomNoteOne(text, "single_page_knowledge_card", "upper");
+          const upper = await generateCustomNoteOne(scriptWithShoot, "single_page_knowledge_card", "upper");
           setCustomNoteImageUpper(upper);
           setCustomNotePartInFlight("lower");
-          const lower = await generateCustomNoteOne(text, "single_page_knowledge_card", "lower");
+          const lower = await generateCustomNoteOne(scriptWithShoot, "single_page_knowledge_card", "lower");
           setCustomNoteImageLower(lower);
         } else {
           setCustomNotePartInFlight(null);
-          const img = await generateCustomNoteOne(text, "storyboard_sheet_landscape", undefined);
+          const img = await generateCustomNoteOne(scriptWithShoot, "storyboard_sheet_landscape", undefined);
           setCustomNoteImageUpper(img);
         }
       } catch (e) {
@@ -3716,13 +3747,15 @@ export default function PlatformPage() {
       .join("\n\n")
       .slice(0, 3800);
     const progressJobId = newPlatformCompositeProgressJobId();
+    const shootBrief = lastShootingTechniqueBriefRef.current.trim() || undefined;
     const res = await generatePlatformCompositeSheetMutation.mutateAsync({
       sceneId: card.id,
       title: card.title,
-      scriptContext: buildPlatformSheetScriptContext(card),
+      scriptContext: buildPlatformSheetScriptContext(card, { shootingTechniqueBrief: shootBrief }),
       kind: "storyboard_sheet_landscape",
       gridVariant: customTopicGridVariant,
       executionDetails: buildPlatformExecutionDetailsPayload(card),
+      shootingTechniqueBrief: shootBrief,
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       coverPersonaContext: coverPersona,
       referencePhotoUrl: storyboardRefUrl,
@@ -3812,6 +3845,7 @@ export default function PlatformPage() {
             topicTitle: customTopicTitle.trim() || undefined,
           },
           platformHint: decisionIntelPlatformHint,
+          blueOceanLexicon: decisionIntelBlueOceanLexicon,
           pick: {
             title: title.slice(0, 240),
             structure: structure.slice(0, 8000),
@@ -3863,7 +3897,7 @@ export default function PlatformPage() {
           coverPersonaContext: coverPersona,
           headlineTitle: card.title,
           compositeKind: "storyboard_sheet_landscape",
-          scriptContext: buildPlatformSheetScriptContext(card),
+          scriptContext: buildPlatformSheetScriptContext(card, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
           executionDetails: buildPlatformExecutionDetailsPayload(card),
           gridVariant: customTopicGridVariant,
           referencePhotoUrl: customTopicPhotoUrl ?? undefined,
@@ -3982,7 +4016,7 @@ export default function PlatformPage() {
               generatePlatformCompositeSheetMutation.mutateAsync({
                 sceneId: item.id,
                 title: headlineTitle,
-                scriptContext: buildPlatformSheetScriptContext(item as any),
+                scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                 kind: compositeKind,
                 gridVariant: compositeGridVariant,
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
@@ -4417,6 +4451,15 @@ export default function PlatformPage() {
   const decisionIntelPlatformHint = useMemo(
     () => pickPrimaryDecisionIntelPlatformHint(primaryPlatforms),
     [primaryPlatforms],
+  );
+  /** 决策智库 / 自定义选题推演文案：合并看板蓝海词 + 趋势报表全局蓝海词 */
+  const decisionIntelBlueOceanLexicon = useMemo(
+    () =>
+      buildBlueOceanLexicon({
+        platformMenu: platformDashboard?.platformMenu,
+        globalBlueOceanWords: visualReportData?.globalBlueOceanWords,
+      }),
+    [platformDashboard?.platformMenu, visualReportData?.globalBlueOceanWords],
   );
   const maxFit = Math.max(...primaryPlatforms.map((item) => item.audienceFitScore), 100);
   const maxMomentum = Math.max(...primaryPlatforms.map((item) => item.momentumScore), 100);
@@ -5090,7 +5133,7 @@ export default function PlatformPage() {
                 coverPersonaContext: coverPersona || undefined,
                 headlineTitle,
                 compositeKind,
-                scriptContext: buildPlatformSheetScriptContext(item as any),
+                scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 gridVariant: compositeGridVariant,
                 pollDebugLabel: `套装批量 · ${item.id}`,
@@ -5932,6 +5975,7 @@ export default function PlatformPage() {
           topic: strategicMapTopic,
           contentBlueprint: strategicMapBlueprint,
           platformHint: decisionIntelPlatformHint,
+          blueOceanLexicon: decisionIntelBlueOceanLexicon,
           pick,
         });
         const mapped = mapStrategicMapBlueprintsToExecutionCards(
@@ -6006,6 +6050,7 @@ export default function PlatformPage() {
           topic: strategicMapTopic,
           contentBlueprint: strategicMapBlueprint,
           platformHint: decisionIntelPlatformHint,
+          blueOceanLexicon: decisionIntelBlueOceanLexicon,
           pick: { title: title.slice(0, 240), structure, source: "structure" as const },
         });
         const mapped = mapStrategicMapBlueprintsToExecutionCards(
@@ -6066,6 +6111,7 @@ export default function PlatformPage() {
           topic: strategicMapTopic,
           contentBlueprint: strategicMapBlueprint,
           platformHint: decisionIntelPlatformHint,
+          blueOceanLexicon: decisionIntelBlueOceanLexicon,
           pick,
           regenerate: true,
         });
@@ -7136,6 +7182,9 @@ export default function PlatformPage() {
                 }
                 onBusyChange={setAssetAnalysisBusy}
                 onDeepOptimize={handleAssetDeepOptimize}
+                onShootingTechniqueReady={(brief) => {
+                  lastShootingTechniqueBriefRef.current = brief;
+                }}
                 onGenerateFromText={handleAssetGenerateFromText}
                 optimizeCopyCost={customOptimizeCopyCost}
               />
@@ -8190,6 +8239,7 @@ export default function PlatformPage() {
                           topic: strategicMapTopic,
                           contentBlueprint: strategicMapBlueprint,
                           platformHint: decisionIntelPlatformHint,
+                          blueOceanLexicon: decisionIntelBlueOceanLexicon,
                           windowDays: selectedWindowDays,
                           dateRange: formatDecisionIntelDateRangeZh(selectedWindowDays),
                           platformAnalysisEpoch: platformAnalysisEpochRef.current,
@@ -9060,7 +9110,7 @@ export default function PlatformPage() {
                             generatePlatformCompositeSheetMutation.mutate({
                               sceneId: sourceRow.id,
                               title: sourceRow.title,
-                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any),
+                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                               kind: compositeKind,
                               gridVariant: compositeGridVariant,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
@@ -9492,7 +9542,7 @@ export default function PlatformPage() {
                             coverPersonaContext: coverPersona || undefined,
                             headlineTitle,
                             compositeKind,
-                            scriptContext: buildPlatformSheetScriptContext(item as any),
+                            scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                             gridVariant: compositeGridVariant,
                             pollDebugLabel: `套装单卡 · ${item.id}`,
@@ -9584,6 +9634,21 @@ export default function PlatformPage() {
                           <p className="mt-3 whitespace-normal break-words text-sm leading-relaxed text-gray-400">
                             {copyFlat}
                           </p>
+                        ) : null}
+                        {Array.isArray(item.highlightKeywords) && item.highlightKeywords.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#3eedff]/80">
+                              蓝海 / 高亮
+                            </span>
+                            {item.highlightKeywords.map((w, wi) => (
+                              <span
+                                key={`${item.id}-hk-${wi}`}
+                                className="rounded-md border border-[rgba(62,237,255,0.28)] bg-[rgba(62,237,255,0.08)] px-2 py-0.5 text-[11px] text-[#a5f3fc]"
+                              >
+                                {w}
+                              </span>
+                            ))}
+                          </div>
                         ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
                           <summary className="cursor-pointer select-none text-[15px] font-black text-[#ff9900] animate-pulse transition-colors hover:text-[#ffb84d]">
@@ -9905,7 +9970,7 @@ export default function PlatformPage() {
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
                                     title: headlineTitle,
-                                    scriptContext: buildPlatformSheetScriptContext(item as any),
+                                    scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                                     kind: compositeKind,
                                     gridVariant: compositeGridVariant,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),

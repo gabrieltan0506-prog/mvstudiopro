@@ -1296,6 +1296,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
+  /** 上传素材拍摄手法摘要（景别/布光/走位等），并入中文脚本约束 */
+  shootingTechniqueBrief?: string;
   /** @deprecated 保留欄位僅兼容舊 job 入參，已忽略（2×4 固定中文直送）。 */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
@@ -1387,6 +1389,14 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
   let scriptContextForPipeline = options.scriptContext;
+  const stagingBits = [
+    String(options.executionDetails || "").trim(),
+    String(options.shootingTechniqueBrief || "").trim(),
+  ].filter(Boolean);
+  if (stagingBits.length > 0) {
+    scriptContextForPipeline = `${String(scriptContextForPipeline || "").trim()}\n\n【光影与机位约束·拍摄手法】\n${stagingBits.join("\n\n")}`;
+    appendImageFlowLog(L, `[2×4·拍摄手法] 已注入 executionDetails/shootingTechniqueBrief（${stagingBits.join(" · ").length} chars）`);
+  }
   const referencePhotoUrl = String(options.referencePhotoUrl || "").trim() || undefined;
   if (referencePhotoUrl) {
     scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(
