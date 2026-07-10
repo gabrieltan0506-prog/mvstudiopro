@@ -10,10 +10,19 @@ import {
 import {
   EVOLINK_CHAT_MODEL_GPT54,
   formatEvolinkChatApiError,
-  isEvolinkChatModelNotFoundError,
   normalizeEvolinkChatModel,
   toEvolinkChatUserMessage,
 } from "../services/evolinkChatModel";
+import {
+  getOhMyGptApiKey,
+  getOhMyGptChatCompletionsUrl,
+  getOhMyGptGpt56SolModel,
+  getOhMyGptGpt56TerraModel,
+  isOhMyGptGpt56FamilyModel,
+  isOhMyGptGpt56TerraFallbackEnabled,
+  normalizeOhMyGptGpt56Model,
+  OHMYGPT_CHAT_MODEL_GPT56_SOL,
+} from "../services/ohmygptChat";
 
 export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
@@ -456,8 +465,8 @@ function getOpenAiModelName(modelTier: ModelTier | undefined) {
       EVOLINK_CHAT_MODEL_GPT54,
     );
   }
-  // 未指定 modelName 时默认走 gpt-5.5（与 PLATFORM_STAGE2_OPENAI_MODEL 一致）
-  return normalizeEvolinkChatModel(process.env.PLATFORM_STAGE2_OPENAI_MODEL || process.env.OPENAI_GPT54_MODEL);
+  // 未指定 modelName：平台全案默认 OhMyGPT gpt-5.6-sol
+  return getOhMyGptGpt56SolModel();
 }
 
 function getEvolinkApiKey(): string {
@@ -536,16 +545,36 @@ const resolveTarget = (
   explicitModelName?: string,
 ): LlmTarget => {
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
-    const fallback =
-      modelTier === "gpt54" || modelTier === "gpt5" ? EVOLINK_CHAT_MODEL_GPT54 : undefined;
-    const resolvedModelName = normalizeEvolinkChatModel(
-      explicitModelName || getOpenAiModelName(modelTier),
-      fallback,
-    );
+    const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
 
     /**
-     * Both GPT-5.4 and GPT-5.5 use Evolink API key (EVOLINK_API_KEY) and Evolink base URL.
-     * Native OpenAI API key is not used for these models.
+     * 平台全案 / Stage2 文案：OhMyGPT GPT-5.6 Sol（主）→ Terra（退路）。
+     * 调用形态与 EvoLink 相同：OpenAI-compatible `/v1/chat/completions`。
+     * Refs:
+     *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
+     *   https://developers.openai.com/api/docs/guides/latest-model
+     *   https://docs.ohmygpt.com/docs/api
+     * 图片生成仍走 EvoLink gpt-image-2，不经此分支。
+     */
+    if (isOhMyGptGpt56FamilyModel(candidate) || (!explicitModelName && modelTier !== "gpt54" && modelTier !== "gpt5")) {
+      const ohmyKey = getOhMyGptApiKey();
+      if (!ohmyKey) {
+        throw new Error("OHMYGPT_API_KEY / PROXY_OPENAI_API_KEY is not configured");
+      }
+      return {
+        provider: "openai",
+        apiUrl: getOhMyGptChatCompletionsUrl(),
+        apiKey: ohmyKey,
+        modelName: normalizeOhMyGptGpt56Model(candidate || OHMYGPT_CHAT_MODEL_GPT56_SOL),
+      };
+    }
+
+    const fallback =
+      modelTier === "gpt54" || modelTier === "gpt5" ? EVOLINK_CHAT_MODEL_GPT54 : undefined;
+    const resolvedModelName = normalizeEvolinkChatModel(candidate || getOpenAiModelName(modelTier), fallback);
+
+    /**
+     * GPT-5.4 / GPT-5.5（非 5.6）仍走 Evolink。
      * Refs:
      *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.4/gpt-5.4-reference
      *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.5/gpt-5.5-reference
@@ -1149,71 +1178,94 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     payload.response_format = normalizedResponseFormat;
   }
 
-  const postOnce = async (modelName: string): Promise<Response> => {
-    const body = { ...payload, model: modelName };
-    return fetch(String(target.apiUrl), {
+  const postChatCompletions = async (
+    apiUrl: string,
+    apiKey: string,
+    body: Record<string, unknown>,
+    label: string,
+  ): Promise<InvokeResult> => {
+    const response = await fetch(apiUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${target.apiKey}`,
+        authorization: `Bearer ${apiKey}`,
       },
       signal: mergeWithLlmTimeout(params.abortSignal),
       body: JSON.stringify(body),
     });
-  };
 
-  let activeModel = String(target.modelName || "").trim();
-  let response = await postOnce(activeModel);
-
-  // 404「Could not find an existing deployment…」：非积分问题；若主模型不可用则回退 gpt-5.4 再试一次。
-  if (!response.ok && response.status === 404) {
-    const errorText = await response.text();
-    const fallbackModel = EVOLINK_CHAT_MODEL_GPT54;
-    if (
-      isEvolinkChatModelNotFoundError(response.status, errorText) &&
-      activeModel !== fallbackModel
-    ) {
-      console.warn(
-        `[invokeOpenAI] model "${activeModel}" not found on Evolink (404), retrying with ${fallbackModel}`,
-      );
-      activeModel = fallbackModel;
-      response = await postOnce(activeModel);
-      if (!response.ok) {
-        const retryText = await response.text();
-        throw new Error(toEvolinkChatUserMessage(response.status, retryText));
-      }
-    } else {
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
       throw new Error(toEvolinkChatUserMessage(response.status, errorText));
     }
-  } else if (!response.ok) {
-    const errorText = await response.text();
-    // 402 = 积分不足；其余保留服务端日志细节，同时抛出用户可读文案
-    const userMsg = toEvolinkChatUserMessage(response.status, errorText);
-    console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
-    throw new Error(userMsg);
-  }
 
-  // Guard against Cloudflare / proxy returning an HTML error page with status 200
-  // (e.g. 524 timeout pages that arrive with 200 OK from intermediate CDN layers).
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("text/html")) {
-    throw new Error(
-      `Evolink returned HTML instead of JSON (status ${response.status}) — possible 524 timeout or Cloudflare error page`,
-    );
-  }
-  if (!contentType.includes("application/json") && !contentType.includes("text/event-stream") && contentType !== "") {
-    throw new Error(
-      `Evolink returned unexpected Content-Type "${contentType}" (status ${response.status}) — expected application/json`,
-    );
-  }
+    // Guard against Cloudflare / proxy returning an HTML error page with status 200
+    // (e.g. 524 timeout pages that arrive with 200 OK from intermediate CDN layers).
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("text/html")) {
+      throw new Error(
+        `${label} returned HTML instead of JSON (status ${response.status}) — possible 524 timeout or Cloudflare error page`,
+      );
+    }
+    if (
+      !contentType.includes("application/json") &&
+      !contentType.includes("text/event-stream") &&
+      contentType !== ""
+    ) {
+      throw new Error(
+        `${label} returned unexpected Content-Type "${contentType}" (status ${response.status}) — expected application/json`,
+      );
+    }
 
-  const rawText = await response.text();
+    const rawText = await response.text();
+    try {
+      return JSON.parse(rawText) as InvokeResult;
+    } catch {
+      throw new Error(`${label} returned non-JSON body (status ${response.status}): ${rawText.slice(0, 400)}`);
+    }
+  };
+
+  const primaryModel = String(target.modelName || "").trim();
+  const isOhMyGptEndpoint = String(target.apiUrl || "").includes("ohmygpt.com") || String(target.apiUrl || "").includes("hash070.com");
+  const isGpt56SolPrimary =
+    isOhMyGptEndpoint &&
+    normalizeOhMyGptGpt56Model(primaryModel) === OHMYGPT_CHAT_MODEL_GPT56_SOL;
+
   try {
-    return JSON.parse(rawText) as InvokeResult;
-  } catch {
-    throw new Error(
-      `Evolink returned non-JSON body (status ${response.status}): ${rawText.slice(0, 400)}`,
+    return await postChatCompletions(
+      String(target.apiUrl),
+      String(target.apiKey),
+      payload,
+      isOhMyGptEndpoint ? "OhMyGPT" : "Evolink",
     );
+  } catch (primaryErr) {
+    // OhMyGPT gpt-5.6-sol 任意错误 → 同网关 gpt-5.6-terra（图片仍走 EvoLink gpt-image-2）
+    if (!isGpt56SolPrimary || !isOhMyGptGpt56TerraFallbackEnabled()) {
+      throw primaryErr;
+    }
+    const terraModel = getOhMyGptGpt56TerraModel();
+    if (terraModel === primaryModel) throw primaryErr;
+    console.warn(
+      `[invokeOpenAI] OhMyGPT ${primaryModel} failed → fallback ${terraModel}:`,
+      primaryErr instanceof Error ? primaryErr.message.slice(0, 240) : primaryErr,
+    );
+    try {
+      return await postChatCompletions(
+        String(target.apiUrl),
+        String(target.apiKey),
+        { ...payload, model: terraModel },
+        "OhMyGPT",
+      );
+    } catch (fallbackErr) {
+      console.warn(
+        `[invokeOpenAI] OhMyGPT ${terraModel} fallback also failed:`,
+        fallbackErr instanceof Error ? fallbackErr.message.slice(0, 240) : fallbackErr,
+      );
+      throw fallbackErr instanceof Error
+        ? fallbackErr
+        : new Error("文案生成暂时不可用（GPT-5.6 Sol 与 Terra 均失败），请稍后重试");
+    }
   }
 }
 
