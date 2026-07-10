@@ -1500,6 +1500,11 @@ async function processPlatformJob(
       const compositeScriptContext = String(params.compositeScriptContext ?? "").trim();
       const compositeExecutionDetails =
         typeof params.compositeExecutionDetails === "string" ? params.compositeExecutionDetails.trim() : undefined;
+      const compositeShootingTechniqueBrief =
+        typeof (params as { compositeShootingTechniqueBrief?: unknown }).compositeShootingTechniqueBrief === "string"
+          ? String((params as { compositeShootingTechniqueBrief?: string }).compositeShootingTechniqueBrief).trim() ||
+            undefined
+          : undefined;
       const imagePromptTranslator = "gpt54" as const;
 
       const rawCompDr = (params as { enableCompositeDeepResearchPro?: unknown }).enableCompositeDeepResearchPro;
@@ -1572,6 +1577,7 @@ async function processPlatformJob(
             scriptContext: compositeScriptContext,
             isTrial,
             executionDetails: compositeExecutionDetails,
+            shootingTechniqueBrief: compositeShootingTechniqueBrief,
             imagePromptTranslator,
             flowLog: compositeFlowLog,
             enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,

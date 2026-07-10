@@ -21,7 +21,7 @@ import {
 } from "./platformTopicCoverPrompt.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
-import { appendFashionEditorialCharacterGuidance } from "../../shared/platformFashionEditorialCharacter.js";
+import { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
 import {
   isEvolinkGptImage2Configured,
   isEvolinkModerationFailure,
@@ -1501,6 +1501,7 @@ export async function generatePlatformCompositeSheetImage(options: {
         const chineseCore = buildCompositeSheetDirectChineseBody(
           k as "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
           scriptContextForPipeline,
+          { rowBand: Boolean(options.gridSection) },
         ).trim();
         if (!chineseCore) {
           appendImageFlowLog(L, "[2×4·步骤1] 中文主体为空");
@@ -1508,7 +1509,15 @@ export async function generatePlatformCompositeSheetImage(options: {
         }
         appendImageFlowLog(
           L,
-          `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 约 ${chineseCore.length} 字符`,
+          `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${
+            options.gridSection
+              ? isStoryboard
+                ? "3×4 横排四格分镜"
+                : "3×4 横排四格图文"
+              : isStoryboard
+                ? "电影 2×4 分镜"
+                : "小红书 2×4 八格"
+          }）· 约 ${chineseCore.length} 字符`,
         );
 
         appendImageFlowLog(L, "[2×4·步骤1·完成] 主体就绪，直接进入像素锁与送生图");
@@ -1554,10 +1563,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           isFirst
             ? "This is the FIRST part: include a slim top 内容总结 title band, then this part's single row of 4 panels below it."
             : "This is a CONTINUATION part: do NOT repeat the global top title band — start directly with this part's single row of 4 panels at the very top edge."
-        } All on-image text stays **Simplified Chinese**, print-clear, no garble.`;
+        } CHARACTER & SHOOTING CONTINUITY (same as 2×4 rules): modern host/protagonist must stay **the same person** across all parts with **VOGUE / ELLE / Harper's Bazaar / Hollywood fashion-editorial** wardrobe matched to each scene (navy/black/cream/grey couture textures; optional understated luxury accessories, never forced clutter). Shot size / camera move / lighting / blocking must follow any 【光影与机位约束·拍摄手法】 or 【上传素材拍摄技法】 in the script (teaching demos: prefer fixed mid-long shot, phone/prop foreground, screen background). All on-image text stays **Simplified Chinese**, print-clear, no garble.`;
         appendImageFlowLog(
           L,
-          `[3×4·分段] 第 ${index + 1}/${total} 段 · 已注入连贯/同风格指令（${isFirst ? "含顶栏" : "无顶栏·续接"}）· prompt≈${promptForImage.length} 字符`,
+          `[3×4·分段] 第 ${index + 1}/${total} 段 · 已注入连贯/同风格/时装大片/拍摄手法指令（${isFirst ? "含顶栏" : "无顶栏·续接"}）· prompt≈${promptForImage.length} 字符`,
         );
       }
 
@@ -1763,6 +1772,8 @@ export function splitScriptIntoSections(scriptContext: string, sections: number)
  * 把内容拆成 2–3 段，每段各自走 {@link generatePlatformCompositeSheetImage}（注入 `gridSection` 连贯指令、
  * 每段字密度更低 → 降低糊字），再纵向拼成单张长图上传，返回单一 URL。仅支持 storyboard / xhs；
  * 任一段失败即抛错（调用方据此报错或退款）。
+ *
+ * **人物造型 + 拍摄手法**：与 2×4 共用同一套规则；切段前先抽出共享约束，再**逐段前置**，避免切段后后段丢失时装大片 / 机位约束。
  */
 export async function generatePlatformGridStitchedSheetImage(
   options: Parameters<typeof generatePlatformCompositeSheetImage>[0] & { sections?: number },
@@ -1776,19 +1787,39 @@ export async function generatePlatformGridStitchedSheetImage(
   }
   // 3×4 十二格 = 3 行 × 4 列；分成 3 段，每段一整横排 4 格 → 纵向拼成 12 格长图。
   const total = Math.max(2, Math.min(3, options.sections ?? 3));
-  const parts = splitScriptIntoSections(options.scriptContext, total);
+
+  const sharedRules = [
+    PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH,
+    String(options.executionDetails || "").trim()
+      ? `【光影与机位约束·拍摄手法】\n${String(options.executionDetails).trim()}`
+      : "",
+    String(options.shootingTechniqueBrief || "").trim()
+      ? `【上传素材拍摄技法】\n${String(options.shootingTechniqueBrief).trim()}`
+      : "",
+    "【3×4 十二格·跨段连贯】本图为 3 行×4 列长图的分段横排生成；各段现代主人公须同一人、同一国际时尚大片阶层气质；景别/运镜/布光对齐拍摄手法约束；跨段色调、布光、边框一致以便无缝拼接。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const narrative = String(options.scriptContext || "").trim();
+  const parts = splitScriptIntoSections(narrative, total);
   const realTotal = parts.length;
   appendImageFlowLog(
     L,
-    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段分别生成（每段更低密度·降糊字）→ sharp 直向拼成一张长图`,
+    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段分别生成（每段前置时装大片+拍摄手法共享约束）→ sharp 直向拼成一张长图`,
   );
 
   const urls: string[] = [];
   for (let i = 0; i < parts.length; i++) {
     appendImageFlowLog(L, `[3×4·总控] ▶ 生成第 ${i + 1}/${realTotal} 段 …`);
+    const sectionScript = `${sharedRules}\n\n【本段分镜内容 · 第 ${i + 1}/${realTotal} 横排】\n${parts[i]}`.slice(
+      0,
+      12000,
+    );
     const url = await generatePlatformCompositeSheetImage({
       ...options,
-      scriptContext: parts[i],
+      scriptContext: sectionScript,
+      // 共享规则已写入每段 script；仍传字段供内层兜底与 flow log
       gridSection: { index: i, total: realTotal },
     });
     if (!String(url || "").trim()) {

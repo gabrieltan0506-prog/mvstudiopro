@@ -5012,6 +5012,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             "xiaohongshu_dual_note",
           ]),
           compositeExecutionDetails: z.string().max(4000).optional(),
+          /** 上传素材拍摄手法摘要 → 2×4 / 3×4 分镜共用 */
+          compositeShootingTechniqueBrief: z.string().max(4000).optional(),
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           creationRecordId: z.number().int().positive().optional(),
           compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
@@ -5186,6 +5188,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeScriptContext: input.compositeScriptContext,
               compositeKind: input.compositeKind,
               compositeExecutionDetails: input.compositeExecutionDetails,
+              compositeShootingTechniqueBrief: input.compositeShootingTechniqueBrief,
               compositeImagePromptTranslator: imagePromptTranslatorForComposite,
               creationRecordId: input.creationRecordId,
               enableCompositeDeepResearchPro: enableTopicCoverDeepResearchProAdmin,

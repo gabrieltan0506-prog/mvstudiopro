@@ -164,3 +164,31 @@ export function appendFashionEditorialCharacterGuidance(base, opts?): string;
 
 4. 全案执行卡生成封面 → 人物穿搭贴合场景、杂志大片气质  
 5. 自定义选题上传人像生成封面+分镜 → 同脸 + 高级时装造型，配饰不堆砌  
+6. **3×4 十二格**（全案批量 / 自定义切换）→ 三段横排均含时装大片 + 拍摄手法；跨段同人同布光；flow log 含「时装大片+拍摄手法共享约束」
+
+---
+
+## 续：3×4 分镜沿用人物造型与拍摄手法（完工）
+
+> 同分支 PR #731 · 3×4 与 2×4 **同一套**规则，分段切脚本时不丢约束
+
+### 问题
+
+3×4 会把 `scriptContext` 切成 2–3 段再分别生图；若共享约束只在全文末尾，后段可能丢失时装大片 / 机位说明。
+
+### 修复
+
+**文件**：`server/services/proxyImageService.ts` → `generatePlatformGridStitchedSheetImage`
+
+- 切段前组装 `sharedRules`：`PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH` + `executionDetails` + `shootingTechniqueBrief` + 跨段连贯说明  
+- **每一段**前置该共享块后再送 `generatePlatformCompositeSheetImage`  
+- `MULTI-PART LONG SHEET` 英文指令补充 CHARACTER & SHOOTING CONTINUITY（与 2×4 同口径）  
+- `buildCompositeSheetDirectChineseBody(..., { rowBand: true })`：中文主体改为「1 行×4 格」并写明时装大片 + 拍摄手法对齐  
+
+**套装链路**：`compositeShootingTechniqueBrief` 入队 → worker 传入 2×4/3×4 生图；客户端批量/单卡/自定义套装均带上 `shootingTechniqueBrief`。
+
+```ts
+// 3×4 每段前置（示意）
+const sectionScript = `${sharedRules}\n\n【本段分镜内容 · 第 ${i + 1}/${realTotal} 横排】\n${parts[i]}`;
+await generatePlatformCompositeSheetImage({ ...options, scriptContext: sectionScript, gridSection: { index: i, total: realTotal } });
+```

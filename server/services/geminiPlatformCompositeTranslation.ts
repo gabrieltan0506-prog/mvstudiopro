@@ -496,9 +496,8 @@ ${SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN}`.trim();
 }
 
 /**
- * **2×4 分镜 / 小红书八格** 的「中文直送主体」。
- * 仅产出**中文画面主体**；调用方仍会在其后拼接英文像素锁（`GPT_IMAGE2_*_2X4_PIXEL_LOCK`）+ 顶栏注入 + 镜头/光影 modifier，
- * 故 2×4 八格的格状纪律由像素锁继续锁死，本函数只负责把 GPT-5.5 中文文案（含分镜描述）原样带入。
+ * **2×4 分镜 / 小红书八格**（或 **3×4 分段横排**）的「中文直送主体」。
+ * 仅产出**中文画面主体**；调用方仍会在其后拼接英文像素锁（`GPT_IMAGE2_*_2X4_PIXEL_LOCK` / `*_ROWBAND_*`）+ 顶栏注入 + 镜头/光影 modifier。
  */
 export function buildCompositeSheetDirectChineseBody(
   kind:
@@ -506,10 +505,23 @@ export function buildCompositeSheetDirectChineseBody(
     | "storyboard_sheet_landscape"
     | "xiaohongshu_dual_note",
   scriptContext: string,
+  opts?: { rowBand?: boolean },
 ): string {
   const slice = String(scriptContext || "").slice(0, SCRIPT_SLICE);
   const isStoryboard = kind === "storyboard_sheet_landscape" || kind === "storyboard_sheet_portrait";
+  const rowBand = Boolean(opts?.rowBand);
   if (isStoryboard) {
+    if (rowBand) {
+      return `请直接据下方中文脚本生成**3×4 十二格长图中的一整横排分镜**（横版约 16:9，仅 **1 行 × 4 列共 4 格**，不要画成完整 2×4 八格）：
+- 严格排成单横排四格，格线笔直、格间留白清晰，左→右顺扫；本段将与其他横排纵向拼成 3×4 长图。
+- 每一格自上而下：① 本格分镜主题（一行加粗简体中文）；② 该镜头电影级写实剧照（高细节，约占 70–75%）；③ 格内底部约 25–30% 为简体中文四栏小表，表头固定【景别 / 运镜 / 画面内容 / 台词与音效】四栏都要填。
+- 风格：电影感、8k、精致布光、统一高级色调；所有屏内文字一律**简体中文、印刷清晰、不可乱码/缺笔**。
+- 若脚本含【光影与机位约束·拍摄手法】或【上传素材拍摄技法】，四格的景别/运镜/布光/走位须对齐该约束（教学演示类优先固定中远景、前景操作物、背景大屏同步）。
+- 现代主讲/主人公人物造型须对齐【人物造型·国际时尚大片】：配合场景的高雅/高贵时装，VOGUE·ELLE·Harper's Bazaar·好莱坞时尚编辑气质；妆发皮肤高级真实，配饰可点缀勿硬配；与其他分段跨段同一人、同一阶层气质、同一布光色调。
+
+【中文脚本】：
+${slice}`;
+    }
     return `请直接据下方中文脚本生成一张**电影级 2×4 八格分镜参考图**（横版约 16:9 单张主表，不是单张满版海报）：
 - 顶部约 8–12% 为通栏【内容总结】标题栏（简体中文·全片梗概，不放各格分镜标题）。
 - 其下严格排成 **2 行 × 4 列、共 8 格**，格线笔直、格间留白清晰，按 row1 左→右、row2 左→右顺扫。
@@ -519,6 +531,14 @@ export function buildCompositeSheetDirectChineseBody(
 - 现代主讲/主人公人物造型须对齐【人物造型·国际时尚大片】：配合场景的高雅/高贵时装，VOGUE·ELLE·Harper's Bazaar·好莱坞时尚编辑气质；妆发皮肤高级真实，配饰可点缀勿硬配；跨格服装可随场景微调但须保持同一人与同一阶层气质。
 
 【中文脚本】：
+${slice}`;
+  }
+  if (rowBand) {
+    return `请直接据下方中文文案生成**3×4 十二格长图中的一整横排图文笔记**（横版约 16:9，仅 **1 行 × 4 列共 4 格**，不要画成完整 2×4 八格）：
+- 严格排成单横排四格，格线笔直；每格为一个知识/内容要点：醒目简体中文小标题 + 要点短句 + 扁平插画/图标；整体暖色粉彩、明快多彩、高级商务审美。
+- 画风为**扁平插画信息图**；屏内文字一律**简体中文、清晰不乱码**；与其他分段跨段同色调同边框以便拼接。
+
+【中文文案】：
 ${slice}`;
   }
   return `请直接据下方中文文案生成一张**小红书风格 2×4 八格图文笔记参考图**（横版约 16:9 单张主表，不是单张满版海报）：

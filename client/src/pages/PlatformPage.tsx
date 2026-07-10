@@ -2477,6 +2477,8 @@ export default function PlatformPage() {
         | "xiaohongshu_dual_note";
       scriptContext: string;
       executionDetails: string;
+      /** 上传素材拍摄手法 → 2×4 / 3×4 分镜 */
+      shootingTechniqueBrief?: string;
       gridVariant?: "2x4" | "3x4";
       pollDebugLabel?: string;
       /** 用户上传人像 → 封面/分镜融合主人公相貌 */
@@ -2495,6 +2497,9 @@ export default function PlatformPage() {
         compositeScriptContext: inp.scriptContext,
         compositeKind: inp.compositeKind,
         compositeExecutionDetails: inp.executionDetails,
+        ...(inp.shootingTechniqueBrief?.trim()
+          ? { compositeShootingTechniqueBrief: inp.shootingTechniqueBrief.trim() }
+          : {}),
         gridVariant: inp.gridVariant ?? "2x4",
         imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
         ...optionalBoundCreationRecordId(),
@@ -3902,6 +3907,7 @@ export default function PlatformPage() {
           compositeKind: "storyboard_sheet_landscape",
           scriptContext: buildPlatformSheetScriptContext(card, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
           executionDetails: buildPlatformExecutionDetailsPayload(card),
+          shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
           gridVariant: customTopicGridVariant,
           referencePhotoUrl: customTopicPhotoUrl ?? undefined,
           compositeImageEngine: storyboardCompositeEngine,
@@ -4023,6 +4029,7 @@ export default function PlatformPage() {
                 kind: compositeKind,
                 gridVariant: compositeGridVariant,
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                 ...optionalBoundCreationRecordId(),
                 imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                 progressJobId,
@@ -5138,6 +5145,7 @@ export default function PlatformPage() {
                 compositeKind,
                 scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                 gridVariant: compositeGridVariant,
                 pollDebugLabel: `套装批量 · ${item.id}`,
               }),
@@ -9117,6 +9125,7 @@ export default function PlatformPage() {
                               kind: compositeKind,
                               gridVariant: compositeGridVariant,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
+                              shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                               ...optionalBoundCreationRecordId(),
                               imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                               progressJobId: newPlatformCompositeProgressJobId(),
@@ -9547,6 +9556,7 @@ export default function PlatformPage() {
                             compositeKind,
                             scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                            shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                             gridVariant: compositeGridVariant,
                             pollDebugLabel: `套装单卡 · ${item.id}`,
                           }),
@@ -9977,6 +9987,7 @@ export default function PlatformPage() {
                                     kind: compositeKind,
                                     gridVariant: compositeGridVariant,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                                    shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                                     ...optionalBoundCreationRecordId(),
                                     imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                                     progressJobId: newPlatformCompositeProgressJobId(),
