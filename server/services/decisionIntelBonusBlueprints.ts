@@ -143,6 +143,12 @@ export async function generateDecisionIntelBonusBlueprints(params: {
   topic: string;
   platformHint: string;
   abortSignal?: AbortSignal;
+  /** 平台蓝海词 / 标签推演词表（可选） */
+  blueOceanLexicon?: {
+    flat?: string[];
+    grouped?: unknown[];
+    tagCandidates?: string[];
+  } | null;
 }): Promise<Record<string, unknown>[]> {
   const selected = selectDecisionIntelBonusTopics(params.report.topicStructureExamples);
   if (selected.length === 0) return [];
@@ -161,5 +167,6 @@ export async function generateDecisionIntelBonusBlueprints(params: {
     platformHint: params.platformHint,
     idPrefix: "decision-intel-bonus",
     abortSignal: params.abortSignal,
+    blueOceanLexicon: params.blueOceanLexicon,
   });
 }
