@@ -686,10 +686,9 @@ async function buildPlatformDashboard(params: {
   /** UI / 请求覆写：vertex=Gemini 3.5 Flash · openai=GPT‑5.5 */
   copyLlmMode?: PlatformStage2LlmMode | null;
 }) {
-  const getPlatformDecisionWindowDays = (platform: string): number => {
-    if (platform === "douyin" || platform === "kuaishou") return 5;
-    if (platform === "bilibili" || platform === "xiaohongshu") return 15;
-    return params.windowDays;
+  /** 与用户所选 3/7/15/30/45 对齐；短窗不再硬编码 5/15，避免分析样本与 UI 脱节。 */
+  const getPlatformDecisionWindowDays = (_platform: string): number => {
+    return Math.max(3, Math.min(45, Number(params.windowDays) || 15));
   };
   const readTrendItemTimestampMs = (item: any): number | null => {
     const ts =
@@ -4120,7 +4119,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
-1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。必须查阅平台最新官方活动（结合当前日期 ${currentDateStr}，优先给出仍在进行中的活动，而非过期活动）。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
+1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。必须结合当前日期 ${currentDateStr} 与 snapshot.supportActivities / 推流活动匹配结果，优先仍在进行中的活动（如抖音 AI 创作大赛、小红书 RED 新生代/中长视频激励、B 站任务中心当月征稿、快手光合计划），禁止写已过期活动。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : wd <= 15 ? " 【短窗：" + wd + " 天】优先近两周仍可报名的征稿/激励。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
 3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
 4. blueOceanWords：**蓝海词（分级）**，每个平台 2-4 组，每组格式为 { "primary": "一级蓝海词（父词，搜索量 >10万/月）", "secondary": ["二级词1", "二级词2", "二级词3"]}。定义：搜索量大（>10万/月）+ 同行内容少（同类笔记 <200篇）+ 用户意图精准（离成交近）。二级词来源：用一级词在该平台搜索后，整理下拉联想词 + 评论区高赞高频词中高流量（点赞>1万/收藏>5000/评论热烈）的子词条。二级词数量：有数据则列出 3-5 个，无法确认满足标准的词条不强行凑数。小红书优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取；抖音优先从热门话题下评论区高频词中提取。

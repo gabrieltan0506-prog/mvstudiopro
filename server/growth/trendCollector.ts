@@ -272,6 +272,73 @@ function safeDateFromTimestamp(timestamp?: number) {
   return toShanghaiIso(timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000);
 }
 
+/**
+ * 小红书 noteCard / 搜索 note：尽量解析发布时间。
+ * 缺 publishedAt 时短窗（3/7/15 天）评分会把样本整批丢掉，导致「有效数据」极低。
+ */
+function extractXhsPublishedAt(noteCard: unknown): string | undefined {
+  const nc = noteCard as Record<string, any> | null | undefined;
+  if (!nc || typeof nc !== "object") return undefined;
+
+  const candidates: unknown[] = [
+    nc.time,
+    nc.timestamp,
+    nc.createTime,
+    nc.createdAt,
+    nc.lastUpdateTime,
+    nc.updateTime,
+    nc?.noteCard?.time,
+    nc?.noteCard?.timestamp,
+    nc?.interactInfo?.time,
+    nc?.cornerTagInfo?.V2?.text,
+    nc?.cornerTagInfo?.text,
+  ];
+
+  for (const raw of candidates) {
+    if (raw == null) continue;
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      const iso = safeDateFromTimestamp(raw);
+      if (iso) return iso;
+    }
+    const text = String(raw).trim();
+    if (!text) continue;
+
+    // 「x 天前 / x 小时前 / x 分钟前 / 刚刚」
+    const relative =
+      text.match(/^(\d+)\s*(分钟|小時|小时|天|周|週|个月|個月)前$/) ||
+      text.match(/^(\d+)\s*(min|hour|day|week|month)s?\s*ago$/i);
+    if (relative) {
+      const n = Number(relative[1]);
+      const unit = relative[2];
+      if (Number.isFinite(n) && n >= 0) {
+        const now = Date.now();
+        const ms =
+          /分钟|min/i.test(unit) ? n * 60_000 :
+          /小时|小時|hour/i.test(unit) ? n * 3_600_000 :
+          /天|day/i.test(unit) ? n * 86_400_000 :
+          /周|週|week/i.test(unit) ? n * 7 * 86_400_000 :
+          /月|month/i.test(unit) ? n * 30 * 86_400_000 :
+          0;
+        if (ms > 0) return toShanghaiIso(now - ms);
+      }
+    }
+    if (/^刚刚$|^剛才$|^just now$/i.test(text)) {
+      return toShanghaiIso(Date.now());
+    }
+
+    // 纯数字时间戳（秒/毫秒）
+    if (/^\d{10,13}$/.test(text)) {
+      const iso = safeDateFromTimestamp(Number(text));
+      if (iso) return iso;
+    }
+
+    // ISO / 常见日期串
+    const parsed = Date.parse(text.replace(/年|月/g, "-").replace(/日/g, "").replace(/\./g, "-"));
+    if (Number.isFinite(parsed) && parsed > 0) return toShanghaiIso(parsed);
+  }
+  return undefined;
+}
+
 function parseCsvEnv(name: string) {
   return String(process.env[name] || "")
     .split(",")
@@ -1822,6 +1889,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     getPlatformSeeds("bilibili"),
     searchRoute.keywordLimit || defaultKeywordLimit,
   );
+  // 默认优先 pubdate，避免仅 click 排序导致短窗样本偏老爆款
   const searchOrders = Array.from(new Set((parseCsvEnv("BILIBILI_SEARCH_ORDERS").length
     ? parseCsvEnv("BILIBILI_SEARCH_ORDERS")
     : ["pubdate", "click"])
@@ -2274,9 +2342,10 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     xhsSearchRoute.keywordLimit || defaultXhsKeywordLimit,
   );
   const searchPages = xhsSearchRoute.pageCount || defaultXhsSearchPages;
+  // 默认加入 time_descending，提高短窗（3/7/15 天）近期有效样本占比
   const searchSorts = parseCsvEnv("XHS_SEARCH_SORTS").length
     ? parseCsvEnv("XHS_SEARCH_SORTS")
-    : ["general", "popularity_desc"];
+    : ["general", "time_descending", "popularity_desc"];
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
@@ -2314,6 +2383,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
             comments: parseChineseCount(noteCard.interactInfo?.commentCount),
             shares: parseChineseCount(noteCard.interactInfo?.shareCount),
             contentType: noteCard.video ? "video" : "note",
+            publishedAt: extractXhsPublishedAt(noteCard) || extractXhsPublishedAt(feed),
             ...metaFromXhsNote(noteCard),
           } satisfies TrendItem;
         })
@@ -2367,6 +2437,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
                 shares: parseChineseCount(note.interactInfo?.shareCount ?? note.shareCount),
                 contentType: note.video ? "video" : "note",
                 tags: [keyword, sort],
+                publishedAt: extractXhsPublishedAt(note.noteCard ?? note) || extractXhsPublishedAt(note),
                 ...metaFromXhsNote(note.noteCard ?? note),
               } satisfies TrendItem;
             })

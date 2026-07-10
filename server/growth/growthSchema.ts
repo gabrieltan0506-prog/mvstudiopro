@@ -1203,8 +1203,24 @@ const PLATFORM_SUPPORT_ACTIVITY_REGISTRY: Partial<Record<GrowthPlatform, Support
       summary: "西瓜 / 抖音 / 头条联动分发仍可参与，更适合稳定口播、案例拆解和知识表达的视频。",
       status: "active",
       verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按公开入口与既有平台认知比对后保留。",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "长期入口；2026-07 复核仍有效。",
+    },
+    {
+      label: "抖音 AI 创作大赛 / AI 创作浪潮计划",
+      summary: "面向 AI 叙事与工具创作的官方征稿：现金奖池 + 上亿流量激励；适合 Seedance / 即梦等工具向内容。",
+      status: "active",
+      verifiedBy: "web",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "2026-06 官宣启动；短窗分析优先引用进行中赛道。",
+    },
+    {
+      label: "抖音知识节 / 知识区流量扶持",
+      summary: "知识口播、教程拆解、技能成长类内容可借官方知识向话题与征稿获得加权曝光。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "季度/节点活动；结合当前日期判断是否仍在征稿期。",
     },
   ],
   toutiao: [
@@ -1213,8 +1229,8 @@ const PLATFORM_SUPPORT_ACTIVITY_REGISTRY: Partial<Record<GrowthPlatform, Support
       summary: "西瓜 / 抖音 / 头条联动分发仍可参与，更适合稳定口播、案例拆解和知识表达的视频。",
       status: "active",
       verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按公开入口与既有平台认知比对后保留。",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "长期入口；2026-07 复核仍有效。",
     },
   ],
   bilibili: [
@@ -1223,52 +1239,60 @@ const PLATFORM_SUPPORT_ACTIVITY_REGISTRY: Partial<Record<GrowthPlatform, Support
       summary: "适合系列内容、案例复盘和方法拆解，是长期可关注的官方激励入口。",
       status: "active",
       verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按公开入口与平台现行创作机制比对后保留。",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "长期机制；2026-07 复核仍有效。",
     },
     {
       label: "任务中心征稿",
-      summary: "适合围绕站内征稿主题做热点切入、专题化创作和活动投稿。",
+      summary: "适合围绕站内征稿主题做热点切入、专题化创作和活动投稿；每月主题会更新，短窗需看当月任务。",
       status: "active",
       verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按公开入口与平台现行征稿机制比对后保留。",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "月更征稿；分析时强调「当月任务中心」时效。",
     },
   ],
   xiaohongshu: [
+    {
+      label: "RED 新生代创作大赛 / 创作基金",
+      summary: "2026 首届综合创作大赛：百亿赛事流量 + 创作基金；适合人格化原创、真诚分享与新生代账号冷启动。",
+      status: "active",
+      verifiedBy: "web",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "2026-03 启动，盛典与获奖流量助推延续至年中；短窗优先引用。",
+    },
+    {
+      label: "小红书中长视频激励 / 视频激励计划",
+      summary: "中长视频分发加码：创作基金 + 流量券（创作者月度任务最高可达数万流量券量级），适合 1 分钟以上种草/教程/生活方式视频。",
+      status: "active",
+      verifiedBy: "web",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "2026-05 新生代盛典官宣；与图文种草并行。",
+    },
     {
       label: "小红书电商与买手成长扶持",
       summary: "更适合种草笔记、生活方式内容、细分痛点解决和交易承接一体化内容。",
       status: "active",
       verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按公开可见平台生态与 Gemini 比对后保留，后续如有更明确官方页面应优先替换。",
-    },
-    {
-      label: "小红书商家 / 主理人 / 服务商成长扶持",
-      summary: "更适合同城门店、体验课、女性健康、家居生活方式等需要搜索承接和信任积累的内容。",
-      status: "active",
-      verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按公开可见平台生态与 Gemini 比对后保留，后续如有更明确官方页面应优先替换。",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "长期电商生态扶持；2026-07 复核保留。",
     },
   ],
   kuaishou: [
     {
       label: "快手光合计划与创作者成长扶持",
-      summary: "更适合真实口播、强场景、生活服务承接和长期稳定更新的账号。",
+      summary: "百亿级流量扶持优质创作者：冷启动包 / 热门加速 / 垂类加油包；更适合真实口播、强场景与稳定更新。",
       status: "active",
-      verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按快手公开财报与平台创作者生态描述比对后保留。",
+      verifiedBy: "web",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "光合计划公开口径复核；长期有效。",
     },
     {
       label: "快手直播与短直联动扶持",
       summary: "更适合先用短视频打痛点，再把体验课、门店服务或直播承接接起来。",
       status: "active",
       verifiedBy: "web+gemini",
-      lastReviewedAt: "2026-04-09",
-      reviewNote: "按快手公开财报与平台创作者生态描述比对后保留。",
+      lastReviewedAt: "2026-07-10",
+      reviewNote: "长期短直联动机制；2026-07 复核保留。",
     },
   ],
 };
@@ -1293,15 +1317,16 @@ function buildPlatformActivities(
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
   platformSnapshots: GrowthPlatformSnapshot[],
   platformRecommendations: GrowthPlatformRecommendation[],
+  windowDays = 15,
 ): GrowthPlatformActivity[] {
+  const hotWindowDays = Math.max(3, Math.min(45, Number(windowDays) || 15));
   return requestedPlatforms.map((platform) => {
     const collection = collections[platform];
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
     const recommendation = platformRecommendations.find((item) => parsePlatformFromRecommendation(item.name) === platform);
     const items = (collection?.items || []).filter((item) => item.contentType !== "topic" && item.bucket !== "douyin_topics");
-    // ✨ v4：用增长潜力算法选 hotTopics（≈30 天窗口 + 排商业/企业号 + 同账号突然爆发 + 强制行业归类）
-    //    替换原"点赞+播放+评论*3"绝对值排行，避免两年前老作品污染
-    const { selected: hotScored } = selectByGrowthPotential(items, { topN: 4, windowDays: 30 });
+    // 跟随用户所选 3/7/15/30/45 窗口选 hotTopics，避免短窗仍用 30 天老样本
+    const { selected: hotScored } = selectByGrowthPotential(items, { topN: 4, windowDays: hotWindowDays });
     const hotTopics = hotScored.map((s) => s.item.title).filter(Boolean);
     const activityLevel = items.length >= 40 ? "高" : items.length >= 15 ? "中" : "低";
     const suggestedTopics = recommendation?.topicIdeas?.slice(0, 3).map((item) => item.title)
@@ -2246,12 +2271,14 @@ const PUSH_ACTIVITY_REGISTRY_DATA: Array<{
   dataSource: string;
 }> = [
   { platform: "douyin", activityName: "中视频伙伴计划", activityType: "官方推流活动", status: "进行中", deadline: "长期有效", matchers: ["口播", "讲解", "知识", "案例", "教程", "拆解", "方法", "课程", "分析"], submissionSuggestion: "视频时长需超过 1 分钟，画质清晰，口播或讲解类内容优先。申请后需等待官方审核，通过后自动参与分成。", dataSource: "douyin_creator_center_static" },
+  { platform: "douyin", activityName: "抖音 AI 创作大赛", activityType: "官方推流活动", status: "进行中", deadline: "2026 赛季征稿期", matchers: ["AI", "人工智能", "AIGC", "即梦", "Seedance", "短片", "叙事", "剧本", "角色"], submissionSuggestion: "按官方赛道投稿 AI 叙事作品；可结合即梦 / Seedance 工具创作，关注现金奖与流量激励节点。", dataSource: "douyin_ai_contest_2026" },
   { platform: "douyin", activityName: "抖音知识节", activityType: "节点营销", status: "进行中", deadline: "季度活动", matchers: ["知识", "方法", "教育", "成长", "技能", "学习", "课程"], submissionSuggestion: "在视频主题中融入知识输出视角，使用官方话题标签参与投稿。", dataSource: "douyin_creator_center_static" },
+  { platform: "xiaohongshu", activityName: "RED 新生代创作大赛", activityType: "品牌挑战赛", status: "进行中", deadline: "2026 赛事周期", matchers: ["原创", "新生代", "人格", "真诚", "分享", "生活", "记录", "创作"], submissionSuggestion: "按赛事主题投稿优质原创；关注百亿赛事流量与创作基金节点，获奖可获长期流量助推。", dataSource: "xiaohongshu_red_contest_2026" },
+  { platform: "xiaohongshu", activityName: "小红书中长视频激励计划", activityType: "创作激励", status: "进行中", deadline: "2026 年中加码期", matchers: ["视频", "中长视频", "教程", "种草", "生活方式", "Vlog", "口播"], submissionSuggestion: "发布 1 分钟以上中长视频并完成平台视频激励任务，可领取流量券；适合教程/种草/生活方式体裁。", dataSource: "xiaohongshu_video_incentive_2026" },
   { platform: "xiaohongshu", activityName: "小红书电商与买手成长扶持", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["带货", "电商", "种草", "好物", "推荐", "穿搭", "美妆", "生活方式"], submissionSuggestion: "发布种草笔记，绑定商品橱窗或服务链接，以'一人店'模式参与买手成长计划。", dataSource: "xiaohongshu_static" },
-  { platform: "xiaohongshu", activityName: "小红书健康生活主题月", activityType: "节点营销", status: "进行中", deadline: "月度活动", matchers: ["健身", "健康", "体态", "养生", "减脂", "运动", "瑜伽", "普拉提", "体重"], submissionSuggestion: "以健康生活为主题发布笔记，使用相关话题标签，可获得平台推流加权。", dataSource: "xiaohongshu_static" },
   { platform: "bilibili", activityName: "创作激励计划", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["教程", "拆解", "复盘", "案例", "知识", "方法", "分析", "科普"], submissionSuggestion: "上传 60 秒以上的正式视频，开通创作激励后自动参与，系列内容月更稳定更有优势。", dataSource: "bilibili_static" },
   { platform: "bilibili", activityName: "任务中心征稿活动", activityType: "品牌挑战赛", status: "进行中", deadline: "每月更新", matchers: ["创作", "视频", "教程", "生活", "记录", "日常", "分享"], submissionSuggestion: "进入 B 站创作者中心任务中心查看当月征稿主题，投稿符合主题的视频即可参与奖励。", dataSource: "bilibili_static" },
-  { platform: "kuaishou", activityName: "快手光合计划", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["生活", "口播", "真实", "日常", "服务", "技能", "帮助", "经验"], submissionSuggestion: "稳定更新、真实内容，申请光合创作者认证后可享平台流量扶持与收益激励。", dataSource: "kuaishou_static" },
+  { platform: "kuaishou", activityName: "快手光合计划", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["生活", "口播", "真实", "日常", "服务", "技能", "帮助", "经验", "美食", "体育", "时尚"], submissionSuggestion: "稳定更新、真实内容，申请光合创作者认证后可享平台流量扶持与收益激励。", dataSource: "kuaishou_static" },
   { platform: "kuaishou", activityName: "快手直播与短直联动扶持", activityType: "官方推流活动", status: "进行中", deadline: "长期有效", matchers: ["直播", "电商", "服务", "同城", "带货", "销售", "促销"], submissionSuggestion: "先用短视频积累流量，再通过直播承接咨询或带货，平台会给短直联动账号额外流量加权。", dataSource: "kuaishou_static" },
 ];
 
@@ -2362,7 +2389,7 @@ export function buildMockGrowthSnapshot(params: {
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, {}, context, industryTemplate);
   const titleExecutions = buildTitleExecutions(params.analysis, context, platformRecommendations, platformSnapshots, industryTemplate);
-  const platformActivities = buildPlatformActivities(requestedPlatforms, {}, platformSnapshots, platformRecommendations);
+  const platformActivities = buildPlatformActivities(requestedPlatforms, {}, platformSnapshots, platformRecommendations, 15);
   const monetizationStrategies = buildMonetizationStrategies(requestedPlatforms, platformRecommendations, monetizationTracks, context, industryTemplate);
   const dataLibraryStructure = buildDataLibraryStructure(requestedPlatforms, {});
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
@@ -2581,7 +2608,7 @@ export function buildGrowthSnapshotFromCollections(params: {
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, params.collections, context, industryTemplate);
   const titleExecutions = buildTitleExecutions(params.analysis, context, platformRecommendations, platformSnapshots, industryTemplate);
-  const platformActivities = buildPlatformActivities(requestedPlatforms, params.collections, platformSnapshots, platformRecommendations);
+  const platformActivities = buildPlatformActivities(requestedPlatforms, params.collections, platformSnapshots, platformRecommendations, windowDays);
   const monetizationStrategies = buildMonetizationStrategies(requestedPlatforms, platformRecommendations, monetizationTracks, context, industryTemplate);
   const dataLibraryStructure = buildDataLibraryStructure(requestedPlatforms, params.collections);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
