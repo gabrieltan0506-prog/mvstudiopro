@@ -304,8 +304,9 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
 }
 
 /**
- * Creator Growth **Stage 1 / Stage 2 / 战略看板 / 深度追问 / 自定义选题文案** 固定 **OpenAI GPT‑5.5**。  
- * 不因 env 或 404 回退到 gpt-5.4。Gemini 退路：`PLATFORM_STAGE2_LLM=vertex`。
+ * Creator Growth **Stage 1 / Stage 2 / 战略看板 / 深度追问 / 自定义选题文案** 主路径固定 **EvoLink GPT‑5.5**。  
+ * EvoLink 报错时由 `invokeOpenAI` 自动改走 **OhMyGPT `gpt-5.6-sol`**（同 `/v1/chat/completions` 形态；需 `PROXY_OPENAI_API_KEY` / `OHMYGPT_API_KEY`）。  
+ * Gemini 退路：`PLATFORM_STAGE2_LLM=vertex`。
  */
 export function getPlatformStage2OpenAiModel(): string {
   return normalizeEvolinkChatModel("gpt-5.5");
@@ -370,7 +371,7 @@ export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
 }
 
 /**
- * Stage 2 OpenAI **第二階** JSON 封裝：与文案主路径一致，固定 **gpt-5.5**（不回退 gpt-5.4）。
+ * Stage 2 OpenAI **第二階** JSON 封裝：与文案主路径一致，固定 **EvoLink gpt-5.5**（失败则 OhMyGPT gpt-5.6-sol）。
  */
 export function getPlatformStage2StructureOpenAiModel(): string {
   return normalizeEvolinkChatModel("gpt-5.5");

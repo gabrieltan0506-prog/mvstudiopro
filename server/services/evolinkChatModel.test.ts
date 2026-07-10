@@ -31,6 +31,7 @@ describe("evolink error classification", () => {
     expect(isEvolinkChatModelNotFoundError(404, body)).toBe(true);
     expect(isEvolinkInsufficientQuotaError(404, body)).toBe(false);
     expect(toEvolinkChatUserMessage(404, body)).toMatch(/GPT-5\.5.*非积分问题/);
+    expect(toEvolinkChatUserMessage(404, body)).toMatch(/gpt-5\.6-sol/);
   });
 
   it("detects 402 insufficient quota", () => {

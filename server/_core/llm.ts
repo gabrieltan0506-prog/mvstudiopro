@@ -9,10 +9,17 @@ import {
 } from "../services/cometapi";
 import {
   EVOLINK_CHAT_MODEL_GPT54,
+  EVOLINK_CHAT_MODEL_GPT55,
   formatEvolinkChatApiError,
   normalizeEvolinkChatModel,
   toEvolinkChatUserMessage,
 } from "../services/evolinkChatModel";
+import {
+  getOhMyGptApiKey,
+  getOhMyGptChatCompletionsUrl,
+  getOhMyGptGpt56SolModel,
+  isOhMyGptGpt56SolFallbackEnabled,
+} from "../services/ohmygptChat";
 
 export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
@@ -1148,45 +1155,89 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetch(String(target.apiUrl), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${target.apiKey}`,
-    },
-    signal: mergeWithLlmTimeout(params.abortSignal),
-    body: JSON.stringify(payload),
-  });
+  const postChatCompletions = async (
+    apiUrl: string,
+    apiKey: string,
+    body: Record<string, unknown>,
+    label: string,
+  ): Promise<InvokeResult> => {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      signal: mergeWithLlmTimeout(params.abortSignal),
+      body: JSON.stringify(body),
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    // 402 = 积分不足；404 = 模型不可用（不回退 gpt-5.4，文案固定 gpt-5.5）
-    const userMsg = toEvolinkChatUserMessage(response.status, errorText);
-    console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
-    throw new Error(userMsg);
-  }
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
+      throw new Error(toEvolinkChatUserMessage(response.status, errorText));
+    }
 
-  // Guard against Cloudflare / proxy returning an HTML error page with status 200
-  // (e.g. 524 timeout pages that arrive with 200 OK from intermediate CDN layers).
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("text/html")) {
-    throw new Error(
-      `Evolink returned HTML instead of JSON (status ${response.status}) — possible 524 timeout or Cloudflare error page`,
-    );
-  }
-  if (!contentType.includes("application/json") && !contentType.includes("text/event-stream") && contentType !== "") {
-    throw new Error(
-      `Evolink returned unexpected Content-Type "${contentType}" (status ${response.status}) — expected application/json`,
-    );
-  }
+    // Guard against Cloudflare / proxy returning an HTML error page with status 200
+    // (e.g. 524 timeout pages that arrive with 200 OK from intermediate CDN layers).
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("text/html")) {
+      throw new Error(
+        `${label} returned HTML instead of JSON (status ${response.status}) — possible 524 timeout or Cloudflare error page`,
+      );
+    }
+    if (
+      !contentType.includes("application/json") &&
+      !contentType.includes("text/event-stream") &&
+      contentType !== ""
+    ) {
+      throw new Error(
+        `${label} returned unexpected Content-Type "${contentType}" (status ${response.status}) — expected application/json`,
+      );
+    }
 
-  const rawText = await response.text();
+    const rawText = await response.text();
+    try {
+      return JSON.parse(rawText) as InvokeResult;
+    } catch {
+      throw new Error(`${label} returned non-JSON body (status ${response.status}): ${rawText.slice(0, 400)}`);
+    }
+  };
+
+  const primaryModel = String(target.modelName || "").trim();
+  const isEvolinkGpt55Primary =
+    String(target.apiUrl || "").includes("evolink.ai") &&
+    normalizeEvolinkChatModel(primaryModel) === EVOLINK_CHAT_MODEL_GPT55;
+
   try {
-    return JSON.parse(rawText) as InvokeResult;
-  } catch {
-    throw new Error(
-      `Evolink returned non-JSON body (status ${response.status}): ${rawText.slice(0, 400)}`,
+    return await postChatCompletions(
+      String(target.apiUrl),
+      String(target.apiKey),
+      payload,
+      "Evolink",
     );
+  } catch (primaryErr) {
+    // EvoLink gpt-5.5 任意错误 → OhMyGPT gpt-5.6-sol（同 OpenAI chat/completions 形态）
+    if (!isEvolinkGpt55Primary || !isOhMyGptGpt56SolFallbackEnabled()) {
+      throw primaryErr;
+    }
+    const ohmyKey = getOhMyGptApiKey();
+    const ohmyModel = getOhMyGptGpt56SolModel();
+    const ohmyUrl = getOhMyGptChatCompletionsUrl();
+    console.warn(
+      `[invokeOpenAI] Evolink ${primaryModel} failed → OhMyGPT fallback ${ohmyModel}:`,
+      primaryErr instanceof Error ? primaryErr.message.slice(0, 240) : primaryErr,
+    );
+    try {
+      return await postChatCompletions(ohmyUrl, ohmyKey, { ...payload, model: ohmyModel }, "OhMyGPT");
+    } catch (fallbackErr) {
+      console.warn(
+        `[invokeOpenAI] OhMyGPT ${ohmyModel} fallback also failed:`,
+        fallbackErr instanceof Error ? fallbackErr.message.slice(0, 240) : fallbackErr,
+      );
+      throw fallbackErr instanceof Error
+        ? fallbackErr
+        : new Error("文案生成暂时不可用（EvoLink 与 OhMyGPT 均失败），请稍后重试");
+    }
   }
 }
 
