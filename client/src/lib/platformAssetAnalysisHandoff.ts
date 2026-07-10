@@ -1,10 +1,15 @@
 import type { GrowthAnalysisScores } from "@shared/growth";
+import { formatShootingTechniqueBrief } from "@shared/shootingTechniqueBrief";
 
 export type AssetAnalysisHandoffPayload = {
   sourceText: string;
   optimizationBrief: string;
   visionContext: string;
+  /** 上传素材拍摄手法摘要，供分镜 scriptContext 注入 */
+  shootingTechniqueBrief: string;
 };
+
+export { formatShootingTechniqueBrief };
 
 /** 将素材视觉分析结果格式化为「深度优化文案」mutation 输入。 */
 export function formatAssetAnalysisForOptimize(
@@ -45,6 +50,11 @@ export function formatAssetAnalysisForOptimize(
     lines.push(`【图文笔记指南】\n${remixGuide.structuredBody.trim()}`);
   }
 
+  const shootingTechniqueBrief = formatShootingTechniqueBrief(analysis);
+  if (shootingTechniqueBrief) {
+    lines.push(`【拍摄手法】\n${shootingTechniqueBrief}`);
+  }
+
   const visionContext = lines.join("\n\n").trim();
   const context = String(userContext || "").trim();
 
@@ -59,6 +69,9 @@ export function formatAssetAnalysisForOptimize(
     context ? `【用户补充背景】\n${context}` : "",
     "请基于上述上传素材的视觉分析（封面/分镜），深度优化封面主副标、2×4 分镜叙事节奏与各平台发布稿。",
     "必须紧扣素材内人物、场景与专业背景，禁止输出与用户素材无关的模板标题或套话。",
+    shootingTechniqueBrief
+      ? "分镜与封面须对齐【拍摄手法】中的景别、布光、走位与教学演示构图参考，勿另起一套无关机位。"
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -67,5 +80,6 @@ export function formatAssetAnalysisForOptimize(
     sourceText: sourceText.slice(0, 11000),
     optimizationBrief: optimizationBrief.slice(0, 4000),
     visionContext: visionContext.slice(0, 8000),
+    shootingTechniqueBrief: shootingTechniqueBrief.slice(0, 2800),
   };
 }

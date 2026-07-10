@@ -83,6 +83,24 @@ export function buildStage1StrategicHandoffForStage2(
   for (const m of rawMenu.slice(0, 8)) {
     if (!m || typeof m !== "object") continue;
     const o = m as Record<string, unknown>;
+    const blueOceanRaw = o.blueOceanWords ?? o.blue_ocean_words ?? o["蓝海词"];
+    const blueOceanWords = Array.isArray(blueOceanRaw)
+      ? blueOceanRaw
+          .map((w) => {
+            if (typeof w === "string") return clip(w, 40);
+            if (w && typeof w === "object") {
+              const row = w as Record<string, unknown>;
+              const primary = clip(row.primary ?? row.word, 40);
+              const secondary = Array.isArray(row.secondary)
+                ? row.secondary.map((s) => clip(s, 24)).filter(Boolean).slice(0, 5)
+                : [];
+              return secondary.length ? `${primary}（${secondary.join("、")}）` : primary;
+            }
+            return "";
+          })
+          .filter(Boolean)
+          .join("、")
+      : "";
     platformMenuDigest.push({
       platform: clip(o.platform, 40),
       label: clip(o.label ?? o.displayName, 80),
@@ -90,6 +108,7 @@ export function buildStage1StrategicHandoffForStage2(
       titleExample: clip(o.titleExample, 200),
       contentHook: clip(o.contentHook, 500),
       whyNow: clip(o.whyNow, 400),
+      blueOceanWords: clip(blueOceanWords, 400),
     });
   }
 

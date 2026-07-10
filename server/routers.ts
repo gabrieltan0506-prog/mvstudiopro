@@ -72,6 +72,11 @@ import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale,
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
+import {
+  BLUE_OCEAN_USAGE_POLICY,
+  buildBlueOceanLexicon,
+  deriveTagCandidatesFromTrendSamples,
+} from "../shared/blueOceanLexicon.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1076,6 +1081,26 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
         const v = b[key];
         if (v != null && typeof v !== "string") b[key] = String(v);
       }
+      // highlightKeywords：蓝海/高亮词，统一为 string[]
+      if (!Array.isArray(b.highlightKeywords)) {
+        const hk = b.highlightKeywords ?? b.blueOceanKeywords ?? b.keywords ?? b["高亮词"] ?? b["蓝海词"];
+        if (Array.isArray(hk)) {
+          b.highlightKeywords = hk.map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
+        } else if (typeof hk === "string" && hk.trim()) {
+          b.highlightKeywords = hk
+            .split(/[,，、/\s]+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .slice(0, 8);
+        } else {
+          b.highlightKeywords = [];
+        }
+      } else {
+        b.highlightKeywords = (b.highlightKeywords as unknown[])
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+          .slice(0, 8);
+      }
       return b;
     });
   }
@@ -1142,6 +1167,8 @@ export async function buildPlatformContent(params: {
   abortSignal?: AbortSignal;
   /** Stage 1 戰略看板清洗摘要（標題／文案／分鏡種子）；由 worker 或同步路由注入 */
   stage1Handoff?: ReturnType<typeof buildStage1StrategicHandoffForStage2> | null;
+  /** 趋势报表全局蓝海词（一级/二级），与 platformMenu 合并进推演文案词表 */
+  globalBlueOceanWords?: unknown;
   /**
    * 單次請求覆寫 Stage2 線路（Vertex **Gemini 3.5 Flash** vs OpenAI GPT‑5.5）。
    * 未傳時沿用 {@link resolvePlatformStage2LlmMode}（Fly env 等）。
@@ -1288,6 +1315,16 @@ export async function buildPlatformContent(params: {
       titleFromSamples.length > 0
         ? titleFromSamples.slice(0, 8)
         : evidenceItems.slice(0, 8).map((item) => item?.title).filter(Boolean);
+    const tagCandidates = deriveTagCandidatesFromTrendSamples(
+      [
+        ...highEngagementSamples,
+        ...evidenceItems.slice(0, 12).map((item: any) => ({
+          tags: item?.tags,
+          title: item?.title,
+        })),
+      ],
+      12,
+    );
     return {
       platform,
       decisionWindowDays,
@@ -1298,12 +1335,29 @@ export async function buildPlatformContent(params: {
       growthPotentialRankedCount: growthDebugKept,
       highEngagementSamples: highEngagementSamples.slice(0, 8),
       recentTitles,
+      /** trendStore 标签/标题碎片 → 蓝海二级词种子（数据驱动，不强行凑数） */
+      tagCandidates,
       topBuckets: Object.entries(bucketCounts)
         .sort((left, right) => right[1] - left[1])
         .slice(0, 6)
         .map(([bucket, count]) => ({ bucket, count })),
     };
   });
+  const allTagCandidates = [
+    ...new Set(
+      dynamicDecisionChain.flatMap((row) =>
+        Array.isArray(row.tagCandidates) ? row.tagCandidates.map(String) : [],
+      ),
+    ),
+  ].slice(0, 20);
+  const blueOceanLexicon = buildBlueOceanLexicon({
+    platformMenu: params.platformMenu,
+    globalBlueOceanWords: params.globalBlueOceanWords,
+    tagCandidates: allTagCandidates,
+  });
+  diagnostics.blueOceanFlatCount = blueOceanLexicon.flat.length;
+  diagnostics.blueOceanGroupedCount = blueOceanLexicon.grouped.length;
+  diagnostics.blueOceanTagCandidateCount = blueOceanLexicon.tagCandidates.length;
   const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
   const hasCulturePersona = /文化|艺术|艺术|历史|历史|书画|书画|收藏|人文/i.test(params.context || "");
   const personaConstraint = (hasMedicalPersona || hasCulturePersona)
@@ -1315,6 +1369,8 @@ export async function buildPlatformContent(params: {
           windowDays: params.windowDays,
           platformMenu: params.platformMenu,
           dynamicDecisionChain,
+          blueOceanLexicon,
+          blueOceanUsagePolicy: BLUE_OCEAN_USAGE_POLICY,
           /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
           trendEngagementAlignmentPolicy:
             "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在完整人设（职业、身份、兴趣、爱好、专长）约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，热点与样本仅作参考，须改写为贴合本人设的表达，禁止字面抄袭标题或正文，禁止硬套无关热梗。",
@@ -1369,6 +1425,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 (3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
 (4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
 
+【蓝海词与标签推演】：须读取 user JSON 的 blueOceanLexicon（flat / grouped）与 blueOceanUsagePolicy，以及 platformMenu[].blueOceanWords、dynamicDecisionChain[].tagCandidates。${BLUE_OCEAN_USAGE_POLICY} 维度 6（长尾常青）优先覆盖 secondary 与 tagCandidates。每条 blueprint 须输出 highlightKeywords（本条实际使用的蓝海/高亮词 2–6 个）。
+
 请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
 1. contentBlueprints：须恰好包含 **6** 个具体可执行的内容方案，并与上方 **6** 个维度一一对应（第 1 条对应维度 1，依此类推，第 6 条对应维度 6）。每个方案须包含：
@@ -1390,9 +1448,10 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
        "[图5-图6 核心内容] 分步列出3个要点..."
 	       "[正文区] 完整文案+平台搜索关键词，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
+   - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
    - executionDetails（执行细节，**建议**极度具体）：
-     * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色西装，手持文物复刻件对照讲解"）
-     * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光"）
+     * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"）
+     * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光；人物妆发干净高级、皮肤通透有真实纹理"）
      * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】直接说出核心判断：……","【3-15秒】展示具体案例：……","【15-25秒】给出行动建议：……"]）
 
 2. monetizationLanes：生成 1-2 条强相关的变现路径（例如"知识付费-心血管健康私人咨询"）。必须包含：
@@ -1415,6 +1474,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       "actionableSteps": ["第一步具体动作", "第二步具体动作", "第三步具体动作"],
       "detailedScript": "完整分镜脚本（视频用时间轴，图文用封面+内页格式）",
       "publishingAdvice": "发布时机与平台设置建议",
+      "highlightKeywords": ["蓝海词1", "蓝海词2"],
       "executionDetails": {
         "environmentAndWardrobe": "拍摄环境与服装道具",
         "lightingAndCamera": "灯光与机位建议",
@@ -1439,7 +1499,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，**建议**极度具体的「物理级微小行动」。**不建议**写「制作身份名片」、「锁定文化符号」这类空泛顾问废话。**建议**具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
-4. **建议**详细、有落地感，避免泛泛而谈。${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，**不建议**硬套。${personaConstraint}
+4. **建议**详细、有落地感，避免泛泛而谈。${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 文案、脚本中的场景与主张须能用**人设各维**（职业、身份、兴趣、爱好、专长）解释。在详细脚本与指导设计中，融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动时**须经人设改写适配**，**不建议**硬套。同步自然嵌入 blueOceanLexicon 中的蓝海词与标签。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
@@ -3928,6 +3988,14 @@ export const appRouter = router({
             brandMatchFit: z.number().optional(),
             source: z.enum(["structure", "personalization"]).optional(),
           }),
+          /** 可选：平台蓝海词词表，写入推演文案 */
+          blueOceanLexicon: z
+            .object({
+              flat: z.array(z.string()).optional(),
+              grouped: z.array(z.any()).optional(),
+              tagCandidates: z.array(z.string()).optional(),
+            })
+            .optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -4002,6 +4070,7 @@ export const appRouter = router({
           platformHint,
           idPrefix: input.regenerate ? "decision-intel-regen" : "decision-intel-picked",
           abortSignal: ctx.clientDisconnected,
+          blueOceanLexicon: input.blueOceanLexicon,
         });
 
         if (blueprints.length > 0) {
@@ -4943,6 +5012,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             "xiaohongshu_dual_note",
           ]),
           compositeExecutionDetails: z.string().max(4000).optional(),
+          /** 上传素材拍摄手法摘要 → 2×4 / 3×4 分镜共用 */
+          compositeShootingTechniqueBrief: z.string().max(4000).optional(),
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
           creationRecordId: z.number().int().positive().optional(),
           compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
@@ -5117,6 +5188,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeScriptContext: input.compositeScriptContext,
               compositeKind: input.compositeKind,
               compositeExecutionDetails: input.compositeExecutionDetails,
+              compositeShootingTechniqueBrief: input.compositeShootingTechniqueBrief,
               compositeImagePromptTranslator: imagePromptTranslatorForComposite,
               creationRecordId: input.creationRecordId,
               enableCompositeDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
@@ -5381,6 +5453,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
             progressJobId: z.string().min(8).max(64).optional(),
             executionDetails: z.string().max(4000).optional(),
+            /** 上传素材拍摄手法摘要（景别/布光/走位），并入 2×4 中文脚本 */
+            shootingTechniqueBrief: z.string().max(4000).optional(),
             /** 與單幀一致：英文 prompt 翻譯引擎 */
             imagePromptTranslator: zPlatformImagePromptTranslatorInput,
             /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
@@ -5531,6 +5605,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 scriptContext: input.scriptContext,
                 isTrial,
                 executionDetails: input.executionDetails,
+                shootingTechniqueBrief: input.shootingTechniqueBrief,
                 imagePromptTranslator: imagePromptTranslatorForComposite,
                 flowLog: imageGenFlowLog,
                 enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
@@ -5597,6 +5672,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             scriptContext: input.scriptContext,
             isTrial,
             executionDetails: input.executionDetails,
+            shootingTechniqueBrief: input.shootingTechniqueBrief,
             imagePromptTranslator: imagePromptTranslatorForComposite,
             flowLog: imageGenFlowLog,
             enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,
@@ -5960,6 +6036,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           context: z.string().optional(),
           windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
           platformMenu: z.array(z.any()).optional(),
+          /** 趋势报表全局蓝海词（一级/二级），并入 Stage2 推演文案词表 */
+          globalBlueOceanWords: z.array(z.any()).optional(),
           snapshotSummary: z.record(z.string(), z.any()),
           /** Stage 1 完整戰略看板：後端清洗為 stage1StrategicHandoff 再併入 Stage 2 提示 */
           strategicDashboard: z.record(z.string(), z.any()).optional(),
@@ -6006,6 +6084,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               context: input.context,
               windowDays: input.windowDays,
               platformMenu: input.platformMenu ?? [],
+              globalBlueOceanWords: input.globalBlueOceanWords ?? [],
               snapshotSummary: input.snapshotSummary,
               strategicDashboard: input.strategicDashboard,
               ...(stage2LlmModeForJob ? { stage2LlmMode: stage2LlmModeForJob } : {}),

@@ -1170,6 +1170,9 @@ async function processPlatformJob(
       const context = String(params.context || "");
       const windowDays = Number(params.windowDays ?? 15);
       const platformMenu = Array.isArray(params.platformMenu) ? params.platformMenu : [];
+      const globalBlueOceanWords = Array.isArray((params as Record<string, unknown>).globalBlueOceanWords)
+        ? ((params as Record<string, unknown>).globalBlueOceanWords as unknown[])
+        : [];
       const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
       const strategicDashboard = (params as Record<string, unknown>).strategicDashboard;
       const stage1Handoff = buildStage1StrategicHandoffForStage2(strategicDashboard, snapshotSummary);
@@ -1223,6 +1226,7 @@ async function processPlatformJob(
         store,
         abortSignal: undefined,
         stage1Handoff,
+        globalBlueOceanWords,
         stage2LlmModeOverride: stage2LlmModeOverride ?? null,
         onBlueprintGenerated: platformJobId
           ? async (blueprint, dimIndex) => {
@@ -1496,6 +1500,11 @@ async function processPlatformJob(
       const compositeScriptContext = String(params.compositeScriptContext ?? "").trim();
       const compositeExecutionDetails =
         typeof params.compositeExecutionDetails === "string" ? params.compositeExecutionDetails.trim() : undefined;
+      const compositeShootingTechniqueBrief =
+        typeof (params as { compositeShootingTechniqueBrief?: unknown }).compositeShootingTechniqueBrief === "string"
+          ? String((params as { compositeShootingTechniqueBrief?: string }).compositeShootingTechniqueBrief).trim() ||
+            undefined
+          : undefined;
       const imagePromptTranslator = "gpt54" as const;
 
       const rawCompDr = (params as { enableCompositeDeepResearchPro?: unknown }).enableCompositeDeepResearchPro;
@@ -1568,6 +1577,7 @@ async function processPlatformJob(
             scriptContext: compositeScriptContext,
             isTrial,
             executionDetails: compositeExecutionDetails,
+            shootingTechniqueBrief: compositeShootingTechniqueBrief,
             imagePromptTranslator,
             flowLog: compositeFlowLog,
             enableCompositeDeepResearchPro: enableCompositeDeepResearchProAdmin,

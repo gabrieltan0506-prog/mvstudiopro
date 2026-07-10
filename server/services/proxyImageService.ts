@@ -21,6 +21,7 @@ import {
 } from "./platformTopicCoverPrompt.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
+import { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
 import {
   isEvolinkGptImage2Configured,
   isEvolinkModerationFailure,
@@ -1032,12 +1033,28 @@ const STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN = [
   "Do NOT invent a new face per panel; treat the cover as the single source of truth for host identity.",
 ].join("\n");
 
+/** 3×4 续接段：以上一段横排成品为视觉真源，锁人物/场景/色调 */
+const STORYBOARD_PREVIOUS_ROW_CONTINUITY_DIRECTIVE_EN = [
+  "",
+  "PREVIOUS ROW BAND CONTINUITY (CRITICAL IMAGE EDIT): One or more attached references include the already-rendered",
+  "previous horizontal row of this same 3×4 long storyboard. Match the modern host face, hair, wardrobe tier,",
+  "skin tone, and overall fashion-editorial look to those panels. Keep the SAME color grade, lighting direction,",
+  "background material language, outer border and decorative frame so vertical stitching looks seamless.",
+  "Continue the story with FOUR NEW panels only — do not redraw or duplicate the previous row's shots.",
+  "Scene may progress, but stay in the same visual world (location family / set design language); avoid sudden",
+  "wardrobe or location jumps that break continuity with the previous row.",
+].join("\n");
+
 function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverPersonaContext?: string): string {
+  const persona = appendFashionEditorialCharacterGuidance(
+    String(coverPersonaContext || "").trim(),
+    { maxChars: 2800, lang: "zh" },
+  );
   const anchor = [
     "【视觉锚点·主人公】",
     "分镜各格中的现代主讲/主人公须与上传参考人像为同一人（五官、发型、气质跨格一致，禁止换成陌生面孔）。",
     "仅当脚本明确描写古人、历史人物、古代场景、顾客/路人等独立角色时，才使用不同人物造型。",
-    coverPersonaContext?.trim() ? coverPersonaContext.trim() : "",
+    persona,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1296,6 +1313,8 @@ export async function generatePlatformCompositeSheetImage(options: {
   scriptContext: string;
   isTrial?: boolean;
   executionDetails?: string;
+  /** 上传素材拍摄手法摘要（景别/布光/走位等），并入中文脚本约束 */
+  shootingTechniqueBrief?: string;
   /** @deprecated 保留欄位僅兼容舊 job 入參，已忽略（2×4 固定中文直送）。 */
   imagePromptTranslator?: import("./geminiPlatformCompositeTranslation.js").PlatformImagePromptTranslator;
   /** 可選：2×4 生圖逐步驟時間線 */
@@ -1308,6 +1327,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   coverPersonaContext?: string;
   /** 用户上传主人公参考人像 → EvoLink edit，分镜各格保持同一人（古人/历史角色等脚本明示时除外） */
   referencePhotoUrl?: string;
+  /**
+   * 3×4 续接段等：额外参考图（如上一段横排成品 URL），与 referencePhotoUrl 一并送 EvoLink edit，
+   * 用于锁跨段人物脸型、服装阶层、色调与场景材质语言。
+   */
+  continuityReferenceImageUrls?: string[];
   /** 参考图为已生成竖版封面（非原始抠像）→ 加强跨格同脸指令 */
   referencePhotoFromApprovedCover?: boolean;
   /**
@@ -1349,9 +1373,13 @@ export async function generatePlatformCompositeSheetImage(options: {
   }
   const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
   const referencePhotoUrlEarly = String(options.referencePhotoUrl || "").trim() || undefined;
-  const compositeImageEngine = referencePhotoUrlEarly
-    ? "gpt_image2"
-    : resolvePlatformCompositeSheetImageEngine(options.compositeImageEngine ?? null);
+  const continuityRefsEarly = (options.continuityReferenceImageUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean);
+  const compositeImageEngine =
+    referencePhotoUrlEarly || continuityRefsEarly.length > 0
+      ? "gpt_image2"
+      : resolvePlatformCompositeSheetImageEngine(options.compositeImageEngine ?? null);
 
   const survival = isPlatformWeekendSurvivalModeEnabled();
   appendImageFlowLog(
@@ -1387,15 +1415,37 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
   let scriptContextForPipeline = options.scriptContext;
+  const stagingBits = [
+    String(options.executionDetails || "").trim(),
+    String(options.shootingTechniqueBrief || "").trim(),
+  ].filter(Boolean);
+  if (stagingBits.length > 0) {
+    scriptContextForPipeline = `${String(scriptContextForPipeline || "").trim()}\n\n【光影与机位约束·拍摄手法】\n${stagingBits.join("\n\n")}`;
+    appendImageFlowLog(L, `[2×4·拍摄手法] 已注入 executionDetails/shootingTechniqueBrief（${stagingBits.join(" · ").length} chars）`);
+  }
+  // 全案 / 自定义分镜：无论是否有参考人像，均注入国际时尚大片人物造型约束
+  scriptContextForPipeline = appendFashionEditorialCharacterGuidance(scriptContextForPipeline, {
+    maxChars: 14000,
+    lang: "zh",
+  });
   const referencePhotoUrl = String(options.referencePhotoUrl || "").trim() || undefined;
-  if (referencePhotoUrl) {
+  const continuityRefs = (options.continuityReferenceImageUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean)
+    .filter((u) => u !== referencePhotoUrl)
+    .slice(0, 3);
+  const hasAnyImageRef = Boolean(referencePhotoUrl) || continuityRefs.length > 0;
+  if (referencePhotoUrl || continuityRefs.length > 0) {
     scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(
       scriptContextForPipeline,
       options.coverPersonaContext,
     );
+    if (continuityRefs.length > 0) {
+      scriptContextForPipeline = `${String(scriptContextForPipeline).trim()}\n\n【3×4 跨段视觉真源】须对齐已生成的上一段横排：同一现代主人公脸型与时装阶层、同一色调布光与场景材质语言；本段只画新的一横排四格，禁止重画上一段镜头。`;
+    }
     appendImageFlowLog(
       L,
-      "[2×4·主人公参考] 已注入视觉锚点 · 分镜将融合上传参考人像（强制 GPT-IMAGE-2 edit 模式）",
+      `[2×4·主人公参考] 已注入视觉锚点 · 参考=${referencePhotoUrl ? "人像/封面" : "无"}${continuityRefs.length ? ` + 连贯图${continuityRefs.length}张` : ""}（强制 GPT-IMAGE-2 edit 模式）`,
     );
   }
   const drFromAdmin = Boolean(options.enableCompositeDeepResearchPro);
@@ -1481,6 +1531,7 @@ export async function generatePlatformCompositeSheetImage(options: {
         const chineseCore = buildCompositeSheetDirectChineseBody(
           k as "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
           scriptContextForPipeline,
+          { rowBand: Boolean(options.gridSection) },
         ).trim();
         if (!chineseCore) {
           appendImageFlowLog(L, "[2×4·步骤1] 中文主体为空");
@@ -1488,7 +1539,15 @@ export async function generatePlatformCompositeSheetImage(options: {
         }
         appendImageFlowLog(
           L,
-          `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）· 约 ${chineseCore.length} 字符`,
+          `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${
+            options.gridSection
+              ? isStoryboard
+                ? "3×4 横排四格分镜"
+                : "3×4 横排四格图文"
+              : isStoryboard
+                ? "电影 2×4 分镜"
+                : "小红书 2×4 八格"
+          }）· 约 ${chineseCore.length} 字符`,
         );
 
         appendImageFlowLog(L, "[2×4·步骤1·完成] 主体就绪，直接进入像素锁与送生图");
@@ -1534,10 +1593,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           isFirst
             ? "This is the FIRST part: include a slim top 内容总结 title band, then this part's single row of 4 panels below it."
             : "This is a CONTINUATION part: do NOT repeat the global top title band — start directly with this part's single row of 4 panels at the very top edge."
-        } All on-image text stays **Simplified Chinese**, print-clear, no garble.`;
+        } CHARACTER & SHOOTING CONTINUITY (same as 2×4 rules): modern host/protagonist must stay **the same person** across all parts with **VOGUE / ELLE / Harper's Bazaar / Hollywood fashion-editorial** wardrobe matched to each scene (navy/black/cream/grey couture textures; optional understated luxury accessories, never forced clutter). Shot size / camera move / lighting / blocking must follow any 【光影与机位约束·拍摄手法】 or 【上传素材拍摄技法】 in the script (teaching demos: prefer fixed mid-long shot, phone/prop foreground, screen background). When a previous row-band image is attached as reference, treat it as the visual source of truth for face, wardrobe tier, color grade, lighting and set materials. All on-image text stays **Simplified Chinese**, print-clear, no garble.`;
         appendImageFlowLog(
           L,
-          `[3×4·分段] 第 ${index + 1}/${total} 段 · 已注入连贯/同风格指令（${isFirst ? "含顶栏" : "无顶栏·续接"}）· prompt≈${promptForImage.length} 字符`,
+          `[3×4·分段] 第 ${index + 1}/${total} 段 · 已注入连贯/同风格/时装大片/拍摄手法指令（${isFirst ? "含顶栏" : "无顶栏·续接"}）· prompt≈${promptForImage.length} 字符`,
         );
       }
 
@@ -1548,19 +1607,27 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       );
 
       if (isEvolinkGptImage2Configured()) {
-        const refImageUrls = referencePhotoUrl ? [referencePhotoUrl] : [];
+        const refImageUrls = [
+          ...(referencePhotoUrl ? [referencePhotoUrl] : []),
+          ...continuityRefs,
+        ].filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 4);
         const refDirectives = [
-          refImageUrls.length ? STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN : "",
-          refImageUrls.length && options.referencePhotoFromApprovedCover
+          referencePhotoUrl || continuityRefs.length ? STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN : "",
+          referencePhotoUrl && options.referencePhotoFromApprovedCover
             ? STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN
             : "",
+          continuityRefs.length ? STORYBOARD_PREVIOUS_ROW_CONTINUITY_DIRECTIVE_EN : "",
         ]
           .filter(Boolean)
           .join("\n");
         const promptForEvo = refImageUrls.length ? `${promptForImage}${refDirectives}` : promptForImage;
         appendImageFlowLog(
           L,
-          `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}${refImageUrls.length ? ` · edit模式·参考=${options.referencePhotoFromApprovedCover ? "已生成封面" : "上传人像"}` : ""}`,
+          `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}${
+            refImageUrls.length
+              ? ` · edit模式·参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`
+              : ""
+          }`,
         );
         const evoErr: { message?: string } = {};
         let fromEvolink = await postEvolinkGptImage2AndUpload(promptForEvo, subdir, {
@@ -1617,7 +1684,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
       }
 
-      if (referencePhotoUrl) {
+      if (hasAnyImageRef) {
         throw new Error("参考人像分镜生成失败");
       }
 
@@ -1743,6 +1810,8 @@ export function splitScriptIntoSections(scriptContext: string, sections: number)
  * 把内容拆成 2–3 段，每段各自走 {@link generatePlatformCompositeSheetImage}（注入 `gridSection` 连贯指令、
  * 每段字密度更低 → 降低糊字），再纵向拼成单张长图上传，返回单一 URL。仅支持 storyboard / xhs；
  * 任一段失败即抛错（调用方据此报错或退款）。
+ *
+ * **人物造型 + 拍摄手法**：与 2×4 共用同一套规则；切段前先抽出共享约束，再**逐段前置**，避免切段后后段丢失时装大片 / 机位约束。
  */
 export async function generatePlatformGridStitchedSheetImage(
   options: Parameters<typeof generatePlatformCompositeSheetImage>[0] & { sections?: number },
@@ -1756,26 +1825,71 @@ export async function generatePlatformGridStitchedSheetImage(
   }
   // 3×4 十二格 = 3 行 × 4 列；分成 3 段，每段一整横排 4 格 → 纵向拼成 12 格长图。
   const total = Math.max(2, Math.min(3, options.sections ?? 3));
-  const parts = splitScriptIntoSections(options.scriptContext, total);
+
+  const sharedRules = [
+    PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH,
+    String(options.executionDetails || "").trim()
+      ? `【光影与机位约束·拍摄手法】\n${String(options.executionDetails).trim()}`
+      : "",
+    String(options.shootingTechniqueBrief || "").trim()
+      ? `【上传素材拍摄技法】\n${String(options.shootingTechniqueBrief).trim()}`
+      : "",
+    "【3×4 十二格·跨段连贯】本图为 3 行×4 列长图的分段横排生成；各段现代主人公须同一人、同一国际时尚大片阶层气质；景别/运镜/布光对齐拍摄手法约束；跨段色调、布光、边框、场景材质语言一致以便无缝拼接。场景可推进但须留在同一视觉世界，禁止突然换脸、换装阶层或跳戏到无关布景。",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const narrative = String(options.scriptContext || "").trim();
+  const parts = splitScriptIntoSections(narrative, total);
   const realTotal = parts.length;
   appendImageFlowLog(
     L,
-    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段分别生成（每段更低密度·降糊字）→ sharp 直向拼成一张长图`,
+    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段 · 第2段起以上一段横排图作 EvoLink 连贯参考（锁人物/场景/色调）→ sharp 直向拼成长图`,
   );
 
+  if (!isEvolinkGptImage2Configured() && realTotal > 1) {
+    appendImageFlowLog(
+      L,
+      "[3×4·总控] 警告：未配置 EvoLink，续接段无法用上一段图做 edit 连贯锁，跨段一致性可能下降",
+    );
+  }
+
   const urls: string[] = [];
+  const baseRef = String(options.referencePhotoUrl || "").trim() || undefined;
   for (let i = 0; i < parts.length; i++) {
     appendImageFlowLog(L, `[3×4·总控] ▶ 生成第 ${i + 1}/${realTotal} 段 …`);
+    const sectionScript = `${sharedRules}\n\n【本段分镜内容 · 第 ${i + 1}/${realTotal} 横排】\n${parts[i]}`.slice(
+      0,
+      12000,
+    );
+    // 续接段：封面/人像 + 上一段横排（及首段）作视觉真源，强制 GPT-IMAGE-2 edit
+    const continuityReferenceImageUrls =
+      i > 0
+        ? [urls[i - 1]!, urls[0]!].filter((u, idx, arr) => Boolean(u) && arr.indexOf(u) === idx)
+        : undefined;
+    const sectionRefPhoto = baseRef || (i > 0 ? urls[0] : undefined);
     const url = await generatePlatformCompositeSheetImage({
       ...options,
-      scriptContext: parts[i],
+      scriptContext: sectionScript,
       gridSection: { index: i, total: realTotal },
+      referencePhotoUrl: sectionRefPhoto,
+      referencePhotoFromApprovedCover:
+        Boolean(options.referencePhotoFromApprovedCover) || (i > 0 && !baseRef && Boolean(urls[0])),
+      continuityReferenceImageUrls,
+      // 有连贯参考时必须走 GPT-IMAGE-2 edit（EvoLink）
+      compositeImageEngine:
+        sectionRefPhoto || (continuityReferenceImageUrls?.length ?? 0) > 0
+          ? "gpt_image2"
+          : options.compositeImageEngine,
     });
     if (!String(url || "").trim()) {
       throw new Error(`[3×4] 第 ${i + 1}/${realTotal} 段未返回图像`);
     }
     urls.push(String(url));
-    appendImageFlowLog(L, `[3×4·总控] ✓ 第 ${i + 1}/${realTotal} 段完成`);
+    appendImageFlowLog(
+      L,
+      `[3×4·总控] ✓ 第 ${i + 1}/${realTotal} 段完成${continuityReferenceImageUrls?.length ? ` · 已用上段连贯参考×${continuityReferenceImageUrls.length}` : ""}`,
+    );
   }
 
   const subdir = isStoryboard ? "platform_storyboard_sheet_3x4" : "platform_xhs_dual_3x4";
