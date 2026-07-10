@@ -164,31 +164,25 @@ export function appendFashionEditorialCharacterGuidance(base, opts?): string;
 
 4. 全案执行卡生成封面 → 人物穿搭贴合场景、杂志大片气质  
 5. 自定义选题上传人像生成封面+分镜 → 同脸 + 高级时装造型，配饰不堆砌  
-6. **3×4 十二格**（全案批量 / 自定义切换）→ 三段横排均含时装大片 + 拍摄手法；跨段同人同布光；flow log 含「时装大片+拍摄手法共享约束」
+6. **3×4 十二格**（全案批量 / 自定义切换）→ 三段横排均含时装大片 + 拍摄手法；**第 2 段起以上一段横排图作 EvoLink 连贯参考**锁同脸同色调同场景材质；flow log 含「上段连贯参考」
 
 ---
 
-## 续：3×4 分镜沿用人物造型与拍摄手法（完工）
+## 续：3×4 跨段人物/场景一致性（像素级连贯锁）
 
-> 同分支 PR #731 · 3×4 与 2×4 **同一套**规则，分段切脚本时不丢约束
+> 同分支 PR #731 · 解决「分段独立出图 → 换脸换景」
 
-### 问题
+### 根因
 
-3×4 会把 `scriptContext` 切成 2–3 段再分别生图；若共享约束只在全文末尾，后段可能丢失时装大片 / 机位说明。
+3×4 是 3 次独立生图再拼接；仅靠文案约束无法保证跨段同人同景。
 
-### 修复
+### 方案（保留 3×4，不做取消）
 
-**文件**：`server/services/proxyImageService.ts` → `generatePlatformGridStitchedSheetImage`
+**文件**：`proxyImageService.ts`
 
-- 切段前组装 `sharedRules`：`PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH` + `executionDetails` + `shootingTechniqueBrief` + 跨段连贯说明  
-- **每一段**前置该共享块后再送 `generatePlatformCompositeSheetImage`  
-- `MULTI-PART LONG SHEET` 英文指令补充 CHARACTER & SHOOTING CONTINUITY（与 2×4 同口径）  
-- `buildCompositeSheetDirectChineseBody(..., { rowBand: true })`：中文主体改为「1 行×4 格」并写明时装大片 + 拍摄手法对齐  
+1. 新增 `continuityReferenceImageUrls`：续接段把**上一段横排成品**（及首段）送入 EvoLink edit  
+2. 新增 `STORYBOARD_PREVIOUS_ROW_CONTINUITY_DIRECTIVE_EN`：锁脸、时装阶层、色调、布光、场景材质语言  
+3. `generatePlatformGridStitchedSheetImage`：第 2 段起 `referencePhotoUrl = 封面/人像 || 首段图`，并强制 `gpt_image2`  
+4. 无 EvoLink 时打警告（续接段无法像素锁）
 
-**套装链路**：`compositeShootingTechniqueBrief` 入队 → worker 传入 2×4/3×4 生图；客户端批量/单卡/自定义套装均带上 `shootingTechniqueBrief`。
-
-```ts
-// 3×4 每段前置（示意）
-const sectionScript = `${sharedRules}\n\n【本段分镜内容 · 第 ${i + 1}/${realTotal} 横排】\n${parts[i]}`;
-await generatePlatformCompositeSheetImage({ ...options, scriptContext: sectionScript, gridSection: { index: i, total: realTotal } });
-```
+若线上仍大量漂脸，再考虑隐藏 3×4 UI；当前以像素参考锁优先于直接下线。
