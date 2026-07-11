@@ -205,7 +205,7 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   const parts: string[] = [];
   if (on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图】主句8–14字、可见文案≤2行；禁百科堆字与多图标辅标栏；禁默认暗沉严肃。有人物时禁上课正脸/证件照站姿，须表情或动态抓人（跳跃、失衡、陶醉、错愕、坏笑等择一）。",
+      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题/论文副标上屏；有人物禁坐姿上课脸，须瞪大眼/跳跃/失衡等抓人瞬间，同批勿全坐着。",
     );
   }
   if (on("graphic-note-rhythm")) {
@@ -219,6 +219,11 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   if (on("contrast-reversal-climax")) {
     parts.push(
       "【反差弧出图】开场身份错位；中段可精确专有词/数字；情绪态度须有可见反转（可不止一次），落点不限定仰慕；勿说明书墙。",
+    );
+  }
+  if (on("crossover-organ-popsci")) {
+    parts.push(
+      "【跨界科普出图】可电影感解剖/脏器透视；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
     );
   }
   if (parts.length === 0) return "";
