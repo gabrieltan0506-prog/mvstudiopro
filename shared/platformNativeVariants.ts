@@ -205,7 +205,7 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   const parts: string[] = [];
   if (on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图】主句8–14字、可见文案≤2行；禁百科堆字与多图标辅标栏；禁默认暗沉严肃，优先明快生活化高级感。",
+      "【封面出图】主句8–14字、可见文案≤2行；禁百科堆字与多图标辅标栏；禁默认暗沉严肃。有人物时禁上课正脸/证件照站姿，须表情或动态抓人（跳跃、失衡、陶醉、错愕、坏笑等择一）。",
     );
   }
   if (on("graphic-note-rhythm")) {
