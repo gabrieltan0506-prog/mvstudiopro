@@ -92,6 +92,7 @@ import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "../shared/storyboardLi
 import {
   normalizePlatformVariants,
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
+  composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
@@ -5412,20 +5413,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "gpt54" as const;
 
-        const enrichedBundleScriptContext = await (async () => {
+        const enrichedBundleScriptContext = (() => {
           const base = String(input.compositeScriptContext || "").trim();
-          try {
-            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
-            const skills = await resolvePlatformSkillsPrompt({
-              userId,
-              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
-              allowBloggerTitle: Boolean(input.allowBloggerTitle),
-            });
-            if (!skills.trim()) return base;
-            return `${skills.slice(0, 3500)}\n\n${base}`.slice(0, 12000);
-          } catch {
-            return base;
-          }
+          const hints = composePlatformImageSkillHints(
+            Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          );
+          if (!hints.trim()) return base;
+          return `${hints}\n\n${base}`.slice(0, 12000);
         })();
 
         const jobId = nanoid(16);
@@ -5829,20 +5823,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
-        const enrichedCompositeScriptContext = await (async () => {
+        const enrichedCompositeScriptContext = (() => {
           const base = String(input.scriptContext || "").trim();
-          try {
-            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
-            const skills = await resolvePlatformSkillsPrompt({
-              userId,
-              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
-              allowBloggerTitle: Boolean(input.allowBloggerTitle),
-            });
-            if (!skills.trim()) return base;
-            return `${skills.slice(0, 3500)}\n\n${base}`.slice(0, 12000);
-          } catch {
-            return base;
-          }
+          const hints = composePlatformImageSkillHints(
+            Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          );
+          if (!hints.trim()) return base;
+          return `${hints}\n\n${base}`.slice(0, 12000);
         })();
 
         let detachLiveProgress: (() => void) | undefined;

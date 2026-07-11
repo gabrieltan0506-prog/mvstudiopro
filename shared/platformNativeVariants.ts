@@ -96,3 +96,28 @@ export function pickCoverHeadlineFromVariants(
   }
   return list.find((v) => v.coverHeadline)?.coverHeadline || "";
 }
+
+/**
+ * 出图链路专用：禁止灌入全文 Skill（会显著拖慢双语编导 / 像素模型）。
+ * 仅返回与封面、图文格、手法相关的短硬约束。
+ */
+export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null): string {
+  const ids = Array.isArray(enabledSkillIds) ? enabledSkillIds.map(String) : null;
+  const on = (id: string) => (ids == null ? true : ids.includes(id));
+  const parts: string[] = [];
+  if (on("cover-stop-scroll")) {
+    parts.push(
+      "【封面出图】主句8–14字、可见文案≤2行；禁百科堆字与多图标辅标栏；禁默认暗沉严肃，优先明快生活化高级感。",
+    );
+  }
+  if (on("graphic-note-rhythm")) {
+    parts.push(
+      "【图文笔记出图】格间一条叙事递进；每格一主信息；明快少暗调；禁每格重开无关话题。",
+    );
+  }
+  if (on("director-craft")) {
+    parts.push("【分镜出图】只借灯光运镜情绪手法词，成稿画面与画内字禁止导演名/片名致敬。");
+  }
+  if (parts.length === 0) return "";
+  return `【Platform 出图短约束】\n${parts.join("\n")}`;
+}
