@@ -35,3 +35,21 @@
 ## 非目标
 
 - 不写死「哈佛医学博士」专用模板；由 `needsReviewSafeVoice(context)` 与人设挖掘泛化触发。
+
+---
+
+## 续：文化素材反坍缩（同日）
+
+**根因（`11.pdf` 复盘）**：决策智库骨架默认「宋代点茶 / 苏东坡 / 李清照」，Stage1/2 few-shot 亦偏宋词人 → 全案与分镜反复坍缩到宋朝。
+
+**修复**（软边界措辞，避免硬禁令导致模型拒写）：
+
+| 文件 | 改动 |
+|------|------|
+| `shared/platformCulturalMaterialDiversity.ts` | 跨朝代/典籍/阶层/当代：**强烈建议 / 高度需求 / 包括但不限于** |
+| `shared/advancedPredictionEngine.ts` | 默认骨架改为史记/爵士/银发/唐边塞/影视等 |
+| `shared/storyboardLightingEmotion.ts` | 分镜六栏含运镜/灯光/情绪；手法卡（电影+剧集）。**A+B+C**：成稿去名只写手法词；系统 Prompt 可溯源点名；曹译文=内地剧集 |
+| `decisionIntelligenceFlashPipeline.ts` | Call B 多样性软边界 |
+| Stage1/2 + 自定义选题 | 注入多样性 + 灯光情绪 + 替换苏东坡示例 |
+
+**验收**：同一人设重跑全案/智库，选题面拉开（少扎堆宋词人）；分镜表可见灯光与情绪栏。

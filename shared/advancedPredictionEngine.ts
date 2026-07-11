@@ -28,9 +28,10 @@ export function predictViewsAdvanced(contentBlueprint: unknown, platformData: { 
   const text = JSON.stringify(contentBlueprint);
   const seed = text.slice(0, 2000);
 
-  if (text.includes("女性心病") && (text.includes("宋代点茶") || text.includes("宋代点茶"))) baseViews *= 2.5;
-  if (text.includes("跨界美学") || text.includes("跨界美学")) baseViews *= 1.5;
+  if (text.includes("女性") && (text.includes("情绪") || text.includes("内耗") || text.includes("银发"))) baseViews *= 1.6;
+  if (text.includes("跨界美学") || text.includes("跨界")) baseViews *= 1.5;
   if (text.includes("爵士乐") || text.includes("爵士")) baseViews *= 1.8;
+  if (text.includes("史记") || text.includes("战国") || text.includes("文物") || text.includes("唐诗")) baseViews *= 1.35;
 
   const variance = jitter(seed, "views", 0.1);
   return Math.round(baseViews * (1 + variance));
@@ -44,9 +45,9 @@ export function predictConversionRateAdvanced(
   const seed = text.slice(0, 2000);
   let baseRate = thinkingLevel === "HIGH" ? 8.0 : 5.0;
 
-  if (text.includes("医学卫教") || text.includes("医学卫教") || text.includes("预防医学") || text.includes("预防医学")) baseRate += 3.5;
-  if (text.includes("宋代点茶") || text.includes("宋代点茶")) baseRate += 2.0;
-  if (text.includes("情感疗愈") || text.includes("情感疗愈")) baseRate += 1.5;
+  if (text.includes("医学卫教") || text.includes("预防医学") || text.includes("生命科学") || text.includes("康养")) baseRate += 3.5;
+  if (text.includes("史记") || text.includes("文物") || text.includes("唐诗") || text.includes("元曲")) baseRate += 1.5;
+  if (text.includes("情感疗愈") || text.includes("生活美学") || text.includes("觉察")) baseRate += 1.5;
 
   const variance = jitter(seed, "conv", 0.1);
   return parseFloat(clamp(baseRate * (1 + variance), 1, 25).toFixed(2));
@@ -62,8 +63,9 @@ export function calculateIPFit(contentBlueprint: unknown, userProfile: { brandGe
       hits++;
       continue;
     }
-    if (g === "生活美学" && text.includes("生活美学")) hits++;
-    else if (g === "宋代点茶" && text.includes("宋代点茶")) hits++;
+    if (g === "生活美学" && (text.includes("生活美学") || text.includes("审美"))) hits++;
+    else if (g === "生命科学" && (text.includes("生命") || text.includes("觉察"))) hits++;
+    else if (g === "古典对照" && (text.includes("史记") || text.includes("唐诗") || text.includes("文物"))) hits++;
   }
   const base = 38;
   const add = genes.length ? Math.min(58, (hits / genes.length) * 55 + hits * 6) : 20;
@@ -105,13 +107,13 @@ function radarFromBlueprint(text: string, seed: string): AdvancedAIReportData["g
   let platformPotential = 75;
   let mabEfficiency = 78;
 
-  if (text.includes("女性心病")) {
+  if (text.includes("女性") && (text.includes("情绪") || text.includes("内耗"))) {
     views += 8;
     brandFit += 6;
   }
-  if (text.includes("宋代点茶") || text.includes("宋代点茶") || text.includes("点茶") || text.includes("点茶")) {
-    views += 10;
-    platformPotential += 8;
+  if (text.includes("史记") || text.includes("文物") || text.includes("唐诗") || text.includes("银发")) {
+    views += 8;
+    platformPotential += 6;
   }
   if (text.includes("爵士")) {
     conversion += 7;
@@ -152,11 +154,11 @@ function applyBlueprintRadarNudgesForPlatformSlice(text: string, r: SimRadar, st
   const k = strength;
   let { views, conversion, brandFit, platformPotential, mabEfficiency } = r;
 
-  if (text.includes("女性心病")) {
+  if (text.includes("女性") && (text.includes("情绪") || text.includes("内耗"))) {
     brandFit += Math.round(6 * k);
     views += Math.round(4 * k);
   }
-  if (text.includes("宋代点茶") || text.includes("点茶")) {
+  if (text.includes("史记") || text.includes("文物") || text.includes("唐诗") || text.includes("银发")) {
     views += Math.round(6 * k);
     platformPotential += Math.round(6 * k);
   }
@@ -269,7 +271,7 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
   const platformData = input.platformData ?? {};
   const thinkingLevel = input.thinkingLevel ?? "HIGH";
   const windowDays = input.windowDays;
-  const userProfile = input.userProfile ?? { brandGenes: ["女性心病", "生活美学", "宋代点茶"] };
+  const userProfile = input.userProfile ?? { brandGenes: ["生命科学", "生活美学", "古典对照"] };
   const text = JSON.stringify(contentBlueprint);
   const seed = `${topic}|${text.slice(0, 1500)}`;
 
@@ -280,26 +282,26 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
   const platformRadar = platformHitPotentialRadarFromBlueprint(text, seed, platformKey);
   const platformLabel = PLATFORM_LABEL_ZH[platformKey] ?? platformKey;
 
-  const v1 = input.mabTitles?.[0] ?? "听爵士，降10mmHg血压？这招绝了！";
-  const v2 = input.mabTitles?.[1] ?? "宋代点茶：女性心病的跨界美学处方笺";
+  const v1 = input.mabTitles?.[0] ?? "史记里那个最会「止损」的人，今天会怎么过中年？";
+  const v2 = input.mabTitles?.[1] ?? "为什么爵士乐总在「唱错」的地方安慰你？";
 
   const mabVariants = buildMabVariantsFromTitles(v1, v2, text);
 
   const personalization = [
     {
-      topicDirection: "宋代点茶 × 情绪疗愈",
-      brandMatchScore: calculateIPFit({ ...tryParse(text), focus: "茶" }, userProfile),
+      topicDirection: "史记人物 × 当代边界感与身心节律",
+      brandMatchScore: calculateIPFit({ ...tryParse(text), focus: "史记" }, userProfile),
       viewsPredicted: Math.round(totalViews * (0.95 + hash01(seed + "p0") * 0.08)),
     },
     {
-      topicDirection: "女性心病卫教 × 爵士乐美学",
+      topicDirection: "爵士留白 × 主观时间与恢复美学",
       brandMatchScore: calculateIPFit({ ...tryParse(text), jazz: true }, userProfile),
       viewsPredicted: Math.round(totalViews * (0.82 + hash01(seed + "p1") * 0.06)),
     },
     {
-      topicDirection: "女性心病卫教 × 专业数据",
+      topicDirection: "银发家庭沟通 × 生活力观察清单",
       brandMatchScore: Math.round(
-        clamp(calculateIPFit(tryParse(text), { brandGenes: [...userProfile.brandGenes, "数据"] }) * 0.9, 0, 100),
+        clamp(calculateIPFit(tryParse(text), { brandGenes: [...userProfile.brandGenes, "银发"] }) * 0.9, 0, 100),
       ),
       viewsPredicted: Math.round(totalViews * (0.65 + hash01(seed + "p2") * 0.08)),
     },
@@ -307,29 +309,29 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
 
   const topicStructureExamples = [
     {
-      title: "最佳宋代点茶叙事线",
-      structure: "开场共鸣 → 史观一句 → 可操作步骤 → CTA",
+      title: "唐人边塞诗 × 旅行恢复隐喻",
+      structure: "反差钩子 → 痛点共鸣 → 半成品解法两点 → 咨询 CTA",
       predictedCtr: parseFloat((4.2 + hash01(seed + "ctr0") * 3).toFixed(1)),
       predictedConversion: parseFloat((avgConv * 0.92 + hash01(seed + "c0")).toFixed(2)),
       brandMatchFit: clamp(76 + hash01(seed + "bf0") * 20, 55, 98),
     },
     {
-      title: "爵士 × 心率话题切入",
-      structure: "反差标题 → 个人故事 → 医学底稿一句话 → 互动提问",
+      title: "爵士 × 主观时间切入",
+      structure: "反差标题 → 个人故事 → 可执行觉察动作 → 互动提问",
       predictedCtr: parseFloat((5.1 + hash01(seed + "ctr1") * 2.8).toFixed(1)),
       predictedConversion: parseFloat((avgConv * 1.05 + hash01(seed + "c1")).toFixed(2)),
       brandMatchFit: clamp(68 + hash01(seed + "bf1") * 22, 55, 98),
     },
     {
-      title: "预防医学清单体",
-      structure: "清单封面 → 三条干货 → 一条免责 → 预约/关注",
+      title: "网球第三盘 × 中年节律",
+      structure: "运动场钩子 → 身体隐喻 → 三条清单 → 预约/关注",
       predictedCtr: parseFloat((3.8 + hash01(seed + "ctr2") * 2.4).toFixed(1)),
       predictedConversion: parseFloat((avgConv * 0.88 + hash01(seed + "c2")).toFixed(2)),
       brandMatchFit: clamp(62 + hash01(seed + "bf2") * 18, 55, 98),
     },
     {
-      title: "宋茶 × 女性情绪疗愈",
-      structure: "美感镜头 → 情绪命名 → 具体仪式 → 温和转化",
+      title: "当代热播剧情绪桥段 × 生命觉察",
+      structure: "影视切口 → 情绪命名 → 半成品框架 → 温和转化",
       predictedCtr: parseFloat((4.6 + hash01(seed + "ctr3") * 3.2).toFixed(1)),
       predictedConversion: parseFloat((avgConv * 0.97 + hash01(seed + "c3")).toFixed(2)),
       brandMatchFit: clamp(80 + hash01(seed + "bf3") * 15, 55, 98),
@@ -343,14 +345,14 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
     {
       id: 1,
       title: "跨界赛道强度",
-      content: `判断1：「${topic}」与高互动叙事结构叠加时，模型估测较易触达更广受众；建议以宋茶/爵士其中一条做主轴做深。`,
+      content: `判断1：「${topic}」与高互动叙事结构叠加时，模型估测较易触达更广受众；建议在「典籍人物 / 文物事件 / 爵士生活 / 运动旅行」中轮换主轴，避免锁死单一朝代或单一词人。`,
       metricsText: `参考播放量量级约 ${formatIntCn(totalViews)}，转化区间约 ${avgConv.toFixed(1)}%。`,
     },
     {
       id: 2,
       title: "转化与信任",
       content:
-        "判断2：医学底色 + 可感知仪式（泡茶、节奏）能拉高完播后的有效咨询线索；清单体与故事体可分流测试。",
+        "判断2：学者底色 + 可感知生活场域（音乐、球场、旅行、市井）能拉高完播后的有效咨询线索；清单体与故事体可分流测试。",
       metricsText: `历史样本对比：清单/分步结构较平铺叙述，预估转化平均高约 ${(avgConv * 0.08).toFixed(1)} 个百分点（为模型估算，非承诺）。`,
     },
     {
@@ -364,7 +366,7 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
       id: 4,
       title: "战略升级方向",
       content:
-        "判断4：动态对照下，表现稳定的版本适合加大曝光；新鲜组合（如宋茶×情绪）宜保留试错节奏，避免过早锁死单一叙事模版。",
+        "判断4：动态对照下，表现稳定的版本适合加大曝光；新鲜组合（史记×边界感、文物×观察力、影视×觉察）宜保留试错节奏，避免过早锁死宋词人模板。",
       metricsText: `执行节奏综合评分：${radar.mabEfficiency}/100。`,
     },
   ];
@@ -387,7 +389,7 @@ export function buildSimulatedAdvancedAIReport(input: SimulatedAdvancedReportInp
     platformDetailedData: {
       note: "热榜＋品牌契合可在此挂接现有 growth JSON",
       hotListBrandFitHint:
-        text.includes("宋代点茶") || text.includes("宋代点茶")
+        text.includes("史记") || text.includes("爵士") || text.includes("文物") || text.includes("银发")
           ? "跨界话题与账号基因契合度偏高"
           : "建议以主航道关键词对齐榜单",
       matchedPlatform: platformKey,

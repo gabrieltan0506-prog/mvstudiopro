@@ -11,6 +11,11 @@ import {
   PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE,
   needsReviewSafeVoice,
 } from "@shared/platformCreatorInsightFraming";
+import {
+  PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
+  needsCulturalMaterialDiversity,
+} from "@shared/platformCulturalMaterialDiversity";
+import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "@shared/storyboardLightingEmotion";
 import { extractJsonString } from "../_core/llm";
 import { callDecisionIntelGpt55StructuredJson } from "./decisionIntelGpt55Copywriting.js";
 
@@ -87,6 +92,9 @@ export async function generateDecisionIntelTopicBlueprints(params: {
   const reviewBlock = needsReviewSafeVoice(contextBlob)
     ? `\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}\n`
     : "";
+  const diversityBlock = needsCulturalMaterialDiversity(contextBlob)
+    ? `\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}\n`
+    : "";
 
   const system = `你是资深内容策划，负责把「战略地图选题结构」扩写为可立刻开拍、并能促成咨询意向的执行方案。
 【规则】
@@ -95,8 +103,12 @@ export async function generateDecisionIntelTopicBlueprints(params: {
 - 【场景生动化】文案与分镜中的拍摄场景须具体、可拍、能打动用户；包括但不局限于例如博物馆、户外旅行、知名景区、游泳池、网球场、音乐厅、饭店餐厅、路边大排档、商场、街景、自然风光等（可据人设拓展）；禁止多条扎堆书房、客厅等同质布景。
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
 ${reviewBlock}
+${diversityBlock}
+${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}
+- 若输入标题已是苏轼/李清照等宋词人模板，**强烈建议改写扩写**为同痛点但换朝代/典籍/文物/当代切口的新标题，少原样复读宋词人套餐。
 - 若提供蓝海词/标签，须在 copywriting、detailedScript、publishingAdvice 中自然嵌入 1–3 个，禁止堆砌 hashtag。
-- 须严格延续输入标题与结构骨架的主线，不得偏题；语气专业、可拍、简体中文。
+- 须严格延续输入选题的主线痛点与人设，不得偏题；语气专业、可拍、简体中文。
+- **高度需求** executionDetails.lightingAndCamera 与 stepByStepScript 写清运镜、灯光与情绪（见上方手法卡）；只借手法，禁止点名导演/致敬；分镜表六栏含运镜、灯光安排与情绪表达。
 - 禁止 markdown 代码块；第一个字符必须是 {。`;
 
   const user = `【账号选题方向】${params.topic}
