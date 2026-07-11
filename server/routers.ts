@@ -1194,6 +1194,11 @@ export async function buildPlatformContent(params: {
    * `dimIndex` 為 0-based 維度序號（0–5）。
    */
   onBlueprintGenerated?: (blueprint: unknown, dimIndex: number) => Promise<void> | void;
+  /**
+   * /platform 勾选 Skill 拼成的强制 Prompt 块（由 resolvePlatformSkillsPrompt 生成）。
+   * 注入后与软建议冲突时以 Skill 为准。
+   */
+  platformSkillsPrompt?: string;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1376,13 +1381,16 @@ export async function buildPlatformContent(params: {
   const reviewSafe = needsReviewSafeVoice(params.context || "");
   diagnostics.reviewSafeVoice = reviewSafe;
   diagnostics.culturalMaterialDiversity = needsCulturalMaterialDiversity(params.context || "");
+  const skillsBlock = String(params.platformSkillsPrompt || "").trim();
+  diagnostics.platformSkillsPromptChars = skillsBlock.length;
   const personaConstraint =
     buildKnowledgeMonetizationConstraint(params.context || "") +
     (reviewSafe ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}` : "") +
     (needsCulturalMaterialDiversity(params.context || "")
       ? `\n\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}`
       : "") +
-    `\n\n${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}`;
+    `\n\n${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}` +
+    (skillsBlock ? `\n\n${skillsBlock}` : "");
 
   const stage2UserJsonString = JSON.stringify({
           context: params.context || "",
@@ -4100,6 +4108,8 @@ export const appRouter = router({
               tagCandidates: z.array(z.string()).optional(),
             })
             .optional(),
+          /** /platform 勾选启用的 Skill id */
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -4167,6 +4177,18 @@ export const appRouter = router({
           }
         }
 
+        const platformSkillsPrompt = await (async () => {
+          try {
+            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
+            return await resolvePlatformSkillsPrompt({
+              userId: ctx.user.id,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+            });
+          } catch {
+            return "";
+          }
+        })();
+
         const blueprints = await generateDecisionIntelTopicBlueprints({
           picks: [input.pick],
           contentBlueprint,
@@ -4175,6 +4197,7 @@ export const appRouter = router({
           idPrefix: input.regenerate ? "decision-intel-regen" : "decision-intel-picked",
           abortSignal: ctx.clientDisconnected,
           blueOceanLexicon: input.blueOceanLexicon,
+          platformSkillsPrompt,
         });
 
         if (blueprints.length > 0) {
@@ -4798,6 +4821,65 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (!url) throw e;
           return { url };
         }
+      }),
+
+    /** /platform：列出内置 + 当前用户上传的 Skill */
+    listPlatformSkills: protectedProcedure.query(async ({ ctx }) => {
+      const { listAllPlatformSkillsForUser } = await import("./services/platformSkillsService.js");
+      const skills = await listAllPlatformSkillsForUser(ctx.user.id);
+      return {
+        skills: skills.map((s) => ({
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          version: s.version,
+          defaultEnabled: s.defaultEnabled,
+          source: s.source,
+          updatedAt: s.updatedAt,
+          bodyChars: String(s.body || "").length,
+        })),
+      };
+    }),
+
+    /** /platform：上传 .md Skill（账号持久化） */
+    uploadPlatformSkill: protectedProcedure
+      .input(
+        z.object({
+          markdown: z.string().min(20).max(80_000),
+          filenameHint: z.string().max(120).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const { saveUserPlatformSkill } = await import("./services/platformSkillsService.js");
+        const skill = await saveUserPlatformSkill({
+          userId: ctx.user.id,
+          markdown: input.markdown,
+          filenameHint: input.filenameHint,
+        });
+        return {
+          skill: {
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+            version: skill.version,
+            defaultEnabled: skill.defaultEnabled,
+            source: skill.source,
+            updatedAt: skill.updatedAt,
+            bodyChars: String(skill.body || "").length,
+          },
+        };
+      }),
+
+    /** /platform：删除用户上传的 Skill（不可删内置） */
+    deletePlatformSkill: protectedProcedure
+      .input(z.object({ skillId: z.string().min(1).max(80) }))
+      .mutation(async ({ input, ctx }) => {
+        const { deleteUserPlatformSkill } = await import("./services/platformSkillsService.js");
+        const ok = await deleteUserPlatformSkill(ctx.user.id, input.skillId);
+        if (!ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "只能删除自己上传的 Skill（user-*）" });
+        }
+        return { ok: true as const };
       }),
 
     enqueueGenerateTopicImage: protectedProcedure
@@ -6150,6 +6232,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            */
           stage2LlmMode: zPlatformCopyLlmModeInput,
           supervisorToken: z.string().max(512).optional(),
+          /** /platform 勾选启用的 Skill id 列表（内置 + 用户上传） */
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -6192,6 +6276,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               snapshotSummary: input.snapshotSummary,
               strategicDashboard: input.strategicDashboard,
               ...(stage2LlmModeForJob ? { stage2LlmMode: stage2LlmModeForJob } : {}),
+              ...(Array.isArray(input.enabledSkillIds)
+                ? { enabledSkillIds: input.enabledSkillIds }
+                : {}),
             },
           },
         });

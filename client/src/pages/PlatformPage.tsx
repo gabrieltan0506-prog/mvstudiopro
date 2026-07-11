@@ -153,6 +153,22 @@ const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
 
+/** /platform 挂载 Skill：勾选 id 列表（JSON string[]） */
+const PLATFORM_ENABLED_SKILL_IDS_LS_KEY = "mvstudiopro.platform.enabledSkillIds.v1";
+
+function readEnabledPlatformSkillIdsFromLs(): Set<string> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(PLATFORM_ENABLED_SKILL_IDS_LS_KEY);
+    if (raw == null) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return new Set(parsed.map(String).filter(Boolean));
+  } catch {
+    return null;
+  }
+}
+
 function parsePlatformCopyLlmEngineLs(raw: string | null): PlatformCopyLlmEngine {
   return raw === "vertex" ? "vertex" : "openai";
 }
@@ -1863,6 +1879,14 @@ export default function PlatformPage() {
   const [customTopicGenCopy, setCustomTopicGenCopy] = useState(true);
   const [customTopicGenCover, setCustomTopicGenCover] = useState(true);
   const [customTopicGenStoryboard, setCustomTopicGenStoryboard] = useState(true);
+  /** Platform 可挂载 Skill：勾选 id（localStorage 持久化） */
+  const [enabledPlatformSkillIds, setEnabledPlatformSkillIds] = useState<Set<string>>(() => {
+    return readEnabledPlatformSkillIdsFromLs() ?? new Set();
+  });
+  const [platformSkillIdsHydrated, setPlatformSkillIdsHydrated] = useState(
+    () => readEnabledPlatformSkillIdsFromLs() != null,
+  );
+  const [platformSkillUploading, setPlatformSkillUploading] = useState(false);
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -1976,6 +2000,79 @@ export default function PlatformPage() {
   );
 
   const enqueuePlatformContentJobMutation = trpc.mvAnalysis.enqueuePlatformContentJob.useMutation();
+
+  const platformSkillsQuery = trpc.mvAnalysis.listPlatformSkills.useQuery(undefined, {
+    enabled: isAuthenticated,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const uploadPlatformSkillMutation = trpc.mvAnalysis.uploadPlatformSkill.useMutation();
+  const deletePlatformSkillMutation = trpc.mvAnalysis.deletePlatformSkill.useMutation();
+
+  useEffect(() => {
+    const skills = platformSkillsQuery.data?.skills;
+    if (!skills?.length || platformSkillIdsHydrated) return;
+    setEnabledPlatformSkillIds(new Set(skills.filter((s) => s.defaultEnabled).map((s) => s.id)));
+    setPlatformSkillIdsHydrated(true);
+  }, [platformSkillsQuery.data?.skills, platformSkillIdsHydrated]);
+
+  useEffect(() => {
+    if (!platformSkillIdsHydrated) return;
+    try {
+      window.localStorage.setItem(
+        PLATFORM_ENABLED_SKILL_IDS_LS_KEY,
+        JSON.stringify(Array.from(enabledPlatformSkillIds)),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [enabledPlatformSkillIds, platformSkillIdsHydrated]);
+
+  const togglePlatformSkillId = useCallback((id: string) => {
+    setEnabledPlatformSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleUploadPlatformSkillFile = useCallback(
+    async (file: File) => {
+      if (!isAuthenticated) {
+        toast.error("请先登录后再上传 Skill");
+        return;
+      }
+      const name = String(file.name || "").toLowerCase();
+      if (!name.endsWith(".md") && file.type && !/markdown|text\/plain/i.test(file.type)) {
+        toast.error("请上传 .md 文件");
+        return;
+      }
+      setPlatformSkillUploading(true);
+      try {
+        const markdown = await file.text();
+        if (markdown.trim().length < 20) {
+          toast.error("Skill 内容过短（至少约 20 字）");
+          return;
+        }
+        const res = await uploadPlatformSkillMutation.mutateAsync({
+          markdown,
+          filenameHint: file.name,
+        });
+        const sid = res.skill?.id;
+        if (sid) {
+          setEnabledPlatformSkillIds((prev) => new Set(prev).add(sid));
+        }
+        toast.success(`已上传 Skill：${res.skill?.name || sid || "ok"}`);
+        void platformSkillsQuery.refetch();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "上传 Skill 失败");
+      } finally {
+        setPlatformSkillUploading(false);
+      }
+    },
+    [isAuthenticated, uploadPlatformSkillMutation, platformSkillsQuery],
+  );
 
   /** Fly worker 回传后解析 platformContent（轮询与错误处理集中一处，供初次与重试共用） */
   const runStage2FromJobId = useCallback(async (jobId: string) => {
@@ -2193,6 +2290,7 @@ export default function PlatformPage() {
           snapshotSummary,
           strategicDashboard: dash as unknown as Record<string, unknown>,
           stage2LlmMode: "openai" as const,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
           ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
         });
         setContentJobPollTrace({
@@ -2224,7 +2322,14 @@ export default function PlatformPage() {
         setIsContentLoading(false);
       }
     },
-    [focusPrompt, enqueuePlatformContentJobMutation, runStage2FromJobId, platformCopyLlmEngine, visualReportData],
+    [
+      focusPrompt,
+      enqueuePlatformContentJobMutation,
+      runStage2FromJobId,
+      platformCopyLlmEngine,
+      visualReportData,
+      enabledPlatformSkillIds,
+    ],
   );
 
   /** 用户确认后入队 Stage 2（后端立即扣积分）并轮询直至完成 */
@@ -3982,6 +4087,7 @@ export default function PlatformPage() {
           },
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
           pick: {
             title: title.slice(0, 240),
             structure: structure.slice(0, 8000),
@@ -6237,6 +6343,7 @@ export default function PlatformPage() {
           contentBlueprint: strategicMapBlueprint,
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
           pick,
         });
         const mapped = mapStrategicMapBlueprintsToExecutionCards(
@@ -6265,6 +6372,7 @@ export default function PlatformPage() {
       contentExecutionCards.length,
       strategicMapSessionExecutionCards.length,
       scrollToPlatformExecutionCopy,
+      enabledPlatformSkillIds,
     ],
   );
 
@@ -6312,6 +6420,7 @@ export default function PlatformPage() {
           contentBlueprint: strategicMapBlueprint,
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
           pick: { title: title.slice(0, 240), structure, source: "structure" as const },
         });
         const mapped = mapStrategicMapBlueprintsToExecutionCards(
@@ -6340,6 +6449,7 @@ export default function PlatformPage() {
       contentExecutionCards.length,
       strategicMapSessionExecutionCards.length,
       scrollToPlatformExecutionCopy,
+      enabledPlatformSkillIds,
     ],
   );
 
@@ -6373,6 +6483,7 @@ export default function PlatformPage() {
           contentBlueprint: strategicMapBlueprint,
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
           pick,
           regenerate: true,
         });
@@ -6415,6 +6526,7 @@ export default function PlatformPage() {
       strategicMapSessionExecutionCards.length,
       supervisorAccess,
       scrollToPlatformExecutionCopy,
+      enabledPlatformSkillIds,
     ],
   );
 
@@ -9139,6 +9251,102 @@ export default function PlatformPage() {
                         视频图文分镜表
                       </h3>
                       <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成分镜套装、一键生成封面加分镜。</p>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-[#10B981]/30 bg-[#10B981]/8 px-4 py-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-white">生成 Skill（挂载到全案文案 / 分镜）</div>
+                        <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
+                          勾选后注入「开始全案分析」文案生成。内置文件在{" "}
+                          <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
+                          ；可上传 .md 追加。用于拉开文化/生活场域，避免苏轼李清照与网球游泳复读。
+                        </p>
+                      </div>
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#10B981]/45 bg-[#10B981]/15 px-2.5 py-1.5 text-[11px] font-bold text-[#a7f3d0] transition hover:bg-[#10B981]/25">
+                        {platformSkillUploading ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            上传中…
+                          </>
+                        ) : (
+                          <>上传 Skill.md</>
+                        )}
+                        <input
+                          type="file"
+                          accept=".md,text/markdown,text/plain"
+                          className="hidden"
+                          disabled={platformSkillUploading || !isAuthenticated}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            e.target.value = "";
+                            if (f) void handleUploadPlatformSkillFile(f);
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {(platformSkillsQuery.data?.skills ?? []).map((sk) => {
+                        const on = enabledPlatformSkillIds.has(sk.id);
+                        return (
+                          <label
+                            key={sk.id}
+                            className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] transition ${
+                              on
+                                ? "border-[#10B981]/50 bg-[#10B981]/12 text-white"
+                                : "border-white/10 bg-black/20 text-gray-400"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={on}
+                              onChange={() => togglePlatformSkillId(sk.id)}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="font-semibold text-white/90">{sk.name}</span>
+                              <span className="ml-1 text-[10px] text-gray-500">
+                                {sk.source === "builtin" ? "内置" : "上传"} · {sk.id}
+                              </span>
+                              {sk.description ? (
+                                <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">
+                                  {sk.description}
+                                </span>
+                              ) : null}
+                            </span>
+                            {sk.source === "user" ? (
+                              <button
+                                type="button"
+                                className="shrink-0 text-[10px] text-rose-300/80 hover:text-rose-200"
+                                onClick={(ev) => {
+                                  ev.preventDefault();
+                                  void (async () => {
+                                    try {
+                                      await deletePlatformSkillMutation.mutateAsync({ skillId: sk.id });
+                                      setEnabledPlatformSkillIds((prev) => {
+                                        const next = new Set(prev);
+                                        next.delete(sk.id);
+                                        return next;
+                                      });
+                                      toast.success("已删除上传 Skill");
+                                      void platformSkillsQuery.refetch();
+                                    } catch (err) {
+                                      toast.error(err instanceof Error ? err.message : "删除失败");
+                                    }
+                                  })();
+                                }}
+                              >
+                                删除
+                              </button>
+                            ) : null}
+                          </label>
+                        );
+                      })}
+                      {!platformSkillsQuery.data?.skills?.length ? (
+                        <div className="text-[11px] text-gray-500 sm:col-span-2">
+                          {platformSkillsQuery.isLoading ? "加载 Skill…" : "暂无 Skill（请确认 docs/2026Jul11/skill 已部署）"}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                   {platformTopicCount > 0 ? (
