@@ -11,6 +11,7 @@ import {
   appendFashionEditorialCharacterGuidance,
   PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH,
 } from "../../shared/platformFashionEditorialCharacter.js";
+import { STORYBOARD_ON_IMAGE_TEXT_ZH } from "../../shared/storyboardTextClarity.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -516,6 +517,7 @@ export function buildCompositeSheetDirectChineseBody(
 - 严格排成单横排四格，格线笔直、格间留白清晰，左→右顺扫；本段将与其他横排纵向拼成 3×4 长图。
 - 每一格自上而下：① 本格分镜主题（一行加粗简体中文）；② 该镜头电影级写实剧照（高细节，约占 70–75%）；③ 格内底部约 25–30% 为简体中文四栏小表，表头固定【景别 / 运镜 / 画面内容 / 台词与音效】四栏都要填。
 - 风格：电影感、8k、精致布光、统一高级色调；所有屏内文字一律**简体中文、印刷清晰、不可乱码/缺笔**。
+${STORYBOARD_ON_IMAGE_TEXT_ZH}
 - 若脚本含【光影与机位约束·拍摄手法】或【上传素材拍摄技法】，四格的景别/运镜/布光/走位须对齐该约束（教学演示类优先固定中远景、前景操作物、背景大屏同步）。
 - 现代主讲/主人公人物造型须对齐【人物造型·国际时尚大片】：配合场景的高雅/高贵时装，VOGUE·ELLE·Harper's Bazaar·好莱坞时尚编辑气质；妆发皮肤高级真实，配饰可点缀勿硬配；与其他分段跨段同一人、同一阶层气质、同一布光色调。
 
@@ -527,6 +529,7 @@ ${slice}`;
 - 其下严格排成 **2 行 × 4 列、共 8 格**，格线笔直、格间留白清晰，按 row1 左→右、row2 左→右顺扫。
 - 每一格自上而下：① 本格分镜主题（一行加粗简体中文）；② 该镜头电影级写实剧照（高细节，约占 70–75%）；③ 格内底部约 25–30% 为简体中文四栏小表，表头固定【景别 / 运镜 / 画面内容 / 台词与音效】四栏都要填。
 - 风格：电影感、8k、精致布光、统一高级色调；所有屏内文字一律**简体中文、印刷清晰、不可乱码/缺笔**。
+${STORYBOARD_ON_IMAGE_TEXT_ZH}
 - 若脚本含【光影与机位约束·拍摄手法】或【上传素材拍摄技法】，八格的景别/运镜/布光/走位须对齐该约束（教学演示类优先固定中远景、前景操作物、背景大屏同步）。
 - 现代主讲/主人公人物造型须对齐【人物造型·国际时尚大片】：配合场景的高雅/高贵时装，VOGUE·ELLE·Harper's Bazaar·好莱坞时尚编辑气质；妆发皮肤高级真实，配饰可点缀勿硬配；跨格服装可随场景微调但须保持同一人与同一阶层气质。
 
