@@ -205,7 +205,7 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   const parts: string[] = [];
   if (on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题/论文副标上屏；有人物禁坐姿上课脸，须瞪大眼/跳跃/失衡等抓人瞬间，同批勿全坐着。",
+      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题上屏；有人物禁坐姿上课脸——帅气运动定格（网球发球/爬山登顶等）或有戏表情均可，不要求搞笑；同批勿全坐着。",
     );
   }
   if (on("graphic-note-rhythm")) {
