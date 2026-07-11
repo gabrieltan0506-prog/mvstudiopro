@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureMinGraphicNoteBlueprints } from "./ensureMinGraphicNoteBlueprints";
+import { ensureMinGraphicNoteBlueprints } from "../../shared/ensureMinGraphicNoteBlueprints";
 
 describe("ensureMinGraphicNoteBlueprints", () => {
   it("不足 3 条图文时从尾部补齐，并同步小红书 variant", () => {
