@@ -7,6 +7,11 @@ import * as db from "../db";
 import { platformStrategicBlueprintSnapshots } from "../../drizzle/schema-platform-strategic-blueprints";
 import { buildPlatformSceneTextForCover } from "../../shared/platformSceneTextForCover.js";
 import { buildTitleVariantsFromBlueprint, pickPreferredTitleVariant } from "../../shared/platformTitleVariants.js";
+import {
+  normalizePlatformVariants,
+  pickCoverHeadlineFromVariants,
+  type PlatformNativeVariant,
+} from "../../shared/platformNativeVariants.js";
 
 export type EnrichedBlueprintSnapshot = {
   sceneId: string;
@@ -20,6 +25,7 @@ export type EnrichedBlueprintSnapshot = {
     lightingAndCamera?: string;
     stepByStepScript?: unknown;
   };
+  platformVariants?: PlatformNativeVariant[];
 };
 
 /** 無法從 DB 取得可售品質封面文案時拋出（由路由轉為 PRECONDITION_FAILED）。 */
@@ -85,6 +91,7 @@ export function buildEnrichedBlueprintSnapshots(contentBlueprints: unknown[]): E
       typeof raw.executionDetails === "object" && raw.executionDetails !== null
         ? (raw.executionDetails as EnrichedBlueprintSnapshot["executionDetails"])
         : undefined;
+    const platformVariants = normalizePlatformVariants(raw.platformVariants ?? raw.platformAdaptations);
     enriched.push({
       sceneId,
       title,
@@ -93,6 +100,7 @@ export function buildEnrichedBlueprintSnapshots(contentBlueprints: unknown[]): E
       format,
       isGraphicCover,
       executionDetails,
+      ...(platformVariants.length > 0 ? { platformVariants } : {}),
     });
     idx += 1;
   }
@@ -323,7 +331,8 @@ export function optimizeEnrichedBlueprintForCover(
     executionDetails: hit.executionDetails,
   }).trim();
 
-  const topicHook = title.slice(0, 500);
+  const coverFromVariant = pickCoverHeadlineFromVariants(hit.platformVariants).trim();
+  const topicHook = (coverFromVariant || title).slice(0, 500);
   const appealHook = hook.slice(0, 500);
   if (!topicHook.trim()) {
     throw new PlatformCoverInputsError("封面主句为空，请检查该选题后重新同步。");

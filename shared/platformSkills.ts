@@ -85,6 +85,12 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "cultural-diversity",
   "lifestyle-diversity",
   "hook-solution-cta",
+  "platform-native",
+  "review-safe-voice",
+  "cover-stop-scroll",
+  "blue-ocean-natural",
+  "batch-arc-engagement",
+  "graphic-note-rhythm",
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];

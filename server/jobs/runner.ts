@@ -1238,6 +1238,7 @@ async function processPlatformJob(
             return await resolvePlatformSkillsPrompt({
               userId: jobUserId ?? 0,
               enabledSkillIds,
+              allowBloggerTitle: Boolean((params as { allowBloggerTitle?: unknown }).allowBloggerTitle),
             });
           } catch (e) {
             console.warn(

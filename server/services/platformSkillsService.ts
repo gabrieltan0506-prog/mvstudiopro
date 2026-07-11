@@ -248,6 +248,8 @@ export async function deleteUserPlatformSkill(userId: number | string, skillId: 
 export async function resolvePlatformSkillsPrompt(params: {
   userId: number | string;
   enabledSkillIds?: string[] | null;
+  /** UI 开关：默认 false = 禁止空壳「博主/创作者」 */
+  allowBloggerTitle?: boolean;
 }): Promise<string> {
   const all = await listAllPlatformSkillsForUser(params.userId);
   const enabledIds = Array.isArray(params.enabledSkillIds)
@@ -257,7 +259,10 @@ export async function resolvePlatformSkillsPrompt(params: {
     enabledIds === null
       ? all.filter((s) => s.defaultEnabled)
       : all.filter((s) => enabledIds.includes(s.id));
-  return composePlatformSkillsPromptBlock(selected);
+  const skills = composePlatformSkillsPromptBlock(selected);
+  const { composeBloggerTitlePolicyPrompt } = await import("../../shared/platformNativeVariants.js");
+  const blogger = composeBloggerTitlePolicyPrompt(Boolean(params.allowBloggerTitle));
+  return [skills, blogger].filter(Boolean).join("\n\n");
 }
 
 export { composePlatformSkillsPromptBlock };
