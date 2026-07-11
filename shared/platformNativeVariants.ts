@@ -218,7 +218,7 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   }
   if (on("contrast-reversal-climax")) {
     parts.push(
-      "【反差弧出图】开场身份错位；中段可出现1处精确专有词/数字；末段须见「轻视→仰慕」人物态度反转，勿画成说明书墙。",
+      "【反差弧出图】开场身份错位；中段可精确专有词/数字；情绪态度须有可见反转（可不止一次），落点不限定仰慕；勿说明书墙。",
     );
   }
   if (parts.length === 0) return "";
