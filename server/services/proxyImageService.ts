@@ -1421,13 +1421,18 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
   let scriptContextForPipeline = options.scriptContext;
-  const stagingBits = [
-    String(options.executionDetails || "").trim(),
-    String(options.shootingTechniqueBrief || "").trim(),
-  ].filter(Boolean);
+  // 图文笔记禁止注入拍摄手法（否则会画成「导演手法卡」）；仅短视频分镜需要光影/机位。
+  const stagingBits = isXhs
+    ? []
+    : [
+        String(options.executionDetails || "").trim(),
+        String(options.shootingTechniqueBrief || "").trim(),
+      ].filter(Boolean);
   if (stagingBits.length > 0) {
     scriptContextForPipeline = `${String(scriptContextForPipeline || "").trim()}\n\n【光影与机位约束·拍摄手法】\n${stagingBits.join("\n\n")}`;
     appendImageFlowLog(L, `[2×4·拍摄手法] 已注入 executionDetails/shootingTechniqueBrief（${stagingBits.join(" · ").length} chars）`);
+  } else if (isXhs && (options.executionDetails || options.shootingTechniqueBrief)) {
+    appendImageFlowLog(L, `[2×4·图文] 已跳过 executionDetails/shootingTechniqueBrief（避免手法卡）`);
   }
   // 全案 / 自定义分镜：无论是否有参考人像，均注入国际时尚大片人物造型约束
   scriptContextForPipeline = appendFashionEditorialCharacterGuidance(scriptContextForPipeline, {
@@ -1830,26 +1835,41 @@ export function splitScriptIntoSections(scriptContext: string, sections: number)
 
 /**
  * 从文案抽出约 12 个图文节拍标题（供 3×4 分段专用），避免每段都塞全文导致序号从 01 重开、内容重复。
+ * 优先读 `[封面]`/`[图N]` 大纲；跳过拍摄执行脚本（灯光/运镜/口播时间轴），避免抽成「手法卡」节拍。
  */
 export function extractGraphicNoteBeatsFor3x4(scriptContext: string, totalBeats = 12): string[] {
   const full = String(scriptContext || "").trim();
   const beats: string[] = [];
+  const isShootTechniqueLine = (line: string) =>
+    /(灯光|机位|运镜|口播|景别|拍摄手法|分镜表|\[\d+\s*[-–~]\s*\d+\s*秒\])/.test(line);
+
+  // 优先：详细脚本里的 [封面] / [图N] 知识页
+  const pageBlocks = full.match(/\[(?:封面|图\d+)\][^\n\[]*/g);
+  if (pageBlocks?.length) {
+    for (const block of pageBlocks) {
+      const cleaned = block.replace(/^\[(?:封面|图\d+)\]\s*/, "").trim().slice(0, 80);
+      if (cleaned.length >= 4 && !isShootTechniqueLine(cleaned)) beats.push(cleaned);
+      if (beats.length >= totalBeats) break;
+    }
+  }
+
   const stepBlocks = full.match(/(?:^|\n)\s*(?:\d+[\.\)、]|【\d+】|第\d+[步格段])/gm);
-  // 优先：分镜步骤 / 落地步骤 行
+  // 次选：内容要点行（跳过拍摄教学）
   const lines = full
     .split(/\n+/)
     .map((s) => s.replace(/^\s*[-*•]\s*/, "").trim())
     .filter((s) => s.length >= 6 && s.length <= 120);
   for (const line of lines) {
-    if (/^(【选题】|【钩子】|【文案|【制作】|【环境|【灯光|【情绪|【版式|【发布|【视觉|【3×4|【本段)/.test(line)) {
+    if (beats.length >= totalBeats) break;
+    if (/^(【选题】|【钩子】|【文案|【制作】|【环境|【灯光|【情绪|【版式|【发布|【视觉|【3×4|【本段|【体裁|【图文大纲)/.test(line)) {
       continue;
     }
+    if (isShootTechniqueLine(line)) continue;
     if (/^\d+[\.\)、]/.test(line) || /^【?\d+】?/.test(line) || line.includes("：") || line.includes(":")) {
       beats.push(line.replace(/^\d+[\.\)、]\s*/, "").slice(0, 80));
     }
-    if (beats.length >= totalBeats) break;
   }
-  // 次选：按句号切短句
+  // 再次：按句号切短句（仍跳过拍摄教学）
   if (beats.length < totalBeats) {
     const sentences = full
       .replace(/\s+/g, " ")
@@ -1857,6 +1877,7 @@ export function extractGraphicNoteBeatsFor3x4(scriptContext: string, totalBeats 
       .map((s) => s.trim())
       .filter((s) => s.length >= 8 && s.length <= 60);
     for (const s of sentences) {
+      if (isShootTechniqueLine(s)) continue;
       if (beats.some((b) => b.includes(s.slice(0, 12)) || s.includes(b.slice(0, 12)))) continue;
       beats.push(s.slice(0, 80));
       if (beats.length >= totalBeats) break;
@@ -1912,13 +1933,16 @@ export async function generatePlatformGridStitchedSheetImage(
 
   const sharedRules = [
     PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH,
-    String(options.executionDetails || "").trim()
+    // 图文笔记：禁止注入拍摄手法，否则横排会被画成「导演手法卡」
+    !isXhs && String(options.executionDetails || "").trim()
       ? `【光影与机位约束·拍摄手法】\n${String(options.executionDetails).trim()}`
       : "",
-    String(options.shootingTechniqueBrief || "").trim()
+    !isXhs && String(options.shootingTechniqueBrief || "").trim()
       ? `【上传素材拍摄技法】\n${String(options.shootingTechniqueBrief).trim()}`
       : "",
-    "【3×4 十二格·跨段连贯】本图为 3 行×4 列长图的分段横排生成；各段现代主人公须同一人、同一国际时尚大片阶层气质；景别/运镜/布光对齐拍摄手法约束；跨段色调、布光、边框、场景材质语言一致以便无缝拼接。场景可推进但须留在同一视觉世界，禁止突然换脸、换装阶层或跳戏到无关布景。",
+    isXhs
+      ? "【3×4 十二格·跨段连贯·图文笔记】本图为攻略/避坑知识信息图（扁平插画），不是分镜手法卡。各段现代主人公须同一人、同一阶层气质；跨段色调、边框、插画语言一致以便无缝拼接。禁止六栏分镜表、灯光机位教学、口播时间轴。"
+      : "【3×4 十二格·跨段连贯】本图为 3 行×4 列长图的分段横排生成；各段现代主人公须同一人、同一国际时尚大片阶层气质；景别/运镜/布光对齐拍摄手法约束；跨段色调、布光、边框、场景材质语言一致以便无缝拼接。场景可推进但须留在同一视觉世界，禁止突然换脸、换装阶层或跳戏到无关布景。",
   ]
     .filter(Boolean)
     .join("\n\n");
