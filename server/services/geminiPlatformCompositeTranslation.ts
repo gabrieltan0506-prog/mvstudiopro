@@ -20,6 +20,7 @@ import {
   COVER_DIRECT_CONTEXT_MAX_CHARS,
   focusCoverChineseContextForDirectSend,
 } from "./platformImageChineseStaging.js";
+import { composePlatformCoverNativeVisualDirective } from "../../shared/platformNativeVariants.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -579,8 +580,13 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
   context: string;
   variant: "video" | "graphic";
   coverPersonaContext?: string;
+  /** platformVariants.coverSubline */
+  coverSubline?: string;
+  /** xiaohongshu / bilibili / weixin_channels 或 UI hint */
+  coverNativePlatform?: string;
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 120);
+  const subline = String(input.coverSubline || "").trim().slice(0, 24);
   const ctx = focusCoverChineseContextForDirectSend(String(input.context || ""), COVER_DIRECT_CONTEXT_MAX_CHARS);
   const persona = appendFashionEditorialCharacterGuidance(
     String(input.coverPersonaContext || "").trim(),
@@ -589,10 +595,18 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
   const personaBlock = persona
     ? `【身份锚点】（人物服装 / 道具 / 环境须与此一致）：\n${persona}\n\n`
     : `【身份锚点】\n${PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH}\n\n`;
-  return `${personaBlock}请直接据下方选题与语境生成**一张竖版 9:16 单帧信息流封面**（单一主体、满版主视觉，不要做成 2×4 网格或多格分镜）：
+  const nativeDirective = composePlatformCoverNativeVisualDirective(input.coverNativePlatform, {
+    format: input.variant === "graphic" ? "图文" : "短视频",
+  });
+  const nativeBlock = nativeDirective ? `${nativeDirective}\n\n` : "";
+  const sublineRule = subline
+    ? `- 副标固定为「${subline}」（≤18 字、一行），字号明显小于主句、不抢主句；禁止再另造第三条封面文案。`
+    : `- 可有一行副标（≤18 字），总共可见文案 **≤2 行**；无副标亦可。`;
+  return `${personaBlock}${nativeBlock}请直接据下方选题与语境生成**一张竖版 9:16 单帧信息流封面**（单一主体、满版主视觉，不要做成 2×4 网格或多格分镜）：
 
 【停滑封面·硬约束】
-- 主标题用**简体中文**，**8–14 字**为佳，大而清晰、印刷级，紧扣「${hook}」；只表达**一个**信息缺口。可有一行副标（≤18 字），总共可见文案 **≤2 行**。
+- 主标题用**简体中文**，**8–14 字**为佳，大而清晰、印刷级，**必须**呈现「${hook}」；只表达**一个**信息缺口。
+${sublineRule}
 - **禁止**百科封面：长段论述、履历堆砌、四条以上卖点清单、多图标+多辅标栏、说明书式信息图。
 - **禁止**默认暗沉、低照度、压抑严肃、葬礼感光影；须**生活化、年轻化、健康化、有温度的高级感**。
 - 优先自然日光 / 户外或生活场域、明快克制配色 + 一处鲜明强调色；高级时尚可以，但要有点击欲，不要死板正装肖像海报。
@@ -601,8 +615,8 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
 - 从语境中只保留 **1–3 个**最能辨识此人设的特色道具/场景锚点（如典籍、耳机、节拍器、旅行物件），**禁止**把语境关键词全部画进画面。
 - masterpiece、8k、视觉冲击力强；屏内文字一律**简体中文、清晰不乱码**。
 
-【选题主句】：「${hook}」
-【语境（只调场景与情绪与 1–3 个特色道具；勿把语境全文印上封面）】：
+【选题主句·coverHeadline】：「${hook}」
+${subline ? `【封面副标·coverSubline】：「${subline}」\n` : ""}【语境（只调场景与情绪与 1–3 个特色道具；勿把语境全文印上封面）】：
 ${ctx}
 
 ${PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER}`.trim();

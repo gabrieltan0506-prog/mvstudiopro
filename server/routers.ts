@@ -4622,6 +4622,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           drProSecondarySceneId: z.string().min(1).max(128).optional(),
           /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
           supervisorToken: z.string().max(512).optional(),
+          /**
+           * 封面平台母语偏好（决策智库 / 趋势选中平台）：优先取 platformVariants.coverHeadline。
+           * 可为 douyin / xiaohongshu / bilibili / kuaishou / weixin_channels。
+           */
+          coverPlatformHint: z.string().max(40).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4651,6 +4656,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
+            preferredPlatform: input.coverPlatformHint,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -4826,6 +4832,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
           drProSecondaryCoverInputs,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
+          coverSubline: resolvedCover.coverSubline,
+          coverNativePlatform: resolvedCover.coverNativePlatform,
+          coverHeadlineFromVariant: resolvedCover.coverHeadlineFromVariant,
         });
       }),
 
@@ -4968,6 +4977,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           supervisorToken: z.string().max(512).optional(),
           /** 可選：用户上传人像照片 URL（公网直链）→ EvoLink GPT-Image-2 edit 换封面主角 */
           referencePhotoUrl: z.string().url().max(2048).optional(),
+          /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
+          coverPlatformHint: z.string().max(40).optional(),
           /** 一键封面套装：40×N 按序分拆扣费 */
           bulkCoverPack: z
             .object({
@@ -5037,6 +5048,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
+            preferredPlatform: input.coverPlatformHint,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -5226,6 +5238,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
                 drProSecondarySceneId: input.drProSecondarySceneId,
                 referencePhotoUrl: input.referencePhotoUrl,
+                coverPlatformHint: input.coverPlatformHint,
+                coverSubline: resolvedCover.coverSubline,
+                coverNativePlatform: resolvedCover.coverNativePlatform,
+                coverHeadlineFromVariant: resolvedCover.coverHeadlineFromVariant,
               },
             },
           });
@@ -5270,6 +5286,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           referencePhotoUrl: z.string().url().max(2048).optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
+          /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
+          coverPlatformHint: z.string().max(40).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -5307,6 +5325,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
+            preferredPlatform: input.coverPlatformHint,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -5454,6 +5473,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeImageEngine: input.compositeImageEngine,
               compositeGridVariant: bundleIs3x4 ? "3x4" : "2x4",
               referencePhotoUrl: input.referencePhotoUrl,
+              coverPlatformHint: input.coverPlatformHint,
+              coverSubline: resolvedCover.coverSubline,
+              coverNativePlatform: resolvedCover.coverNativePlatform,
+              coverHeadlineFromVariant: resolvedCover.coverHeadlineFromVariant,
             },
           },
         });
@@ -5471,6 +5494,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverPersonaContext: z.string().max(4000).optional(),
           /** @deprecated 批量封面固定 GPT 5.4；此欄位忽略。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
+          coverPlatformHint: z.string().max(40).optional(),
           scenes: z
             .array(
               z.object({
@@ -5502,7 +5527,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const optimizedByScene = new Map<string, Awaited<ReturnType<typeof assertOptimizedCoverInputsFromDb>>>();
         for (const s of input.scenes) {
           try {
-            optimizedByScene.set(s.id, await assertOptimizedCoverInputsFromDb({ userId, sceneId: s.id }));
+            optimizedByScene.set(
+              s.id,
+              await assertOptimizedCoverInputsFromDb({
+                userId,
+                sceneId: s.id,
+                preferredPlatform: input.coverPlatformHint,
+              }),
+            );
           } catch (e) {
             if (e instanceof PlatformCoverInputsError) {
               throw new TRPCError({
@@ -5614,13 +5646,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               context: coverContextZh,
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
+              coverSubline: opt.coverSubline,
+              coverNativePlatform: opt.coverNativePlatform,
             }).trim();
             if (!safePrompt) {
               throw new Error("中文封面指令为空");
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符（无模型聚焦，跳过默认 GPT 提炼）`,
+              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符（无模型聚焦；headline=${opt.coverHeadlineFromVariant ? "coverHeadline" : "title"}）`,
             );
             appendImageFlowLog(
               flowLog,

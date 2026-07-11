@@ -84,17 +84,115 @@ export function pickCoverHeadlineFromVariants(
   variants: PlatformNativeVariant[] | undefined,
   preferredPlatform?: string | null,
 ): string {
+  return pickCoverVariantFromVariants(variants, preferredPlatform).coverHeadline;
+}
+
+export type PickedCoverVariant = {
+  coverHeadline: string;
+  coverSubline: string;
+  platform: string;
+  format: string;
+  hook: string;
+};
+
+/**
+ * 选出图用的平台变体块（主句 + 副标 + 平台 id）。
+ * `preferredPlatform` 可为 UI hint（douyin/xiaohongshu/…）或原生 id。
+ */
+export function pickCoverVariantFromVariants(
+  variants: PlatformNativeVariant[] | undefined,
+  preferredPlatform?: string | null,
+): PickedCoverVariant {
+  const empty: PickedCoverVariant = {
+    coverHeadline: "",
+    coverSubline: "",
+    platform: "",
+    format: "",
+    hook: "",
+  };
   const list = variants || [];
-  if (list.length === 0) return "";
-  const pref = String(preferredPlatform || "").trim();
-  const order = pref
-    ? [pref, "xiaohongshu", "bilibili", "weixin_channels"]
+  if (list.length === 0) return empty;
+  const nativePref = mapUiPlatformHintToNativeVariantId(preferredPlatform);
+  const order = nativePref
+    ? [nativePref, "xiaohongshu", "bilibili", "weixin_channels"]
     : ["xiaohongshu", "bilibili", "weixin_channels"];
   for (const id of order) {
     const hit = list.find((v) => v.platform === id && v.coverHeadline);
-    if (hit?.coverHeadline) return hit.coverHeadline;
+    if (hit?.coverHeadline) {
+      return {
+        coverHeadline: hit.coverHeadline,
+        coverSubline: String(hit.coverSubline || "").trim(),
+        platform: String(hit.platform || id),
+        format: String(hit.format || "").trim(),
+        hook: String(hit.hook || "").trim(),
+      };
+    }
   }
-  return list.find((v) => v.coverHeadline)?.coverHeadline || "";
+  const any = list.find((v) => v.coverHeadline);
+  if (!any?.coverHeadline) return empty;
+  return {
+    coverHeadline: any.coverHeadline,
+    coverSubline: String(any.coverSubline || "").trim(),
+    platform: String(any.platform || ""),
+    format: String(any.format || "").trim(),
+    hook: String(any.hook || "").trim(),
+  };
+}
+
+/**
+ * UI / 决策智库 platformHint → 平台母语变体 id。
+ * 抖音/快手本批无独立变体：抖音热度参照视频号；快手贴近视频号口语。
+ */
+export function mapUiPlatformHintToNativeVariantId(
+  hint?: string | null,
+): PlatformNativeVariantId | "" {
+  const h = String(hint || "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  if (!h) return "";
+  if (h === "xiaohongshu" || h === "xhs" || h === "小红书") return "xiaohongshu";
+  if (h === "bilibili" || h === "bili" || h === "b站" || h === "哔哩") return "bilibili";
+  if (
+    h === "weixin_channels" ||
+    h === "weixin" ||
+    h === "channels" ||
+    h === "视频号" ||
+    h === "douyin" ||
+    h === "抖音" ||
+    h === "kuaishou" ||
+    h === "快手"
+  ) {
+    return "weixin_channels";
+  }
+  if ((PLATFORM_NATIVE_VARIANT_IDS as readonly string[]).includes(h)) {
+    return h as PlatformNativeVariantId;
+  }
+  return "";
+}
+
+/**
+ * 封面像素层：平台母语构图/语气短指令（非全文 Skill）。
+ * 只改主句气质与视觉偏好，不灌 md。
+ */
+export function composePlatformCoverNativeVisualDirective(
+  platform?: string | null,
+  opts?: { format?: string | null },
+): string {
+  const id = mapUiPlatformHintToNativeVariantId(platform) || String(platform || "").trim();
+  const isGraphic = String(opts?.format || "").includes("图文");
+  if (id === "xiaohongshu") {
+    return isGraphic
+      ? `【平台母语·小红书图文封面】主句偏清单感/情绪大字、一眼心动；暖色生活审美、干净留白；禁止说明书式多栏图标。`
+      : `【平台母语·小红书短视频封面】主句偏情绪停滑、种草感；明快生活场域；主句大而少字，禁止百科堆字。`;
+  }
+  if (id === "bilibili") {
+    return `【平台母语·B站封面】主句偏知识反差/信息缺口（仍≤14字）；略偏清晰信息密度与「想点开搞懂」；禁止空泛鸡汤与多图标清单栏。`;
+  }
+  if (id === "weixin_channels") {
+    return `【平台母语·视频号封面】主句偏生活一句人话、温暖易转发；私域聊天感而非广告腔；光影有温度，禁止审讯室/葬礼感暗调。`;
+  }
+  return "";
 }
 
 /**
