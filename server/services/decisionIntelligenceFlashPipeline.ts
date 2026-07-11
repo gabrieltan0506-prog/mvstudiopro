@@ -9,6 +9,12 @@ import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import { extractJsonString } from "../_core/llm";
 import { callDecisionIntelGpt55StructuredJson } from "./decisionIntelGpt55Copywriting.js";
 import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize";
+import {
+  PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
+  PLATFORM_CULTURAL_MATERIAL_DIVERSITY_SHORT,
+  needsCulturalMaterialDiversity,
+} from "@shared/platformCulturalMaterialDiversity";
+import { PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE } from "@shared/platformCreatorInsightFraming";
 
 const PLATFORM_LABEL: Record<string, string> = {
   douyin: "抖音",
@@ -96,6 +102,11 @@ async function gpt55CallCreativeEngine(params: {
 }): Promise<CallBOutput> {
   const platformLabel = PLATFORM_LABEL[params.platformHint] || params.platformHint;
   const ids = params.base.executionSuggestions.mabVariants.map((v) => v.id).join(", ");
+  const contextBlob = `${params.topic}\n${blueprintJsonForPrompt(params.contentBlueprint, 4000)}`;
+  const diversityBlock = needsCulturalMaterialDiversity(contextBlob)
+    ? `\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}\n`
+    : `\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_SHORT}\n`;
+
   const system = `你是深谙抖音、小红书、B 站等平台的资深内容操盘手。
 根据内容蓝图产出高吸引力的赛马标题、延伸选题与内容结构。
 【规则】
@@ -103,16 +114,19 @@ async function gpt55CallCreativeEngine(params: {
 - 只输出一个 JSON，字段：mabVariants、personalization、topicStructureExamples。
 - mabVariants 必须与输入 id 完全一致且顺序一致（通常 2 条）。
 - personalization 必须恰好 3 条（与本地骨架列数一致）。
-- topicStructureExamples 必须恰好 4 条，每条含 title、structure（structure 可用「段落1 → 段落2」）。`;
+- topicStructureExamples 必须恰好 4 条，每条含 title、structure（structure 可用「段落1 → 段落2」）。
+${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
+${diversityBlock}
+- **强烈建议**不要把 3+4 条选题都写成苏轼/苏东坡/李清照/辛弃疾或「宋朝词人穿越」模板；**高度需求**跨朝代、典籍、文物、事件、平民与贵族、当代影视/时事轮换。`;
 
   const user = `【选题方向】：${params.topic}
 【目标平台】：${platformLabel}
 【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
 请产出：
-1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题（JSON 内含 id 与 title）。
-2) personalization：3 个延伸个性化选题方向（topicDirection）。
-3) topicStructureExamples：4 组 title + structure。`;
+1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题（JSON 内含 id 与 title）。两条标题**强烈建议**来自**不同朝代或不同素材类型**（例如一条史记/文物，一条爵士/运动/当代话题），少两条都是宋词人。
+2) personalization：3 个延伸个性化选题方向（topicDirection）——三条**高度需求**覆盖至少两种朝代/文本类型 + 一种当代生活或影视切口。
+3) topicStructureExamples：4 组 title + structure——四条标题**强烈建议**不要重复同一人物；**高度需求**至少一条非人物（文物/事件/时事/影视），至少一条结构含半成品解法。`;
 
   const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,

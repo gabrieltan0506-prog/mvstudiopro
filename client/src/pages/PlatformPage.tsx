@@ -898,6 +898,14 @@ function buildPlatformSheetScriptContext(
   const ex = item.executionDetails;
   if (ex?.environmentAndWardrobe) parts.push(`【环境与服装】${ex.environmentAndWardrobe}`);
   if (ex?.lightingAndCamera) parts.push(`【灯光机位】${ex.lightingAndCamera}`);
+  else {
+    parts.push(
+      "【灯光机位·高度需求】每格写清主光方向/质感/色温/明暗比（侧光、逆光、伦勃朗、窗光等），服务叙事，避免死白顶光。",
+    );
+  }
+  parts.push(
+    "【情绪表达·大师级·高度需求】每格点明微表情与气氛；光影与情绪同步递进。可借鉴包括但不限于 Nolan（克制压迫）、Spielberg（敬畏温暖）、J.J. Abrams（期待揭示）、Villeneuve（静默疏离）、王家卫（暧昧余韵）、Fincher（冷静不安）、黑泽明（群体浪潮）、Deakins 动机窗光——按段落选用。分镜表六栏：景别/运镜/灯光安排/情绪表达/画面内容/台词与音效。",
+  );
   if (Array.isArray(ex?.stepByStepScript) && ex.stepByStepScript.length) {
     parts.push(`【分镜步骤】\n${ex.stepByStepScript.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
   }
@@ -918,9 +926,9 @@ function buildPlatformExecutionDetailsPayload(item: {
   const lighting = String(item.executionDetails?.lightingAndCamera || "").trim();
   const env = String(item.executionDetails?.environmentAndWardrobe || "").trim();
   if (!lighting && !env) {
-    return "高端时尚编辑大片气质，Rembrandt lighting, cinematic softbox, intellectual editorial authority.";
+    return "大师级导演光影：动机窗光 + Rembrandt 补光，电影级明暗比；情绪弧线：开场克制好奇（Nolan 味）→ 中段共鸣紧绷（Fincher 味）→ 收束释然邀请（Spielberg 味）。";
   }
-  return `[灯光机位]: ${lighting || "—"} | [环境与服化]: ${env || "—"} | [情绪设定]: 高端时尚编辑 · Rembrandt · 电影级软光`.slice(
+  return `[灯光机位]: ${lighting || "—"} | [环境与服化]: ${env || "—"} | [情绪设定]: 大师级导演调度 · 动机光/轮廓光 · 情绪随段落递进`.slice(
     0,
     4000,
   );
@@ -3837,8 +3845,10 @@ export default function PlatformPage() {
           "【主人公特质与专长】",
           protagonist,
           customTopicTitle.trim() ? `\n【选题方向】${customTopicTitle.trim()}` : "",
-          "\n【商业闭环·必须】先从主人公背景与赛道推断：① 目标客户是谁；② 1–2 个核心痛点；③ 吸睛标题（好奇缺口/反常识/反差/时事）；④ 钩子停滑句；⑤ 正文给 2–3 个半成品解法并故意留白；⑥ 结尾咨询/私信/预约 CTA。不要写成纯百科。",
-          "\n【审核友好】若涉及健康/医学/法律/金融等强监管领域：用学者/生活美学/生命科学表达，避免病名治疗干预、听诊器/CT 等临床强视觉锚点与疗效承诺。",
+          "\n【商业闭环·强烈建议】先从主人公背景与赛道推断：① 目标客户是谁；② 1–2 个核心痛点；③ 吸睛标题（好奇缺口/反常识/反差/时事）；④ 钩子停滑句；⑤ 正文给 2–3 个半成品解法并故意留白；⑥ 结尾咨询/私信/预约 CTA。少写成纯百科。",
+          "\n【素材多样性·强烈建议】少默认苏轼/李清照/宋朝词人。**高度需求**从周秦汉唐宋元明清及近现代轮换；包括但不限于史记/战国策/唐诗/医籍/小说/文物/历史事件/当代影视与时事；人物覆盖贵族到平民；文化是容器，带回扣人设的钩子与解法。",
+          "\n【灯光与情绪·大师级·高度需求】分镜与脚本写清每段灯光安排与情绪表达，目标达电影导演级水准；可借鉴包括但不限于 Christopher Nolan、Steven Spielberg、J.J. Abrams、Denis Villeneuve、王家卫、David Fincher、黑泽明、Roger Deakins 式动机光——按段落选用。画内表建议含灯光安排、情绪表达两栏。",
+          "\n【审核友好·强烈建议】若涉及健康/医学/法律/金融等强监管领域：用学者/生活美学/生命科学表达，少用病名治疗干预、听诊器/CT 等临床强视觉锚点与疗效承诺。",
           "\n请围绕该主人公的专业背景、人格特质与视觉形象，设计一条适合短视频传播的单条选题执行方案。",
           "\n【分镜视觉约束】各格分镜须以上传参考人像为主人公/主讲人相貌（跨格同一人，禁止换成陌生面孔）；仅脚本明确描写古人、历史人物、古代场景或独立第三方角色时，才使用不同人物造型。封面亦须融合同一参考人像。",
         ]
@@ -7733,7 +7743,7 @@ export default function PlatformPage() {
                   <textarea
                     value={focusPrompt}
                     onChange={(event) => setFocusPrompt(event.target.value)}
-                    placeholder="例如：我是哈佛医学博士，擅长心脑血管慢病与中西医养生，热爱爵士乐与旅行。希望打造高价值商业 IP，结合黄帝内经等典籍与西医观点，规划差异化选题、赛道方向、产品矩阵与适合发布的平台。"
+                    placeholder="例如：我是哈佛医学博士，擅长心脑血管慢病与中西医养生，热爱爵士乐与旅行。希望打造高价值商业 IP，结合史记/唐诗/医籍与西医观点，规划跨朝代差异化选题、赛道方向、产品矩阵与适合发布的平台。"
                     className="min-h-[136px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
                   />
                   <div className="absolute right-3 top-3">

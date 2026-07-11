@@ -549,7 +549,7 @@ export default function PlatformAssetAnalysisPanel({
         </label>
         <textarea
           className="w-full min-h-[88px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#6ee7b7]/50 focus:outline-none focus:ring-1 focus:ring-[#6ee7b7]/30 transition"
-          placeholder="例：哈佛医学博士×苏东坡×情绪免疫力；目标平台小红书+视频号；封面主标「别把情绪熬成血管病」…"
+          placeholder="例：哈佛医学博士×史记刺客×情绪边界感；目标平台小红书+视频号；封面主标「别把内耗熬成习惯」…"
           value={context}
           onChange={(e) => setContext(e.target.value)}
           disabled={busy || disabled}

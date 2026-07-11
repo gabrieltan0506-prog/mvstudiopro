@@ -84,6 +84,11 @@ import {
   buildKnowledgeMonetizationConstraint,
   needsReviewSafeVoice,
 } from "../shared/platformCreatorInsightFraming.js";
+import {
+  PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
+  needsCulturalMaterialDiversity,
+} from "../shared/platformCulturalMaterialDiversity.js";
+import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "../shared/storyboardLightingEmotion.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -810,6 +815,9 @@ async function buildPlatformDashboard(params: {
     buildKnowledgeMonetizationConstraint(params.context || "") +
     (needsReviewSafeVoice(params.context || "")
       ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}\n另：platformMenu 第一顺位优先知识型/审美型适配平台（通常小红书或B站），而非纯流量平台。`
+      : "") +
+    (needsCulturalMaterialDiversity(params.context || "")
+      ? `\n\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}`
       : "");
 
   const dashboardSystemInstruction = `你是一位资深内容商业顾问，帮创作者判断平台优先级和商业化切入点。
@@ -838,12 +846,12 @@ async function buildPlatformDashboard(params: {
    禁止输出文字描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
 5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
 6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
-7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《苏东坡若来填志愿，会选哪三条赛道？》，开头说：『你以为选专业只看分数？古人把人生赛道拆成另一套坐标系。』」标题须有好奇缺口；开头须点名受众痛点并留半成品解法空间。
+7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《史记里最会止损的人，今天会怎么过中年？》，开头说：『你以为内耗是现代病？一本两千年前的书，早就写过另一种止损法。』」标题须有好奇缺口；素材勿默认苏轼/李清照；开头须点名受众痛点并留半成品解法空间。
 8. 平台动态决策链必须强制使用：抖音 / 快手优先参考近 3-5 天样本（当前统一按 5 天窗口给你），B站 / 小红书优先参考近 7-15 天样本（当前统一按 15 天窗口给你）。判断“现在先做什么”时，优先读取 dynamicDecisionEvidence，不要只复述宽窗口快照。
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
-2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清人设各维度中的身份与商业价值（职业、身份、兴趣、爱好、专长中至少点到 2～3 维，禁止只写「博主」）。
+2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清人设各维度中的身份与商业价值（职业、身份、兴趣、爱好、专长中至少点到 2～3 维，禁止只写「博主」）；若涉及古典文化，须写「跨朝代典籍与生活场域」而非只写「唐诗宋词」。
 3. platformMenu：**必须输出至少 3 条、至多 4 条**。凡是上方 \`platforms\` 数组中出现的抖音 / 快手 / 小红书 / B站，只要带有 summary 或动量/适配分数，就应各占一条 platformMenu（**快手样本稀疏也必须写 nextMove**，不得以「数据少」整条省略；顺位仍可 1→4 排序）。**严禁只输出 2 条就结束。** 每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
    每条 platformMenu 还须包含 **blueOceanWords（蓝海词）**：从该平台在 \`snapshot\` 热点/关键词中，挑选 3-5 个符合蓝海词定义的词条（搜索量大 >10万/月、同类笔记少 <200篇、用户意图精准离成交近）。如果该平台是小红书，优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取。格式：字符串数组，每项为 2-8 字，例如 ["同城相亲攻略","油皮抗老水乳","家庭急救技巧"]。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向（须说明如何经人设各维——职业、身份、兴趣、爱好、专长——改写落地，禁止纯泛热榜）；actionCards：3 个立刻能做的动作。
@@ -1367,9 +1375,14 @@ export async function buildPlatformContent(params: {
   diagnostics.blueOceanTagCandidateCount = blueOceanLexicon.tagCandidates.length;
   const reviewSafe = needsReviewSafeVoice(params.context || "");
   diagnostics.reviewSafeVoice = reviewSafe;
+  diagnostics.culturalMaterialDiversity = needsCulturalMaterialDiversity(params.context || "");
   const personaConstraint =
     buildKnowledgeMonetizationConstraint(params.context || "") +
-    (reviewSafe ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}` : "");
+    (reviewSafe ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}` : "") +
+    (needsCulturalMaterialDiversity(params.context || "")
+      ? `\n\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}`
+      : "") +
+    `\n\n${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}`;
 
   const stage2UserJsonString = JSON.stringify({
           context: params.context || "",
@@ -1446,11 +1459,11 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 	   - detailedScript（详细的拍摄脚本或大纲，**建议**保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**建议在视觉与场域上与前几段方案明显区隔。
      【脚本排版·建议格式（可灵活，勿牺牲可读性）】：
      ▸ 如果 format 为「短视频」（抖音/B站/快手）：**建议**用时间轴分段，每段含「视觉描述」与「口播文案」，例如：
-       "[00:00-00:05] 视觉：手持一本泛黄诗集特写，对准镜头。文案：你以为熬夜只是意志力差？古人早有另一套说法。"
-       "[00:05-00:20] 视觉：切换古籍页与当代书桌并置。文案：把经典里的一句，翻译成今天能用的生活判断……"
+       "[00:00-00:05] 视觉：手持一本泛黄史书特写，对准镜头。文案：你以为熬夜只是意志力差？古人早有另一套说法。"
+       "[00:05-00:20] 视觉：切换青铜器/舆图与当代书桌并置。文案：把典籍里的一句，翻译成今天能用的生活判断……"
        "[00:20-00:45] 视觉：旅行/球场/音乐现场等生活场域。文案：给你两个可立刻试的觉察动作——完整路径，我们私聊再拆。"
      ▸ 如果 format 为「图文」（小红书）：**建议**分封面+内页格式，例如：
-       "[封面设计] 大标题：苏东坡若来填志愿，会选哪三条赛道？视觉：高质感茶席+当代书桌拼接。"
+       "[封面设计] 大标题：唐人边塞诗里的「换气」，和你游泳时一样吗？视觉：高质感茶席+当代书桌拼接。"
        "[图2-图4 痛点引入] 文案：总把「忙」当成勋章的人，其实卡在同一类身心节奏误区……"
        "[图5-图6 核心内容] 分步列出 2–3 个半成品要点（留白完整方案）……"
 	       "[正文区] 完整文案+平台搜索关键词+结尾咨询钩子，不要随意堆砌无关标签。"）
@@ -1458,8 +1471,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
    - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
    - executionDetails（执行细节，**建议**极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"；**强监管赛道避免听诊器/CT 屏等临床强锚点**）
-     * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光；人物妆发干净高级、皮肤通透有真实纹理"）
-     * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】钩子停滑：……","【3-15秒】痛点共鸣：……","【15-25秒】半成品解法两点：……","【25-35秒】咨询/私信 CTA：……"]）
+     * lightingAndCamera（灯光 + 机位，**高度需求大师级导演水准**：写清主光方向/质感/色温/明暗比与情绪服务关系；可借鉴包括但不限于 Nolan 高反差建筑光、Spielberg 温暖魔术时刻、J.J. Abrams 光晕剪影、Villeneuve 雾霾大光域、王家卫霓虹溢光、Fincher 精密冷光、黑泽明天气即光、Deakins 动机窗光——按段落选用。例如："窗侧动机光 + 伦勃朗补光，色温偏暖，明暗比 4:1，轮廓光勾勒西装质感；手机固定支架正面对拍"）
+     * stepByStepScript（逐步脚本；**强烈建议**每步含画面 + 灯光要点 + 情绪表达 + 口播，情绪达导演级调度。例如：["【0-3秒】钩子｜侧光高反差（Nolan 味）｜克制好奇：……","【3-15秒】痛点｜略压暗青冷（Fincher 味）｜紧绷：……","【15-25秒】解法｜柔窗光（Deakins 味）｜释然：……","【25-35秒】CTA｜正面暖柔光（Spielberg 味）｜邀请感：……"]）
 
 2. monetizationLanes：生成 1-2 条强相关的变现路径（例如"知识付费-深度私人顾问交流"）。必须包含：
    - title（变现方向名，具体到品类）
