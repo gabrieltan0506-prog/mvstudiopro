@@ -15,7 +15,11 @@ const EVOLINK_RESOLUTION = String(process.env.EVOLINK_GPT_IMAGE2_RESOLUTION || "
 export const EVOLINK_GPT_IMAGE2_PORTRAIT_SIZE = "1024x1536" as const;
 export const EVOLINK_GPT_IMAGE2_LANDSCAPE_SIZE = "1536x1024" as const;
 
-const POLL_INTERVAL_MS = 3000;
+/** EvoLink 任务轮询：默认 2s（原 3s）；可用 EVOLINK_GPT_IMAGE2_POLL_MS 覆写，范围 1000～5000。 */
+const POLL_INTERVAL_MS = Math.min(
+  Math.max(Number(process.env.EVOLINK_GPT_IMAGE2_POLL_MS) || 2000, 1000),
+  5000,
+);
 const REQUEST_TIMEOUT_MS = Math.min(
   Math.max(Number(process.env.EVOLINK_GPT_IMAGE2_TIMEOUT_MS) || 600_000, 60_000),
   900_000,

@@ -9,7 +9,7 @@ import { buildPlatformSceneTextForCover } from "../../shared/platformSceneTextFo
 import { buildTitleVariantsFromBlueprint, pickPreferredTitleVariant } from "../../shared/platformTitleVariants.js";
 import {
   normalizePlatformVariants,
-  pickCoverHeadlineFromVariants,
+  pickCoverVariantFromVariants,
   type PlatformNativeVariant,
 } from "../../shared/platformNativeVariants.js";
 
@@ -44,6 +44,12 @@ export type OptimizedCoverFromDb = {
   appealHook: string;
   /** 快照入庫時的 platformsKey（逗號分隔平台 id），供封面管線拉 trendStore 高互動摘要。 */
   snapshotPlatformsKey?: string;
+  /** platformVariants 选中的副标（≤18 字），可空 */
+  coverSubline?: string;
+  /** 实际采用的母语变体平台 id（xiaohongshu / bilibili / weixin_channels） */
+  coverNativePlatform?: string;
+  /** 主句是否来自 platformVariants.coverHeadline */
+  coverHeadlineFromVariant?: boolean;
 };
 
 function readBlueprintTitle(raw: Record<string, unknown>): string {
@@ -289,10 +295,12 @@ function blueprintHasSaleableSubstance(hit: EnrichedBlueprintSnapshot): boolean 
 
 /**
  * 從入庫快照還原後做一次確定性優化（標題變體評分、補鉤子、去重開頭），再組封面 context。
+ * `preferredPlatform`：UI/决策智库 platformHint，用于优先取对应 platformVariants.coverHeadline。
  */
 export function optimizeEnrichedBlueprintForCover(
   hit: EnrichedBlueprintSnapshot,
   blueprintIndex: number,
+  preferredPlatform?: string | null,
 ): OptimizedCoverFromDb {
   if (!blueprintHasSaleableSubstance(hit)) {
     throw new PlatformCoverInputsError(
@@ -324,25 +332,38 @@ export function optimizeEnrichedBlueprintForCover(
   let copywriting = stripRedundantLeading(hit.copywriting, [title, hook, pickedTitle]);
   copywriting = copywriting.replace(/\s+/g, " ").trim();
 
+  const pickedVariant = pickCoverVariantFromVariants(hit.platformVariants, preferredPlatform);
+  const coverFromVariant = pickedVariant.coverHeadline.trim();
+  const topicHook = (coverFromVariant || title).slice(0, 500);
+  /** 变体 hook 优先作 appeal；否则用正文钩子 */
+  const appealHook = (pickedVariant.hook || hook).slice(0, 500);
+  if (!topicHook.trim()) {
+    throw new PlatformCoverInputsError("封面主句为空，请检查该选题后重新同步。");
+  }
+
   const context = buildPlatformSceneTextForCover({
-    title,
-    hook,
+    title: topicHook,
+    hook: appealHook,
     copywriting,
     executionDetails: hit.executionDetails,
   }).trim();
 
-  const coverFromVariant = pickCoverHeadlineFromVariants(hit.platformVariants).trim();
-  const topicHook = (coverFromVariant || title).slice(0, 500);
-  const appealHook = hook.slice(0, 500);
-  if (!topicHook.trim()) {
-    throw new PlatformCoverInputsError("封面主句为空，请检查该选题后重新同步。");
-  }
   if (context.length < 12) {
     throw new PlatformCoverInputsError("优化后的正文语境过短，无法安全进入生图。请补充该选题文案后重新同步。");
   }
 
-  const format: "短视频" | "图文" = hit.isGraphicCover ? "图文" : "短视频";
-  return { topicHook, context, format, appealHook };
+  const formatFromVariant = String(pickedVariant.format || "").trim();
+  const format: "短视频" | "图文" =
+    hit.isGraphicCover || formatFromVariant.includes("图文") ? "图文" : "短视频";
+  return {
+    topicHook,
+    context,
+    format,
+    appealHook,
+    coverSubline: pickedVariant.coverSubline.slice(0, 24) || undefined,
+    coverNativePlatform: pickedVariant.platform || undefined,
+    coverHeadlineFromVariant: Boolean(coverFromVariant),
+  };
 }
 
 /**
@@ -351,6 +372,8 @@ export function optimizeEnrichedBlueprintForCover(
 export async function assertOptimizedCoverInputsFromDb(params: {
   userId: number;
   sceneId: string;
+  /** UI / 决策智库 platformHint：优先取对应 platformVariants.coverHeadline */
+  preferredPlatform?: string | null;
 }): Promise<OptimizedCoverFromDb> {
   const database = await db.getDb();
   if (!database) {
@@ -419,7 +442,7 @@ export async function assertOptimizedCoverInputsFromDb(params: {
   const snapshotPlatformsKey = String(rows[0]?.platformsKey || "").trim();
 
   return {
-    ...optimizeEnrichedBlueprintForCover(hit, blueprintIndex),
+    ...optimizeEnrichedBlueprintForCover(hit, blueprintIndex, params.preferredPlatform),
     snapshotPlatformsKey: snapshotPlatformsKey || undefined,
   };
 }

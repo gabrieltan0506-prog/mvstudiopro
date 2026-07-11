@@ -114,6 +114,12 @@ export type RunPlatformTopicImagePipelineInput = {
    * 把封面主角替换成此人（保住相貌辨识度），并注入换人指令。
    */
   referencePhotoUrl?: string;
+  /** platformVariants.coverSubline */
+  coverSubline?: string;
+  /** 母语变体平台：xiaohongshu / bilibili / weixin_channels（或 UI hint） */
+  coverNativePlatform?: string;
+  /** 主句是否来自 platformVariants.coverHeadline（仅日志） */
+  coverHeadlineFromVariant?: boolean;
 };
 
 export type RunPlatformTopicImagePipelineResult = {
@@ -327,12 +333,16 @@ export async function runPlatformTopicImagePipeline(
           context: staging.optimizedChineseBlob,
           variant: isGraphic ? "graphic" : "video",
           coverPersonaContext: coverPersona || undefined,
+          coverSubline: String(input.coverSubline || "").trim() || undefined,
+          coverNativePlatform: String(input.coverNativePlatform || "").trim() || undefined,
         }).trim();
         if (!safePrompt) {
           throw new Error("中文封面指令为空");
         }
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+          `${platformFlowLogTimestamp()}  [步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符` +
+            ` · headline=${input.coverHeadlineFromVariant ? "platformVariants.coverHeadline" : "title/fallback"}` +
+            (input.coverNativePlatform ? ` · native=${input.coverNativePlatform}` : ""),
         );
         topicImageCondenseLog.push(
           `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 主体直接进封面像素链路（GPT‑Image‑2 / NB2 / NBP 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${safePrompt.length}）`,

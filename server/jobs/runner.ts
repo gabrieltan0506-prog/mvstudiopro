@@ -1338,16 +1338,26 @@ async function processPlatformJob(
       let contextRaw: string;
       let appealHookOut: string;
       let snapshotPlatformsKey = "";
+      let coverSublineOut: string | undefined;
+      let coverNativePlatformOut: string | undefined;
+      let coverHeadlineFromVariantOut: boolean | undefined;
       try {
         const resolved = await assertOptimizedCoverInputsFromDb({
           userId: uidNum,
           sceneId: sceneIdRaw,
+          preferredPlatform:
+            typeof (params as { coverPlatformHint?: unknown }).coverPlatformHint === "string"
+              ? String((params as { coverPlatformHint?: string }).coverPlatformHint)
+              : undefined,
         });
         topicHook = resolved.topicHook;
         contextRaw = resolved.context;
         appealHookOut = resolved.appealHook;
         fmt = resolved.format;
         snapshotPlatformsKey = resolved.snapshotPlatformsKey ?? "";
+        coverSublineOut = resolved.coverSubline;
+        coverNativePlatformOut = resolved.coverNativePlatform;
+        coverHeadlineFromVariantOut = resolved.coverHeadlineFromVariant;
       } catch (e) {
         const msg = e instanceof PlatformCoverInputsError ? e.message : e instanceof Error ? e.message : String(e);
         throw new Error(msg || "无法从选题快照解析封面文案");
@@ -1414,6 +1424,19 @@ async function processPlatformJob(
         drProSecondaryCoverInputs,
         trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
         referencePhotoUrl,
+        coverSubline:
+          coverSublineOut ||
+          (typeof (params as { coverSubline?: unknown }).coverSubline === "string"
+            ? String((params as { coverSubline?: string }).coverSubline)
+            : undefined),
+        coverNativePlatform:
+          coverNativePlatformOut ||
+          (typeof (params as { coverNativePlatform?: unknown }).coverNativePlatform === "string"
+            ? String((params as { coverNativePlatform?: string }).coverNativePlatform)
+            : undefined),
+        coverHeadlineFromVariant:
+          coverHeadlineFromVariantOut ??
+          Boolean((params as { coverHeadlineFromVariant?: unknown }).coverHeadlineFromVariant),
       });
       return { provider: "vertex", output: result };
     }
@@ -1452,16 +1475,26 @@ async function processPlatformJob(
       let contextRaw: string;
       let appealHookOut: string;
       let snapshotPlatformsKey = "";
+      let coverSublineOut: string | undefined;
+      let coverNativePlatformOut: string | undefined;
+      let coverHeadlineFromVariantOut: boolean | undefined;
       try {
         const resolved = await assertOptimizedCoverInputsFromDb({
           userId: uidNum,
           sceneId: sceneIdRaw,
+          preferredPlatform:
+            typeof (params as { coverPlatformHint?: unknown }).coverPlatformHint === "string"
+              ? String((params as { coverPlatformHint?: string }).coverPlatformHint)
+              : undefined,
         });
         topicHook = resolved.topicHook;
         contextRaw = resolved.context;
         appealHookOut = resolved.appealHook;
         fmt = resolved.format;
         snapshotPlatformsKey = resolved.snapshotPlatformsKey ?? "";
+        coverSublineOut = resolved.coverSubline;
+        coverNativePlatformOut = resolved.coverNativePlatform;
+        coverHeadlineFromVariantOut = resolved.coverHeadlineFromVariant;
       } catch (e) {
         const msg = e instanceof PlatformCoverInputsError ? e.message : e instanceof Error ? e.message : String(e);
         throw new Error(msg || "无法从选题快照解析封面文案");
@@ -1580,6 +1613,9 @@ async function processPlatformJob(
           drProSecondaryCoverInputs,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
           referencePhotoUrl: referencePhotoUrlBundle,
+          coverSubline: coverSublineOut,
+          coverNativePlatform: coverNativePlatformOut,
+          coverHeadlineFromVariant: coverHeadlineFromVariantOut,
         });
       } catch (e) {
         coverErr = e;

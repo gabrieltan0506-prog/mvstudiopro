@@ -92,6 +92,7 @@ import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "../shared/storyboardLi
 import {
   normalizePlatformVariants,
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
+  composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
@@ -4621,6 +4622,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           drProSecondarySceneId: z.string().min(1).max(128).optional(),
           /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
           supervisorToken: z.string().max(512).optional(),
+          /**
+           * 封面平台母语偏好（决策智库 / 趋势选中平台）：优先取 platformVariants.coverHeadline。
+           * 可为 douyin / xiaohongshu / bilibili / kuaishou / weixin_channels。
+           */
+          coverPlatformHint: z.string().max(40).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -4650,6 +4656,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
+            preferredPlatform: input.coverPlatformHint,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -4825,6 +4832,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
           drProSecondaryCoverInputs,
           trendEngagementVisualBrief: trendEngagementVisualBrief || undefined,
+          coverSubline: resolvedCover.coverSubline,
+          coverNativePlatform: resolvedCover.coverNativePlatform,
+          coverHeadlineFromVariant: resolvedCover.coverHeadlineFromVariant,
         });
       }),
 
@@ -4967,6 +4977,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           supervisorToken: z.string().max(512).optional(),
           /** 可選：用户上传人像照片 URL（公网直链）→ EvoLink GPT-Image-2 edit 换封面主角 */
           referencePhotoUrl: z.string().url().max(2048).optional(),
+          /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
+          coverPlatformHint: z.string().max(40).optional(),
           /** 一键封面套装：40×N 按序分拆扣费 */
           bulkCoverPack: z
             .object({
@@ -5036,6 +5048,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
+            preferredPlatform: input.coverPlatformHint,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -5225,6 +5238,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
                 drProSecondarySceneId: input.drProSecondarySceneId,
                 referencePhotoUrl: input.referencePhotoUrl,
+                coverPlatformHint: input.coverPlatformHint,
+                coverSubline: resolvedCover.coverSubline,
+                coverNativePlatform: resolvedCover.coverNativePlatform,
+                coverHeadlineFromVariant: resolvedCover.coverHeadlineFromVariant,
               },
             },
           });
@@ -5269,6 +5286,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           referencePhotoUrl: z.string().url().max(2048).optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
+          /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
+          coverPlatformHint: z.string().max(40).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -5306,6 +5325,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           resolvedCover = await assertOptimizedCoverInputsFromDb({
             userId,
             sceneId: sid,
+            preferredPlatform: input.coverPlatformHint,
           });
         } catch (e) {
           if (e instanceof PlatformCoverInputsError) {
@@ -5412,20 +5432,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "gpt54" as const;
 
-        const enrichedBundleScriptContext = await (async () => {
+        const enrichedBundleScriptContext = (() => {
           const base = String(input.compositeScriptContext || "").trim();
-          try {
-            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
-            const skills = await resolvePlatformSkillsPrompt({
-              userId,
-              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
-              allowBloggerTitle: Boolean(input.allowBloggerTitle),
-            });
-            if (!skills.trim()) return base;
-            return `${skills.slice(0, 3500)}\n\n${base}`.slice(0, 12000);
-          } catch {
-            return base;
-          }
+          const hints = composePlatformImageSkillHints(
+            Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          );
+          if (!hints.trim()) return base;
+          return `${hints}\n\n${base}`.slice(0, 12000);
         })();
 
         const jobId = nanoid(16);
@@ -5460,6 +5473,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeImageEngine: input.compositeImageEngine,
               compositeGridVariant: bundleIs3x4 ? "3x4" : "2x4",
               referencePhotoUrl: input.referencePhotoUrl,
+              coverPlatformHint: input.coverPlatformHint,
+              coverSubline: resolvedCover.coverSubline,
+              coverNativePlatform: resolvedCover.coverNativePlatform,
+              coverHeadlineFromVariant: resolvedCover.coverHeadlineFromVariant,
             },
           },
         });
@@ -5477,6 +5494,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           coverPersonaContext: z.string().max(4000).optional(),
           /** @deprecated 批量封面固定 GPT 5.4；此欄位忽略。 */
           imagePromptTranslator: zPlatformImagePromptTranslatorInput,
+          /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
+          coverPlatformHint: z.string().max(40).optional(),
           scenes: z
             .array(
               z.object({
@@ -5508,7 +5527,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const optimizedByScene = new Map<string, Awaited<ReturnType<typeof assertOptimizedCoverInputsFromDb>>>();
         for (const s of input.scenes) {
           try {
-            optimizedByScene.set(s.id, await assertOptimizedCoverInputsFromDb({ userId, sceneId: s.id }));
+            optimizedByScene.set(
+              s.id,
+              await assertOptimizedCoverInputsFromDb({
+                userId,
+                sceneId: s.id,
+                preferredPlatform: input.coverPlatformHint,
+              }),
+            );
           } catch (e) {
             if (e instanceof PlatformCoverInputsError) {
               throw new TRPCError({
@@ -5543,9 +5569,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const {
-          extractChineseVisualBrief,
           buildPlatformTopicCoverDirectChinesePrompt,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
+        const { focusCoverChineseContextForDirectSend } = await import(
+          "./services/platformImageChineseStaging.js"
+        );
         const {
           buildImagePromptStats,
           generatePlatformTopicCoverNanoBanana2FromEnglishPrompt,
@@ -5612,20 +5640,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             translatedPromptWords: 0,
           };
           try {
-            const coverContextZh =
-              (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000);
+            const coverContextZh = focusCoverChineseContextForDirectSend(briefSource, 1800);
             const safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
               topicHook: opt.topicHook,
               context: coverContextZh,
               variant: geminiVariant,
               coverPersonaContext: batchCoverPersona || undefined,
+              coverSubline: opt.coverSubline,
+              coverNativePlatform: opt.coverNativePlatform,
             }).trim();
             if (!safePrompt) {
               throw new Error("中文封面指令为空");
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符（无模型聚焦；headline=${opt.coverHeadlineFromVariant ? "coverHeadline" : "title"}）`,
             );
             appendImageFlowLog(
               flowLog,
@@ -5829,20 +5858,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
-        const enrichedCompositeScriptContext = await (async () => {
+        const enrichedCompositeScriptContext = (() => {
           const base = String(input.scriptContext || "").trim();
-          try {
-            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
-            const skills = await resolvePlatformSkillsPrompt({
-              userId,
-              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
-              allowBloggerTitle: Boolean(input.allowBloggerTitle),
-            });
-            if (!skills.trim()) return base;
-            return `${skills.slice(0, 3500)}\n\n${base}`.slice(0, 12000);
-          } catch {
-            return base;
-          }
+          const hints = composePlatformImageSkillHints(
+            Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          );
+          if (!hints.trim()) return base;
+          return `${hints}\n\n${base}`.slice(0, 12000);
         })();
 
         let detachLiveProgress: (() => void) | undefined;

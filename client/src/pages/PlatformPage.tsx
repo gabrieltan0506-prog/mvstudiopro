@@ -2864,6 +2864,7 @@ export default function PlatformPage() {
         ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
+        coverPlatformHint: selectedTrendPlatforms[0],
       });
       setTopicImageJobPollTrace({
         jobId,
@@ -3011,6 +3012,7 @@ export default function PlatformPage() {
       platformComposite2x4Engine,
       enabledPlatformSkillIds,
       allowBloggerTitle,
+      selectedTrendPlatforms,
     ],
   );
 
@@ -3043,7 +3045,7 @@ export default function PlatformPage() {
         coverPersonaContext: inp.coverPersonaContext,
         failedJobId: inp.failedJobId,
         sceneId: inp.sceneId,
-        /** 封面 topic 管线；与 2×4 合成英文化开关无关。 */
+        /** 封面 topic 管线；与 2×4 合成出图开关无关。 */
         imagePromptTranslator: "gpt54" as const,
         coverProEngine:
           canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
@@ -3053,12 +3055,13 @@ export default function PlatformPage() {
         ...(supervisorToken ? { supervisorToken } : {}),
         ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
         ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
+        coverPlatformHint: selectedTrendPlatforms[0],
       });
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
         lines: [
-          `${new Date().toISOString()} 已入队 · 封面英文化与出图`,
+          `${new Date().toISOString()} 已入队 · 封面中文直送与出图`,
         ],
         pollCount: 0,
         currentStep: "已入队…",
@@ -3179,7 +3182,7 @@ export default function PlatformPage() {
         userFacingError,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs, selectedTrendPlatforms],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
