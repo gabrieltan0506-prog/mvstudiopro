@@ -872,7 +872,7 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: 
   return appendFashionEditorialCharacterGuidance(parts.join("\n").trim(), { maxChars: 3800, lang: "zh" });
 }
 
-/** 供分镜表 / 小红书 2×4 八格图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
+/** 供分镜表 / 小红书图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
 function buildPlatformSheetScriptContext(
   item: {
     title: string;
@@ -882,15 +882,18 @@ function buildPlatformSheetScriptContext(
     detailedScript?: string;
     publishingAdvice?: string;
     actionableSteps?: string[];
+    format?: string;
     executionDetails?: {
       environmentAndWardrobe?: string;
       lightingAndCamera?: string;
       stepByStepScript?: string[];
     };
   },
-  opts?: { shootingTechniqueBrief?: string },
+  opts?: { shootingTechniqueBrief?: string; gridVariant?: "2x4" | "3x4" },
 ): string {
   const parts: string[] = [];
+  const isGraphic = item.format === "图文" || item.format === "小红书";
+  const is3x4 = opts?.gridVariant === "3x4";
   parts.push(`【选题】${item.title}`);
   if (item.hook) parts.push(`【钩子】${item.hook}`);
   if (item.copywriting) parts.push(`【文案与结构】${item.copywriting}`);
@@ -906,6 +909,19 @@ function buildPlatformSheetScriptContext(
   parts.push(
     "【情绪·运镜·灯光·高度需求】每格点明运镜意图、微表情与气氛；光影与情绪同步递进。只借专业影视手法（高反差建筑光、温暖魔术时刻、光晕剪影揭示、雾霾大光域静默、霓虹余韵、精密冷光不安、天气即光群像、动机窗光等），禁止点名导演或写「某某风/致敬」。分镜表六栏：景别/运镜/灯光安排/情绪表达/画面内容/台词与音效。",
   );
+  if (isGraphic && is3x4) {
+    parts.push(
+      "【版式·3×4 十二格图文笔记】须按 **3 行 × 4 列 = 12 格** 展开知识节拍（序号徽章 01–12），勿写成仅 2×4 八格。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
+    );
+  } else if (isGraphic) {
+    parts.push(
+      "【版式·2×4 八格图文笔记】按 2 行 × 4 列共 8 格展开（序号 01–08）。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
+    );
+  } else if (is3x4) {
+    parts.push(
+      "【版式·3×4 十二格分镜】须按 3 行 × 4 列 = 12 格展开镜头节拍；现代主人公跨格同脸（锁参考人像），衣着可随场景微调。",
+    );
+  }
   if (Array.isArray(ex?.stepByStepScript) && ex.stepByStepScript.length) {
     parts.push(`【分镜步骤】\n${ex.stepByStepScript.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
   }
@@ -1276,15 +1292,25 @@ function buildCompositeImageGenPendingLines(input: {
   title: string;
   imagePromptTranslator?: PlatformImagePromptTranslator | "vertex_gemini_31_pro_preview";
   progressJobId?: string;
+  gridVariant?: "2x4" | "3x4";
 }): string[] {
   const ts = new Date().toISOString();
-  const trLine = "2×4／八格英文化：自动翻译与版式适配（多数 1～3 分钟内完成）。";
+  const is3x4 = input.gridVariant === "3x4";
+  const trLine = is3x4
+    ? "3×4 十二格：分段横排生成后拼接（多数 3～5 分钟内完成）。"
+    : "2×4／八格英文化：自动翻译与版式适配（多数 1～3 分钟内完成）。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
-      ? "小红书 2×4 八格图文笔记"
+      ? is3x4
+        ? "小红书 3×4 十二格图文笔记"
+        : "小红书 2×4 八格图文笔记"
       : input.kind === "storyboard_sheet_landscape"
-        ? "视频向 2×4 分镜主表 · 横版"
-        : "视频向 2×4 分镜主表 · 竖版";
+        ? is3x4
+          ? "视频向 3×4 十二格分镜主表 · 横版"
+          : "视频向 2×4 分镜主表 · 横版"
+        : is3x4
+          ? "视频向 3×4 十二格分镜主表"
+          : "视频向 2×4 分镜主表 · 竖版";
   const pid = String(input.progressJobId ?? "").trim();
   return [
     `${ts}  [客户端] 宽幅合成已发起 · ${kindLabel}`,
@@ -1757,8 +1783,11 @@ export default function PlatformPage() {
   ]);
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
-  /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId */
+  /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId；可覆盖全局人像 */
   const [coverReferencePhotoMap, setCoverReferencePhotoMap] = useState<Record<string, string>>({});
+  /** 全局主人公照片（一键套装上方上传）→ 默认套用全部选题；单卡可覆盖 */
+  const [globalCoverReferencePhotoUrl, setGlobalCoverReferencePhotoUrl] = useState<string | null>(null);
+  const [globalCoverRefUploading, setGlobalCoverRefUploading] = useState(false);
   /** 正在上传人像参考图的 sceneId 集合（上传期间禁用生成按钮） */
   const [coverRefUploadingIds, setCoverRefUploadingIds] = useState<Set<string>>(() => new Set());
   /** 用户发起封面绘制后置为 true；收起条件为当前视窗内每一条选题均有有效封面 URL（与 Stage1 轮播只看「任务旗标」区分）。 */
@@ -1860,6 +1889,7 @@ export default function PlatformPage() {
       | "storyboard_sheet_landscape"
       | "xiaohongshu_dual_note"
       | "single_page_knowledge_card";
+    gridVariant?: "2x4" | "3x4";
   } | null>(null);
   /** 与 GET /api/jobs 合成轮询同步的计数（仅用于 Debug 面板，不刷整条 imageGenFlowLog） */
   const compositeLivePollAttemptRef = useRef(0);
@@ -2469,6 +2499,79 @@ export default function PlatformPage() {
     },
     [uploadCoverReferencePhotoMutation],
   );
+
+  /** 单卡人像优先，否则用全局主人公照片；再否则用已生成封面（锁脸续用） */
+  const resolveReferencePhotoForScene = useCallback(
+    (sceneId: string): string | undefined => {
+      const per = String(coverReferencePhotoMap[sceneId] || "").trim();
+      if (per) return per;
+      const global = String(globalCoverReferencePhotoUrl || "").trim();
+      if (global) return global;
+      const cover = String(platformImageMap[sceneId] || "").trim();
+      return cover || undefined;
+    },
+    [coverReferencePhotoMap, globalCoverReferencePhotoUrl, platformImageMap],
+  );
+
+  const handleUploadGlobalCoverReferencePhoto = useCallback(
+    async (file: File) => {
+      if (!file.type.startsWith("image/")) {
+        toast.error("请上传图片文件（JPG / PNG）");
+        return;
+      }
+      if (file.size > 25 * 1024 * 1024) {
+        toast.error("图片过大（请 ≤ 25MB）");
+        return;
+      }
+      setGlobalCoverRefUploading(true);
+      try {
+        const jpegBase64 = await new Promise<string>((resolve, reject) => {
+          const img = new window.Image();
+          const objectUrl = URL.createObjectURL(file);
+          img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            const maxEdge = 1280;
+            const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const cctx = canvas.getContext("2d");
+            if (!cctx) {
+              reject(new Error("无法处理图片（canvas 不可用）"));
+              return;
+            }
+            cctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+            const base64 = dataUrl.split(",")[1] || "";
+            if (!base64) {
+              reject(new Error("图片编码失败"));
+              return;
+            }
+            resolve(base64);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error("图片读取失败"));
+          };
+          img.src = objectUrl;
+        });
+        const { url } = await uploadCoverReferencePhotoMutation.mutateAsync({
+          imageBase64: jpegBase64,
+          mimeType: "image/jpeg",
+        });
+        if (!url) throw new Error("上传未返回 URL");
+        setGlobalCoverReferencePhotoUrl(url);
+        toast.success("全局主人公照片已上传 · 封面/分镜/图文将锁脸（衣着可随场景微调）");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "人像上传失败");
+      } finally {
+        setGlobalCoverRefUploading(false);
+      }
+    },
+    [uploadCoverReferencePhotoMutation],
+  );
   const syncPlatformExecutionBlueprintsSnapshotMutation =
     trpc.mvAnalysis.syncPlatformExecutionBlueprintsSnapshot.useMutation();
   const enqueueTopicCoverAndCompositeBundleMutation =
@@ -3032,6 +3135,7 @@ export default function PlatformPage() {
               sceneId: scene.id,
               pollDebugLabel: `异步逐张批量 · ${scene.id}`,
               bulkCoverPack: { packSceneIds, sequentialSlot: slotIndex },
+              referencePhotoUrl: resolveReferencePhotoForScene(scene.id),
             }),
           (waitMs) => {
             liveLines.push(
@@ -3200,11 +3304,15 @@ export default function PlatformPage() {
             setPlatformXhsNoteMap((p) => ({ ...p, [ctx.sceneId]: out.compositeImageUrl! }));
           }
           if (!compositeBatchSilentUiRef.current) {
-            toast.success("2×4 合成成功（异步轮询）");
+            toast.success(
+              ctx.gridVariant === "3x4" ? "3×4 合成成功（异步轮询）" : "2×4 合成成功（异步轮询）",
+            );
           }
         } else if (j.status === "failed") {
           if (!compositeBatchSilentUiRef.current) {
-            toast.error(`2×4 合成失败: ${out?.error || j.error || "未知错误"}`);
+            toast.error(
+              `${ctx.gridVariant === "3x4" ? "3×4" : "2×4"} 合成失败: ${out?.error || j.error || "未知错误"}`,
+            );
           }
         }
       } catch {
@@ -3236,10 +3344,18 @@ export default function PlatformPage() {
               sceneId: input.sceneId,
               title: input.title ?? "",
               kind: input.kind,
+              gridVariant: input.gridVariant === "3x4" ? "3x4" : "2x4",
             }
           : null;
+      const is3x4Dbg = input.gridVariant === "3x4";
       const compositeDbgLabel =
-        input.kind === "xiaohongshu_dual_note" ? "图文笔记 · 2×4 八格合成" : "分镜图 · 2×4 宽幅合成";
+        input.kind === "xiaohongshu_dual_note"
+          ? is3x4Dbg
+            ? "图文笔记 · 3×4 十二格合成"
+            : "图文笔记 · 2×4 八格合成"
+          : is3x4Dbg
+            ? "分镜图 · 3×4 十二格合成"
+            : "分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
         setCompositeJobPollTrace({
           jobId: pid,
@@ -3261,6 +3377,7 @@ export default function PlatformPage() {
             title: input.title,
             imagePromptTranslator: input.imagePromptTranslator,
             progressJobId: pid.length >= 8 ? pid : undefined,
+            gridVariant: input.gridVariant,
           }),
           meta: {
             localOpId,
@@ -4037,7 +4154,10 @@ export default function PlatformPage() {
               generatePlatformCompositeSheetMutation.mutateAsync({
                 sceneId: item.id,
                 title: headlineTitle,
-                scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
+                scriptContext: buildPlatformSheetScriptContext(item as any, {
+                  shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                  gridVariant: compositeGridVariant,
+                }),
                 kind: compositeKind,
                 gridVariant: compositeGridVariant,
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
@@ -4047,7 +4167,12 @@ export default function PlatformPage() {
                 progressJobId,
                 ...compositeSupervisorExtras,
                 bulkCompositePack: { packSceneIds, sequentialSlot: slotIndex },
-                compositeImageEngine: platformComposite2x4Engine,
+                compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                  ? "gpt_image2"
+                  : platformComposite2x4Engine,
+                ...(resolveReferencePhotoForScene(item.id)
+                  ? { referencePhotoUrl: resolveReferencePhotoForScene(item.id) }
+                  : {}),
               }),
             (waitMs) => {
               liveLines.push(
@@ -4086,10 +4211,15 @@ export default function PlatformPage() {
             );
             setCompositeAwaitingJobTerminal(false);
             try {
+              const batchIs3x4Label = compositeGridVariant === "3x4";
               const batchCompositeDbgLabel =
                 compositeKind === "xiaohongshu_dual_note"
-                  ? "图文笔记 · 2×4 八格合成"
-                  : "分镜图 · 2×4 宽幅合成";
+                  ? batchIs3x4Label
+                    ? "图文笔记 · 3×4 十二格合成"
+                    : "图文笔记 · 2×4 八格合成"
+                  : batchIs3x4Label
+                    ? "分镜图 · 3×4 十二格合成"
+                    : "分镜图 · 2×4 宽幅合成";
               const j = await pollJobUntilTerminal(pollJobId, {
                 intervalMs: compositeSheetLivePollIntervalMs,
                 maxWaitMs: 18 * 60_000,
@@ -5246,11 +5376,18 @@ export default function PlatformPage() {
                 coverPersonaContext: coverPersona || undefined,
                 headlineTitle,
                 compositeKind,
-                scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
+                scriptContext: buildPlatformSheetScriptContext(item as any, {
+                  shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                  gridVariant: compositeGridVariant,
+                }),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                 gridVariant: compositeGridVariant,
                 pollDebugLabel: `套装批量 · ${item.id}`,
+                referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                  ? "gpt_image2"
+                  : platformComposite2x4Engine,
               }),
             (waitMs) => {
               liveLines.push(
@@ -5406,7 +5543,7 @@ export default function PlatformPage() {
     setCoverWaitCarouselEngaged(false);
   }, [coverWaitCarouselEngaged, allTopicCoverImagesReady, anyCompositeOutputBusy]);
 
-  /** 顶部「2×4 / 小红书合成」画廊：各选题合成 URL / pending（Grid + ImageUpscaleBar） */
+  /** 顶部「2×4 / 3×4 / 小红书合成」画廊：各选题合成 URL / pending（Grid + ImageUpscaleBar） */
   const referenceStoryboardGraphicStrip = useMemo(() => {
     type StripItem = {
       key: string;
@@ -5419,6 +5556,9 @@ export default function PlatformPage() {
     };
     const items: StripItem[] = [];
     const pend = pendingCompositeSheet;
+    const is3x4 = compositeGridVariant === "3x4";
+    const sbLabel = is3x4 ? "分镜 · 3×4 十二格合成" : "分镜 · 2×4 合成";
+    const xhsLabel = is3x4 ? "小红书 · 3×4 十二格图文" : "小红书 · 2×4 八格图文";
     for (const row of visibleExecutionCards) {
       const id = row.id;
       const title = row.title;
@@ -5429,7 +5569,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: sbUrl,
-          kindLabel: "分镜 · 2×4 合成",
+          kindLabel: sbLabel,
           layout: "landscape",
           pending: false,
         });
@@ -5442,7 +5582,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: null,
-          kindLabel: "分镜 · 2×4 合成",
+          kindLabel: sbLabel,
           layout: "landscape",
           pending: true,
         });
@@ -5454,7 +5594,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: xhsUrl,
-          kindLabel: "小红书 · 2×4 八格图文",
+          kindLabel: xhsLabel,
           layout: "landscape",
           pending: false,
         });
@@ -5464,7 +5604,7 @@ export default function PlatformPage() {
           sceneId: id,
           title,
           url: null,
-          kindLabel: "小红书 · 2×4 八格图文",
+          kindLabel: xhsLabel,
           layout: "landscape",
           pending: true,
         });
@@ -5476,6 +5616,7 @@ export default function PlatformPage() {
     platformStoryboardSheetMap,
     platformXhsNoteMap,
     pendingCompositeSheet,
+    compositeGridVariant,
   ]);
 
   // 分镜图独立导出（原始整图 URL，不经 PDF、不会被分页截断）
@@ -5510,9 +5651,15 @@ export default function PlatformPage() {
   }, []);
   const buildStoryboardSheetFilename = useCallback((item: { key: string; title: string }, index: number) => {
     const safeTitle = (item.title || "分镜").replace(/[\\/:*?"<>|]+/g, "").slice(0, 24);
-    const kindTag = item.key.includes("xhs") ? "小红书八格图文" : "分镜2x4";
+    const kindTag = item.key.includes("xhs")
+      ? compositeGridVariant === "3x4"
+        ? "小红书十二格图文"
+        : "小红书八格图文"
+      : compositeGridVariant === "3x4"
+        ? "分镜3x4"
+        : "分镜2x4";
     return `mvstudiopro-${kindTag}-${safeTitle}-${index + 1}.png`;
-  }, []);
+  }, [compositeGridVariant]);
   const handleExportAllStoryboardSheets = useCallback(async () => {
     const items = storyboardSheetDownloadItems;
     if (items.length === 0) {
@@ -8995,6 +9142,72 @@ export default function PlatformPage() {
                     </div>
                   </div>
                   {platformTopicCount > 0 ? (
+                    <div className="rounded-xl border border-[#c4b5fd]/35 bg-[#6a5cff]/10 px-4 py-3">
+                      <div className="flex flex-wrap items-start gap-3">
+                        {globalCoverReferencePhotoUrl ? (
+                          <img
+                            src={globalCoverReferencePhotoUrl}
+                            alt="全局主人公"
+                            className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-[#c4b5fd]/50"
+                          />
+                        ) : (
+                          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#c4b5fd]/40 text-[#c4b5fd]/70">
+                            <UserRound className="h-5 w-5" aria-hidden />
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold text-white">全局主人公照片（推荐先上传）</div>
+                          <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
+                            套用全部选题的封面、分镜表与图文笔记解说人物：<strong className="text-white/80">锁脸</strong>
+                            ，衣着可随场景微调。单卡可另传照片覆盖。
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <label
+                              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#6a5cff]/45 bg-[#6a5cff]/20 px-2.5 py-1.5 text-[11px] font-bold text-[#c4b5fd] transition hover:bg-[#6a5cff]/30 ${
+                                globalCoverRefUploading ? "cursor-wait opacity-70" : ""
+                              }`}
+                            >
+                              {globalCoverRefUploading ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  上传中…
+                                </>
+                              ) : (
+                                <>
+                                  <UserRound className="h-3 w-3" aria-hidden />
+                                  {globalCoverReferencePhotoUrl ? "更换全局照片" : "上传全局主人公照片"}
+                                </>
+                              )}
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                className="hidden"
+                                disabled={globalCoverRefUploading}
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = "";
+                                  if (f) void handleUploadGlobalCoverReferencePhoto(f);
+                                }}
+                              />
+                            </label>
+                            {globalCoverReferencePhotoUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => setGlobalCoverReferencePhotoUrl(null)}
+                                className="rounded-md border border-white/15 px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:border-white/30 hover:text-gray-200"
+                              >
+                                移除
+                              </button>
+                            ) : null}
+                          </div>
+                          <p className="mt-1.5 text-[10px] leading-tight text-amber-300/70">
+                            请仅上传本人或已获授权人物的照片（着装得体、成年）；请勿上传他人、未成年或不雅照片。
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {platformTopicCount > 0 ? (
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
                         <button
                           type="button"
@@ -9134,7 +9347,9 @@ export default function PlatformPage() {
                       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
                         <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
                         <h3 className="text-xl font-bold tracking-tight text-white">
-                          2×4 分镜 · 小红书 2×4 八格图文 画廊
+                          {compositeGridVariant === "3x4"
+                            ? "3×4 十二格分镜 · 小红书十二格图文 画廊"
+                            : "2×4 分镜 · 小红书 2×4 八格图文 画廊"}
                         </h3>
                         {!isTrial && storyboardSheetDownloadItems.length > 0 ? (
                           <button
@@ -9187,7 +9402,11 @@ export default function PlatformPage() {
                     </div>
                     {referenceStoryboardGraphicStrip.length === 0 ? (
                       <div className="flex min-h-[160px] w-full items-center justify-center text-center text-sm italic text-gray-600">
-                        尚未生成 2×4 分镜或小红书 2×4 八格图文（请在下方选题卡片中点击生成）
+                        尚未生成{" "}
+                        {compositeGridVariant === "3x4"
+                          ? "3×4 十二格分镜或小红书十二格图文"
+                          : "2×4 分镜或小红书 2×4 八格图文"}
+                        （请在下方选题卡片中点击生成）
                       </div>
                     ) : (
                       <div className="grid gap-6 md:grid-cols-2">
@@ -9464,7 +9683,7 @@ export default function PlatformPage() {
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
-                            referencePhotoUrl: coverReferencePhotoMap[item.id] || undefined,
+                            referencePhotoUrl: resolveReferencePhotoForScene(item.id),
                             pollDebugLabel: `单张选题封面 · ${item.id}`,
                           });
                         })
@@ -9529,7 +9748,7 @@ export default function PlatformPage() {
                               buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
                             failedJobId: isEligibleFreeRetry ? sceneJobIds[item.id] : undefined,
                             sceneId: item.id,
-                            referencePhotoUrl: coverReferencePhotoMap[item.id] || undefined,
+                            referencePhotoUrl: resolveReferencePhotoForScene(item.id),
                             pollDebugLabel: `手动重生成 · ${item.id}`,
                           });
                         })
@@ -9657,11 +9876,18 @@ export default function PlatformPage() {
                             coverPersonaContext: coverPersona || undefined,
                             headlineTitle,
                             compositeKind,
-                            scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
+                            scriptContext: buildPlatformSheetScriptContext(item as any, {
+                              shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                              gridVariant: compositeGridVariant,
+                            }),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                             shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
                             gridVariant: compositeGridVariant,
                             pollDebugLabel: `套装单卡 · ${item.id}`,
+                            referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                            compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                              ? "gpt_image2"
+                              : platformComposite2x4Engine,
                           }),
                         )
                           .then((res) => {
@@ -9956,9 +10182,9 @@ export default function PlatformPage() {
                             </span>
                           </div>
                           <div className="mb-2 flex items-center gap-2 rounded-lg border border-[#6a5cff]/30 bg-[#6a5cff]/8 px-2.5 py-2">
-                            {coverReferencePhotoMap[item.id] ? (
+                            {resolveReferencePhotoForScene(item.id) ? (
                               <img
-                                src={coverReferencePhotoMap[item.id]}
+                                src={resolveReferencePhotoForScene(item.id)}
                                 alt="人像参考"
                                 className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-[#c4b5fd]/50"
                               />
@@ -9981,7 +10207,9 @@ export default function PlatformPage() {
                                 ) : (
                                   <>
                                     <UserRound className="h-3 w-3" aria-hidden />
-                                    {coverReferencePhotoMap[item.id] ? "更换人物照片" : "上传人物照片（换封面主角）"}
+                                    {coverReferencePhotoMap[item.id]
+                                      ? "更换本条人物照片"
+                                      : "本条覆盖人物照片（可选）"}
                                   </>
                                 )}
                                 <input
@@ -9998,8 +10226,10 @@ export default function PlatformPage() {
                               </label>
                               <span className="mt-0.5 text-[10px] leading-tight text-gray-500">
                                 {coverReferencePhotoMap[item.id]
-                                  ? "已绑定人像 · 生成封面时将换成此人（保留排版与风格）"
-                                  : "可选 · 上传一张清晰正脸照，让封面主角换成你/指定人物"}
+                                  ? "已用本条照片覆盖 · 封面/分镜/图文锁脸"
+                                  : globalCoverReferencePhotoUrl
+                                    ? "沿用上方全局主人公 · 可在此覆盖"
+                                    : "可选 · 或先在上方上传全局主人公照片"}
                               </span>
                               <span className="mt-0.5 text-[10px] leading-tight text-amber-300/70">
                                 请仅上传本人或已获授权人物的照片（着装得体、成年）；请勿上传他人、未成年或不雅照片。
@@ -10017,7 +10247,7 @@ export default function PlatformPage() {
                                 }
                                 className="shrink-0 rounded-md border border-white/15 px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:border-white/30 hover:text-gray-200"
                               >
-                                移除
+                                移除本条
                               </button>
                             ) : null}
                           </div>
@@ -10086,7 +10316,10 @@ export default function PlatformPage() {
                                   generatePlatformCompositeSheetMutation.mutateAsync({
                                     sceneId: item.id,
                                     title: headlineTitle,
-                                    scriptContext: buildPlatformSheetScriptContext(item as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
+                                    scriptContext: buildPlatformSheetScriptContext(item as any, {
+                                      shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                                      gridVariant: compositeGridVariant,
+                                    }),
                                     kind: compositeKind,
                                     gridVariant: compositeGridVariant,
                                     executionDetails: buildPlatformExecutionDetailsPayload(item as any),
@@ -10095,7 +10328,19 @@ export default function PlatformPage() {
                                     imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
                                     progressJobId: newPlatformCompositeProgressJobId(),
                                     ...compositeSupervisorExtras,
-                                    compositeImageEngine: platformComposite2x4Engine,
+                                    compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                                      ? "gpt_image2"
+                                      : platformComposite2x4Engine,
+                                    ...(resolveReferencePhotoForScene(item.id)
+                                      ? {
+                                          referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                                          referencePhotoFromApprovedCover: Boolean(
+                                            String(platformImageMap[item.id] || "").trim() &&
+                                              resolveReferencePhotoForScene(item.id) ===
+                                                String(platformImageMap[item.id] || "").trim(),
+                                          ),
+                                        }
+                                      : {}),
                                   }),
                                 ).catch(() => {});
                               }}

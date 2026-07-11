@@ -170,7 +170,7 @@ const GPT_IMAGE2_STORYBOARD_ROWBAND_PIXEL_LOCK =
 
 /** 小红书 3×4 分段：单段一整横排 4 格资讯图 beat。 */
 const GPT_IMAGE2_XHS_ROWBAND_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK (single row band): Xiaohongshu premium graphic note — render EXACTLY FOUR equal panels in ONE single horizontal row — **1 row × 4 columns** — filling the whole canvas width with straight vertical gutters. **Do NOT draw a second row. Do NOT make a 2×4 eight-panel grid.** EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams or numbered badges as fits; cohesive luxury palette. NOT RECOMMENDED: two stacked rows; eight cells; single full-bleed hero; left text column + right single photo; wholly English-only cells.";
+  "CRITICAL COMPOSITION LOCK (single row band): Xiaohongshu premium graphic note — render EXACTLY FOUR equal panels in ONE single horizontal row — **1 row × 4 columns** — filling the whole canvas width with straight vertical gutters. **Do NOT draw a second row. Do NOT make a 2×4 eight-panel grid.** EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams or numbered badges as fits (use the badge range given in the Chinese brief for this row; full sheet is 01–12 across three rows); cohesive luxury palette. If a modern narrator/host appears in any cell, FACE-LOCK to the attached reference photo; wardrobe may soft-adapt to the cell scene. NOT RECOMMENDED: two stacked rows; eight cells; single full-bleed hero; left text column + right single photo; wholly English-only cells.";
 
 /** 单次 GPT-IMAGE-2（fal / OhMyGPT）fetch 超时；封面/分镜/图文笔记共用。默认 6 分钟；`GPT_IMAGE_FETCH_TIMEOUT_MS` 可缩短，上限 6 分钟。 */
 const GPT_IMAGE2_REQUEST_TIMEOUT_MS = Math.min(
@@ -1016,23 +1016,26 @@ const COVER_REFERENCE_BENIGN_CLARIFIER_EN = [
   "editorial-grade portrait integration suitable for publication.",
 ].join("\n");
 
-/** 2×4/3×4 分镜：参考人像时各格主人公须与上传照片同一人（古人/历史角色等除外） */
+/** 2×4/3×4 分镜与图文：参考人像时锁脸；衣着可随场景微调 */
 const STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN = [
   "",
   "REFERENCE PROTAGONIST (CRITICAL IMAGE EDIT): A reference photo of the real presenter/host is attached.",
-  "In every panel where the modern-day presenter or host appears, use THIS exact person's face,",
-  "skin tone, hairstyle and likeness — keep the same identity across all panels.",
+  "FACE LOCK (HARD): In every panel/cell where the modern-day presenter, host, or narrator appears",
+  "(including Xiaohongshu graphic-note explanation panels with a person), use THIS exact person's face,",
+  "bone structure, eyes, nose, mouth, age, skin tone and hairstyle — same identity across the whole sheet.",
+  "WARDROBE (SOFT): Clothing, layering and accessories MAY adapt to each scene's setting and lighting,",
+  "but keep the same fashion tier and body type; do not invent a different person via outfit alone.",
   "Only depict a different unfamiliar person when the script explicitly calls for ancient/historical figures,",
   "named third-party characters, or clearly distinct roles; never replace the main host with a random stranger.",
 ].join("\n");
 
-/** 参考图为已生成的竖版封面时：强制八格与封面同脸（解决抠像→封面 OK、分镜换脸） */
+/** 参考图为已生成的竖版封面时：强制与封面同脸（解决抠像→封面 OK、分镜/图文换脸） */
 const STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN = [
   "",
   "APPROVED COVER FACE LOCK (HIGHEST PRIORITY): The attached reference is the finalized vertical cover art.",
-  "The presenter/host face in EVERY modern-day panel MUST match this cover exactly — same facial bone structure,",
-  "eyes, nose, mouth, age, hairstyle, skin tone, and stethoscope/props if visible on the cover.",
-  "Do NOT invent a new face per panel; treat the cover as the single source of truth for host identity.",
+  "The presenter/host face in EVERY modern-day panel or graphic-note cell with a person MUST match this cover",
+  "exactly — same facial bone structure, eyes, nose, mouth, age, hairstyle and skin tone.",
+  "Wardrobe may soft-adapt to the scene; face identity must not drift. Do NOT invent a new face per panel.",
 ].join("\n");
 
 /** 3×4 续接段：以上一段横排成品为视觉真源，锁人物/场景/色调 */
@@ -1053,8 +1056,9 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
     { maxChars: 2800, lang: "zh" },
   );
   const anchor = [
-    "【视觉锚点·主人公】",
-    "分镜各格中的现代主讲/主人公须与上传参考人像为同一人（五官、发型、气质跨格一致，禁止换成陌生面孔）。",
+    "【视觉锚点·主人公·锁脸】",
+    "分镜表与图文笔记中，凡出现现代主讲/主人公/解说人物的格子，须与上传参考人像为同一人：五官、发型、肤色、年龄跨格一致，禁止换成陌生面孔。",
+    "衣着可随场景微调（色系/外套/配饰），但身材与时装阶层不变；勿靠换装暗示换人。",
     "仅当脚本明确描写古人、历史人物、古代场景、顾客/路人等独立角色时，才使用不同人物造型。",
     persona,
   ]
@@ -1533,7 +1537,11 @@ export async function generatePlatformCompositeSheetImage(options: {
         const chineseCore = buildCompositeSheetDirectChineseBody(
           k as "storyboard_sheet_portrait" | "storyboard_sheet_landscape" | "xiaohongshu_dual_note",
           scriptContextForPipeline,
-          { rowBand: Boolean(options.gridSection) },
+          {
+            rowBand: Boolean(options.gridSection),
+            sectionIndex: options.gridSection?.index,
+            sectionTotal: options.gridSection?.total,
+          },
         ).trim();
         if (!chineseCore) {
           appendImageFlowLog(L, "[2×4·步骤1] 中文主体为空");
@@ -1783,29 +1791,100 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
 export function splitScriptIntoSections(scriptContext: string, sections: number): string[] {
   const n = Math.max(2, Math.min(3, Math.floor(sections) || 2));
   const full = String(scriptContext || "").trim();
-  if (!full) return Array.from({ length: n }, () => "");
+  if (!full) {
+    return Array.from({ length: n }, (_, i) =>
+      `【3×4 扩写·第 ${i + 1}/${n} 横排】请围绕同一主题新写 4 个不重复要点（本横排序号 ${(i * 4 + 1).toString().padStart(2, "0")}–${((i + 1) * 4).toString().padStart(2, "0")}），勿与其他横排重复。`,
+    );
+  }
 
+  let out: string[] = [];
   // 先尝试按「空行分隔的段落块」聚合，保证不切断句子
   const blocks = full.split(/\n\s*\n+/).map((s) => s.trim()).filter(Boolean);
   if (blocks.length >= n) {
     const per = Math.ceil(blocks.length / n);
-    const out: string[] = [];
     for (let i = 0; i < n; i++) {
       out.push(blocks.slice(i * per, (i + 1) * per).join("\n\n").trim());
     }
-    // 过滤掉聚合后产生的空段，确保段数 = 实际有内容的段
-    const nonEmpty = out.filter(Boolean);
-    return nonEmpty.length >= 2 ? nonEmpty : [full];
+    out = out.filter(Boolean);
+  } else {
+    // 按字符长度等分
+    const per = Math.ceil(full.length / n);
+    for (let i = 0; i < n; i++) {
+      const chunk = full.slice(i * per, (i + 1) * per).trim();
+      if (chunk) out.push(chunk);
+    }
   }
 
-  // 按字符长度等分
-  const per = Math.ceil(full.length / n);
-  const out: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const chunk = full.slice(i * per, (i + 1) * per).trim();
-    if (chunk) out.push(chunk);
+  // 3×4 必须凑满 n 段；内容不足时用扩写指令补段，避免退化成单张 2×4 八格
+  const seed = full.slice(0, 2400);
+  while (out.length < n) {
+    const i = out.length;
+    out.push(
+      `【3×4 扩写·第 ${i + 1}/${n} 横排】在同一主题下新写 4 个不重复的图文/分镜要点（序号 ${(i * 4 + 1)
+        .toString()
+        .padStart(2, "0")}–${((i + 1) * 4).toString().padStart(2, "0")}），承接上文、勿重复上一段。\n\n${seed}`,
+    );
   }
-  return out.length >= 2 ? out : [full];
+  return out.slice(0, n);
+}
+
+/**
+ * 从文案抽出约 12 个图文节拍标题（供 3×4 分段专用），避免每段都塞全文导致序号从 01 重开、内容重复。
+ */
+export function extractGraphicNoteBeatsFor3x4(scriptContext: string, totalBeats = 12): string[] {
+  const full = String(scriptContext || "").trim();
+  const beats: string[] = [];
+  const stepBlocks = full.match(/(?:^|\n)\s*(?:\d+[\.\)、]|【\d+】|第\d+[步格段])/gm);
+  // 优先：分镜步骤 / 落地步骤 行
+  const lines = full
+    .split(/\n+/)
+    .map((s) => s.replace(/^\s*[-*•]\s*/, "").trim())
+    .filter((s) => s.length >= 6 && s.length <= 120);
+  for (const line of lines) {
+    if (/^(【选题】|【钩子】|【文案|【制作】|【环境|【灯光|【情绪|【版式|【发布|【视觉|【3×4|【本段)/.test(line)) {
+      continue;
+    }
+    if (/^\d+[\.\)、]/.test(line) || /^【?\d+】?/.test(line) || line.includes("：") || line.includes(":")) {
+      beats.push(line.replace(/^\d+[\.\)、]\s*/, "").slice(0, 80));
+    }
+    if (beats.length >= totalBeats) break;
+  }
+  // 次选：按句号切短句
+  if (beats.length < totalBeats) {
+    const sentences = full
+      .replace(/\s+/g, " ")
+      .split(/[。！？；\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 8 && s.length <= 60);
+    for (const s of sentences) {
+      if (beats.some((b) => b.includes(s.slice(0, 12)) || s.includes(b.slice(0, 12)))) continue;
+      beats.push(s.slice(0, 80));
+      if (beats.length >= totalBeats) break;
+    }
+  }
+  // 不足则用主题扩写占位，保证 12 格
+  const theme = (full.match(/【选题】([^\n]+)/)?.[1] || full.slice(0, 40) || "本主题").trim();
+  const fillers = [
+    "封面钩子：一句话点出痛点",
+    "痛点共鸣：日常细节对照",
+    "观察窗口一：可执行动作",
+    "观察窗口二：兴趣与节律",
+    "观察窗口三：生活半径",
+    "可收藏模板：三栏对照表",
+    "主人公出镜：锁脸解说",
+    "互动引导：评论区行动",
+    "误区澄清：别只问吃了吗",
+    "方法拆解：怎么记状态表",
+    "场景示例：本周可拍画面",
+    "收束 CTA：私信/收藏提醒",
+  ];
+  let i = 0;
+  while (beats.length < totalBeats) {
+    beats.push(`${fillers[i % fillers.length]}（${theme.slice(0, 16)}）`);
+    i += 1;
+  }
+  void stepBlocks;
+  return beats.slice(0, totalBeats);
 }
 
 /**
@@ -1816,6 +1895,7 @@ export function splitScriptIntoSections(scriptContext: string, sections: number)
  * 任一段失败即抛错（调用方据此报错或退款）。
  *
  * **人物造型 + 拍摄手法**：与 2×4 共用同一套规则；切段前先抽出共享约束，再**逐段前置**，避免切段后后段丢失时装大片 / 机位约束。
+ * **图文 3×4**：每段只注入本横排 4 个节拍 + 强制序号区间，禁止各段都从 01 重画导致乱版。
  */
 export async function generatePlatformGridStitchedSheetImage(
   options: Parameters<typeof generatePlatformCompositeSheetImage>[0] & { sections?: number },
@@ -1844,11 +1924,26 @@ export async function generatePlatformGridStitchedSheetImage(
     .join("\n\n");
 
   const narrative = String(options.scriptContext || "").trim();
-  const parts = splitScriptIntoSections(narrative, total);
+  const parts = isXhs
+    ? Array.from({ length: total }, (_, i) => {
+        const beats = extractGraphicNoteBeatsFor3x4(narrative, 12);
+        const slice = beats.slice(i * 4, i * 4 + 4);
+        const badgeStart = i * 4 + 1;
+        const badgeEnd = badgeStart + 3;
+        const badgeRange = `${String(badgeStart).padStart(2, "0")}–${String(badgeEnd).padStart(2, "0")}`;
+        return [
+          `【本横排专属节拍·严禁复用其他横排】序号徽章必须且只能是 ${badgeRange}（整表 01–12 的第 ${i + 1}/${total} 行）。`,
+          `禁止出现 ${badgeRange === "01–04" ? "05–12" : "01–04 或其他横排序号"}；禁止重画上一段已出现的标题、画面与文案。`,
+          `本横排四格主题（左→右，互不重复，全部画完）：`,
+          ...slice.map((b, j) => `${String(badgeStart + j).padStart(2, "0")}. ${b}`),
+          `主题锚点（勿整段复述）：${narrative.slice(0, 500)}`,
+        ].join("\n");
+      })
+    : splitScriptIntoSections(narrative, total);
   const realTotal = parts.length;
   appendImageFlowLog(
     L,
-    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段 · 第2段起以上一段横排图作 EvoLink 连贯参考（锁人物/场景/色调）→ sharp 直向拼成长图`,
+    `[3×4·总控] kind=${k} · 拆成 ${realTotal} 段${isXhs ? "（图文：每段仅 4 个专属节拍+强制序号）" : ""} · 第2段起以上一段横排图作 EvoLink 连贯参考（锁人物/场景/色调）→ sharp 直向拼成长图`,
   );
 
   if (!isEvolinkGptImage2Configured() && realTotal > 1) {
@@ -1862,7 +1957,8 @@ export async function generatePlatformGridStitchedSheetImage(
   const baseRef = String(options.referencePhotoUrl || "").trim() || undefined;
   for (let i = 0; i < parts.length; i++) {
     appendImageFlowLog(L, `[3×4·总控] ▶ 生成第 ${i + 1}/${realTotal} 段 …`);
-    const sectionScript = `${sharedRules}\n\n【本段分镜内容 · 第 ${i + 1}/${realTotal} 横排】\n${parts[i]}`.slice(
+    const sectionLabel = isXhs ? "本段图文内容" : "本段分镜内容";
+    const sectionScript = `${sharedRules}\n\n【${sectionLabel} · 第 ${i + 1}/${realTotal} 横排】\n${parts[i]}`.slice(
       0,
       12000,
     );
