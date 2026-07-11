@@ -60,6 +60,8 @@ export async function generateDecisionIntelTopicBlueprints(params: {
     grouped?: unknown[];
     tagCandidates?: string[];
   } | null;
+  /** /platform 挂载 Skill 拼块（可选） */
+  platformSkillsPrompt?: string | null;
 }): Promise<Record<string, unknown>[]> {
   const picks = params.picks.filter((p) => p.title.trim() && p.structure.trim());
   if (picks.length === 0) return [];
@@ -95,6 +97,7 @@ export async function generateDecisionIntelTopicBlueprints(params: {
   const diversityBlock = needsCulturalMaterialDiversity(contextBlob)
     ? `\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}\n`
     : "";
+  const skillsBlock = String(params.platformSkillsPrompt || "").trim();
 
   const system = `你是资深内容策划，负责把「战略地图选题结构」扩写为可立刻开拍、并能促成咨询意向的执行方案。
 【规则】
@@ -104,7 +107,7 @@ export async function generateDecisionIntelTopicBlueprints(params: {
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
 ${reviewBlock}
 ${diversityBlock}
-${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}
+${skillsBlock ? `${skillsBlock}\n` : ""}${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}
 - 若输入标题已是苏轼/李清照等宋词人模板，**强烈建议改写扩写**为同痛点但换朝代/典籍/文物/当代切口的新标题，少原样复读宋词人套餐。
 - 若提供蓝海词/标签，须在 copywriting、detailedScript、publishingAdvice 中自然嵌入 1–3 个，禁止堆砌 hashtag。
 - 须严格延续输入选题的主线痛点与人设，不得偏题；语气专业、可拍、简体中文。

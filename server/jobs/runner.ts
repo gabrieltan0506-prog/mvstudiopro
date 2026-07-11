@@ -1228,6 +1228,25 @@ async function processPlatformJob(
         stage1Handoff,
         globalBlueOceanWords,
         stage2LlmModeOverride: stage2LlmModeOverride ?? null,
+        platformSkillsPrompt: await (async () => {
+          try {
+            const { resolvePlatformSkillsPrompt } = await import("../services/platformSkillsService.js");
+            const rawIds = (params as { enabledSkillIds?: unknown }).enabledSkillIds;
+            const enabledSkillIds = Array.isArray(rawIds)
+              ? rawIds.map(String).filter(Boolean).slice(0, 24)
+              : null;
+            return await resolvePlatformSkillsPrompt({
+              userId: jobUserId ?? 0,
+              enabledSkillIds,
+            });
+          } catch (e) {
+            console.warn(
+              "[platform_build_content] skills resolve skipped:",
+              e instanceof Error ? e.message.slice(0, 160) : e,
+            );
+            return "";
+          }
+        })(),
         onBlueprintGenerated: platformJobId
           ? async (blueprint, dimIndex) => {
               incrementalBlueprints[dimIndex] = blueprint;
