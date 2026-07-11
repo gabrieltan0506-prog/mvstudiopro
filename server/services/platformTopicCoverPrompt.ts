@@ -5,11 +5,12 @@
 import { PLATFORM_FASHION_EDITORIAL_CHARACTER_EN } from "../../shared/platformFashionEditorialCharacter.js";
 
 export const PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS = [
-  "Shot on 35mm lens, f/1.4 aperture",
-  "cinematic lighting, soft volumetric light",
+  "Shot on 35mm lens, f/1.8 aperture",
+  "bright natural daylight or soft golden-hour side light — lively, youthful, healthy mood",
+  "avoid default low-key gloom, heavy shadows, funeral-dark grading, or overly serious corporate portrait lighting",
   "hyper-detailed textures, ultra-photorealistic, 8k",
-  "award-winning photography: deliberate background—generous negative space for hero type OR a rich contextual set; avoid generic gray voids",
-  "color grade with chromatic intent—punchy contrast or luxe muted blocking… not default stock gray",
+  "award-winning photography: generous negative space for a short hero headline; lifestyle editorial, not encyclopedia poster",
+  "color grade with chromatic intent—fresh contrast and one accent color; not muddy gray or oppressive dark-gold",
   PLATFORM_FASHION_EDITORIAL_CHARACTER_EN,
 ].join(", ");
 

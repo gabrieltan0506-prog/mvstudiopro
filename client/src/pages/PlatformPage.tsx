@@ -155,6 +155,8 @@ type PlatformCopyLlmEngine = "vertex" | "openai";
 
 /** /platform 挂载 Skill：勾选 id 列表（JSON string[]） */
 const PLATFORM_ENABLED_SKILL_IDS_LS_KEY = "mvstudiopro.platform.enabledSkillIds.v1";
+/** 接受「博主/创作者」自称（默认关） */
+const PLATFORM_ALLOW_BLOGGER_TITLE_LS_KEY = "mvstudiopro.platform.allowBloggerTitle.v1";
 
 function readEnabledPlatformSkillIdsFromLs(): Set<string> | null {
   if (typeof window === "undefined") return null;
@@ -166,6 +168,15 @@ function readEnabledPlatformSkillIdsFromLs(): Set<string> | null {
     return new Set(parsed.map(String).filter(Boolean));
   } catch {
     return null;
+  }
+}
+
+function readAllowBloggerTitleFromLs(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(PLATFORM_ALLOW_BLOGGER_TITLE_LS_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -1887,6 +1898,7 @@ export default function PlatformPage() {
     () => readEnabledPlatformSkillIdsFromLs() != null,
   );
   const [platformSkillUploading, setPlatformSkillUploading] = useState(false);
+  const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -2028,6 +2040,14 @@ export default function PlatformPage() {
     }
   }, [enabledPlatformSkillIds, platformSkillIdsHydrated]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLATFORM_ALLOW_BLOGGER_TITLE_LS_KEY, allowBloggerTitle ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [allowBloggerTitle]);
+
   const togglePlatformSkillId = useCallback((id: string) => {
     setEnabledPlatformSkillIds((prev) => {
       const next = new Set(prev);
@@ -2072,6 +2092,119 @@ export default function PlatformPage() {
       }
     },
     [isAuthenticated, uploadPlatformSkillMutation, platformSkillsQuery],
+  );
+
+  const platformSkillsMountPanel = (
+    <div className="rounded-xl border border-[#10B981]/30 bg-[#10B981]/8 px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-white">生成 Skill（全案 + 自定义共用）</div>
+          <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
+            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图。内置在{" "}
+            <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
+            ；可上传 .md 追加。
+          </p>
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#10B981]/45 bg-[#10B981]/15 px-2.5 py-1.5 text-[11px] font-bold text-[#a7f3d0] transition hover:bg-[#10B981]/25">
+          {platformSkillUploading ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              上传中…
+            </>
+          ) : (
+            <>上传 Skill.md</>
+          )}
+          <input
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            className="hidden"
+            disabled={platformSkillUploading || !isAuthenticated}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void handleUploadPlatformSkillFile(f);
+            }}
+          />
+        </label>
+      </div>
+      <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[11px] text-gray-300">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={allowBloggerTitle}
+          onChange={(e) => setAllowBloggerTitle(e.target.checked)}
+        />
+        <span>
+          <span className="font-semibold text-white/90">允许使用「博主 / 创作者」自称</span>
+          <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">
+            默认关闭：强制「职业 × 客户 × 场景」。勾选后才允许空壳自称。
+          </span>
+        </span>
+      </label>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {(platformSkillsQuery.data?.skills ?? []).map((sk) => {
+          const on = enabledPlatformSkillIds.has(sk.id);
+          return (
+            <label
+              key={sk.id}
+              className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] transition ${
+                on
+                  ? "border-[#10B981]/50 bg-[#10B981]/12 text-white"
+                  : "border-white/10 bg-black/20 text-gray-400"
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={on}
+                onChange={() => togglePlatformSkillId(sk.id)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold text-white/90">{sk.name}</span>
+                <span className="ml-1 text-[10px] text-gray-500">
+                  {sk.source === "builtin" ? "内置" : "上传"} · {sk.id}
+                </span>
+                {sk.description ? (
+                  <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">
+                    {sk.description}
+                  </span>
+                ) : null}
+              </span>
+              {sk.source === "user" ? (
+                <button
+                  type="button"
+                  className="shrink-0 text-[10px] text-rose-300/80 hover:text-rose-200"
+                  onClick={(ev) => {
+                    ev.preventDefault();
+                    void (async () => {
+                      try {
+                        await deletePlatformSkillMutation.mutateAsync({ skillId: sk.id });
+                        setEnabledPlatformSkillIds((prev) => {
+                          const next = new Set(prev);
+                          next.delete(sk.id);
+                          return next;
+                        });
+                        toast.success("已删除上传 Skill");
+                        void platformSkillsQuery.refetch();
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "删除失败");
+                      }
+                    })();
+                  }}
+                >
+                  删除
+                </button>
+              ) : null}
+            </label>
+          );
+        })}
+        {!platformSkillsQuery.data?.skills?.length ? (
+          <div className="text-[11px] text-gray-500 sm:col-span-2">
+            {platformSkillsQuery.isLoading ? "加载 Skill…" : "暂无 Skill（请确认 docs/2026Jul11/skill 已部署）"}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 
   /** Fly worker 回传后解析 platformContent（轮询与错误处理集中一处，供初次与重试共用） */
@@ -2291,6 +2424,7 @@ export default function PlatformPage() {
           strategicDashboard: dash as unknown as Record<string, unknown>,
           stage2LlmMode: "openai" as const,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
           ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
         });
         setContentJobPollTrace({
@@ -2329,6 +2463,7 @@ export default function PlatformPage() {
       platformCopyLlmEngine,
       visualReportData,
       enabledPlatformSkillIds,
+      allowBloggerTitle,
     ],
   );
 
@@ -2727,6 +2862,8 @@ export default function PlatformPage() {
         ...(supervisorToken ? { supervisorToken } : {}),
         compositeImageEngine: inp.compositeImageEngine ?? (inp.referencePhotoUrl ? "gpt_image2" : platformComposite2x4Engine),
         ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        allowBloggerTitle,
       });
       setTopicImageJobPollTrace({
         jobId,
@@ -2872,6 +3009,8 @@ export default function PlatformPage() {
       platformCoverVertexNb2,
       platformImageFlowPollIntervalMs,
       platformComposite2x4Engine,
+      enabledPlatformSkillIds,
+      allowBloggerTitle,
     ],
   );
 
@@ -3639,6 +3778,8 @@ export default function PlatformPage() {
       ...(notePart ? { notePart } : {}),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       progressJobId,
+      enabledSkillIds: Array.from(enabledPlatformSkillIds),
+      allowBloggerTitle,
     });
     if (res.imageUrl) return res.imageUrl;
     if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
@@ -3703,6 +3844,8 @@ export default function PlatformPage() {
           visionContext: pendingOptimizeVisionRef.current,
           includeLiveTrends: pendingOptimizeLiveTrendsRef.current || Boolean(pendingOptimizeVisionRef.current),
           liveTrendWindowDays: 7,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
         });
         pendingOptimizeVisionRef.current = undefined;
         pendingOptimizeLiveTrendsRef.current = false;
@@ -3749,6 +3892,8 @@ export default function PlatformPage() {
         visionContext: payload.visionContext,
         includeLiveTrends: true,
         liveTrendWindowDays: 7,
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        allowBloggerTitle,
       });
       pendingOptimizeVisionRef.current = undefined;
       pendingOptimizeLiveTrendsRef.current = false;
@@ -3757,7 +3902,7 @@ export default function PlatformPage() {
         summary: res.result.summary,
       };
     },
-    [optimizeCustomCopyMutation],
+    [optimizeCustomCopyMutation, enabledPlatformSkillIds, allowBloggerTitle],
   );
 
   const handleAssetGenerateFromText = useCallback(
@@ -3999,6 +4144,8 @@ export default function PlatformPage() {
       referencePhotoFromApprovedCover: refFromApprovedCover,
       progressJobId,
       compositeImageEngine: storyboardRefUrl ? "gpt_image2" : platformComposite2x4Engine,
+      enabledSkillIds: Array.from(enabledPlatformSkillIds),
+      allowBloggerTitle,
     });
     if (res.imageUrl) return res.imageUrl;
     if ((res as { isAsync?: boolean }).isAsync) {
@@ -4088,6 +4235,7 @@ export default function PlatformPage() {
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
           pick: {
             title: title.slice(0, 240),
             structure: structure.slice(0, 8000),
@@ -4279,6 +4427,8 @@ export default function PlatformPage() {
                 ...(resolveReferencePhotoForScene(item.id)
                   ? { referencePhotoUrl: resolveReferencePhotoForScene(item.id) }
                   : {}),
+                enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                allowBloggerTitle,
               }),
             (waitMs) => {
               liveLines.push(
@@ -5816,59 +5966,6 @@ export default function PlatformPage() {
     [platformDashboard],
   );
 
-  const executionBlueprint = useMemo(
-    () => {
-      // Prioritize platformContent.contentBlueprints[0] over snapshot assetAdaptation
-      const bestBlueprint: any =
-        Array.isArray(platformContent?.contentBlueprints) && platformContent!.contentBlueprints.length > 0
-          ? platformContent!.contentBlueprints[0]
-          : Array.isArray(platformDashboard?.contentBlueprints) && platformDashboard!.contentBlueprints.length > 0
-          ? platformDashboard!.contentBlueprints[0]
-          : null;
-
-      if (bestBlueprint) {
-        return [
-          {
-            label: "内容开头",
-            // Fix #4: prefer hook field; never use generic fallback
-            detail: cleanUserCopy(bestBlueprint.hook || bestBlueprint.openingHook || bestBlueprint["开头文案钩子"] || bestBlueprint["hook"] || bestBlueprint["开头钩子"] || contentExecutionCards[0]?.hook || "", ""),
-          },
-          {
-            label: "内容结构",
-            detail: cleanUserCopy(bestBlueprint.copywriting || bestBlueprint.body || bestBlueprint["核心文案方向"] || bestBlueprint["文案"] || bestBlueprint["正文"] || contentExecutionCards[0]?.copywriting || "", ""),
-          },
-          {
-            label: "行动引导",
-            // Fix #4: pull from actionableSteps first, then production/graphicPlan — never generic template
-            detail: cleanUserCopy(
-              (Array.isArray(bestBlueprint.actionableSteps) && bestBlueprint.actionableSteps.length > 0
-                ? bestBlueprint.actionableSteps.join(" → ")
-                : "") ||
-              bestBlueprint.graphicPlan || bestBlueprint.videoPlan || bestBlueprint["图文怎么排版/视频怎么拍"] || bestBlueprint["图文排版"] || bestBlueprint["视频拍摄"] || bestBlueprint["制作建议"] || contentExecutionCards[0]?.production || "",
-              ""
-            ),
-          },
-        ].filter((item) => item.detail);
-      }
-
-      return [
-        {
-          label: "内容开头",
-          detail: isContentLoading ? "正在重构开场三秒钩子..." : "",
-        },
-        {
-          label: "内容结构",
-          detail: isContentLoading ? "正在搭建高留存内容骨架..." : "",
-        },
-        {
-          label: "行动引导",
-          detail: isContentLoading ? "正在规划商业承接卡点..." : "",
-        },
-      ].filter((item) => item.detail);
-    },
-    [isContentLoading, assetAdaptation, contentExecutionCards, topMonetization, platformContent, platformDashboard],
-  );
-
   const isAnalyzing = growthSnapshotQuery.isFetching;
   const processingSteps = useMemo(
     () => buildPlatformProcessingSteps(selectedWindowDays, elapsedTime, focusPrompt),
@@ -6344,6 +6441,7 @@ export default function PlatformPage() {
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
           pick,
         });
         const mapped = mapStrategicMapBlueprintsToExecutionCards(
@@ -6373,6 +6471,7 @@ export default function PlatformPage() {
       strategicMapSessionExecutionCards.length,
       scrollToPlatformExecutionCopy,
       enabledPlatformSkillIds,
+      allowBloggerTitle,
     ],
   );
 
@@ -6421,6 +6520,7 @@ export default function PlatformPage() {
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
           pick: { title: title.slice(0, 240), structure, source: "structure" as const },
         });
         const mapped = mapStrategicMapBlueprintsToExecutionCards(
@@ -6450,6 +6550,7 @@ export default function PlatformPage() {
       strategicMapSessionExecutionCards.length,
       scrollToPlatformExecutionCopy,
       enabledPlatformSkillIds,
+      allowBloggerTitle,
     ],
   );
 
@@ -6484,6 +6585,7 @@ export default function PlatformPage() {
           platformHint: decisionIntelPlatformHint,
           blueOceanLexicon: decisionIntelBlueOceanLexicon,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
           pick,
           regenerate: true,
         });
@@ -6527,6 +6629,7 @@ export default function PlatformPage() {
       supervisorAccess,
       scrollToPlatformExecutionCopy,
       enabledPlatformSkillIds,
+      allowBloggerTitle,
     ],
   );
 
@@ -6546,7 +6649,7 @@ export default function PlatformPage() {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("深度追问在「平台优先级」区块下方：请先生成战略看板与报告内容。");
+    toast.message("深度追问在战略看板结论下方：请先生成战略看板与报告内容。");
     document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -6971,6 +7074,8 @@ export default function PlatformPage() {
             </button>
           </div>
 
+          <div className="mb-5">{platformSkillsMountPanel}</div>
+
           {customWorkspaceTab === "copy" ? (
             <>
               <div className="mb-5 grid gap-2 sm:grid-cols-2">
@@ -7091,6 +7196,27 @@ export default function PlatformPage() {
                 )}
               </div>
 
+              {!customOptimizeResult && visibleExecutionCards.some((c) => c.publishingAdvice?.trim()) ? (
+                <div className="mt-5 rounded-xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
+                    发布时间 / 发布建议（来自全案选题）
+                  </div>
+                  <div className="mt-1.5 space-y-1.5">
+                    {visibleExecutionCards
+                      .filter((c) => c.publishingAdvice?.trim())
+                      .slice(0, 3)
+                      .map((c) => (
+                        <div key={`custom-pub-${c.id}`} className="text-sm leading-6 text-[#ffe9a8]">
+                          <span className="font-semibold text-white/80">{c.title.slice(0, 28)}</span>
+                          {c.title.length > 28 ? "…" : ""}
+                          <span className="text-white/40"> · </span>
+                          {c.publishingAdvice}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
+
               {customNoteBusy && (
                 <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#ff4fb8]/15 bg-[rgba(255,79,184,0.05)] px-4 py-3 text-sm text-[#ff9fe0]/80">
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
@@ -7116,6 +7242,26 @@ export default function PlatformPage() {
                     深度优化结果{customOptimizeSummary ? ` · ${customOptimizeSummary}` : ""}
                   </div>
                   <div className="whitespace-pre-wrap text-sm leading-7 text-white/88">{customOptimizeResult}</div>
+                  {visibleExecutionCards.some((c) => c.publishingAdvice?.trim()) ? (
+                    <div className="rounded-xl border border-[#fbbf24]/25 bg-black/20 px-3 py-2.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
+                        发布时间 / 发布建议（参考全案选题）
+                      </div>
+                      <div className="mt-1.5 space-y-1.5">
+                        {visibleExecutionCards
+                          .filter((c) => c.publishingAdvice?.trim())
+                          .slice(0, 3)
+                          .map((c) => (
+                            <div key={`pub-${c.id}`} className="text-sm leading-6 text-[#ffe9a8]">
+                              <span className="font-semibold text-white/80">{c.title.slice(0, 28)}</span>
+                              {c.title.length > 28 ? "…" : ""}
+                              <span className="text-white/40"> · </span>
+                              {c.publishingAdvice}
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap gap-2 pt-2">
                     <button
                       type="button"
@@ -8900,125 +9046,6 @@ export default function PlatformPage() {
 
             </div>
 
-            <div className="grid gap-4">
-              <div className={shellCardClasses("p-6")}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <TrendingUp className="h-4 w-4 text-[#49e6ff]" />
-                  平台优先级与切入方式
-                </div>
-                <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
-                  基于你在上方填写的人物背景与创作诉求，结合近 {selectedWindowDays} 天窗口样本，给出各平台优先顺序与具体切入动作（不含封面图、分镜图与决策智库报告）。
-                </p>
-                <div className="mt-5 grid gap-4">
-                  {platformDecisionRows.map((item, index) => (
-                    <div key={item.id} className="rounded-[24px] border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <div className="flex items-center gap-3">
-                            <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
-                              Priority {index + 1}
-                            </div>
-                            <div className="text-xl font-bold text-white">{item.name}</div>
-                          </div>
-                          <div className="mt-3 text-sm leading-7 text-[#b9afd9]">{renderSafeText(item.trend)}</div>
-                            </div>
-                            <div className="rounded-full border border-white/10 bg-[rgba(255,255,255,0.04)] px-3 py-2 text-xs text-[#d6cdf0]">
-                              {renderSafeText(item.lane)}
-                            </div>
-                          </div>
-                          {Array.isArray((item as any).trafficBoosters) && (item as any).trafficBoosters.length > 0 ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {(item as any).trafficBoosters.map((b: any, bi: number) => (
-                                <span key={bi} className="inline-flex items-center gap-1 rounded-full border border-[#ff6b2b]/40 bg-[rgba(255,100,30,0.12)] px-3 py-1 text-[11px] font-medium text-[#ff9966] animate-pulse">
-                                  <Flame className="h-3 w-3" />
-                                  {renderSafeText(b)}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                      <div className="mt-4 grid gap-3 md:grid-cols-2">
-                        <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
-                          <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">为什么现在做</div>
-                          <div className="mt-2 text-sm leading-7 text-white whitespace-pre-wrap">{renderSafeText(item.whyNow)}</div>
-                        </div>
-                        <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
-                          <div className="text-[11px] uppercase tracking-[0.18em] text-[#ffdd44]">建议动作</div>
-                          <div className="mt-2 text-sm leading-7 text-white whitespace-pre-wrap">{renderSafeText(item.nextMove)}</div>
-                        </div>
-                      </div>
-                      {(item.hook || item.monetization) ? (
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
-                          {item.hook ? (
-                            <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                              <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">开头怎么说</div>
-                              <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{renderSafeText(item.hook)}</div>
-                            </div>
-                          ) : null}
-                          {item.monetization ? (
-                            <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                              <div className="text-[11px] uppercase tracking-[0.18em] text-[#ffdd44]">更适合的承接</div>
-                              <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{renderSafeText(item.monetization)}</div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {((item as any).primaryTrack || (item as any).estimatedTraffic || (item as any).ipUniqueness || (item as any).commercialConversion) ? (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          {(item as any).primaryTrack ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Target className="h-3 w-3" />赛道</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).primaryTrack, '分析中...')}</div></div>) : null}
-                          {(item as any).estimatedTraffic ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><BarChart3 className="h-3 w-3" />预估流量</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).estimatedTraffic, '分析中...')}</div></div>) : null}
-                          {(item as any).ipUniqueness ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Star className="h-3 w-3" />IP稀缺度</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).ipUniqueness, '分析中...')}</div></div>) : null}
-                          {(item as any).commercialConversion ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><DollarSign className="h-3 w-3" />商业转化</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).commercialConversion, '分析中...')}</div></div>) : null}
-                        </div>
-                      ) : null}
-                      {/* Fix #3: 对标账号 — show 用户画像 when accounts are objects or absent */}
-                      {Array.isArray((item as any).referenceAccounts) && (item as any).referenceAccounts.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
-                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />目标受众 &amp; 对标账号</div>
-                          <div className="mt-2 space-y-2">
-                            {(item as any).referenceAccounts.map((acc: any, ai: number) => {
-                              // Support: string | {account, reason} | {name, reason} — never show [object Object]
-                              const accountText = typeof acc === "string"
-                                ? acc
-                                : typeof acc === "object" && acc !== null
-                                  ? String(acc?.account || acc?.name || acc?.title || acc?.用户画像 || acc?.portrait || JSON.stringify(acc) || "")
-                                  : "";
-                              const reasonText = typeof acc === "object" && acc !== null
-                                ? String(acc?.reason || acc?.description || acc?.desc || acc?.为什么 || "")
-                                : "";
-                              // Skip entirely if both are empty (malformed entry)
-                              if (!accountText && !reasonText && accountText !== "{}") return null;
-                              return (
-                                <div key={ai} className="rounded-lg border border-[#3a2b6a] bg-[#170d35] px-3 py-2">
-                                  {accountText ? <div className="text-[11px] font-semibold text-[#c9c0e6]">{accountText}</div> : null}
-                                  {reasonText ? <div className="mt-1 text-[11px] leading-5 text-[#9080b8]">{reasonText}</div> : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : null}
-                      {/* 蓝海词 — Blue Ocean Keywords */}
-                      {Array.isArray((item as any).blueOceanWords) && (item as any).blueOceanWords.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-[#22d3ee]/30 bg-[rgba(34,211,238,0.06)] p-3">
-                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#67e8f9]">
-                            <Globe className="h-3 w-3" />蓝海词 · Blue Ocean Keywords
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {(item as any).blueOceanWords.map((w: string, wi: number) => (
-                              <span key={wi} className="inline-flex items-center gap-1 rounded-full border border-[#22d3ee]/40 bg-[rgba(34,211,238,0.12)] px-3 py-1 text-[11px] font-semibold text-[#a5f3fc]">
-                                {w}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-
             <div className="mt-6 grid gap-4 xl:grid-cols-2 xl:items-start">
                             <div id={PLATFORM_SECTION_DEEP_QA_ID} className={`scroll-mt-20 ${shellCardClasses("p-6")}`}>
                               <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -9253,102 +9280,7 @@ export default function PlatformPage() {
                       <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成分镜套装、一键生成封面加分镜。</p>
                     </div>
                   </div>
-                  <div className="rounded-xl border border-[#10B981]/30 bg-[#10B981]/8 px-4 py-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-white">生成 Skill（挂载到全案文案 / 分镜）</div>
-                        <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-                          勾选后注入「开始全案分析」文案生成。内置文件在{" "}
-                          <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
-                          ；可上传 .md 追加。用于拉开文化/生活场域，避免苏轼李清照与网球游泳复读。
-                        </p>
-                      </div>
-                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#10B981]/45 bg-[#10B981]/15 px-2.5 py-1.5 text-[11px] font-bold text-[#a7f3d0] transition hover:bg-[#10B981]/25">
-                        {platformSkillUploading ? (
-                          <>
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            上传中…
-                          </>
-                        ) : (
-                          <>上传 Skill.md</>
-                        )}
-                        <input
-                          type="file"
-                          accept=".md,text/markdown,text/plain"
-                          className="hidden"
-                          disabled={platformSkillUploading || !isAuthenticated}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            e.target.value = "";
-                            if (f) void handleUploadPlatformSkillFile(f);
-                          }}
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      {(platformSkillsQuery.data?.skills ?? []).map((sk) => {
-                        const on = enabledPlatformSkillIds.has(sk.id);
-                        return (
-                          <label
-                            key={sk.id}
-                            className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] transition ${
-                              on
-                                ? "border-[#10B981]/50 bg-[#10B981]/12 text-white"
-                                : "border-white/10 bg-black/20 text-gray-400"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              className="mt-0.5"
-                              checked={on}
-                              onChange={() => togglePlatformSkillId(sk.id)}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="font-semibold text-white/90">{sk.name}</span>
-                              <span className="ml-1 text-[10px] text-gray-500">
-                                {sk.source === "builtin" ? "内置" : "上传"} · {sk.id}
-                              </span>
-                              {sk.description ? (
-                                <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">
-                                  {sk.description}
-                                </span>
-                              ) : null}
-                            </span>
-                            {sk.source === "user" ? (
-                              <button
-                                type="button"
-                                className="shrink-0 text-[10px] text-rose-300/80 hover:text-rose-200"
-                                onClick={(ev) => {
-                                  ev.preventDefault();
-                                  void (async () => {
-                                    try {
-                                      await deletePlatformSkillMutation.mutateAsync({ skillId: sk.id });
-                                      setEnabledPlatformSkillIds((prev) => {
-                                        const next = new Set(prev);
-                                        next.delete(sk.id);
-                                        return next;
-                                      });
-                                      toast.success("已删除上传 Skill");
-                                      void platformSkillsQuery.refetch();
-                                    } catch (err) {
-                                      toast.error(err instanceof Error ? err.message : "删除失败");
-                                    }
-                                  })();
-                                }}
-                              >
-                                删除
-                              </button>
-                            ) : null}
-                          </label>
-                        );
-                      })}
-                      {!platformSkillsQuery.data?.skills?.length ? (
-                        <div className="text-[11px] text-gray-500 sm:col-span-2">
-                          {platformSkillsQuery.isLoading ? "加载 Skill…" : "暂无 Skill（请确认 docs/2026Jul11/skill 已部署）"}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
+                  {platformSkillsMountPanel}
                   {platformTopicCount > 0 ? (
                     <div className="rounded-xl border border-[#c4b5fd]/35 bg-[#6a5cff]/10 px-4 py-3">
                       <div className="flex flex-wrap items-start gap-3">
@@ -10200,9 +10132,19 @@ export default function PlatformPage() {
                             ))}
                           </div>
                         ) : null}
+                        {item.publishingAdvice ? (
+                          <div className="mt-3 rounded-xl border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] px-3 py-2.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
+                              发布时间 / 发布建议
+                            </div>
+                            <div className="mt-1 text-sm leading-6 text-[#ffe9a8] whitespace-pre-wrap">
+                              {item.publishingAdvice}
+                            </div>
+                          </div>
+                        ) : null}
                         <details className="mb-4 mt-3 cursor-pointer text-xs text-gray-500">
                           <summary className="cursor-pointer select-none text-[15px] font-black text-[#ff9900] animate-pulse transition-colors hover:text-[#ffb84d]">
-                            ▶ 执行细项、分镜与发布（点击展开查看详细步骤）
+                            ▶ 执行细项与分镜（点击展开查看详细步骤）
                           </summary>
                           <div className="mt-3 space-y-2.5 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
                             {item.production ? (
@@ -10245,12 +10187,6 @@ export default function PlatformPage() {
                                   ))}
                                 </div>
                               </div>
-                            ) : null}
-                            {(item as any).publishingAdvice ? (
-                              <p>
-                                <strong className="text-[#9ddcff]">发布建议：</strong>
-                                {(item as any).publishingAdvice}
-                              </p>
                             ) : null}
                             {(item as any).detailedScript ? (
                               <div>
@@ -10549,6 +10485,8 @@ export default function PlatformPage() {
                                           ),
                                         }
                                       : {}),
+                                    enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                                    allowBloggerTitle,
                                   }),
                                 ).catch(() => {});
                               }}
@@ -10651,38 +10589,97 @@ export default function PlatformPage() {
                     ))
                   )}
                 </div>
-              </div>
-            </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-              <div className={shellCardClasses("p-6")}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Rocket className="h-4 w-4 text-[#49e6ff]" />
-                  视频怎么拍 / 图文怎么写
-                </div>
-                <div className="mt-5 space-y-3">
-                  {/* Show loading skeleton while Call 3 is running */}
-                  {isContentLoading && executionBlueprint.length === 0 ? (
-                    <div className="flex h-24 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#8cefff]/60">
-                      <Loader2 className="mb-2 h-5 w-5 animate-spin" />
-                      <span className="text-sm">正在重构开场三秒钩子、搭建高留存内容骨架...</span>
+                <div className="mt-8 border-t border-white/10 pt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <TrendingUp className="h-4 w-4 text-[#49e6ff]" />
+                      平台优先级与切入方式
                     </div>
-                  ) : executionBlueprint.length === 0 ? (
-                    <div className="flex h-24 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]/60 text-sm">
-                      完成平台分析后将显示专属执行细节
+                    <div className="text-[11px] text-[#9b8fc4]">近 {selectedWindowDays} 天窗口 · 条越长越优先</div>
+                  </div>
+                  {isDashboardLoading && platformDecisionRows.length === 0 ? (
+                    <div className="mt-4 flex h-28 animate-pulse items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-sm text-[#8cefff]/70">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      正在整理平台优先级…
+                    </div>
+                  ) : platformDecisionRows.length === 0 ? (
+                    <div className="mt-4 flex h-24 items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-sm text-[#c9c0e6]/70">
+                      完成全案分析后显示平台优先级图
                     </div>
                   ) : (
-                    executionBlueprint.map((item) => (
-                      <div key={item.label} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                        <div className="text-sm font-semibold text-white">{item.label}</div>
-                        <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.detail}</div>
-                      </div>
-                    ))
+                    <div className="mt-4 space-y-3">
+                      {platformDecisionRows.map((item, index) => {
+                        const barPct = Math.max(28, 100 - index * 18);
+                        const barColors = [
+                          "from-[#49e6ff] to-[#6a5cff]",
+                          "from-[#6fffb0] to-[#49e6ff]",
+                          "from-[#fbbf24] to-[#ff4fb8]",
+                          "from-[#a78bfa] to-[#6366f1]",
+                        ];
+                        const moveOneLine = String(item.nextMove || "")
+                          .replace(/\s+/g, " ")
+                          .trim()
+                          .slice(0, 72);
+                        const blueWords = Array.isArray((item as { blueOceanWords?: string[] }).blueOceanWords)
+                          ? (item as { blueOceanWords: string[] }).blueOceanWords.slice(0, 4)
+                          : [];
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full border border-[#49e6ff]/35 bg-[#49e6ff]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#8cefff]">
+                                P{index + 1}
+                              </span>
+                              <span className="text-sm font-bold text-white">{item.name}</span>
+                              {item.trend ? (
+                                <span className="rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] text-[#c9c0e6]">
+                                  {renderSafeText(item.trend)}
+                                </span>
+                              ) : null}
+                              {item.lane ? (
+                                <span className="rounded-md border border-[#ffdd44]/25 bg-[#ffdd44]/8 px-2 py-0.5 text-[10px] text-[#ffe08a]">
+                                  {renderSafeText(item.lane)}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-2.5 h-2.5 w-full overflow-hidden rounded-full bg-white/5">
+                              <div
+                                className={`h-full rounded-full bg-gradient-to-r ${barColors[index % barColors.length]}`}
+                                style={{ width: `${barPct}%` }}
+                                title={`Priority ${index + 1}`}
+                              />
+                            </div>
+                            {moveOneLine ? (
+                              <div className="mt-2 truncate text-[12px] leading-5 text-[#b9afd9]" title={String(item.nextMove || "")}>
+                                切入：{moveOneLine}
+                                {String(item.nextMove || "").trim().length > 72 ? "…" : ""}
+                              </div>
+                            ) : null}
+                            {blueWords.length > 0 ? (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {blueWords.map((w, wi) => (
+                                  <span
+                                    key={`${item.id}-bo-${wi}`}
+                                    className="rounded-full border border-[#22d3ee]/35 bg-[rgba(34,211,238,0.1)] px-2 py-0.5 text-[10px] text-[#a5f3fc]"
+                                  >
+                                    {w}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
+            </div>
 
-              <div className={shellCardClasses("p-6")}>
+            <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Target className="h-4 w-4 text-[#6fffb0]" />
                   个性化分析
@@ -10714,7 +10711,6 @@ export default function PlatformPage() {
                   )}
                 </div>
               </div>
-            </div>
 
             <div className={shellCardClasses("p-6 mt-4")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">

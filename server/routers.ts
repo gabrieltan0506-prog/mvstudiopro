@@ -89,6 +89,10 @@ import {
   needsCulturalMaterialDiversity,
 } from "../shared/platformCulturalMaterialDiversity.js";
 import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "../shared/storyboardLightingEmotion.js";
+import {
+  normalizePlatformVariants,
+  PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
+} from "../shared/platformNativeVariants.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1114,6 +1118,9 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
           .filter(Boolean)
           .slice(0, 8);
       }
+      // platformVariants：三平台钩子/封面/标签差异块
+      const pv = normalizePlatformVariants(b.platformVariants ?? b.platformAdaptations);
+      if (pv.length > 0) b.platformVariants = pv;
       return b;
     });
   }
@@ -1390,13 +1397,34 @@ export async function buildPlatformContent(params: {
       ? `\n\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}`
       : "") +
     `\n\n${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}` +
-    (skillsBlock ? `\n\n${skillsBlock}` : "");
+    (skillsBlock ? `\n\n${skillsBlock}` : "") +
+    `\n\n${PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT}`;
+
+  const douyinHotForWeixin =
+    (Array.isArray(dynamicDecisionChain)
+      ? dynamicDecisionChain.find((row: { platform?: string }) => row?.platform === "douyin")
+      : null) ?? null;
+  const weixinChannelsDouyinHotRef = douyinHotForWeixin
+    ? {
+        note: "视频号母语参照：抖音近窗（约3–5天）高互动样本的钩子结构与节奏；禁止抄标题。",
+        decisionWindowDays: (douyinHotForWeixin as { decisionWindowDays?: number }).decisionWindowDays ?? 5,
+        highEngagementSamples: Array.isArray(
+          (douyinHotForWeixin as { highEngagementSamples?: unknown }).highEngagementSamples,
+        )
+          ? (douyinHotForWeixin as { highEngagementSamples: unknown[] }).highEngagementSamples.slice(0, 8)
+          : [],
+      }
+    : {
+        note: "当前请求未含抖音链；视频号仍按生活一句人话母语写，勿抄热梗标题。",
+        highEngagementSamples: [],
+      };
 
   const stage2UserJsonString = JSON.stringify({
           context: params.context || "",
           windowDays: params.windowDays,
           platformMenu: params.platformMenu,
           dynamicDecisionChain,
+          weixinChannelsDouyinHotRef,
           blueOceanLexicon,
           blueOceanUsagePolicy: BLUE_OCEAN_USAGE_POLICY,
           /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
@@ -1411,7 +1439,7 @@ export async function buildPlatformContent(params: {
           /** Stage 1 看板清洗手遞：含 contentSeeds（title/hook/copywriting/分鏡欄位） */
           stage1StrategicHandoff: handoff,
           ipContextBinding:
-            "当前用户真实人设（职业、身份、兴趣、爱好、专长等，见 context 与用户 JSON 快照），必须据此生成恰好 6 条、六个内容维度各一的 contentBlueprints。泛化、与此人设脱钩或仅用「创作者」「博主」等空壳表述的内容将被拒收。",
+            "当前用户真实人设（职业、身份、兴趣、爱好、专长等，见 context 与用户 JSON 快照），必须据此生成恰好 6 条、六个内容维度各一的 contentBlueprints。泛化、与此人设脱钩或仅用「创作者」「博主」等空壳表述的内容将被拒收（除非用户明确放开博主自称）。",
         });
 
   const structuredStage2Messages: Parameters<typeof invokeLLM>[0]["messages"] = [
@@ -1477,6 +1505,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 	       "[正文区] 完整文案+平台搜索关键词+结尾咨询钩子，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
+   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(8–14字)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。小红书可为图文或短视频；短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
    - executionDetails（执行细节，**建议**极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"；**强监管赛道避免听诊器/CT 屏等临床强锚点**）
      * lightingAndCamera（灯光 + 机位，**高度需求专业影视手法**：写清主光方向/质感/色温/明暗比、运镜意图与情绪服务关系；可借用高反差建筑光、温暖魔术时刻、光晕剪影、雾霾大光域、霓虹溢光、精密冷光、天气即光、动机窗光、剧集人物主光等——按段落选用一种主手法。**禁止**点名导演/片名或写「某某味/致敬」。例如："窗侧动机光 + 伦勃朗补光，色温偏暖，明暗比 4:1，轮廓光勾勒西装质感；手机固定支架正面对拍"）
@@ -1503,6 +1532,36 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       "detailedScript": "完整分镜脚本（视频用时间轴，图文用封面+内页格式）",
       "publishingAdvice": "发布时机与平台设置建议",
       "highlightKeywords": ["蓝海词1", "蓝海词2"],
+      "platformVariants": [
+        {
+          "platform": "xiaohongshu",
+          "format": "图文或短视频",
+          "hook": "小红书停滑句",
+          "coverHeadline": "八到十四字主句",
+          "coverSubline": "可选副标",
+          "tags": ["标签1", "标签2"],
+          "blueOceanKeywords": ["词1"],
+          "reuseMainCopy": false
+        },
+        {
+          "platform": "bilibili",
+          "format": "短视频",
+          "hook": "B站停滑句",
+          "coverHeadline": "知识反差主句",
+          "tags": ["标签A"],
+          "blueOceanKeywords": ["词2"],
+          "reuseMainCopy": false
+        },
+        {
+          "platform": "weixin_channels",
+          "format": "短视频",
+          "hook": "视频号人话钩子",
+          "coverHeadline": "生活一句主句",
+          "tags": ["标签B"],
+          "blueOceanKeywords": ["词3"],
+          "reuseMainCopy": false
+        }
+      ],
       "executionDetails": {
         "environmentAndWardrobe": "拍摄环境与服装道具",
         "lightingAndCamera": "灯光与机位建议",
@@ -1625,7 +1684,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
 【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
 輸出格式必須嚴格為：
-{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": [...], "actionableSteps": [...], "detailedScript": "（≥400字分鏡）", "publishingAdvice": "...", "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] }, "highlightKeywords": [...] } }
+{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
 不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
 
     const dimMessages: typeof structuredStage2Messages = [
@@ -4110,6 +4169,7 @@ export const appRouter = router({
             .optional(),
           /** /platform 勾选启用的 Skill id */
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -4183,6 +4243,7 @@ export const appRouter = router({
             return await resolvePlatformSkillsPrompt({
               userId: ctx.user.id,
               enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
             });
           } catch {
             return "";
@@ -5206,6 +5267,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           gridVariant: z.enum(["2x4", "3x4"]).optional(),
           /** 用户上传人像 URL → 封面 EvoLink edit 融合主人公相貌 */
           referencePhotoUrl: z.string().url().max(2048).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -5349,6 +5412,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         void input.imagePromptTranslator;
         const imagePromptTranslatorForComposite = "gpt54" as const;
 
+        const enrichedBundleScriptContext = await (async () => {
+          const base = String(input.compositeScriptContext || "").trim();
+          try {
+            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
+            const skills = await resolvePlatformSkillsPrompt({
+              userId,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
+            });
+            if (!skills.trim()) return base;
+            return `${skills.slice(0, 3500)}\n\n${base}`.slice(0, 12000);
+          } catch {
+            return base;
+          }
+        })();
+
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
@@ -5371,7 +5450,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               topicCoverPixelEngine,
               enableTopicCoverDeepResearchPro: enableTopicCoverDeepResearchProAdmin,
               compositeTitle: input.compositeTitle,
-              compositeScriptContext: input.compositeScriptContext,
+              compositeScriptContext: enrichedBundleScriptContext,
               compositeKind: input.compositeKind,
               compositeExecutionDetails: input.compositeExecutionDetails,
               compositeShootingTechniqueBrief: input.compositeShootingTechniqueBrief,
@@ -5657,6 +5736,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             referencePhotoFromApprovedCover: z.boolean().optional(),
             /** 2×4 出图：GPT-Image-2 主链 vs Vertex Nano Banana 2 主路径（优先于部署变量 PLATFORM_COMPOSITE_SHEET_ENGINE） */
             compositeImageEngine: z.enum(["gpt_image2", "nano_banana_2"]).optional(),
+            /** /platform 挂载 Skill（注入脚本语境） */
+            enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+            allowBloggerTitle: z.boolean().optional(),
             /** 一键分镜/八格套装：54×N 按序分拆扣费 */
             bulkCompositePack: z
               .object({
@@ -5747,6 +5829,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
+        const enrichedCompositeScriptContext = await (async () => {
+          const base = String(input.scriptContext || "").trim();
+          try {
+            const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
+            const skills = await resolvePlatformSkillsPrompt({
+              userId,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
+            });
+            if (!skills.trim()) return base;
+            return `${skills.slice(0, 3500)}\n\n${base}`.slice(0, 12000);
+          } catch {
+            return base;
+          }
+        })();
+
         let detachLiveProgress: (() => void) | undefined;
 
         const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
@@ -5788,7 +5886,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               imageUrl = await generateSheet({
                 kind: input.kind,
                 title: input.title,
-                scriptContext: input.scriptContext,
+                scriptContext: enrichedCompositeScriptContext,
                 isTrial,
                 executionDetails: input.executionDetails,
                 shootingTechniqueBrief: input.shootingTechniqueBrief,
@@ -5855,7 +5953,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           imageUrl = await generateSheet({
             kind: input.kind,
             title: input.title,
-            scriptContext: input.scriptContext,
+            scriptContext: enrichedCompositeScriptContext,
             isTrial,
             executionDetails: input.executionDetails,
             shootingTechniqueBrief: input.shootingTechniqueBrief,
@@ -6234,6 +6332,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           supervisorToken: z.string().max(512).optional(),
           /** /platform 勾选启用的 Skill id 列表（内置 + 用户上传） */
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          /** UI：接受「博主/创作者」自称；默认 false */
+          allowBloggerTitle: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -6279,6 +6379,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               ...(Array.isArray(input.enabledSkillIds)
                 ? { enabledSkillIds: input.enabledSkillIds }
                 : {}),
+              ...(typeof input.allowBloggerTitle === "boolean"
+                ? { allowBloggerTitle: input.allowBloggerTitle }
+                : {}),
             },
           },
         });
@@ -6298,6 +6401,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           includeLiveTrends: z.boolean().optional(),
           liveTrendWindowDays: z.number().int().min(3).max(15).optional(),
           supervisorToken: z.string().max(512).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -6323,6 +6428,19 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         try {
+          const platformSkillsPrompt = await (async () => {
+            try {
+              const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
+              return await resolvePlatformSkillsPrompt({
+                userId,
+                enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+                allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              });
+            } catch {
+              return "";
+            }
+          })();
+
           const { optimizeCustomCopy } = await import("./services/platformOptimizeCustomCopy");
           const result = await optimizeCustomCopy({
             sourceText: input.sourceText,
@@ -6330,6 +6448,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             visionContext: input.visionContext,
             includeLiveTrends: input.includeLiveTrends,
             liveTrendWindowDays: input.liveTrendWindowDays,
+            platformSkillsPrompt: platformSkillsPrompt || undefined,
           });
 
           return {
