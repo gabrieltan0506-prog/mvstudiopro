@@ -211,7 +211,7 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   }
   if (on("graphic-note-rhythm")) {
     parts.push(
-      "【图文笔记出图】格间一条叙事递进；每格一主信息；明快少暗调；禁每格重开无关话题。",
+      "【图文笔记出图】读者向可发笔记：钩子→痛点→误区→场景/关系/节律→问答→评论CTA；禁拍封面/拆八页/录60秒/发布SOP等技术指导格。",
     );
   }
   if (on("director-craft")) {

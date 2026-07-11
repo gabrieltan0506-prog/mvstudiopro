@@ -22,6 +22,7 @@ import {
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
 import { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
+import { isGraphicNoteMetaCreatorGuidance } from "../../shared/graphicNoteReaderFacing.js";
 import { STORYBOARD_TEXT_RENDER_WRAPPER_EN } from "../../shared/storyboardTextClarity.js";
 import { STORYBOARD_LIGHTING_EMOTION_LOCK_EN } from "../../shared/storyboardLightingEmotion.js";
 import {
@@ -1835,41 +1836,42 @@ export function splitScriptIntoSections(scriptContext: string, sections: number)
 
 /**
  * 从文案抽出约 12 个图文节拍标题（供 3×4 分段专用），避免每段都塞全文导致序号从 01 重开、内容重复。
- * 优先读 `[封面]`/`[图N]` 大纲；跳过拍摄执行脚本（灯光/运镜/口播时间轴），避免抽成「手法卡」节拍。
+ * 优先读 `[封面]`/`[图N]` 大纲；跳过拍摄执行脚本与创作者技术指导页，避免抽成「手法卡/怎么拍怎么发」节拍。
  */
 export function extractGraphicNoteBeatsFor3x4(scriptContext: string, totalBeats = 12): string[] {
   const full = String(scriptContext || "").trim();
   const beats: string[] = [];
-  const isShootTechniqueLine = (line: string) =>
+  const isBadBeatLine = (line: string) =>
+    isGraphicNoteMetaCreatorGuidance(line) ||
     /(灯光|机位|运镜|口播|景别|拍摄手法|分镜表|\[\d+\s*[-–~]\s*\d+\s*秒\])/.test(line);
 
-  // 优先：详细脚本里的 [封面] / [图N] 知识页
+  // 优先：详细脚本里的 [封面] / [图N] 知识页（跳过创作 SOP 页）
   const pageBlocks = full.match(/\[(?:封面|图\d+)\][^\n\[]*/g);
   if (pageBlocks?.length) {
     for (const block of pageBlocks) {
       const cleaned = block.replace(/^\[(?:封面|图\d+)\]\s*/, "").trim().slice(0, 80);
-      if (cleaned.length >= 4 && !isShootTechniqueLine(cleaned)) beats.push(cleaned);
+      if (cleaned.length >= 4 && !isBadBeatLine(cleaned)) beats.push(cleaned);
       if (beats.length >= totalBeats) break;
     }
   }
 
   const stepBlocks = full.match(/(?:^|\n)\s*(?:\d+[\.\)、]|【\d+】|第\d+[步格段])/gm);
-  // 次选：内容要点行（跳过拍摄教学）
+  // 次选：内容要点行（跳过拍摄教学 / 技术指导）
   const lines = full
     .split(/\n+/)
     .map((s) => s.replace(/^\s*[-*•]\s*/, "").trim())
     .filter((s) => s.length >= 6 && s.length <= 120);
   for (const line of lines) {
     if (beats.length >= totalBeats) break;
-    if (/^(【选题】|【钩子】|【文案|【制作】|【环境|【灯光|【情绪|【版式|【发布|【视觉|【3×4|【本段|【体裁|【图文大纲)/.test(line)) {
+    if (/^(【选题】|【钩子】|【文案|【制作】|【环境|【灯光|【情绪|【版式|【发布|【视觉|【3×4|【本段|【体裁|【图文大纲|【读者向)/.test(line)) {
       continue;
     }
-    if (isShootTechniqueLine(line)) continue;
+    if (isBadBeatLine(line)) continue;
     if (/^\d+[\.\)、]/.test(line) || /^【?\d+】?/.test(line) || line.includes("：") || line.includes(":")) {
       beats.push(line.replace(/^\d+[\.\)、]\s*/, "").slice(0, 80));
     }
   }
-  // 再次：按句号切短句（仍跳过拍摄教学）
+  // 再次：按句号切短句（仍跳过拍摄教学 / 技术指导）
   if (beats.length < totalBeats) {
     const sentences = full
       .replace(/\s+/g, " ")
@@ -1877,27 +1879,27 @@ export function extractGraphicNoteBeatsFor3x4(scriptContext: string, totalBeats 
       .map((s) => s.trim())
       .filter((s) => s.length >= 8 && s.length <= 60);
     for (const s of sentences) {
-      if (isShootTechniqueLine(s)) continue;
+      if (isBadBeatLine(s)) continue;
       if (beats.some((b) => b.includes(s.slice(0, 12)) || s.includes(b.slice(0, 12)))) continue;
       beats.push(s.slice(0, 80));
       if (beats.length >= totalBeats) break;
     }
   }
-  // 不足则用主题扩写占位，保证 12 格
+  // 不足则用**读者向**主题扩写占位，保证 12 格（禁止「本周可拍/拆八页」类创作 SOP 填充）
   const theme = (full.match(/【选题】([^\n]+)/)?.[1] || full.slice(0, 40) || "本主题").trim();
   const fillers = [
     "封面钩子：一句话点出痛点",
-    "痛点共鸣：日常细节对照",
-    "观察窗口一：可执行动作",
-    "观察窗口二：兴趣与节律",
-    "观察窗口三：生活半径",
-    "可收藏模板：三栏对照表",
-    "主人公出镜：锁脸解说",
-    "互动引导：评论区行动",
-    "误区澄清：别只问吃了吗",
-    "方法拆解：怎么记状态表",
-    "场景示例：本周可拍画面",
-    "收束 CTA：私信/收藏提醒",
+    "你可能是这三类人",
+    "常见误区：越做越累",
+    "先看场景：怎么选地方",
+    "再看关系：怎么开口邀请",
+    "再看节律：可重复的小顺序",
+    "大家真正想搜的三个问题",
+    "可立刻试的一个动作",
+    "误区澄清：别只说你要动",
+    "生活印证：晚饭后十分钟",
+    "收藏清单：评论区领取",
+    "收束 CTA：收藏再出发",
   ];
   let i = 0;
   while (beats.length < totalBeats) {
@@ -1941,7 +1943,7 @@ export async function generatePlatformGridStitchedSheetImage(
       ? `【上传素材拍摄技法】\n${String(options.shootingTechniqueBrief).trim()}`
       : "",
     isXhs
-      ? "【3×4 十二格·跨段连贯·图文笔记】本图为攻略/避坑知识信息图（扁平插画），不是分镜手法卡。各段现代主人公须同一人、同一阶层气质；跨段色调、边框、插画语言一致以便无缝拼接。禁止六栏分镜表、灯光机位教学、口播时间轴。"
+      ? "【3×4 十二格·跨段连贯·图文笔记】本图为**读者可直接发布**的攻略/避坑知识信息图（扁平插画），不是分镜手法卡，也不是创作者技术指导。各段现代主人公须同一人、同一阶层气质；跨段色调、边框、插画语言一致以便无缝拼接。禁止六栏分镜表、灯光机位教学、口播时间轴；禁止「拍封面/拆八页/录60秒/发布SOP」格。"
       : "【3×4 十二格·跨段连贯】本图为 3 行×4 列长图的分段横排生成；各段现代主人公须同一人、同一国际时尚大片阶层气质；景别/运镜/布光对齐拍摄手法约束；跨段色调、布光、边框、场景材质语言一致以便无缝拼接。场景可推进但须留在同一视觉世界，禁止突然换脸、换装阶层或跳戏到无关布景。",
   ]
     .filter(Boolean)

@@ -57,6 +57,18 @@
 
 **关键路径：** `client/src/pages/PlatformPage.tsx` · `server/services/proxyImageService.ts` · `server/services/geminiPlatformCompositeTranslation.ts`
 
+### 2b）图文笔记 ≠ 创作者技术指导（#743 续）
+
+**根因：** 图文 `scriptContext` 仍喂入 `publishingAdvice` / 创作 SOP 步骤；Stage2 图文大纲偶发写成「今晚拍封面/拆八页/录60秒」；3×4 filler 含「本周可拍画面」→ 模型画出技术指导格。第二张 2×4「饭后散步劝父母」才是正确可发笔记。
+
+**修复：**
+
+- `shared/graphicNoteReaderFacing.ts`：识别并剔除元创作指令；图文出图不喂 `publishingAdvice`。
+- Stage2：图文 `detailedScript` 强制读者向页结构；Skill `graphic-note-rhythm` 显式禁技术指导格。
+- 3×4 节拍抽取 + filler 改为读者向（钩子→痛点→场景/关系/节律→问答→评论CTA）。
+
+**单测：** `server/services/graphicNoteReaderFacing.test.ts` · `extractGraphicNoteBeatsFor3x4.test.ts`
+
 ### 3）反差·反转·高潮弧 Skill（#741）
 
 - 从 `sk.mp4` 提炼创作方式（加速录屏难听清口播，以**画面字幕**为准）。

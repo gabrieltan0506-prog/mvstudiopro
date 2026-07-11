@@ -21,6 +21,7 @@ import {
   focusCoverChineseContextForDirectSend,
 } from "./platformImageChineseStaging.js";
 import { composePlatformCoverNativeVisualDirective } from "../../shared/platformNativeVariants.js";
+import { GRAPHIC_NOTE_READER_FACING_DIRECTIVE_ZH } from "../../shared/graphicNoteReaderFacing.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -552,12 +553,12 @@ ${STORYBOARD_LIGHTING_EMOTION_GUIDANCE_ZH}
 【中文脚本】：
 ${slice}`;
   }
-  const graphicAntiShootCardZh =
-    "- **体裁硬约束**：这是**攻略/避坑/知识笔记**信息图，不是短视频分镜表。禁止画成「导演拍摄手法·手法卡」、禁止六栏表（景别/运镜/灯光安排/情绪表达/画面内容/台词音效）、禁止灯光机位教学、禁止口播节奏时间轴。若文案里混入拍摄执行脚本，忽略并只抽取生活场景知识点（痛点→做法→印证→CTA）。";
+  const graphicAntiShootCardZh = `${GRAPHIC_NOTE_READER_FACING_DIRECTIVE_ZH}
+- **体裁硬约束**：这是**读者向攻略/避坑/知识笔记**信息图，不是短视频分镜表，也不是创作者技术指导。禁止「导演拍摄手法·手法卡」、六栏表、灯光机位教学、口播时间轴；禁止「拍封面/拆八页/录60秒/发布SOP」格子。若文案混入创作教学，忽略并只画读者用知识点（痛点→误区→场景/关系/节律→常见问→评论CTA）。`;
 
   if (rowBand) {
     return `请直接据下方中文文案生成**3×4 十二格长图中的一整横排图文笔记**（横版约 16:9，仅 **1 行 × 4 列共 4 格**，不要画成完整 2×4 八格）：
-- 严格排成单横排四格，格线笔直、四格等宽；每格为一个知识/内容要点：醒目简体中文小标题 + 要点短句 + 扁平插画/图标/序号徽章 **${badgeRange}**（整张长图共 12 格 01–12，本段为第 ${sectionIndex + 1}/${sectionTotal} 横排）。
+- 严格排成单横排四格，格线笔直、四格等宽；每格为一个**读者向**知识/内容要点：醒目简体中文小标题 + 要点短句 + 扁平插画/图标/序号徽章 **${badgeRange}**（整张长图共 12 格 01–12，本段为第 ${sectionIndex + 1}/${sectionTotal} 横排）。
 - **硬约束**：本图只能出现序号 ${badgeRange}；禁止画 2 行、禁止八格、禁止把全文 01–08 再画一遍；若文案里出现其他序号，忽略并以本横排四格主题为准。
 ${graphicAntiShootCardZh}
 - 画风为**扁平插画信息图**（与优质 2×4 八格图文同级清晰度）；屏内文字一律**简体中文、清晰不乱码**；与其他分段跨段同色调同边框以便拼接。
@@ -568,7 +569,7 @@ ${slice}`;
   }
   return `请直接据下方中文文案生成一张**小红书风格 2×4 八格图文笔记参考图**（横版约 16:9 单张主表，不是单张满版海报）：
 - 严格排成 **2 行 × 4 列、共 8 格**，格线笔直、格间留白清晰，按 row1 左→右、row2 左→右顺扫。
-- 每格为一个知识/内容要点：醒目简体中文小标题 + 要点短句 + 扁平插画/图标/序号徽章 01–08；整体暖色粉彩、明快多彩、高级商务审美、印刷清晰。
+- 每格为一个**读者向**知识/内容要点：醒目简体中文小标题 + 要点短句 + 扁平插画/图标/序号徽章 01–08；整体暖色粉彩、明快多彩、高级商务审美、印刷清晰。
 ${graphicAntiShootCardZh}
 - 画风为**扁平插画信息图（单页图文笔记风）**，不要电影写实摄影或暗调光影；屏内文字一律**简体中文、清晰不乱码**（英文仅作极少量点缀）。
 - 若格内出现现代解说/主人公人物：须与参考人像**同脸**（锁脸）；衣着可随该格场景微调，勿换人。

@@ -23,4 +23,20 @@ describe("extractGraphicNoteBeatsFor3x4", () => {
     expect(beats[1]).toContain("交通卡");
     expect(beats.some((b) => /灯光|运镜|口播/.test(b))).toBe(false);
   });
+
+  it("跳过创作者技术指导页，填充用读者向节拍", () => {
+    const script = `
+【选题】饭后散步劝父母
+[封面] 别再对爸妈说你该运动了
+[图2] 你可能是这三类人
+[图3] 这些误区让你越走越累
+[图10] 今晚拍小红书封面素材
+[图11] 拆成八页图文笔记
+[图12] 同步录60秒视频版
+`;
+    const beats = extractGraphicNoteBeatsFor3x4(script, 12);
+    expect(beats.some((b) => /今晚拍|拆成八页|同步录|可拍画面/.test(b))).toBe(false);
+    expect(beats[0]).toContain("别再对爸妈");
+    expect(beats.some((b) => /这三类人|误区|评论|收藏/.test(b))).toBe(true);
+  });
 });
