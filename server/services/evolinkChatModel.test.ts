@@ -3,7 +3,9 @@ import {
   isEvolinkChatModelNotFoundError,
   isEvolinkInsufficientQuotaError,
   normalizeEvolinkChatModel,
+  shouldSkipOhMyGptSameAccountFallback,
   toEvolinkChatUserMessage,
+  toOpenAiCompatibleChatUserMessage,
 } from "./evolinkChatModel";
 
 describe("normalizeEvolinkChatModel", () => {
@@ -41,5 +43,19 @@ describe("evolink error classification", () => {
   it("detects 402 insufficient quota", () => {
     expect(isEvolinkInsufficientQuotaError(402, "Insufficient quota")).toBe(true);
     expect(toEvolinkChatUserMessage(402, "Insufficient quota")).toMatch(/积分不足/);
+  });
+
+  it("auth errors name the correct provider", () => {
+    expect(toOpenAiCompatibleChatUserMessage(401, "authentication_error", "OhMyGPT")).toMatch(/OhMyGPT/);
+    expect(toOpenAiCompatibleChatUserMessage(401, "invalid or expired token", "Evolink")).toMatch(/EvoLink/);
+    expect(toEvolinkChatUserMessage(401, "authentication_error")).toMatch(/EvoLink/);
+  });
+
+  it("treats OhMyGPT balance exhaustion as quota and skips same-account fallback", () => {
+    expect(isEvolinkInsufficientQuotaError(403, "余额不足")).toBe(true);
+    expect(isEvolinkInsufficientQuotaError(429, "quota exceeded")).toBe(true);
+    expect(shouldSkipOhMyGptSameAccountFallback(402, "Insufficient quota")).toBe(true);
+    expect(shouldSkipOhMyGptSameAccountFallback(401, "authentication_error")).toBe(true);
+    expect(shouldSkipOhMyGptSameAccountFallback(500, "internal")).toBe(false);
   });
 });

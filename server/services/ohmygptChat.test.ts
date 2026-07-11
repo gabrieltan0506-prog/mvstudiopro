@@ -3,6 +3,7 @@ import {
   getOhMyGptChatCompletionsUrl,
   getOhMyGptGpt56SolModel,
   getOhMyGptGpt56TerraModel,
+  isOhMyGptChatEndpoint,
   isOhMyGptGpt56FamilyModel,
   isOhMyGptGpt56TerraFallbackEnabled,
   normalizeOhMyGptGpt56Model,
@@ -45,5 +46,12 @@ describe("ohmygptChat GPT-5.6", () => {
     expect(isOhMyGptGpt56TerraFallbackEnabled()).toBe(true);
     process.env.OHMYGPT_GPT56_TERRA_FALLBACK = "0";
     expect(isOhMyGptGpt56TerraFallbackEnabled()).toBe(false);
+  });
+
+  it("detects OhMyGPT CDN hosts for fallback routing", () => {
+    expect(isOhMyGptChatEndpoint("https://api.ohmygpt.com/v1/chat/completions")).toBe(true);
+    expect(isOhMyGptChatEndpoint("https://apic1.ohmycdn.com/v1/chat/completions")).toBe(true);
+    expect(isOhMyGptChatEndpoint("https://c-z0-api-01.hash070.com/v1/chat/completions")).toBe(true);
+    expect(isOhMyGptChatEndpoint("https://direct.evolink.ai/v1/chat/completions")).toBe(false);
   });
 });

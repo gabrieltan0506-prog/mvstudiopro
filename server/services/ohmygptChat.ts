@@ -48,6 +48,17 @@ export function isOhMyGptChatConfigured(): boolean {
   return Boolean(getOhMyGptApiKey());
 }
 
+/** 是否为 OhMyGPT / 其 CDN 网关（用于 fallback 与错误文案分流）。 */
+export function isOhMyGptChatEndpoint(apiUrl?: string): boolean {
+  const u = String(apiUrl || "").toLowerCase();
+  return (
+    u.includes("ohmygpt.com") ||
+    u.includes("ohmycdn.com") ||
+    u.includes("hash070.com") ||
+    u.includes("opapi.win")
+  );
+}
+
 export function isOhMyGptGpt56FamilyModel(raw?: string): boolean {
   const key = String(raw || "")
     .trim()

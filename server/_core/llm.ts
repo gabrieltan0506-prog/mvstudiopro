@@ -9,15 +9,18 @@ import {
 } from "../services/cometapi";
 import {
   EVOLINK_CHAT_MODEL_GPT54,
+  EVOLINK_CHAT_MODEL_GPT55,
   formatEvolinkChatApiError,
   normalizeEvolinkChatModel,
-  toEvolinkChatUserMessage,
+  shouldSkipOhMyGptSameAccountFallback,
+  toOpenAiCompatibleChatUserMessage,
 } from "../services/evolinkChatModel";
 import {
   getOhMyGptApiKey,
   getOhMyGptChatCompletionsUrl,
   getOhMyGptGpt56SolModel,
   getOhMyGptGpt56TerraModel,
+  isOhMyGptChatEndpoint,
   isOhMyGptGpt56FamilyModel,
   isOhMyGptGpt56TerraFallbackEnabled,
   normalizeOhMyGptGpt56Model,
@@ -548,7 +551,7 @@ const resolveTarget = (
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
 
     /**
-     * 平台全案 / Stage2 文案：OhMyGPT GPT-5.6 Sol（主）→ Terra（退路）。
+     * 平台全案 / Stage2 文案：OhMyGPT GPT-5.6 Sol（主）→ Terra（退路）→ EvoLink gpt-5.5。
      * 调用形态与 EvoLink 相同：OpenAI-compatible `/v1/chat/completions`。
      * Refs:
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
@@ -558,15 +561,28 @@ const resolveTarget = (
      */
     if (isOhMyGptGpt56FamilyModel(candidate) || (!explicitModelName && modelTier !== "gpt54" && modelTier !== "gpt5")) {
       const ohmyKey = getOhMyGptApiKey();
-      if (!ohmyKey) {
-        throw new Error("OHMYGPT_API_KEY / PROXY_OPENAI_API_KEY is not configured");
+      if (ohmyKey) {
+        return {
+          provider: "openai",
+          apiUrl: getOhMyGptChatCompletionsUrl(),
+          apiKey: ohmyKey,
+          modelName: normalizeOhMyGptGpt56Model(candidate || OHMYGPT_CHAT_MODEL_GPT56_SOL),
+        };
       }
-      return {
-        provider: "openai",
-        apiUrl: getOhMyGptChatCompletionsUrl(),
-        apiKey: ohmyKey,
-        modelName: normalizeOhMyGptGpt56Model(candidate || OHMYGPT_CHAT_MODEL_GPT56_SOL),
-      };
+      // 无 OhMyGPT 密钥时直接走 EvoLink gpt-5.5，避免文案链路整段不可用
+      const evolinkKeyForCopy = getEvolinkApiKey();
+      if (evolinkKeyForCopy) {
+        console.warn(
+          "[resolveTarget] OhMyGPT key missing → platform copy falls back to Evolink gpt-5.5",
+        );
+        return {
+          provider: "openai",
+          apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+          apiKey: evolinkKeyForCopy,
+          modelName: EVOLINK_CHAT_MODEL_GPT55,
+        };
+      }
+      throw new Error("OHMYGPT_API_KEY / PROXY_OPENAI_API_KEY is not configured");
     }
 
     const fallback =
@@ -1182,7 +1198,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     apiUrl: string,
     apiKey: string,
     body: Record<string, unknown>,
-    label: string,
+    label: "OhMyGPT" | "Evolink",
   ): Promise<InvokeResult> => {
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -1196,8 +1212,16 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.warn(formatEvolinkChatApiError(response.status, response.statusText, errorText));
-      throw new Error(toEvolinkChatUserMessage(response.status, errorText));
+      console.warn(`[${label}] ${formatEvolinkChatApiError(response.status, response.statusText, errorText)}`);
+      const err = new Error(toOpenAiCompatibleChatUserMessage(response.status, errorText, label)) as Error & {
+        status?: number;
+        providerLabel?: "OhMyGPT" | "Evolink";
+        rawErrorText?: string;
+      };
+      err.status = response.status;
+      err.providerLabel = label;
+      err.rawErrorText = errorText.slice(0, 800);
+      throw err;
     }
 
     // Guard against Cloudflare / proxy returning an HTML error page with status 200
@@ -1227,10 +1251,26 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   };
 
   const primaryModel = String(target.modelName || "").trim();
-  const isOhMyGptEndpoint = String(target.apiUrl || "").includes("ohmygpt.com") || String(target.apiUrl || "").includes("hash070.com");
+  const isOhMyGptEndpoint = isOhMyGptChatEndpoint(String(target.apiUrl || ""));
+  const isGpt56FamilyPrimary = isOhMyGptEndpoint && isOhMyGptGpt56FamilyModel(primaryModel);
   const isGpt56SolPrimary =
     isOhMyGptEndpoint &&
     normalizeOhMyGptGpt56Model(primaryModel) === OHMYGPT_CHAT_MODEL_GPT56_SOL;
+
+  const tryEvolinkGpt55Fallback = async (reason: unknown): Promise<InvokeResult> => {
+    const evolinkKey = getEvolinkApiKey();
+    if (!evolinkKey) throw reason instanceof Error ? reason : new Error(String(reason));
+    console.warn(
+      `[invokeOpenAI] OhMyGPT copy path failed → Evolink ${EVOLINK_CHAT_MODEL_GPT55}:`,
+      reason instanceof Error ? reason.message.slice(0, 240) : reason,
+    );
+    return postChatCompletions(
+      EVOLINK_CHAT_COMPLETIONS_URL,
+      evolinkKey,
+      { ...payload, model: EVOLINK_CHAT_MODEL_GPT55 },
+      "Evolink",
+    );
+  };
 
   try {
     return await postChatCompletions(
@@ -1240,32 +1280,64 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       isOhMyGptEndpoint ? "OhMyGPT" : "Evolink",
     );
   } catch (primaryErr) {
-    // OhMyGPT gpt-5.6-sol 任意错误 → 同网关 gpt-5.6-terra（图片仍走 EvoLink gpt-image-2）
-    if (!isGpt56SolPrimary || !isOhMyGptGpt56TerraFallbackEnabled()) {
-      throw primaryErr;
-    }
-    const terraModel = getOhMyGptGpt56TerraModel();
-    if (terraModel === primaryModel) throw primaryErr;
-    console.warn(
-      `[invokeOpenAI] OhMyGPT ${primaryModel} failed → fallback ${terraModel}:`,
-      primaryErr instanceof Error ? primaryErr.message.slice(0, 240) : primaryErr,
-    );
-    try {
-      return await postChatCompletions(
-        String(target.apiUrl),
-        String(target.apiKey),
-        { ...payload, model: terraModel },
-        "OhMyGPT",
+    const primaryMeta = primaryErr as Error & { status?: number; rawErrorText?: string };
+    const skipSameAccount =
+      isOhMyGptEndpoint &&
+      shouldSkipOhMyGptSameAccountFallback(
+        Number(primaryMeta.status || 0),
+        String(primaryMeta.rawErrorText || primaryMeta.message || ""),
       );
-    } catch (fallbackErr) {
-      console.warn(
-        `[invokeOpenAI] OhMyGPT ${terraModel} fallback also failed:`,
-        fallbackErr instanceof Error ? fallbackErr.message.slice(0, 240) : fallbackErr,
-      );
-      throw fallbackErr instanceof Error
-        ? fallbackErr
-        : new Error("文案生成暂时不可用（GPT-5.6 Sol 与 Terra 均失败），请稍后重试");
+
+    // OhMyGPT 额度/鉴权已失败：同账号 Terra 必挂，直接 EvoLink gpt-5.5
+    if (skipSameAccount && isGpt56FamilyPrimary) {
+      try {
+        return await tryEvolinkGpt55Fallback(primaryErr);
+      } catch (evolinkErr) {
+        throw evolinkErr instanceof Error ? evolinkErr : primaryErr;
+      }
     }
+
+    // OhMyGPT gpt-5.6-sol 其它错误 → 同网关 gpt-5.6-terra，再失败走 EvoLink
+    if (isGpt56SolPrimary && isOhMyGptGpt56TerraFallbackEnabled()) {
+      const terraModel = getOhMyGptGpt56TerraModel();
+      if (terraModel !== primaryModel) {
+        console.warn(
+          `[invokeOpenAI] OhMyGPT ${primaryModel} failed → fallback ${terraModel}:`,
+          primaryErr instanceof Error ? primaryErr.message.slice(0, 240) : primaryErr,
+        );
+        try {
+          return await postChatCompletions(
+            String(target.apiUrl),
+            String(target.apiKey),
+            { ...payload, model: terraModel },
+            "OhMyGPT",
+          );
+        } catch (fallbackErr) {
+          console.warn(
+            `[invokeOpenAI] OhMyGPT ${terraModel} fallback also failed:`,
+            fallbackErr instanceof Error ? fallbackErr.message.slice(0, 240) : fallbackErr,
+          );
+          try {
+            return await tryEvolinkGpt55Fallback(fallbackErr);
+          } catch (evolinkErr) {
+            throw evolinkErr instanceof Error
+              ? evolinkErr
+              : new Error("文案生成暂时不可用（GPT-5.6 与 EvoLink 退路均失败），请稍后重试");
+          }
+        }
+      }
+    }
+
+    // 其它 OhMyGPT 5.6（如直接打 Terra）失败 → EvoLink gpt-5.5
+    if (isGpt56FamilyPrimary) {
+      try {
+        return await tryEvolinkGpt55Fallback(primaryErr);
+      } catch (evolinkErr) {
+        throw evolinkErr instanceof Error ? evolinkErr : primaryErr;
+      }
+    }
+
+    throw primaryErr;
   }
 }
 

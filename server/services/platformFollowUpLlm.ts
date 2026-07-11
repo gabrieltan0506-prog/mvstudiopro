@@ -1,5 +1,5 @@
 /**
- * 平台「深度追问 / 趋势续分析」：固定 **OpenAI GPT‑5.5**（与 Stage 1 / Stage 2 文案同模型族）。
+ * 平台「深度追问 / 趋势续分析」：固定 **OhMyGPT GPT‑5.6 Sol**（失败回退 Terra → EvoLink gpt-5.5）。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import {
@@ -94,7 +94,7 @@ export function buildPlatformFollowUpUserJson(input: {
   });
 }
 
-/** 深度追问 · 纯文本：固定 GPT‑5.5 · JSON 输出。 */
+/** 深度追问 · 纯文本：平台文案主模型 · JSON 输出。 */
 export async function invokePlatformFollowUpGpt55(options: {
   windowDays: number;
   context: string;
