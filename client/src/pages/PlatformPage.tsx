@@ -4184,7 +4184,15 @@ export default function PlatformPage() {
   };
 
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
-  const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();
+  const savePlatformSessionBundleMutation = trpc.mvAnalysis.savePlatformSessionBundle.useMutation();
+  /** 避免在 visibleExecutionCards / unlockedStrategicReport 定义前引用（TDZ） */
+  const saveCurrentPlatformSessionToMyWorksRef = useRef<
+    (opts?: {
+      titleSuffix?: string;
+      toastOnSuccess?: boolean;
+      decisionIntelOverride?: AdvancedAIReportData | null;
+    }) => Promise<{ success: boolean; id: number } | null>
+  >(async () => null);
 
   const downloadPlatformPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation({
     onSuccess: (result) => {
@@ -4201,35 +4209,11 @@ export default function PlatformPage() {
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        toast.success("平台分析 PDF 已开始下载，快照已保存至「我的作品」");
-        // Save snapshot record (GMT+8 title) with summary content
-        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
-        const summaryLines: string[] = [];
-        if (platformDashboard?.headline) summaryLines.push(platformDashboard.headline);
-        if (platformDashboard?.subheadline) summaryLines.push(platformDashboard.subheadline);
-        if (platformDashboard?.hotTopics?.length) {
-          summaryLines.push("\n🔥 热门趋势");
-          platformDashboard.hotTopics.slice(0, 5).forEach((t: any) => {
-            summaryLines.push(`• ${t.title || t.topic || t}`);
-          });
-        }
-        if (platformDashboard?.platformMenu?.length) {
-          summaryLines.push("\n📊 平台分析");
-          const snapPdf = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
-          const pdfRec = snapPdf?.platformRecommendations?.slice(0, 4) ?? [];
-          const pdfPf = snapPdf?.platformSnapshots?.slice(0, 4) ?? [];
-          platformDashboard.platformMenu.slice(0, 4).forEach((p: any, i: number) => {
-            const nameHint = String(pdfRec[i]?.name ?? pdfPf[i]?.displayName ?? "").trim();
-            summaryLines.push(
-              `• ${resolvePlatformMenuDisplayName(p as Record<string, unknown>, i, nameHint || undefined)}`,
-            );
-          });
-        }
-        recordSnapshotMutation.mutate({
-          analysisType: "platform",
-          title: `平台趋势分析 ${gmt8Label}`,
-          summary: summaryLines.join("\n").slice(0, 1800),
-          analysisDate: new Date().toISOString(),
+        toast.success("平台分析 PDF 已开始下载");
+        // 完整作品包（文案/分镜/追问/趋势/战略全景）→ 我的作品
+        void saveCurrentPlatformSessionToMyWorksRef.current({
+          titleSuffix: "PDF导出",
+          toastOnSuccess: true,
         });
       } catch { toast.error("PDF 下载时出错，请重试"); }
     },
@@ -4562,9 +4546,16 @@ export default function PlatformPage() {
       }
       void decisionIntelLatestQuery.refetch();
       void decisionIntelPricingQuery.refetch();
+      const report = (data as { report?: AdvancedAIReportData })?.report ?? null;
+      void saveCurrentPlatformSessionToMyWorksRef.current({
+        titleSuffix: "战略全景解锁",
+        toastOnSuccess: true,
+        decisionIntelOverride: report,
+      });
     },
     onError: (e) => toast.error(e.message || "解锁失败"),
   });
+
   const generateDecisionIntelTopicCopyMutation =
     trpc.mvAnalysis.generateDecisionIntelTopicExecutionCopy.useMutation({
       onError: (e) => toast.error(e.message || "战略选题文案扩写失败"),
@@ -4606,6 +4597,11 @@ export default function PlatformPage() {
       link.href = dataUrl;
       link.click();
       toast.success("报告图已下载（PNG）");
+      void saveCurrentPlatformSessionToMyWorksRef.current({
+        titleSuffix: "战略全景PNG",
+        toastOnSuccess: false,
+        decisionIntelOverride: report,
+      });
     } catch (e) {
       console.error(e);
       toast.error("导出图片失败，请稍后再试");
@@ -4990,6 +4986,101 @@ export default function PlatformPage() {
     }
     return Array.from(byKey.values());
   }, [contentExecutionCards, strategicMapSessionExecutionCards]);
+
+  /** 将当前平台页全案状态打包写入「我的作品」 */
+  const saveCurrentPlatformSessionToMyWorks = useCallback(
+    async (opts?: {
+      titleSuffix?: string;
+      toastOnSuccess?: boolean;
+      decisionIntelOverride?: AdvancedAIReportData | null;
+    }) => {
+      try {
+        const gmt8Label = new Date().toLocaleDateString("zh-TW", {
+          timeZone: "Asia/Shanghai",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+        const cards = (visibleExecutionCards || []).slice(0, 24).map((card) => ({
+          id: card.id,
+          title: card.title,
+          hook: card.hook,
+          copywriting: card.copywriting,
+          format: card.format,
+          detailedScript: card.detailedScript,
+          publishingAdvice: card.publishingAdvice,
+          suitablePlatforms: card.suitablePlatforms,
+          highlightKeywords: card.highlightKeywords,
+          executionDetails: card.executionDetails,
+          coverImageUrl: platformImageMap[card.id] || null,
+          storyboardImageUrl:
+            platformStoryboardSheetMap[card.id] ||
+            (platformImageMap[`${card.id}:storyboard`] as string | undefined) ||
+            null,
+        }));
+        const thumb =
+          cards.map((c) => c.coverImageUrl).find(Boolean) ||
+          cards.map((c) => c.storyboardImageUrl).find(Boolean) ||
+          undefined;
+        const title = `平台全案 · ${gmt8Label}${opts?.titleSuffix ? ` · ${opts.titleSuffix}` : ""}`;
+        const res = await savePlatformSessionBundleMutation.mutateAsync({
+          title: title.slice(0, 200),
+          thumbnailUrl: typeof thumb === "string" && thumb.startsWith("http") ? thumb : undefined,
+          windowDays: selectedWindowDays,
+          platformDashboard: platformDashboard
+            ? (platformDashboard as unknown as Record<string, unknown>)
+            : null,
+          platformContent: platformContent
+            ? {
+                contentBlueprints: platformContent.contentBlueprints?.slice(0, 12) ?? [],
+                monetizationLanes: platformContent.monetizationLanes?.slice(0, 8) ?? [],
+              }
+            : null,
+          visualReport: visualReportData
+            ? (visualReportData as unknown as Record<string, unknown>)
+            : null,
+          decisionIntelReport:
+            opts?.decisionIntelOverride !== undefined
+              ? opts.decisionIntelOverride
+              : unlockedStrategicReport ?? null,
+          executionCards: cards,
+          deepQa: askResult
+            ? {
+                question: askResult.title,
+                answer: [askResult.answer, askResult.encouragement].filter(Boolean).join("\n\n"),
+                askedAt: new Date().toISOString(),
+              }
+            : null,
+          customCopy: customOptimizeResult || customNoteText || null,
+          customTopicProtagonist: customTopicProtagonist || null,
+        });
+        if (opts?.toastOnSuccess !== false) {
+          toast.success(res.id ? `已保存至「我的作品」（#${res.id}）` : "已保存至「我的作品」");
+        }
+        return res;
+      } catch (e) {
+        console.warn("[PlatformPage] savePlatformSessionBundle failed:", e);
+        toast.error(e instanceof Error ? e.message : "保存作品包失败");
+        return null;
+      }
+    },
+    [
+      askResult,
+      customNoteText,
+      customOptimizeResult,
+      customTopicProtagonist,
+      platformContent,
+      platformDashboard,
+      platformImageMap,
+      platformStoryboardSheetMap,
+      savePlatformSessionBundleMutation,
+      selectedWindowDays,
+      unlockedStrategicReport,
+      visibleExecutionCards,
+      visualReportData,
+    ],
+  );
+  saveCurrentPlatformSessionToMyWorksRef.current = saveCurrentPlatformSessionToMyWorks;
 
   const visibleExecutionCardsKey = useMemo(
     () => visibleExecutionCards.map((c) => c.id).join("|"),

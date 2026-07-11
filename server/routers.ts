@@ -3678,6 +3678,81 @@ export const appRouter = router({
         }
       }),
 
+    /**
+     * 平台全案会话包 →「我的作品」：保存文案、执行卡（封面/分镜 URL）、深度追问、
+     * 自定义文案、趋势报表、战略全景整页数据，供日后完整回看。
+     */
+    savePlatformSessionBundle: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().min(2).max(200),
+          thumbnailUrl: z.string().url().optional(),
+          windowDays: z.number().int().min(1).max(90).optional(),
+          platformDashboard: z.record(z.string(), z.any()).nullable().optional(),
+          platformContent: z
+            .object({
+              contentBlueprints: z.array(z.any()).optional(),
+              monetizationLanes: z.array(z.any()).optional(),
+            })
+            .nullable()
+            .optional(),
+          visualReport: z.record(z.string(), z.any()).nullable().optional(),
+          decisionIntelReport: z.any().nullable().optional(),
+          executionCards: z.array(z.any()).max(48).optional(),
+          deepQa: z
+            .object({
+              question: z.string().max(2000).optional(),
+              answer: z.string().max(20000).optional(),
+              askedAt: z.string().max(64).optional(),
+            })
+            .nullable()
+            .optional(),
+          customCopy: z.string().max(50000).nullable().optional(),
+          customTopicProtagonist: z.string().max(4000).nullable().optional(),
+          notes: z.string().max(2000).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const {
+          PLATFORM_SESSION_BUNDLE_SCHEMA_VERSION,
+          summarizePlatformSessionBundle,
+        } = await import("../shared/platformSessionBundle.js");
+        const plan = await getUserPlan(ctx.user.id);
+        const bundle = {
+          schemaVersion: PLATFORM_SESSION_BUNDLE_SCHEMA_VERSION,
+          capturedAt: new Date().toISOString(),
+          windowDays: input.windowDays,
+          platformDashboard: input.platformDashboard ?? null,
+          platformContent: input.platformContent ?? null,
+          visualReport: input.visualReport ?? null,
+          decisionIntelReport: input.decisionIntelReport ?? null,
+          executionCards: Array.isArray(input.executionCards) ? input.executionCards.slice(0, 48) : [],
+          deepQa: input.deepQa ?? null,
+          customCopy: input.customCopy ?? null,
+          customTopicProtagonist: input.customTopicProtagonist ?? null,
+          notes: input.notes,
+        };
+        const summary = summarizePlatformSessionBundle(bundle);
+        const id = await recordCreation({
+          userId: ctx.user.id,
+          type: "platform_session_bundle",
+          title: input.title,
+          thumbnailUrl: input.thumbnailUrl,
+          metadata: {
+            isPlatformSessionBundle: true,
+            isSnapshot: true,
+            analysisType: "platform",
+            summary,
+            analysisDate: bundle.capturedAt,
+            bundle,
+          },
+          quality: "平台全案作品包",
+          creditsUsed: 0,
+          plan,
+        });
+        return { success: true, id };
+      }),
+
     /** 个性化战略地图：首次体验价与历史次数（登录后可查） */
     getDecisionIntelligencePricing: protectedProcedure.query(async ({ ctx }) => {
       const database = await db.getDb();

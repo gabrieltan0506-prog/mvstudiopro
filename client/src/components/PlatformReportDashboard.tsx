@@ -40,21 +40,12 @@ import {
 import type { ReactElement, ReactNode } from "react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  LabelList,
-  Legend,
   PolarAngleAxis,
   PolarGrid,
   PolarRadiusAxis,
   Radar,
   RadarChart,
   ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
 } from "recharts";
 import { PaidTrafficReviewPanel } from "./PaidTrafficReviewPanel";
 
@@ -255,6 +246,33 @@ function buildStructureMetricBars(structures: AdvancedAIReportData["topicStructu
   }));
 }
 
+/** 静态百分比环：PDF / HTML 均可见中心数值，不依赖 hover */
+function StaticPctRing(props: { label: string; value: number; color: string }) {
+  const v = Math.min(100, Math.max(0, Math.round(props.value)));
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div
+        className="relative h-[4.25rem] w-[4.25rem] shrink-0 rounded-full"
+        style={{
+          background: `conic-gradient(${props.color} ${v * 3.6}deg, rgba(255,255,255,0.08) 0deg)`,
+        }}
+        aria-label={`${props.label} ${v}%`}
+      >
+        <div className="absolute inset-[0.55rem] flex items-center justify-center rounded-full bg-[#0b1220] text-[13px] font-black tabular-nums text-white">
+          {v}%
+        </div>
+      </div>
+      <span className="text-[11px] font-bold tracking-wide text-white/75">{props.label}</span>
+    </div>
+  );
+}
+
+function truncateTitle(s: string, max = 36): string {
+  const t = String(s || "").trim();
+  if (!t) return "（未命名选题）";
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
 /** 各平台付费投流产品矩阵 + 渠道预算权重（投流策略用，weight 合计≈100） */
 interface PaidChannelPlan {
   name: string;
@@ -383,30 +401,6 @@ function buildPaidTrafficPriorityTopics(structures: AdvancedAIReportData["topicS
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, 2);
-}
-
-function BarTooltipDark({
-  active,
-  payload,
-  unit = "",
-}: {
-  active?: boolean;
-  payload?: Array<{ name?: string; value?: number; color?: string; payload?: { fullName?: string } }>;
-  unit?: string;
-}): ReactElement | null {
-  if (!active || !payload || payload.length === 0) return null;
-  const full = payload[0]?.payload?.fullName;
-  return (
-    <div className="max-w-[16rem] rounded-lg border border-white/15 bg-[#0B0F19]/95 px-2.5 py-1.5 text-xs shadow-xl">
-      {full ? <div className="mb-1 line-clamp-2 font-semibold text-white">{full}</div> : null}
-      {payload.map((p, i) => (
-        <div key={i} className="flex items-center gap-1.5 tabular-nums text-gray-200">
-          <span className="inline-block h-2 w-2 rounded-sm" style={{ background: p.color }} aria-hidden />
-          {p.name}：<span className="font-bold text-white">{formatInt(Number(p.value) || 0)}{unit}</span>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function PlatformReportDashboard({
@@ -777,7 +771,7 @@ export function PlatformReportDashboard({
         </section>
       </div>
 
-      {/* 横向对比带：量化柱形图基准 */}
+      {/* 横向对比带：静态可读（PDF / HTML 均显示标题与数值，不依赖 hover） */}
       {topicViewsBars.length > 0 || structureMetricBars.length > 0 ? (
         <div className="mb-4 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
           <section className="overflow-hidden rounded-xl border border-sky-500/40 bg-[linear-gradient(180deg,rgba(56,189,248,0.14)_0%,rgba(17,24,39,0.97)_42%)] shadow-[0_10px_36px_rgba(56,189,248,0.14)]">
@@ -788,41 +782,50 @@ export function PlatformReportDashboard({
               </span>
               <div>
                 <h2 className="text-base font-bold leading-tight text-sky-50 md:text-lg">选题预估播放量对比</h2>
-                <p className="text-[11px] font-medium text-sky-200/75">横向柱状 · 序号对应「IP 契合与推荐」</p>
+                <p className="text-[11px] font-medium text-sky-200/75">
+                  排名条形 · 标题与播放量常显 · 对应「IP 契合与推荐」
+                </p>
               </div>
             </div>
-            <div className="min-h-[224px] px-2.5 pb-3 pt-3" style={{ height: 244 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={topicViewsBars}
-                  layout="vertical"
-                  margin={{ top: 4, right: 56, bottom: 4, left: 8 }}
-                  barCategoryGap="22%"
-                >
-                  <CartesianGrid horizontal={false} stroke="#1f2937" strokeDasharray="3 3" />
-                  <XAxis type="number" tick={{ fill: "#9CA3AF", fontSize: 11 }} axisLine={{ stroke: "#374151" }} tickLine={false} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={56}
-                    tick={{ fill: "#D1D5DB", fontSize: 12, fontWeight: 700 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip cursor={{ fill: "rgba(56,189,248,0.08)" }} content={<BarTooltipDark />} />
-                  <Bar dataKey="views" radius={[0, 6, 6, 0]} maxBarSize={26}>
-                    {topicViewsBars.map((row) => (
-                      <Cell key={row.name} fill={row.color} />
-                    ))}
-                    <LabelList
-                      dataKey="views"
-                      position="right"
-                      formatter={(v: number) => formatInt(Number(v) || 0)}
-                      style={{ fill: "#E5E7EB", fontSize: 11, fontWeight: 700 }}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="space-y-3 px-3.5 py-3.5">
+              {(() => {
+                const maxViews = Math.max(1, ...topicViewsBars.map((r) => r.views));
+                return topicViewsBars.map((row) => {
+                  const pct = Math.round((row.views / maxViews) * 100);
+                  return (
+                    <div
+                      key={row.name}
+                      className="rounded-lg border border-sky-500/20 bg-black/25 px-3 py-2.5"
+                    >
+                      <div className="mb-1.5 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-bold uppercase tracking-wide text-sky-300/80">
+                            {row.name}
+                          </div>
+                          <div
+                            className="mt-0.5 text-sm font-semibold leading-snug text-sky-50"
+                            title={row.fullName}
+                          >
+                            {truncateTitle(row.fullName, 42)}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="text-lg font-black tabular-nums leading-none text-cyan-200">
+                            {formatInt(row.views)}
+                          </div>
+                          <div className="mt-0.5 text-[10px] font-medium text-sky-200/60">预估播放</div>
+                        </div>
+                      </div>
+                      <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${pct}%`, background: row.color }}
+                        />
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </section>
 
@@ -834,22 +837,35 @@ export function PlatformReportDashboard({
               </span>
               <div>
                 <h2 className="text-base font-bold leading-tight text-fuchsia-50 md:text-lg">封面 / 转化 / 契合 三维对比</h2>
-                <p className="text-[11px] font-medium text-fuchsia-200/75">分组柱状 · 序号对应「选题结构实例」</p>
+                <p className="text-[11px] font-medium text-fuchsia-200/75">
+                  环形百分比常显 · 对应「选题结构实例」
+                </p>
               </div>
             </div>
-            <div className="min-h-[224px] px-2.5 pb-3 pt-3" style={{ height: 244 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={structureMetricBars} margin={{ top: 8, right: 8, bottom: 4, left: -12 }} barCategoryGap="18%">
-                  <CartesianGrid vertical={false} stroke="#1f2937" strokeDasharray="3 3" />
-                  <XAxis dataKey="name" tick={{ fill: "#D1D5DB", fontSize: 12, fontWeight: 700 }} axisLine={{ stroke: "#374151" }} tickLine={false} />
-                  <YAxis domain={[0, 100]} tick={{ fill: "#9CA3AF", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{ fill: "rgba(217,70,239,0.08)" }} content={<BarTooltipDark />} />
-                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 2 }} iconType="circle" />
-                  <Bar dataKey="封面" fill="#fbbf24" radius={[4, 4, 0, 0]} maxBarSize={22} />
-                  <Bar dataKey="转化" fill="#38bdf8" radius={[4, 4, 0, 0]} maxBarSize={22} />
-                  <Bar dataKey="契合" fill="#34d399" radius={[4, 4, 0, 0]} maxBarSize={22} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="space-y-3 px-3.5 py-3.5">
+              {structureMetricBars.map((row) => (
+                <div
+                  key={row.name}
+                  className="rounded-lg border border-fuchsia-500/20 bg-black/25 px-3 py-3"
+                >
+                  <div className="mb-2.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-fuchsia-300/80">
+                      {row.name}
+                    </div>
+                    <div
+                      className="mt-0.5 text-sm font-semibold leading-snug text-fuchsia-50"
+                      title={row.fullName}
+                    >
+                      {truncateTitle(row.fullName, 42)}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-around gap-3">
+                    <StaticPctRing label="封面" value={row.封面} color="#fbbf24" />
+                    <StaticPctRing label="转化" value={row.转化} color="#38bdf8" />
+                    <StaticPctRing label="契合" value={row.契合} color="#34d399" />
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         </div>
