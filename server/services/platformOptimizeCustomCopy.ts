@@ -7,6 +7,7 @@ import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches";
+import { isOhMyGptChatConfigured } from "./ohmygptChat";
 import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
 
 export type OptimizeCustomCopyInput = {
@@ -119,7 +120,9 @@ function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
 }
 
 async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" | "minimal"): Promise<string> {
-  if (!String(process.env.EVOLINK_API_KEY || "").trim()) {
+  const hasOhMy = isOhMyGptChatConfigured();
+  const hasEvolink = Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
+  if (!hasOhMy && !hasEvolink) {
     throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({

@@ -305,7 +305,7 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
 
 /**
  * Creator Growth **Stage 1 / Stage 2 全案 / 战略看板 / 深度追问 / 自定义选题文案** 主路径固定 **OhMyGPT GPT‑5.6 Sol**。  
- * Sol 报错时由 `invokeOpenAI` 自动改走同网关 **`gpt-5.6-terra`**（需 `PROXY_OPENAI_API_KEY` / `OHMYGPT_API_KEY`）。  
+ * Sol 报错时由 `invokeOpenAI` 自动改走同网关 **`gpt-5.6-terra`**，再失败则回退 **EvoLink gpt-5.5**（需对应密钥）。  
  * **生图仍走 EvoLink gpt-image-2**，不经本函数。Gemini 文案退路：`PLATFORM_STAGE2_LLM=vertex`。
  */
 export function getPlatformStage2OpenAiModel(): string {
