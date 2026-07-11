@@ -32,7 +32,8 @@ export const PLATFORM_NATIVE_VARIANT_LABEL_ZH: Record<string, string> = {
 /** Stage2 / 扩写：要求输出 platformVariants 的硬约束摘要（Skill md 已详述时仍可短提醒） */
 export const PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT = `【platformVariants·必须】每条 contentBlueprint 须含 platformVariants 数组，恰好覆盖 xiaohongshu、bilibili、weixin_channels 三项。
 每项字段：platform, format, hook, coverHeadline(8–14字), coverSubline(可选≤18字), tags(3–8), blueOceanKeywords(1–3且三平台子集不同), reuseMainCopy。
-- 小红书：format 可为图文或短视频；短视频时 reuseMainCopy=true，不必另写长文案，tags/蓝海可偏女性向生活词。
+- **图文配额**：全案 6 条中至少 3 条主 format=图文；主 format=图文时 xiaohongshu.format 必须=图文且 reuseMainCopy=false。
+- 小红书：主 format=短视频时可为短视频 reuseMainCopy=true；tags/蓝海可偏女性向生活词。
 - B站、视频号：默认 format=短视频。
 - 主文案一套；三平台只差钩子/封面主句/标签与蓝海子集。
 - 视频号钩子节奏可参照 user JSON 的 weixinChannelsDouyinHotRef（抖音近窗高热样本结构），禁止抄标题。`;

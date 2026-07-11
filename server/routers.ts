@@ -94,6 +94,7 @@ import {
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
+import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1124,6 +1125,8 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
       if (pv.length > 0) b.platformVariants = pv;
       return b;
     });
+    // 小红书测流：全案 6 条中至少保底若干条为图文笔记（不足则从尾部短视频改写体裁标记）
+    out.contentBlueprints = ensureMinGraphicNoteBlueprints(out.contentBlueprints as any[], 3);
   }
 
   // ── Per-monetizationLane item key aliases ─────────────────────────────────
@@ -1490,7 +1493,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
 1. contentBlueprints：须恰好包含 **6** 个具体可执行的内容方案，并与上方 **6** 个维度一一对应（第 1 条对应维度 1，依此类推，第 6 条对应维度 6）。每个方案须包含：
    - title（选题标题：**必须**有好奇缺口/反常识/反差/时事切口之一，具体有画面；禁止正确但无聊的百科题）
-   - format（内容形式：短视频 / 图文）
+   - format（内容形式：短视频 / 图文）。**【图文配额·硬】** 6 条中 **至少 3 条** `format=图文`（小红书笔记可发、可收藏），用于近期小红书流量验证；其余可为短视频。维度「痛点 / 人设 / 长尾搜索」**优先图文**；图文的 detailedScript **必须**用 `[封面]`/`[图N]` 大纲，不要写成口播时间轴。
    - hook（开头文案钩子：**必须**是一句能停滑的话——反问、具体物件、痛点一击或反常识；建议≥30字仍口语）
    - copywriting（核心文案方向，**建议**完整正文不少于200字。结构须含：点名目标客户 → 痛点共鸣 → **2–3 个半成品解法要点（故意留白完整方案）** → **结尾咨询/私信/预约类 CTA**。图文与视频均给出可直接使用的正文；**口吻宜生动，避免公文笔触**）
    - suitablePlatforms（适合发哪些平台，字符串数组）
@@ -1508,7 +1511,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 	       "[正文区] 完整文案+平台搜索关键词+结尾咨询钩子，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
-   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(8–14字)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。小红书可为图文或短视频；短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
+   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(8–14字)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。**当主 format=图文时，xiaohongshu.format 必须=图文且 reuseMainCopy=false**。主 format=短视频时小红书可为短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
    - executionDetails（执行细节，**建议**极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"；**强监管赛道避免听诊器/CT 屏等临床强锚点**）
      * lightingAndCamera（灯光 + 机位，**高度需求专业影视手法**：写清主光方向/质感/色温/明暗比、运镜意图与情绪服务关系；可借用高反差建筑光、温暖魔术时刻、光晕剪影、雾霾大光域、霓虹溢光、精密冷光、天气即光、动机窗光、剧集人物主光等——按段落选用一种主手法。**禁止**点名导演/片名或写「某某味/致敬」。例如："窗侧动机光 + 伦勃朗补光，色温偏暖，明暗比 4:1，轮廓光勾勒西装质感；手机固定支架正面对拍"）
@@ -1682,12 +1685,18 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
     dimName: string,
     dimReasoning: OpenAiEffort = stage2ReasoningEffort,
   ): Promise<Record<string, unknown> | null> => {
+    // 痛点(2) / 人设(3) / 长尾(5) 优先图文，凑满「至少 3 条图文」测小红书流量
+    const preferGraphicNote = dimIndex === 2 || dimIndex === 3 || dimIndex === 5;
+    const formatHint = preferGraphicNote
+      ? `本维度 **优先 format=「图文」**（小红书笔记）；detailedScript 用 [封面]/[图2]…[图N] 攻略大纲；platformVariants.xiaohongshu.format=图文、reuseMainCopy=false。`
+      : `本维度可用短视频；若更适合收藏型清单/避坑笔记，也可选图文。`;
     // Per-dimension system override: tell LLM to output exactly ONE blueprint for this dimension
     const dimSystemSuffix = `
 
 【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
+【体裁】${formatHint}
 輸出格式必須嚴格為：
-{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
+{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡或图文大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
 不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
 
     const dimMessages: typeof structuredStage2Messages = [
