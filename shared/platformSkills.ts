@@ -91,6 +91,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "blue-ocean-natural",
   "batch-arc-engagement",
   "graphic-note-rhythm",
+  "contrast-reversal-climax",
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];
