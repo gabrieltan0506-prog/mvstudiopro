@@ -92,6 +92,8 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "batch-arc-engagement",
   "graphic-note-rhythm",
   "contrast-reversal-climax",
+  "crossover-organ-popsci",
+  "vivid-anti-boring",
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];

@@ -94,6 +94,7 @@ import {
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
+import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1124,6 +1125,8 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
       if (pv.length > 0) b.platformVariants = pv;
       return b;
     });
+    // 小红书测流：全案 6 条中至少保底若干条为图文笔记（不足则从尾部短视频改写体裁标记）
+    out.contentBlueprints = ensureMinGraphicNoteBlueprints(out.contentBlueprints as any[], 3);
   }
 
   // ── Per-monetizationLane item key aliases ─────────────────────────────────
@@ -1154,11 +1157,13 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
 /** Stage2 文案 / 分镜：场景须生动具体，供 system prompt 复用。 */
 const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学·软边界】**强烈建议**文案与分镜选用**具体、可拍、有心理张力**的场景——博物馆侧光、极地旷野、精密实验室、废墟工业风、烟火市集、高空天台、泳池边、球场、路边大排档等皆可；**优先**让读者「看见画面、感到情绪」，并与本人设（职业、身份、专长）互证。**不推荐**五套方案扎堆同一套书房/客厅/书桌模板，除非人设或选题明确需要。`;
 
-/** Stage2 口吻：减轻「合规顾问模板腔」。 */
-const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人直接开拍/开写**的稿子，不是给风控看的合规摘要。
+/** Stage2 口吻：减轻「合规顾问模板腔」+ 去无聊。 */
+const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人直接开拍/开写、愿意点开**的稿子，不是给风控看的合规摘要，也不是无人想读的论文提纲。
 - **像成熟顾问对创作者当面说话**：有判断、有温度、有意外感；hook 与 copywriting **优先**用口语、具体物件、可感知的动作与反差，**避免**「首先…其次…综上所述」公文笔触。
-- **每条方案应有辨识度**：六条的标题、场景、情绪基调 **建议明显不同**（不要六条同一结构换词）。
+- **去无聊硬门槛**：标题若读起来像「××观 / ××管理 / 用 A 与 B 观察 C」且无可拍画面 → **必须重写**。每条标题须含物件、身体动作、不信感或身份反差之一。正文短句为主，禁止正确但催眠的长段玄学抒情。
+- **每条方案应有辨识度**：六条的标题、场景、情绪基调、开头句式 **必须明显不同**（不要六条同一结构换词：典籍金句→生命科学→三点观察→评论留词）。
 - **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。
+- **coverHeadline**：8–14 字停滑短句，供封面少字提亮；**禁止**把长 title 原样当封面主句。
 
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}`;
 
@@ -1488,7 +1493,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
 1. contentBlueprints：须恰好包含 **6** 个具体可执行的内容方案，并与上方 **6** 个维度一一对应（第 1 条对应维度 1，依此类推，第 6 条对应维度 6）。每个方案须包含：
    - title（选题标题：**必须**有好奇缺口/反常识/反差/时事切口之一，具体有画面；禁止正确但无聊的百科题）
-   - format（内容形式：短视频 / 图文）
+   - format（内容形式：短视频 / 图文）。**【图文配额·硬】** 6 条中 **至少 3 条** `format=图文`（小红书笔记可发、可收藏），用于近期小红书流量验证；其余可为短视频。维度「痛点 / 人设 / 长尾搜索」**优先图文**；图文的 detailedScript **必须**用 `[封面]`/`[图N]` 大纲，不要写成口播时间轴。
    - hook（开头文案钩子：**必须**是一句能停滑的话——反问、具体物件、痛点一击或反常识；建议≥30字仍口语）
    - copywriting（核心文案方向，**建议**完整正文不少于200字。结构须含：点名目标客户 → 痛点共鸣 → **2–3 个半成品解法要点（故意留白完整方案）** → **结尾咨询/私信/预约类 CTA**。图文与视频均给出可直接使用的正文；**口吻宜生动，避免公文笔触**）
    - suitablePlatforms（适合发哪些平台，字符串数组）
@@ -1499,14 +1504,20 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
        "[00:00-00:05] 视觉：手持一本泛黄史书特写，对准镜头。文案：你以为熬夜只是意志力差？古人早有另一套说法。"
        "[00:05-00:20] 视觉：切换青铜器/舆图与当代书桌并置。文案：把典籍里的一句，翻译成今天能用的生活判断……"
        "[00:20-00:45] 视觉：旅行/球场/音乐现场等生活场域。文案：给你两个可立刻试的觉察动作——完整路径，我们私聊再拆。"
-     ▸ 如果 format 为「图文」（小红书）：**建议**分封面+内页格式，例如：
-       "[封面设计] 大标题：唐人边塞诗里的「换气」，和你游泳时一样吗？视觉：高质感茶席+当代书桌拼接。"
-       "[图2-图4 痛点引入] 文案：总把「忙」当成勋章的人，其实卡在同一类身心节奏误区……"
-       "[图5-图6 核心内容] 分步列出 2–3 个半成品要点（留白完整方案）……"
-	       "[正文区] 完整文案+平台搜索关键词+结尾咨询钩子，不要随意堆砌无关标签。"）
+     ▸ 如果 format 为「图文」（小红书）：**必须**写成**读者可直接收藏发布**的笔记页大纲，用 `[封面]`/`[图2]`…`[图N]`。每页只写读者用得上的生活/知识要点（痛点、误区、场景、关系、节律、常见问、评论领清单）。
+       **严禁**在图文大纲里写创作者技术指导页：禁止「今晚拍封面素材 / 拆成八页 / 同步录60秒 / 发布建议 / hashtag 墙 / 怎么拍怎么发 / 落地执行三步曲」等元内容——那些属于 publishingAdvice 或短视频，**不要**画进图文格。
+       对标正常可发笔记结构示例：
+       "[封面] 别再对爸妈说你该运动了"
+       "[图2] 你可能是这三类人……"
+       "[图3] 这些误区让你越走越累……"
+       "[图4] 先看场景：平路、微风、灯光软……"
+       "[图5] 再看关系：改成陪我走十分钟……"
+       "[图6] 再看节律：可重复的小顺序……"
+       "[图7] 大家真正想搜的三个问题……"
+       "[图8] 想要清单？评论区打「饭后散步」"
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
-   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(8–14字)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。小红书可为图文或短视频；短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
+   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(8–14字)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。**当主 format=图文时，xiaohongshu.format 必须=图文且 reuseMainCopy=false**。主 format=短视频时小红书可为短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
    - executionDetails（执行细节，**建议**极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"；**强监管赛道避免听诊器/CT 屏等临床强锚点**）
      * lightingAndCamera（灯光 + 机位，**高度需求专业影视手法**：写清主光方向/质感/色温/明暗比、运镜意图与情绪服务关系；可借用高反差建筑光、温暖魔术时刻、光晕剪影、雾霾大光域、霓虹溢光、精密冷光、天气即光、动机窗光、剧集人物主光等——按段落选用一种主手法。**禁止**点名导演/片名或写「某某味/致敬」。例如："窗侧动机光 + 伦勃朗补光，色温偏暖，明暗比 4:1，轮廓光勾勒西装质感；手机固定支架正面对拍"）
@@ -1680,12 +1691,18 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
     dimName: string,
     dimReasoning: OpenAiEffort = stage2ReasoningEffort,
   ): Promise<Record<string, unknown> | null> => {
+    // 痛点(2) / 人设(3) / 长尾(5) 优先图文，凑满「至少 3 条图文」测小红书流量
+    const preferGraphicNote = dimIndex === 2 || dimIndex === 3 || dimIndex === 5;
+    const formatHint = preferGraphicNote
+      ? `本维度 **优先 format=「图文」**（小红书笔记）；detailedScript 用 [封面]/[图2]…[图N] 攻略大纲；platformVariants.xiaohongshu.format=图文、reuseMainCopy=false。`
+      : `本维度可用短视频；若更适合收藏型清单/避坑笔记，也可选图文。`;
     // Per-dimension system override: tell LLM to output exactly ONE blueprint for this dimension
     const dimSystemSuffix = `
 
 【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
+【体裁】${formatHint}
 輸出格式必須嚴格為：
-{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
+{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡或图文大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
 不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
 
     const dimMessages: typeof structuredStage2Messages = [

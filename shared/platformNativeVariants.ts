@@ -32,7 +32,8 @@ export const PLATFORM_NATIVE_VARIANT_LABEL_ZH: Record<string, string> = {
 /** Stage2 / 扩写：要求输出 platformVariants 的硬约束摘要（Skill md 已详述时仍可短提醒） */
 export const PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT = `【platformVariants·必须】每条 contentBlueprint 须含 platformVariants 数组，恰好覆盖 xiaohongshu、bilibili、weixin_channels 三项。
 每项字段：platform, format, hook, coverHeadline(8–14字), coverSubline(可选≤18字), tags(3–8), blueOceanKeywords(1–3且三平台子集不同), reuseMainCopy。
-- 小红书：format 可为图文或短视频；短视频时 reuseMainCopy=true，不必另写长文案，tags/蓝海可偏女性向生活词。
+- **图文配额**：全案 6 条中至少 3 条主 format=图文；主 format=图文时 xiaohongshu.format 必须=图文且 reuseMainCopy=false。
+- 小红书：主 format=短视频时可为短视频 reuseMainCopy=true；tags/蓝海可偏女性向生活词。
 - B站、视频号：默认 format=短视频。
 - 主文案一套；三平台只差钩子/封面主句/标签与蓝海子集。
 - 视频号钩子节奏可参照 user JSON 的 weixinChannelsDouyinHotRef（抖音近窗高热样本结构），禁止抄标题。`;
@@ -205,12 +206,12 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   const parts: string[] = [];
   if (on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图】主句8–14字、可见文案≤2行；禁百科堆字与多图标辅标栏；禁默认暗沉严肃。有人物时禁上课正脸/证件照站姿，须表情或动态抓人（跳跃、失衡、陶醉、错愕、坏笑等择一）。",
+      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题上屏；有人物禁坐姿上课脸——帅气运动定格（网球发球/爬山登顶等）或有戏表情均可，不要求搞笑；同批勿全坐着。",
     );
   }
   if (on("graphic-note-rhythm")) {
     parts.push(
-      "【图文笔记出图】格间一条叙事递进；每格一主信息；明快少暗调；禁每格重开无关话题。",
+      "【图文笔记出图】读者向可发笔记：钩子→痛点→误区→场景/关系/节律→问答→评论CTA；禁拍封面/拆八页/录60秒/发布SOP等技术指导格。",
     );
   }
   if (on("director-craft")) {
@@ -219,6 +220,11 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   if (on("contrast-reversal-climax")) {
     parts.push(
       "【反差弧出图】开场身份错位；中段可精确专有词/数字；情绪态度须有可见反转（可不止一次），落点不限定仰慕；勿说明书墙。",
+    );
+  }
+  if (on("crossover-organ-popsci")) {
+    parts.push(
+      "【跨界科普出图】可电影感解剖/脏器透视；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
     );
   }
   if (parts.length === 0) return "";

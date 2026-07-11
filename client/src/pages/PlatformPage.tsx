@@ -29,6 +29,11 @@ import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon } from "@shared/blueOceanLexicon";
 import { appendFashionEditorialCharacterGuidance } from "@shared/platformFashionEditorialCharacter";
+import {
+  filterGraphicNoteReaderFacingSteps,
+  focusGraphicNoteReaderScript,
+  isGraphicNoteMetaCreatorGuidance,
+} from "@shared/graphicNoteReaderFacing";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import type {
@@ -931,35 +936,41 @@ function buildPlatformSheetScriptContext(
   const is3x4 = opts?.gridVariant === "3x4";
   parts.push(`【选题】${item.title}`);
   if (item.hook) parts.push(`【钩子】${item.hook}`);
-  if (item.copywriting) parts.push(`【文案与结构】${item.copywriting}`);
 
-  // 图文笔记：只喂攻略/避坑正文，禁止把「灯光·运镜·六栏分镜」塞进出图语境（否则会画成导演手法卡）
+  // 图文笔记：只喂读者向攻略正文；禁止发布建议/创作SOP（否则会画成「技术指导」格）
   if (isGraphic) {
-    parts.push(
-      "【体裁·硬约束】本图是小红书/图文**攻略·避坑·知识笔记**（生活场景信息图），不是短视频分镜表，也不是「导演拍摄手法·手法卡」。禁止六栏（景别/运镜/灯光安排/情绪表达…）、禁止灯光机位教学、禁止口播节奏表、禁止把每格画成拍摄现场说明书。",
-    );
-    if (item.detailedScript) parts.push(`【图文大纲·优先拆格】${item.detailedScript}`);
-    if (item.actionableSteps?.length) {
-      const contentSteps = item.actionableSteps.filter(
-        (s) => !/(灯光|机位|运镜|口播|景别|拍摄手法|分镜表)/.test(String(s || "")),
-      );
-      if (contentSteps.length) {
-        parts.push(`【内容要点】\n${contentSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
-      }
+    if (item.copywriting) {
+      const readerCopy = String(item.copywriting)
+        .split(/\n+/)
+        .map((l) => l.trim())
+        .filter((l) => l && !isGraphicNoteMetaCreatorGuidance(l))
+        .join("\n")
+        .trim();
+      if (readerCopy) parts.push(`【文案与结构】${readerCopy}`);
     }
-    if (item.publishingAdvice) parts.push(`【发布建议】${item.publishingAdvice}`);
+    parts.push(
+      "【体裁·硬约束】本图是小红书/图文**读者向攻略·避坑·知识笔记**（可直接发布），不是短视频分镜表，也不是创作者「技术指导手册」。禁止六栏分镜、灯光机位教学、口播时间轴；禁止「拍封面素材/拆八页/录60秒/发布建议/话题标签墙」等生产SOP格子。",
+    );
+    const readerScript = focusGraphicNoteReaderScript(item.detailedScript);
+    if (readerScript) parts.push(`【图文大纲·读者页】${readerScript}`);
+    const contentSteps = filterGraphicNoteReaderFacingSteps(item.actionableSteps);
+    if (contentSteps.length) {
+      parts.push(`【内容要点】\n${contentSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+    }
+    // 故意不喂 publishingAdvice：易变成「怎么发」技术指导格
     if (is3x4) {
       parts.push(
-        "【版式·3×4 十二格图文笔记】须按 **3 行 × 4 列 = 12 格** 展开知识节拍（序号徽章 01–12），勿写成仅 2×4 八格。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
+        "【版式·3×4 十二格图文笔记】须按 **3 行 × 4 列 = 12 格** 展开读者向知识节拍（序号徽章 01–12）。末 2–3 格只能是互动/清单CTA，禁止创作教学。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
       );
     } else {
       parts.push(
-        "【版式·2×4 八格图文笔记】按 2 行 × 4 列共 8 格展开（序号 01–08）。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
+        "【版式·2×4 八格图文笔记】按 2 行 × 4 列共 8 格展开（序号 01–08）。对标可直接发布的笔记结构；禁止创作SOP格。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
       );
     }
     return parts.join("\n\n").slice(0, 12000);
   }
 
+  if (item.copywriting) parts.push(`【文案与结构】${item.copywriting}`);
   if (item.production) parts.push(`【制作】${item.production}`);
   const ex = item.executionDetails;
   if (ex?.environmentAndWardrobe) parts.push(`【环境与服装】${ex.environmentAndWardrobe}`);
