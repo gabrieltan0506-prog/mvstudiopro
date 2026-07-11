@@ -5537,7 +5537,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         const {
-          extractChineseVisualBrief,
           buildPlatformTopicCoverDirectChinesePrompt,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
         const {
@@ -5606,8 +5605,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             translatedPromptWords: 0,
           };
           try {
-            const coverContextZh =
-              (await extractChineseVisualBrief(briefSource, flowLog)) || briefSource.slice(0, 2000);
+            const coverContextZh = briefSource.slice(0, 3500);
             const safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
               topicHook: opt.topicHook,
               context: coverContextZh,
@@ -5619,7 +5617,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符`,
+              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符（已跳过 extractChineseVisualBrief）`,
             );
             appendImageFlowLog(
               flowLog,

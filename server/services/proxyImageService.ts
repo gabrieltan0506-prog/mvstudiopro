@@ -188,7 +188,7 @@ const GPT_IMAGE2_MAX_ATTEMPTS = Math.min(
     1,
     Number(process.env.GPT_IMAGE2_MAX_ATTEMPTS) ||
       Number(process.env.GPT_IMAGE2_PER_SIZE_MAX_ATTEMPTS) ||
-      3,
+      2,
   ),
 );
 
@@ -1412,7 +1412,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   const compositeMaxAttempts = Math.min(
     8,
-    Math.max(1, Number(process.env.PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS) || 3),
+    Math.max(1, Number(process.env.PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS) || 2),
   );
   appendImageFlowLog(
     L,
