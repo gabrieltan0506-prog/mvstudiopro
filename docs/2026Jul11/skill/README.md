@@ -14,6 +14,7 @@
 | `blue-ocean-natural.md` | blue-ocean-natural | 开 |
 | `batch-arc-engagement.md` | batch-arc-engagement | 开 |
 | `graphic-note-rhythm.md` | graphic-note-rhythm | 开 |
+| `contrast-reversal-climax.md` | contrast-reversal-climax | 开 |
 
 **非 md 开关（UI）**：「接受博主/创作者自称」默认关，勾选才放开空壳自称。
 

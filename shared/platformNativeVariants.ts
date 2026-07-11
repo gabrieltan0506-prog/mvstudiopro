@@ -216,6 +216,11 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   if (on("director-craft")) {
     parts.push("【分镜出图】只借灯光运镜情绪手法词，成稿画面与画内字禁止导演名/片名致敬。");
   }
+  if (on("contrast-reversal-climax")) {
+    parts.push(
+      "【反差弧出图】开场身份错位；中段可精确专有词/数字；情绪态度须有可见反转（可不止一次），落点不限定仰慕；勿说明书墙。",
+    );
+  }
   if (parts.length === 0) return "";
   return `【Platform 出图短约束】\n${parts.join("\n")}`;
 }

@@ -916,14 +916,50 @@ function buildPlatformSheetScriptContext(
       stepByStepScript?: string[];
     };
   },
-  opts?: { shootingTechniqueBrief?: string; gridVariant?: "2x4" | "3x4" },
+  opts?: {
+    shootingTechniqueBrief?: string;
+    gridVariant?: "2x4" | "3x4";
+    /** 出图 kind 已知时优先用它判断（避免 format 缺失时误塞分镜六栏） */
+    sheetKind?: "storyboard" | "graphic";
+  },
 ): string {
   const parts: string[] = [];
-  const isGraphic = item.format === "图文" || item.format === "小红书";
+  const isGraphic =
+    opts?.sheetKind === "graphic" ||
+    item.format === "图文" ||
+    item.format === "小红书";
   const is3x4 = opts?.gridVariant === "3x4";
   parts.push(`【选题】${item.title}`);
   if (item.hook) parts.push(`【钩子】${item.hook}`);
   if (item.copywriting) parts.push(`【文案与结构】${item.copywriting}`);
+
+  // 图文笔记：只喂攻略/避坑正文，禁止把「灯光·运镜·六栏分镜」塞进出图语境（否则会画成导演手法卡）
+  if (isGraphic) {
+    parts.push(
+      "【体裁·硬约束】本图是小红书/图文**攻略·避坑·知识笔记**（生活场景信息图），不是短视频分镜表，也不是「导演拍摄手法·手法卡」。禁止六栏（景别/运镜/灯光安排/情绪表达…）、禁止灯光机位教学、禁止口播节奏表、禁止把每格画成拍摄现场说明书。",
+    );
+    if (item.detailedScript) parts.push(`【图文大纲·优先拆格】${item.detailedScript}`);
+    if (item.actionableSteps?.length) {
+      const contentSteps = item.actionableSteps.filter(
+        (s) => !/(灯光|机位|运镜|口播|景别|拍摄手法|分镜表)/.test(String(s || "")),
+      );
+      if (contentSteps.length) {
+        parts.push(`【内容要点】\n${contentSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+      }
+    }
+    if (item.publishingAdvice) parts.push(`【发布建议】${item.publishingAdvice}`);
+    if (is3x4) {
+      parts.push(
+        "【版式·3×4 十二格图文笔记】须按 **3 行 × 4 列 = 12 格** 展开知识节拍（序号徽章 01–12），勿写成仅 2×4 八格。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
+      );
+    } else {
+      parts.push(
+        "【版式·2×4 八格图文笔记】按 2 行 × 4 列共 8 格展开（序号 01–08）。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
+      );
+    }
+    return parts.join("\n\n").slice(0, 12000);
+  }
+
   if (item.production) parts.push(`【制作】${item.production}`);
   const ex = item.executionDetails;
   if (ex?.environmentAndWardrobe) parts.push(`【环境与服装】${ex.environmentAndWardrobe}`);
@@ -936,15 +972,7 @@ function buildPlatformSheetScriptContext(
   parts.push(
     "【情绪·运镜·灯光·高度需求】每格点明运镜意图、微表情与气氛；光影与情绪同步递进。只借专业影视手法（高反差建筑光、温暖魔术时刻、光晕剪影揭示、雾霾大光域静默、霓虹余韵、精密冷光不安、天气即光群像、动机窗光等），禁止点名导演或写「某某风/致敬」。分镜表六栏：景别/运镜/灯光安排/情绪表达/画面内容/台词与音效。",
   );
-  if (isGraphic && is3x4) {
-    parts.push(
-      "【版式·3×4 十二格图文笔记】须按 **3 行 × 4 列 = 12 格** 展开知识节拍（序号徽章 01–12），勿写成仅 2×4 八格。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
-    );
-  } else if (isGraphic) {
-    parts.push(
-      "【版式·2×4 八格图文笔记】按 2 行 × 4 列共 8 格展开（序号 01–08）。凡出现现代解说/主人公的格子须锁参考人像同脸，衣着可随场景微调。",
-    );
-  } else if (is3x4) {
+  if (is3x4) {
     parts.push(
       "【版式·3×4 十二格分镜】须按 3 行 × 4 列 = 12 格展开镜头节拍；现代主人公跨格同脸（锁参考人像），衣着可随场景微调。",
     );
@@ -4412,8 +4440,12 @@ export default function PlatformPage() {
                 sceneId: item.id,
                 title: headlineTitle,
                 scriptContext: buildPlatformSheetScriptContext(item as any, {
-                  shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                  shootingTechniqueBrief:
+                    compositeKind === "xiaohongshu_dual_note"
+                      ? undefined
+                      : lastShootingTechniqueBriefRef.current.trim() || undefined,
                   gridVariant: compositeGridVariant,
+                  sheetKind: compositeKind === "xiaohongshu_dual_note" ? "graphic" : "storyboard",
                 }),
                 kind: compositeKind,
                 gridVariant: compositeGridVariant,
@@ -5636,8 +5668,12 @@ export default function PlatformPage() {
                 headlineTitle,
                 compositeKind,
                 scriptContext: buildPlatformSheetScriptContext(item as any, {
-                  shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                  shootingTechniqueBrief:
+                    compositeKind === "xiaohongshu_dual_note"
+                      ? undefined
+                      : lastShootingTechniqueBriefRef.current.trim() || undefined,
                   gridVariant: compositeGridVariant,
+                  sheetKind: compositeKind === "xiaohongshu_dual_note" ? "graphic" : "storyboard",
                 }),
                 executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                 shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
@@ -9586,7 +9622,13 @@ export default function PlatformPage() {
                             generatePlatformCompositeSheetMutation.mutate({
                               sceneId: sourceRow.id,
                               title: sourceRow.title,
-                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any, { shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined }),
+                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any, {
+                                shootingTechniqueBrief: isXhs
+                                  ? undefined
+                                  : lastShootingTechniqueBriefRef.current.trim() || undefined,
+                                gridVariant: compositeGridVariant,
+                                sheetKind: isXhs ? "graphic" : "storyboard",
+                              }),
                               kind: compositeKind,
                               gridVariant: compositeGridVariant,
                               executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
@@ -10020,8 +10062,12 @@ export default function PlatformPage() {
                             headlineTitle,
                             compositeKind,
                             scriptContext: buildPlatformSheetScriptContext(item as any, {
-                              shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                              shootingTechniqueBrief:
+                                compositeKind === "xiaohongshu_dual_note"
+                                  ? undefined
+                                  : lastShootingTechniqueBriefRef.current.trim() || undefined,
                               gridVariant: compositeGridVariant,
+                              sheetKind: compositeKind === "xiaohongshu_dual_note" ? "graphic" : "storyboard",
                             }),
                             executionDetails: buildPlatformExecutionDetailsPayload(item as any),
                             shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
@@ -10464,8 +10510,12 @@ export default function PlatformPage() {
                                     sceneId: item.id,
                                     title: headlineTitle,
                                     scriptContext: buildPlatformSheetScriptContext(item as any, {
-                                      shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                                      shootingTechniqueBrief:
+                                        compositeKind === "xiaohongshu_dual_note"
+                                          ? undefined
+                                          : lastShootingTechniqueBriefRef.current.trim() || undefined,
                                       gridVariant: compositeGridVariant,
+                                      sheetKind: compositeKind === "xiaohongshu_dual_note" ? "graphic" : "storyboard",
                                     }),
                                     kind: compositeKind,
                                     gridVariant: compositeGridVariant,
