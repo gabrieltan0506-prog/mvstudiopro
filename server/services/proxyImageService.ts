@@ -22,6 +22,7 @@ import {
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
 import { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
+import { STORYBOARD_TEXT_RENDER_WRAPPER_EN } from "../../shared/storyboardTextClarity.js";
 import {
   isEvolinkGptImage2Configured,
   isEvolinkModerationFailure,
@@ -153,18 +154,18 @@ function buildFalGptImage2RequestBody(
 
 /** 拼在寬幅 2×4 合成英文 prompt 末尾：頂部簡中主標 + 幾何鎖定 + **每格底部簡中訊息分格表**（與 {@link STORYBOARD_2X4_SHEET_TRANSLATION_FOOTER} 一致）。 */
 const GPT_IMAGE2_STORYBOARD_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled; thin grid OK; table body must be 简体中文. NOT RECOMMENDED: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels. SOFT PREFERENCE (when compatible with clarity): harmonize lower table bands with overall color/lighting—paper-tint, soft panel, low-contrast separation—rather than routinely using harsh full-black bars with pure-white copy for technical fields.";
+  "CRITICAL COMPOSITION LOCK: single wide landscape ~16:9 master. TOP ~8–12% HEIGHT ONLY: full-width band = **内容总结** as the sheet-level theme (whole-script / episode summary); may include 「· 分镜脚本」suffix—**no per-shot titles in this band**. Below: EXACTLY eight equal panels, 2 rows × 4 columns, straight gutters. PER PANEL top-to-bottom: (1) **分镜主题描述** one bold legible **Simplified Chinese** line for that shot only (≤14 chars preferred); (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with **four labeled fields** — **景别**, **运镜**, **画面内容**, **台词与音效** — all four filled with **short** cells (≤18 chars each); thin grid OK; table body must be 简体中文. TEXT CLARITY: large crisp glyphs, no blurry/soft Chinese strokes; prefer light paper-tint table band over harsh black bar + tiny white type. NOT RECOMMENDED: missing top **内容总结** strip; first row of panels flush to canvas top; placing per-shot **分镜主题描述** in the global top band instead of inside each cell; fewer than eight cells; English-only tables; wholly empty panels; dense micro-text that becomes illegible.";
 
 /** 小紅書八格：幾何與分鏡同為 2×4；畫風偏資訊圖 / 筆記感，每格強簡中（與 {@link XHS_GRAPHIC_NOTE_2X4_FOOTER} 一致）。 */
 const GPT_IMAGE2_XHS_2X4_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. NOT RECOMMENDED: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells. SOFT PREFERENCE: let Hook/context drive light and color—daylight, soft pastel, or warm editorial tones are welcome when they fit; not recommended to default every sheet to heavy dark-gold / low-key gloom without narrative reason.";
+  "CRITICAL COMPOSITION LOCK: Xiaohongshu premium graphic note, single wide landscape ~16:9 master; EXACTLY eight equal panels in 2 rows × 4 columns with straight full-span gutters; row-major read (top L→R, then bottom L→R). EACH CELL: high-density editorial beat — legible Simplified Chinese titles, bullets, icons, pill tags, small diagrams, or numbered badges 01–08 as fits; cohesive luxury palette. TEXT CLARITY: crisp print-clear Simplified Chinese, adequate font size, no blurry glyphs. NOT RECOMMENDED: 2×2 four-cell layout only; single full-bleed hero; 50/50 split only; one horizontal strip of eight thin bands; left text column + right single photo; wholly English-only cells. SOFT PREFERENCE: let Hook/context drive light and color—daylight, soft pastel, or warm editorial tones are welcome when they fit; not recommended to default every sheet to heavy dark-gold / low-key gloom without narrative reason.";
 
 /**
  * 3×4 十二格「分段」专用：**单段只画一整横排 4 格（1 row × 4 columns）**，供 3 段纵向拼成 3 行 × 4 列 = 12 格长图。
  * 关键是覆盖 2×4 锁里的「EXACTLY eight panels / 2 rows」，否则每段会各自又画成 2×4，拼出来像 2×4 而非真正的 3×4。
  */
 const GPT_IMAGE2_STORYBOARD_ROWBAND_PIXEL_LOCK =
-  "CRITICAL COMPOSITION LOCK (single row band): render EXACTLY FOUR equal panels in ONE single horizontal row — **1 row × 4 columns** — that fill the entire canvas width edge-to-edge with straight vertical gutters. **Do NOT draw a second row. Do NOT make a 2×4 eight-panel grid.** PER PANEL top-to-bottom: (1) one bold legible **Simplified Chinese** **分镜主题描述** line for that shot only; (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with four labeled fields **景别 / 运镜 / 画面内容 / 台词与音效**, all four filled; thin grid OK; table body must be 简体中文. NOT RECOMMENDED: two stacked rows; eight panels; fewer than four panels; English-only tables; wholly empty panels.";
+  "CRITICAL COMPOSITION LOCK (single row band): render EXACTLY FOUR equal panels in ONE single horizontal row — **1 row × 4 columns** — that fill the entire canvas width edge-to-edge with straight vertical gutters. **Do NOT draw a second row. Do NOT make a 2×4 eight-panel grid.** PER PANEL top-to-bottom: (1) one bold legible **Simplified Chinese** **分镜主题描述** line for that shot only (≤14 chars preferred); (2) cinematic still; (3) bottom ~25–30% = **Simplified Chinese** table with four labeled fields **景别 / 运镜 / 画面内容 / 台词与音效**, all four filled with short cells (≤18 chars); thin grid OK; table body must be 简体中文. TEXT CLARITY: large crisp glyphs, no blurry Chinese; light paper-tint table band preferred. NOT RECOMMENDED: two stacked rows; eight panels; fewer than four panels; English-only tables; wholly empty panels; micro-text.";
 
 /** 小红书 3×4 分段：单段一整横排 4 格资讯图 beat。 */
 const GPT_IMAGE2_XHS_ROWBAND_PIXEL_LOCK =
@@ -1575,7 +1576,9 @@ export async function generatePlatformCompositeSheetImage(options: {
             `[2×4·顶栏] 已并入 prompt · 内容总结锚点（简中）· len=${topicTitleZh.length} · 「${topicTitleZh.replace(/\s+/g, " ").slice(0, 72)}${topicTitleZh.length > 72 ? "…" : ""}」`,
           );
         }
-        const promptForImageBase = `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
+        const promptForImageBase = isStoryboard
+          ? `${trimmedEnglishCore}\n\n${STORYBOARD_TEXT_RENDER_WRAPPER_EN}\n\n${pixelLock}${storyboardTitleInject}`
+          : `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
         promptForImage = appendVertexProPhotographyPromptModifiers(promptForImageBase, "platform_landscape_sheet");
 
         appendImageFlowLog(

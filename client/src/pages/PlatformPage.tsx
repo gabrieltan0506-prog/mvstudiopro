@@ -918,9 +918,9 @@ function buildPlatformExecutionDetailsPayload(item: {
   const lighting = String(item.executionDetails?.lightingAndCamera || "").trim();
   const env = String(item.executionDetails?.environmentAndWardrobe || "").trim();
   if (!lighting && !env) {
-    return "高端医学权威风格，Rembrandt lighting, cinematic softbox, intellectual authority.";
+    return "高端时尚编辑大片气质，Rembrandt lighting, cinematic softbox, intellectual editorial authority.";
   }
-  return `[灯光机位]: ${lighting || "—"} | [环境与服化]: ${env || "—"} | [情绪设定]: 高端医学权威 · Rembrandt · 电影级软光`.slice(
+  return `[灯光机位]: ${lighting || "—"} | [环境与服化]: ${env || "—"} | [情绪设定]: 高端时尚编辑 · Rembrandt · 电影级软光`.slice(
     0,
     4000,
   );
@@ -3837,6 +3837,8 @@ export default function PlatformPage() {
           "【主人公特质与专长】",
           protagonist,
           customTopicTitle.trim() ? `\n【选题方向】${customTopicTitle.trim()}` : "",
+          "\n【商业闭环·必须】先从主人公背景与赛道推断：① 目标客户是谁；② 1–2 个核心痛点；③ 吸睛标题（好奇缺口/反常识/反差/时事）；④ 钩子停滑句；⑤ 正文给 2–3 个半成品解法并故意留白；⑥ 结尾咨询/私信/预约 CTA。不要写成纯百科。",
+          "\n【审核友好】若涉及健康/医学/法律/金融等强监管领域：用学者/生活美学/生命科学表达，避免病名治疗干预、听诊器/CT 等临床强视觉锚点与疗效承诺。",
           "\n请围绕该主人公的专业背景、人格特质与视觉形象，设计一条适合短视频传播的单条选题执行方案。",
           "\n【分镜视觉约束】各格分镜须以上传参考人像为主人公/主讲人相貌（跨格同一人，禁止换成陌生面孔）；仅脚本明确描写古人、历史人物、古代场景或独立第三方角色时，才使用不同人物造型。封面亦须融合同一参考人像。",
         ]

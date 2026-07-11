@@ -77,6 +77,13 @@ import {
   buildBlueOceanLexicon,
   deriveTagCandidatesFromTrendSamples,
 } from "../shared/blueOceanLexicon.js";
+import {
+  PLATFORM_AUDIENCE_PAIN_DIMENSION_EXTRA,
+  PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE,
+  PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE,
+  buildKnowledgeMonetizationConstraint,
+  needsReviewSafeVoice,
+} from "../shared/platformCreatorInsightFraming.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -799,13 +806,11 @@ async function buildPlatformDashboard(params: {
   const personaContextLine = params.context
     ? `\n\n用户背景补充（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 300)}`
     : "";
-  // If context mentions medical/doctor or culture/art, add hard constraint against generic monetization
-  // Support both Simplified and Traditional Chinese in persona detection
-  const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
-  const hasCulturePersona = /文化|艺术|艺术|历史|历史|书画|书画|收藏|人文/i.test(params.context || "");
-  const personaConstraint = (hasMedicalPersona || hasCulturePersona)
-    ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。platformMenu 中的第一顺位必须是与知识型/审美型内容适配度最高的平台（通常是小红书或B站），而非纯流量平台。`
-    : "";
+  const personaConstraint =
+    buildKnowledgeMonetizationConstraint(params.context || "") +
+    (needsReviewSafeVoice(params.context || "")
+      ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}\n另：platformMenu 第一顺位优先知识型/审美型适配平台（通常小红书或B站），而非纯流量平台。`
+      : "");
 
   const dashboardSystemInstruction = `你是一位资深内容商业顾问，帮创作者判断平台优先级和商业化切入点。
 
@@ -816,7 +821,7 @@ async function buildPlatformDashboard(params: {
 【绝对禁止输出泛平台画像】
 在生成 platformMenu 的推荐理由（whyNow 等字段）时，绝对禁止写「抖音适合短视频」、「B站适合长视频讲透」、「小红书适合图文」等通用废话。
 你的 positioning 或推荐理由，必须 100% 绑定该用户的上述人设各维（职业、身份、兴趣、爱好、专长等），而非笼统「专长」一词带过。
-例如：如果用户是"爱好中国历史的心脏科医生"，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
+例如：如果用户是"爱好中国历史的生命科学学者"，你必须写出「B站更适合你拆解古代『榫卯结构』与『当代生命科学隐喻』的硬核科普，能建立极高信任感」这类高度专属的理由。
 
 【强制热点关联与平台深度指标（须对齐人设各维）】
 你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
@@ -833,7 +838,7 @@ async function buildPlatformDashboard(params: {
    禁止输出文字描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
 5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
 6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
-7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
+7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《苏东坡若来填志愿，会选哪三条赛道？》，开头说：『你以为选专业只看分数？古人把人生赛道拆成另一套坐标系。』」标题须有好奇缺口；开头须点名受众痛点并留半成品解法空间。
 8. 平台动态决策链必须强制使用：抖音 / 快手优先参考近 3-5 天样本（当前统一按 5 天窗口给你），B站 / 小红书优先参考近 7-15 天样本（当前统一按 15 天窗口给你）。判断“现在先做什么”时，优先读取 dynamicDecisionEvidence，不要只复述宽窗口快照。
 
 严格要求：
@@ -1137,7 +1142,9 @@ const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学·
 const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人直接开拍/开写**的稿子，不是给风控看的合规摘要。
 - **像成熟顾问对创作者当面说话**：有判断、有温度、有意外感；hook 与 copywriting **优先**用口语、具体物件、可感知的动作与反差，**避免**「首先…其次…综上所述」公文笔触。
 - **每条方案应有辨识度**：六条的标题、场景、情绪基调 **建议明显不同**（不要六条同一结构换词）。
-- **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。`;
+- **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。
+
+${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}`;
 
 /**
  * 6 個內容維度（順序固定，與 Prompt 對齊）。
@@ -1358,11 +1365,11 @@ export async function buildPlatformContent(params: {
   diagnostics.blueOceanFlatCount = blueOceanLexicon.flat.length;
   diagnostics.blueOceanGroupedCount = blueOceanLexicon.grouped.length;
   diagnostics.blueOceanTagCandidateCount = blueOceanLexicon.tagCandidates.length;
-  const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
-  const hasCulturePersona = /文化|艺术|艺术|历史|历史|书画|书画|收藏|人文/i.test(params.context || "");
-  const personaConstraint = (hasMedicalPersona || hasCulturePersona)
-    ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。`
-    : "";
+  const reviewSafe = needsReviewSafeVoice(params.context || "");
+  diagnostics.reviewSafeVoice = reviewSafe;
+  const personaConstraint =
+    buildKnowledgeMonetizationConstraint(params.context || "") +
+    (reviewSafe ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}` : "");
 
   const stage2UserJsonString = JSON.stringify({
           context: params.context || "",
@@ -1413,7 +1420,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 【核心数量与维度指令】：须为该平台精确生成 **6** 个深度内容方案（**少于 6 个将导致系统拒收**）。请结合 ipContextBinding，依序从以下**六个维度**各发散**一个**独特选题（每条对应一个维度，顺序不可乱）：
 1.核心专业洞察(Professional Insight)
 2.跨界结合与价值观(Cross-over Value)
-3.目标受众痛点暴击(Audience Pain Point)
+3.目标受众痛点暴击(Audience Pain Point)：${PLATFORM_AUDIENCE_PAIN_DIMENSION_EXTRA}
 4.个人经历与人设魅力(IP Persona Story)
 5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**建议经解构与重塑**，使其贴合用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，**不建议**为凑热点而脱钩。
 6.长尾常青与搜索流量（Long-tail Evergreen & Search Traffic）：面向**可持续吃长尾流量**的常青选题——围绕用户赛道里**高搜索意图、低时效衰减**的真实问题/关键词（如「如何…」「…怎么选」「…避坑」「…对比」等），设计可被反复搜索与收藏的实用内容；**建议**明确给出该平台可布局的**搜索关键词**与可系列化的子选题方向，便于沉淀为 IP 资产。
@@ -1430,34 +1437,34 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 请忠于当前用户的真实行业背景与人设各维，**不建议**套用任何无关的专业标签。
 
 1. contentBlueprints：须恰好包含 **6** 个具体可执行的内容方案，并与上方 **6** 个维度一一对应（第 1 条对应维度 1，依此类推，第 6 条对应维度 6）。每个方案须包含：
-   - title（选题标题，**建议**具体、有画面感，避免抽象空话）
+   - title（选题标题：**必须**有好奇缺口/反常识/反差/时事切口之一，具体有画面；禁止正确但无聊的百科题）
    - format（内容形式：短视频 / 图文）
-   - hook（开头文案钩子，**建议**是一句具体的、能让用户停下来的话——可带反问、具体物件或反常识）
-   - copywriting（核心文案方向，**建议**包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都建议给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文；**口吻宜生动，避免公文笔触**）
+   - hook（开头文案钩子：**必须**是一句能停滑的话——反问、具体物件、痛点一击或反常识；建议≥30字仍口语）
+   - copywriting（核心文案方向，**建议**完整正文不少于200字。结构须含：点名目标客户 → 痛点共鸣 → **2–3 个半成品解法要点（故意留白完整方案）** → **结尾咨询/私信/预约类 CTA**。图文与视频均给出可直接使用的正文；**口吻宜生动，避免公文笔触**）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：**建议**给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
 	   - detailedScript（详细的拍摄脚本或大纲，**建议**保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**建议在视觉与场域上与前几段方案明显区隔。
      【脚本排版·建议格式（可灵活，勿牺牲可读性）】：
      ▸ 如果 format 为「短视频」（抖音/B站/快手）：**建议**用时间轴分段，每段含「视觉描述」与「口播文案」，例如：
-       "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
-       "[00:05-00:20] 视觉：切换古籍《黄帝内经》特写页。文案：两千年前的古人早就告诉你..."
-       "[00:20-00:45] 视觉：心脏神经示意图动画。文案：心脏里有一个「第二大脑」..."
+       "[00:00-00:05] 视觉：手持一本泛黄诗集特写，对准镜头。文案：你以为熬夜只是意志力差？古人早有另一套说法。"
+       "[00:05-00:20] 视觉：切换古籍页与当代书桌并置。文案：把经典里的一句，翻译成今天能用的生活判断……"
+       "[00:20-00:45] 视觉：旅行/球场/音乐现场等生活场域。文案：给你两个可立刻试的觉察动作——完整路径，我们私聊再拆。"
      ▸ 如果 format 为「图文」（小红书）：**建议**分封面+内页格式，例如：
-       "[封面设计] 大标题：古代治心病就靠这3件事。视觉：高质感茶席+心电图拼接图。"
-       "[图2-图4 痛点引入] 文案：你总是睡不好、心悸？其实古人早就有答案..."
-       "[图5-图6 核心内容] 分步列出3个要点..."
-	       "[正文区] 完整文案+平台搜索关键词，不要随意堆砌无关标签。"）
+       "[封面设计] 大标题：苏东坡若来填志愿，会选哪三条赛道？视觉：高质感茶席+当代书桌拼接。"
+       "[图2-图4 痛点引入] 文案：总把「忙」当成勋章的人，其实卡在同一类身心节奏误区……"
+       "[图5-图6 核心内容] 分步列出 2–3 个半成品要点（留白完整方案）……"
+	       "[正文区] 完整文案+平台搜索关键词+结尾咨询钩子，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
    - executionDetails（执行细节，**建议**极度具体）：
-     * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"）
+     * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"；**强监管赛道避免听诊器/CT 屏等临床强锚点**）
      * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光；人物妆发干净高级、皮肤通透有真实纹理"）
-     * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】直接说出核心判断：……","【3-15秒】展示具体案例：……","【15-25秒】给出行动建议：……"]）
+     * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】钩子停滑：……","【3-15秒】痛点共鸣：……","【15-25秒】半成品解法两点：……","【25-35秒】咨询/私信 CTA：……"]）
 
-2. monetizationLanes：生成 1-2 条强相关的变现路径（例如"知识付费-心血管健康私人咨询"）。必须包含：
+2. monetizationLanes：生成 1-2 条强相关的变现路径（例如"知识付费-深度私人顾问交流"）。必须包含：
    - title（变现方向名，具体到品类）
    - fitReason（为什么适合此用户，基于其具体人设各维：职业、身份、兴趣、爱好、专长等）
-   - offerShape（交付形态，例如"90分钟1v1线上问诊+报告解读"）
+   - offerShape（交付形态，例如"90分钟1v1深度交流+书面要点"）
    - revenueModes（具体变现方式数组）
    - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
 
