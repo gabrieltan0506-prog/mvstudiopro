@@ -108,7 +108,7 @@ ${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}
 - 若输入标题已是苏轼/李清照等宋词人模板，**强烈建议改写扩写**为同痛点但换朝代/典籍/文物/当代切口的新标题，少原样复读宋词人套餐。
 - 若提供蓝海词/标签，须在 copywriting、detailedScript、publishingAdvice 中自然嵌入 1–3 个，禁止堆砌 hashtag。
 - 须严格延续输入选题的主线痛点与人设，不得偏题；语气专业、可拍、简体中文。
-- **高度需求** executionDetails.lightingAndCamera 与 stepByStepScript 达到大师级导演光影与情绪调度（见上方导演语汇）；分镜表六栏含灯光安排与情绪表达。
+- **高度需求** executionDetails.lightingAndCamera 与 stepByStepScript 写清运镜、灯光与情绪（见上方手法卡）；只借手法，禁止点名导演/致敬；分镜表六栏含运镜、灯光安排与情绪表达。
 - 禁止 markdown 代码块；第一个字符必须是 {。`;
 
   const user = `【账号选题方向】${params.topic}

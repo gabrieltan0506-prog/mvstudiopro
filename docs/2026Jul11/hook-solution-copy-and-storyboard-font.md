@@ -48,7 +48,7 @@
 |------|------|
 | `shared/platformCulturalMaterialDiversity.ts` | 跨朝代/典籍/阶层/当代：**强烈建议 / 高度需求 / 包括但不限于** |
 | `shared/advancedPredictionEngine.ts` | 默认骨架改为史记/爵士/银发/唐边塞/影视等 |
-| `shared/storyboardLightingEmotion.ts` | 分镜六栏含灯光/情绪；**大师级导演语汇库**（Nolan / Spielberg / Abrams / Villeneuve / 王家卫 / Fincher / 黑泽明 / Deakins） |
+| `shared/storyboardLightingEmotion.ts` | 分镜六栏含运镜/灯光/情绪；手法卡（电影+剧集）。**A+B+C**：成稿去名只写手法词；系统 Prompt 可溯源点名；曹译文=内地剧集 |
 | `decisionIntelligenceFlashPipeline.ts` | Call B 多样性软边界 |
 | Stage1/2 + 自定义选题 | 注入多样性 + 灯光情绪 + 替换苏东坡示例 |
 
