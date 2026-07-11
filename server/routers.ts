@@ -5539,6 +5539,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const {
           buildPlatformTopicCoverDirectChinesePrompt,
         } = await import("./services/geminiPlatformCompositeTranslation.js");
+        const { focusCoverChineseContextForDirectSend } = await import(
+          "./services/platformImageChineseStaging.js"
+        );
         const {
           buildImagePromptStats,
           generatePlatformTopicCoverNanoBanana2FromEnglishPrompt,
@@ -5605,7 +5608,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             translatedPromptWords: 0,
           };
           try {
-            const coverContextZh = briefSource.slice(0, 3500);
+            const coverContextZh = focusCoverChineseContextForDirectSend(briefSource, 1800);
             const safePrompt = buildPlatformTopicCoverDirectChinesePrompt({
               topicHook: opt.topicHook,
               context: coverContextZh,
@@ -5617,7 +5620,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             appendImageFlowLog(
               flowLog,
-              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符（已跳过 extractChineseVisualBrief）`,
+              `[步骤1·中文直送] 中文封面指令送像素链路 · 约 ${safePrompt.length} 字符（无模型聚焦，跳过默认 GPT 提炼）`,
             );
             appendImageFlowLog(
               flowLog,

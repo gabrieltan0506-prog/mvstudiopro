@@ -16,6 +16,10 @@ import {
   STORYBOARD_LIGHTING_EMOTION_GUIDANCE_ZH,
   STORYBOARD_PANEL_TABLE_FIELDS_ZH,
 } from "../../shared/storyboardLightingEmotion.js";
+import {
+  COVER_DIRECT_CONTEXT_MAX_CHARS,
+  focusCoverChineseContextForDirectSend,
+} from "./platformImageChineseStaging.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -295,7 +299,7 @@ const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【版式补充】
 1. 竖版 9:16 单帧满版主视觉，单一主体；避免无意做成 2×4 或多格分镜。
 2. 主标题为**简体中文**，大而清晰；场景随选题多样化，避免千篇一律书房/客厅套路。
-3. 建议 2–4 个线描小图标 + 简中辅标，自然融入光影，不压过主标题。
+3. **不要**默认堆 2–4 个线描图标栏；最多 0–1 个极克制点缀，且不可抢主句。
 4. masterpiece、8k；屏内文字一律简体中文、印刷清晰。
 `.trim();
 
@@ -577,7 +581,7 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
   coverPersonaContext?: string;
 }): string {
   const hook = String(input.topicHook || "").trim().slice(0, 120);
-  const ctx = String(input.context || "").slice(0, SCRIPT_SLICE);
+  const ctx = focusCoverChineseContextForDirectSend(String(input.context || ""), COVER_DIRECT_CONTEXT_MAX_CHARS);
   const persona = appendFashionEditorialCharacterGuidance(
     String(input.coverPersonaContext || "").trim(),
     { maxChars: 2200, lang: "zh" },
@@ -594,10 +598,11 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
 - 优先自然日光 / 户外或生活场域、明快克制配色 + 一处鲜明强调色；高级时尚可以，但要有点击欲，不要死板正装肖像海报。
 - 场景随文案多样化、贴合选题；人物脸/上半身可读，主标题不压脸。
 - **不要**为「显得专业」强行加 2–4 个线描图标栏；最多 0–1 个极克制点缀，且不可抢主句。
+- 从语境中只保留 **1–3 个**最能辨识此人设的特色道具/场景锚点（如典籍、耳机、节拍器、旅行物件），**禁止**把语境关键词全部画进画面。
 - masterpiece、8k、视觉冲击力强；屏内文字一律**简体中文、清晰不乱码**。
 
 【选题主句】：「${hook}」
-【语境（据文案调场景与情绪，勿把语境全文印上封面）】：
+【语境（只调场景与情绪与 1–3 个特色道具；勿把语境全文印上封面）】：
 ${ctx}
 
 ${PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER}`.trim();
