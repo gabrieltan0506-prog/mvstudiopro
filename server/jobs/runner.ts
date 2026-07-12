@@ -1109,7 +1109,11 @@ async function processPlatformJob(
           modelName = `${qaModel} · multimodal附件`;
         } else {
           const { invokePlatformFollowUpGpt55 } = await import("../services/platformFollowUpLlm.js");
-          const { raw, modelName: usedModel } = await invokePlatformFollowUpGpt55({
+          const {
+            raw,
+            modelName: usedModel,
+            provider: followUpProvider,
+          } = await invokePlatformFollowUpGpt55({
             windowDays,
             context,
             question,
@@ -1134,7 +1138,7 @@ async function processPlatformJob(
               ? parsed.nextQuestions.map((x) => String(x))
               : [],
           };
-          provider = "openai";
+          provider = followUpProvider === "gemini" ? "gemini-api" : "openai";
           modelName = usedModel;
         }
 
@@ -1146,7 +1150,7 @@ async function processPlatformJob(
               route: "platform_qa",
               modelName,
               provider,
-              copyLlmMode: fileUri ? "vertex" : "openai",
+              copyLlmMode: provider.startsWith("gemini") ? "vertex" : "openai",
               windowDays,
               multimodalFile: Boolean(fileUri),
             },
