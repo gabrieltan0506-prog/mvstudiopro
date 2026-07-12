@@ -1,12 +1,19 @@
 /**
- * 平台「深度追问 / 趋势续分析」：固定 **OhMyGPT GPT‑5.6 Sol**（失败回退 Terra → EvoLink gpt-5.5）。
+ * 平台「深度追问 / 趋势续分析」：主路径 OhMyGPT GPT‑5.6；
+ * 失败或空回临时 fallback Gemini Flash（与 Stage2 文案同模型）。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches.js";
-import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime.js";
+import {
+  callGemini35FlashCopywriting,
+  resolveGemini35FlashCopywritingMaxOutputTokens,
+  resolvePlatformStage2GeminiModel,
+} from "./gemini35FlashRuntime.js";
+
+const FOLLOW_UP_TEMPERATURE = 0.8;
 
 export function buildPlatformFollowUpSystemPrompt(windowDays: number): string {
   return `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
@@ -94,35 +101,58 @@ export function buildPlatformFollowUpUserJson(input: {
   });
 }
 
-/** 深度追问 · 纯文本：平台文案主模型 · JSON 输出。 */
+/** 深度追问 · 纯文本：平台文案主模型 · JSON 输出（GPT 失败走 Gemini Flash）。 */
 export async function invokePlatformFollowUpGpt55(options: {
   windowDays: number;
   context: string;
   question: string;
   snapshot: FollowUpSnapshotSlice;
   abortSignal?: AbortSignal;
-}): Promise<{ raw: string; modelName: string; provider: "openai" }> {
-  const modelName = getPlatformStage2OpenAiModel();
+}): Promise<{ raw: string; modelName: string; provider: "openai" | "gemini"; fallbackUsed: boolean }> {
+  const systemInstruction = buildPlatformFollowUpSystemPrompt(options.windowDays);
+  const userText = buildPlatformFollowUpUserJson(options);
+  const openaiModel = getPlatformStage2OpenAiModel();
   const reasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
-  const response = await invokeLLM({
-    provider: "openai",
-    modelName,
-    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-    temperature: 0.8,
-    response_format: { type: "json_object" },
-    reasoningEffort,
-    messages: [
-      { role: "system", content: buildPlatformFollowUpSystemPrompt(options.windowDays) },
-      {
-        role: "user",
-        content: buildPlatformFollowUpUserJson(options),
-      },
-    ],
-    abortSignal: options.abortSignal,
-  });
-  return {
-    raw: extractFirstChoicePlainText(response),
-    modelName,
-    provider: "openai",
-  };
+
+  try {
+    const response = await invokeLLM({
+      provider: "openai",
+      modelName: openaiModel,
+      max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+      temperature: FOLLOW_UP_TEMPERATURE,
+      response_format: { type: "json_object" },
+      reasoningEffort,
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: userText },
+      ],
+      abortSignal: options.abortSignal,
+    });
+    const raw = extractFirstChoicePlainText(response).trim();
+    if (raw) {
+      return { raw, modelName: openaiModel, provider: "openai", fallbackUsed: false };
+    }
+    console.warn("[platformFollowUp] GPT-5.6 空回 → Gemini Flash fallback");
+  } catch (e) {
+    console.warn(
+      "[platformFollowUp] GPT-5.6 failed → Gemini Flash fallback:",
+      e instanceof Error ? e.message : e,
+    );
+  }
+
+  const geminiModel = resolvePlatformStage2GeminiModel();
+  console.warn(`[platformFollowUp] Gemini Flash fallback · model=${geminiModel}`);
+  const raw = (
+    await callGemini35FlashCopywriting({
+      taskSystemInstruction: systemInstruction,
+      userText,
+      responseMimeType: "application/json",
+      maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+      temperature: FOLLOW_UP_TEMPERATURE,
+      topP: 0.95,
+      modelName: geminiModel,
+      abortSignal: options.abortSignal,
+    })
+  ).trim();
+  return { raw, modelName: geminiModel, provider: "gemini", fallbackUsed: true };
 }

@@ -8,7 +8,11 @@ import {
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches";
 import { isOhMyGptChatConfigured } from "./ohmygptChat";
-import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
+import {
+  callGemini35FlashCopywriting,
+  resolveGemini35FlashCopywritingMaxOutputTokens,
+  resolvePlatformStage2GeminiModel,
+} from "./gemini35FlashRuntime";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -32,7 +36,7 @@ export type OptimizeCustomCopyResult = {
   coverNotes?: string;
 };
 
-/** GPT-5.5 链路失败时统一对用户展示的提示（不使用 Gemini 兜底）。 */
+/** GPT / Gemini 链路均失败时统一对用户展示的提示。 */
 export const OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE = "算力紧张，请稍后再试";
 
 const SYSTEM_PROMPT = `你是 mvstudiopro 平台页的资深内容顾问，专门帮创作者把「已有封面文案、分镜脚本、商业背景」深度改写成可直接发布的版本。
@@ -140,6 +144,22 @@ async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" 
   return extractFirstChoicePlainText(response).trim();
 }
 
+async function invokeOptimizeViaGeminiFlash(userBlock: string): Promise<string> {
+  const geminiModel = resolvePlatformStage2GeminiModel();
+  console.warn(`[optimizeCustomCopy] GPT-5.6 失败 → Gemini Flash fallback · model=${geminiModel}`);
+  return (
+    await callGemini35FlashCopywriting({
+      taskSystemInstruction: SYSTEM_PROMPT,
+      userText: userBlock,
+      responseMimeType: "application/json",
+      maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+      temperature: 0.8,
+      topP: 0.95,
+      modelName: geminiModel,
+    })
+  ).trim();
+}
+
 export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promise<OptimizeCustomCopyResult> {
   const sourceText = String(input.sourceText || "").trim();
   if (sourceText.length < 10) {
@@ -168,18 +188,26 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
       return parseOptimizeCustomCopyJson(raw);
     } catch (err) {
       lastError = err;
-      if (err instanceof Error && err.message === OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE) {
-        throw err;
-      }
       console.warn(
-        `[optimizeCustomCopy] GPT-5.5 失败 (reasoning=${reasoningEffort}):`,
+        `[optimizeCustomCopy] GPT-5.6 失败 (reasoning=${reasoningEffort}):`,
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }
   }
 
+  try {
+    const raw = await invokeOptimizeViaGeminiFlash(userBlock);
+    return parseOptimizeCustomCopyJson(raw);
+  } catch (err) {
+    lastError = err;
+    console.warn(
+      "[optimizeCustomCopy] Gemini Flash fallback 失败:",
+      err instanceof Error ? err.message.slice(0, 240) : err,
+    );
+  }
+
   console.warn(
-    "[optimizeCustomCopy] GPT-5.5 全部重试失败:",
+    "[optimizeCustomCopy] GPT-5.6 + Gemini Flash 全部失败:",
     lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
   );
   throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);

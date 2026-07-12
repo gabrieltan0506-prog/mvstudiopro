@@ -3527,16 +3527,19 @@ export const appRouter = router({
             );
           }
         }
-        const followUpCopyLlmMode: PlatformStage2LlmMode = "openai";
         const followUpModel = getPlatformStage2OpenAiModel();
         try {
-          const { raw: rawFollowUpContent, modelName: followUpModelUsed } =
-            await invokePlatformFollowUpGpt55({
-              windowDays: input.windowDays,
-              context: input.context || "",
-              question: input.question,
-              snapshot: input.snapshot,
-            });
+          const {
+            raw: rawFollowUpContent,
+            modelName: followUpModelUsed,
+            provider: followUpProvider,
+            fallbackUsed: geminiFallbackUsed,
+          } = await invokePlatformFollowUpGpt55({
+            windowDays: input.windowDays,
+            context: input.context || "",
+            question: input.question,
+            snapshot: input.snapshot,
+          });
 
           let parsedFollowUpRaw: unknown;
           try {
@@ -3556,14 +3559,14 @@ export const appRouter = router({
             debug: {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModelUsed || followUpModel,
-              provider: "openai",
-              copyLlmMode: followUpCopyLlmMode,
+              provider: followUpProvider,
+              copyLlmMode: followUpProvider === "gemini" ? "vertex" : "openai",
               windowDays: input.windowDays,
-              fallbackUsed: false,
+              fallbackUsed: geminiFallbackUsed,
             },
           };
         } catch (error) {
-          console.warn("[growth.askPlatformFollowUp] fallback:", error);
+          console.warn("[growth.askPlatformFollowUp] static fallback:", error);
           return {
             success: true,
             result: buildPlatformFollowUpFallback(input),
@@ -3571,7 +3574,7 @@ export const appRouter = router({
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModel,
               provider: "openai",
-              copyLlmMode: followUpCopyLlmMode,
+              copyLlmMode: "openai",
               windowDays: input.windowDays,
               fallbackUsed: true,
               error: error instanceof Error ? error.message : String(error),
@@ -4534,42 +4537,71 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : {}),
           });
 
-          const response = visualReportUsesGeminiConsumer
-            ? await invokeLLM({
-                model: "pro",
-                provider: "gemini",
-                modelName: visualReportGeminiModel,
-                response_format: { type: "json_object" },
-                max_tokens: Math.min(
-                  32768,
-                  Math.max(2048, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32768),
-                ),
-                temperature: 0.8,
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: userPayload },
-                ],
-              })
-            : await invokeLLM({
-                provider: "openai",
-                model: "gpt54",
-                modelName:
-                  String(process.env.VISUAL_REPORT_OPENAI_MODEL ?? "").trim() ||
-                  String(process.env.OPENAI_GPT54_MODEL ?? "").trim() ||
-                  undefined,
-                response_format: { type: "json_object" },
-                max_tokens: Math.min(
-                  32_768,
-                  Math.max(4096, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 16_384),
-                ),
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  {
-                    role: "user",
-                    content: `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`,
-                  },
-                ],
-              });
+          const visualReportMaxTokensGemini = Math.min(
+            32768,
+            Math.max(2048, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32768),
+          );
+          const visualReportMaxTokensOpenAi = Math.min(
+            32_768,
+            Math.max(4096, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 16_384),
+          );
+          const visualReportOpenAiModel =
+            String(process.env.VISUAL_REPORT_OPENAI_MODEL ?? "").trim() ||
+            String(process.env.OPENAI_GPT54_MODEL ?? "").trim() ||
+            undefined;
+          const visualReportUserOpenAi = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
+
+          const invokeVisualReportGemini = () =>
+            invokeLLM({
+              model: "pro",
+              provider: "gemini",
+              modelName: visualReportGeminiModel,
+              response_format: { type: "json_object" },
+              max_tokens: visualReportMaxTokensGemini,
+              temperature: 0.8,
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPayload },
+              ],
+            });
+          const invokeVisualReportOpenAi = () =>
+            invokeLLM({
+              provider: "openai",
+              model: "gpt54",
+              modelName: visualReportOpenAiModel,
+              response_format: { type: "json_object" },
+              max_tokens: visualReportMaxTokensOpenAi,
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: visualReportUserOpenAi },
+              ],
+            });
+
+          let response: Awaited<ReturnType<typeof invokeLLM>>;
+          let visualReportProviderUsed: "gemini" | "openai" = visualReportUsesGeminiConsumer
+            ? "gemini"
+            : "openai";
+          try {
+            response = visualReportUsesGeminiConsumer
+              ? await invokeVisualReportGemini()
+              : await invokeVisualReportOpenAi();
+            const primaryText = extractFirstChoicePlainText(response).trim();
+            if (!primaryText) {
+              throw new Error("visual report primary engine returned empty content");
+            }
+          } catch (primaryErr) {
+            const fallbackIsGemini = !visualReportUsesGeminiConsumer;
+            console.warn(
+              `[generateVisualReport] ${visualReportProviderUsed} 失败 → ${
+                fallbackIsGemini ? "Gemini" : "OpenAI"
+              } fallback:`,
+              primaryErr instanceof Error ? primaryErr.message : primaryErr,
+            );
+            response = fallbackIsGemini
+              ? await invokeVisualReportGemini()
+              : await invokeVisualReportOpenAi();
+            visualReportProviderUsed = fallbackIsGemini ? "gemini" : "openai";
+          }
 
           const choice0 = response.choices?.[0];
           const rawBody =
@@ -4628,7 +4660,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendRuntimeMetric("visual.report", {
             ok: true,
             engineEnv: visualReportEngineRaw || "openai(default)",
-            provider: visualReportUsesGeminiConsumer ? `gemini_consumer:${visualReportGeminiModel}` : "openai_json",
+            provider:
+              visualReportProviderUsed === "gemini"
+                ? `gemini_consumer:${visualReportGeminiModel}`
+                : "openai_json",
             durationMs: Date.now() - llmStartedAtMs,
             upstreamModel: String(response?.model ?? "").trim() || null,
             finishReason: choice0?.finish_reason ?? null,
