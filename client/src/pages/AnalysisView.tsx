@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useParams, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -11,8 +12,12 @@ import {
   Layers,
   MessageSquare,
   Sparkles,
+  Download,
+  Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { formatDateGMT8 } from "@/lib/utils";
+import { downloadElementAsPng } from "@/lib/downloadElementPng";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import type { AdvancedAIReportData } from "@shared/advancedAIReport";
 import {
@@ -44,6 +49,61 @@ function parseMeta(raw: unknown): Record<string, unknown> {
   return {};
 }
 
+function SectionDownloadButton({
+  busy,
+  onClick,
+  label = "下载图片",
+}: {
+  busy: boolean;
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/8 px-2.5 py-1.5 text-[11px] font-medium text-white/80 hover:bg-white/12 disabled:opacity-50"
+    >
+      {busy ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+      {busy ? "导出中…" : label}
+    </button>
+  );
+}
+
+function SectionShell({
+  title,
+  icon,
+  children,
+  sectionRef,
+  onDownload,
+  busy,
+  className = "",
+}: {
+  title: string;
+  icon?: ReactNode;
+  children: ReactNode;
+  sectionRef: RefObject<HTMLElement | null>;
+  onDownload: () => void;
+  busy: boolean;
+  className?: string;
+}) {
+  return (
+    <section className={`mb-10 ${className}`}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-lg font-bold text-white">
+          {icon}
+          {title}
+        </h2>
+        <SectionDownloadButton busy={busy} onClick={onDownload} />
+      </div>
+      <div ref={sectionRef as RefObject<HTMLDivElement>} className="rounded-2xl">
+        {children}
+      </div>
+    </section>
+  );
+}
+
 function ExecutionCardBlock({ card }: { card: PlatformSessionExecutionCardArtifact }) {
   return (
     <article className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
@@ -69,6 +129,7 @@ function ExecutionCardBlock({ card }: { card: PlatformSessionExecutionCardArtifa
                 src={card.coverImageUrl}
                 alt={`${card.title || "选题"}封面`}
                 className="w-full rounded-lg border border-white/10 object-cover"
+                crossOrigin="anonymous"
               />
             </div>
           ) : null}
@@ -81,6 +142,7 @@ function ExecutionCardBlock({ card }: { card: PlatformSessionExecutionCardArtifa
                 src={card.storyboardImageUrl}
                 alt={`${card.title || "选题"}分镜`}
                 className="w-full rounded-lg border border-white/10 object-cover"
+                crossOrigin="anonymous"
               />
             </div>
           ) : null}
@@ -129,9 +191,77 @@ function PlatformSessionBundleView({
     | null
     | undefined;
 
+  const overviewRef = useRef<HTMLDivElement>(null);
+  const decisionRef = useRef<HTMLDivElement>(null);
+  const fullCaseRef = useRef<HTMLDivElement>(null);
+  const deepQaRef = useRef<HTMLDivElement>(null);
+  const customCopyRef = useRef<HTMLDivElement>(null);
+  const trendRef = useRef<HTMLDivElement>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  const runDownload = useCallback(async (key: string, el: HTMLElement | null, filename: string) => {
+    if (!el) {
+      toast.error("该分区暂无可导出内容");
+      return;
+    }
+    setBusyKey(key);
+    try {
+      await downloadElementAsPng(el, filename);
+      toast.success(`${filename} 已下载`);
+    } catch (e) {
+      console.error("[AnalysisView] png export failed:", e);
+      toast.error("导出图片失败，请稍后再试");
+    } finally {
+      setBusyKey(null);
+    }
+  }, []);
+
+  const downloadables = [
+    { key: "overview", label: "作品概览", available: true },
+    { key: "decision", label: "个人战略全景", available: Boolean(decision) },
+    {
+      key: "fullCase",
+      label: "全案分析（选题文案与分镜）",
+      available: Array.isArray(bundle.executionCards) && bundle.executionCards.length > 0,
+    },
+    { key: "deepQa", label: "深度追问", available: Boolean(bundle.deepQa?.answer) },
+    { key: "customCopy", label: "自定义文案", available: Boolean(bundle.customCopy?.trim()) },
+    {
+      key: "trend",
+      label: "平台趋势",
+      available: Boolean(dash?.hotTopics?.length || bundle.visualReport),
+    },
+  ].filter((d) => d.available);
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
-      <div className="mb-8 rounded-2xl border border-cyan-500/25 bg-cyan-500/5 p-6">
+      <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5">
+        <span className="text-[11px] font-semibold text-white/45">分区下载图片：</span>
+        {downloadables.map((d) => (
+          <SectionDownloadButton
+            key={d.key}
+            label={d.label}
+            busy={busyKey === d.key}
+            onClick={() => {
+              const map: Record<string, { el: HTMLElement | null; name: string }> = {
+                overview: { el: overviewRef.current, name: `作品概览-${title}` },
+                decision: { el: decisionRef.current, name: `个人战略全景-${title}` },
+                fullCase: { el: fullCaseRef.current, name: `全案分析-选题文案分镜-${title}` },
+                deepQa: { el: deepQaRef.current, name: `深度追问-${title}` },
+                customCopy: { el: customCopyRef.current, name: `自定义文案-${title}` },
+                trend: { el: trendRef.current, name: `平台趋势-${title}` },
+              };
+              const hit = map[d.key];
+              void runDownload(d.key, hit?.el ?? null, hit?.name || d.label);
+            }}
+          />
+        ))}
+      </div>
+
+      <div
+        ref={overviewRef}
+        className="mb-8 rounded-2xl border border-cyan-500/25 bg-cyan-500/5 p-6"
+      >
         <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 px-3 py-1 text-xs font-semibold text-cyan-200">
           <Sparkles size={12} /> 平台全案作品包
         </div>
@@ -149,66 +279,102 @@ function PlatformSessionBundleView({
       </div>
 
       {decision ? (
-        <section className="mb-10">
-          <h2 className="mb-3 text-lg font-bold text-white">个人战略全景</h2>
+        <SectionShell
+          title="个人战略全景"
+          sectionRef={decisionRef}
+          busy={busyKey === "decision"}
+          onDownload={() =>
+            void runDownload("decision", decisionRef.current, `个人战略全景-${title}`)
+          }
+        >
           <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0B0F19] p-2">
             <PlatformReportDashboard data={decision} />
           </div>
-        </section>
+        </SectionShell>
       ) : null}
 
       {Array.isArray(bundle.executionCards) && bundle.executionCards.length > 0 ? (
-        <section className="mb-10">
-          <h2 className="mb-3 text-lg font-bold text-white">
-            选题文案与分镜（{bundle.executionCards.length}）
-          </h2>
-          <div className="space-y-4">
+        <SectionShell
+          title={`全案分析 · 选题文案与分镜（${bundle.executionCards.length}）`}
+          sectionRef={fullCaseRef}
+          busy={busyKey === "fullCase"}
+          onDownload={() =>
+            void runDownload("fullCase", fullCaseRef.current, `全案分析-选题文案分镜-${title}`)
+          }
+        >
+          <div className="space-y-4 rounded-2xl border border-white/10 bg-[#0B0F19]/90 p-3">
             {bundle.executionCards.map((card, i) => (
               <ExecutionCardBlock key={card.id || `${card.title}-${i}`} card={card} />
             ))}
           </div>
-        </section>
+        </SectionShell>
       ) : null}
 
       {bundle.deepQa?.answer ? (
-        <section className="mb-10 rounded-2xl border border-violet-500/25 bg-violet-500/5 p-5">
-          <h2 className="mb-2 flex items-center gap-2 text-lg font-bold text-white">
-            <MessageSquare size={18} /> 深度追问
-          </h2>
-          {bundle.deepQa.question ? (
-            <p className="mb-2 text-sm font-semibold text-violet-200/90">Q：{bundle.deepQa.question}</p>
-          ) : null}
-          <p className="whitespace-pre-wrap text-sm leading-7 text-white/75">{bundle.deepQa.answer}</p>
-        </section>
+        <SectionShell
+          title="深度追问"
+          icon={<MessageSquare size={18} />}
+          sectionRef={deepQaRef}
+          busy={busyKey === "deepQa"}
+          className=""
+          onDownload={() => void runDownload("deepQa", deepQaRef.current, `深度追问-${title}`)}
+        >
+          <div className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-5">
+            {bundle.deepQa.question ? (
+              <p className="mb-2 text-sm font-semibold text-violet-200/90">Q：{bundle.deepQa.question}</p>
+            ) : null}
+            <p className="whitespace-pre-wrap text-sm leading-7 text-white/75">{bundle.deepQa.answer}</p>
+          </div>
+        </SectionShell>
       ) : null}
 
       {bundle.customCopy?.trim() ? (
-        <section className="mb-10 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-5">
-          <h2 className="mb-2 text-lg font-bold text-white">自定义生成文案</h2>
-          {bundle.customTopicProtagonist ? (
-            <p className="mb-2 text-xs text-amber-200/70">主人公：{bundle.customTopicProtagonist}</p>
-          ) : null}
-          <p className="whitespace-pre-wrap text-sm leading-7 text-white/75">{bundle.customCopy}</p>
-        </section>
+        <SectionShell
+          title="自定义生成文案"
+          sectionRef={customCopyRef}
+          busy={busyKey === "customCopy"}
+          onDownload={() =>
+            void runDownload("customCopy", customCopyRef.current, `自定义文案-${title}`)
+          }
+        >
+          <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-5">
+            {bundle.customTopicProtagonist ? (
+              <p className="mb-2 text-xs text-amber-200/70">主人公：{bundle.customTopicProtagonist}</p>
+            ) : null}
+            <p className="whitespace-pre-wrap text-sm leading-7 text-white/75">{bundle.customCopy}</p>
+          </div>
+        </SectionShell>
       ) : null}
 
       {dash?.hotTopics?.length ? (
-        <section className="mb-10 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-          <h2 className="mb-3 text-lg font-bold text-white">平台趋势摘要</h2>
-          <ul className="space-y-1.5 text-sm text-white/70">
-            {dash.hotTopics.slice(0, 8).map((t, i) => (
-              <li key={i}>· {t.title || t.topic || String(t)}</li>
-            ))}
-          </ul>
-          {bundle.visualReport ? (
-            <p className="mt-3 text-xs text-white/40">已保存完整趋势视觉报表数据（可在平台页重新导出图）。</p>
-          ) : null}
-        </section>
+        <SectionShell
+          title="平台趋势摘要"
+          sectionRef={trendRef}
+          busy={busyKey === "trend"}
+          onDownload={() => void runDownload("trend", trendRef.current, `平台趋势-${title}`)}
+        >
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+            <ul className="space-y-1.5 text-sm text-white/70">
+              {dash.hotTopics.slice(0, 8).map((t, i) => (
+                <li key={i}>· {t.title || t.topic || String(t)}</li>
+              ))}
+            </ul>
+            {bundle.visualReport ? (
+              <p className="mt-3 text-xs text-white/40">已保存完整趋势视觉报表数据（可在平台页重新导出图）。</p>
+            ) : null}
+          </div>
+        </SectionShell>
       ) : bundle.visualReport ? (
-        <section className="mb-10 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-          <h2 className="mb-2 text-lg font-bold text-white">平台趋势分析</h2>
-          <p className="text-sm text-white/55">本作品包已包含趋势视觉报表快照数据。</p>
-        </section>
+        <SectionShell
+          title="平台趋势分析"
+          sectionRef={trendRef}
+          busy={busyKey === "trend"}
+          onDownload={() => void runDownload("trend", trendRef.current, `平台趋势-${title}`)}
+        >
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+            <p className="text-sm text-white/55">本作品包已包含趋势视觉报表快照数据。</p>
+          </div>
+        </SectionShell>
       ) : null}
     </div>
   );
@@ -222,11 +388,31 @@ export default function AnalysisView() {
     autoFetch: true,
     redirectOnUnauthenticated: true,
   });
+  const decisionOnlyRef = useRef<HTMLDivElement>(null);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const { data: item, isLoading, error } = trpc.creations.get.useQuery(
     { id },
     { enabled: !!id && isAuthenticated, retry: false },
   );
+
+  const runDownload = useCallback(async (key: string, el: HTMLElement | null, filename: string) => {
+    if (!el) {
+      toast.error("该分区暂无可导出内容");
+      return;
+    }
+    setBusyKey(key);
+    try {
+      await downloadElementAsPng(el, filename);
+      toast.success(`${filename} 已下载`);
+    } catch (e) {
+      console.error("[AnalysisView] png export failed:", e);
+      toast.error("导出图片失败，请稍后再试");
+    } finally {
+      setBusyKey(null);
+    }
+  }, []);
 
   if (authLoading || isLoading) {
     return (
@@ -302,71 +488,97 @@ export default function AnalysisView() {
         />
       ) : isDecisionOnly && decisionReport ? (
         <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
-          <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 p-6">
-            <div
-              className={`mb-3 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${colors.badge}`}
-            >
-              <BarChart2 size={12} />
-              {label}
-            </div>
-            <h1 className="mb-2 text-2xl font-bold text-white">{item.title ?? label}</h1>
-            <div className="flex items-center gap-2 text-sm text-white/40">
-              <Calendar size={13} />
-              {formatDateGMT8(analysisDate, { showTime: true })}
-            </div>
+          <div className="mb-4 flex justify-end">
+            <SectionDownloadButton
+              busy={busyKey === "decisionOnly"}
+              label="下载个人战略全景图片"
+              onClick={() =>
+                void runDownload(
+                  "decisionOnly",
+                  decisionOnlyRef.current,
+                  `个人战略全景-${item.title ?? label}`,
+                )
+              }
+            />
           </div>
-          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0B0F19] p-2">
-            <PlatformReportDashboard data={decisionReport} />
+          <div ref={decisionOnlyRef} className="rounded-2xl bg-[#0B0F19] p-2">
+            <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div
+                className={`mb-3 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${colors.badge}`}
+              >
+                <BarChart2 size={12} />
+                {label}
+              </div>
+              <h1 className="mb-2 text-2xl font-bold text-white">{item.title ?? label}</h1>
+              <div className="flex items-center gap-2 text-sm text-white/40">
+                <Calendar size={13} />
+                {formatDateGMT8(analysisDate, { showTime: true })}
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0B0F19] p-2">
+              <PlatformReportDashboard data={decisionReport} />
+            </div>
           </div>
         </div>
       ) : (
         <div className="mx-auto max-w-3xl px-5 py-10">
-          <div className="mb-8 rounded-2xl border border-white/10 bg-white/5 p-6">
-            <div
-              className={`mb-3 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${colors.badge}`}
-            >
-              {analysisType === "platform" ? <BarChart2 size={12} /> : <FileText size={12} />}
-              {label}
-            </div>
-            <h1 className="text-2xl font-bold text-white mb-2">{item.title ?? label}</h1>
-            <div className="flex items-center gap-2 text-sm text-white/40">
-              <Calendar size={13} />
-              {formatDateGMT8(analysisDate, { showTime: true })}
-            </div>
-            {item.quality && <div className="mt-2 text-xs text-white/30">{item.quality}</div>}
+          <div className="mb-4 flex justify-end">
+            <SectionDownloadButton
+              busy={busyKey === "summary"}
+              label="下载分析快照图片"
+              onClick={() =>
+                void runDownload("summary", summaryRef.current, `分析快照-${item.title ?? label}`)
+              }
+            />
           </div>
+          <div ref={summaryRef} className="rounded-2xl bg-[#0B0F19]/80 p-2">
+            <div className="mb-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div
+                className={`mb-3 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${colors.badge}`}
+              >
+                {analysisType === "platform" ? <BarChart2 size={12} /> : <FileText size={12} />}
+                {label}
+              </div>
+              <h1 className="text-2xl font-bold text-white mb-2">{item.title ?? label}</h1>
+              <div className="flex items-center gap-2 text-sm text-white/40">
+                <Calendar size={13} />
+                {formatDateGMT8(analysisDate, { showTime: true })}
+              </div>
+              {item.quality && <div className="mt-2 text-xs text-white/30">{item.quality}</div>}
+            </div>
 
-          {sections.length > 0 ? (
-            <div className="space-y-4">
-              {sections.map((section: string, i: number) => {
-                const lines = section.split("\n");
-                const isHeading =
-                  lines[0].startsWith("#") || lines[0].startsWith("**") || lines[0].length < 40;
-                return (
-                  <div key={i} className="rounded-xl border border-white/8 bg-white/4 px-5 py-4">
-                    {isHeading && lines.length > 1 ? (
-                      <>
-                        <p className="mb-2 text-sm font-semibold text-purple-300">
-                          {lines[0].replace(/^#+\s*|^\*\*|\*\*$/g, "")}
-                        </p>
-                        <p className="text-sm leading-7 text-white/70 whitespace-pre-wrap">
-                          {lines.slice(1).join("\n")}
-                        </p>
-                      </>
-                    ) : (
-                      <p className="text-sm leading-7 text-white/75 whitespace-pre-wrap">{section}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/15 py-16 text-center text-white/30">
-              <FileText className="mx-auto mb-3 opacity-30" size={32} />
-              <p className="text-sm">此快照未保存分析摘要内容</p>
-              <p className="mt-1 text-xs opacity-60">请重新下载 PDF 以生成新的快照记录</p>
-            </div>
-          )}
+            {sections.length > 0 ? (
+              <div className="space-y-4">
+                {sections.map((section: string, i: number) => {
+                  const lines = section.split("\n");
+                  const isHeading =
+                    lines[0].startsWith("#") || lines[0].startsWith("**") || lines[0].length < 40;
+                  return (
+                    <div key={i} className="rounded-xl border border-white/8 bg-white/4 px-5 py-4">
+                      {isHeading && lines.length > 1 ? (
+                        <>
+                          <p className="mb-2 text-sm font-semibold text-purple-300">
+                            {lines[0].replace(/^#+\s*|^\*\*|\*\*$/g, "")}
+                          </p>
+                          <p className="text-sm leading-7 text-white/70 whitespace-pre-wrap">
+                            {lines.slice(1).join("\n")}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-sm leading-7 text-white/75 whitespace-pre-wrap">{section}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-white/15 py-16 text-center text-white/30">
+                <FileText className="mx-auto mb-3 opacity-30" size={32} />
+                <p className="text-sm">此快照未保存分析摘要内容</p>
+                <p className="mt-1 text-xs opacity-60">请重新下载 PDF 以生成新的快照记录</p>
+              </div>
+            )}
+          </div>
 
           <div className="mt-10 flex justify-center">
             <button
