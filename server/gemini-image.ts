@@ -5,6 +5,7 @@
  * 像素主路徑另可走 OhMyGPT **GPT-IMAGE-2**（見 proxyImageService）；本模組不調用 `gemini-3-pro-image-preview`。
  */
 import { storagePut } from "./storage";
+import { enforceSimplifiedChineseImagePrompt } from "./services/simplifiedChinese.js";
 import {
   baseUrlForVertex,
   extractGeneratedImage,
@@ -170,6 +171,9 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     ? await fetchRemoteAssetAsBase64(opts.referenceImageUrl)
     : null;
 
+  // NB2 对繁体极敏感：送图前把汉字转简体 + 追加屏内字语言锁
+  const promptForImage = enforceSimplifiedChineseImagePrompt(opts.prompt);
+
   const contents = [
     {
       role: "user",
@@ -177,7 +181,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
         ...(reference
           ? [{ inlineData: { data: reference.base64, mimeType: reference.mimeType } }]
           : []),
-        { text: opts.prompt },
+        { text: promptForImage },
       ],
     },
   ];
