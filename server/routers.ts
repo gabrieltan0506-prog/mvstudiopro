@@ -95,6 +95,7 @@ import {
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
+import { normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1160,6 +1161,8 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
           .filter(Boolean)
           .slice(0, 8);
       }
+      // commentHooks：≤3 字生活化评论钩
+      b.commentHooks = normalizeCommentHooksList(b.commentHooks ?? b.commentHook ?? b["评论关键词"]);
       // platformVariants：三平台钩子/封面/标签差异块
       const pv = normalizePlatformVariants(b.platformVariants ?? b.platformAdaptations);
       if (pv.length > 0) b.platformVariants = pv;
@@ -1570,11 +1573,12 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
    - actionableSteps（落地三步曲：**建议**给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
 	   - detailedScript（详细的拍摄脚本或大纲，**建议**保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**建议在视觉与场域上与前几段方案明显区隔。
      【脚本排版·建议格式（可灵活，勿牺牲可读性）】：
-     ▸ 如果 format 为「短视频」（抖音/B站/快手）：**建议**用时间轴分段，每段含「视觉描述」与「口播文案」，例如：
+     ▸ 如果 format 为「短视频」（抖音/B站/快手）：成片目标 **约 1 分半～2 分钟**（时间轴落在 00:00–01:30～00:00–02:00）。**建议**用时间轴分段，每段含「视觉描述」与「口播文案」；口播合计约 220–380 字口语，字幕钉子 8–12 句封顶；**禁止**为凑字数写成 3 分钟以上长片。例如：
        "[00:00-00:05] 视觉：手持一本泛黄史书特写，对准镜头。文案：你以为熬夜只是意志力差？古人早有另一套说法。"
-       "[00:05-00:20] 视觉：切换青铜器/舆图与当代书桌并置。文案：把典籍里的一句，翻译成今天能用的生活判断……"
-       "[00:20-00:45] 视觉：旅行/球场/音乐现场等生活场域。文案：给你两个可立刻试的觉察动作——完整路径，我们私聊再拆。"
-     ▸ 如果 format 为「图文」（小红书）：**必须**写成**读者可直接收藏发布**的笔记页大纲，用 \`[封面]\`/\`[图2]\`…\`[图N]\`。每页只写读者用得上的生活/知识要点（痛点、误区、场景、关系、节律、常见问、评论领清单）。
+       "[00:05-00:35] 视觉：切换青铜器/舆图与当代书桌并置。文案：把典籍里的一句，翻译成今天能用的生活判断……"
+       "[00:35-01:20] 视觉：旅行/球场/音乐现场等生活场域。文案：在这里我先分享一些可立刻试的觉察动作——"
+       "[01:20-01:45] 视觉：正面暖光收束。文案：完整路径评论区扣「想要」，我们再细拆。"
+     ▸ 如果 format 为「图文」（小红书）：**必须**写成**读者可直接收藏发布**的笔记页大纲，用 \`[封面]\`/\`[图2]\`…\`[图N]\`（**建议 8–12 页，信息要丰富**）。每页只写读者用得上的生活/知识要点（痛点、误区、场景、关系、节律、常见问、评论领清单）。**细节堆在笔记页，不要靠拉长口播。**
        **严禁**在图文大纲里写创作者技术指导页：禁止「今晚拍封面素材 / 拆成八页 / 同步录60秒 / 发布建议 / hashtag 墙 / 怎么拍怎么发 / 落地执行三步曲」等元内容——那些属于 publishingAdvice 或短视频，**不要**画进图文格。
        对标正常可发笔记结构示例：
        "[封面] 别再对爸妈说你该运动了"
@@ -1611,7 +1615,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       "copywriting": "完整正文（≥200字）",
       "suitablePlatforms": ["平台1", "平台2"],
       "actionableSteps": ["第一步具体动作", "第二步具体动作", "第三步具体动作"],
-      "detailedScript": "完整分镜脚本（视频用时间轴，图文用封面+内页格式）",
+      "detailedScript": "完整分镜脚本（短视频约1.5–2分钟时间轴勿注水；图文用8–12页丰富封面+内页）",
       "publishingAdvice": "发布时机与平台设置建议",
       "highlightKeywords": ["蓝海词1", "蓝海词2"],
       "platformVariants": [
@@ -1841,7 +1845,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 【体裁】${formatHint}
 ${styleDirective}
 輸出格式必須嚴格為：
-{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡或图文大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
+{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（短视频：约1.5–2分钟时间轴，口播勿注水；图文：8–12页丰富大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
 不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
 
     const dimMessages: typeof structuredStage2Messages = [
@@ -4591,9 +4595,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
-1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。必须结合当前日期 ${currentDateStr} 与 snapshot.supportActivities / 推流活动匹配结果，优先仍在进行中的活动（如抖音 AI 创作大赛、小红书 RED 新生代/中长视频激励、B 站任务中心当月征稿、快手光合计划），禁止写已过期活动。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : wd <= 15 ? " 【短窗：" + wd + " 天】优先近两周仍可报名的征稿/激励。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
+1. trafficBoosters：官方流量扶持活动 + **创作者中心官方话题活动**，每个平台至少 2-3 条。必须结合当前日期 ${currentDateStr}、snapshot.supportActivities、以及 user JSON 中的 officialCampaigns.byPlatform。优先仍在进行中的活动与话题（如小红书 #我的暑假生活 / #城市漫步指南 / #好物测评、RED 新生代、中长视频激励、B 站任务中心、快手光合），禁止写已过期活动。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : wd <= 15 ? " 【短窗：" + wd + " 天】优先近两周仍可报名的征稿/激励。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
-3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
+3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；亦可吸收 officialCampaigns.topicExamples 的官方话题切口（须人设改写）。附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
 4. blueOceanWords：**蓝海词（分级）**，每个平台 2-4 组，每组格式为 { "primary": "一级蓝海词（父词，搜索量 >10万/月）", "secondary": ["二级词1", "二级词2", "二级词3"]}。定义：搜索量大（>10万/月）+ 同行内容少（同类笔记 <200篇）+ 用户意图精准（离成交近）。二级词来源：用一级词在该平台搜索后，整理下拉联想词 + 评论区高赞高频词中高流量（点赞>1万/收藏>5000/评论热烈）的子词条。二级词数量：有数据则列出 3-5 个，无法确认满足标准的词条不强行凑数。小红书优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取；抖音优先从热门话题下评论区高频词中提取。
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
@@ -4604,8 +4608,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
 - trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
-- topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
-- trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
+- topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}。**realCase 建议标注可蹭官方活动名**（如「#城市漫步指南 · …」）。
+- trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-4条）。**必须优先采用** user JSON 字段 officialCampaigns.globalTrafficSupport 中的条目（可略压缩说明），格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 - globalBlueOceanWords：**【必须输出，不可省略】** 聚合所有选定平台的蓝海词，提取 4-6 组，一/二级分级。格式：[{"primary":"一级蓝海词（父词）","secondary":["二级词1","二级词2","二级词3"]}]。定义：搜索量大（>10万次/月）+ 同类笔记少（<200篇）+ 用户意图精准（离成交近）。二级词来源：用一级词在各平台搜索后，整理下拉联想词 + 评论区高赞高频词（点赞>1万/收藏>5000）。无法确认满足标准的词不强行凑数。小红书优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取；抖音优先从热门话题下评论区高频词中提取；B站从专栏/视频弹幕高频词提取；快手从同城热点话题提取。
 
@@ -4627,6 +4631,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           visualReportEngineRaw === "gemini-3-flash-preview";
         const llmStartedAtMs = Date.now();
         try {
+          const { listOfficialCampaignLinesForReport, ensureOfficialCampaignSeedsLoaded } = await import(
+            "./services/platformOfficialCampaigns"
+          );
+          await ensureOfficialCampaignSeedsLoaded();
+          const officialCampaigns = await listOfficialCampaignLinesForReport(input.platforms);
           const userPayload = JSON.stringify({
             windowDays: input.windowDays,
             platforms: input.platforms,
@@ -4634,6 +4643,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             pastDate: pastStr,
             platformEvidence,
             industrySampleGrowth: industryGrowthHintsObj,
+            officialCampaigns,
             ...(String(input.personaContext || "").trim()
               ? { personaContext: String(input.personaContext).trim().slice(0, 4000) }
               : {}),
@@ -4822,10 +4832,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 ? parsed.topicExamples.map((e: any) => ({ structure: safeStr(e?.structure || e), concept: safeStr(e?.concept || ""), realCase: safeStr(e?.realCase || "") }))
                 : [],
               // New global fields: trafficSupport, hotFestivals
-              trafficSupport: Array.isArray(parsed.trafficSupport) ? parsed.trafficSupport.map(safeStr) : [],
+              trafficSupport: (() => {
+                const fromLlm = Array.isArray(parsed.trafficSupport) ? parsed.trafficSupport.map(safeStr) : [];
+                const fromDb = officialCampaigns.globalTrafficSupport || [];
+                const merged = [...fromLlm];
+                for (const line of fromDb) {
+                  const prefix = String(line).split("：")[0] || "";
+                  if (prefix && !merged.some((m) => String(m).includes(prefix))) merged.push(line);
+                }
+                return merged.slice(0, 8);
+              })(),
               hotFestivals: Array.isArray(parsed.hotFestivals) ? parsed.hotFestivals.map(safeStr) : [],
               globalBlueOceanWords,
               platformDetails,
+              officialCampaignTopicExamples: officialCampaigns.topicExamples || [],
             },
           };
         } catch (error) {
@@ -5157,6 +5177,165 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         })),
       };
     }),
+
+    /** Skill 自动路由总管说明（只读，供 UI 展示） */
+    getPlatformSkillMasterInfo: publicProcedure.query(async () => {
+      const { PLATFORM_SKILL_MASTER_READONLY } = await import("../shared/platformTopicShortlist.js");
+      return PLATFORM_SKILL_MASTER_READONLY;
+    }),
+
+    /** 官方活动策展（创作者中心话题 + 扶持计划） */
+    listPlatformOfficialCampaigns: publicProcedure
+      .input(
+        z
+          .object({
+            platform: z.string().max(32).optional(),
+            featuredOnly: z.boolean().optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        const { listOfficialCampaigns, ensureOfficialCampaignSeedsLoaded } = await import(
+          "./services/platformOfficialCampaigns"
+        );
+        await ensureOfficialCampaignSeedsLoaded();
+        const campaigns = await listOfficialCampaigns({
+          platform: input?.platform,
+          featuredOnly: input?.featuredOnly ?? true,
+          activeOnly: true,
+        });
+        return { campaigns, count: campaigns.length };
+      }),
+
+    /**
+     * 选题初选：默认 6 条（标明 skillsUsed / conveyGoal）；超出 6 条按条另计费，单次最多 20。
+     */
+    generatePlatformTopicShortlist: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().max(8000).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+          existingTitles: z.array(z.string().max(200)).max(60).optional(),
+          /** 生成条数，默认 6，最大 20；第 7 条起另计费 */
+          count: z.number().int().min(1).max(20).optional(),
+          stage1Seeds: z
+            .array(
+              z.object({
+                title: z.string().max(200).optional(),
+                hook: z.string().max(400).optional(),
+              }),
+            )
+            .max(8)
+            .optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const { clampTopicShortlistCount, platformTopicShortlistTotalCredits, PLATFORM_TOPIC_SHORTLIST_DEFAULT } =
+          await import("../shared/platformTopicShortlist.js");
+        const count = clampTopicShortlistCount(input.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+        const priced = platformTopicShortlistTotalCredits({
+          count,
+          baseCredits: CREDIT_COSTS.platformTopicShortlist,
+          extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
+        });
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < priced.total) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，选题初选 ${count} 条需要 ${priced.total} 点（基础 ${CREDIT_COSTS.platformTopicShortlist} + 加量 ${priced.extraCount}×${CREDIT_COSTS.platformTopicShortlistExtra}；当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            priced.total,
+            "platformTopicShortlist",
+            priced.extraCount > 0
+              ? `选题初选 ${count} 条（含加量 ${priced.extraCount}）`
+              : `选题初选 ${count} 条`,
+          );
+        }
+        const { generatePlatformTopicShortlist } = await import("./services/platformTopicShortlist.js");
+        const result = await generatePlatformTopicShortlist({
+          userId,
+          context: input.context,
+          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          allowBloggerTitle: Boolean(input.allowBloggerTitle),
+          existingTitles: input.existingTitles,
+          stage1Seeds: input.stage1Seeds,
+          count,
+        });
+        const creditsInfo = await getCredits(userId);
+        return {
+          ...result,
+          count,
+          chargedCredits: isAdminUser ? 0 : priced.total,
+          pricing: priced,
+          totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
+
+    /**
+     * 勾选 1–6 条初选 → 正式文案扩写（含 graphicNotePages）。
+     * 扣 {@link CREDIT_COSTS.platformTopicExpand}。
+     */
+    expandPlatformTopicPicks: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().max(8000).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+          picks: z
+            .array(
+              z.object({
+                id: z.string().min(4).max(64),
+                title: z.string().min(4).max(120),
+                hookSketch: z.string().min(4).max(200),
+                conveyGoal: z.string().min(4).max(240),
+                skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
+                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "default"]),
+                formatHint: z.enum(["图文", "短视频"]),
+                dedupeKey: z.string().min(1).max(80),
+                commentHook: z.string().max(8).optional(),
+                linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
+              }),
+            )
+            .min(1)
+            .max(6),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformTopicExpand;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(userId, "platformTopicExpand", `初选扩写 ${input.picks.length} 条正式文案`);
+        }
+        const { expandPlatformTopicPicks } = await import("./services/platformTopicShortlist.js");
+        const result = await expandPlatformTopicPicks({
+          userId,
+          context: input.context,
+          picks: input.picks,
+          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          allowBloggerTitle: Boolean(input.allowBloggerTitle),
+        });
+        const creditsInfo = await getCredits(userId);
+        return {
+          ...result,
+          chargedCredits: isAdminUser ? 0 : cost,
+          totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
 
     /**
      * Skill 区上方·GPT‑5.5 免费问答（每日 30 次）。

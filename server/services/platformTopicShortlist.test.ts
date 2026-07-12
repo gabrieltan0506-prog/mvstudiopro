@@ -1,0 +1,97 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildGraphicNotePagesFromBlueprint,
+  deriveTopicDedupeKey,
+  dedupeTopicShortlist,
+  ensureAuthorityCiteInCopy,
+  normalizeCommentHook,
+  normalizeCommentHooksList,
+  platformTopicShortlistTotalCredits,
+  prefersInventoryGraphicNote,
+  textHasAuthorityCite,
+} from "../../shared/platformTopicShortlist.js";
+
+describe("deriveTopicDedupeKey", () => {
+  it("collapses 王安石 variants", () => {
+    expect(deriveTopicDedupeKey("执拗的代价：从王安石的变法焦虑看现代强人")).toBe("figure:王安石");
+    expect(deriveTopicDedupeKey("荆公变法与当代内耗")).toBe("figure:王安石");
+  });
+  it("collapses 深夜高压 motif", () => {
+    expect(deriveTopicDedupeKey("凌晨一点的工作群，你的心脏正在经历重金属摇滚")).toBe(
+      "motif:深夜高压",
+    );
+  });
+});
+
+describe("dedupeTopicShortlist", () => {
+  it("keeps only one item per dedupeKey", () => {
+    const out = dedupeTopicShortlist(
+      [
+        { title: "王安石A", dedupeKey: "figure:王安石", hookSketch: "" },
+        { title: "王安石B", dedupeKey: "figure:王安石", hookSketch: "" },
+        { title: "爵士留白", dedupeKey: "motif:other", hookSketch: "" },
+      ],
+      { max: 20 },
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0]!.title).toBe("王安石A");
+  });
+  it("filters existing titles", () => {
+    const out = dedupeTopicShortlist(
+      [{ title: "已有题", dedupeKey: "title:x", hookSketch: "" }],
+      { existingTitles: ["已有题"], max: 20 },
+    );
+    expect(out).toHaveLength(0);
+  });
+});
+
+describe("comment hooks", () => {
+  it("clamps to 3 chars and rewrites long CTA", () => {
+    expect(normalizeCommentHook("慢生活啊")).toBe("慢生活");
+    expect(normalizeCommentHook("预约诊断通话")).toBe("想要");
+    expect(normalizeCommentHooksList(["求带", "想要", "想要"])).toEqual(["求带", "想要"]);
+  });
+});
+
+describe("platformTopicShortlistTotalCredits", () => {
+  it("charges base for 6 and extras beyond", () => {
+    expect(platformTopicShortlistTotalCredits({ count: 6, baseCredits: 12, extraPerTopic: 2 })).toEqual({
+      count: 6,
+      included: 6,
+      extraCount: 0,
+      total: 12,
+    });
+    expect(platformTopicShortlistTotalCredits({ count: 12, baseCredits: 12, extraPerTopic: 2 }).total).toBe(
+      12 + 6 * 2,
+    );
+    expect(platformTopicShortlistTotalCredits({ count: 20, baseCredits: 12, extraPerTopic: 2 }).total).toBe(
+      12 + 14 * 2,
+    );
+  });
+});
+
+describe("authority cite", () => {
+  it("detects and patches when missing on fmcg", () => {
+    expect(textHasAuthorityCite("按《中国居民膳食指南（2022）》建议少糖")).toBe(true);
+    const r = ensureAuthorityCiteInCopy({
+      copywriting: "雪糕很好吃但要算账。",
+      lane: "fmcg",
+    });
+    expect(r.patched).toBe(true);
+    expect(textHasAuthorityCite(r.copywriting)).toBe(true);
+  });
+});
+
+describe("inventory graphic note fallback", () => {
+  it("builds inventory_index + detail_card for 合集 titles", () => {
+    expect(prefersInventoryGraphicNote("上海7月不可错过重磅展览合集，大部分免费")).toBe(true);
+    const pages = buildGraphicNotePagesFromBlueprint({
+      title: "上海7月不可错过重磅展览合集，大部分免费",
+      hook: "28场热门展览",
+      commentHook: "清单",
+    });
+    expect(pages.some((p) => p.role === "inventory_index")).toBe(true);
+    expect(pages.filter((p) => p.role === "detail_card").length).toBeGreaterThanOrEqual(2);
+    expect(pages.length).toBeGreaterThanOrEqual(8);
+  });
+});

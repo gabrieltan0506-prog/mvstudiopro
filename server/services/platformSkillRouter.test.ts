@@ -18,6 +18,7 @@ const FULL_POOL = [
   "contrast-reversal-climax",
   "director-craft",
   "graphic-note-rhythm",
+  "xhs-collectible-note",
 ];
 
 const SIX_DIMS = [
@@ -55,6 +56,7 @@ describe("routePlatformSkillIds", () => {
     expect(r.selectedIds).toContain("forensic-life-lens");
     expect(r.selectedIds).toContain("authority-cite-endorsement");
     expect(r.selectedIds).toContain("graphic-note-rhythm");
+    expect(r.selectedIds).toContain("xhs-collectible-note");
     expect(r.selectedIds).not.toContain("4season-fmcg-popsci");
   });
 

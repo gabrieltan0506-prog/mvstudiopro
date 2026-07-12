@@ -91,6 +91,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "blue-ocean-natural",
   "batch-arc-engagement",
   "graphic-note-rhythm",
+  "xhs-collectible-note",
   "contrast-reversal-climax",
   "crossover-popsci",
   "vivid-anti-boring",

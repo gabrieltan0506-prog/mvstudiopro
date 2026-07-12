@@ -286,6 +286,12 @@ export const CREDIT_COSTS = {
   decisionIntelligenceReportFirst: 150,
   /** 平台页 Stage 2：專屬選題與長文案（入隊時扣費；失敗不退積分，與其他 LLM 任務一致） */
   platformStage2Copywriting: 60,
+  /** 选题初选：默认 6 条含在基础价内；超出按条另计 */
+  platformTopicShortlist: 12,
+  /** 选题初选超出默认 6 条后，每多 1 条 */
+  platformTopicShortlistExtra: 2,
+  /** 勾选后正式扩写文案 + 图文页结构（最多 6 条） */
+  platformTopicExpand: 48,
   decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
 
@@ -307,6 +313,9 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "创作者成长营", subFeature: "REMIX 配乐生成", credits: CREDIT_COSTS.growthCampRemixMusic, note: "额外扣费" },
   // ─── 平台趋势分析 ─────────────────────────────────────────
   { product: "平台数据分析", subFeature: "全案分析（看板+專屬文案）", credits: CREDIT_COSTS.platformStage2Copywriting, note: "入隊專屬文案時扣 60 cr；與實時樣本+IP 背景成稿" },
+  { product: "平台数据分析", subFeature: "选题初选（默认6条）", credits: CREDIT_COSTS.platformTopicShortlist, note: "每条标明 Skill 与传达目标；默认可重生成" },
+  { product: "平台数据分析", subFeature: "选题初选加量（第7条起）", credits: CREDIT_COSTS.platformTopicShortlistExtra, note: "每多 1 条另计 2 cr，单次最多 20" },
+  { product: "平台数据分析", subFeature: "初选扩写（最多6条正式文案）", credits: CREDIT_COSTS.platformTopicExpand, note: "含 graphicNotePages 可发图文结构" },
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
