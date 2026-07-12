@@ -132,16 +132,16 @@ export async function invokePlatformFollowUpGpt55(options: {
     if (raw) {
       return { raw, modelName: openaiModel, provider: "openai", fallbackUsed: false };
     }
-    console.warn("[platformFollowUp] GPT-5.6 空回 → Gemini Flash fallback");
+    console.warn("[platformFollowUp] GPT-5.6 空回 → Gemini 3.1 Pro fallback");
   } catch (e) {
     console.warn(
-      "[platformFollowUp] GPT-5.6 failed → Gemini Flash fallback:",
+      "[platformFollowUp] GPT-5.6 failed → Gemini 3.1 Pro fallback:",
       e instanceof Error ? e.message : e,
     );
   }
 
   const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(`[platformFollowUp] Gemini Flash fallback · model=${geminiModel}`);
+  console.warn(`[platformFollowUp] Gemini 3.1 Pro fallback · model=${geminiModel}`);
   const raw = (
     await callGemini35FlashCopywriting({
       taskSystemInstruction: systemInstruction,

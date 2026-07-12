@@ -20,7 +20,7 @@ vi.mock("../config/platformSwitches.js", () => ({
 
 vi.mock("./gemini35FlashRuntime.js", () => ({
   resolveGemini35FlashCopywritingMaxOutputTokens: () => 65536,
-  resolvePlatformStage2GeminiModel: () => "gemini-3-flash-preview",
+  resolvePlatformStage2GeminiModel: () => "gemini-3.1-pro-preview",
   callGemini35FlashCopywriting: vi.fn(),
 }));
 

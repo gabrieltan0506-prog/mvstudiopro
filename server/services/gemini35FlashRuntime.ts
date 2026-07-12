@@ -55,11 +55,11 @@ export function resolveGemini35FlashModelName(): string {
   return fromEnv || DEFAULT_GEMINI_35_FLASH_MODEL;
 }
 
-/** Stage2 专属文案 fallback；默認 `gemini-3-flash-preview`（可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写）。 */
+/** Stage2 专属文案 fallback；默認 `gemini-3.1-pro-preview`（可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写）。简体硬锁仍走 callGemini35FlashCopywriting。 */
 export function resolvePlatformStage2GeminiModel(): string {
   return (
     String(process.env.PLATFORM_STAGE2_GEMINI_MODEL || "").trim() ||
-    "gemini-3-flash-preview"
+    "gemini-3.1-pro-preview"
   );
 }
 
