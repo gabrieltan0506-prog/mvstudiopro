@@ -47,6 +47,7 @@ import type {
 import {
   CREDIT_COSTS,
   PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL,
+  PLATFORM_SKILL_QA_DAILY_FREE_LIMIT,
   platformCoverBundleTotalCredits,
   platformCompositeBundleTotalCreditsForGrid,
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
@@ -1937,6 +1938,19 @@ export default function PlatformPage() {
     () => readEnabledPlatformSkillIdsFromLs() != null,
   );
   const [platformSkillUploading, setPlatformSkillUploading] = useState(false);
+  const [skillQaQuestion, setSkillQaQuestion] = useState("");
+  const [skillQaAnswer, setSkillQaAnswer] = useState("");
+  const [skillQaRemaining, setSkillQaRemaining] = useState<number | null>(null);
+  const [skillQaImageOffer, setSkillQaImageOffer] = useState<null | {
+    creationRelated: boolean;
+    suggestedPrompt: string;
+    creditCost: number;
+    isFirstImageDiscount: boolean;
+    guideMessage: string;
+  }>(null);
+  const [skillQaImageUrl, setSkillQaImageUrl] = useState<string | null>(null);
+  const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
+  const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
@@ -2133,13 +2147,178 @@ export default function PlatformPage() {
     [isAuthenticated, uploadPlatformSkillMutation, platformSkillsQuery],
   );
 
+  const handleAskPlatformSkillQa = useCallback(async () => {
+    const q = skillQaQuestion.trim();
+    if (q.length < 2) {
+      toast.error("请先输入问题");
+      return;
+    }
+    if (!isAuthenticated) {
+      toast.error("请先登录后再提问");
+      return;
+    }
+    try {
+      const res = await askPlatformSkillQaMutation.mutateAsync({
+        question: q,
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        allowBloggerTitle,
+      });
+      setSkillQaAnswer(res.answer || "");
+      setSkillQaRemaining(res.remainingFreeToday);
+      setSkillQaImageOffer(res.imageOffer ?? null);
+      setSkillQaImageUrl(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "问答失败");
+    }
+  }, [
+    skillQaQuestion,
+    isAuthenticated,
+    askPlatformSkillQaMutation,
+    enabledPlatformSkillIds,
+    allowBloggerTitle,
+  ]);
+
+  const handleConfirmSkillQaImage = useCallback(async () => {
+    const prompt = skillQaImageOffer?.suggestedPrompt?.trim();
+    if (!prompt) return;
+    if (!isAuthenticated) {
+      toast.error("请先登录");
+      return;
+    }
+    const cost = skillQaImageOffer.creditCost;
+    const ok = window.confirm(
+      `确认生成单页图？将扣除 ${cost} 积分${
+        skillQaImageOffer.isFirstImageDiscount ? "（生涯首张·封面九折）" : "（封面原价）"
+      }。生图会参考下方已勾选的 Skill。`,
+    );
+    if (!ok) return;
+    try {
+      const res = await confirmPlatformSkillQaImageMutation.mutateAsync({
+        imagePrompt: prompt,
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        aspectRatio: "9:16",
+      });
+      setSkillQaImageUrl(res.imageUrl);
+      toast.success(
+        res.isFirstImageDiscount
+          ? `已生成（首张九折，扣 ${res.creditsCharged} 点）`
+          : `已生成（扣 ${res.creditsCharged} 点）`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "生图失败");
+    }
+  }, [
+    skillQaImageOffer,
+    isAuthenticated,
+    confirmPlatformSkillQaImageMutation,
+    enabledPlatformSkillIds,
+  ]);
+
+  const scrollToPlatformSection = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   const platformSkillsMountPanel = (
-    <div className="rounded-xl border border-[#10B981]/30 bg-[#10B981]/8 px-4 py-3">
+    <div className="space-y-3">
+      <div className="rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/8 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-white">Skill 顾问问答 · GPT‑5.5</div>
+            <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
+              提问创作 / Skill 用法免费（每日 {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
+              {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
+              ）。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
+              {CREDIT_COSTS.platformSkillQaImageFirst} 点），之后 {CREDIT_COSTS.platformTopicFrameGraphic}{" "}
+              点。生图会带上你勾选的 Skill。
+            </p>
+          </div>
+        </div>
+        <textarea
+          value={skillQaQuestion}
+          onChange={(e) => setSkillQaQuestion(e.target.value)}
+          rows={3}
+          placeholder="例如：封面怎么写才不说教？跨界科普怎么开头？帮我画一张网球发球封面试试…"
+          className="mt-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white placeholder:text-gray-600 focus:border-[#49e6ff]/50 focus:outline-none"
+        />
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={askPlatformSkillQaMutation.isPending || !skillQaQuestion.trim()}
+            onClick={() => void handleAskPlatformSkillQa()}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#49e6ff]/45 bg-[#49e6ff]/15 px-3 py-1.5 text-[11px] font-bold text-[#b8f4ff] transition hover:bg-[#49e6ff]/25 disabled:opacity-50"
+          >
+            {askPlatformSkillQaMutation.isPending ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                思考中…
+              </>
+            ) : (
+              "免费提问"
+            )}
+          </button>
+        </div>
+        {skillQaAnswer ? (
+          <div className="mt-3 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap text-gray-200">
+            {skillQaAnswer}
+          </div>
+        ) : null}
+        {skillQaImageOffer ? (
+          <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+            <p className="text-[11px] leading-snug text-amber-100/90">{skillQaImageOffer.guideMessage}</p>
+            {skillQaImageOffer.creationRelated ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-[#ff4fb8]/45 bg-[#ff4fb8]/15 px-2.5 py-1 text-[10px] font-bold text-[#ff9fe0]"
+                  onClick={() => scrollToPlatformSection("platform-custom-workspace")}
+                >
+                  去自定义创作（推荐）
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-[#7d73ff]/45 bg-[#7d73ff]/15 px-2.5 py-1 text-[10px] font-bold text-[#c4b5fd]"
+                  onClick={() => scrollToPlatformSection("platform-report")}
+                >
+                  去全案分析（推荐）
+                </button>
+              </div>
+            ) : null}
+            <p className="mt-2 text-[10px] text-gray-400 line-clamp-3">
+              试一张提示词：{skillQaImageOffer.suggestedPrompt}
+            </p>
+            <button
+              type="button"
+              disabled={confirmPlatformSkillQaImageMutation.isPending}
+              onClick={() => void handleConfirmSkillQaImage()}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-400/15 px-3 py-1.5 text-[11px] font-bold text-amber-100 disabled:opacity-50"
+            >
+              {confirmPlatformSkillQaImageMutation.isPending ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  生图中…
+                </>
+              ) : (
+                `确认生图（${skillQaImageOffer.creditCost} 积分${
+                  skillQaImageOffer.isFirstImageDiscount ? "·首张九折" : ""
+                }）`
+              )}
+            </button>
+          </div>
+        ) : null}
+        {skillQaImageUrl ? (
+          <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
+            <img src={skillQaImageUrl} alt="Skill 问答生图" className="max-h-[420px] w-full object-contain bg-black/40" />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-xl border border-[#10B981]/30 bg-[#10B981]/8 px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-white">生成 Skill（全案 + 自定义共用）</div>
           <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图。内置在{" "}
+            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图，以及上方 Skill 顾问问答/生图。内置在{" "}
             <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
             ；可上传 .md 追加。
           </p>
@@ -2243,6 +2422,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
       </div>
+    </div>
     </div>
   );
 

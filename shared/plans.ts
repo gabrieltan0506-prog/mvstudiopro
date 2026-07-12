@@ -254,6 +254,11 @@ export const CREDIT_COSTS = {
   platformRefImage: 36,
   /** 平台页：选题单帧 · 图文/小红书竖版封面（GPT-IMAGE-2）；单张「生成封面」统一走此价 */
   platformTopicFrameGraphic: 48,
+  /**
+   * Skill 问答栏·单页生图「账号生涯首张」九折价（相对 {@link platformTopicFrameGraphic}）。
+   * 第二张起恢复封面原价。
+   */
+  platformSkillQaImageFirst: 43,
   /** 短视频向·分镜 2×4 宽幅 **60**（`storyboard_sheet_*`，非图文笔记八格） */
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格 **72**（`xiaohongshu_dual_note`，非分镜主表） */
@@ -283,6 +288,24 @@ export const CREDIT_COSTS = {
   /** 战略地图：同一选题第二次起「重新生成文案」 */
   decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
+
+/** Skill 问答：每日免费次数上限（登录用户） */
+export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 30;
+
+/**
+ * Skill 问答栏单页生图积分：账号生涯第 1 张九折，之后封面原价。
+ * @param priorImageCount 已成功记入 platformSkillQaImage 的次数
+ */
+export function platformSkillQaImageCredits(priorImageCount: number): {
+  cost: number;
+  isFirstDiscount: boolean;
+} {
+  const prior = Math.max(0, Math.floor(Number(priorImageCount) || 0));
+  if (prior <= 0) {
+    return { cost: CREDIT_COSTS.platformSkillQaImageFirst, isFirstDiscount: true };
+  }
+  return { cost: CREDIT_COSTS.platformTopicFrameGraphic, isFirstDiscount: false };
+}
 
 /** 自定义抠像可选比例 */
 export const PLATFORM_MATTING_ASPECT_RATIOS = ["9:16", "16:9", "3:4", "4:3", "21:9"] as const;

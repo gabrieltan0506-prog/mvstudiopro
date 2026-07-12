@@ -4931,6 +4931,118 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       };
     }),
 
+    /**
+     * Skill 区上方·GPT‑5.5 免费问答（每日 30 次）。
+     * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
+     */
+    askPlatformSkillQa: protectedProcedure
+      .input(
+        z.object({
+          question: z.string().min(2).max(2000),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const { askPlatformSkillQa } = await import("./services/platformSkillQa.js");
+        try {
+          const result = await askPlatformSkillQa({
+            userId: ctx.user.id,
+            question: input.question,
+            enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+            allowBloggerTitle: Boolean(input.allowBloggerTitle),
+            isAdmin: isAdminUser,
+          });
+          return { success: true as const, ...result };
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "问答失败";
+          throw new TRPCError({
+            code: /上限/.test(msg) ? "TOO_MANY_REQUESTS" : "BAD_REQUEST",
+            message: msg,
+          });
+        }
+      }),
+
+    /**
+     * Skill 问答·确认单页生图：生涯首张封面九折，其后封面原价；可挂载当前勾选 Skill。
+     */
+    confirmPlatformSkillQaImage: protectedProcedure
+      .input(
+        z.object({
+          imagePrompt: z.string().min(4).max(2000),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          aspectRatio: z.enum(["9:16", "16:9", "3:4", "4:3"]).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const { confirmPlatformSkillQaImage, PLATFORM_SKILL_QA_IMAGE_ACTION } = await import(
+          "./services/platformSkillQa.js"
+        );
+        const prepared = await confirmPlatformSkillQaImage({
+          userId,
+          imagePrompt: input.imagePrompt,
+          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          aspectRatio: input.aspectRatio,
+        });
+        const cost = prepared.needCharge;
+        let charged = false;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            PLATFORM_SKILL_QA_IMAGE_ACTION,
+            `Skill 问答生图${prepared.isFirstImageDiscount ? "·首张九折" : ""} · ${input.imagePrompt.slice(0, 48)}`,
+          );
+          charged = true;
+        } else {
+          // 管理员也记一笔 0 元 usage，保证「首张九折」计数一致
+          const drizzleDb = await import("./db").then((m) => m.getDb());
+          if (drizzleDb) {
+            const { stripeUsageLogs } = await import("../drizzle/schema-stripe");
+            await drizzleDb.insert(stripeUsageLogs).values({
+              userId,
+              action: PLATFORM_SKILL_QA_IMAGE_ACTION,
+              creditsCost: 0,
+              isFreeQuota: 1,
+              description: `Skill 问答生图（管理员）· ${input.imagePrompt.slice(0, 80)}`,
+            });
+          }
+        }
+
+        try {
+          const result = await prepared.runGenerate();
+          return {
+            success: true as const,
+            imageUrl: result.imageUrl,
+            creditsCharged: isAdminUser ? 0 : result.creditsCharged,
+            isFirstImageDiscount: result.isFirstImageDiscount,
+            englishPrompt: result.englishPrompt,
+            imageGenFlowLog: result.imageGenFlowLog,
+          };
+        } catch (error) {
+          if (charged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "Skill 问答生图失败退还").catch((refundErr: unknown) => {
+              console.error("[confirmPlatformSkillQaImage] refund failed:", refundErr);
+            });
+          }
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: error instanceof Error ? error.message : "生图失败",
+          });
+        }
+      }),
+
     /** /platform：上传 .md Skill（账号持久化） */
     uploadPlatformSkill: protectedProcedure
       .input(
