@@ -201,12 +201,14 @@ export async function pickLinkedCampaignsForTopic(params: {
   const scored = cams
     .map((c) => {
       let score = c.laneHints.includes(lane as never) ? 3 : 1;
-      if (/暑假|暑期|夏日|清凉/.test(title) && c.category === "summer_lifestyle") score += 3;
-      if (/漫步|展|博物|市集|城市/.test(title) && c.category === "city_walk") score += 3;
-      if (/好物|测评|零食|冰|糖|防晒/.test(title) && c.category === "fmcg_goods") score += 3;
-      if (/读书|书单|莎士比亚|罗琳/.test(title) && c.category === "culture_reading") score += 2;
-      if (/运动|散步|力量/.test(title) && c.category === "wellness_sport") score += 2;
-      if (params.formatHint === "短视频" && c.kind === "traffic_support" && /中长视频|视频激励/.test(c.name)) {
+      if (/暑假|暑期|夏日|清凉|余地|旅游|旅行|录取/.test(title) && c.category === "summer_lifestyle") score += 3;
+      if (/漫步|展|博物|市集|城市|旅游|旅行/.test(title) && c.category === "city_walk") score += 3;
+      if (/好物|测评|零食|冰|糖|防晒|冻门|下酒|雪糕/.test(title) && c.category === "fmcg_goods") score += 3;
+      if (/读书|书单|书店|莎士比亚|罗琳|反调/.test(title) && c.category === "culture_reading") score += 2;
+      if (/运动|散步|力量|HYROX|皮质醇|变多强|户外/.test(title) && c.category === "wellness_sport") score += 2;
+      if (/主角感|法式|设计|毕业展/.test(title) && c.category === "aesthetics_design") score += 2;
+      if (/美食|掌门|谐音|市集/.test(title) && c.category === "food_local") score += 2;
+      if (params.formatHint === "短视频" && c.kind === "traffic_support" && /中长视频|视频激励|视频作者|好视频/.test(c.name)) {
         score += 2;
       }
       return { name: c.name, score };
