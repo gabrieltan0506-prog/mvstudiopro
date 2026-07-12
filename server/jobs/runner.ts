@@ -139,23 +139,36 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 function isPlatformTimeoutError(error: unknown): boolean {
   const name = error instanceof Error ? error.name : "";
+  if (name === "TimeoutError" || name === "AbortError") return true;
   const message = error instanceof Error ? error.message : String(error || "");
-  const lower = `${name} ${message}`.toLowerCase();
+  // 只看业务头，不看「执行日志」正文：日志常嵌入 PLATFORM_*_TIMEOUT_MS 环境变量名，
+  // 旧逻辑用 includes("timeout") 会把 EvoLink/审核等真失败误判成「深度思考超时」。
+  const head = (message.split("\n执行日志:")[0] ?? message).slice(0, 800);
+  const lower = head.toLowerCase();
   return (
-    name === "AbortError" ||
-    lower.includes("timeout") ||
-    lower.includes("timed out") ||
-    lower.includes("abort") ||
-    lower.includes("aborted") ||
-    // withLlmTimeout throws Chinese messages — must also match these:
-    message.includes("超时") ||   // "LLM 请求超时，已等待 Xms"
-    message.includes("已取消")    // "LLM 请求已取消（客户端已断开）"
+    /\btimed?\s*out\b/.test(lower) ||
+    /\baborte?d?\b/.test(lower) ||
+    // withLlmTimeout / 墙钟硬上限
+    head.includes("超时") ||
+    head.includes("已取消") ||
+    head.includes("硬上限，已终止")
   );
 }
 
 function getPlatformJobErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || "");
+  // EvoLink 402 / Insufficient credits：勿包装成「深度思考超时」
+  if (
+    /\b402\b/.test(message) ||
+    /insufficient.?credits|insufficient.?quota|pre-deduction failed|积分不足|额度不足/i.test(message)
+  ) {
+    return "上游生图账户积分不足，请充值后再试（https://evolink.ai/dashboard/billing）";
+  }
   if (isPlatformTimeoutError(error)) {
     return "AI 深度思考时间过长导致连接超时。请尝试缩减提示词范围，或重新提交分析。";
+  }
+  if (/参考人像|EvoLink edit|封面无有效 URL|套裝生图失败|套装生图失败/i.test(message)) {
+    return "套装生图失败，请稍后重试；若上传了人像参考，也可先不带参考图再试";
   }
   return "任务执行失败，请稍后重试。";
 }

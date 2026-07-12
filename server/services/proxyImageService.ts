@@ -30,6 +30,7 @@ import {
   isEvolinkModerationFailure,
   postEvolinkGptImage2AndUpload,
 } from "./evolinkGptImage2.js";
+import { isEvolinkInsufficientQuotaError } from "./evolinkChatModel.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -944,10 +945,10 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     .filter(Boolean)
     .slice(0, 16);
 
-  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal（已移除 Vertex）。有参考人像时仅 EvoLink。
+  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力，含 edit 换脸）→ 失败后 OhMyGPT → fal（无参考图降级）。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · 仅 EvoLink` : "顺序 EvoLink → OhMyGPT → fal"}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · 优先 EvoLink，失败降级无参考` : "顺序 EvoLink → OhMyGPT → fal"}…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -1166,26 +1167,35 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       }
       appendImageFlowLog(
         L,
-        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 本条失败（可免费补发）",
+        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 降级为无参考图文生图（套装可继续，脸锁可能丢失）",
+      );
+    } else if (hasRef) {
+      const quotaHint = isEvolinkInsufficientQuotaError(402, String(evoErr.message || ""))
+        ? "·上游积分不足402"
+        : "";
+      appendImageFlowLog(
+        L,
+        `[单帧·换脸] EvoLink edit 未出图（非审核${quotaHint}·${String(evoErr.message || "unknown").slice(0, 100)}）→ 降级无参考备援，避免套装整单失败`,
       );
     }
     appendImageFlowLog(L, "[单帧·主力] EvoLink 无图 → 评估 fallback");
   }
 
-  // 换脸 / 换人（edit 模式）只走 EvoLink：OhMyGPT/fal 封装不保证支持 image_urls，避免 fallback 出无脸错图。
+  // 有参考人像时优先 EvoLink edit；失败后仍走 OhMyGPT/fal 文生图降级（无法保脸，但优于整单「封面无有效 URL」）。
+  // 降级须去掉 REFERENCE PERSON edit 指令（无 image_urls 时该指令只会干扰）。
+  const fallbackPrompt = withProVisual;
   if (hasRef) {
     appendImageFlowLog(
       L,
-      "[单帧·换脸] 参考人像路径仅 EvoLink；EvoLink 未出图 → 本条失败（可免费补发重试），不走 OhMyGPT/fal 以免丢失人像",
+      "[单帧·换脸] 进入无参考图降级链 OhMyGPT → fal（人像锁可能丢失；审核拦截已在上方快速失败）",
     );
-    return null;
   }
 
   appendImageFlowLog(
     L,
     `[单帧·备援1] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT}`,
   );
-  const fromOhm = await postGptImage2AndUpload(prompt, options.gcsSubdir, {
+  const fromOhm = await postGptImage2AndUpload(fallbackPrompt, options.gcsSubdir, {
     sizes,
     flowLog: L,
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
@@ -1196,7 +1206,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   }
 
   appendImageFlowLog(L, `[单帧·备援2] OhMyGPT 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`);
-  const falSecond = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
+  const falSecond = await postGptImage2ViaFalAndUpload(fallbackPrompt, options.gcsSubdir, options.aspectRatio, L);
   if (falSecond) {
     appendImageFlowLog(L, "[单帧·备援2] fal GPT-IMAGE-2 成功，已落库");
     return falSecond;
@@ -1682,14 +1692,6 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           });
           return fromEvolink;
         }
-        if (refImageUrls.length) {
-          if (isEvolinkModerationFailure(evoErr.message)) {
-            moderationBlocked = true;
-            lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
-            throw lastFailure;
-          }
-          throw new Error("参考人像分镜生成失败（EvoLink edit 模式无备援路径）");
-        }
         if (isEvolinkModerationFailure(evoErr.message)) {
           moderationBlocked = true;
           lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
@@ -1699,14 +1701,25 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           );
           throw lastFailure;
         }
-        appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
+        if (refImageUrls.length) {
+          const quotaHint = isEvolinkInsufficientQuotaError(402, String(evoErr.message || ""))
+            ? "·上游积分不足402"
+            : "";
+          appendImageFlowLog(
+            L,
+            `[2×4·步骤2a·主力] EvoLink edit 未出图（非审核${quotaHint}·${String(evoErr.message || "unknown").slice(0, 120)}）→ 降级无参考 OhMyGPT/fal，避免 3×4/套装整单失败`,
+          );
+        } else {
+          appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
+        }
       }
 
-      if (hasAnyImageRef) {
-        throw new Error("参考人像分镜生成失败");
-      }
-
-      appendImageFlowLog(L, `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`);
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}${
+          hasAnyImageRef ? " · 无参考图降级（脸锁/连贯锁可能丢失）" : ""
+        }`,
+      );
       const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
         sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
         flowLog: L,

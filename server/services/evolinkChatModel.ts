@@ -39,8 +39,8 @@ export function isEvolinkChatModelNotFoundError(status: number, errorText: strin
 
 export function isEvolinkInsufficientQuotaError(status: number, errorText: string): boolean {
   if (status === 402) return true;
-  // OhMyGPT / 各代理常把余额耗尽写成 403/429 或中文「余额/额度」
-  return /insufficient.?quota|insufficient_quota|quota.?exceeded|out of credits|no (?:remaining )?credits|balance.?insufficient|余额不足|额度不足|积分不足|账户余额|billing|payment.?required/i.test(
+  // OhMyGPT / 各代理常把余额耗尽写成 403/429 或中文「余额/额度」；EvoLink 生图常见 "Insufficient credits"
+  return /insufficient.?quota|insufficient.?credits|insufficient_quota|quota.?exceeded|out of credits|no (?:remaining )?credits|pre-deduction failed|balance.?insufficient|余额不足|额度不足|积分不足|账户余额|billing|payment.?required/i.test(
     errorText,
   );
 }

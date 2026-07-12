@@ -45,6 +45,21 @@ describe("evolink error classification", () => {
     expect(toEvolinkChatUserMessage(402, "Insufficient quota")).toMatch(/积分不足/);
   });
 
+  it("detects Insufficient credits wording from EvoLink images API", () => {
+    expect(
+      isEvolinkInsufficientQuotaError(
+        402,
+        "Insufficient credits: Pre-deduction failed: insufficient quota: need 4.3024 credits, available 1.7419 credits",
+      ),
+    ).toBe(true);
+    expect(
+      isEvolinkInsufficientQuotaError(
+        200,
+        "Insufficient credits: Pre-deduction failed",
+      ),
+    ).toBe(true);
+  });
+
   it("auth errors name the correct provider", () => {
     expect(toOpenAiCompatibleChatUserMessage(401, "authentication_error", "OhMyGPT")).toMatch(/OhMyGPT/);
     expect(toOpenAiCompatibleChatUserMessage(401, "invalid or expired token", "Evolink")).toMatch(/EvoLink/);

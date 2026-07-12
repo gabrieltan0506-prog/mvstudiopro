@@ -6,11 +6,15 @@ const INTERNAL_ENGINE_PATTERN =
 export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂时不可用，请稍后重试"): string {
   const text = String(raw || "").trim();
   if (!text) return fallback;
+  // 浏览器层 TypeError：请求未完成（冷启动/链路抖动/代理中断），非 Stage2 业务错误
+  if (/^Failed to fetch$/i.test(text) || /\bFailed to fetch\b|Load failed|NetworkError|ERR_NETWORK|ECONNRESET/i.test(text)) {
+    return "网络中断，请求未到达或响应丢失。请稍后重试；若刚才已确认扣费，先刷新页面看是否已有结果，避免重复扣费";
+  }
   if (/\(401\)|Unauthorized|登录状态已失效|未登录|session.*失效/i.test(text)) {
     return "登录状态已失效，请刷新页面重新登录后再试（分析任务可能仍在后台运行）";
   }
   // EvoLink 积分不足（402）——保留可读提示，便于用户充值
-  if (/积分不足|insufficient.?quota|dashboard\/billing/i.test(text)) {
+  if (/积分不足|insufficient.?quota|insufficient.?credits|pre-deduction failed|dashboard\/billing/i.test(text)) {
     return "上游模型账户积分不足，请充值后再试（https://evolink.ai/dashboard/billing）";
   }
   // 模型 deployment / 上游 404 —— 明确告知非积分问题；全案文案主路径为 OhMyGPT gpt-5.6-sol，失败改走 terra
