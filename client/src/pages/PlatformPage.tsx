@@ -2179,16 +2179,17 @@ export default function PlatformPage() {
   ]);
 
   const handleConfirmSkillQaImage = useCallback(async () => {
-    const prompt = skillQaImageOffer?.suggestedPrompt?.trim();
-    if (!prompt) return;
+    const offer = skillQaImageOffer;
+    const prompt = offer?.suggestedPrompt?.trim();
+    if (!offer || !prompt) return;
     if (!isAuthenticated) {
       toast.error("请先登录");
       return;
     }
-    const cost = skillQaImageOffer.creditCost;
+    const cost = offer.creditCost;
     const ok = window.confirm(
       `确认生成单页图？将扣除 ${cost} 积分${
-        skillQaImageOffer.isFirstImageDiscount ? "（生涯首张·封面九折）" : "（封面原价）"
+        offer.isFirstImageDiscount ? "（生涯首张·封面九折）" : "（封面原价）"
       }。生图会参考下方已勾选的 Skill。`,
     );
     if (!ok) return;
