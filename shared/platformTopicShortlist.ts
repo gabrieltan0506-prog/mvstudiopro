@@ -56,6 +56,8 @@ export const platformGraphicNotePageSchema = z.object({
     "cover",
     "audience_pain",
     "scene",
+    "inventory_index",
+    "detail_card",
     "share_tips",
     "evidence",
     "checklist",
@@ -246,6 +248,12 @@ export const PLATFORM_SKILL_MASTER_READONLY = {
     "选题生成默认 6 条（每条标明 skillsUsed 与 conveyGoal）；超出 6 条按条另计费。勾选后扩写正式文案+可发图文页，避免开盲盒。",
 } as const;
 
+/** 标题像合集/清单/N场 → 走 m1 式总览墙+细卡 */
+export function prefersInventoryGraphicNote(title: string, hook?: string): boolean {
+  const t = `${title} ${hook || ""}`;
+  return /合集|清单|不可错过|N场|\d+\s*场|免费|看展|市集|周末去哪|好去处/.test(t);
+}
+
 export function buildGraphicNotePagesFromBlueprint(bp: {
   title?: string;
   hook?: string;
@@ -260,12 +268,78 @@ export function buildGraphicNotePagesFromBlueprint(bp: {
         .split(/\n+/)
         .map((s) => s.trim())
         .filter((s) => s.length > 8)
-        .slice(0, 6)
+        .slice(0, 8)
     : [];
   const tip1 = chunks[0] || "在这里我先分享一些可立刻用的对照动作，不求一次讲完。";
   const tip2 = chunks[1] || "把场景钉死：什么人、什么时刻、差在哪一口体感。";
   const tip3 = chunks[2] || "收束前给一句可追溯依据，再落到本周能做的小动作。";
   const hookWord = normalizeCommentHook(bp.commentHook || "想要");
+
+  if (prefersInventoryGraphicNote(title, hook)) {
+    return [
+      {
+        pageIndex: 1,
+        role: "cover",
+        headline: hook.slice(0, 28),
+        body: `${title}｜大数字场次或结果钉 + 价值钉（免费/低成本/可对照）`.slice(0, 220),
+      },
+      {
+        pageIndex: 2,
+        role: "audience_pain",
+        headline: "为什么现在值得存",
+        body: tip1.slice(0, 220),
+      },
+      {
+        pageIndex: 3,
+        role: "inventory_index",
+        headline: "编号总览墙",
+        body: (chunks[1] || "① 名称 📍地点 📅窗口 ② … ③ …（可截图）").slice(0, 220),
+      },
+      {
+        pageIndex: 4,
+        role: "detail_card",
+        headline: "细卡① 看点钉子",
+        body: (chunks[2] || "档期｜门槛（免费免约/票价）｜一句量感或稀缺钉子").slice(0, 220),
+      },
+      {
+        pageIndex: 5,
+        role: "detail_card",
+        headline: "细卡② 看点钉子",
+        body: (chunks[3] || "同馆可打包双展/三连展；每卡只钉一个结果").slice(0, 220),
+      },
+      {
+        pageIndex: 6,
+        role: "detail_card",
+        headline: "细卡③ 看点钉子",
+        body: (chunks[4] || "件数/国宝/沉浸空间——数字可截").slice(0, 220),
+      },
+      {
+        pageIndex: 7,
+        role: "share_tips",
+        headline: "在这里我先分享一些",
+        body: tip3.slice(0, 220),
+      },
+      {
+        pageIndex: 8,
+        role: "checklist",
+        headline: "本周可执行清单",
+        body: (chunks[5] || "① 锁定一场/一个动作 ② 记下窗口 ③ 周末对照打卡").slice(0, 220),
+      },
+      {
+        pageIndex: 9,
+        role: "save_reason",
+        headline: "为什么值得收藏",
+        body: "下周还能照着约；收藏>点赞才是工具帖。页数够、栏位齐才有存档价值。",
+      },
+      {
+        pageIndex: 10,
+        role: "cta",
+        headline: `评论区扣「${hookWord}」`,
+        body: `评论「${hookWord}」领取更细对照；主页可约深度交流（不问病史、不做诊疗承诺）。`,
+      },
+    ];
+  }
+
   return [
     { pageIndex: 1, role: "cover", headline: hook.slice(0, 28), body: `适合谁 + 解决什么：${title}` },
     {

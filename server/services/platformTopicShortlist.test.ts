@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGraphicNotePagesFromBlueprint,
   deriveTopicDedupeKey,
   dedupeTopicShortlist,
   ensureAuthorityCiteInCopy,
   normalizeCommentHook,
   normalizeCommentHooksList,
   platformTopicShortlistTotalCredits,
+  prefersInventoryGraphicNote,
   textHasAuthorityCite,
 } from "../../shared/platformTopicShortlist.js";
 
@@ -77,5 +79,19 @@ describe("authority cite", () => {
     });
     expect(r.patched).toBe(true);
     expect(textHasAuthorityCite(r.copywriting)).toBe(true);
+  });
+});
+
+describe("inventory graphic note fallback", () => {
+  it("builds inventory_index + detail_card for 合集 titles", () => {
+    expect(prefersInventoryGraphicNote("上海7月不可错过重磅展览合集，大部分免费")).toBe(true);
+    const pages = buildGraphicNotePagesFromBlueprint({
+      title: "上海7月不可错过重磅展览合集，大部分免费",
+      hook: "28场热门展览",
+      commentHook: "清单",
+    });
+    expect(pages.some((p) => p.role === "inventory_index")).toBe(true);
+    expect(pages.filter((p) => p.role === "detail_card").length).toBeGreaterThanOrEqual(2);
+    expect(pages.length).toBeGreaterThanOrEqual(8);
   });
 });

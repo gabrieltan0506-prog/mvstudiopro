@@ -241,6 +241,7 @@ export function composePlatformImageSkillHints(
   if (on("vivid-anti-boring")) {
     parts.push(
       "【文案出图联动】前3秒/封面气质须痛点+爽点前置；禁说教上课脸与说明书墙。",
+      "【短视频讲解·m2密度】标题封神/天花板+只推3个；字幕一句一钉；稀缺倒计时+量感数字；收束低成本首选。",
     );
   }
   if (on("graphic-note-rhythm")) {
@@ -250,7 +251,7 @@ export function composePlatformImageSkillHints(
   }
   if (on("xhs-collectible-note")) {
     parts.push(
-      "【高收藏图文】建议8–12页角色齐全；封面人群+痛点+结果；解法写「在这里我先分享一些」；封面少字硬限。",
+      "【高收藏图文·m1密度】8–12页；封面城市+时段+大数字+价值钉；页2编号总览墙；中段detail细卡（档期/门槛/一句钉子）；解法写「在这里我先分享一些」；封面少字硬限。",
     );
   }
   if (on("director-craft")) {
