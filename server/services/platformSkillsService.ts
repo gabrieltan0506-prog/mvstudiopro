@@ -297,4 +297,78 @@ export async function resolvePlatformSkillsPrompt(params: {
   return [skills, blogger].filter(Boolean).join("\n\n");
 }
 
+/**
+ * Stage2 六维：为每条 blueprint 生成**不同赛道**的 Skill Prompt。
+ */
+export async function resolveDiverseDimensionSkillsPrompts(params: {
+  userId: number | string;
+  enabledSkillIds?: string[] | null;
+  allowBloggerTitle?: boolean;
+  routeContext?: string | null;
+  dimensions: Array<{ dimIndex: number; dimName: string; seedText?: string | null }>;
+  sheetKindForDim?: (dimIndex: number) => "graphic" | "video" | "unknown";
+}): Promise<{
+  poolIds: string[];
+  plans: Array<{
+    dimIndex: number;
+    dimName: string;
+    lane: string;
+    selectedIds: string[];
+    prompt: string;
+  }>;
+}> {
+  const all = await listAllPlatformSkillsForUser(params.userId);
+  const { resolveSkillPoolIds, planDiverseBlueprintSkillRoutes } = await import(
+    "../../shared/platformSkillRouter.js"
+  );
+  const { composeBloggerTitlePolicyPrompt } = await import("../../shared/platformNativeVariants.js");
+  const blogger = composeBloggerTitlePolicyPrompt(Boolean(params.allowBloggerTitle));
+
+  const fallbackPoolIds =
+    params.enabledSkillIds == null ? all.filter((s) => s.defaultEnabled).map((s) => s.id) : [];
+  const poolIds = resolveSkillPoolIds({
+    enabledSkillIds: params.enabledSkillIds,
+    fallbackPoolIds,
+  });
+
+  if (poolIds.length === 0) {
+    return {
+      poolIds: [],
+      plans: params.dimensions.map((d) => ({
+        dimIndex: d.dimIndex,
+        dimName: d.dimName,
+        lane: "default",
+        selectedIds: [],
+        prompt: blogger,
+      })),
+    };
+  }
+
+  const routes = planDiverseBlueprintSkillRoutes({
+    poolIds,
+    baseContext: params.routeContext || "",
+    dimensions: params.dimensions,
+    sheetKindForDim: params.sheetKindForDim,
+  });
+
+  const byId = new Map(all.map((s) => [s.id, s]));
+  const plans = routes.map((r) => {
+    const selected = r.selectedIds.map((id) => byId.get(id)).filter(Boolean) as typeof all;
+    const skills = composePlatformSkillsPromptBlock(selected);
+    const prompt = [skills, blogger].filter(Boolean).join("\n\n");
+    console.info(
+      `[platformSkills] diverse dim=${r.dimIndex + 1} lane=${r.lane} skills=${r.selectedIds.join(",")}`,
+    );
+    return {
+      dimIndex: r.dimIndex,
+      dimName: r.dimName,
+      lane: r.lane,
+      selectedIds: r.selectedIds,
+      prompt,
+    };
+  });
+
+  return { poolIds, plans };
+}
+
 export { composePlatformSkillsPromptBlock };

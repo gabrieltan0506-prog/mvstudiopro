@@ -1225,12 +1225,13 @@ const BLUEPRINT_DIMENSIONS: ReadonlyArray<{
   name: string;
   reasoning: "high" | "medium";
 }> = [
+  // 六维互斥赛道时统一 high：风格分化依赖更稳的题材推理（可用 env 全局下调）
   { index: 1, name: "核心专业洞察(Professional Insight)", reasoning: "high" },
-  { index: 2, name: "跨界结合与价值观(Cross-over Value)", reasoning: "medium" },
+  { index: 2, name: "跨界结合与价值观(Cross-over Value)", reasoning: "high" },
   { index: 3, name: "目标受众痛点暴击(Audience Pain Point)", reasoning: "high" },
   { index: 4, name: "个人经历与人设魅力(IP Persona Story)", reasoning: "high" },
   { index: 5, name: "强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）", reasoning: "high" },
-  { index: 6, name: "长尾常青与搜索流量（Long-tail Evergreen & Search Traffic）", reasoning: "medium" },
+  { index: 6, name: "长尾常青与搜索流量（Long-tail Evergreen & Search Traffic）", reasoning: "high" },
 ];
 
 export async function buildPlatformContent(params: {
@@ -1257,9 +1258,17 @@ export async function buildPlatformContent(params: {
   onBlueprintGenerated?: (blueprint: unknown, dimIndex: number) => Promise<void> | void;
   /**
    * /platform 勾选 Skill 拼成的强制 Prompt 块（由 resolvePlatformSkillsPrompt 生成）。
-   * 注入后与软建议冲突时以 Skill 为准。
+   * `skillRouteMode=all` 时整批共用；`auto` 多样时仅作 monetization / 兜底。
    */
   platformSkillsPrompt?: string;
+  /** 用于 auto 多样路由加载 Skill 正文 */
+  userId?: number | string | null;
+  /** 勾选池；与 skillRouteMode=auto 联用 → 六条不同风格赛道 */
+  enabledSkillIds?: string[] | null;
+  allowBloggerTitle?: boolean;
+  skillRouteMode?: "auto" | "all" | null;
+  /** 仅供 Skill 路由打分（看板 headline 等）；不改变 Stage2 user JSON 的 context */
+  skillRouteContext?: string | null;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1442,17 +1451,30 @@ export async function buildPlatformContent(params: {
   const reviewSafe = needsReviewSafeVoice(params.context || "");
   diagnostics.reviewSafeVoice = reviewSafe;
   diagnostics.culturalMaterialDiversity = needsCulturalMaterialDiversity(params.context || "");
-  const skillsBlock = String(params.platformSkillsPrompt || "").trim();
-  diagnostics.platformSkillsPromptChars = skillsBlock.length;
-  const personaConstraint =
+  let skillsBlockShared = String(params.platformSkillsPrompt || "").trim();
+  diagnostics.platformSkillsPromptChars = skillsBlockShared.length;
+  const skillRouteMode = params.skillRouteMode === "all" ? "all" : "auto";
+  const useDiverseSkillRoutes =
+    skillRouteMode === "auto" && params.userId != null && String(params.userId) !== "";
+  diagnostics.skillRouteMode = skillRouteMode;
+  diagnostics.skillRouteDiverse = useDiverseSkillRoutes;
+  const skillRouteContextForDims = String(
+    params.skillRouteContext || params.context || "",
+  ).slice(0, 4000);
+
+  const personaConstraintBase =
     buildKnowledgeMonetizationConstraint(params.context || "") +
     (reviewSafe ? `\n\n${PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE}` : "") +
     (needsCulturalMaterialDiversity(params.context || "")
       ? `\n\n${PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE}`
       : "") +
     `\n\n${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}` +
-    (skillsBlock ? `\n\n${skillsBlock}` : "") +
     `\n\n${PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT}`;
+
+  // all 模式：整批共用一份 Skill；auto 多样模式：Skill 按维注入，此处不塞全文
+  const personaConstraint =
+    personaConstraintBase +
+    (!useDiverseSkillRoutes && skillsBlockShared ? `\n\n${skillsBlockShared}` : "");
 
   const douyinHotForWeixin =
     (Array.isArray(dynamicDecisionChain)
@@ -1680,6 +1702,67 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
   const systemContent = String(structuredStage2Messages.find((m) => m.role === "system")?.content ?? "");
   const userContent = String(structuredStage2Messages.find((m) => m.role === "user")?.content ?? "");
 
+  /** 六维各自 Skill Prompt（auto 多样）；key = 0-based dimIndex */
+  const skillsPromptByDim = new Map<number, { lane: string; prompt: string }>();
+  if (useDiverseSkillRoutes) {
+    try {
+      const { resolveDiverseDimensionSkillsPrompts } = await import("./services/platformSkillsService.js");
+      const seeds = Array.isArray((handoff as { contentSeeds?: unknown } | null)?.contentSeeds)
+        ? ((handoff as { contentSeeds: Array<{ title?: string; hook?: string }> }).contentSeeds || [])
+        : [];
+      const diverse = await resolveDiverseDimensionSkillsPrompts({
+        userId: params.userId!,
+        enabledSkillIds: params.enabledSkillIds,
+        allowBloggerTitle: Boolean(params.allowBloggerTitle),
+        routeContext: skillRouteContextForDims,
+        dimensions: BLUEPRINT_DIMENSIONS.map((d, i) => ({
+          dimIndex: i,
+          dimName: d.name,
+          seedText: [seeds[i]?.title, seeds[i]?.hook].filter(Boolean).join(" "),
+        })),
+        sheetKindForDim: (dimIndex) =>
+          dimIndex === 2 || dimIndex === 3 || dimIndex === 5 ? "graphic" : "video",
+      });
+      for (const p of diverse.plans) {
+        skillsPromptByDim.set(p.dimIndex, { lane: p.lane, prompt: p.prompt });
+      }
+      diagnostics.skillRouteLanes = diverse.plans.map((p) => ({
+        dim: p.dimIndex + 1,
+        lane: p.lane,
+        skillCount: p.selectedIds.length,
+      }));
+      const specialtyLanes = diverse.plans
+        .map((p) => p.lane)
+        .filter((l) => l !== "default");
+      diagnostics.skillRouteSpecialtyUnique = new Set(specialtyLanes).size;
+    } catch (e) {
+      console.warn(
+        "[buildPlatformContent] diverse skill route failed, fallback shared:",
+        e instanceof Error ? e.message : e,
+      );
+      diagnostics.skillRouteDiverse = false;
+      if (!skillsBlockShared && params.userId != null && String(params.userId) !== "") {
+        try {
+          const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
+          skillsBlockShared = await resolvePlatformSkillsPrompt({
+            userId: params.userId,
+            enabledSkillIds: params.enabledSkillIds,
+            allowBloggerTitle: Boolean(params.allowBloggerTitle),
+            routeContext: skillRouteContextForDims,
+            sheetKind: "unknown",
+            skillRouteMode: "auto",
+          });
+          diagnostics.platformSkillsPromptChars = skillsBlockShared.length;
+        } catch (e2) {
+          console.warn(
+            "[buildPlatformContent] shared skill fallback also failed:",
+            e2 instanceof Error ? e2.message : e2,
+          );
+        }
+      }
+    }
+  }
+
   /**
    * 為單一維度生成一條 blueprint。
    * Prompt 告知 LLM 只輸出這個維度的方案，格式：`{ "blueprint": { ...fields } }`。
@@ -1745,11 +1828,18 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
     const formatHint = preferGraphicNote
       ? `本维度 **优先 format=「图文」**（小红书笔记）；detailedScript 用 [封面]/[图2]…[图N] 攻略大纲；platformVariants.xiaohongshu.format=图文、reuseMainCopy=false。`
       : `本维度可用短视频；若更适合收藏型清单/避坑笔记，也可选图文。`;
-    // Per-dimension system override: tell LLM to output exactly ONE blueprint for this dimension
+    const dimSkill = skillsPromptByDim.get(dimIndex);
+    const styleDirective = dimSkill
+      ? `\n【本条风格赛道·强制】primaryLane=${dimSkill.lane}。须严格按下方挂载 Skill 的叙事/文案/变现纪律写作；**禁止**写成其他赛道口吻（例如本条是 forensic 就不要做成配料打脸或器官拟人复读；本条是 fmcg 就不要做成法医猎奇）。同批其他维度会走不同赛道，本条只要自己的风格鲜明。\n${dimSkill.prompt}\n`
+      : skillsBlockShared
+        ? `\n${skillsBlockShared}\n`
+        : "";
+
     const dimSystemSuffix = `
 
 【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
 【体裁】${formatHint}
+${styleDirective}
 輸出格式必須嚴格為：
 { "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（≥400字分鏡或图文大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
 不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
@@ -6800,6 +6890,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         strategicDashboard: z.record(z.string(), z.any()).optional(),
         stage2LlmMode: zPlatformCopyLlmModeInput,
         supervisorToken: z.string().max(512).optional(),
+        enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+        allowBloggerTitle: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const t0 = Date.now();
@@ -6855,6 +6947,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           type Stage2RaceDone = { kind: "done"; data: z.infer<typeof platformContentResponseSchema>; diagnostics: Record<string, unknown> };
           type Stage2RaceTimeout = { kind: "timeout" };
+          const syncDash = input.strategicDashboard as Record<string, unknown> | undefined;
+          const syncSkillRouteContext = [
+            input.context,
+            typeof syncDash?.headline === "string" ? syncDash.headline : "",
+            typeof syncDash?.subheadline === "string" ? syncDash.subheadline : "",
+            typeof syncDash?.personaSummary === "string" ? syncDash.personaSummary : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+            .slice(0, 4000);
+
           const raced = await Promise.race([
             buildPlatformContent({
               snapshot: input.snapshotSummary,
@@ -6866,6 +6969,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               abortSignal: ctx.clientDisconnected,
               stage1Handoff,
               stage2LlmModeOverride: stage2LlmModeOverride ?? null,
+              userId: ctx.user?.id ?? null,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              skillRouteMode: "auto",
+              skillRouteContext: syncSkillRouteContext,
+              platformSkillsPrompt: "",
             }).then(
               (r): Stage2RaceDone => ({
                 kind: "done",

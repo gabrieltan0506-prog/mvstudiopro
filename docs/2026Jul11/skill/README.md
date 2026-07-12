@@ -49,6 +49,9 @@
 
 出图另走短约束，并**强制封面少字硬限**（coverHeadline 8–14 字、≤2 行），减轻 fallback 模型啰嗦。服务端可用 `skillRouteMode: "all"` 恢复全量（暂无 UI 开关）。
 
+### 2026-07-12i（六维不同风格）
+Stage2 六条 blueprint **并行各调一次 LLM**；`auto` 模式下由 `planDiverseBlueprintSkillRoutes` **预分配互斥 specialty 赛道**（fmcg / forensic / crossover / contrast），再按维注入对应 Skill 全文。同批 specialty 不重复；赛道不足时其余维走 `default`（核心 + batch-arc）。六维 reasoning 默认 **high**。diagnostics 可见 `skillRouteLanes`。
+
 ### 2026-07-12e（b2.pdf 反面：禁读论文式选题）
 - 强化 `cultural-diversity` / `lifestyle-diversity` / `vivid-anti-boring`：人设里的唐诗/爵士是**可用容器不是必交作业**；同批典籍主容器 ≤2；禁「读《》领悟 / 哈佛实验室揭秘」；决策智库 Call B 同步生活化配额。
 

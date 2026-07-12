@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PLATFORM_SKILL_ROUTER_CORE_IDS,
+  planDiverseBlueprintSkillRoutes,
   resolveSkillPoolIds,
   routePlatformSkillIds,
 } from "../../shared/platformSkillRouter.js";
@@ -17,6 +18,15 @@ const FULL_POOL = [
   "contrast-reversal-climax",
   "director-craft",
   "graphic-note-rhythm",
+];
+
+const SIX_DIMS = [
+  { dimIndex: 0, dimName: "专业洞察" },
+  { dimIndex: 1, dimName: "跨界价值观" },
+  { dimIndex: 2, dimName: "痛点暴击" },
+  { dimIndex: 3, dimName: "人设魅力" },
+  { dimIndex: 4, dimName: "强冲突" },
+  { dimIndex: 5, dimName: "长尾常青" },
 ];
 
 describe("routePlatformSkillIds", () => {
@@ -69,9 +79,51 @@ describe("routePlatformSkillIds", () => {
     expect(r.primaryLane).toBe("fmcg");
     expect(r.selectedIds).not.toContain("4season-fmcg-popsci");
     expect(r.selectedIds).toContain("hook-solution-cta");
-    expect(r.selectedIds.every((id) => ["hook-solution-cta", "cover-stop-scroll", "forensic-life-lens"].includes(id))).toBe(
-      true,
-    );
+    expect(
+      r.selectedIds.every((id) =>
+        ["hook-solution-cta", "cover-stop-scroll", "forensic-life-lens"].includes(id),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("planDiverseBlueprintSkillRoutes", () => {
+  it("assigns mutually exclusive specialty lanes across six dims when pool is full", () => {
+    const plans = planDiverseBlueprintSkillRoutes({
+      poolIds: FULL_POOL,
+      baseContext: "哈佛医学院人设的生活方式内容周计划",
+      dimensions: SIX_DIMS,
+    });
+    expect(plans).toHaveLength(6);
+    const specialty = plans.map((p) => p.lane).filter((l) => l !== "default");
+    expect(new Set(specialty).size).toBe(specialty.length);
+    expect(new Set(specialty)).toEqual(new Set(["crossover", "forensic", "fmcg", "contrast"]));
+    expect(plans[0]!.selectedIds).toContain("crossover-popsci");
+    expect(plans[1]!.selectedIds).toContain("forensic-life-lens");
+    expect(plans[2]!.selectedIds).toContain("4season-fmcg-popsci");
+    expect(plans[3]!.selectedIds).toContain("contrast-reversal-climax");
+  });
+
+  it("lets strong context claim first free specialty without duplicating", () => {
+    const plans = planDiverseBlueprintSkillRoutes({
+      poolIds: FULL_POOL,
+      baseContext: "雪糕配料表打脸与添加糖科普",
+      dimensions: SIX_DIMS,
+    });
+    const fmcgDims = plans.filter((p) => p.lane === "fmcg");
+    expect(fmcgDims).toHaveLength(1);
+    const specialty = plans.map((p) => p.lane).filter((l) => l !== "default");
+    expect(new Set(specialty).size).toBe(specialty.length);
+  });
+
+  it("falls back to default when specialty skills absent from pool", () => {
+    const plans = planDiverseBlueprintSkillRoutes({
+      poolIds: [...PLATFORM_SKILL_ROUTER_CORE_IDS, "batch-arc-engagement"],
+      baseContext: "安全带保命与雪糕配料",
+      dimensions: SIX_DIMS,
+    });
+    expect(plans.every((p) => p.lane === "default")).toBe(true);
+    expect(plans[0]!.selectedIds).toContain("batch-arc-engagement");
   });
 });
 
@@ -81,6 +133,9 @@ describe("resolveSkillPoolIds", () => {
     expect(resolveSkillPoolIds({ enabledSkillIds: [], fallbackPoolIds: ["b"] })).toEqual([]);
   });
   it("falls back when enabledSkillIds is null", () => {
-    expect(resolveSkillPoolIds({ enabledSkillIds: null, fallbackPoolIds: ["x", "y"] })).toEqual(["x", "y"]);
+    expect(resolveSkillPoolIds({ enabledSkillIds: null, fallbackPoolIds: ["x", "y"] })).toEqual([
+      "x",
+      "y",
+    ]);
   });
 });
