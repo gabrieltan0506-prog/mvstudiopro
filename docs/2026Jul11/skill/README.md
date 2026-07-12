@@ -36,6 +36,19 @@
 ### 2026-07-12h（法医视角）
 - **`forensic-life-lens`**：死因侧逻辑 → 还怎么活；10 条放松向菜单；禁血腥猎奇与命案复盘
 
+### Skill 自动路由总管（勾选 ≠ 全灌）
+生成时**默认 `auto`**：UI 勾选只表示**允许池**；[`shared/platformSkillRouter.ts`](../../shared/platformSkillRouter.ts) 按选题上下文从池中挑子集再注入。
+
+| 组 | id |
+|----|-----|
+| 核心（池内必选） | hook-solution-cta · review-safe-voice · vivid-anti-boring · cover-stop-scroll · platform-native · cultural-diversity · lifestyle-diversity |
+| 赛道 fmcg | 4season + label-debunk + authority + monetize |
+| 赛道 forensic | forensic-life-lens + authority |
+| 赛道 crossover / contrast | 对应单 Skill |
+| 体裁 | graphic → graphic-note-rhythm；video → director-craft |
+
+出图另走短约束，并**强制封面少字硬限**（coverHeadline 8–14 字、≤2 行），减轻 fallback 模型啰嗦。服务端可用 `skillRouteMode: "all"` 恢复全量（暂无 UI 开关）。
+
 ### 2026-07-12e（b2.pdf 反面：禁读论文式选题）
 - 强化 `cultural-diversity` / `lifestyle-diversity` / `vivid-anti-boring`：人设里的唐诗/爵士是**可用容器不是必交作业**；同批典籍主容器 ≤2；禁「读《》领悟 / 哈佛实验室揭秘」；决策智库 Call B 同步生活化配额。
 

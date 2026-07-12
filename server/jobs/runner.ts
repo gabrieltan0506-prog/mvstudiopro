@@ -1239,10 +1239,25 @@ async function processPlatformJob(
             const enabledSkillIds = Array.isArray(rawIds)
               ? rawIds.map(String).filter(Boolean).slice(0, 24)
               : null;
+            const dash = strategicDashboard as Record<string, unknown> | undefined;
+            const routeContext = [
+              context,
+              typeof dash?.headline === "string" ? dash.headline : "",
+              typeof dash?.subheadline === "string" ? dash.subheadline : "",
+              typeof dash?.personaSummary === "string" ? dash.personaSummary : "",
+              typeof (snapshotSummary as { topic?: unknown })?.topic === "string"
+                ? (snapshotSummary as { topic: string }).topic
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n")
+              .slice(0, 4000);
             return await resolvePlatformSkillsPrompt({
               userId: jobUserId ?? 0,
               enabledSkillIds,
               allowBloggerTitle: Boolean((params as { allowBloggerTitle?: unknown }).allowBloggerTitle),
+              routeContext,
+              sheetKind: "unknown",
             });
           } catch (e) {
             console.warn(

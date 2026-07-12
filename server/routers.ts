@@ -4354,10 +4354,21 @@ export const appRouter = router({
         const platformSkillsPrompt = await (async () => {
           try {
             const { resolvePlatformSkillsPrompt } = await import("./services/platformSkillsService.js");
+            const pick = input.pick;
+            const routeContext = [input.topic, pick?.title, pick?.structure]
+              .filter(Boolean)
+              .join("\n")
+              .slice(0, 4000);
+            const sheetKind =
+              /图文|笔记|小红书/.test(`${pick?.title || ""}\n${pick?.structure || ""}`)
+                ? ("graphic" as const)
+                : ("video" as const);
             return await resolvePlatformSkillsPrompt({
               userId: ctx.user.id,
               enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
               allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              routeContext,
+              sheetKind,
             });
           } catch {
             return "";
@@ -5693,6 +5704,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const base = String(input.compositeScriptContext || "").trim();
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+            {
+              routeContext: `${finalTopicHook}\n${enrichedContext}\n${input.compositeTitle || ""}\n${base.slice(0, 1200)}`,
+              sheetKind:
+                input.compositeKind === "graphic" || /图文/.test(String(finalFormatForPipeline || ""))
+                  ? "graphic"
+                  : "video",
+              forceCoverShortCopy: true,
+            },
           );
           if (!hints.trim()) return base;
           return `${hints}\n\n${base}`.slice(0, 12000);
@@ -6119,6 +6138,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const base = String(input.scriptContext || "").trim();
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+            {
+              routeContext: `${input.title || ""}\n${base.slice(0, 2000)}`,
+              sheetKind:
+                input.kind === "xiaohongshu_2x4" ||
+                input.kind === "single_page_knowledge_card" ||
+                String(input.kind || "").includes("graphic")
+                  ? "graphic"
+                  : "video",
+              forceCoverShortCopy: true,
+            },
           );
           if (!hints.trim()) return base;
           return `${hints}\n\n${base}`.slice(0, 12000);
@@ -6714,6 +6743,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 userId,
                 enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
                 allowBloggerTitle: Boolean(input.allowBloggerTitle),
+                routeContext: `${input.optimizationBrief || ""}\n${String(input.sourceText || "").slice(0, 2500)}`,
+                sheetKind: "unknown",
               });
             } catch {
               return "";
