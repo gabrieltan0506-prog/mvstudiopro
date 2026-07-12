@@ -1,6 +1,6 @@
 /**
  * 平台中文输出统一为**大陆简体（zh-Hans）**。
- * Gemini / Nano Banana 2 常默认繁体；文案后处理 + 出图 prompt 锁一起兜底。
+ * Gemini / Nano Banana 2 / GPT-Image-2 常默认繁体；文案后处理 + 出图 prompt 锁一起兜底。
  */
 import * as OpenCC from "opencc-js";
 
@@ -21,7 +21,7 @@ export const GEMINI_COPY_SIMPLIFIED_ZH_LOCK = `【语言硬约束 · CRITICAL】
 3. 若内部思考或检索结果含繁体，输出前必须先转为简体；专有名词亦优先用大陆通行写法。
 4. JSON 字段内的全部中文字符同样必须是简体。`;
 
-/** Nano Banana 2 / Vertex 出图：屏内汉字简体锁（英文指令对图像模型更稳）。 */
+/** 出图（封面 / 分镜 / 图文 / NB2 / GPT-Image-2）：屏内汉字简体锁。 */
 export const NANO_BANANA2_SIMPLIFIED_ZH_LOCK = `
 LANGUAGE LOCK (CRITICAL — ON-IMAGE TEXT):
 - All Chinese glyphs rendered in the image MUST be Mainland **Simplified Chinese** (简体中文 / zh-Hans).
@@ -30,12 +30,12 @@ LANGUAGE LOCK (CRITICAL — ON-IMAGE TEXT):
 - Keep English labels only when the brief explicitly requires English; Chinese body text stays Simplified.
 `.trim();
 
-/** 把简体锁追加到生图 prompt，并把已有汉字尽量转成简体。 */
+const IMAGE_PROMPT_SIMP_MARKER = "LANGUAGE LOCK (CRITICAL — ON-IMAGE TEXT)";
+
+/** 把简体锁追加到生图 prompt，并把已有汉字尽量转成简体（封面/分镜/图文/任意引擎通用）。 */
 export function enforceSimplifiedChineseImagePrompt(prompt: string): string {
   const base = toSimplifiedChinese(String(prompt || "").trim());
   if (!base) return NANO_BANANA2_SIMPLIFIED_ZH_LOCK;
-  if (base.includes("Simplified Chinese") && base.includes("简体中文")) {
-    return base;
-  }
+  if (base.includes(IMAGE_PROMPT_SIMP_MARKER)) return base;
   return `${base}\n\n${NANO_BANANA2_SIMPLIFIED_ZH_LOCK}`;
 }
