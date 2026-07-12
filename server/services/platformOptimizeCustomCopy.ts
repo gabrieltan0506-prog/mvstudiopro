@@ -146,7 +146,7 @@ async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" 
 
 async function invokeOptimizeViaGeminiFlash(userBlock: string): Promise<string> {
   const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(`[optimizeCustomCopy] GPT-5.6 失败 → Gemini Flash fallback · model=${geminiModel}`);
+  console.warn(`[optimizeCustomCopy] GPT-5.6 失败 → Gemini 3.1 Pro fallback · model=${geminiModel}`);
   return (
     await callGemini35FlashCopywriting({
       taskSystemInstruction: SYSTEM_PROMPT,
@@ -201,7 +201,7 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
   } catch (err) {
     lastError = err;
     console.warn(
-      "[optimizeCustomCopy] Gemini Flash fallback 失败:",
+      "[optimizeCustomCopy] Gemini 3.1 Pro fallback 失败:",
       err instanceof Error ? err.message.slice(0, 240) : err,
     );
   }

@@ -33,16 +33,16 @@ export async function callDecisionIntelGpt55StructuredJson(params: {
     });
     const text = extractFirstChoicePlainText(response).trim();
     if (text) return text;
-    console.warn("[decisionIntel] GPT-5.6 空回 → Gemini Flash fallback");
+    console.warn("[decisionIntel] GPT-5.6 空回 → Gemini 3.1 Pro fallback");
   } catch (e) {
     console.warn(
-      "[decisionIntel] GPT-5.6 failed → Gemini Flash fallback:",
+      "[decisionIntel] GPT-5.6 failed → Gemini 3.1 Pro fallback:",
       e instanceof Error ? e.message : e,
     );
   }
 
   const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(`[decisionIntel] Gemini Flash fallback · model=${geminiModel}`);
+  console.warn(`[decisionIntel] Gemini 3.1 Pro fallback · model=${geminiModel}`);
   return callGemini35FlashCopywriting({
     taskSystemInstruction: params.taskSystemInstruction,
     userText: params.userText,

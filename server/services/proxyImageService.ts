@@ -856,7 +856,7 @@ type NanoBanana2FromPromptRole =
   | "optional_fallback_after_openai"
   | "platform_vertex_cover_primary";
 
-/** GPT-IMAGE-2 失敗後：Vertex **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· **4K**。 */
+/** GPT-IMAGE-2 失敗後：Vertex **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· **2K**。模型不變，僅分辨率。 */
 async function fallbackNanoBanana2FromPrompt(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
@@ -899,7 +899,7 @@ async function fallbackNanoBanana2FromPrompt(
     }
     const vertexResult = await generateGeminiImage({
       prompt: String(prompt || "").trim(),
-      quality: "4k",
+      quality: "2k",
       aspectRatio,
       personGeneration: "ALLOW_ADULT",
       imagePersistFlowLog: L,
@@ -920,7 +920,7 @@ async function fallbackNanoBanana2FromPrompt(
     }
     appendImageFlowLog(
       L,
-      `${logTag} Nano Banana 2 成功 · 4K · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}${
+      `${logTag} Nano Banana 2 成功 · 2K · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}${
         refUrl ? " · 已锁参考人像" : ""
       }`,
     );
@@ -1321,13 +1321,13 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
   const refUrl = String(options.referenceImageUrl || "").trim();
   appendImageFlowLog(
     L,
-    `[2×4·NB2主路径] Vertex Nano Banana 2 · 4K · 16:9 · prompt≈${options.promptForImage.length} chars${
+    `[2×4·NB2主路径] Vertex Nano Banana 2 · 2K · 16:9 · prompt≈${options.promptForImage.length} chars${
       refUrl ? " · 携带参考人像脸锁" : ""
     }（已跳过 OhMyGPT / fal；切回 GPT 链：请求 compositeImageEngine=gpt_image2 或 PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2）`,
   );
   const vertexResult = await generateGeminiImage({
     prompt: options.promptForImage,
-    quality: "4k",
+    quality: "2k",
     aspectRatio: "16:9",
     personGeneration: "ALLOW_ADULT",
     imagePersistFlowLog: L,
