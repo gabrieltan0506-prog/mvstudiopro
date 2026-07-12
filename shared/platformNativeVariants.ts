@@ -232,6 +232,26 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
       "【跨界科普出图】主体可拟人；电影感机制透视+生活B-roll对照；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
     );
   }
+  if (on("4season-fmcg-popsci") || on("summer-fmcg-popsci") || on("label-debunk-copy")) {
+    parts.push(
+      "【四季畅销品轻科普出图】当季SKU食欲/开封特写+配料或营养成分表可读高亮；看不清配料则拍营养成分/宣称正反分屏；量感倒糖盐；禁诊疗恐吓。",
+    );
+  }
+  if (on("food-popsci-lens") || on("4season-fmcg-popsci")) {
+    parts.push(
+      "【食品科普运镜】开封/咬入特写→包装信息圈点→工业或量感→体感生活情景→货架收束；成稿禁导演名/片名。",
+    );
+  }
+  if (on("authority-cite-endorsement")) {
+    parts.push(
+      "【权威背书出图】最多一张简洁信息卡（指南名+一句阈值）；勿伪造红头文件或论文截图墙。",
+    );
+  }
+  if (on("fmcg-popsci-monetize")) {
+    parts.push(
+      "【科普变现出图】末帧可留评论关键词/清单预告，勿小黄车与疗效承诺画面；半成品缺口视觉优先于卖货。",
+    );
+  }
   if (parts.length === 0) return "";
   return `【Platform 出图短约束】\n${parts.join("\n")}`;
 }

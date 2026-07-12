@@ -30,8 +30,16 @@
 
 ### 其余内置（未大改，仍默认开）
 
-`director-craft` · `cultural-diversity` · `lifestyle-diversity` · `hook-solution-cta` · `platform-native` · `review-safe-voice` · `blue-ocean-natural` · `batch-arc-engagement`
+`director-craft` · `cultural-diversity` · `lifestyle-diversity` · `hook-solution-cta` · `platform-native` · `review-safe-voice` · `blue-ocean-natural` · `batch-arc-engagement` · `vivid-anti-boring`
 
+### 2026-07-12 畅销品轻科普（改版 f）
+
+| 文件 | id | 要点 |
+|------|-----|------|
+| `4season-fmcg-popsci.md` | 4season-fmcg-popsci | 四季畅销品弧+运镜合一（取代 summer / food-lens） |
+| `label-debunk-copy.md` | label-debunk-copy | 何时用；标签盲区替代证据 |
+| `authority-cite-endorsement.md` | authority-cite-endorsement | 权威背书：食品+睡眠运动心理宣称等 |
+| `fmcg-popsci-monetize.md` | fmcg-popsci-monetize | 打脸科普→清单线索→顾问/课/沙龙 |
 ---
 
 ## 代码改动摘要（按主题）
