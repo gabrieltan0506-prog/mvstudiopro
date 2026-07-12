@@ -118,7 +118,7 @@ export async function generatePlatformTopicShortlist(params: {
 4. 至少一半 formatHint=图文；赛道尽量拉开（参考 laneHints）。
 5. 禁止读论文式标题；禁止空壳「博主」自称（除非政策允许）。
 6. 对外解法话术用「在这里我先分享一些」，禁止写「半成本/半成品解法」刺耳词。
-7. 图文向选题对标高赞合集笔记（m1）：封面「城市+时段+大数字场次+价值钉（免费/低成本）」；总览墙可截；细卡含档期/门槛/一句钉子。短视频向对标高赞讲解（m2）：只推3个天花板级切口；字幕一句一钉；稀缺倒计时+量感数字；收束低成本首选。
+7. 图文向选题对标高赞合集笔记（m1）：封面「城市+时段+大数字场次+价值钉」；总览墙+细卡；**笔记要丰富（规划 8–12 页）**。短视频向对标 m2：只推3个；字幕一句一钉；**成片约 1.5–2 分钟**，不要规划成长片。
 8. 要有生活画面，不是方法论课；禁止读论文式标题。
 输出：{ "topics": [ ...恰好${targetCount}条 ] }`;
 
@@ -230,16 +230,23 @@ export async function expandPlatformTopicPicks(params: {
         skillIds: pick.skillsUsed,
         allowBloggerTitle: params.allowBloggerTitle,
       });
+      const isVideo = pick.formatHint === "短视频";
       const system = `你是平台执行文案编辑。只输出一个 JSON 对象：{ "blueprint": { ... } }。
 必须遵守挂载 Skill。本条赛道 primaryLane=${pick.primaryLane}。
 硬约束：
-- title/hook/copywriting(≥200字)/detailedScript(≥400字或图文大纲)/format/suitablePlatforms/actionableSteps/publishingAdvice/highlightKeywords/commentHooks/graphicNotePages
+- title/hook/copywriting/detailedScript/format/suitablePlatforms/actionableSteps/publishingAdvice/highlightKeywords/commentHooks/graphicNotePages
 - format 优先用「${pick.formatHint}」
 - commentHooks：1–3 个，每个≤3个汉字生活词（想要/求带/慢生活…），禁止「预约诊断通话」整句
 - 对外写法用「在这里我先分享一些」，禁止「半成本/半成品解法」刺耳词
-- graphicNotePages：8–12 页，每页含 pageIndex,role,headline,body；role 可用 cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta
-- 合集/清单/看展/市集向：必须含 inventory_index + 至少 2 张 detail_card（对标 m1：总览墙+细卡）
-- 短视频：detailedScript 按 m2 写字幕钉子序列（开场杀伤句→稀缺/量感→低成本收束），禁止说明书墙
+- **体裁分工（重要）**：短视频口播要短；图文笔记要丰富。不要用短视频篇幅去砍笔记，也不要用笔记密度去拉长视频。
+${
+  isVideo
+    ? `- 【短视频时长】成片目标 **1分半～2分钟**（时间轴建议落在 00:00–01:30～00:00–02:00）。detailedScript 用时间轴；口播合计约 220–380 字口语；字幕钉子 8–12 句封顶。按 m2：开场杀伤句→稀缺/量感→低成本收束。禁止说明书墙、禁止为凑 ≥400 字注水。
+- graphicNotePages：可给 6–8 页精简提纲（细节留给图文选题）；仍须含 cover + cta`
+    : `- 【图文笔记】copywriting ≥200 字可发正文；detailedScript 用 [封面]/[图N] 大纲且信息密（对标 m1），**不要**写成口播时间轴。
+- graphicNotePages：**必须 8–12 页**，每页含 pageIndex,role,headline,body；role 可用 cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta
+- 合集/清单/看展/市集向：必须含 inventory_index + 至少 2 张 detail_card（总览墙+细卡）`
+}
 - 若赛道为 fmcg 或正文做畅销品/标签科普：正文必须出现一句可追溯权威（如按《中国居民膳食指南（2022）》…）
 - 去临床恐吓；强监管赛道用优化表达
 conveyGoal（须兑现）：${pick.conveyGoal}`;

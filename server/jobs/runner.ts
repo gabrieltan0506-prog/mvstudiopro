@@ -930,7 +930,7 @@ async function processPlatformJob(
     const stage1SystemInstruction = `你是一位顶级内容创作导演兼文案大师，你的产出标准绝对不接受大纲、空洞建议或模糊描述。
 
 【铁律】——违反任何一条即视为失败，必须重写：
-1. detailedScript 必须使用精确时间轴格式，视频方案每段格式：「[00:00-00:05] 画面：镜头景别+运镜+道具+演员动作。口播：逐字文案。情绪：氛围描述。」图文方案每页格式：「[封面] 设计说明+大标题文案。[图2] 图片内容+正文段落。」总字数不得少于400字。
+1. detailedScript：短视频用精确时间轴，成片约 **1分半～2分钟**（建议落在 00:00–01:30～00:00–02:00），口播勿为凑字注水；每段格式「[00:00-00:05] 画面：…口播：…情绪：…」。图文用「[封面]…[图N]…」**8–12页丰富大纲**。图文总信息要密；短视频不要强行 ≥400 字灌水。
 2. copywriting 必须是可直接使用的完整正文，包含开头段落全文（≥60字）+中段内容展开（≥100字）+结尾引导行动（≥40字），总字数不得少于200字。
 3. executionDetails.environmentAndWardrobe 必须说明：拍摄地点+背景布置+创作者服装要求+必备道具（≥50字）。
 4. executionDetails.lightingAndCamera 必须说明：使用哪种光源+布光方式+机位角度+焦距建议+是否手持（≥50字）。
@@ -954,7 +954,7 @@ async function processPlatformJob(
             context,
             windowDays,
             snapshotData: snapshotSummary,
-            task: "必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。在 contentBlueprints 数组中，务必精确生成 5 个深度内容方案/选题，切勿少于 5 个；须严格结合用户 context 所描述的真实人设（职业、身份、兴趣、爱好、专长等），从以下 5 个维度各出 1 个独特选题：①核心专业洞察 ②跨界结合与价值观 ③目标受众痛点暴击 ④个人经历与人设魅力 ⑤多场景热点与生动选题（结合趋势与热点改写适配本人设，场景宜多元，避免无依据时扎堆书房客厅）。输出严格合法 JSON，必须包含以下字段：contentBlueprints（必须恰好 5 条内容方案数组，每项含：title（选题标题）/format（「短视频」或「图文」）/hook（≥30字开场钩子，必须是让用户停下来的具体一句话）/copywriting（≥200字逐字文案，包含完整开头段落/中段展开/结尾引导行动）/suitablePlatforms（适合平台数组）/actionableSteps（至少3个落地步骤，字符串数组）/detailedScript（精确时间轴拍摄脚本：视频格式用「[00:00-00:05] 画面：...口播：...情绪：...」格式；图文格式用「[封面] 设计：... [图2] 文案：...」格式，≥400字）/publishingAdvice（发布时机与平台设置，包含具体hashtag）/executionDetails（对象，必须包含environmentAndWardrobe（拍摄环境+服装道具，≥50字）/lightingAndCamera（灯光+机位设置，≥50字）/stepByStepScript（逐步脚本数组，每步「[时段]动作描述」格式，至少5步））/highlightKeywords（热点关键字数组，格式如「[高亮:职场霸凌]」）） 和 monetizationLanes（1-2条变现路径数组，每项含：title/fitReason/offerShape/revenueModes（数组）/firstValidation）。第一个字符必须是 {，最后必须是 }。",
+            task: "必须严格输出纯 JSON 格式，不要包含任何 markdown 代码块标记或前后缀说明文字。在 contentBlueprints 数组中，务必精确生成 5 个深度内容方案/选题，切勿少于 5 个；须严格结合用户 context 所描述的真实人设（职业、身份、兴趣、爱好、专长等），从以下 5 个维度各出 1 个独特选题：①核心专业洞察 ②跨界结合与价值观 ③目标受众痛点暴击 ④个人经历与人设魅力 ⑤多场景热点与生动选题（结合趋势与热点改写适配本人设，场景宜多元，避免无依据时扎堆书房客厅）。输出严格合法 JSON，必须包含以下字段：contentBlueprints（必须恰好 5 条内容方案数组，每项含：title（选题标题）/format（「短视频」或「图文」）/hook（≥30字开场钩子，必须是让用户停下来的具体一句话）/copywriting（≥200字逐字文案，包含完整开头段落/中段展开/结尾引导行动）/suitablePlatforms（适合平台数组）/actionableSteps（至少3个落地步骤，字符串数组）/detailedScript（精确时间轴拍摄脚本：短视频格式用「[00:00-00:05] 画面：...口播：...情绪：...」，成片约1.5–2分钟勿注水；图文格式用「[封面] 设计：... [图2] 文案：...」8–12页丰富大纲）/publishingAdvice（发布时机与平台设置，包含具体hashtag）/executionDetails（对象，必须包含environmentAndWardrobe（拍摄环境+服装道具，≥50字）/lightingAndCamera（灯光+机位设置，≥50字）/stepByStepScript（逐步脚本数组，每步「[时段]动作描述」格式，至少5步））/highlightKeywords（热点关键字数组，格式如「[高亮:职场霸凌]」）） 和 monetizationLanes（1-2条变现路径数组，每项含：title/fitReason/offerShape/revenueModes（数组）/firstValidation）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
       ],
