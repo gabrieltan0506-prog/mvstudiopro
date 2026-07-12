@@ -58,11 +58,11 @@ export const PLATFORM_USE_GOOGLE_GCP = true;
 export const PLATFORM_WEEKEND_GCP_ESCAPE = false;
 
 /**
- * Vertex **Nano Banana 2**（`generateGeminiImage` 生圖兜底）代碼默認關閉。
- * 路徑恢復可用時：設環境變數 `PLATFORM_VERTEX_NANO_BANANA2=1`，或改此常數為 `true`。
- * {@link isPlatformWeekendGcpEscape} 為真時仍會關閉（與本項無關的其它 GCP 可繼續用）。
+ * Vertex **Nano Banana 2**（`generateGeminiImage` 生圖兜底）**臨時默認開啟**：GPT-Image-2 失敗後走 NB2。
+ * 關閉：設 `PLATFORM_VERTEX_NANO_BANANA2=0`。
+ * {@link isPlatformWeekendGcpEscape} 為真時仍會關閉。
  */
-export const PLATFORM_VERTEX_NANO_BANANA2_ENABLED = false;
+export const PLATFORM_VERTEX_NANO_BANANA2_ENABLED = true;
 
 /** 是否允許在 GPT-IMAGE-2 失敗後調用 Vertex Nano Banana 2。 */
 export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {

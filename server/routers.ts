@@ -524,9 +524,34 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
 /** Stage 1 / Stage 2 取樣溫度（GPT‑5 系 OpenAI 可能忽略 temperature，见 llm.ts）。 */
 const STAGE2_LLM_TEMPERATURE = 0.8;
 
-/** Stage 1 / Stage 2 / 深度追问：固定 OhMyGPT GPT‑5.6 Sol（忽略 env `PLATFORM_STAGE2_LLM=vertex` 与 UI 历史选项）。 */
+/** Stage 1 / Stage 2 / 深度追问：主路径 OhMyGPT GPT‑5.6 Sol；失败临时 fallback Gemini Flash（`gemini-3-flash-preview`）。 */
 function resolvePlatformCopyLlmMode(_input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
   return "openai";
+}
+
+/** GPT‑5.6 失败后临时改走 Gemini Flash 文案（需 GEMINI_API_KEY）。 */
+async function invokeGeminiFlashCopyFallback(options: {
+  systemInstruction: string;
+  userText: string;
+  abortSignal?: AbortSignal;
+  label?: string;
+}): Promise<string> {
+  const geminiModel = resolvePlatformStage2GeminiModel();
+  console.warn(
+    `[platformCopy] GPT-5.6 失败 → Gemini Flash fallback · model=${geminiModel}${
+      options.label ? ` · ${options.label}` : ""
+    }`,
+  );
+  return callGemini35FlashCopywriting({
+    taskSystemInstruction: options.systemInstruction,
+    userText: options.userText,
+    responseMimeType: "application/json",
+    maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+    temperature: STAGE2_LLM_TEMPERATURE,
+    topP: 0.95,
+    modelName: geminiModel,
+    abortSignal: options.abortSignal,
+  });
 }
 
 /** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（Gemini 3.5 Flash 或 GPT‑5.6 Sol）。 */
@@ -541,20 +566,35 @@ async function invokePlatformStructuredCopyLlm(options: {
   if (options.copyLlmMode === "openai") {
     const modelName = getPlatformStage2OpenAiModel();
     const reasoningEffort = options.reasoningEffortOverride ?? resolvePlatformStage2OpenAiReasoningEffort();
-    const response = await invokeLLM({
-      provider: "openai",
-      modelName,
-      max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-      temperature: STAGE2_LLM_TEMPERATURE,
-      response_format: { type: "json_object" },
-      reasoningEffort,
-      messages: [
-        { role: "system", content: options.systemInstruction },
-        { role: "user", content: options.userText },
-      ],
+    try {
+      const response = await invokeLLM({
+        provider: "openai",
+        modelName,
+        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+        temperature: STAGE2_LLM_TEMPERATURE,
+        response_format: { type: "json_object" },
+        reasoningEffort,
+        messages: [
+          { role: "system", content: options.systemInstruction },
+          { role: "user", content: options.userText },
+        ],
+        abortSignal: options.abortSignal,
+      });
+      const text = extractFirstChoicePlainText(response).trim();
+      if (text) return text;
+      console.warn("[invokePlatformStructuredCopyLlm] GPT-5.6 空回 → Gemini Flash fallback");
+    } catch (e) {
+      console.warn(
+        "[invokePlatformStructuredCopyLlm] GPT-5.6 failed → Gemini Flash fallback:",
+        e instanceof Error ? e.message : e,
+      );
+    }
+    return invokeGeminiFlashCopyFallback({
+      systemInstruction: options.systemInstruction,
+      userText: options.userText,
       abortSignal: options.abortSignal,
+      label: "structured",
     });
-    return extractFirstChoicePlainText(response);
   }
   const geminiModel = resolvePlatformStage2GeminiModel();
   return callGemini35FlashCopywriting({
@@ -1618,7 +1658,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 
   const stage2LlmMode: PlatformStage2LlmMode = "openai";
   diagnostics.stage2LlmMode = stage2LlmMode;
-  diagnostics.stage2LlmModeSource = "fixed_gpt56_sol";
+  diagnostics.stage2LlmModeSource = "gpt56_sol_then_gemini_flash_fallback";
+  diagnostics.stage2GeminiFallbackModel = resolvePlatformStage2GeminiModel();
   const openaiCreativeModel = getPlatformStage2OpenAiModel();
   const stage2ReasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
   diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
@@ -1737,10 +1778,33 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
         res = await invoke("minimal");
         rawText = extractFirstChoicePlainText(res).trim();
       }
-      if (!rawText) return null;
-      return parseSingleBlueprintRaw(rawText);
+      if (rawText) return parseSingleBlueprintRaw(rawText);
+      console.warn(
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) GPT-5.6 空回 → Gemini Flash fallback`,
+      );
     } catch (e) {
-      console.warn(`[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) failed:`, e instanceof Error ? e.message : e);
+      console.warn(
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) GPT-5.6 failed → Gemini Flash fallback:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+
+    try {
+      const geminiRaw = (
+        await invokeGeminiFlashCopyFallback({
+          systemInstruction: systemContent + dimSystemSuffix,
+          userText: userContent,
+          abortSignal: params.abortSignal,
+          label: `dim ${dimIndex + 1} ${dimName}`,
+        })
+      ).trim();
+      if (!geminiRaw) return null;
+      return parseSingleBlueprintRaw(geminiRaw);
+    } catch (e) {
+      console.warn(
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) Gemini Flash fallback failed:`,
+        e instanceof Error ? e.message : e,
+      );
       return null;
     }
   };
@@ -1770,10 +1834,31 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
         reasoningEffort: "high",
       });
       const rawText = extractFirstChoicePlainText(res).trim();
-      if (!rawText) return [];
-      return parseMonetizationRaw(rawText);
+      if (rawText) return parseMonetizationRaw(rawText);
+      console.warn("[buildPlatformContent] monetization GPT-5.6 空回 → Gemini Flash fallback");
     } catch (e) {
-      console.warn("[buildPlatformContent] monetizationLanes call failed:", e instanceof Error ? e.message : e);
+      console.warn(
+        "[buildPlatformContent] monetization GPT-5.6 failed → Gemini Flash fallback:",
+        e instanceof Error ? e.message : e,
+      );
+    }
+
+    try {
+      const geminiRaw = (
+        await invokeGeminiFlashCopyFallback({
+          systemInstruction: systemContent + monetizationSystemOverride,
+          userText: userContent,
+          abortSignal: params.abortSignal,
+          label: "monetization",
+        })
+      ).trim();
+      if (!geminiRaw) return [];
+      return parseMonetizationRaw(geminiRaw);
+    } catch (e) {
+      console.warn(
+        "[buildPlatformContent] monetization Gemini Flash fallback failed:",
+        e instanceof Error ? e.message : e,
+      );
       return [];
     }
   };
