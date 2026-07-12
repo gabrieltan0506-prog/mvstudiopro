@@ -80,6 +80,8 @@ export const platformTopicShortlistItemSchema = z.object({
   formatHint: z.enum(["图文", "短视频"]).default("图文"),
   dedupeKey: z.string().min(1).max(80),
   commentHook: z.string().min(1).max(PLATFORM_COMMENT_HOOK_MAX_CHARS).optional(),
+  /** 关联的官方活动 / 话题名（如 #城市漫步指南） */
+  linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
 });
 
 export type PlatformTopicShortlistItem = z.infer<typeof platformTopicShortlistItemSchema>;

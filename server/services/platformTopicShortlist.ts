@@ -109,17 +109,32 @@ export async function generatePlatformTopicShortlist(params: {
     allowBloggerTitle: params.allowBloggerTitle,
   });
 
+  const { listOfficialCampaigns, pickLinkedCampaignsForTopic, ensureOfficialCampaignSeedsLoaded } = await import(
+    "./platformOfficialCampaigns"
+  );
+  await ensureOfficialCampaignSeedsLoaded();
+  const featuredCampaigns = await listOfficialCampaigns({
+    platform: "xiaohongshu",
+    featuredOnly: true,
+  });
+  const campaignBrief = featuredCampaigns.slice(0, 10).map((c) => ({
+    name: c.name,
+    category: c.category,
+    personaFit: c.personaFit,
+    topicHooks: c.topicHooks.slice(0, 2),
+  }));
+
   const system = `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
 任务：基于人设与 Skill 池，生成恰好 ${targetCount} 条**互不重复**的选题初选（不是完整长文）。
 硬约束：
-1. 每条必须含：title, hookSketch, conveyGoal, skillsUsed(数组,从池内真实 id 选), primaryLane(fmcg|forensic|crossover|contrast|default), formatHint(图文|短视频), dedupeKey, commentHook(≤3个汉字生活词，如想要/求带/慢生活)。
+1. 每条必须含：title, hookSketch, conveyGoal, skillsUsed(数组,从池内真实 id 选), primaryLane(fmcg|forensic|crossover|contrast|default), formatHint(图文|短视频), dedupeKey, commentHook(≤3个汉字生活词), linkedCampaigns(1–2个官方活动名，必须从下方 officialCampaigns.name 选)。
 2. 同人物/同母题只能出现一次（如王安石、苏轼、深夜高压各最多一条）。
 3. skillsUsed 必须能解释这条要传达什么；conveyGoal 写清「要传达的核心」1–2 句。
 4. 至少一半 formatHint=图文；赛道尽量拉开（参考 laneHints）。
 5. 禁止读论文式标题；禁止空壳「博主」自称（除非政策允许）。
 6. 对外解法话术用「在这里我先分享一些」，禁止写「半成本/半成品解法」刺耳词。
 7. 图文向选题对标高赞合集笔记（m1）：封面「城市+时段+大数字场次+价值钉」；总览墙+细卡；**笔记要丰富（规划 8–12 页）**。短视频向对标 m2：只推3个；字幕一句一钉；**成片约 1.5–2 分钟**，不要规划成长片。
-8. 要有生活画面，不是方法论课；禁止读论文式标题。
+8. 要有生活画面，不是方法论课；优先把官方活动话题与人设方向结合（暑假生活/城市漫步/好物测评/运动日常/读书笔记等）。
 输出：{ "topics": [ ...恰好${targetCount}条 ] }`;
 
   const user = JSON.stringify({
@@ -129,6 +144,7 @@ export async function generatePlatformTopicShortlist(params: {
     stage1Seeds: (params.stage1Seeds || []).slice(0, 6),
     avoidTitles: (params.existingTitles || []).slice(0, 40),
     skillsBrief: skillsBlock.slice(0, 8000),
+    officialCampaigns: campaignBrief,
   });
 
   const res = await invokeLLM({
@@ -176,9 +192,23 @@ export async function generatePlatformTopicShortlist(params: {
       formatHint: String(r.formatHint || "").includes("短视频") ? ("短视频" as const) : ("图文" as const),
       dedupeKey: String(r.dedupeKey || deriveTopicDedupeKey(title, String(r.hookSketch || ""))).slice(0, 80),
       commentHook: normalizeCommentHook(r.commentHook),
+      linkedCampaigns: Array.isArray(r.linkedCampaigns)
+        ? r.linkedCampaigns.map(String).filter(Boolean).slice(0, 4)
+        : undefined,
     };
     const checked = platformTopicShortlistItemSchema.safeParse(item);
-    if (checked.success) normalized.push(checked.data);
+    if (checked.success) {
+      const linked =
+        checked.data.linkedCampaigns && checked.data.linkedCampaigns.length
+          ? checked.data.linkedCampaigns
+          : await pickLinkedCampaignsForTopic({
+              lane: checked.data.primaryLane,
+              title: checked.data.title,
+              formatHint: checked.data.formatHint,
+              limit: 2,
+            });
+      normalized.push({ ...checked.data, linkedCampaigns: linked });
+    }
   }
 
   const topics = dedupeTopicShortlist(normalized, {
@@ -298,6 +328,14 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       bp.conveyGoal = pick.conveyGoal;
       bp.dedupeKey = pick.dedupeKey;
       bp.shortlistId = pick.id;
+      const linkedCampaigns = Array.isArray(pick.linkedCampaigns)
+        ? pick.linkedCampaigns.map(String).filter(Boolean).slice(0, 4)
+        : [];
+      bp.linkedCampaigns = linkedCampaigns;
+      if (linkedCampaigns.length) {
+        const tag = linkedCampaigns.join(" · ");
+        bp.publishingAdvice = `${String(bp.publishingAdvice || "").trim()}\n官方活动：${tag}（发布时挂同名话题/参与创作者中心活动）`.trim();
+      }
       bp.commentHooks = Array.isArray(bp.commentHooks)
         ? (bp.commentHooks as unknown[]).map((x) => normalizeCommentHook(x)).slice(0, 4)
         : [normalizeCommentHook(pick.commentHook)];

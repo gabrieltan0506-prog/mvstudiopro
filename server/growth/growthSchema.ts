@@ -28,6 +28,10 @@ import { matchIndustryTemplate } from "./industryTemplates";
 import { getPlatformTemplate } from "./platformTemplates";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { normalizeStringList } from "./trendNormalize";
+import {
+  featuredOfficialCampaigns,
+  formatCampaignForReport,
+} from "../../shared/platformOfficialCampaigns";
 import { buildGrowthDataAnalystSummary } from "./growthDataAnalyst";
 import { selectByGrowthPotential } from "./trendGrowthScoring";
 import { filterTrendItemsByWindowDays, summarizeTrendWindowCounts } from "./trendWindow";
@@ -1308,8 +1312,19 @@ function filterSupportActivitiesWithReview(
 
 export function buildPlatformSupportActivities(platform: GrowthPlatform) {
   const candidates = PLATFORM_SUPPORT_ACTIVITY_REGISTRY[platform] || [];
-  return filterSupportActivitiesWithReview(candidates)
-    .map((item) => `${item.label}：${item.summary}`);
+  const base = filterSupportActivitiesWithReview(candidates).map(
+    (item) => `${item.label}：${item.summary}`,
+  );
+  const topicLines = featuredOfficialCampaigns(platform)
+    .filter((c) => c.kind === "topic_challenge")
+    .slice(0, 6)
+    .map((c) => formatCampaignForReport(c));
+  const merged = [...base];
+  for (const line of topicLines) {
+    const prefix = line.split("：")[0] || "";
+    if (!merged.some((m) => m.startsWith(prefix))) merged.push(line);
+  }
+  return merged;
 }
 
 function buildPlatformActivities(

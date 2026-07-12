@@ -4595,9 +4595,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
 ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
-1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。必须结合当前日期 ${currentDateStr} 与 snapshot.supportActivities / 推流活动匹配结果，优先仍在进行中的活动（如抖音 AI 创作大赛、小红书 RED 新生代/中长视频激励、B 站任务中心当月征稿、快手光合计划），禁止写已过期活动。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : wd <= 15 ? " 【短窗：" + wd + " 天】优先近两周仍可报名的征稿/激励。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
+1. trafficBoosters：官方流量扶持活动 + **创作者中心官方话题活动**，每个平台至少 2-3 条。必须结合当前日期 ${currentDateStr}、snapshot.supportActivities、以及 user JSON 中的 officialCampaigns.byPlatform。优先仍在进行中的活动与话题（如小红书 #我的暑假生活 / #城市漫步指南 / #好物测评、RED 新生代、中长视频激励、B 站任务中心、快手光合），禁止写已过期活动。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : wd <= 15 ? " 【短窗：" + wd + " 天】优先近两周仍可报名的征稿/激励。" : ""} 格式要求：每条注明平台活动名称 + 参与门槛或奖励。
 2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
-3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
+3. hotTopics：**【强制数量：5-8个】** 每条须为**可读的一句式细分赛道**，**优先**能在上文「行业样本推断」JSON 的 **key** 中找到词汇锚点，或与全局 **trackGrowth[].name** 使用同一套正式分类口径；亦可吸收 officialCampaigns.topicExamples 的官方话题切口（须人设改写）。附带简短内容说明。**不建议**纯热搜词云、与表中 key 无语义对应关系的碎片标签或碎词充当整条赛道名。**禁止**与本报告全局 trackGrowth 中 growth 已为负值（如 -60%）的赛道语义重复；热榜应体现仍能加码的方向。
 4. blueOceanWords：**蓝海词（分级）**，每个平台 2-4 组，每组格式为 { "primary": "一级蓝海词（父词，搜索量 >10万/月）", "secondary": ["二级词1", "二级词2", "二级词3"]}。定义：搜索量大（>10万/月）+ 同行内容少（同类笔记 <200篇）+ 用户意图精准（离成交近）。二级词来源：用一级词在该平台搜索后，整理下拉联想词 + 评论区高赞高频词中高流量（点赞>1万/收藏>5000/评论热烈）的子词条。二级词数量：有数据则列出 3-5 个，无法确认满足标准的词条不强行凑数。小红书优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取；抖音优先从热门话题下评论区高频词中提取。
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
@@ -4608,8 +4608,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
 - trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
-- topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
-- trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
+- topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}。**realCase 建议标注可蹭官方活动名**（如「#城市漫步指南 · …」）。
+- trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-4条）。**必须优先采用** user JSON 字段 officialCampaigns.globalTrafficSupport 中的条目（可略压缩说明），格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 - globalBlueOceanWords：**【必须输出，不可省略】** 聚合所有选定平台的蓝海词，提取 4-6 组，一/二级分级。格式：[{"primary":"一级蓝海词（父词）","secondary":["二级词1","二级词2","二级词3"]}]。定义：搜索量大（>10万次/月）+ 同类笔记少（<200篇）+ 用户意图精准（离成交近）。二级词来源：用一级词在各平台搜索后，整理下拉联想词 + 评论区高赞高频词（点赞>1万/收藏>5000）。无法确认满足标准的词不强行凑数。小红书优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取；抖音优先从热门话题下评论区高频词中提取；B站从专栏/视频弹幕高频词提取；快手从同城热点话题提取。
 
@@ -4631,6 +4631,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           visualReportEngineRaw === "gemini-3-flash-preview";
         const llmStartedAtMs = Date.now();
         try {
+          const { listOfficialCampaignLinesForReport, ensureOfficialCampaignSeedsLoaded } = await import(
+            "./services/platformOfficialCampaigns"
+          );
+          await ensureOfficialCampaignSeedsLoaded();
+          const officialCampaigns = await listOfficialCampaignLinesForReport(input.platforms);
           const userPayload = JSON.stringify({
             windowDays: input.windowDays,
             platforms: input.platforms,
@@ -4638,6 +4643,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             pastDate: pastStr,
             platformEvidence,
             industrySampleGrowth: industryGrowthHintsObj,
+            officialCampaigns,
             ...(String(input.personaContext || "").trim()
               ? { personaContext: String(input.personaContext).trim().slice(0, 4000) }
               : {}),
@@ -4826,10 +4832,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 ? parsed.topicExamples.map((e: any) => ({ structure: safeStr(e?.structure || e), concept: safeStr(e?.concept || ""), realCase: safeStr(e?.realCase || "") }))
                 : [],
               // New global fields: trafficSupport, hotFestivals
-              trafficSupport: Array.isArray(parsed.trafficSupport) ? parsed.trafficSupport.map(safeStr) : [],
+              trafficSupport: (() => {
+                const fromLlm = Array.isArray(parsed.trafficSupport) ? parsed.trafficSupport.map(safeStr) : [];
+                const fromDb = officialCampaigns.globalTrafficSupport || [];
+                const merged = [...fromLlm];
+                for (const line of fromDb) {
+                  const prefix = String(line).split("：")[0] || "";
+                  if (prefix && !merged.some((m) => String(m).includes(prefix))) merged.push(line);
+                }
+                return merged.slice(0, 8);
+              })(),
               hotFestivals: Array.isArray(parsed.hotFestivals) ? parsed.hotFestivals.map(safeStr) : [],
               globalBlueOceanWords,
               platformDetails,
+              officialCampaignTopicExamples: officialCampaigns.topicExamples || [],
             },
           };
         } catch (error) {
@@ -5168,6 +5184,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       return PLATFORM_SKILL_MASTER_READONLY;
     }),
 
+    /** 官方活动策展（创作者中心话题 + 扶持计划） */
+    listPlatformOfficialCampaigns: publicProcedure
+      .input(
+        z
+          .object({
+            platform: z.string().max(32).optional(),
+            featuredOnly: z.boolean().optional(),
+          })
+          .optional(),
+      )
+      .query(async ({ input }) => {
+        const { listOfficialCampaigns, ensureOfficialCampaignSeedsLoaded } = await import(
+          "./services/platformOfficialCampaigns"
+        );
+        await ensureOfficialCampaignSeedsLoaded();
+        const campaigns = await listOfficialCampaigns({
+          platform: input?.platform,
+          featuredOnly: input?.featuredOnly ?? true,
+          activeOnly: true,
+        });
+        return { campaigns, count: campaigns.length };
+      }),
+
     /**
      * 选题初选：默认 6 条（标明 skillsUsed / conveyGoal）；超出 6 条按条另计费，单次最多 20。
      */
@@ -5261,6 +5300,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 formatHint: z.enum(["图文", "短视频"]),
                 dedupeKey: z.string().min(1).max(80),
                 commentHook: z.string().max(8).optional(),
+                linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
               }),
             )
             .min(1)

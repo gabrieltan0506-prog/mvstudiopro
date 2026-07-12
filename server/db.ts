@@ -102,6 +102,41 @@ async function ensurePaidTrafficReviewsTable(db: NonNullable<Awaited<ReturnType<
   }
 }
 
+/** 官方活动策展表：缺失时自动建表（与 drizzle/postgres/0007 对齐）。 */
+async function ensurePlatformOfficialCampaignsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "platform_official_campaigns" (
+        "id" serial PRIMARY KEY,
+        "campaignKey" varchar(80) NOT NULL UNIQUE,
+        "platform" varchar(32) NOT NULL,
+        "name" text NOT NULL,
+        "kind" varchar(32) NOT NULL DEFAULT 'topic_challenge',
+        "category" varchar(48) NOT NULL DEFAULT 'summer_lifestyle',
+        "featured" boolean NOT NULL DEFAULT true,
+        "personaFit" text NOT NULL DEFAULT '',
+        "topicHooksJson" text NOT NULL DEFAULT '[]',
+        "laneHintsJson" text NOT NULL DEFAULT '[]',
+        "summary" text NOT NULL DEFAULT '',
+        "status" varchar(16) NOT NULL DEFAULT 'active',
+        "sourceNote" text NOT NULL DEFAULT '',
+        "reviewedAt" varchar(32) NOT NULL DEFAULT '',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "platform_official_campaigns_platform_featured_idx"
+        ON "platform_official_campaigns" ("platform", "featured", "status")
+    `);
+  } catch (e) {
+    console.warn(
+      "[Database] ensure platform_official_campaigns (non-fatal):",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -112,6 +147,7 @@ export async function getDb() {
       await ensurePlatformStrategicBlueprintSnapshotsTable(_db);
       await ensurePlatformDrSecondaryStagingTable(_db);
       await ensurePaidTrafficReviewsTable(_db);
+      await ensurePlatformOfficialCampaignsTable(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

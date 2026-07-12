@@ -2615,6 +2615,14 @@ export default function PlatformPage() {
                             评「{t.commentHook}」
                           </span>
                         ) : null}
+                        {(t.linkedCampaigns || []).slice(0, 2).map((c) => (
+                          <span
+                            key={c}
+                            className="rounded bg-[#ff6b9d]/20 px-1 text-[9px] text-[#ffb3cc]"
+                          >
+                            {c}
+                          </span>
+                        ))}
                       </span>
                       <span className="sr-only">{selectedCount}</span>
                     </span>
