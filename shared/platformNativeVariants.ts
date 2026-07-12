@@ -222,9 +222,9 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
       "【反差弧出图】开场身份错位；中段可精确专有词/数字；情绪态度须有可见反转（可不止一次），落点不限定仰慕；勿说明书墙。",
     );
   }
-  if (on("crossover-organ-popsci")) {
+  if (on("crossover-popsci") || on("crossover-organ-popsci")) {
     parts.push(
-      "【跨界科普出图】可电影感解剖/脏器透视；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
+      "【跨界科普出图】主体可拟人；电影感机制透视+生活B-roll对照；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
     );
   }
   if (parts.length === 0) return "";

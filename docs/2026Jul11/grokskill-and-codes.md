@@ -24,6 +24,7 @@
 | 文件 | id | 要点 |
 |------|-----|------|
 | `contrast-reversal-climax.md` | contrast-reversal-climax | **新增**。身份反差 + 情绪可多次反转；专有词升压（如葡萄糖指标，勿空说「血糖」）；高潮**不限定仰慕**，随文案节奏。参考样本：`~/Downloads/2026Jul11/sk.mp4`（博士服务员）。 |
+| `crossover-popsci.md` | crossover-popsci | **由 crossover-organ-popsci 改写扩面**。跨界科普叙事（器官只是一例）；含如何跨界菜单 A–H；样本弧来自 `~/Downloads/2026Jul12/1.mp4` 高密度抽帧。 |
 | `cover-stop-scroll.md` | cover-stop-scroll | **大改**。有人物时禁正面上课脸/证件照站姿；须表情或动态抓人（跳跃、失衡、陶醉、错愕、坏笑等）；时装质感可留，停滑优先。 |
 | `graphic-note-rhythm.md` | graphic-note-rhythm | 图文格节奏（既有）；与 #741 代码配合，避免短视频分镜规则污染图文。 |
 
