@@ -87,6 +87,9 @@ import {
   PLATFORM_SKILL_MASTER_READONLY,
   PLATFORM_TOPIC_EXPAND_MAX,
   PLATFORM_TOPIC_EXPAND_MIN,
+  PLATFORM_TOPIC_SHORTLIST_DEFAULT,
+  PLATFORM_TOPIC_SHORTLIST_MAX,
+  platformTopicShortlistTotalCredits,
   type PlatformTopicShortlistItem,
 } from "@shared/platformTopicShortlist";
 import {
@@ -1988,8 +1991,14 @@ export default function PlatformPage() {
   /** 选题初选 20 → 勾选 5–6 → 扩写 */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
   const [selectedShortlistIds, setSelectedShortlistIds] = useState<Set<string>>(new Set());
+  const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
   const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
+  const topicShortlistPrice = platformTopicShortlistTotalCredits({
+    count: topicShortlistCount,
+    baseCredits: CREDIT_COSTS.platformTopicShortlist,
+    extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
+  });
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -2484,10 +2493,32 @@ export default function PlatformPage() {
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold text-white">选题初选（先挑再写）</div>
             <p className="mt-0.5 text-[10px] leading-snug text-gray-400">
-              先生成约 20 条初选（每条写明 Skill 与传达目标），勾选 {PLATFORM_TOPIC_EXPAND_MIN}–
-              {PLATFORM_TOPIC_EXPAND_MAX} 条再扩写正式文案。初选 {CREDIT_COSTS.platformTopicShortlist}{" "}
-              点/次 · 扩写 {CREDIT_COSTS.platformTopicExpand} 点/次。
+              默认生成 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条（每条写明 Skill 与传达目标）；超出按条另计费（最多{" "}
+              {PLATFORM_TOPIC_SHORTLIST_MAX}）。勾选后扩写正式文案。基础{" "}
+              {CREDIT_COSTS.platformTopicShortlist} 点
+              {topicShortlistPrice.extraCount > 0
+                ? ` + 加量 ${topicShortlistPrice.extraCount}×${CREDIT_COSTS.platformTopicShortlistExtra}=${topicShortlistPrice.total} 点`
+                : ""}
+              {" · "}扩写 {CREDIT_COSTS.platformTopicExpand} 点/次（最多 {PLATFORM_TOPIC_EXPAND_MAX} 条）。
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-gray-300">
+              <span>条数</span>
+              {([6, 12, 20] as const).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setTopicShortlistCount(n)}
+                  className={`rounded border px-2 py-0.5 font-semibold ${
+                    topicShortlistCount === n
+                      ? "border-[#49e6ff]/50 bg-[#49e6ff]/20 text-[#b8f4ff]"
+                      : "border-white/15 text-gray-400"
+                  }`}
+                >
+                  {n}
+                  {n > PLATFORM_TOPIC_SHORTLIST_DEFAULT ? "·加量" : "·默认"}
+                </button>
+              ))}
+            </div>
           </div>
           <button
             type="button"
@@ -2510,10 +2541,19 @@ export default function PlatformPage() {
                     enabledSkillIds: Array.from(enabledPlatformSkillIds),
                     allowBloggerTitle,
                     existingTitles,
+                    count: topicShortlistCount,
                   });
-                  setTopicShortlist(res.topics || []);
-                  setSelectedShortlistIds(new Set());
-                  toast.success(`已生成 ${(res.topics || []).length} 条初选`);
+                  const topics = res.topics || [];
+                  setTopicShortlist(topics);
+                  // 默认全选（不超过扩写上限）
+                  setSelectedShortlistIds(
+                    new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)),
+                  );
+                  toast.success(
+                    `已生成 ${topics.length} 条初选${
+                      res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
+                    }`,
+                  );
                 } catch (err) {
                   toast.error(err instanceof Error ? err.message : "初选生成失败");
                 }
@@ -2521,7 +2561,9 @@ export default function PlatformPage() {
             }}
             className="shrink-0 rounded-md border border-[#49e6ff]/45 bg-[#49e6ff]/15 px-2.5 py-1.5 text-[10px] font-bold text-[#b8f4ff] disabled:opacity-50"
           >
-            {generateTopicShortlistMutation.isPending ? "生成中…" : "生成 20 条初选"}
+            {generateTopicShortlistMutation.isPending
+              ? "生成中…"
+              : `生成 ${topicShortlistCount} 条初选（${topicShortlistPrice.total} 点）`}
           </button>
         </div>
         {topicShortlist.length > 0 ? (
@@ -2592,7 +2634,7 @@ export default function PlatformPage() {
                   void (async () => {
                     const picks = topicShortlist.filter((t) => selectedShortlistIds.has(t.id));
                     if (picks.length < PLATFORM_TOPIC_EXPAND_MIN) {
-                      toast.message(`请勾选至少 ${PLATFORM_TOPIC_EXPAND_MIN} 条`);
+                      toast.message(`请至少勾选 ${PLATFORM_TOPIC_EXPAND_MIN} 条`);
                       return;
                     }
                     try {
@@ -2621,14 +2663,14 @@ export default function PlatformPage() {
               >
                 {expandTopicPicksMutation.isPending
                   ? "扩写中…"
-                  : `扩写已勾选（${selectedShortlistIds.size}/${PLATFORM_TOPIC_EXPAND_MIN}–${PLATFORM_TOPIC_EXPAND_MAX}）`}
+                  : `扩写已勾选（${selectedShortlistIds.size}/${PLATFORM_TOPIC_EXPAND_MAX}）`}
               </button>
               <button
                 type="button"
                 disabled={generateTopicShortlistMutation.isPending}
                 onClick={() => {
                   setSelectedShortlistIds(new Set());
-                  toast.message("已清空勾选；可再点「生成 20 条初选」换一批");
+                  toast.message("已清空勾选；可再点生成换一批");
                 }}
                 className="rounded-md border border-white/15 px-2.5 py-1.5 text-[10px] text-gray-300"
               >

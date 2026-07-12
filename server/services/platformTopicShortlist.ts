@@ -7,7 +7,8 @@ import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import {
   PLATFORM_TOPIC_EXPAND_MAX,
   PLATFORM_TOPIC_EXPAND_MIN,
-  PLATFORM_TOPIC_SHORTLIST_COUNT,
+  PLATFORM_TOPIC_SHORTLIST_DEFAULT,
+  clampTopicShortlistCount,
   buildGraphicNotePagesFromBlueprint,
   dedupeTopicShortlist,
   deriveTopicDedupeKey,
@@ -74,7 +75,10 @@ export async function generatePlatformTopicShortlist(params: {
   allowBloggerTitle?: boolean;
   existingTitles?: string[];
   stage1Seeds?: Array<{ title?: string; hook?: string }>;
+  /** 生成条数，默认 6，最大 20 */
+  count?: number | null;
 }): Promise<{ topics: PlatformTopicShortlistItem[]; diagnostics: Record<string, unknown> }> {
+  const targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const all = await listAllPlatformSkillsForUser(params.userId);
   const fallbackPoolIds =
     params.enabledSkillIds == null ? all.filter((s) => s.defaultEnabled).map((s) => s.id) : [];
@@ -106,15 +110,16 @@ export async function generatePlatformTopicShortlist(params: {
   });
 
   const system = `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
-任务：基于人设与 Skill 池，生成恰好 ${PLATFORM_TOPIC_SHORTLIST_COUNT} 条**互不重复**的选题初选（不是完整长文）。
+任务：基于人设与 Skill 池，生成恰好 ${targetCount} 条**互不重复**的选题初选（不是完整长文）。
 硬约束：
 1. 每条必须含：title, hookSketch, conveyGoal, skillsUsed(数组,从池内真实 id 选), primaryLane(fmcg|forensic|crossover|contrast|default), formatHint(图文|短视频), dedupeKey, commentHook(≤3个汉字生活词，如想要/求带/慢生活)。
 2. 同人物/同母题只能出现一次（如王安石、苏轼、深夜高压各最多一条）。
 3. skillsUsed 必须能解释这条要传达什么；conveyGoal 写清「要传达的核心」1–2 句。
-4. 至少 8 条 formatHint=图文；赛道尽量拉开（参考 laneHints）。
+4. 至少一半 formatHint=图文；赛道尽量拉开（参考 laneHints）。
 5. 禁止读论文式标题；禁止空壳「博主」自称（除非政策允许）。
 6. 对外解法话术用「在这里我先分享一些」，禁止写「半成本/半成品解法」刺耳词。
-输出：{ "topics": [ ...恰好${PLATFORM_TOPIC_SHORTLIST_COUNT}条 ] }`;
+7. 图文向选题可参考「场馆｜季节活动｜可收藏实用信息」结构（如城市图书馆暑期市集：地点+时段+亮点+怎么逛），要有生活画面，不是方法论课。
+输出：{ "topics": [ ...恰好${targetCount}条 ] }`;
 
   const user = JSON.stringify({
     personaContext: String(params.context || "").slice(0, 6000),
@@ -177,7 +182,7 @@ export async function generatePlatformTopicShortlist(params: {
 
   const topics = dedupeTopicShortlist(normalized, {
     existingTitles: params.existingTitles,
-    max: PLATFORM_TOPIC_SHORTLIST_COUNT,
+    max: targetCount,
   });
 
   return {
@@ -186,6 +191,7 @@ export async function generatePlatformTopicShortlist(params: {
       poolCount: poolIds.length,
       rawCount: rawList.length,
       afterDedupe: topics.length,
+      targetCount,
       lanes: topics.map((t) => t.primaryLane),
     },
   };
@@ -203,7 +209,7 @@ export async function expandPlatformTopicPicks(params: {
 }> {
   const picks = params.picks.slice(0, PLATFORM_TOPIC_EXPAND_MAX);
   if (picks.length < PLATFORM_TOPIC_EXPAND_MIN) {
-    throw new Error(`请勾选 ${PLATFORM_TOPIC_EXPAND_MIN}–${PLATFORM_TOPIC_EXPAND_MAX} 条初选再扩写`);
+    throw new Error(`请至少勾选 ${PLATFORM_TOPIC_EXPAND_MIN} 条初选再扩写（最多 ${PLATFORM_TOPIC_EXPAND_MAX}）`);
   }
 
   const usedKeys = new Set<string>();

@@ -1,12 +1,18 @@
 /**
- * Stage2 选题初选（20→勾选5–6→扩写）与图文笔记页结构、评论钩子、去重、权威落句验收。
+ * Stage2 选题初选（默认 6 条；超出另计费）与图文笔记页结构、评论钩子、去重、权威落句验收。
  */
 
 import { z } from "zod";
 import type { PlatformSkillLane } from "./platformSkillRouter.js";
 
-export const PLATFORM_TOPIC_SHORTLIST_COUNT = 20;
-export const PLATFORM_TOPIC_EXPAND_MIN = 5;
+/** 默认生成条数（含在基础积分内） */
+export const PLATFORM_TOPIC_SHORTLIST_DEFAULT = 6;
+/** 单次最多可生成（超出默认部分按条另计费） */
+export const PLATFORM_TOPIC_SHORTLIST_MAX = 20;
+/** @deprecated 使用 DEFAULT；保留别名避免旧引用断裂 */
+export const PLATFORM_TOPIC_SHORTLIST_COUNT = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
+
+export const PLATFORM_TOPIC_EXPAND_MIN = 1;
 export const PLATFORM_TOPIC_EXPAND_MAX = 6;
 
 /** 小红书评论区生活化钩子：≤3 个汉字/字符，禁止整句预约话术 */
@@ -24,6 +30,25 @@ export const PLATFORM_COMMENT_HOOK_EXAMPLES = [
   "学到了",
   "共鸣",
 ] as const;
+
+export function clampTopicShortlistCount(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return PLATFORM_TOPIC_SHORTLIST_DEFAULT;
+  return Math.max(1, Math.min(PLATFORM_TOPIC_SHORTLIST_MAX, n));
+}
+
+/** 基础价含默认 6 条；超出条数 × extraPerTopic */
+export function platformTopicShortlistTotalCredits(params: {
+  count: number;
+  baseCredits: number;
+  extraPerTopic: number;
+}): { count: number; included: number; extraCount: number; total: number } {
+  const count = clampTopicShortlistCount(params.count);
+  const included = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
+  const extraCount = Math.max(0, count - included);
+  const total = params.baseCredits + extraCount * params.extraPerTopic;
+  return { count, included, extraCount, total };
+}
 
 export const platformGraphicNotePageSchema = z.object({
   pageIndex: z.number().int().min(1).max(16),
@@ -58,7 +83,7 @@ export const platformTopicShortlistItemSchema = z.object({
 export type PlatformTopicShortlistItem = z.infer<typeof platformTopicShortlistItemSchema>;
 
 export const platformTopicShortlistResponseSchema = z.object({
-  topics: z.array(platformTopicShortlistItemSchema).min(8).max(24),
+  topics: z.array(platformTopicShortlistItemSchema).min(1).max(PLATFORM_TOPIC_SHORTLIST_MAX),
   diagnostics: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -170,7 +195,7 @@ export function dedupeTopicShortlist<T extends { title: string; dedupeKey?: stri
   items: T[],
   opts?: { existingTitles?: string[]; max?: number },
 ): T[] {
-  const max = opts?.max ?? PLATFORM_TOPIC_SHORTLIST_COUNT;
+  const max = opts?.max ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT;
   const existing = new Set(
     (opts?.existingTitles || []).map((t) =>
       t.replace(/\s+/g, "").trim().toLowerCase().slice(0, 40),
@@ -218,7 +243,7 @@ export const PLATFORM_SKILL_MASTER_READONLY = {
     { id: "default", label: "默认生活向", skills: "batch-arc-engagement + 核心" },
   ],
   shortlistHint:
-    "正式文案前先出 20 条初选：每条标明 skillsUsed 与 conveyGoal；你勾选 5–6 条再扩写，避免开盲盒。",
+    "选题生成默认 6 条（每条标明 skillsUsed 与 conveyGoal）；超出 6 条按条另计费。勾选后扩写正式文案+可发图文页，避免开盲盒。",
 } as const;
 
 export function buildGraphicNotePagesFromBlueprint(bp: {

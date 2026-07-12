@@ -5,6 +5,7 @@ import {
   ensureAuthorityCiteInCopy,
   normalizeCommentHook,
   normalizeCommentHooksList,
+  platformTopicShortlistTotalCredits,
   textHasAuthorityCite,
 } from "../../shared/platformTopicShortlist.js";
 
@@ -47,6 +48,23 @@ describe("comment hooks", () => {
     expect(normalizeCommentHook("慢生活啊")).toBe("慢生活");
     expect(normalizeCommentHook("预约诊断通话")).toBe("想要");
     expect(normalizeCommentHooksList(["求带", "想要", "想要"])).toEqual(["求带", "想要"]);
+  });
+});
+
+describe("platformTopicShortlistTotalCredits", () => {
+  it("charges base for 6 and extras beyond", () => {
+    expect(platformTopicShortlistTotalCredits({ count: 6, baseCredits: 12, extraPerTopic: 2 })).toEqual({
+      count: 6,
+      included: 6,
+      extraCount: 0,
+      total: 12,
+    });
+    expect(platformTopicShortlistTotalCredits({ count: 12, baseCredits: 12, extraPerTopic: 2 }).total).toBe(
+      12 + 6 * 2,
+    );
+    expect(platformTopicShortlistTotalCredits({ count: 20, baseCredits: 12, extraPerTopic: 2 }).total).toBe(
+      12 + 14 * 2,
+    );
   });
 });
 

@@ -5168,8 +5168,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     }),
 
     /**
-     * 选题初选：生成约 20 条（标明 skillsUsed / conveyGoal），用户勾选后再扩写。
-     * 扣 {@link CREDIT_COSTS.platformTopicShortlist}；可重复生成。
+     * 选题初选：默认 6 条（标明 skillsUsed / conveyGoal）；超出 6 条按条另计费，单次最多 20。
      */
     generatePlatformTopicShortlist: protectedProcedure
       .input(
@@ -5178,6 +5177,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
           existingTitles: z.array(z.string().max(200)).max(60).optional(),
+          /** 生成条数，默认 6，最大 20；第 7 条起另计费 */
+          count: z.number().int().min(1).max(20).optional(),
           stage1Seeds: z
             .array(
               z.object({
@@ -5192,16 +5193,30 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ ctx, input }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const cost = CREDIT_COSTS.platformTopicShortlist;
+        const { clampTopicShortlistCount, platformTopicShortlistTotalCredits, PLATFORM_TOPIC_SHORTLIST_DEFAULT } =
+          await import("../shared/platformTopicShortlist.js");
+        const count = clampTopicShortlistCount(input.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+        const priced = platformTopicShortlistTotalCredits({
+          count,
+          baseCredits: CREDIT_COSTS.platformTopicShortlist,
+          extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
+        });
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
-          if (creditsInfo.totalAvailable < cost) {
+          if (creditsInfo.totalAvailable < priced.total) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，选题初选需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，选题初选 ${count} 条需要 ${priced.total} 点（基础 ${CREDIT_COSTS.platformTopicShortlist} + 加量 ${priced.extraCount}×${CREDIT_COSTS.platformTopicShortlistExtra}；当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCredits(userId, "platformTopicShortlist", "选题初选 20 条");
+          await deductCreditsAmount(
+            userId,
+            priced.total,
+            "platformTopicShortlist",
+            priced.extraCount > 0
+              ? `选题初选 ${count} 条（含加量 ${priced.extraCount}）`
+              : `选题初选 ${count} 条`,
+          );
         }
         const { generatePlatformTopicShortlist } = await import("./services/platformTopicShortlist.js");
         const result = await generatePlatformTopicShortlist({
@@ -5211,17 +5226,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           allowBloggerTitle: Boolean(input.allowBloggerTitle),
           existingTitles: input.existingTitles,
           stage1Seeds: input.stage1Seeds,
+          count,
         });
         const creditsInfo = await getCredits(userId);
         return {
           ...result,
-          chargedCredits: isAdminUser ? 0 : cost,
+          count,
+          chargedCredits: isAdminUser ? 0 : priced.total,
+          pricing: priced,
           totalAvailable: creditsInfo.totalAvailable,
         };
       }),
 
     /**
-     * 勾选 5–6 条初选 → 正式文案扩写（含 graphicNotePages）。
+     * 勾选 1–6 条初选 → 正式文案扩写（含 graphicNotePages）。
      * 扣 {@link CREDIT_COSTS.platformTopicExpand}。
      */
     expandPlatformTopicPicks: protectedProcedure
@@ -5244,7 +5262,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 commentHook: z.string().max(8).optional(),
               }),
             )
-            .min(5)
+            .min(1)
             .max(6),
         }),
       )
