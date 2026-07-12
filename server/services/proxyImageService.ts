@@ -858,9 +858,12 @@ async function fallbackNanoBanana2FromPrompt(
   aspectRatio: "9:16" | "16:9",
   flowLog?: string[],
   role: NanoBanana2FromPromptRole = "optional_fallback_after_openai",
+  /** 用户上传人像：送 Vertex 做脸锁，禁止无参考乱生成 */
+  referenceImageUrl?: string,
 ): Promise<string | null> {
   const L = flowLog;
   const logTag = role === "platform_vertex_cover_primary" ? "[NB2·封面]" : "[单帧兜底]";
+  const refUrl = String(referenceImageUrl || "").trim();
 
   if (role === "optional_fallback_after_openai") {
     if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
@@ -887,12 +890,16 @@ async function fallbackNanoBanana2FromPrompt(
       );
       return null;
     }
+    if (refUrl) {
+      appendImageFlowLog(L, `${logTag} 携带参考人像做脸锁 · ref=${refUrl.slice(0, 96)}`);
+    }
     const vertexResult = await generateGeminiImage({
       prompt: String(prompt || "").trim(),
       quality: "4k",
       aspectRatio,
       personGeneration: "ALLOW_ADULT",
       imagePersistFlowLog: L,
+      ...(refUrl ? { referenceImageUrl: refUrl } : {}),
     });
     let url = String(vertexResult?.imageUrl || "").trim();
     if (!url) {
@@ -909,7 +916,9 @@ async function fallbackNanoBanana2FromPrompt(
     }
     appendImageFlowLog(
       L,
-      `${logTag} Nano Banana 2 成功 · 4K · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}`,
+      `${logTag} Nano Banana 2 成功 · 4K · model=${vertexResult.model ?? "?"} · location=${vertexResult.location ?? "?"}${
+        refUrl ? " · 已锁参考人像" : ""
+      }`,
     );
     return url;
   } catch (e: unknown) {
@@ -944,10 +953,10 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     .filter(Boolean)
     .slice(0, 16);
 
-  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal → Nano Banana 2（临时兜底）。有参考人像时优先 EvoLink edit。
+  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ …；有参考人像时 EvoLink edit → NB2（带脸锁），禁止无参考降级。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · 优先 EvoLink，失败后仍可降级` : "顺序 EvoLink → OhMyGPT → fal → NB2"}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · EvoLink → NB2（带脸锁）` : "顺序 EvoLink → OhMyGPT → fal → NB2"}…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -1070,10 +1079,9 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
 
 /**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → GPT-Image-2 像素链。
- * **供应商顺序：EvoLink（主力）→ OhMyGPT → fal**（均为 gpt-image-2 同模型；已移除 Vertex 退路）。
- * fallback 仅在 EvoLink 出不了图时触发，正常路径零额外成本。图像 API **不**执行翻译。
- * 传 `referenceImageUrls`（换人/换脸 edit 模式）时**只走 EvoLink**（OhMyGPT/fal 封装不保证支持 image_urls，
- * 避免 fallback 出「无脸错图」）；EvoLink 失败则本条失败，走免费补发重试。
+ * **供应商顺序：EvoLink（主力）→ OhMyGPT → fal → NB2**（无参考时）。
+ * 传 `referenceImageUrls`（换人/换脸）时：**EvoLink edit → NB2（携带参考图脸锁）**；
+ * **禁止**再降级到无参考 OhMyGPT/fal/NB2，避免出「无脸错图」浪费算力。
  */
 export async function generateGptImage2FromRawEnglishPrompt(options: {
   englishPrompt: string;
@@ -1102,6 +1110,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     .filter(Boolean)
     .slice(0, 16);
   const hasRef = refImageUrls.length > 0;
+  const primaryRefUrl = hasRef ? refImageUrls[0] : "";
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
   const base =
     options.aspectRatio === "9:16"
@@ -1132,7 +1141,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       return fromEvolink;
     }
 
-    // 换脸/换人路径：若 EvoLink 把这张**良性人像**误判为违规，附澄清语境（成年/着装/本人或已授权/编辑用途）重试一次，降低误杀。
+    // 换脸/换人路径：若 EvoLink 把这张**良性人像**误判为违规，附澄清语境重试一次。
     if (hasRef && isEvolinkModerationFailure(evoErr.message)) {
       appendImageFlowLog(
         L,
@@ -1152,7 +1161,6 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
         appendImageFlowLog(L, "[单帧·换脸] 澄清语境重试成功，已落库");
         return retryEvolink;
       }
-      // 澄清重试仍被审核拦截 → 标记 moderationBlocked，让上层「快速失败」并给用户明确换图提示，不再空跑后续重试。
       if (isEvolinkModerationFailure(retryErr.message || evoErr.message)) {
         if (options.captureError) {
           options.captureError.moderationBlocked = true;
@@ -1166,20 +1174,37 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       }
       appendImageFlowLog(
         L,
-        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 降级无参考备援",
+        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 改走 Nano Banana 2（携带参考图脸锁）",
       );
     }
     appendImageFlowLog(L, "[单帧·主力] EvoLink 无图 → 评估 fallback");
   }
 
-  // 换脸失败：临时允许无参考 OhMyGPT/fal/NB2 降级，避免整单无图（脸锁可能丢失）。
-  const fallbackPrompt = withProVisual;
+  // 有上传人像：只允许「带参考」的 NB2 兜底，禁止无参考 OhMyGPT/fal 出错脸。
   if (hasRef) {
     appendImageFlowLog(
       L,
-      "[单帧·换脸] EvoLink edit 未出图 → 临时降级无参考 OhMyGPT → fal → Nano Banana 2",
+      "[单帧·换脸] EvoLink edit 未出图 → Nano Banana 2（携带参考人像脸锁；跳过无参考 OhMyGPT/fal）",
     );
+    const nb2WithFace = await fallbackNanoBanana2FromPrompt(
+      prompt,
+      options.aspectRatio,
+      L,
+      "optional_fallback_after_openai",
+      primaryRefUrl,
+    );
+    if (nb2WithFace) {
+      appendImageFlowLog(L, "[单帧·换脸] Nano Banana 2 带参考脸锁成功");
+      return nb2WithFace;
+    }
+    appendImageFlowLog(
+      L,
+      "[单帧·换脸] EvoLink / Nano Banana 2（带参考）均无图 · 本条失败（可免费补发；不降级无脸错图）",
+    );
+    return null;
   }
+
+  const fallbackPrompt = withProVisual;
 
   appendImageFlowLog(
     L,
@@ -1273,6 +1298,8 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
   attempt: number;
   compositeMaxAttempts: number;
   sheetKind: string;
+  /** 用户上传人像 / 封面脸锁：送 Vertex 锁定主人公 */
+  referenceImageUrl?: string;
 }): Promise<string> {
   const L = options.flowLog;
   if (isPlatformWeekendGcpEscape()) {
@@ -1287,9 +1314,12 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
     );
     throw new Error("2×4 Vertex Nano Banana 2 主路径：Vertex 未配置。");
   }
+  const refUrl = String(options.referenceImageUrl || "").trim();
   appendImageFlowLog(
     L,
-    `[2×4·NB2主路径] Vertex Nano Banana 2 · 4K · 16:9 · prompt≈${options.promptForImage.length} chars（已跳过 OhMyGPT / fal；切回 GPT 链：请求 compositeImageEngine=gpt_image2 或 PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2）`,
+    `[2×4·NB2主路径] Vertex Nano Banana 2 · 4K · 16:9 · prompt≈${options.promptForImage.length} chars${
+      refUrl ? " · 携带参考人像脸锁" : ""
+    }（已跳过 OhMyGPT / fal；切回 GPT 链：请求 compositeImageEngine=gpt_image2 或 PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2）`,
   );
   const vertexResult = await generateGeminiImage({
     prompt: options.promptForImage,
@@ -1297,6 +1327,7 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
     aspectRatio: "16:9",
     personGeneration: "ALLOW_ADULT",
     imagePersistFlowLog: L,
+    ...(refUrl ? { referenceImageUrl: refUrl } : {}),
   });
   const rawUrl = String(vertexResult?.imageUrl || "").trim();
   if (!rawUrl) {
@@ -1459,6 +1490,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     .filter((u) => u !== referencePhotoUrl)
     .slice(0, 3);
   const hasAnyImageRef = Boolean(referencePhotoUrl) || continuityRefs.length > 0;
+  void hasAnyImageRef;
   if (referencePhotoUrl || continuityRefs.length > 0) {
     scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(
       scriptContextForPipeline,
@@ -1706,18 +1738,37 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         if (refImageUrls.length) {
           appendImageFlowLog(
             L,
-            `[2×4·步骤2a·主力] EvoLink edit 未出图 → 临时降级无参考 OhMyGPT / fal / Nano Banana 2`,
+            `[2×4·步骤2a·主力] EvoLink edit 未出图 → Nano Banana 2（携带参考人像脸锁；跳过无参考 OhMyGPT/fal）`,
           );
-        } else {
-          appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal / NB2");
+          const nb2WithFace = await fallbackNanoBanana2FromPrompt(
+            promptForEvo,
+            "16:9",
+            L,
+            "optional_fallback_after_openai",
+            refImageUrls[0],
+          );
+          if (nb2WithFace) {
+            const mirrored = await mirrorNanoSheetUrlToGcs(nb2WithFace, subdir, L);
+            appendImageFlowLog(
+              L,
+              `[2×4·换脸] Nano Banana 2 带参考脸锁成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
+            );
+            emitPlatformImagePipelineStat({
+              event: "composite_sheet_nano_fallback_success",
+              sheetKind: k,
+              compositeSheetAttempt: attempt,
+              compositeSheetMaxAttempts: compositeMaxAttempts,
+            });
+            return mirrored;
+          }
+          throw new Error("EvoLink / Nano Banana 2（带参考脸锁）均未返回图像；不降级无脸错图");
         }
+        appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal / NB2");
       }
 
       appendImageFlowLog(
         L,
-        `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}${
-          hasAnyImageRef ? " · 无参考图降级" : ""
-        }`,
+        `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
       );
       const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
         sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
