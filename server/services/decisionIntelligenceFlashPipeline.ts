@@ -117,16 +117,16 @@ async function gpt55CallCreativeEngine(params: {
 - topicStructureExamples 必须恰好 4 条，每条含 title、structure（structure 可用「段落1 → 段落2」）。
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
 ${diversityBlock}
-- **强烈建议**不要把 3+4 条选题都写成苏轼/苏东坡/李清照/辛弃疾或「宋朝词人穿越」模板；**高度需求**跨朝代、典籍、文物、事件、平民与贵族、当代影视/时事轮换。`;
+- **强烈建议**不要把 3+4 条选题都写成**同一个**历史人物或同一影视角色复读；时代与典籍/影视均可开放取材（含宋朝范仲淹、文天祥、王安石等，亦含当代剧桥段）。`;
 
   const user = `【选题方向】：${params.topic}
 【目标平台】：${platformLabel}
 【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
 请产出：
-1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题（JSON 内含 id 与 title）。两条标题**强烈建议**来自**不同朝代或不同素材类型**（例如一条史记/文物，一条爵士/运动/当代话题），少两条都是宋词人。
-2) personalization：3 个延伸个性化选题方向（topicDirection）——三条**高度需求**覆盖至少两种朝代/文本类型 + 一种当代生活或影视切口。
-3) topicStructureExamples：4 组 title + structure——四条标题**强烈建议**不要重复同一人物；**高度需求**至少一条非人物（文物/事件/时事/影视），至少一条结构含半成品解法。`;
+1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题（JSON 内含 id 与 title）。两条标题**强烈建议**主轴不同（例如一条典籍/人物，一条影视或当代生活），勿两条钉死同一人。
+2) personalization：3 个延伸个性化选题方向（topicDirection）——可混用古今人物、典籍、影视健康桥段、反差身份选题；可用数字钩子（五个妙招先说第三个）。
+3) topicStructureExamples：4 组 title + structure——四条**强烈建议**不要重复同一主角；至少一条含半成品解法或数字清单结构。`;
 
   const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,
