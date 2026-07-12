@@ -5,7 +5,8 @@ export type DecisionIntelTopicPick = {
   predictedCtr?: number;
   predictedConversion?: number;
   brandMatchFit?: number;
-  source?: "structure" | "personalization";
+  /** mab = 战略升级「探索」赛马卡 */
+  source?: "structure" | "personalization" | "mab";
 };
 
 export function normalizeDecisionIntelTopicTitleKey(title: string): string {

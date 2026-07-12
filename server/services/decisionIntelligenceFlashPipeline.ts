@@ -12,6 +12,7 @@ import { sanitizeDecisionIntelMetricsText } from "@shared/decisionIntelSanitize"
 import {
   PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
   PLATFORM_CULTURAL_MATERIAL_DIVERSITY_SHORT,
+  PLATFORM_CULTURAL_PERSON_ROTATION_HARD,
   needsCulturalMaterialDiversity,
 } from "@shared/platformCulturalMaterialDiversity";
 import { PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE } from "@shared/platformCreatorInsightFraming";
@@ -117,16 +118,18 @@ async function gpt55CallCreativeEngine(params: {
 - topicStructureExamples 必须恰好 4 条，每条含 title、structure（structure 可用「段落1 → 段落2」）。
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
 ${diversityBlock}
-- **强烈建议**不要把 3+4 条选题都写成**同一个**历史人物或同一影视角色复读；时代与典籍/影视均可开放取材（含宋朝范仲淹、文天祥、王安石等，亦含当代剧桥段）。`;
+${PLATFORM_CULTURAL_PERSON_ROTATION_HARD}
+- **赛马硬分工**：utilize（利用）= 成熟句型对照，可经典但不准默认苏轼/「读内经讲血管」复读；explore（探索）= **必须**热播或当代生活新组合，禁止探索位再写苏轼/论文题。
+- 全部 mab + personalization + topicStructure 标题之间：**同人默认只出现一次**。`;
 
   const user = `【选题方向】：${params.topic}
 【目标平台】：${platformLabel}
 【内容蓝图】：${blueprintJsonForPrompt(params.contentBlueprint)}
 
 请产出：
-1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题（JSON 内含 id 与 title）。两条标题**强烈建议**主轴不同（例如一条典籍/人物，一条影视或当代生活），勿两条钉死同一人。
-2) personalization：3 个延伸个性化选题方向（topicDirection）——可混用古今人物、典籍、影视健康桥段、反差身份选题；可用数字钩子（五个妙招先说第三个）。
-3) topicStructureExamples：4 组 title + structure——四条**强烈建议**不要重复同一主角；至少一条含半成品解法或数字清单结构。`;
+1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题。utilize 与 explore 主轴必须不同人/不同场域；explore 优先《藏海传》式热播或烟火生活；**禁止两条都古典文人或都苏轼系**。
+2) personalization：3 个延伸方向——优先生活/热播/关系；古典人物从三苏与唐宋八大家**轮换**，同人勿复读；可用数字钩子。
+3) topicStructureExamples：4 组 title + structure——四人/四局不撞；至少 2 条放松向生活或热播；至多 1 条古典文人主容器；至少一条含半成品解法。禁止四条里出现两次苏轼/苏东坡。`;
 
   const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,
