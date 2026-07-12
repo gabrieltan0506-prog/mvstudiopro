@@ -92,7 +92,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "batch-arc-engagement",
   "graphic-note-rhythm",
   "contrast-reversal-climax",
-  "crossover-organ-popsci",
+  "crossover-popsci",
   "vivid-anti-boring",
 ] as const;
 

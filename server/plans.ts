@@ -258,6 +258,8 @@ export const CREDIT_COSTS = {
 
   // ─── 平台页·选题单帧参考（一键批量 / 单张重绘 · GPT-IMAGE-2）·扣点 3×──────────────
   platformTopicFrameGraphic: 48, // 图文/小红书竖版封面；單張封面按鈕統一扣此價
+  /** Skill 问答栏·生涯首张单页生图（封面九折） */
+  platformSkillQaImageFirst: 43,
   platformTopicFrameVideo: 15,  // 短视频分镜参考条
   /** 平台页：竖版封面 · ~~超高点击率加价~~（已下架，統一走 platformTopicFrameGraphic） */
   // ─── 平台页·合成生图（兩種 2×4 扣費不同，勿混用）────────────────────────────────
@@ -309,6 +311,12 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 18 cr；试用包不支持" },
   { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: CREDIT_COSTS.platformTopicFrameVideo, note: "每张 15 cr，生图 GPT-IMAGE-2" },
   { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: CREDIT_COSTS.platformTopicFrameGraphic, note: "每张 48 cr，生图 GPT-IMAGE-2" },
+  {
+    product: "平台数据分析",
+    subFeature: "Skill 问答·单页生图（首张九折）",
+    credits: CREDIT_COSTS.platformSkillQaImageFirst,
+    note: "Skill 区上方问答确认生图：生涯首张 43 cr（封面九折），之后按封面 48 cr；问答本身每日 30 次免费",
+  },
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "短视频向 2×4 分镜主表 60 cr/次（kind: storyboard_sheet_*）· 非图文笔记八格" },
   {
     product: "平台数据分析",

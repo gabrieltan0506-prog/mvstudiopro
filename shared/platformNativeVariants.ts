@@ -206,7 +206,12 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   const parts: string[] = [];
   if (on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题上屏；有人物禁坐姿上课脸——帅气运动定格（网球发球/爬山登顶等）或有戏表情均可，不要求搞笑；同批勿全坐着。",
+      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题上屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等），服务黄金三秒停滑；同批勿全坐着。",
+    );
+  }
+  if (on("vivid-anti-boring")) {
+    parts.push(
+      "【文案出图联动】前3秒/封面气质须痛点+爽点前置；禁说教上课脸与说明书墙。",
     );
   }
   if (on("graphic-note-rhythm")) {
@@ -222,9 +227,9 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
       "【反差弧出图】开场身份错位；中段可精确专有词/数字；情绪态度须有可见反转（可不止一次），落点不限定仰慕；勿说明书墙。",
     );
   }
-  if (on("crossover-organ-popsci")) {
+  if (on("crossover-popsci") || on("crossover-organ-popsci")) {
     parts.push(
-      "【跨界科普出图】可电影感解剖/脏器透视；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
+      "【跨界科普出图】主体可拟人；电影感机制透视+生活B-roll对照；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
     );
   }
   if (parts.length === 0) return "";

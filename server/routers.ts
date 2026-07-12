@@ -852,7 +852,7 @@ async function buildPlatformDashboard(params: {
    禁止输出文字描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
 5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
 6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
-7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《史记里最会止损的人，今天会怎么过中年？》，开头说：『你以为内耗是现代病？一本两千年前的书，早就写过另一种止损法。』」标题须有好奇缺口；素材勿默认苏轼/李清照；开头须点名受众痛点并留半成品解法空间。
+7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《高压局里养精力的 3 个动作（先说第 2 个）》，开头说：『第 2 个最反常识——先做这个，再谈另外两个。』」标题须有好奇缺口或数字钩子；古今/影视桥段均可；开头须点名受众痛点并留半成品解法空间。
 8. 平台动态决策链必须强制使用：抖音 / 快手优先参考近 3-5 天样本（当前统一按 5 天窗口给你），B站 / 小红书优先参考近 7-15 天样本（当前统一按 15 天窗口给你）。判断“现在先做什么”时，优先读取 dynamicDecisionEvidence，不要只复述宽窗口快照。
 
 严格要求：
@@ -1158,12 +1158,15 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
 const PLATFORM_COPY_VIVID_SCENES_GUIDANCE = `【场景生命力与隐喻美学·软边界】**强烈建议**文案与分镜选用**具体、可拍、有心理张力**的场景——博物馆侧光、极地旷野、精密实验室、废墟工业风、烟火市集、高空天台、泳池边、球场、路边大排档等皆可；**优先**让读者「看见画面、感到情绪」，并与本人设（职业、身份、专长）互证。**不推荐**五套方案扎堆同一套书房/客厅/书桌模板，除非人设或选题明确需要。`;
 
 /** Stage2 口吻：减轻「合规顾问模板腔」+ 去无聊。 */
-const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人直接开拍/开写、愿意点开**的稿子，不是给风控看的合规摘要，也不是无人想读的论文提纲。
-- **像成熟顾问对创作者当面说话**：有判断、有温度、有意外感；hook 与 copywriting **优先**用口语、具体物件、可感知的动作与反差，**避免**「首先…其次…综上所述」公文笔触。
-- **去无聊硬门槛**：标题若读起来像「××观 / ××管理 / 用 A 与 B 观察 C」且无可拍画面 → **必须重写**。每条标题须含物件、身体动作、不信感或身份反差之一。正文短句为主，禁止正确但催眠的长段玄学抒情。
-- **每条方案应有辨识度**：六条的标题、场景、情绪基调、开头句式 **必须明显不同**（不要六条同一结构换词：典籍金句→生命科学→三点观察→评论留词）。
-- **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；在 JSON schema 与字段齐全的前提下，**允许**适度文学化与比喻，**不建议**为凑格式牺牲可读性与画面感。
-- **coverHeadline**：8–14 字停滑短句，供封面少字提亮；**禁止**把长 title 原样当封面主句。
+const PLATFORM_STAGE2_VOICE_GUIDANCE = `【口吻与生命力·第一优先】你写的是**给人愿意看完、愿意点开**的稿子，不是合规摘要，也不是说教课。
+- **痛点与爽点：黄金三秒先抛火花、结尾才说完整**：hook / 前 3 秒须同时出现痛点一击 + 爽点苗头（反转/解气/数字钩子先抛一条）；中段半成品展开；**禁止**痛点或爽点整段留到最后才第一次出现，也**禁止**开头就把完整方案说尽。结尾收满爽点 + CTA。短视频口播、图文封面+次屏同理。
+- **数目克制 + 数字钩子**：半成品优先 2–3 点，清单最多 5 点；可用「五个妙招先说第三个」拉完播。
+- **取材开放**：古今典籍/人物（含宋朝）、平民贵族、影视健康桥段、反差身份选题均可；同批勿六条复读同一主角。
+- **去无聊硬门槛**：标题若读起来像「××观 / ××管理 / 用 A 与 B 观察 C」且无可拍画面 → **必须重写**。每条标题须含物件、身体动作、不信感或身份反差之一。
+- **完播画面**：detailedScript / 封面须提示**多元表情、可夸张姿势**（错愕、坏笑、失衡、发球定格等轮换），禁止六条端坐上课脸。
+- **每条方案应有辨识度**：六条的标题、场景、情绪基调、开头句式 **必须明显不同**。
+- **具体优先于正确**：数字、道具、场所、第一句话怎么开口——**越能直接开拍越好**；允许适度文学化与比喻。
+- **coverHeadline**：8–14 字停滑短句；**禁止**把长 title 原样当封面主句。
 
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}`;
 
@@ -1494,8 +1497,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 1. contentBlueprints：须恰好包含 **6** 个具体可执行的内容方案，并与上方 **6** 个维度一一对应（第 1 条对应维度 1，依此类推，第 6 条对应维度 6）。每个方案须包含：
    - title（选题标题：**必须**有好奇缺口/反常识/反差/时事切口之一，具体有画面；禁止正确但无聊的百科题）
    - format（内容形式：短视频 / 图文）。**【图文配额·硬】** 6 条中 **至少 3 条** \`format=图文\`（小红书笔记可发、可收藏），用于近期小红书流量验证；其余可为短视频。维度「痛点 / 人设 / 长尾搜索」**优先图文**；图文的 detailedScript **必须**用 \`[封面]\`/\`[图N]\` 大纲，不要写成口播时间轴。
-   - hook（开头文案钩子：**必须**是一句能停滑的话——反问、具体物件、痛点一击或反常识；建议≥30字仍口语）
-   - copywriting（核心文案方向，**建议**完整正文不少于200字。结构须含：点名目标客户 → 痛点共鸣 → **2–3 个半成品解法要点（故意留白完整方案）** → **结尾咨询/私信/预约类 CTA**。图文与视频均给出可直接使用的正文；**口吻宜生动，避免公文笔触**）
+   - hook（开头文案钩子：**必须**黄金三秒级停滑——**痛点与爽点前置**同句或紧挨；反问/物件/窘境一击 + 痛快反转；建议≥30字仍口语；禁先讲定义或说教开场）
+   - copywriting（核心文案方向，**建议**完整正文不少于200字。结构须含：**开场痛点+爽点** → 点名目标客户 → 痛点展开 → **2–3 个半成品解法要点（故意留白完整方案）** → **结尾咨询/私信/预约类 CTA**。口吻**幽默风趣、禁训话/公文**；图文与视频均给出可直接使用的正文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：**建议**给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
 	   - detailedScript（详细的拍摄脚本或大纲，**建议**保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**建议在视觉与场域上与前几段方案明显区隔。
@@ -4928,6 +4931,118 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         })),
       };
     }),
+
+    /**
+     * Skill 区上方·GPT‑5.5 免费问答（每日 30 次）。
+     * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
+     */
+    askPlatformSkillQa: protectedProcedure
+      .input(
+        z.object({
+          question: z.string().min(2).max(2000),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const { askPlatformSkillQa } = await import("./services/platformSkillQa.js");
+        try {
+          const result = await askPlatformSkillQa({
+            userId: ctx.user.id,
+            question: input.question,
+            enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+            allowBloggerTitle: Boolean(input.allowBloggerTitle),
+            isAdmin: isAdminUser,
+          });
+          return { success: true as const, ...result };
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "问答失败";
+          throw new TRPCError({
+            code: /上限/.test(msg) ? "TOO_MANY_REQUESTS" : "BAD_REQUEST",
+            message: msg,
+          });
+        }
+      }),
+
+    /**
+     * Skill 问答·确认单页生图：生涯首张封面九折，其后封面原价；可挂载当前勾选 Skill。
+     */
+    confirmPlatformSkillQaImage: protectedProcedure
+      .input(
+        z.object({
+          imagePrompt: z.string().min(4).max(2000),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          aspectRatio: z.enum(["9:16", "16:9", "3:4", "4:3"]).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const { confirmPlatformSkillQaImage, PLATFORM_SKILL_QA_IMAGE_ACTION } = await import(
+          "./services/platformSkillQa.js"
+        );
+        const prepared = await confirmPlatformSkillQaImage({
+          userId,
+          imagePrompt: input.imagePrompt,
+          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          aspectRatio: input.aspectRatio,
+        });
+        const cost = prepared.needCharge;
+        let charged = false;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            PLATFORM_SKILL_QA_IMAGE_ACTION,
+            `Skill 问答生图${prepared.isFirstImageDiscount ? "·首张九折" : ""} · ${input.imagePrompt.slice(0, 48)}`,
+          );
+          charged = true;
+        } else {
+          // 管理员也记一笔 0 元 usage，保证「首张九折」计数一致
+          const drizzleDb = await import("./db").then((m) => m.getDb());
+          if (drizzleDb) {
+            const { stripeUsageLogs } = await import("../drizzle/schema-stripe");
+            await drizzleDb.insert(stripeUsageLogs).values({
+              userId,
+              action: PLATFORM_SKILL_QA_IMAGE_ACTION,
+              creditsCost: 0,
+              isFreeQuota: 1,
+              description: `Skill 问答生图（管理员）· ${input.imagePrompt.slice(0, 80)}`,
+            });
+          }
+        }
+
+        try {
+          const result = await prepared.runGenerate();
+          return {
+            success: true as const,
+            imageUrl: result.imageUrl,
+            creditsCharged: isAdminUser ? 0 : result.creditsCharged,
+            isFirstImageDiscount: result.isFirstImageDiscount,
+            englishPrompt: result.englishPrompt,
+            imageGenFlowLog: result.imageGenFlowLog,
+          };
+        } catch (error) {
+          if (charged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "Skill 问答生图失败退还").catch((refundErr: unknown) => {
+              console.error("[confirmPlatformSkillQaImage] refund failed:", refundErr);
+            });
+          }
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: error instanceof Error ? error.message : "生图失败",
+          });
+        }
+      }),
 
     /** /platform：上传 .md Skill（账号持久化） */
     uploadPlatformSkill: protectedProcedure

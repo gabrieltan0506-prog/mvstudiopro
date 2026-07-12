@@ -23,8 +23,8 @@ import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { normalizeCompositeSheetKind } from "./geminiPlatformCompositeTranslation.js";
 import { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
 import { isGraphicNoteMetaCreatorGuidance } from "../../shared/graphicNoteReaderFacing.js";
-import { STORYBOARD_TEXT_RENDER_WRAPPER_EN } from "../../shared/storyboardTextClarity.js";
-import { STORYBOARD_LIGHTING_EMOTION_LOCK_EN } from "../../shared/storyboardLightingEmotion.js";
+import { STORYBOARD_ON_IMAGE_TEXT_ZH } from "../../shared/storyboardTextClarity.js";
+import { STORYBOARD_LIGHTING_EMOTION_GUIDANCE_ZH } from "../../shared/storyboardLightingEmotion.js";
 import {
   isEvolinkGptImage2Configured,
   isEvolinkModerationFailure,
@@ -1583,7 +1583,7 @@ export async function generatePlatformCompositeSheetImage(options: {
         const titleStripAllowed = !options.gridSection || (options.gridSection.index ?? 0) <= 0;
         const storyboardTitleInject =
           isStoryboard && topicTitleZh && titleStripAllowed
-            ? `\n\nTOP STRIP — **内容总结** (Simplified Chinese; overall arc / synopsis for the whole sheet — render in the top band above the panels; **not** per-panel shot titles). Anchor text to include or paraphrase from: 「${topicTitleZh}」`
+            ? `\n\n【顶栏·内容总结】在格子上方用简体中文写一条总述（整张弧线/Synopsis），不要写成每格分镜标题。可锚定或改写：「${topicTitleZh}」`
             : "";
         if (isStoryboard && topicTitleZh) {
           appendImageFlowLog(
@@ -1592,7 +1592,7 @@ export async function generatePlatformCompositeSheetImage(options: {
           );
         }
         const promptForImageBase = isStoryboard
-          ? `${trimmedEnglishCore}\n\n${STORYBOARD_TEXT_RENDER_WRAPPER_EN}\n\n${pixelLock}\n\n${STORYBOARD_LIGHTING_EMOTION_LOCK_EN}${storyboardTitleInject}`
+          ? `${trimmedEnglishCore}\n\n${STORYBOARD_ON_IMAGE_TEXT_ZH}\n\n${STORYBOARD_LIGHTING_EMOTION_GUIDANCE_ZH}\n\n${pixelLock}${storyboardTitleInject}`
           : `${trimmedEnglishCore}\n\n${pixelLock}${storyboardTitleInject}`;
         promptForImage = appendVertexProPhotographyPromptModifiers(promptForImageBase, "platform_landscape_sheet");
 
