@@ -4361,7 +4361,7 @@ export const appRouter = router({
             predictedCtr: z.number().optional(),
             predictedConversion: z.number().optional(),
             brandMatchFit: z.number().optional(),
-            source: z.enum(["structure", "personalization"]).optional(),
+            source: z.enum(["structure", "personalization", "mab"]).optional(),
           }),
           /** 可选：平台蓝海词词表，写入推演文案 */
           blueOceanLexicon: z
@@ -5797,7 +5797,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             {
               routeContext: `${finalTopicHook}\n${enrichedContext}\n${input.compositeTitle || ""}\n${base.slice(0, 1200)}`,
               sheetKind:
-                input.compositeKind === "graphic" || /图文/.test(String(finalFormatForPipeline || ""))
+                input.compositeKind === "xiaohongshu_dual_note" ||
+                /图文/.test(String(finalFormatForPipeline || ""))
                   ? "graphic"
                   : "video",
               forceCoverShortCopy: true,
@@ -6231,9 +6232,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             {
               routeContext: `${input.title || ""}\n${base.slice(0, 2000)}`,
               sheetKind:
-                input.kind === "xiaohongshu_2x4" ||
-                input.kind === "single_page_knowledge_card" ||
-                String(input.kind || "").includes("graphic")
+                input.kind === "xiaohongshu_dual_note" ||
+                input.kind === "single_page_knowledge_card"
                   ? "graphic"
                   : "video",
               forceCoverShortCopy: true,
