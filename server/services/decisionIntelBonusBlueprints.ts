@@ -108,9 +108,10 @@ ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
 ${reviewBlock}
 ${diversityBlock}
 ${skillsBlock ? `${skillsBlock}\n` : ""}${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH}
-- 若输入标题已是某一人物/词人模板且同批将复读，**强烈建议改写扩写**为同痛点但换人物/典籍/影视桥段/反差切口的新标题；宋朝范仲淹、文天祥、王安石等皆可写，勿自我禁止某朝代。
+- 若输入标题已是苏轼/苏东坡或同人复读模板，**必须**改写为同痛点但换人（三苏其他、唐宋八大家、热播/生活切口）；同人默认只保留 1 条角度。
+- 扩写须放松向、可拍；禁止再写成「读《》领悟 / 哈佛实验室揭秘」论文腔；场景禁止多条扎堆书房黑胶古籍。
 - 若提供蓝海词/标签，须在 copywriting、detailedScript、publishingAdvice 中自然嵌入 1–3 个，禁止堆砌 hashtag。
-- 须严格延续输入选题的主线痛点与人设，不得偏题；语气专业、可拍、简体中文。
+- 须严格延续输入选题的主线痛点与人设，不得偏题；语气专业、可拍、**简体中文**。
 - **高度需求** executionDetails.lightingAndCamera 与 stepByStepScript 写清运镜、灯光与情绪（见上方手法卡）；只借手法，禁止点名导演/致敬；分镜表六栏含运镜、灯光安排与情绪表达。
 - 禁止 markdown 代码块；第一个字符必须是 {。`;
 

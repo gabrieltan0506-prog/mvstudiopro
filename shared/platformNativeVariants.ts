@@ -2,6 +2,9 @@
  * /platform 三平台母语变体（小红书 / B站 / 视频号）+ 博主称号开关文案。
  */
 
+import { routePlatformSkillIds } from "./platformSkillRouter";
+import { PLATFORM_BUILTIN_SKILL_IDS } from "./platformSkills";
+
 export const PLATFORM_NATIVE_VARIANT_IDS = [
   "xiaohongshu",
   "bilibili",
@@ -199,14 +202,40 @@ export function composePlatformCoverNativeVisualDirective(
 /**
  * 出图链路专用：禁止灌入全文 Skill（会显著拖慢双语编导 / 像素模型）。
  * 仅返回与封面、图文格、手法相关的短硬约束。
+ * 默认按选题路由子集；`skillRouteMode: "all"` 时对勾选池全开短约束。
+ * 封面少字硬限始终附加（专治 fallback 模型把长 hook 印满屏）。
  */
-export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null): string {
-  const ids = Array.isArray(enabledSkillIds) ? enabledSkillIds.map(String) : null;
-  const on = (id: string) => (ids == null ? true : ids.includes(id));
+export function composePlatformImageSkillHints(
+  enabledSkillIds?: string[] | null,
+  opts?: {
+    routeContext?: string | null;
+    sheetKind?: "graphic" | "video" | "unknown" | null;
+    skillRouteMode?: "auto" | "all" | null;
+    /** 出图任务默认 true：强制封面少字句 */
+    forceCoverShortCopy?: boolean;
+  },
+): string {
+  const mode = opts?.skillRouteMode === "all" ? "all" : "auto";
+  const poolIds = Array.isArray(enabledSkillIds)
+    ? enabledSkillIds.map(String).filter(Boolean)
+    : null;
+
+  let activeIds: string[] | null = poolIds;
+  if (mode === "auto") {
+    const pool = poolIds ?? [...PLATFORM_BUILTIN_SKILL_IDS];
+    activeIds = routePlatformSkillIds({
+      poolIds: pool,
+      context: opts?.routeContext || "",
+      sheetKind: opts?.sheetKind || "unknown",
+    }).selectedIds;
+  }
+
+  const on = (id: string) => (activeIds == null ? true : activeIds.includes(id));
   const parts: string[] = [];
-  if (on("cover-stop-scroll")) {
+  const forceCover = opts?.forceCoverShortCopy !== false;
+  if (forceCover || on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图】主句8–14字且只提亮2–6字重点色；禁长标题上屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等），服务黄金三秒停滑；同批勿全坐着。",
+      "【封面出图·少字硬限】coverHeadline 须 8–14 字；屏上可见文案最多 2 行；只提亮 2–6 字重点色；禁止把长标题/整段 hook/论文式副标印满屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着。",
     );
   }
   if (on("vivid-anti-boring")) {
@@ -230,6 +259,31 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
   if (on("crossover-popsci") || on("crossover-organ-popsci")) {
     parts.push(
       "【跨界科普出图】主体可拟人；电影感机制透视+生活B-roll对照；情绪共鸣优先；禁课堂挂图墙与诊疗恐吓画面。",
+    );
+  }
+  if (on("4season-fmcg-popsci") || on("summer-fmcg-popsci") || on("label-debunk-copy")) {
+    parts.push(
+      "【四季畅销品轻科普出图】当季SKU食欲/开封特写+配料或营养成分表可读高亮；看不清配料则拍营养成分/宣称正反分屏；量感倒糖盐；禁诊疗恐吓。",
+    );
+  }
+  if (on("food-popsci-lens") || on("4season-fmcg-popsci")) {
+    parts.push(
+      "【食品科普运镜】开封/咬入特写→包装信息圈点→工业或量感→体感生活情景→货架收束；成稿禁导演名/片名。",
+    );
+  }
+  if (on("authority-cite-endorsement")) {
+    parts.push(
+      "【权威背书出图】最多一张简洁信息卡（指南名+一句阈值）；勿伪造红头文件或论文截图墙。",
+    );
+  }
+  if (on("fmcg-popsci-monetize")) {
+    parts.push(
+      "【科普变现出图】末帧可留评论关键词/清单预告，勿小黄车与疗效承诺画面；半成品缺口视觉优先于卖货。",
+    );
+  }
+  if (on("forensic-life-lens")) {
+    parts.push(
+      "【法医视角出图】生活保命场景（安全带/酒杯/头盔/凌晨手机）；禁解剖台、血腥、命案复盘画面；末帧清单/窗口期信息卡。",
     );
   }
   if (parts.length === 0) return "";

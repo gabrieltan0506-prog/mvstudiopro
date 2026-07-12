@@ -150,6 +150,8 @@ export async function askPlatformSkillQa(params: {
     userId: params.userId,
     enabledSkillIds: params.enabledSkillIds,
     allowBloggerTitle: Boolean(params.allowBloggerTitle),
+    routeContext: question,
+    sheetKind: "unknown",
   }).catch(() => "");
 
   const userText = [
@@ -221,6 +223,7 @@ export async function confirmPlatformSkillQaImage(params: {
   const aspect = params.aspectRatio || "9:16";
   const skillHints = composePlatformImageSkillHints(
     Array.isArray(params.enabledSkillIds) ? params.enabledSkillIds : null,
+    { routeContext: prompt, sheetKind: "unknown", forceCoverShortCopy: true },
   );
 
   return {
@@ -233,6 +236,8 @@ export async function confirmPlatformSkillQaImage(params: {
         userId: params.userId,
         enabledSkillIds: params.enabledSkillIds,
         allowBloggerTitle: false,
+        routeContext: prompt,
+        sheetKind: "unknown",
       }).catch(() => "");
       const mergedZh = [
         prompt,

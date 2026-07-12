@@ -1221,6 +1221,25 @@ async function processPlatformJob(
       // Incremental accumulator: holds blueprints already written to job output during generation
       const incrementalBlueprints: unknown[] = [];
 
+      const rawSkillIds = (params as { enabledSkillIds?: unknown }).enabledSkillIds;
+      const enabledSkillIdsForJob = Array.isArray(rawSkillIds)
+        ? rawSkillIds.map(String).filter(Boolean).slice(0, 24)
+        : null;
+      const allowBloggerTitleForJob = Boolean((params as { allowBloggerTitle?: unknown }).allowBloggerTitle);
+      const dash = strategicDashboard as Record<string, unknown> | undefined;
+      const skillRouteContext = [
+        context,
+        typeof dash?.headline === "string" ? dash.headline : "",
+        typeof dash?.subheadline === "string" ? dash.subheadline : "",
+        typeof dash?.personaSummary === "string" ? dash.personaSummary : "",
+        typeof (snapshotSummary as { topic?: unknown })?.topic === "string"
+          ? (snapshotSummary as { topic: string }).topic
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 4000);
+
       const built = await buildPlatformContent({
         snapshot: snapshotSummary,
         platformMenu,
@@ -1232,26 +1251,13 @@ async function processPlatformJob(
         stage1Handoff,
         globalBlueOceanWords,
         stage2LlmModeOverride: stage2LlmModeOverride ?? null,
-        platformSkillsPrompt: await (async () => {
-          try {
-            const { resolvePlatformSkillsPrompt } = await import("../services/platformSkillsService.js");
-            const rawIds = (params as { enabledSkillIds?: unknown }).enabledSkillIds;
-            const enabledSkillIds = Array.isArray(rawIds)
-              ? rawIds.map(String).filter(Boolean).slice(0, 24)
-              : null;
-            return await resolvePlatformSkillsPrompt({
-              userId: jobUserId ?? 0,
-              enabledSkillIds,
-              allowBloggerTitle: Boolean((params as { allowBloggerTitle?: unknown }).allowBloggerTitle),
-            });
-          } catch (e) {
-            console.warn(
-              "[platform_build_content] skills resolve skipped:",
-              e instanceof Error ? e.message.slice(0, 160) : e,
-            );
-            return "";
-          }
-        })(),
+        userId: jobUserId ?? 0,
+        enabledSkillIds: enabledSkillIdsForJob,
+        allowBloggerTitle: allowBloggerTitleForJob,
+        skillRouteMode: "auto",
+        skillRouteContext,
+        // monetization / 兜底：不再预灌单一赛道全文；六维由 buildPlatformContent 内 diverse 路由
+        platformSkillsPrompt: "",
         onBlueprintGenerated: platformJobId
           ? async (blueprint, dimIndex) => {
               incrementalBlueprints[dimIndex] = blueprint;

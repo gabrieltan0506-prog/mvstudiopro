@@ -708,17 +708,25 @@ export function PlatformReportDashboard({
             </div>
           </div>
           <div className="p-3.5 pt-3">
-            <p className="mb-2.5 line-clamp-2 rounded-lg border border-violet-400/25 bg-violet-950/40 px-2.5 py-2 text-xs leading-snug text-violet-100/95">
+            <p className="mb-2.5 line-clamp-3 rounded-lg border border-violet-400/25 bg-violet-950/40 px-2.5 py-2 text-xs leading-snug text-violet-100/95">
               {trial ? (
                 <TrialReadSensitive>
-                  动态测试对照叙事主线；「利用」加量验证成熟句型，「探索」保留新组合试错。
+                  「利用」只作成熟句型对照，不扩写完整文案；「探索」为新组合试错，可点选生成完整文案至执行区。
                 </TrialReadSensitive>
               ) : (
-                <>动态测试对照叙事主线；「利用」加量验证成熟句型，「探索」保留新组合试错。</>
+                <>
+                  「利用」只作成熟句型对照，<span className="font-semibold text-violet-50">不扩写完整文案</span>
+                  ；「探索」为新组合试错，<span className="font-semibold text-violet-50">可点选生成完整文案</span>
+                  至执行区。
+                </>
               )}
             </p>
             <div className="grid grid-cols-2 gap-2">
-              {data.executionSuggestions.mabVariants.map((variant, idx) => (
+              {data.executionSuggestions.mabVariants.map((variant, idx) => {
+                const isExplore = variant.type !== "utilize";
+                const pickTitle = variant.title;
+                const pickKey = normalizeDecisionIntelTopicTitleKey(pickTitle);
+                return (
                 <div
                   key={variant.id}
                   className={`relative rounded-lg border px-2.5 pb-2.5 pt-3.5 shadow-sm ${
@@ -764,8 +772,31 @@ export function PlatformReportDashboard({
                       </span>
                     ) : null}
                   </div>
+                  {!trial && variant.type === "utilize" ? (
+                    <p className="mt-2 rounded-md border border-emerald-500/25 bg-emerald-950/30 px-2 py-1.5 text-center text-[10px] leading-snug text-emerald-100/85">
+                      对照句型 · 不可点选扩写
+                    </p>
+                  ) : null}
+                  {isExplore ? (
+                    <TopicExecutionCopyActions
+                      pick={{
+                        title: pickTitle,
+                        structure:
+                          "探索位赛马标题：按标题主线扩写可拍短视频/图文；优先生活化与热播切口，半成品+咨询 CTA；禁止苏轼默认复读与读论文口播。",
+                        source: "mab",
+                      }}
+                      onGenerate={onGenerateTopicCopy}
+                      onRegenerate={onRegenerateTopicCopy}
+                      trial={trial}
+                      variant="structure"
+                      loading={generatingTopicCopyKey === pickKey}
+                      alreadyInExecution={existingKeys.has(pickKey)}
+                      isGifted={giftedKeys.has(pickKey)}
+                    />
+                  ) : null}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </section>

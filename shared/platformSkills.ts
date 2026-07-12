@@ -94,6 +94,11 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "contrast-reversal-climax",
   "crossover-popsci",
   "vivid-anti-boring",
+  "4season-fmcg-popsci",
+  "label-debunk-copy",
+  "authority-cite-endorsement",
+  "fmcg-popsci-monetize",
+  "forensic-life-lens",
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];
