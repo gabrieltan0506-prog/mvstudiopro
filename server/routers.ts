@@ -95,6 +95,7 @@ import {
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
+import { normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -1160,6 +1161,8 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
           .filter(Boolean)
           .slice(0, 8);
       }
+      // commentHooks：≤3 字生活化评论钩
+      b.commentHooks = normalizeCommentHooksList(b.commentHooks ?? b.commentHook ?? b["评论关键词"]);
       // platformVariants：三平台钩子/封面/标签差异块
       const pv = normalizePlatformVariants(b.platformVariants ?? b.platformAdaptations);
       if (pv.length > 0) b.platformVariants = pv;
@@ -5157,6 +5160,123 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         })),
       };
     }),
+
+    /** Skill 自动路由总管说明（只读，供 UI 展示） */
+    getPlatformSkillMasterInfo: publicProcedure.query(async () => {
+      const { PLATFORM_SKILL_MASTER_READONLY } = await import("../shared/platformTopicShortlist.js");
+      return PLATFORM_SKILL_MASTER_READONLY;
+    }),
+
+    /**
+     * 选题初选：生成约 20 条（标明 skillsUsed / conveyGoal），用户勾选后再扩写。
+     * 扣 {@link CREDIT_COSTS.platformTopicShortlist}；可重复生成。
+     */
+    generatePlatformTopicShortlist: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().max(8000).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+          existingTitles: z.array(z.string().max(200)).max(60).optional(),
+          stage1Seeds: z
+            .array(
+              z.object({
+                title: z.string().max(200).optional(),
+                hook: z.string().max(400).optional(),
+              }),
+            )
+            .max(8)
+            .optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformTopicShortlist;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，选题初选需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(userId, "platformTopicShortlist", "选题初选 20 条");
+        }
+        const { generatePlatformTopicShortlist } = await import("./services/platformTopicShortlist.js");
+        const result = await generatePlatformTopicShortlist({
+          userId,
+          context: input.context,
+          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          allowBloggerTitle: Boolean(input.allowBloggerTitle),
+          existingTitles: input.existingTitles,
+          stage1Seeds: input.stage1Seeds,
+        });
+        const creditsInfo = await getCredits(userId);
+        return {
+          ...result,
+          chargedCredits: isAdminUser ? 0 : cost,
+          totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
+
+    /**
+     * 勾选 5–6 条初选 → 正式文案扩写（含 graphicNotePages）。
+     * 扣 {@link CREDIT_COSTS.platformTopicExpand}。
+     */
+    expandPlatformTopicPicks: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().max(8000).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+          picks: z
+            .array(
+              z.object({
+                id: z.string().min(4).max(64),
+                title: z.string().min(4).max(120),
+                hookSketch: z.string().min(4).max(200),
+                conveyGoal: z.string().min(4).max(240),
+                skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
+                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "default"]),
+                formatHint: z.enum(["图文", "短视频"]),
+                dedupeKey: z.string().min(1).max(80),
+                commentHook: z.string().max(8).optional(),
+              }),
+            )
+            .min(5)
+            .max(6),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformTopicExpand;
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(userId, "platformTopicExpand", `初选扩写 ${input.picks.length} 条正式文案`);
+        }
+        const { expandPlatformTopicPicks } = await import("./services/platformTopicShortlist.js");
+        const result = await expandPlatformTopicPicks({
+          userId,
+          context: input.context,
+          picks: input.picks,
+          enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+          allowBloggerTitle: Boolean(input.allowBloggerTitle),
+        });
+        const creditsInfo = await getCredits(userId);
+        return {
+          ...result,
+          chargedCredits: isAdminUser ? 0 : cost,
+          totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
 
     /**
      * Skill 区上方·GPT‑5.5 免费问答（每日 30 次）。

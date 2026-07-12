@@ -245,7 +245,12 @@ export function composePlatformImageSkillHints(
   }
   if (on("graphic-note-rhythm")) {
     parts.push(
-      "【图文笔记出图】读者向可发笔记：钩子→痛点→误区→场景/关系/节律→问答→评论CTA；禁拍封面/拆八页/录60秒/发布SOP等技术指导格。",
+      "【图文笔记出图】读者向可发笔记：钩子→痛点→误区→场景/关系/节律→问答→评论短钩（≤3字）；禁拍封面/拆八页/录60秒/发布SOP等技术指导格。",
+    );
+  }
+  if (on("xhs-collectible-note")) {
+    parts.push(
+      "【高收藏图文】建议8–12页角色齐全；封面人群+痛点+结果；解法写「在这里我先分享一些」；封面少字硬限。",
     );
   }
   if (on("director-craft")) {
@@ -263,7 +268,7 @@ export function composePlatformImageSkillHints(
   }
   if (on("4season-fmcg-popsci") || on("summer-fmcg-popsci") || on("label-debunk-copy")) {
     parts.push(
-      "【四季畅销品轻科普出图】当季SKU食欲/开封特写+配料或营养成分表可读高亮；看不清配料则拍营养成分/宣称正反分屏；量感倒糖盐；禁诊疗恐吓。",
+      "【畅销品痛点槽点科普出图】当季SKU食欲/开封特写+配料或营养成分表可读高亮；字幕级槽点短句；量感倒糖盐；禁轻描淡写与诊疗恐吓。",
     );
   }
   if (on("food-popsci-lens") || on("4season-fmcg-popsci")) {

@@ -84,6 +84,12 @@ import {
   type DecisionIntelTopicPick,
 } from "@shared/decisionIntelTopicPicks";
 import {
+  PLATFORM_SKILL_MASTER_READONLY,
+  PLATFORM_TOPIC_EXPAND_MAX,
+  PLATFORM_TOPIC_EXPAND_MIN,
+  type PlatformTopicShortlistItem,
+} from "@shared/platformTopicShortlist";
+import {
   Activity,
   ArrowLeft,
   ArrowRight,
@@ -916,6 +922,13 @@ function buildPlatformSheetScriptContext(
     publishingAdvice?: string;
     actionableSteps?: string[];
     format?: string;
+    commentHooks?: string[];
+    graphicNotePages?: Array<{
+      pageIndex?: number;
+      role?: string;
+      headline?: string;
+      body?: string;
+    }>;
     executionDetails?: {
       environmentAndWardrobe?: string;
       lightingAndCamera?: string;
@@ -940,24 +953,44 @@ function buildPlatformSheetScriptContext(
 
   // 图文笔记：只喂读者向攻略正文；禁止发布建议/创作SOP（否则会画成「技术指导」格）
   if (isGraphic) {
-    if (item.copywriting) {
-      const readerCopy = String(item.copywriting)
-        .split(/\n+/)
-        .map((l) => l.trim())
-        .filter((l) => l && !isGraphicNoteMetaCreatorGuidance(l))
-        .join("\n")
-        .trim();
-      if (readerCopy) parts.push(`【文案与结构】${readerCopy}`);
+    const pages = Array.isArray(item.graphicNotePages) ? item.graphicNotePages : [];
+    if (pages.length >= 6) {
+      const pageBlock = pages
+        .slice(0, 12)
+        .map((p, i) => {
+          const idx = p.pageIndex ?? i + 1;
+          const role = p.role || "page";
+          const head = String(p.headline || "").trim();
+          const body = String(p.body || "").trim();
+          return `${idx}. [${role}] ${head}\n${body}`;
+        })
+        .join("\n\n");
+      parts.push(`【可发图文页结构·按页排版】\n${pageBlock}`);
+      parts.push(
+        "【体裁·硬约束】按上方页结构直接排成读者向笔记；禁止创作 SOP 格；评论钩若出现须≤3字生活词。",
+      );
+    } else {
+      if (item.copywriting) {
+        const readerCopy = String(item.copywriting)
+          .split(/\n+/)
+          .map((l) => l.trim())
+          .filter((l) => l && !isGraphicNoteMetaCreatorGuidance(l))
+          .join("\n")
+          .trim();
+        if (readerCopy) parts.push(`【文案与结构】${readerCopy}`);
+      }
+      parts.push(
+        "【体裁·硬约束】本图是小红书/图文**读者向攻略·避坑·知识笔记**（可直接发布），不是短视频分镜表，也不是创作者「技术指导手册」。禁止六栏分镜、灯光机位教学、口播时间轴；禁止「拍封面素材/拆八页/录60秒/发布建议/话题标签墙」等生产SOP格子。",
+      );
+      const readerScript = focusGraphicNoteReaderScript(item.detailedScript);
+      if (readerScript) parts.push(`【图文大纲·读者页】${readerScript}`);
+      const contentSteps = filterGraphicNoteReaderFacingSteps(item.actionableSteps);
+      if (contentSteps.length) {
+        parts.push(`【内容要点】\n${contentSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+      }
     }
-    parts.push(
-      "【体裁·硬约束】本图是小红书/图文**读者向攻略·避坑·知识笔记**（可直接发布），不是短视频分镜表，也不是创作者「技术指导手册」。禁止六栏分镜、灯光机位教学、口播时间轴；禁止「拍封面素材/拆八页/录60秒/发布建议/话题标签墙」等生产SOP格子。",
-    );
-    const readerScript = focusGraphicNoteReaderScript(item.detailedScript);
-    if (readerScript) parts.push(`【图文大纲·读者页】${readerScript}`);
-    const contentSteps = filterGraphicNoteReaderFacingSteps(item.actionableSteps);
-    if (contentSteps.length) {
-      parts.push(`【内容要点】\n${contentSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
-    }
+    const hooks = Array.isArray(item.commentHooks) ? item.commentHooks.filter(Boolean).slice(0, 3) : [];
+    if (hooks.length) parts.push(`【评论短钩】${hooks.join("、")}（每词≤3字）`);
     // 故意不喂 publishingAdvice：易变成「怎么发」技术指导格
     if (is3x4) {
       parts.push(
@@ -1952,6 +1985,11 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
+  /** 选题初选 20 → 勾选 5–6 → 扩写 */
+  const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
+  const [selectedShortlistIds, setSelectedShortlistIds] = useState<Set<string>>(new Set());
+  const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
+  const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -2421,6 +2459,183 @@ export default function PlatformPage() {
           <div className="text-[11px] text-gray-500 sm:col-span-2">
             {platformSkillsQuery.isLoading ? "加载 Skill…" : "暂无 Skill（请确认 docs/2026Jul11/skill 已部署）"}
           </div>
+        ) : null}
+      </div>
+
+      <div className="mt-3 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5">
+        <div className="text-[12px] font-semibold text-[#a7f3d0]">{PLATFORM_SKILL_MASTER_READONLY.title}</div>
+        <p className="mt-1 text-[10px] leading-snug text-gray-400">{PLATFORM_SKILL_MASTER_READONLY.summary}</p>
+        <p className="mt-1 text-[10px] leading-snug text-gray-500">{PLATFORM_SKILL_MASTER_READONLY.shortlistHint}</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {PLATFORM_SKILL_MASTER_READONLY.lanes.map((ln) => (
+            <span
+              key={ln.id}
+              className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] text-gray-300"
+              title={ln.skills}
+            >
+              {ln.id} · {ln.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-[#49e6ff]/25 bg-[#49e6ff]/6 px-3 py-2.5">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px] font-semibold text-white">选题初选（先挑再写）</div>
+            <p className="mt-0.5 text-[10px] leading-snug text-gray-400">
+              先生成约 20 条初选（每条写明 Skill 与传达目标），勾选 {PLATFORM_TOPIC_EXPAND_MIN}–
+              {PLATFORM_TOPIC_EXPAND_MAX} 条再扩写正式文案。初选 {CREDIT_COSTS.platformTopicShortlist}{" "}
+              点/次 · 扩写 {CREDIT_COSTS.platformTopicExpand} 点/次。
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={
+              !isAuthenticated ||
+              generateTopicShortlistMutation.isPending ||
+              expandTopicPicksMutation.isPending
+            }
+            onClick={() => {
+              void (async () => {
+                try {
+                  const existingTitles = [
+                    ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) =>
+                      String(b?.title || ""),
+                    ),
+                    ...topicShortlist.map((t) => t.title),
+                  ].filter(Boolean);
+                  const res = await generateTopicShortlistMutation.mutateAsync({
+                    context: focusPrompt.trim() || undefined,
+                    enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                    allowBloggerTitle,
+                    existingTitles,
+                  });
+                  setTopicShortlist(res.topics || []);
+                  setSelectedShortlistIds(new Set());
+                  toast.success(`已生成 ${(res.topics || []).length} 条初选`);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "初选生成失败");
+                }
+              })();
+            }}
+            className="shrink-0 rounded-md border border-[#49e6ff]/45 bg-[#49e6ff]/15 px-2.5 py-1.5 text-[10px] font-bold text-[#b8f4ff] disabled:opacity-50"
+          >
+            {generateTopicShortlistMutation.isPending ? "生成中…" : "生成 20 条初选"}
+          </button>
+        </div>
+        {topicShortlist.length > 0 ? (
+          <>
+            <div className="mt-2 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
+              {topicShortlist.map((t) => {
+                const on = selectedShortlistIds.has(t.id);
+                const selectedCount = selectedShortlistIds.size;
+                return (
+                  <label
+                    key={t.id}
+                    className={`flex cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 text-[10px] ${
+                      on
+                        ? "border-[#49e6ff]/50 bg-[#49e6ff]/10 text-white"
+                        : "border-white/10 bg-black/20 text-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={on}
+                      onChange={() => {
+                        setSelectedShortlistIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(t.id)) next.delete(t.id);
+                          else if (next.size < PLATFORM_TOPIC_EXPAND_MAX) next.add(t.id);
+                          else toast.message(`最多勾选 ${PLATFORM_TOPIC_EXPAND_MAX} 条`);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-semibold text-white/95">{t.title}</span>
+                      <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
+                      <span className="mt-0.5 flex flex-wrap gap-1">
+                        <span className="rounded bg-white/10 px-1 text-[9px] text-[#a7f3d0]">
+                          {t.primaryLane}
+                        </span>
+                        <span className="rounded bg-white/10 px-1 text-[9px] text-gray-300">
+                          {t.formatHint}
+                        </span>
+                        {(t.skillsUsed || []).slice(0, 5).map((sid) => (
+                          <span key={sid} className="rounded bg-white/5 px-1 text-[9px] text-gray-400">
+                            {sid}
+                          </span>
+                        ))}
+                        {t.commentHook ? (
+                          <span className="rounded bg-amber-500/20 px-1 text-[9px] text-amber-100">
+                            评「{t.commentHook}」
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="sr-only">{selectedCount}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={
+                  expandTopicPicksMutation.isPending ||
+                  selectedShortlistIds.size < PLATFORM_TOPIC_EXPAND_MIN ||
+                  selectedShortlistIds.size > PLATFORM_TOPIC_EXPAND_MAX
+                }
+                onClick={() => {
+                  void (async () => {
+                    const picks = topicShortlist.filter((t) => selectedShortlistIds.has(t.id));
+                    if (picks.length < PLATFORM_TOPIC_EXPAND_MIN) {
+                      toast.message(`请勾选至少 ${PLATFORM_TOPIC_EXPAND_MIN} 条`);
+                      return;
+                    }
+                    try {
+                      const res = await expandTopicPicksMutation.mutateAsync({
+                        context: focusPrompt.trim() || undefined,
+                        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                        allowBloggerTitle,
+                        picks,
+                      });
+                      const bps = res.contentBlueprints || [];
+                      setPlatformContent((prev: any) => ({
+                        ...(prev && typeof prev === "object" ? prev : {}),
+                        contentBlueprints: bps,
+                        monetizationLanes: Array.isArray(prev?.monetizationLanes)
+                          ? prev.monetizationLanes
+                          : [],
+                      }));
+                      toast.success(`已扩写 ${bps.length} 条正式文案（含图文页结构）`);
+                      scrollToPlatformExecutionCopy();
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "扩写失败");
+                    }
+                  })();
+                }}
+                className="rounded-md border border-[#10B981]/45 bg-[#10B981]/15 px-2.5 py-1.5 text-[10px] font-bold text-[#a7f3d0] disabled:opacity-50"
+              >
+                {expandTopicPicksMutation.isPending
+                  ? "扩写中…"
+                  : `扩写已勾选（${selectedShortlistIds.size}/${PLATFORM_TOPIC_EXPAND_MIN}–${PLATFORM_TOPIC_EXPAND_MAX}）`}
+              </button>
+              <button
+                type="button"
+                disabled={generateTopicShortlistMutation.isPending}
+                onClick={() => {
+                  setSelectedShortlistIds(new Set());
+                  toast.message("已清空勾选；可再点「生成 20 条初选」换一批");
+                }}
+                className="rounded-md border border-white/15 px-2.5 py-1.5 text-[10px] text-gray-300"
+              >
+                清空勾选
+              </button>
+            </div>
+          </>
         ) : null}
       </div>
     </div>

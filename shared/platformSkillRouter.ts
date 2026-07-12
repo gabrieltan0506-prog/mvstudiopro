@@ -160,13 +160,15 @@ export function routePlatformSkillIdsForLane(params: {
   const sheet = params.sheetKind || "unknown";
   if (sheet === "graphic") {
     add("graphic-note-rhythm");
-    reasons.push("sheet:graphic → graphic-note-rhythm");
+    add("xhs-collectible-note");
+    reasons.push("sheet:graphic → graphic-note-rhythm + xhs-collectible-note");
   } else if (sheet === "video") {
     add("director-craft");
     reasons.push("sheet:video → director-craft");
   } else {
     add("director-craft");
     add("graphic-note-rhythm");
+    add("xhs-collectible-note");
   }
 
   const max = Math.max(4, Math.min(20, params.maxSkills ?? 12));
