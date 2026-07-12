@@ -98,6 +98,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "label-debunk-copy",
   "authority-cite-endorsement",
   "fmcg-popsci-monetize",
+  "forensic-life-lens",
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];

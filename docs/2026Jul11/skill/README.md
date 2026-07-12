@@ -21,6 +21,7 @@
 | `label-debunk-copy.md` | label-debunk-copy | 开 |
 | `authority-cite-endorsement.md` | authority-cite-endorsement | 开 |
 | `fmcg-popsci-monetize.md` | fmcg-popsci-monetize | 开 |
+| `forensic-life-lens.md` | forensic-life-lens | 开 |
 
 **非 md 开关（UI）**：「接受博主/创作者自称」默认关，勾选才放开空壳自称。
 
@@ -31,6 +32,9 @@
 - **`label-debunk-copy`**：何时用/怎么用；**配料看不出**时的替代证据路径
 - **`authority-cite-endorsement`**：权威背书白名单（食品 + 睡眠/运动/心理/宣称/儿童视屏等）
 - **`fmcg-popsci-monetize`**：打脸科普 → 清单线索 → 顾问/课/沙龙；禁低价带货主变现
+
+### 2026-07-12h（法医视角）
+- **`forensic-life-lens`**：死因侧逻辑 → 还怎么活；10 条放松向菜单；禁血腥猎奇与命案复盘
 
 ### 2026-07-12e（b2.pdf 反面：禁读论文式选题）
 - 强化 `cultural-diversity` / `lifestyle-diversity` / `vivid-anti-boring`：人设里的唐诗/爵士是**可用容器不是必交作业**；同批典籍主容器 ≤2；禁「读《》领悟 / 哈佛实验室揭秘」；决策智库 Call B 同步生活化配额。

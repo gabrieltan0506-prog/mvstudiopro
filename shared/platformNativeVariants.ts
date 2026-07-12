@@ -252,6 +252,11 @@ export function composePlatformImageSkillHints(enabledSkillIds?: string[] | null
       "【科普变现出图】末帧可留评论关键词/清单预告，勿小黄车与疗效承诺画面；半成品缺口视觉优先于卖货。",
     );
   }
+  if (on("forensic-life-lens")) {
+    parts.push(
+      "【法医视角出图】生活保命场景（安全带/酒杯/头盔/凌晨手机）；禁解剖台、血腥、命案复盘画面；末帧清单/窗口期信息卡。",
+    );
+  }
   if (parts.length === 0) return "";
   return `【Platform 出图短约束】\n${parts.join("\n")}`;
 }
