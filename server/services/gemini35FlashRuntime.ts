@@ -5,8 +5,8 @@
  */
 import { GoogleGenAI } from "@google/genai";
 
-/** 平台默认：Gemini 3.5 Flash（可用 GEMINI_35_FLASH_MODEL 覆写）。 */
-export const DEFAULT_GEMINI_35_FLASH_MODEL = "gemini-3.5-flash";
+/** 平台默认：临时用 `gemini-3-flash-preview`（可用 GEMINI_35_FLASH_MODEL 覆写）。 */
+export const DEFAULT_GEMINI_35_FLASH_MODEL = "gemini-3-flash-preview";
 
 /** 文案生成默认输出上限（64K）。可用 `GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` 覆写（4096～65536）。 */
 export const GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS = 65536;
@@ -51,9 +51,12 @@ export function resolveGemini35FlashModelName(): string {
   return fromEnv || DEFAULT_GEMINI_35_FLASH_MODEL;
 }
 
-/** Stage2 专属文案（`buildPlatformContent`）；可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写。 */
+/** Stage2 专属文案 fallback；默認 `gemini-3-flash-preview`（可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写）。 */
 export function resolvePlatformStage2GeminiModel(): string {
-  return String(process.env.PLATFORM_STAGE2_GEMINI_MODEL || "").trim() || resolveGemini35FlashModelName();
+  return (
+    String(process.env.PLATFORM_STAGE2_GEMINI_MODEL || "").trim() ||
+    "gemini-3-flash-preview"
+  );
 }
 
 export function requireGeminiApiKey(): string {

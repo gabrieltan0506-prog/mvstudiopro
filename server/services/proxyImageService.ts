@@ -944,10 +944,10 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     .filter(Boolean)
     .slice(0, 16);
 
-  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal（已移除 Vertex）。有参考人像时仅 EvoLink。
+  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal → Nano Banana 2（临时兜底）。有参考人像时优先 EvoLink edit。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · 仅 EvoLink` : "顺序 EvoLink → OhMyGPT → fal"}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · 优先 EvoLink，失败后仍可降级` : "顺序 EvoLink → OhMyGPT → fal → NB2"}…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -1166,26 +1166,26 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       }
       appendImageFlowLog(
         L,
-        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 本条失败（可免费补发）",
+        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 降级无参考备援",
       );
     }
     appendImageFlowLog(L, "[单帧·主力] EvoLink 无图 → 评估 fallback");
   }
 
-  // 换脸 / 换人（edit 模式）只走 EvoLink：OhMyGPT/fal 封装不保证支持 image_urls，避免 fallback 出无脸错图。
+  // 换脸失败：临时允许无参考 OhMyGPT/fal/NB2 降级，避免整单无图（脸锁可能丢失）。
+  const fallbackPrompt = withProVisual;
   if (hasRef) {
     appendImageFlowLog(
       L,
-      "[单帧·换脸] 参考人像路径仅 EvoLink；EvoLink 未出图 → 本条失败（可免费补发重试），不走 OhMyGPT/fal 以免丢失人像",
+      "[单帧·换脸] EvoLink edit 未出图 → 临时降级无参考 OhMyGPT → fal → Nano Banana 2",
     );
-    return null;
   }
 
   appendImageFlowLog(
     L,
     `[单帧·备援1] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT}`,
   );
-  const fromOhm = await postGptImage2AndUpload(prompt, options.gcsSubdir, {
+  const fromOhm = await postGptImage2AndUpload(fallbackPrompt, options.gcsSubdir, {
     sizes,
     flowLog: L,
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
@@ -1196,13 +1196,25 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   }
 
   appendImageFlowLog(L, `[单帧·备援2] OhMyGPT 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`);
-  const falSecond = await postGptImage2ViaFalAndUpload(prompt, options.gcsSubdir, options.aspectRatio, L);
+  const falSecond = await postGptImage2ViaFalAndUpload(
+    fallbackPrompt,
+    options.gcsSubdir,
+    options.aspectRatio,
+    L,
+  );
   if (falSecond) {
     appendImageFlowLog(L, "[单帧·备援2] fal GPT-IMAGE-2 成功，已落库");
     return falSecond;
   }
 
-  appendImageFlowLog(L, "[单帧] EvoLink / OhMyGPT / fal 均无图（已移除 Vertex 退路）· 本条失败（可免费补发重试）");
+  appendImageFlowLog(L, "[单帧·备援3] GPT-IMAGE-2 全链无图 → Nano Banana 2（临时 fallback）");
+  const nb2Url = await fallbackNanoBanana2FromPrompt(fallbackPrompt, options.aspectRatio, L);
+  if (nb2Url) {
+    appendImageFlowLog(L, "[单帧·备援3] Nano Banana 2 成功");
+    return nb2Url;
+  }
+
+  appendImageFlowLog(L, "[单帧] EvoLink / OhMyGPT / fal / Nano Banana 2 均无图 · 本条失败（可免费补发重试）");
   return null;
 }
 
@@ -1618,10 +1630,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         );
       }
 
-      // GPT-Image-2 像素链：EvoLink（主力）→ OhMyGPT → fal（同模型；已移除 Vertex 退路）。fallback 仅在 EvoLink 失败时触发。
+      // GPT-Image-2 像素链：EvoLink → OhMyGPT → fal → Nano Banana 2（临时兜底）
       appendImageFlowLog(
         L,
-        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 顺序 EvoLink → OhMyGPT → fal`,
+        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 顺序 EvoLink → OhMyGPT → fal → NB2`,
       );
 
       if (isEvolinkGptImage2Configured()) {
@@ -1682,31 +1694,31 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           });
           return fromEvolink;
         }
-        if (refImageUrls.length) {
-          if (isEvolinkModerationFailure(evoErr.message)) {
-            moderationBlocked = true;
-            lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
-            throw lastFailure;
-          }
-          throw new Error("参考人像分镜生成失败（EvoLink edit 模式无备援路径）");
-        }
         if (isEvolinkModerationFailure(evoErr.message)) {
           moderationBlocked = true;
           lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
           appendImageFlowLog(
             L,
-            `[2×4·步骤2a·主力] EvoLink 内容审核拦截 → 标记快速失败（不再整链重试；OhMyGPT/fal 跳过，同内容也会被拦截）`,
+            `[2×4·步骤2a·主力] EvoLink 内容审核拦截 → 标记快速失败（不再整链重试；OhMyGPT/fal/NB2 跳过）`,
           );
           throw lastFailure;
         }
-        appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal");
+        if (refImageUrls.length) {
+          appendImageFlowLog(
+            L,
+            `[2×4·步骤2a·主力] EvoLink edit 未出图 → 临时降级无参考 OhMyGPT / fal / Nano Banana 2`,
+          );
+        } else {
+          appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal / NB2");
+        }
       }
 
-      if (hasAnyImageRef) {
-        throw new Error("参考人像分镜生成失败");
-      }
-
-      appendImageFlowLog(L, `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`);
+      appendImageFlowLog(
+        L,
+        `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}${
+          hasAnyImageRef ? " · 无参考图降级" : ""
+        }`,
+      );
       const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
         sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
         flowLog: L,
@@ -1744,7 +1756,21 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         });
         return falWide;
       }
-      throw new Error("EvoLink / OhMyGPT / fal 均未返回图像（已移除 Vertex 退路）");
+
+      appendImageFlowLog(L, "[2×4·步骤2d·备援3] GPT-IMAGE-2 全链无图 → Nano Banana 2（临时 fallback）");
+      const nb2Wide = await fallbackNanoBanana2FromPrompt(promptForImage, "16:9", L);
+      if (nb2Wide) {
+        const mirrored = await mirrorNanoSheetUrlToGcs(nb2Wide, subdir, L);
+        appendImageFlowLog(L, `[2×4·步骤2d·备援3] Nano Banana 2 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        emitPlatformImagePipelineStat({
+          event: "composite_sheet_nano_fallback_success",
+          sheetKind: k,
+          compositeSheetAttempt: attempt,
+          compositeSheetMaxAttempts: compositeMaxAttempts,
+        });
+        return mirrored;
+      }
+      throw new Error("EvoLink / OhMyGPT / fal / Nano Banana 2 均未返回图像");
     } catch (e: unknown) {
       lastFailure = e;
       const msg = e instanceof Error ? e.message : String(e);
