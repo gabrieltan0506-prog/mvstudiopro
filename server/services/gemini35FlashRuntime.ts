@@ -4,6 +4,10 @@
  * - 生图英文化：无工具 + HIGH thinking（0.7 / 0.9）
  */
 import { GoogleGenAI } from "@google/genai";
+import {
+  GEMINI_COPY_SIMPLIFIED_ZH_LOCK,
+  toSimplifiedChinese,
+} from "./simplifiedChinese.js";
 
 /** 平台默认：临时用 `gemini-3-flash-preview`（可用 GEMINI_35_FLASH_MODEL 覆写）。 */
 export const DEFAULT_GEMINI_35_FLASH_MODEL = "gemini-3-flash-preview";
@@ -71,13 +75,16 @@ export function buildGeminiApiClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey: requireGeminiApiKey() });
 }
 
-/** 爆款文案：知识 + 情绪；配合 googleSearch 保事实准确。 */
+/** 爆款文案：知识 + 情绪；配合 googleSearch 保事实准确。输出强制大陆简体。 */
 export const GEMINI_35_FLASH_COPYWRITING_SYSTEM = `你是一位顶尖的专栏作家与新媒体内容总监。
 你的任务是写出优美、生动且浅显易懂的文案。
 核心写作心法：
 1. 采用「知识 + 情绪」的结构：用通俗易懂的故事或生活场景带出专业知识，结尾必须能触动人心、引发共鸣。
 2. 拒绝生硬说教：文字要有呼吸感，多用比喻，排版清晰（适当使用段落与引号）。
-3. 如果涉及历史、医学或旅游等信息，请先确保事实正确，再注入人文关怀。`;
+3. 如果涉及历史、医学或旅游等信息，请先确保事实正确，再注入人文关怀。
+4. 全部中文输出必须是中国大陆简体中文；严禁繁体字。
+
+${GEMINI_COPY_SIMPLIFIED_ZH_LOCK}`;
 
 /** 生图提示词英文化：艺术向、电影感；仅输出英文 prompt（由下游 JSON 契约包装）。 */
 export const GEMINI_35_FLASH_IMAGE_PROMPT_TRANSLATOR_EN = `You are an elite prompt engineer and a poetic visual artist.
@@ -174,7 +181,7 @@ export async function callGemini35FlashCopywriting(params: {
 }): Promise<string> {
   void params.abortSignal;
   const model = String(params.modelName || "").trim() || resolveGemini35FlashModelName();
-  const systemInstruction = `${GEMINI_35_FLASH_COPYWRITING_SYSTEM}\n\n${params.taskSystemInstruction}`.trim();
+  const systemInstruction = `${GEMINI_35_FLASH_COPYWRITING_SYSTEM}\n\n${params.taskSystemInstruction}\n\n${GEMINI_COPY_SIMPLIFIED_ZH_LOCK}`.trim();
   const baseConfig = {
     systemInstruction,
     temperature: params.temperature ?? readCopywritingTemperature(),
@@ -184,20 +191,23 @@ export async function callGemini35FlashCopywriting(params: {
     maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(params.maxOutputTokens),
   };
 
+  let raw: string;
   try {
-    return await generateGeminiApiContent({
+    raw = await generateGeminiApiContent({
       model,
       userText: params.userText,
       config: { ...baseConfig, tools: [{ googleSearch: {} }] },
     });
   } catch (e) {
     console.warn("[gemini35Flash] copywriting googleSearch 降级:", (e as Error)?.message?.slice(0, 200));
-    return generateGeminiApiContent({
+    raw = await generateGeminiApiContent({
       model,
       userText: params.userText,
       config: baseConfig,
     });
   }
+  // Gemini 常仍渗繁体：OpenCC 后处理，避免用户看到／下游 NB2 照繁体上屏
+  return toSimplifiedChinese(raw);
 }
 
 /**
