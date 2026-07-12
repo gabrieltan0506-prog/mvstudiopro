@@ -25,7 +25,7 @@ export const GEMINI_COPY_SIMPLIFIED_ZH_LOCK = `【语言硬约束 · CRITICAL】
 export const NANO_BANANA2_SIMPLIFIED_ZH_LOCK = `
 LANGUAGE LOCK (CRITICAL — ON-IMAGE TEXT):
 - All Chinese glyphs rendered in the image MUST be Mainland **Simplified Chinese** (简体中文 / zh-Hans).
-- NEVER render Traditional Chinese characters (繁體字), e.g. 髮/學/體/東/龍/優/導/畫/臺.
+- NEVER render Traditional Chinese characters (繁體字 / zh-Hant). Forbidden examples include traditional forms of fa/xue/ti/dong/long/you/dao/hua/tai.
 - If the brief contains Traditional characters, convert them to Simplified BEFORE painting text.
 - Keep English labels only when the brief explicitly requires English; Chinese body text stays Simplified.
 `.trim();
@@ -34,8 +34,10 @@ const IMAGE_PROMPT_SIMP_MARKER = "LANGUAGE LOCK (CRITICAL — ON-IMAGE TEXT)";
 
 /** 把简体锁追加到生图 prompt，并把已有汉字尽量转成简体（封面/分镜/图文/任意引擎通用）。 */
 export function enforceSimplifiedChineseImagePrompt(prompt: string): string {
-  const base = toSimplifiedChinese(String(prompt || "").trim());
-  if (!base) return NANO_BANANA2_SIMPLIFIED_ZH_LOCK;
-  if (base.includes(IMAGE_PROMPT_SIMP_MARKER)) return base;
+  const raw = String(prompt || "").trim();
+  if (!raw) return NANO_BANANA2_SIMPLIFIED_ZH_LOCK;
+  // 已加过锁：原样返回，避免再次 OpenCC 改写 lock 内举例
+  if (raw.includes(IMAGE_PROMPT_SIMP_MARKER)) return raw;
+  const base = toSimplifiedChinese(raw);
   return `${base}\n\n${NANO_BANANA2_SIMPLIFIED_ZH_LOCK}`;
 }
