@@ -1,5 +1,6 @@
 import { resolvePlatformImageStorageDriver } from "../config/platformSwitches.js";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs.js";
+import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 
 function appendImageFlowLog(log: string[] | undefined, message: string): void {
   if (!log) return;
@@ -197,7 +198,8 @@ export async function postEvolinkGptImage2AndUpload(
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveEvolinkSize(aspectRatio, opts.size);
   const quality = String(opts.quality || EVOLINK_DEFAULT_QUALITY).trim() || EVOLINK_DEFAULT_QUALITY;
-  const promptTrimmed = String(prompt || "").trim();
+  // 分镜/图文/封面：送 EvoLink 前强制简体（OpenCC + 屏内字锁）
+  const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
   if (!promptTrimmed) {
     appendImageFlowLog(L, "[GPT-IMAGE-2·EvoLink] prompt 为空，跳过");
     return null;

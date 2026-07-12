@@ -1,4 +1,5 @@
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
+import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import {
   isPlatformVertexNanoBanana2FallbackEnabled,
   isPlatformWeekendGcpEscape,
@@ -477,8 +478,10 @@ async function postGptImage2AndUpload(
   );
   const sizes = sizeList.slice(0, maxAttempts);
 
+  // 分镜/图文/封面：送 GPT-Image-2 前强制简体（OpenCC + 屏内字锁）
+  const promptSimplified = enforceSimplifiedChineseImagePrompt(prompt);
   const { cleaned: promptForApi, stripped: strippedMjSuffix } =
-    stripMidjourneyStyleSuffixFromGptImagePrompt(prompt);
+    stripMidjourneyStyleSuffixFromGptImagePrompt(promptSimplified);
   if (strippedMjSuffix) {
     appendImageFlowLog(L, "[GPT-IMAGE-2] 已去除 Midjourney 風格後綴（如 --ar / --v），比例以 API size 為準");
   }
@@ -761,6 +764,7 @@ async function postGptImage2ViaFalAndUpload(
   quality: GptImage2ApiQuality = GPT_IMAGE2_PORTRAIT_API_QUALITY,
 ): Promise<string | null> {
   const L = flowLog;
+  prompt = enforceSimplifiedChineseImagePrompt(prompt);
   if (!isFalGptImage2FallbackEnabled()) {
     appendImageFlowLog(
       L,

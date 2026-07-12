@@ -14,5 +14,12 @@ describe("simplifiedChinese", () => {
     expect(out).toContain("学习身体");
     expect(out).toContain("Simplified Chinese");
     expect(out).toContain("简体中文");
+    expect(out).toContain("LANGUAGE LOCK (CRITICAL — ON-IMAGE TEXT)");
+  });
+
+  it("is idempotent when lock already present", () => {
+    const once = enforceSimplifiedChineseImagePrompt("分镜：學習");
+    const twice = enforceSimplifiedChineseImagePrompt(once);
+    expect(twice).toBe(once);
   });
 });
