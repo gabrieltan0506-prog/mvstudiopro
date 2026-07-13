@@ -237,6 +237,7 @@ export function composePlatformImageSkillHints(
     parts.push(
       "【封面出图·少字硬限】coverHeadline 须 8–14 字；屏上可见文案最多 2 行；只提亮 2–6 字重点色；禁止把长标题/整段 hook/论文式副标印满屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
       "【封面出图·清单蓝海（x1/x3）】选题含清单/必备/带娃/攻略时：优先 flat lay 神器墙或行李箱 POV + 大数字件数 + 结果钉（安静/不踩雷/省事/建议收藏）；杀伤词可用必備/清單/保姆級/被問爆/無廣；禁论文腔封面。",
+      "【封面出图·医学高赞（mk/mk1/mk3）】医学/急救/机制向：壳三选一——①大数字选题包（100个/谁写谁火/选一个就行+收藏角标）②屏幕证据种草（MSD大众版或3D怼镜+3D讲清原理）③漫画/八卦钩（好员工黑化/不当切片课）；禁病名分型论文封面与空白大褂证件照。",
     );
   }
   if (on("vivid-anti-boring")) {
@@ -254,6 +255,7 @@ export function composePlatformImageSkillHints(
     parts.push(
       "【高收藏图文·m1密度】8–12页；封面城市+时段+大数字+价值钉；页2编号总览墙；中段detail细卡（档期/门槛/一句钉子）；解法写「在这里我先分享一些」；封面少字硬限。",
       "【高收藏图文·清单蓝海x1/x3】带娃/出行清单：flat lay或行李箱证据；细卡写结果句（全程安静/装湿衣服等）；目标藏≥赞工具帖气质。",
+      "【高收藏图文·医学mk】选题包：封面大数字+类目条→页2类目总览墙→细卡「题+一句覆盖什么」；漫画机制可用分镜页；末页/导语附公开资源链；目标藏≥赞。",
     );
   }
   if (on("blue-ocean-natural")) {
@@ -292,6 +294,7 @@ export function composePlatformImageSkillHints(
   if (on("medical-resource-library")) {
     parts.push(
       "【医学资源库出图】可截 MSD 大众版/3D(BioDigital)/症状页、MedlinePlus 动画、CardioSmart 信息图等公开页作对照；字幕级短链或站名；禁伪造病历与诊疗恐吓；勿用已失效的 videosandtutorials 死链。",
+      "【医学高赞壳+料】壳（大数字包/硬核3D种草/八卦漫画）与料（可打开搜索或 multimedia URL）必须同条出现；禁只有口号或只有死链。",
     );
   }
   if (on("fmcg-popsci-monetize")) {
