@@ -2,7 +2,7 @@
 id: medical-resource-library
 name: 医学多媒体资源库
 description: 免登录权威医学站点（MSD大众/专业、MedlinePlus、Cleveland、CardioSmart、Radiopaedia、Innerbody、Zygote）；文案可附动画/图片/症状搜索链
-version: 2026-07-13a
+version: 2026-07-13b
 defaultEnabled: true
 ---
 
@@ -16,7 +16,18 @@ defaultEnabled: true
 - **mk2**：医学科普搜索场 —— 八卦讲医学 / 3D 打脸 / 漫画细胞
 - **mk3**：漫画科普「肿瘤细胞诞生」—— 好手册黑化，反课堂切片
 
-与 `crossover-popsci` / `vivid-anti-boring` / `authority-cite-endorsement` / `review-safe-voice` 叠用。
+与 `crossover-popsci` / `vivid-anti-boring` / `cover-stop-scroll` / `xhs-collectible-note` / `authority-cite-endorsement` / `review-safe-voice` 叠用。
+
+## 高赞原因 → 生成硬规则（必须同时满足「壳 + 料」）
+
+| 样本 | 高赞/高藏原因 | 生成时怎么做 |
+|------|----------------|--------------|
+| mk | **大数字库存感** + 类目清单可截；藏>赞=工具帖 | 封面「N个/谁写谁火/选一个就行」；内页类目黄条+编号题；目标藏≥赞 |
+| mk1 | **屏幕证据**（大众版切换+3D原理）+「太实用/硬核」结果钉；赞藏五万级 | 口播/画面必须出现可打开的 MSD 搜索或 biodigital；字幕钉「3D讲清××原理」 |
+| mk2 | 搜索场验证的四种壳：八卦讲、硬核网站、隐喻手术、漫画细胞 | 同批轮换壳，禁止六条都「××病概述」 |
+| mk3 | **拟人事故叙事**替代显微切片课；愿转愿评 | 机制来自权威资源，表达用职场/黑帮隐喻；收束贴公开对照链 |
+
+**禁止**：只有口号没有 URL；只有 URL 没有痛点壳；封面印「定义·分型·注意事项」。
 
 ## 受众二分（先选对再搜）
 
