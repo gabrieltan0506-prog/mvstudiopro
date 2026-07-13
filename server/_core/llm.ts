@@ -9,20 +9,18 @@ import {
 } from "../services/cometapi";
 import {
   EVOLINK_CHAT_MODEL_GPT54,
-  EVOLINK_CHAT_MODEL_GPT55,
+  EVOLINK_CHAT_MODEL_GPT56_SOL,
   formatEvolinkChatApiError,
+  getEvolinkGpt56SolModel,
+  isEvolinkGpt56FamilyModel,
   normalizeEvolinkChatModel,
-  shouldSkipOhMyGptSameAccountFallback,
   toOpenAiCompatibleChatUserMessage,
 } from "../services/evolinkChatModel";
 import {
   getOhMyGptApiKey,
   getOhMyGptChatCompletionsUrl,
-  getOhMyGptGpt56SolModel,
-  getOhMyGptGpt56TerraModel,
   isOhMyGptChatEndpoint,
   isOhMyGptGpt56FamilyModel,
-  isOhMyGptGpt56TerraFallbackEnabled,
   normalizeOhMyGptGpt56Model,
   OHMYGPT_CHAT_MODEL_GPT56_SOL,
 } from "../services/ohmygptChat";
@@ -468,12 +466,17 @@ function getOpenAiModelName(modelTier: ModelTier | undefined) {
       EVOLINK_CHAT_MODEL_GPT54,
     );
   }
-  // 未指定 modelName：平台全案默认 OhMyGPT gpt-5.6-sol
-  return getOhMyGptGpt56SolModel();
+  // 未指定 modelName：平台全案默认 EvoLink gpt-5.6-sol
+  return getEvolinkGpt56SolModel();
 }
 
 function getEvolinkApiKey(): string {
   return String(process.env.EVOLINK_API_KEY || "").trim();
+}
+
+function isEvolinkChatEndpoint(apiUrl?: string): boolean {
+  const u = String(apiUrl || "").toLowerCase();
+  return u.includes("evolink.ai");
 }
 
 function hasVertexEnv() {
@@ -551,38 +554,45 @@ const resolveTarget = (
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
 
     /**
-     * 平台全案 / Stage2 文案：OhMyGPT GPT-5.6 Sol（主）→ Terra（退路）→ EvoLink gpt-5.5。
-     * 调用形态与 EvoLink 相同：OpenAI-compatible `/v1/chat/completions`。
+     * 平台全案 / Stage2 文案：**EvoLink GPT-5.6 Sol（主）→ OhMyGPT GPT-5.6 Sol（退路）**。
+     * 调用形态：OpenAI-compatible `/v1/chat/completions`。
      * Refs:
+     *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.6/gpt-5.6-reference
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
-     *   https://developers.openai.com/api/docs/guides/latest-model
      *   https://docs.ohmygpt.com/docs/api
-     * 图片生成仍走 EvoLink gpt-image-2，不经此分支。
+     * 图片生成另见 proxyImageService（OhMyGPT gpt-image-2 → EvoLink）。
      */
-    if (isOhMyGptGpt56FamilyModel(candidate) || (!explicitModelName && modelTier !== "gpt54" && modelTier !== "gpt5")) {
+    if (
+      isEvolinkGpt56FamilyModel(candidate) ||
+      isOhMyGptGpt56FamilyModel(candidate) ||
+      (!explicitModelName && modelTier !== "gpt54" && modelTier !== "gpt5")
+    ) {
+      const modelName = normalizeEvolinkChatModel(
+        candidate || getEvolinkGpt56SolModel(),
+        EVOLINK_CHAT_MODEL_GPT56_SOL,
+      );
+      const evolinkKey = getEvolinkApiKey();
+      if (evolinkKey) {
+        return {
+          provider: "openai",
+          apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+          apiKey: evolinkKey,
+          modelName,
+        };
+      }
       const ohmyKey = getOhMyGptApiKey();
       if (ohmyKey) {
+        console.warn(
+          "[resolveTarget] EVOLINK_API_KEY missing → platform copy falls back to OhMyGPT gpt-5.6-sol",
+        );
         return {
           provider: "openai",
           apiUrl: getOhMyGptChatCompletionsUrl(),
           apiKey: ohmyKey,
-          modelName: normalizeOhMyGptGpt56Model(candidate || OHMYGPT_CHAT_MODEL_GPT56_SOL),
+          modelName: normalizeOhMyGptGpt56Model(modelName, OHMYGPT_CHAT_MODEL_GPT56_SOL),
         };
       }
-      // 无 OhMyGPT 密钥时直接走 EvoLink gpt-5.5，避免文案链路整段不可用
-      const evolinkKeyForCopy = getEvolinkApiKey();
-      if (evolinkKeyForCopy) {
-        console.warn(
-          "[resolveTarget] OhMyGPT key missing → platform copy falls back to Evolink gpt-5.5",
-        );
-        return {
-          provider: "openai",
-          apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
-          apiKey: evolinkKeyForCopy,
-          modelName: EVOLINK_CHAT_MODEL_GPT55,
-        };
-      }
-      throw new Error("OHMYGPT_API_KEY / PROXY_OPENAI_API_KEY is not configured");
+      throw new Error("EVOLINK_API_KEY or OHMYGPT_API_KEY / PROXY_OPENAI_API_KEY is not configured");
     }
 
     const fallback =
@@ -1198,7 +1208,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     apiUrl: string,
     apiKey: string,
     body: Record<string, unknown>,
-    label: "OhMyGPT" | "Evolink",
+    label: "OhMyGPT" | "Evolink" | "OpenAI",
   ): Promise<InvokeResult> => {
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -1215,7 +1225,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       console.warn(`[${label}] ${formatEvolinkChatApiError(response.status, response.statusText, errorText)}`);
       const err = new Error(toOpenAiCompatibleChatUserMessage(response.status, errorText, label)) as Error & {
         status?: number;
-        providerLabel?: "OhMyGPT" | "Evolink";
+        providerLabel?: "OhMyGPT" | "Evolink" | "OpenAI";
         rawErrorText?: string;
       };
       err.status = response.status;
@@ -1252,22 +1262,37 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
   const primaryModel = String(target.modelName || "").trim();
   const isOhMyGptEndpoint = isOhMyGptChatEndpoint(String(target.apiUrl || ""));
-  const isGpt56FamilyPrimary = isOhMyGptEndpoint && isOhMyGptGpt56FamilyModel(primaryModel);
-  const isGpt56SolPrimary =
-    isOhMyGptEndpoint &&
-    normalizeOhMyGptGpt56Model(primaryModel) === OHMYGPT_CHAT_MODEL_GPT56_SOL;
+  const isEvolinkEndpoint = isEvolinkChatEndpoint(String(target.apiUrl || ""));
+  const isGpt56FamilyPrimary =
+    isEvolinkGpt56FamilyModel(primaryModel) || isOhMyGptGpt56FamilyModel(primaryModel);
+  const solModel = EVOLINK_CHAT_MODEL_GPT56_SOL;
 
-  const tryEvolinkGpt55Fallback = async (reason: unknown): Promise<InvokeResult> => {
+  const tryOhMyGptSolFallback = async (reason: unknown): Promise<InvokeResult> => {
+    const ohmyKey = getOhMyGptApiKey();
+    if (!ohmyKey) throw reason instanceof Error ? reason : new Error(String(reason));
+    console.warn(
+      `[invokeOpenAI] EvoLink copy path failed → OhMyGPT ${solModel}:`,
+      reason instanceof Error ? reason.message.slice(0, 240) : reason,
+    );
+    return postChatCompletions(
+      getOhMyGptChatCompletionsUrl(),
+      ohmyKey,
+      { ...payload, model: normalizeOhMyGptGpt56Model(solModel, OHMYGPT_CHAT_MODEL_GPT56_SOL) },
+      "OhMyGPT",
+    );
+  };
+
+  const tryEvolinkSolFallback = async (reason: unknown): Promise<InvokeResult> => {
     const evolinkKey = getEvolinkApiKey();
     if (!evolinkKey) throw reason instanceof Error ? reason : new Error(String(reason));
     console.warn(
-      `[invokeOpenAI] OhMyGPT copy path failed → Evolink ${EVOLINK_CHAT_MODEL_GPT55}:`,
+      `[invokeOpenAI] OhMyGPT copy path failed → Evolink ${solModel}:`,
       reason instanceof Error ? reason.message.slice(0, 240) : reason,
     );
     return postChatCompletions(
       EVOLINK_CHAT_COMPLETIONS_URL,
       evolinkKey,
-      { ...payload, model: EVOLINK_CHAT_MODEL_GPT55 },
+      { ...payload, model: normalizeEvolinkChatModel(solModel, EVOLINK_CHAT_MODEL_GPT56_SOL) },
       "Evolink",
     );
   };
@@ -1277,61 +1302,24 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       String(target.apiUrl),
       String(target.apiKey),
       payload,
-      isOhMyGptEndpoint ? "OhMyGPT" : "Evolink",
+      isOhMyGptEndpoint ? "OhMyGPT" : isEvolinkEndpoint ? "Evolink" : "OpenAI",
     );
   } catch (primaryErr) {
-    const primaryMeta = primaryErr as Error & { status?: number; rawErrorText?: string };
-    const skipSameAccount =
-      isOhMyGptEndpoint &&
-      shouldSkipOhMyGptSameAccountFallback(
-        Number(primaryMeta.status || 0),
-        String(primaryMeta.rawErrorText || primaryMeta.message || ""),
-      );
-
-    // OhMyGPT 额度/鉴权已失败：同账号 Terra 必挂，直接 EvoLink gpt-5.5
-    if (skipSameAccount && isGpt56FamilyPrimary) {
+    // EvoLink gpt-5.6-* 失败 → OhMyGPT gpt-5.6-sol
+    if (isEvolinkEndpoint && isGpt56FamilyPrimary) {
       try {
-        return await tryEvolinkGpt55Fallback(primaryErr);
-      } catch (evolinkErr) {
-        throw evolinkErr instanceof Error ? evolinkErr : primaryErr;
+        return await tryOhMyGptSolFallback(primaryErr);
+      } catch (ohmyErr) {
+        throw ohmyErr instanceof Error
+          ? ohmyErr
+          : new Error("文案生成暂时不可用（EvoLink 与 OhMyGPT GPT-5.6 Sol 均失败），请稍后重试");
       }
     }
 
-    // OhMyGPT gpt-5.6-sol 其它错误 → 同网关 gpt-5.6-terra，再失败走 EvoLink
-    if (isGpt56SolPrimary && isOhMyGptGpt56TerraFallbackEnabled()) {
-      const terraModel = getOhMyGptGpt56TerraModel();
-      if (terraModel !== primaryModel) {
-        console.warn(
-          `[invokeOpenAI] OhMyGPT ${primaryModel} failed → fallback ${terraModel}:`,
-          primaryErr instanceof Error ? primaryErr.message.slice(0, 240) : primaryErr,
-        );
-        try {
-          return await postChatCompletions(
-            String(target.apiUrl),
-            String(target.apiKey),
-            { ...payload, model: terraModel },
-            "OhMyGPT",
-          );
-        } catch (fallbackErr) {
-          console.warn(
-            `[invokeOpenAI] OhMyGPT ${terraModel} fallback also failed:`,
-            fallbackErr instanceof Error ? fallbackErr.message.slice(0, 240) : fallbackErr,
-          );
-          try {
-            return await tryEvolinkGpt55Fallback(fallbackErr);
-          } catch (evolinkErr) {
-            throw evolinkErr instanceof Error
-              ? evolinkErr
-              : new Error("文案生成暂时不可用（GPT-5.6 与 EvoLink 退路均失败），请稍后重试");
-          }
-        }
-      }
-    }
-
-    // 其它 OhMyGPT 5.6（如直接打 Terra）失败 → EvoLink gpt-5.5
-    if (isGpt56FamilyPrimary) {
+    // OhMyGPT 主路径失败（无 EvoLink 密钥时）→ 仍尝试 EvoLink gpt-5.6-sol
+    if (isOhMyGptEndpoint && isGpt56FamilyPrimary) {
       try {
-        return await tryEvolinkGpt55Fallback(primaryErr);
+        return await tryEvolinkSolFallback(primaryErr);
       } catch (evolinkErr) {
         throw evolinkErr instanceof Error ? evolinkErr : primaryErr;
       }

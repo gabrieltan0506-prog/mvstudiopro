@@ -9,20 +9,23 @@ import {
 } from "./evolinkChatModel";
 
 describe("normalizeEvolinkChatModel", () => {
-  it("keeps official gpt-5.5 / gpt-5.4 ids", () => {
+  it("keeps official gpt-5.6-sol / gpt-5.5 / gpt-5.4 ids", () => {
+    expect(normalizeEvolinkChatModel("gpt-5.6-sol")).toBe("gpt-5.6-sol");
     expect(normalizeEvolinkChatModel("gpt-5.5")).toBe("gpt-5.5");
     expect(normalizeEvolinkChatModel("gpt-5.4")).toBe("gpt-5.4");
   });
 
   it("maps common aliases", () => {
+    expect(normalizeEvolinkChatModel("gpt-5.6")).toBe("gpt-5.6-sol");
+    expect(normalizeEvolinkChatModel("gpt56sol")).toBe("gpt-5.6-sol");
     expect(normalizeEvolinkChatModel("gpt55")).toBe("gpt-5.5");
     expect(normalizeEvolinkChatModel("GPT-5-5")).toBe("gpt-5.5");
     expect(normalizeEvolinkChatModel("gpt54")).toBe("gpt-5.4");
   });
 
-  it("falls back for unknown model names", () => {
-    expect(normalizeEvolinkChatModel("gpt-5.5-preview")).toBe("gpt-5.5");
-    expect(normalizeEvolinkChatModel("")).toBe("gpt-5.5");
+  it("falls back for unknown model names to gpt-5.6-sol", () => {
+    expect(normalizeEvolinkChatModel("gpt-5.5-preview")).toBe("gpt-5.6-sol");
+    expect(normalizeEvolinkChatModel("")).toBe("gpt-5.6-sol");
   });
 
   it("accepts gpt-5.4 as explicit fallback (Fly tsc regression)", () => {

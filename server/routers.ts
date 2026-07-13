@@ -1573,7 +1573,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
    - actionableSteps（落地三步曲：**建议**给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
 	   - detailedScript（详细的拍摄脚本或大纲，**建议**保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点**经人设改写后**融入，例如明确指出使用什么具体平台搜索关键词。**场景与镜头须与人设各维一致**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} **第 5 条（维度 5）**建议在视觉与场域上与前几段方案明显区隔。
      【脚本排版·建议格式（可灵活，勿牺牲可读性）】：
-     ▸ 如果 format 为「短视频」（抖音/B站/快手）：成片目标 **约 1 分半～2 分钟**（时间轴落在 00:00–01:30～00:00–02:00）。**建议**用时间轴分段，每段含「视觉描述」与「口播文案」；口播合计约 220–380 字口语，字幕钉子 8–12 句封顶；**禁止**为凑字数写成 3 分钟以上长片。例如：
+     ▸ 如果 format 为「短视频」（抖音/B站/快手）：成片目标 **约 1 分半～2 分钟**，**硬上限 ≤2 分半（≤02:30）**（时间轴落在 00:00–01:30～00:00–02:00，最长勿超 00:00–02:30）。**建议**用时间轴分段，每段含「视觉描述」与「口播文案」；口播合计约 220–380 字口语，字幕钉子 8–12 句封顶；**禁止**为凑字数写成超过 2 分半的长片。例如：
        "[00:00-00:05] 视觉：手持一本泛黄史书特写，对准镜头。文案：你以为熬夜只是意志力差？古人早有另一套说法。"
        "[00:05-00:35] 视觉：切换青铜器/舆图与当代书桌并置。文案：把典籍里的一句，翻译成今天能用的生活判断……"
        "[00:35-01:20] 视觉：旅行/球场/音乐现场等生活场域。文案：在这里我先分享一些可立刻试的觉察动作——"
@@ -1615,7 +1615,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       "copywriting": "完整正文（≥200字）",
       "suitablePlatforms": ["平台1", "平台2"],
       "actionableSteps": ["第一步具体动作", "第二步具体动作", "第三步具体动作"],
-      "detailedScript": "完整分镜脚本（短视频约1.5–2分钟时间轴勿注水；图文用8–12页丰富封面+内页）",
+      "detailedScript": "完整分镜脚本（短视频约1.5–2分钟、硬上限≤2分半时间轴勿注水；图文用8–12页丰富封面+内页）",
       "publishingAdvice": "发布时机与平台设置建议",
       "highlightKeywords": ["蓝海词1", "蓝海词2"],
       "platformVariants": [
@@ -1845,7 +1845,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 【体裁】${formatHint}
 ${styleDirective}
 輸出格式必須嚴格為：
-{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（短视频：约1.5–2分钟时间轴，口播勿注水；图文：8–12页丰富大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
+{ "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（短视频：约1.5–2分钟、硬上限≤2分半时间轴，口播勿注水；图文：8–12页丰富大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
 不輸出其他鍵（不要 contentBlueprints 陣列、不要 monetizationLanes）。第一個字元必須是 {，最後必須是 }。`;
 
     const dimMessages: typeof structuredStage2Messages = [

@@ -1,8 +1,15 @@
-/** EvoLink 文本模型 ID 白名单（https://docs.evolink.ai/en/api-manual/language-series/） */
+/** EvoLink 文本模型 ID（https://docs.evolink.ai/en/api-manual/language-series/） */
+export const EVOLINK_CHAT_MODEL_GPT56_SOL = "gpt-5.6-sol" as const;
+export const EVOLINK_CHAT_MODEL_GPT56_TERRA = "gpt-5.6-terra" as const;
 export const EVOLINK_CHAT_MODEL_GPT55 = "gpt-5.5" as const;
 export const EVOLINK_CHAT_MODEL_GPT54 = "gpt-5.4" as const;
 
 const EVOLINK_CHAT_MODEL_ALIASES: Record<string, string> = {
+  "gpt-5.6": EVOLINK_CHAT_MODEL_GPT56_SOL,
+  "gpt-5.6-sol": EVOLINK_CHAT_MODEL_GPT56_SOL,
+  gpt56sol: EVOLINK_CHAT_MODEL_GPT56_SOL,
+  "gpt-5.6-terra": EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  gpt56terra: EVOLINK_CHAT_MODEL_GPT56_TERRA,
   "gpt-5.5": EVOLINK_CHAT_MODEL_GPT55,
   gpt55: EVOLINK_CHAT_MODEL_GPT55,
   "gpt-5-5": EVOLINK_CHAT_MODEL_GPT55,
@@ -11,35 +18,65 @@ const EVOLINK_CHAT_MODEL_ALIASES: Record<string, string> = {
   "gpt-5-4": EVOLINK_CHAT_MODEL_GPT54,
 };
 
-export type EvolinkChatModelId = typeof EVOLINK_CHAT_MODEL_GPT55 | typeof EVOLINK_CHAT_MODEL_GPT54;
+export type EvolinkChatModelId =
+  | typeof EVOLINK_CHAT_MODEL_GPT56_SOL
+  | typeof EVOLINK_CHAT_MODEL_GPT56_TERRA
+  | typeof EVOLINK_CHAT_MODEL_GPT55
+  | typeof EVOLINK_CHAT_MODEL_GPT54;
 
 /**
  * 将 env / 调用方传入的模型名规范为 EvoLink 支持的 chat model。
- * 未知值回退 `gpt-5.5`，避免 Azure deployment 404。
- * `fallback` 显式放宽为 `string`，避免默认字面量 `"gpt-5.5"` 导致传入 `"gpt-5.4"` 时 TS2345。
+ * 未知值回退 `gpt-5.6-sol`（平台文案主路径）。
+ * Docs: https://docs.evolink.ai/en/api-manual/language-series/gpt-5.6/gpt-5.6-reference
  */
 export function normalizeEvolinkChatModel(
   raw?: string,
-  fallback: string = EVOLINK_CHAT_MODEL_GPT55,
+  fallback: string = EVOLINK_CHAT_MODEL_GPT56_SOL,
 ): string {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return fallback;
   const key = trimmed.toLowerCase();
   const mapped = EVOLINK_CHAT_MODEL_ALIASES[key];
   if (mapped) return mapped;
-  if (key === EVOLINK_CHAT_MODEL_GPT55 || key === EVOLINK_CHAT_MODEL_GPT54) return key;
+  if (
+    key === EVOLINK_CHAT_MODEL_GPT56_SOL ||
+    key === EVOLINK_CHAT_MODEL_GPT56_TERRA ||
+    key === EVOLINK_CHAT_MODEL_GPT55 ||
+    key === EVOLINK_CHAT_MODEL_GPT54
+  ) {
+    return key;
+  }
   console.warn(`[evolinkChatModel] unknown model "${trimmed}", fallback to ${fallback}`);
   return fallback;
 }
 
+export function isEvolinkGpt56FamilyModel(raw?: string): boolean {
+  const key = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (!key) return false;
+  return Boolean(EVOLINK_CHAT_MODEL_ALIASES[key]) || /^gpt-5\.6(-sol|-terra|-luna)?$/i.test(key);
+}
+
+/** 平台文案主模型：EvoLink gpt-5.6-sol（可用 EVOLINK_GPT56_SOL_MODEL / PLATFORM_STAGE2_OPENAI_MODEL 覆盖）。 */
+export function getEvolinkGpt56SolModel(): string {
+  return normalizeEvolinkChatModel(
+    process.env.EVOLINK_GPT56_SOL_MODEL ||
+      process.env.PLATFORM_STAGE2_OPENAI_MODEL ||
+      EVOLINK_CHAT_MODEL_GPT56_SOL,
+    EVOLINK_CHAT_MODEL_GPT56_SOL,
+  );
+}
+
 export function isEvolinkChatModelNotFoundError(status: number, errorText: string): boolean {
   if (status === 404) return true;
-  return /deployment to match the model|model not found|not_found_error/i.test(errorText);
+  return /deployment to match the model|model not found|not_found_error|specified model not found/i.test(
+    errorText,
+  );
 }
 
 export function isEvolinkInsufficientQuotaError(status: number, errorText: string): boolean {
   if (status === 402) return true;
-  // OhMyGPT / 各代理常把余额耗尽写成 403/429 或中文「余额/额度」
   return /insufficient.?quota|insufficient_quota|quota.?exceeded|out of credits|no (?:remaining )?credits|balance.?insufficient|余额不足|额度不足|积分不足|账户余额|billing|payment.?required/i.test(
     errorText,
   );
