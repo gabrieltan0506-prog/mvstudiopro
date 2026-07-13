@@ -236,6 +236,7 @@ export function composePlatformImageSkillHints(
   if (forceCover || on("cover-stop-scroll")) {
     parts.push(
       "【封面出图·少字硬限】coverHeadline 须 8–14 字；屏上可见文案最多 2 行；只提亮 2–6 字重点色；禁止把长标题/整段 hook/论文式副标印满屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
+      "【封面出图·清单蓝海（x1/x3）】选题含清单/必备/带娃/攻略时：优先 flat lay 神器墙或行李箱 POV + 大数字件数 + 结果钉（安静/不踩雷/省事/建议收藏）；杀伤词可用必備/清單/保姆級/被問爆/無廣；禁论文腔封面。",
     );
   }
   if (on("vivid-anti-boring")) {
@@ -252,6 +253,12 @@ export function composePlatformImageSkillHints(
   if (on("xhs-collectible-note")) {
     parts.push(
       "【高收藏图文·m1密度】8–12页；封面城市+时段+大数字+价值钉；页2编号总览墙；中段detail细卡（档期/门槛/一句钉子）；解法写「在这里我先分享一些」；封面少字硬限。",
+      "【高收藏图文·清单蓝海x1/x3】带娃/出行清单：flat lay或行李箱证据；细卡写结果句（全程安静/装湿衣服等）；目标藏≥赞工具帖气质。",
+    );
+  }
+  if (on("blue-ocean-natural")) {
+    parts.push(
+      "【蓝海出图】封面主句可自然带 0–1 个可搜意图词（如親子旅遊清單）；禁止把标签墙印满封面。",
     );
   }
   if (on("director-craft")) {
