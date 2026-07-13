@@ -2,7 +2,7 @@
 id: 4season-fmcg-popsci
 name: 四季畅销品痛点槽点科普（弧+运镜）
 description: 当季畅销消费品：痛点/槽点/量感算账/权威一句；叙事弧+运镜；样本 ice.mp4；通用创作者可用
-version: 2026-07-13
+version: 2026-07-13e
 defaultEnabled: true
 ---
 
@@ -16,6 +16,15 @@ defaultEnabled: true
 权威一句见 `authority-cite-endorsement`（**正文必须落句**）；变现见 `fmcg-popsci-monetize`。
 
 参考样本：`~/Downloads/2026Jul12/ice.mp4`（老洋人科普）；2026-07-13 再抽帧见 `~/Downloads/2026Jul13/ice-frames-dense/`。
+
+## ice.mp4 / 雪糕金牌结构（可迁移 · 优先于「念机制」）
+观众一看就懂的结构（创作者原话对齐）：
+1. **一眼懂**：原来不能给孩子一直吃雪糕。  
+2. **痛点1**：配料表原来有猫腻。  
+3. **痛点2**：孩子食欲下降、影响发育。  
+4. **会选了**：以后懂的选雪糕了。
+
+**禁止**写成：「儿童添加糖与发育风险的循证综述」——那是论文腔，没人想看。
 
 ## ice.mp4 密度课（再抽帧结论 · 可迁移）
 1. **日常赌注钩**：如果每天都…（一口就能代入）。  
@@ -31,6 +40,7 @@ defaultEnabled: true
 - [ ] 有没有克数或一日上限占比？  
 - [ ] 有没有「按《中国居民膳食指南…》」类权威一句？  
 - [ ] 有没有立刻能做的动作（翻标/对比/算账）？
+- [ ] 看完能不能复述「会选了」——而不只是「研究说不好」？
 
 ## 与相邻 Skill
 | | 本 Skill | `label-debunk-copy` | `authority-cite-endorsement` |

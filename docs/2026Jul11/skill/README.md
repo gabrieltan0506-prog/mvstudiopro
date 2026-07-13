@@ -34,9 +34,9 @@
 - **去重**：`dedupeKey` 硬约束（同人/同母题如王安石、深夜高压最多 1）。
 - **评论钩** ≤3 字生活词；禁止整句预约话术。
 - **`xhs-collectible-note`**：高收藏页角色（建议 8–12 页）；合集向 inventory/detail；「在这里我先分享一些」。
-- **`vivid-anti-boring`**：补 m2 短视频字幕密度课。
+- **`vivid-anti-boring`**：补 m2 短视频字幕密度课 + **雪糕公式**（一眼懂→双痛点→会选；禁论文腔）。
 - **`review-safe-voice`** 改名：**强监管优化表达**（医学/法律/金融/算命玄学雷区）。
-- **`4season-fmcg-popsci`**：改名痛点槽点科普；ice.mp4 再抽帧密度课；权威一句强制落正文。
+- **`4season-fmcg-popsci`**：改名痛点槽点科普；ice.mp4 再抽帧密度课；权威一句强制落正文；对齐雪糕金牌结构。
 
 ### Skill 自动路由总管（勾选 ≠ 全灌）
 见 [`shared/platformSkillRouter.ts`](../../shared/platformSkillRouter.ts) 与 [`shared/platformTopicShortlist.ts`](../../shared/platformTopicShortlist.ts) 的 `PLATFORM_SKILL_MASTER_READONLY`。
