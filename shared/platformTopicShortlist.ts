@@ -13,7 +13,7 @@ export const PLATFORM_TOPIC_SHORTLIST_MAX = 20;
 export const PLATFORM_TOPIC_SHORTLIST_COUNT = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
 
 export const PLATFORM_TOPIC_EXPAND_MIN = 1;
-export const PLATFORM_TOPIC_EXPAND_MAX = 6;
+export const PLATFORM_TOPIC_EXPAND_MAX = 12;
 
 /** 小红书评论区生活化钩子：≤3 个汉字/字符，禁止整句预约话术 */
 export const PLATFORM_COMMENT_HOOK_MAX_CHARS = 3;

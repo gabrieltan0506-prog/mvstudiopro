@@ -95,7 +95,7 @@ import {
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
-import { normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
+import { PLATFORM_TOPIC_EXPAND_MAX, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { runVertexUpscaleImage } from "./services/vertexImage";
 import {
@@ -5304,7 +5304,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               }),
             )
             .min(1)
-            .max(6),
+            .max(PLATFORM_TOPIC_EXPAND_MAX),
         }),
       )
       .mutation(async ({ ctx, input }) => {
