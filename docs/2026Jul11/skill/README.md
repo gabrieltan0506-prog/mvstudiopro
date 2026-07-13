@@ -17,6 +17,7 @@
 | `xhs-collectible-note.md` | xhs-collectible-note | 开 |
 | `contrast-reversal-climax.md` | contrast-reversal-climax | 开 |
 | `crossover-popsci.md` | crossover-popsci | 开 |
+| `medical-resource-library.md` | medical-resource-library | 开 |
 | `vivid-anti-boring.md` | vivid-anti-boring | 开 |
 | `4season-fmcg-popsci.md` | 4season-fmcg-popsci（痛点槽点科普） | 开 |
 | `label-debunk-copy.md` | label-debunk-copy | 开 |
@@ -25,6 +26,11 @@
 | `forensic-life-lens.md` | forensic-life-lens | 开 |
 
 **非 md 开关（UI）**：「接受博主/创作者自称」默认关。
+
+### 2026-07-13b（医学多媒体资源库）
+- **`medical-resource-library`**：MSD 大众/专业、MedlinePlus、Cleveland、CardioSmart、Radiopaedia、Innerbody、Zygote（免登录实测入口）。
+- 代码：`shared/medicalResourceLibrary.ts`；抽帧：`docs/2026Jul13/mk-medical-highlights.md`；探针：`docs/2026Jul13/medical-sites-probe.md`。
+- 死链已排除：`medlineplus.gov/videosandtutorials.html`；MSD `/home/.../3d-models`；CardioSmart 裸 `/topics`。
 
 ### 2026-07-13（选题初选 + 可发图文）
 - **流程**：选题生成**默认 6 条**（每条 `skillsUsed` + `conveyGoal`）→ 勾选后扩写正式文案 + `graphicNotePages`。超出 6 条按条另计费（最多 20）。积分：基础 12 + 加量 2/条；扩写 48。
@@ -44,7 +50,8 @@
 | 核心 | hook-solution-cta · review-safe-voice · vivid-anti-boring · cover-stop-scroll · platform-native · cultural-diversity · lifestyle-diversity |
 | 赛道 fmcg | 4season + label-debunk + authority + monetize |
 | 赛道 forensic | forensic-life-lens + authority |
-| 赛道 crossover / contrast | 对应单 Skill |
+| 赛道 crossover | crossover-popsci · medical-resource-library · authority |
+| 赛道 contrast | contrast-reversal-climax |
 | 图文 | graphic-note-rhythm + xhs-collectible-note |
 
 ### 更早变更

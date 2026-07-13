@@ -2,6 +2,8 @@
  * /platform 可挂载 Skill：内置 md + 用户上传，勾选后注入生成 Prompt。
  */
 
+import { buildMedicalResourcePromptBlock } from "./medicalResourceLibrary.js";
+
 export type PlatformSkillMeta = {
   id: string;
   name: string;
@@ -72,19 +74,26 @@ export function parsePlatformSkillMarkdown(
 }
 
 /** 将已启用 Skill 拼成一段可注入 system/user 的硬约束块 */
-export function composePlatformSkillsPromptBlock(skills: PlatformSkillRecord[]): string {
+export function composePlatformSkillsPromptBlock(
+  skills: PlatformSkillRecord[],
+  opts?: { topicHint?: string },
+): string {
   const list = (skills || []).filter((s) => s && String(s.body || "").trim());
   if (list.length === 0) return PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE;
   const parts = list.map((s, i) => {
     const head = `### Skill ${i + 1}: ${s.name}（id=${s.id} · ${s.source}）`;
     return `${head}\n${String(s.body).trim()}`;
   });
-  return `【Platform 挂载 Skill·强制遵守（但创作者提示词优先）】
+  let block = `【Platform 挂载 Skill·强制遵守（但创作者提示词优先）】
 以下 Skill 由用户在 /platform 勾选启用。生成选题、文案、分镜、灯光、运镜、图文笔记时**默认**遵守；与旧有软建议冲突时，以本块为准。
 ${PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE}
 成稿仍禁止堆导演名/片名致敬（若启用了导演手法 Skill）。
 
 ${parts.join("\n\n---\n\n")}`;
+  if (list.some((s) => s.id === "medical-resource-library")) {
+    block += `\n\n---\n\n${buildMedicalResourcePromptBlock({ topic: opts?.topicHint })}`;
+  }
+  return block;
 }
 
 export const PLATFORM_BUILTIN_SKILL_IDS = [
@@ -101,6 +110,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "xhs-collectible-note",
   "contrast-reversal-climax",
   "crossover-popsci",
+  "medical-resource-library",
   "vivid-anti-boring",
   "4season-fmcg-popsci",
   "label-debunk-copy",

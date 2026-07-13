@@ -17,6 +17,7 @@ import {
   platformTopicShortlistItemSchema,
   type PlatformTopicShortlistItem,
 } from "../../shared/platformTopicShortlist.js";
+import { ensureMedicalResourceCiteInCopy } from "../../shared/medicalResourceLibrary.js";
 import {
   planDiverseBlueprintSkillRoutes,
   resolveSkillPoolIds,
@@ -347,6 +348,16 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       });
       bp.copywriting = cite.copywriting;
       bp.authorityCitePatched = cite.patched;
+
+      const med = ensureMedicalResourceCiteInCopy({
+        copywriting: String(bp.copywriting || ""),
+        topic: `${bp.title || ""} ${bp.hook || ""}`,
+        force:
+          pick.skillsUsed.includes("medical-resource-library") ||
+          pick.primaryLane === "crossover",
+      });
+      bp.copywriting = med.copywriting;
+      if (med.patched) bp.authorityCitePatched = true;
 
       const hooks = bp.commentHooks as string[];
       if (!Array.isArray(bp.graphicNotePages) || (bp.graphicNotePages as unknown[]).length < 6) {

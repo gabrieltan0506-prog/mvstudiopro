@@ -15,6 +15,7 @@ const FULL_POOL = [
   "fmcg-popsci-monetize",
   "forensic-life-lens",
   "crossover-popsci",
+  "medical-resource-library",
   "contrast-reversal-climax",
   "director-craft",
   "graphic-note-rhythm",
@@ -101,6 +102,7 @@ describe("planDiverseBlueprintSkillRoutes", () => {
     expect(new Set(specialty).size).toBe(specialty.length);
     expect(new Set(specialty)).toEqual(new Set(["crossover", "forensic", "fmcg", "contrast"]));
     expect(plans[0]!.selectedIds).toContain("crossover-popsci");
+    expect(plans[0]!.selectedIds).toContain("medical-resource-library");
     expect(plans[1]!.selectedIds).toContain("forensic-life-lens");
     expect(plans[2]!.selectedIds).toContain("4season-fmcg-popsci");
     expect(plans[3]!.selectedIds).toContain("contrast-reversal-climax");

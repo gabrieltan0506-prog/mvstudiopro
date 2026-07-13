@@ -289,6 +289,11 @@ export function composePlatformImageSkillHints(
       "【权威背书出图】最多一张简洁信息卡（指南名+一句阈值）；勿伪造红头文件或论文截图墙。",
     );
   }
+  if (on("medical-resource-library")) {
+    parts.push(
+      "【医学资源库出图】可截 MSD 大众版/3D(BioDigital)/症状页、MedlinePlus 动画、CardioSmart 信息图等公开页作对照；字幕级短链或站名；禁伪造病历与诊疗恐吓；勿用已失效的 videosandtutorials 死链。",
+    );
+  }
   if (on("fmcg-popsci-monetize")) {
     parts.push(
       "【科普变现出图】末帧可留评论关键词/清单预告，勿小黄车与疗效承诺画面；半成品缺口视觉优先于卖货。",
