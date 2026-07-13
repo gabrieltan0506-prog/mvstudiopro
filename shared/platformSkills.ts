@@ -20,6 +20,12 @@ export type PlatformSkillRecord = PlatformSkillMeta & {
   body: string;
 };
 
+/** 创作者提示词 / 创作诉求 与 Skill 冲突时的优先级（UI 气泡与 Prompt 共用）。 */
+export const PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE = `【创作者提示词优先·硬规则】
+1. Skill 可自由勾选 / 取消，不是强制模板。
+2. 若「人物背景与创作诉求 / 自定义提示词 / 用户明确要求」与已挂载 Skill 冲突：**一律以创作者提示词为准**，Skill 仅作不冲突处的辅助参考。
+3. 只要提示词里写了具体要求（题材、时长、页数、口吻、禁区、平台、人物等），生成时优先兑现这些要求，不得被 Skill 默认设定覆盖。`;
+
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
 function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
@@ -68,13 +74,14 @@ export function parsePlatformSkillMarkdown(
 /** 将已启用 Skill 拼成一段可注入 system/user 的硬约束块 */
 export function composePlatformSkillsPromptBlock(skills: PlatformSkillRecord[]): string {
   const list = (skills || []).filter((s) => s && String(s.body || "").trim());
-  if (list.length === 0) return "";
+  if (list.length === 0) return PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE;
   const parts = list.map((s, i) => {
     const head = `### Skill ${i + 1}: ${s.name}（id=${s.id} · ${s.source}）`;
     return `${head}\n${String(s.body).trim()}`;
   });
-  return `【Platform 挂载 Skill·强制遵守】
-以下 Skill 由用户在 /platform 勾选启用。生成选题、文案、分镜、灯光、运镜、图文笔记时**必须**遵守；与旧有软建议冲突时，以本块为准。
+  return `【Platform 挂载 Skill·强制遵守（但创作者提示词优先）】
+以下 Skill 由用户在 /platform 勾选启用。生成选题、文案、分镜、灯光、运镜、图文笔记时**默认**遵守；与旧有软建议冲突时，以本块为准。
+${PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE}
 成稿仍禁止堆导演名/片名致敬（若启用了导演手法 Skill）。
 
 ${parts.join("\n\n---\n\n")}`;

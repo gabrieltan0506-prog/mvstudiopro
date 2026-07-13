@@ -1025,11 +1025,15 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
 const COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN = [
   "",
   "REFERENCE PERSON (CRITICAL IMAGE EDIT): One reference photo of a real person is attached as input.",
-  "Replace the main human character on this cover with THIS exact person. Preserve their facial identity,",
-  "face shape, skin tone, hairstyle and overall likeness so they are immediately recognizable, while you may",
-  "restyle the lighting, wardrobe, pose and background to fit the cover design. Render only ONE person, with a",
-  "natural, flattering, magazine-grade portrait integration (no distortion, no extra faces, no duplicated heads).",
-  "Keep ALL designed Simplified Chinese text, layout, color palette and the 9:16 vertical framing unchanged.",
+  "FACE LOCK (HARD): Replace the main human character on this cover with THIS exact person. Preserve their facial identity,",
+  "face shape, skin tone, hairstyle and overall likeness so they are immediately recognizable.",
+  "WARDROBE LOCK (HARD): Restyle lighting, pose and background to fit the cover design, BUT clothing MUST match the",
+  "depicted action/scene (tennis → athletic tennis kit; swim → swimwear; hike → outdoor technical wear).",
+  "NEVER keep a heavy coat / formal overcoat / suit jacket while the person is mid tennis serve or other sport action.",
+  "Render only ONE person, with a natural, flattering, magazine-grade portrait integration",
+  "(no distortion, no extra faces, no duplicated heads).",
+  "Keep ALL designed Simplified Chinese (简体中文 / zh-Hans) text, layout, color palette and the 9:16 vertical framing unchanged.",
+  "On-image glyphs must stay Mainland Simplified Chinese — never Traditional Chinese, never English body copy replacing the Chinese headline.",
 ].join("\n");
 
 /**
@@ -1052,10 +1056,12 @@ const STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN = [
   "FACE LOCK (HARD): In every panel/cell where the modern-day presenter, host, or narrator appears",
   "(including Xiaohongshu graphic-note explanation panels with a person), use THIS exact person's face,",
   "bone structure, eyes, nose, mouth, age, skin tone and hairstyle — same identity across the whole sheet.",
-  "WARDROBE (SOFT): Clothing, layering and accessories MAY adapt to each scene's setting and lighting,",
-  "but keep the same fashion tier and body type; do not invent a different person via outfit alone.",
+  "WARDROBE (HARD MATCH TO SCENE): Clothing, layering and accessories MUST adapt to each scene's action and setting",
+  "(sport action → athletic kit; indoor talk → editorial formal OK). Keep the same fashion tier and body type;",
+  "do not invent a different person via outfit alone; never absurd mismatches like overcoat-on-tennis-court.",
   "Only depict a different unfamiliar person when the script explicitly calls for ancient/historical figures,",
   "named third-party characters, or clearly distinct roles; never replace the main host with a random stranger.",
+  "All on-image Chinese text stays Mainland Simplified Chinese (简体中文).",
 ].join("\n");
 
 /** 参考图为已生成的竖版封面时：强制与封面同脸（解决抠像→封面 OK、分镜/图文换脸） */
@@ -1064,7 +1070,9 @@ const STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN = [
   "APPROVED COVER FACE LOCK (HIGHEST PRIORITY): The attached reference is the finalized vertical cover art.",
   "The presenter/host face in EVERY modern-day panel or graphic-note cell with a person MUST match this cover",
   "exactly — same facial bone structure, eyes, nose, mouth, age, hairstyle and skin tone.",
-  "Wardrobe may soft-adapt to the scene; face identity must not drift. Do NOT invent a new face per panel.",
+  "Wardrobe soft-adapts ONLY within the same scene family; face identity must not drift. Do NOT invent a new face per panel.",
+  "If a panel shows sport action, wardrobe must be athletic for that action — never formal overcoat mid-serve.",
+  "On-image text remains Mainland Simplified Chinese.",
 ].join("\n");
 
 /** 3×4 续接段：以上一段横排成品为视觉真源，锁人物/场景/色调 */
@@ -1087,7 +1095,9 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
   const anchor = [
     "【视觉锚点·主人公·锁脸】",
     "分镜表与图文笔记中，凡出现现代主讲/主人公/解说人物的格子，须与上传参考人像为同一人：五官、发型、肤色、年龄跨格一致，禁止换成陌生面孔。",
-    "衣着可随场景微调（色系/外套/配饰），但身材与时装阶层不变；勿靠换装暗示换人。",
+    "【场景服饰·防穿帮】衣着必须跟本格场景动作走：打网球穿网球运动装，游泳穿泳装，爬山穿户外功能装；禁止高定外套/大衣边发球边挥拍等穿帮。",
+    "可微调色系与配饰，但身材与时装阶层不变；勿靠换装暗示换人。",
+    "屏内字一律中国大陆简体中文。",
     "仅当脚本明确描写古人、历史人物、古代场景、顾客/路人等独立角色时，才使用不同人物造型。",
     persona,
   ]

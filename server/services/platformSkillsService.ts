@@ -270,7 +270,10 @@ export async function resolvePlatformSkillsPrompt(params: {
 
   if (poolIds.length === 0) {
     const { composeBloggerTitlePolicyPrompt } = await import("../../shared/platformNativeVariants.js");
-    return composeBloggerTitlePolicyPrompt(Boolean(params.allowBloggerTitle));
+    const { PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE } = await import("../../shared/platformSkills.js");
+    return [PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE, composeBloggerTitlePolicyPrompt(Boolean(params.allowBloggerTitle))]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   const mode = params.skillRouteMode === "all" ? "all" : "auto";
@@ -332,6 +335,8 @@ export async function resolveDiverseDimensionSkillsPrompts(params: {
   });
 
   if (poolIds.length === 0) {
+    const { PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE } = await import("../../shared/platformSkills.js");
+    const emptyPrompt = [PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE, blogger].filter(Boolean).join("\n\n");
     return {
       poolIds: [],
       plans: params.dimensions.map((d) => ({
@@ -339,7 +344,7 @@ export async function resolveDiverseDimensionSkillsPrompts(params: {
         dimName: d.dimName,
         lane: "default",
         selectedIds: [],
-        prompt: blogger,
+        prompt: emptyPrompt,
       })),
     };
   }

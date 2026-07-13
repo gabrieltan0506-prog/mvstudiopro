@@ -235,7 +235,7 @@ export function composePlatformImageSkillHints(
   const forceCover = opts?.forceCoverShortCopy !== false;
   if (forceCover || on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图·少字硬限】coverHeadline 须 8–14 字；屏上可见文案最多 2 行；只提亮 2–6 字重点色；禁止把长标题/整段 hook/论文式副标印满屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着。",
+      "【封面出图·少字硬限】coverHeadline 须 8–14 字；屏上可见文案最多 2 行；只提亮 2–6 字重点色；禁止把长标题/整段 hook/论文式副标印满屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
     );
   }
   if (on("vivid-anti-boring")) {
