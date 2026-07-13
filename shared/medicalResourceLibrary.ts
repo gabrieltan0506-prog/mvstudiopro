@@ -391,7 +391,8 @@ export function buildMedicalResourcePromptBlock(params?: {
     "用途：文案/分镜可展示「动画·图片·症状页」链接；先 hub/搜索，勿臆造深层死链。",
     `受众默认：${audience === "professional" ? "专业版备课 → 成稿仍用大众口径" : "大众版科普"}。`,
     "审核：不诊断、不开方、不承诺疗效；一句资源 + 生活痛点，禁论文墙。",
-    "包装参考：大数字选题包/硬核网站推荐/漫画拟人（谁写谁火·3D讲清原理），不是课堂念稿。",
+    "高赞壳（mk实测·必须选1）：①大数字选题包（谁写谁火/100个/选一个就行·藏≥赞）②硬核网站+屏幕证据（MSD大众版/3D讲清原理）③八卦或漫画拟人（不当切片课）。",
+    "高赞料：同条必须有可打开 URL（SearchResults 或 biodigital/anatomyvideos 等）；壳无料=口号党，料无壳=论文党。",
   ];
   for (const p of picks) {
     const media = p.mediaUrls.length ? ` | 多媒体: ${p.mediaUrls.slice(0, 2).join(" · ")}` : "";

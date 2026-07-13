@@ -72,11 +72,12 @@ describe("medicalResourceLibrary", () => {
     expect(textHasMedicalResourceCite(patched.copywriting)).toBe(true);
   });
 
-  it("prompt block bans known dead links", () => {
+  it("prompt block bans known dead links and encodes mk high-engagement shell", () => {
     const block = buildMedicalResourcePromptBlock({ topic: "医学科普 3D 可视化" });
     expect(block).toContain("biodigital");
     expect(block).toContain("videosandtutorials.html");
     expect(block).toContain("msd-home");
+    expect(block).toMatch(/高赞壳|谁写谁火|3D讲清/);
   });
 });
 
