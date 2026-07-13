@@ -166,7 +166,7 @@ export function normalizeCommentHooksList(raw: unknown): string[] {
 
 /** 权威一句：科普/fmcg 正文验收 */
 const AUTHORITY_CITE_RE =
-  /按[《「]?[^》」\n]{2,40}[》」]?|中国居民膳食指南|健康中国|世卫组织|WHO|GB\s?\d+|营养学会|身体活动指南|睡眠健康/;
+  /按[《「]?[^》」\n]{2,40}[》」]?|中国居民膳食指南|健康中国|世卫组织|WHO|GB\s?\d+|营养学会|身体活动指南|睡眠健康|默沙东|MSD\s*Manual|MedlinePlus|Cleveland Clinic|克利夫兰|CardioSmart|Radiopaedia|Innerbody|Zygote Body|msdmanuals\.cn|medlineplus\.gov|clevelandclinic\.org|cardiosmart\.org|radiopaedia\.org|innerbody\.com|zygotebody\.com/i;
 
 export function textHasAuthorityCite(text: string): boolean {
   return AUTHORITY_CITE_RE.test(String(text || ""));
@@ -241,8 +241,12 @@ export const PLATFORM_SKILL_MASTER_READONLY = {
   ],
   lanes: [
     { id: "fmcg", label: "畅销品痛点科普", skills: "4season-fmcg-popsci · label-debunk · authority · monetize" },
-    { id: "forensic", label: "法医视角·还怎么活", skills: "forensic-life-lens · authority" },
-    { id: "crossover", label: "跨界机制拟人", skills: "crossover-popsci" },
+    { id: "forensic", label: "法医视角·还怎么活", skills: "forensic-life-lens · authority · medical-resource-library" },
+    {
+      id: "crossover",
+      label: "跨界机制拟人/医学资源",
+      skills: "crossover-popsci · medical-resource-library · authority",
+    },
     { id: "contrast", label: "身份反差高潮", skills: "contrast-reversal-climax" },
     { id: "default", label: "默认生活向", skills: "batch-arc-engagement + 核心" },
   ],

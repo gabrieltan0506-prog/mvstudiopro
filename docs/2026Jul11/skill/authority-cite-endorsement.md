@@ -11,7 +11,8 @@ defaultEnabled: true
 ## 用途
 凡轻科普、打脸营销、半成品建议需要**一句可追溯背书**时启用。  
 解决：「除了膳食指南还能引什么？」以及「吃的以外还能挖什么权威素材？」。  
-与 `label-debunk-copy` / `4season-fmcg-popsci` / `crossover-popsci` / `review-safe-voice` 叠用：**每条选题默认只引 1 句**，禁止变成政策播报或论文墙。
+与 `label-debunk-copy` / `4season-fmcg-popsci` / `crossover-popsci` / `medical-resource-library` / `review-safe-voice` 叠用：**每条选题默认只引 1 句**，禁止变成政策播报或论文墙。  
+医学机制/急救/3D 可视化向优先走 `medical-resource-library`（MSD 大众版搜索或 biodigital 等**可打开 URL**），本 Skill 仍可补一句膳食/活动指南。
 
 ## 引用写法（统一 · 必须落进正文）
 - 句式：`按《…》/ 世卫组织建议……` → 立刻接分享动作或算账。  

@@ -82,10 +82,27 @@ export const PROXY_IMAGE_SHEET_CONTEXT_MAX_CHARS = 3500;
  * **平台主路径固定兩檔**：豎版 **1024×1536**、橫版 **1536×1024**（皆為 16 的倍數）；不再传 `auto`、`1024×1024` 等後備。
  */
 /** gpt-image-2 請求體：`output_format: png` 避免 JPEG 重壓縮；落盤後仍寫 GCS/Fly。 */
+/** gpt-image-2 quality：默认 **high**（对标可发笔记清晰度）；`GPT_IMAGE2_QUALITY` / 分项 env 可降为 medium|low 控成本。 */
+type GptImage2ApiQuality = "low" | "medium" | "high";
+function resolveGptImage2ApiQuality(envKeys: string[], fallback: GptImage2ApiQuality = "high"): GptImage2ApiQuality {
+  for (const key of envKeys) {
+    const raw = String(process.env[key] || "")
+      .trim()
+      .toLowerCase();
+    if (raw === "low" || raw === "medium" || raw === "high") return raw;
+  }
+  return fallback;
+}
 /** 豎版封面 GPT-IMAGE-2 quality（OhMyGPT / fal / EvoLink 共用） */
-const GPT_IMAGE2_PORTRAIT_API_QUALITY = "medium" as const;
-/** 2×4 宽幅分镜 / 八格 GPT-IMAGE-2 quality — 与竖版封面同为 medium */
-const GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY = "medium" as const;
+const GPT_IMAGE2_PORTRAIT_API_QUALITY: GptImage2ApiQuality = resolveGptImage2ApiQuality(
+  ["GPT_IMAGE2_PORTRAIT_QUALITY", "GPT_IMAGE2_QUALITY"],
+  "high",
+);
+/** 2×4 宽幅分镜 / 八格 GPT-IMAGE-2 quality — 默认 high，与封面一致 */
+const GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY: GptImage2ApiQuality = resolveGptImage2ApiQuality(
+  ["GPT_IMAGE2_COMPOSITE_QUALITY", "GPT_IMAGE2_QUALITY"],
+  "high",
+);
 const GPT_IMAGE2_OUTPUT_FORMAT = "png" as const;
 /** 豎版：僅 **1024×1536**（與 OpenAI 白名單一致，2:3） */
 const GPT_IMAGE2_PORTRAIT_SIZES = ["1024x1536"] as const;
@@ -117,8 +134,6 @@ function gptImage2OpenAiSizeToFalImageSize(openAiSize: string): { width: number;
   }
   return { width, height };
 }
-
-type GptImage2ApiQuality = typeof GPT_IMAGE2_PORTRAIT_API_QUALITY | typeof GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY;
 
 /** 與 {@link postGptImage2AndUpload} → OhMyGPT `images/generations` 欄位語義一致（單一真相來源：quality / output_format / model / n）。 */
 function buildOhMyGptGptImage2RequestBody(
@@ -933,8 +948,8 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面像素：**預設** 有 `EVOLINK_API_KEY` 時走 **EvoLink GPT‑Image‑2**（`gpt_image2_only`）；否則 Vertex Nano Banana 2。
- * 設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 或請求 `coverPixelEngine=gpt_image2` 強制 GPT‑Image‑2（EvoLink → OhMyGPT → fal → NB2）。
+ * 單幀封面像素：**預設** 走 **GPT‑Image‑2**（`gpt_image2_only`）：**OhMyGPT → EvoLink → fal → NB2**；否則 Vertex Nano Banana 2。
+ * 設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 或請求 `coverPixelEngine=gpt_image2` 強制該鏈。
  * **Nano Banana Pro**：`PLATFORM_TOPIC_COVER_PIXEL_ENGINE=nbp_only` 或請求 `nano_banana_pro`。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
@@ -957,10 +972,10 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     .filter(Boolean)
     .slice(0, 16);
 
-  // 封面统一走 GPT-Image-2 像素链：EvoLink（主力）→ …；有参考人像时 EvoLink edit → NB2（带脸锁），禁止无参考降级。
+  // 封面统一走 GPT-Image-2 像素链：OhMyGPT（主力）→ EvoLink → …；有参考人像时 EvoLink edit → NB2（带脸锁），禁止无参考降级。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · EvoLink → NB2（带脸锁）` : "顺序 EvoLink → OhMyGPT → fal → NB2"}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · EvoLink → NB2（带脸锁）` : "顺序 OhMyGPT → EvoLink → fal → NB2"}…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -1010,11 +1025,15 @@ export async function generatePlatformTopicTypographyNanoBanana2Only(options: {
 const COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN = [
   "",
   "REFERENCE PERSON (CRITICAL IMAGE EDIT): One reference photo of a real person is attached as input.",
-  "Replace the main human character on this cover with THIS exact person. Preserve their facial identity,",
-  "face shape, skin tone, hairstyle and overall likeness so they are immediately recognizable, while you may",
-  "restyle the lighting, wardrobe, pose and background to fit the cover design. Render only ONE person, with a",
-  "natural, flattering, magazine-grade portrait integration (no distortion, no extra faces, no duplicated heads).",
-  "Keep ALL designed Simplified Chinese text, layout, color palette and the 9:16 vertical framing unchanged.",
+  "FACE LOCK (HARD): Replace the main human character on this cover with THIS exact person. Preserve their facial identity,",
+  "face shape, skin tone, hairstyle and overall likeness so they are immediately recognizable.",
+  "WARDROBE LOCK (HARD): Restyle lighting, pose and background to fit the cover design, BUT clothing MUST match the",
+  "depicted action/scene (tennis → athletic tennis kit; swim → swimwear; hike → outdoor technical wear).",
+  "NEVER keep a heavy coat / formal overcoat / suit jacket while the person is mid tennis serve or other sport action.",
+  "Render only ONE person, with a natural, flattering, magazine-grade portrait integration",
+  "(no distortion, no extra faces, no duplicated heads).",
+  "Keep ALL designed Simplified Chinese (简体中文 / zh-Hans) text, layout, color palette and the 9:16 vertical framing unchanged.",
+  "On-image glyphs must stay Mainland Simplified Chinese — never Traditional Chinese, never English body copy replacing the Chinese headline.",
 ].join("\n");
 
 /**
@@ -1037,10 +1056,12 @@ const STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN = [
   "FACE LOCK (HARD): In every panel/cell where the modern-day presenter, host, or narrator appears",
   "(including Xiaohongshu graphic-note explanation panels with a person), use THIS exact person's face,",
   "bone structure, eyes, nose, mouth, age, skin tone and hairstyle — same identity across the whole sheet.",
-  "WARDROBE (SOFT): Clothing, layering and accessories MAY adapt to each scene's setting and lighting,",
-  "but keep the same fashion tier and body type; do not invent a different person via outfit alone.",
+  "WARDROBE (HARD MATCH TO SCENE): Clothing, layering and accessories MUST adapt to each scene's action and setting",
+  "(sport action → athletic kit; indoor talk → editorial formal OK). Keep the same fashion tier and body type;",
+  "do not invent a different person via outfit alone; never absurd mismatches like overcoat-on-tennis-court.",
   "Only depict a different unfamiliar person when the script explicitly calls for ancient/historical figures,",
   "named third-party characters, or clearly distinct roles; never replace the main host with a random stranger.",
+  "All on-image Chinese text stays Mainland Simplified Chinese (简体中文).",
 ].join("\n");
 
 /** 参考图为已生成的竖版封面时：强制与封面同脸（解决抠像→封面 OK、分镜/图文换脸） */
@@ -1049,7 +1070,9 @@ const STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN = [
   "APPROVED COVER FACE LOCK (HIGHEST PRIORITY): The attached reference is the finalized vertical cover art.",
   "The presenter/host face in EVERY modern-day panel or graphic-note cell with a person MUST match this cover",
   "exactly — same facial bone structure, eyes, nose, mouth, age, hairstyle and skin tone.",
-  "Wardrobe may soft-adapt to the scene; face identity must not drift. Do NOT invent a new face per panel.",
+  "Wardrobe soft-adapts ONLY within the same scene family; face identity must not drift. Do NOT invent a new face per panel.",
+  "If a panel shows sport action, wardrobe must be athletic for that action — never formal overcoat mid-serve.",
+  "On-image text remains Mainland Simplified Chinese.",
 ].join("\n");
 
 /** 3×4 续接段：以上一段横排成品为视觉真源，锁人物/场景/色调 */
@@ -1072,7 +1095,9 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
   const anchor = [
     "【视觉锚点·主人公·锁脸】",
     "分镜表与图文笔记中，凡出现现代主讲/主人公/解说人物的格子，须与上传参考人像为同一人：五官、发型、肤色、年龄跨格一致，禁止换成陌生面孔。",
-    "衣着可随场景微调（色系/外套/配饰），但身材与时装阶层不变；勿靠换装暗示换人。",
+    "【场景服饰·防穿帮】衣着必须跟本格场景动作走：打网球穿网球运动装，游泳穿泳装，爬山穿户外功能装；禁止高定外套/大衣边发球边挥拍等穿帮。",
+    "可微调色系与配饰，但身材与时装阶层不变；勿靠换装暗示换人。",
+    "屏内字一律中国大陆简体中文。",
     "仅当脚本明确描写古人、历史人物、古代场景、顾客/路人等独立角色时，才使用不同人物造型。",
     persona,
   ]
@@ -1083,7 +1108,7 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
 
 /**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → GPT-Image-2 像素链。
- * **供应商顺序：EvoLink（主力）→ OhMyGPT → fal → NB2**（无参考时）。
+ * **供应商顺序：OhMyGPT（主力）→ EvoLink → fal → NB2**（无参考时）。
  * 传 `referenceImageUrls`（换人/换脸）时：**EvoLink edit → NB2（携带参考图脸锁）**；
  * **禁止**再降级到无参考 OhMyGPT/fal/NB2，避免出「无脸错图」浪费算力。
  */
@@ -1126,10 +1151,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const prompt = hasRef ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
   const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
 
-  if (isEvolinkGptImage2Configured()) {
+  // 换脸：OhMyGPT generations 无法带参考图，仍走 EvoLink edit
+  if (hasRef && isEvolinkGptImage2Configured()) {
     appendImageFlowLog(
       L,
-      `[单帧·主力] EvoLink GPT-IMAGE-2 · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · edit模式·参考人像=${refImageUrls.length}张` : ""} · 英文 prompt 约 ${prompt.length} 字`,
+      `[单帧·换脸·主力] EvoLink GPT-IMAGE-2 edit · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · 参考人像=${refImageUrls.length}张 · 英文 prompt 约 ${prompt.length} 字`,
     );
     const evoErr: { message?: string } = {};
     const fromEvolink = await postEvolinkGptImage2AndUpload(prompt, options.gcsSubdir, {
@@ -1137,15 +1163,13 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       size: sizes[0],
       flowLog: L,
       quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-      imageUrls: hasRef ? refImageUrls : undefined,
+      imageUrls: refImageUrls,
       captureError: evoErr,
     });
     if (fromEvolink) {
-      appendImageFlowLog(L, "[单帧·主力] EvoLink GPT-IMAGE-2 成功，已落库");
+      appendImageFlowLog(L, "[单帧·换脸·主力] EvoLink GPT-IMAGE-2 成功，已落库");
       return fromEvolink;
     }
-
-    // 换脸/换人路径：若 EvoLink 把这张**良性人像**误判为违规，附澄清语境重试一次。
     if (hasRef && isEvolinkModerationFailure(evoErr.message)) {
       appendImageFlowLog(
         L,
@@ -1176,16 +1200,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
         );
         return null;
       }
-      appendImageFlowLog(
-        L,
-        "[单帧·换脸] 澄清重试后仍无图（非审核原因）→ 改走 Nano Banana 2（携带参考图脸锁）",
-      );
     }
-    appendImageFlowLog(L, "[单帧·主力] EvoLink 无图 → 评估 fallback");
-  }
-
-  // 有上传人像：只允许「带参考」的 NB2 兜底，禁止无参考 OhMyGPT/fal 出错脸。
-  if (hasRef) {
     appendImageFlowLog(
       L,
       "[单帧·换脸] EvoLink edit 未出图 → Nano Banana 2（携带参考人像脸锁；跳过无参考 OhMyGPT/fal）",
@@ -1212,7 +1227,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
 
   appendImageFlowLog(
     L,
-    `[单帧·备援1] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT}`,
+    `[单帧·主力] OhMyGPT GPT-IMAGE-2 · ${options.aspectRatio} · 试尺寸序列: ${sizes.join(" → ")} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY} · ${GPT_IMAGE2_OUTPUT_FORMAT}`,
   );
   const fromOhm = await postGptImage2AndUpload(fallbackPrompt, options.gcsSubdir, {
     sizes,
@@ -1220,11 +1235,28 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
   });
   if (fromOhm) {
-    appendImageFlowLog(L, "[单帧·备援1] OhMyGPT GPT-IMAGE-2 成功，已上传 GCS");
+    appendImageFlowLog(L, "[单帧·主力] OhMyGPT GPT-IMAGE-2 成功，已上传 GCS");
     return fromOhm;
   }
 
-  appendImageFlowLog(L, `[单帧·备援2] OhMyGPT 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`);
+  if (isEvolinkGptImage2Configured()) {
+    appendImageFlowLog(
+      L,
+      `[单帧·备援1] OhMyGPT 无图 → EvoLink GPT-IMAGE-2 · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}`,
+    );
+    const fromEvolink = await postEvolinkGptImage2AndUpload(fallbackPrompt, options.gcsSubdir, {
+      aspectRatio: options.aspectRatio,
+      size: sizes[0],
+      flowLog: L,
+      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+    });
+    if (fromEvolink) {
+      appendImageFlowLog(L, "[单帧·备援1] EvoLink GPT-IMAGE-2 成功，已落库");
+      return fromEvolink;
+    }
+  }
+
+  appendImageFlowLog(L, `[单帧·备援2] EvoLink 无图 → fal openai/gpt-image-2 · ${options.aspectRatio}`);
   const falSecond = await postGptImage2ViaFalAndUpload(
     fallbackPrompt,
     options.gcsSubdir,
@@ -1243,7 +1275,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     return nb2Url;
   }
 
-  appendImageFlowLog(L, "[单帧] EvoLink / OhMyGPT / fal / Nano Banana 2 均无图 · 本条失败（可免费补发重试）");
+  appendImageFlowLog(L, "[单帧] OhMyGPT / EvoLink / fal / Nano Banana 2 均无图 · 本条失败（可免费补发重试）");
   return null;
 }
 
@@ -1666,17 +1698,20 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         );
       }
 
-      // GPT-Image-2 像素链：EvoLink → OhMyGPT → fal → Nano Banana 2（临时兜底）
+      // GPT-Image-2 像素链：OhMyGPT → EvoLink → fal → Nano Banana 2；有参考人像时仍优先 EvoLink edit
+      const refImageUrls = [
+        ...(referencePhotoUrl ? [referencePhotoUrl] : []),
+        ...continuityRefs,
+      ].filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 4);
+      const hasSheetRefs = refImageUrls.length > 0;
       appendImageFlowLog(
         L,
-        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 顺序 EvoLink → OhMyGPT → fal → NB2`,
+        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
+          hasSheetRefs ? "换脸·EvoLink edit → NB2" : "顺序 OhMyGPT → EvoLink → fal → NB2"
+        }`,
       );
 
-      if (isEvolinkGptImage2Configured()) {
-        const refImageUrls = [
-          ...(referencePhotoUrl ? [referencePhotoUrl] : []),
-          ...continuityRefs,
-        ].filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 4);
+      if (hasSheetRefs && isEvolinkGptImage2Configured()) {
         const refDirectives = [
           referencePhotoUrl || continuityRefs.length ? STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN : "",
           referencePhotoUrl && options.referencePhotoFromApprovedCover
@@ -1686,14 +1721,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         ]
           .filter(Boolean)
           .join("\n");
-        const promptForEvo = refImageUrls.length ? `${promptForImage}${refDirectives}` : promptForImage;
+        const promptForEvo = `${promptForImage}${refDirectives}`;
         appendImageFlowLog(
           L,
-          `[2×4·步骤2a·主力] EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}${
-            refImageUrls.length
-              ? ` · edit模式·参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`
-              : ""
-          }`,
+          `[2×4·步骤2a·换脸主力] EvoLink GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
         );
         const evoErr: { message?: string } = {};
         let fromEvolink = await postEvolinkGptImage2AndUpload(promptForEvo, subdir, {
@@ -1701,10 +1732,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
           flowLog: L,
           quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
-          imageUrls: refImageUrls.length ? refImageUrls : undefined,
+          imageUrls: refImageUrls,
           captureError: evoErr,
         });
-        if (!fromEvolink && refImageUrls.length && isEvolinkModerationFailure(evoErr.message)) {
+        if (!fromEvolink && isEvolinkModerationFailure(evoErr.message)) {
           appendImageFlowLog(L, "[2×4·主人公参考] EvoLink 审核拦截 → 附澄清语境重试一次");
           const retryErr: { message?: string } = {};
           fromEvolink = await postEvolinkGptImage2AndUpload(
@@ -1721,7 +1752,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           );
         }
         if (fromEvolink) {
-          appendImageFlowLog(L, `[2×4·步骤2a·主力] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+          appendImageFlowLog(L, `[2×4·步骤2a·换脸主力] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
           emitPlatformImagePipelineStat({
             event: "composite_sheet_gpt_image2_success",
             sheetKind: k,
@@ -1735,44 +1766,41 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
           appendImageFlowLog(
             L,
-            `[2×4·步骤2a·主力] EvoLink 内容审核拦截 → 标记快速失败（不再整链重试；OhMyGPT/fal/NB2 跳过）`,
+            `[2×4·步骤2a·换脸主力] EvoLink 内容审核拦截 → 标记快速失败（不再整链重试；OhMyGPT/fal/NB2 跳过）`,
           );
           throw lastFailure;
         }
-        if (refImageUrls.length) {
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤2a·换脸主力] EvoLink edit 未出图 → Nano Banana 2（携带参考人像脸锁；跳过无参考 OhMyGPT/fal）`,
+        );
+        const nb2WithFace = await fallbackNanoBanana2FromPrompt(
+          promptForEvo,
+          "16:9",
+          L,
+          "optional_fallback_after_openai",
+          refImageUrls[0],
+        );
+        if (nb2WithFace) {
+          const mirrored = await mirrorNanoSheetUrlToGcs(nb2WithFace, subdir, L);
           appendImageFlowLog(
             L,
-            `[2×4·步骤2a·主力] EvoLink edit 未出图 → Nano Banana 2（携带参考人像脸锁；跳过无参考 OhMyGPT/fal）`,
+            `[2×4·换脸] Nano Banana 2 带参考脸锁成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
           );
-          const nb2WithFace = await fallbackNanoBanana2FromPrompt(
-            promptForEvo,
-            "16:9",
-            L,
-            "optional_fallback_after_openai",
-            refImageUrls[0],
-          );
-          if (nb2WithFace) {
-            const mirrored = await mirrorNanoSheetUrlToGcs(nb2WithFace, subdir, L);
-            appendImageFlowLog(
-              L,
-              `[2×4·换脸] Nano Banana 2 带参考脸锁成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
-            );
-            emitPlatformImagePipelineStat({
-              event: "composite_sheet_nano_fallback_success",
-              sheetKind: k,
-              compositeSheetAttempt: attempt,
-              compositeSheetMaxAttempts: compositeMaxAttempts,
-            });
-            return mirrored;
-          }
-          throw new Error("EvoLink / Nano Banana 2（带参考脸锁）均未返回图像；不降级无脸错图");
+          emitPlatformImagePipelineStat({
+            event: "composite_sheet_nano_fallback_success",
+            sheetKind: k,
+            compositeSheetAttempt: attempt,
+            compositeSheetMaxAttempts: compositeMaxAttempts,
+          });
+          return mirrored;
         }
-        appendImageFlowLog(L, "[2×4·步骤2a·主力] EvoLink 无图 → 备援 OhMyGPT / fal / NB2");
+        throw new Error("EvoLink / Nano Banana 2（带参考脸锁）均未返回图像；不降级无脸错图");
       }
 
       appendImageFlowLog(
         L,
-        `[2×4·步骤2b·备援1] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
+        `[2×4·步骤2a·主力] OhMyGPT GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
       );
       const fromOhm = await postGptImage2AndUpload(promptForImage, subdir, {
         sizes: GPT_IMAGE2_LANDSCAPE_SIZES,
@@ -1780,7 +1808,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
       });
       if (fromOhm) {
-        appendImageFlowLog(L, `[2×4·步骤2b·备援1] OhMyGPT 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+        appendImageFlowLog(L, `[2×4·步骤2a·主力] OhMyGPT 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
         emitPlatformImagePipelineStat({
           event: "composite_sheet_gpt_image2_success",
           sheetKind: k,
@@ -1790,9 +1818,32 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         return fromOhm;
       }
 
+      if (isEvolinkGptImage2Configured()) {
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤2b·备援1] OhMyGPT 无图 → EvoLink GPT-IMAGE-2 · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]}`,
+        );
+        const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
+          aspectRatio: "16:9",
+          size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+          flowLog: L,
+          quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+        });
+        if (fromEvolink) {
+          appendImageFlowLog(L, `[2×4·步骤2b·备援1] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+          emitPlatformImagePipelineStat({
+            event: "composite_sheet_gpt_image2_success",
+            sheetKind: k,
+            compositeSheetAttempt: attempt,
+            compositeSheetMaxAttempts: compositeMaxAttempts,
+          });
+          return fromEvolink;
+        }
+      }
+
       appendImageFlowLog(
         L,
-        `[2×4·步骤2c·备援2] OhMyGPT 无图 → fal openai/gpt-image-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
+        `[2×4·步骤2c·备援2] EvoLink 无图 → fal openai/gpt-image-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
       );
       const falWide = await postGptImage2ViaFalAndUpload(
         promptForImage,
@@ -1825,7 +1876,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         });
         return mirrored;
       }
-      throw new Error("EvoLink / OhMyGPT / fal / Nano Banana 2 均未返回图像");
+      throw new Error("OhMyGPT / EvoLink / fal / Nano Banana 2 均未返回图像");
     } catch (e: unknown) {
       lastFailure = e;
       const msg = e instanceof Error ? e.message : String(e);

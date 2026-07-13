@@ -55,13 +55,15 @@ const LANES: LaneDef[] = [
     patterns: [
       /法医|尸检|猝死|暴毙|安全带|头盔|保命|急症|喉头|窒息|口角|劝酒|硬扛|窗口期|死因|解剖(?!学课堂)/,
     ],
-    skillIds: ["forensic-life-lens", "authority-cite-endorsement"],
+    skillIds: ["forensic-life-lens", "authority-cite-endorsement", "medical-resource-library"],
   },
   {
     id: "crossover",
     priority: 3,
-    patterns: [/器官|拟人|谢谢你|对不起.*心脏|我的心脏|胰岛|线粒体|迷走神经|终身劳动|拳头大/],
-    skillIds: ["crossover-popsci", "crossover-organ-popsci"],
+    patterns: [
+      /器官|拟人|谢谢你|对不起.*心脏|我的心脏|胰岛|线粒体|迷走神经|终身劳动|拳头大|医学科普|默沙东|MSD|急救知识|3D\s*可视化|BioDigital|疾病机制|解剖动画|症状自查|硬核网站.*疾病|肿瘤细胞|心肺复苏|海姆立克/,
+    ],
+    skillIds: ["crossover-popsci", "crossover-organ-popsci", "medical-resource-library", "authority-cite-endorsement"],
   },
   {
     id: "contrast",

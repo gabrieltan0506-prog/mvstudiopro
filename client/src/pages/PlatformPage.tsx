@@ -92,6 +92,7 @@ import {
   platformTopicShortlistTotalCredits,
   type PlatformTopicShortlistItem,
 } from "@shared/platformTopicShortlist";
+import { PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE } from "@shared/platformSkills";
 import {
   Activity,
   ArrowLeft,
@@ -1988,6 +1989,9 @@ export default function PlatformPage() {
   const askPlatformSkillQaMutation = trpc.mvAnalysis.askPlatformSkillQa.useMutation();
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
+  /** 全案分析确认前：Skill/提示词优先级对话气泡 */
+  const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
+  const [pendingFullAnalysisLabels, setPendingFullAnalysisLabels] = useState("");
   /** 选题初选 20 → 勾选 5–6 → 扩写 */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
   const [selectedShortlistIds, setSelectedShortlistIds] = useState<Set<string>>(new Set());
@@ -2269,16 +2273,39 @@ export default function PlatformPage() {
 
   const platformSkillsMountPanel = (
     <div className="space-y-3">
+      <div
+        className="flex items-start gap-3 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,rgba(73,230,255,0.12),rgba(99,102,241,0.08))] px-3.5 py-3 shadow-[0_8px_28px_rgba(73,230,255,0.08)]"
+        role="status"
+        aria-label="Skill 与提示词优先级说明"
+      >
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#49e6ff]/40 bg-[#49e6ff]/15 text-[#8cefff]">
+          <Bot className="h-4 w-4" aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</div>
+          <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/30 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
+            <p>
+              Skill <strong className="text-white">可以自由勾选或取消</strong>
+              ，不必全开。若觉得 Skill 没法满足你的要求，直接把要求写进「人物背景与创作诉求」或自定义提示词。
+            </p>
+            <p className="mt-1.5 text-[#b8f4ff]">
+              <strong className="text-white">只要有提示词要求，优先级高于 Skill 设定</strong>
+              ——冲突时一律以你的提示词为准。
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/8 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white">Skill 顾问问答 · GPT‑5.5</div>
+            <div className="text-sm font-semibold text-white">Skill 顾问问答 · GPT‑5.6</div>
             <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
               提问创作 / Skill 用法免费（每日 {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
               {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
               ）。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
               {CREDIT_COSTS.platformSkillQaImageFirst} 点），之后 {CREDIT_COSTS.platformTopicFrameGraphic}{" "}
-              点。生图会带上你勾选的 Skill。
+              点。生图会带上你勾选的 Skill（你的提示词仍优先）。
             </p>
           </div>
         </div>
@@ -6724,17 +6751,13 @@ export default function PlatformPage() {
       .filter(Boolean)
       .join("、");
 
-    const cost = CREDIT_COSTS.platformStage2Copywriting;
-    if (
-      !window.confirm(
-        `【平台全案分析】将基于${selectedPlatformLabels}近 ${selectedWindowDays} 天样本，以及你在右侧填写的人物背景与创作诉求（含 IP 基因），交付：\n` +
-          `· 平台优先级与切入方向（战略看板）\n` +
-          `· 差异化选题文案与分镜脚本\n\n` +
-          `任务入队时扣除 ${cost} 积分。不含封面图、分镜图、MV Studio Pro AI 决策智库报告（均需另购）。全程约数分钟，请勿关闭页面。是否开始？`,
-      )
-    ) {
-      return;
-    }
+    setPendingFullAnalysisLabels(selectedPlatformLabels);
+    setFullAnalysisConfirmOpen(true);
+  };
+
+  const runFullAnalysisAfterConfirm = async () => {
+    setFullAnalysisConfirmOpen(false);
+    const selectedPlatformLabels = pendingFullAnalysisLabels;
 
     /** 本輪 Stage1/2 使用此字串（與輸入框內容一致即可；不再自動清空輸入框）。 */
     const capturedJudgment = String(focusPrompt || "").trim();
@@ -6782,7 +6805,9 @@ export default function PlatformPage() {
       return;
     }
     setHasAnalyzed(true);
-    toast.success("快照已就绪，正在生成战略看板与专属文案…");
+    toast.success(
+      `快照已就绪（${selectedPlatformLabels || "所选平台"}），正在生成战略看板与专属文案…`,
+    );
 
     const snap = result.data.snapshot;
     const snapSummary = snap as Record<string, unknown>;
@@ -7197,6 +7222,57 @@ export default function PlatformPage() {
         onChange={setIpProfile}
         onClose={() => setShowIpModal(false)}
       />
+
+      <Dialog open={fullAnalysisConfirmOpen} onOpenChange={setFullAnalysisConfirmOpen}>
+        <DialogContent className="max-w-lg border border-[#49e6ff]/25 bg-[#0a0618] text-white sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-white">开始全案分析前确认</DialogTitle>
+            <DialogDescription className="text-[#b7add8]">
+              基于{pendingFullAnalysisLabels || "所选平台"}近 {selectedWindowDays}{" "}
+              天样本 + 你的人物背景与创作诉求。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-3 rounded-2xl border border-[#49e6ff]/25 bg-[#49e6ff]/8 px-3 py-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#49e6ff]/40 bg-[#49e6ff]/15 text-[#8cefff]">
+              <Bot className="h-4 w-4" aria-hidden />
+            </div>
+            <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/35 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</p>
+              <p>
+                Skill <strong className="text-white">可自由勾选</strong>
+                。若 Skill 不能满足你，把要求写进提示词即可。
+              </p>
+              <p className="mt-1.5 text-[#b8f4ff]">
+                <strong className="text-white">有提示词要求时，优先级高于 Skill 设定。</strong>
+              </p>
+              <p className="mt-2 text-[10px] leading-snug text-gray-500 whitespace-pre-wrap">
+                {PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE}
+              </p>
+            </div>
+          </div>
+          <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-amber-50/90">
+            入队扣除 <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>
+            。不含封面图、分镜图、决策智库报告。全程约数分钟，请勿关闭页面。
+          </div>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setFullAnalysisConfirmOpen(false)}
+              className="rounded-full border border-white/15 px-4 py-2 text-[12px] text-gray-300 hover:bg-white/5"
+            >
+              再想想
+            </button>
+            <button
+              type="button"
+              onClick={() => void runFullAnalysisAfterConfirm()}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/35 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2 text-[12px] font-semibold text-white"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              确认开始
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="mx-auto max-w-[min(1920px,100%)] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
