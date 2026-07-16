@@ -20,6 +20,8 @@ const FULL_POOL = [
   "director-craft",
   "json-director-middleware",
   "seedance-i2v-motion",
+  "video-reverse-prompt",
+  "manhua-drama-studio",
   "xhs-virtual-goods",
   "graphic-note-rhythm",
   "xhs-collectible-note",
@@ -48,6 +50,8 @@ describe("routePlatformSkillIds", () => {
     expect(r.selectedIds).toContain("director-craft");
     expect(r.selectedIds).toContain("json-director-middleware");
     expect(r.selectedIds).toContain("seedance-i2v-motion");
+    expect(r.selectedIds).toContain("video-reverse-prompt");
+    expect(r.selectedIds).toContain("manhua-drama-studio");
     expect(r.selectedIds).not.toContain("forensic-life-lens");
     expect(r.selectedIds).not.toContain("crossover-popsci");
   });

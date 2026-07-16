@@ -178,7 +178,11 @@ export function routePlatformSkillIdsForLane(params: {
     add("director-craft");
     add("json-director-middleware");
     add("seedance-i2v-motion");
-    reasons.push("sheet:video → director-craft + json-director-middleware + seedance-i2v-motion");
+    add("video-reverse-prompt");
+    add("manhua-drama-studio");
+    reasons.push(
+      "sheet:video → director-craft + json-director + seedance-i2v + video-reverse + manhua-drama",
+    );
   } else {
     add("director-craft");
     add("json-director-middleware");

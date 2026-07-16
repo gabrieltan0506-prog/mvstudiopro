@@ -14,6 +14,12 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { extractVideoFramesFromUrl } from "./extractVideoFrames";
+import {
+  VIDEO_REVERSE_DEFAULT_INTERVAL_SEC,
+  VIDEO_REVERSE_MAX_DURATION_SEC,
+  VIDEO_REVERSE_MAX_FRAMES,
+} from "@shared/videoReversePrompt";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -138,6 +144,48 @@ async function runCanvasVisionMarkdown(prompt: string, images: CanvasVisionImage
   return md;
 }
 
+async function runVideoReversePrompt(
+  userHint: string,
+  videoUrl: string | undefined,
+  fallbackImages: CanvasVisionImage[],
+): Promise<string> {
+  let images: Array<{ url: string; mimeType?: string }> = [];
+
+  if (videoUrl) {
+    const { frames } = await extractVideoFramesFromUrl(videoUrl, {
+      maxFrames: VIDEO_REVERSE_MAX_FRAMES,
+      intervalSec: VIDEO_REVERSE_DEFAULT_INTERVAL_SEC,
+      maxDurationSec: VIDEO_REVERSE_MAX_DURATION_SEC,
+    });
+    images = frames.map((f) => ({ url: f.dataUrl, mimeType: f.mimeType }));
+  } else if (fallbackImages.length) {
+    images = fallbackImages.map((i) => ({
+      url: i.url || "",
+      mimeType: i.mimeType || "image/jpeg",
+    })).filter((i) => i.url);
+  }
+
+  if (!images.length) {
+    throw new Error("请先在本方块上传参考短片（MP4），或连接上游图片帧");
+  }
+
+  const resp = await fetch("/api/google?op=videoReversePrompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userHint: userHint || "反推分镜与 Seedance 微动提示词",
+      images,
+      model: "gemini-3.1-pro-preview",
+      targetEngine: "seedance-2.0",
+    }),
+  });
+  const json = (await resp.json()) as { ok?: boolean; markdown?: string; error?: string; message?: string };
+  if (!resp.ok || !json.ok) throw new Error(json.error || json.message || "视频反推失败");
+  const md = String(json.markdown || "").trim();
+  if (!md) throw new Error("视频反推返回为空");
+  return md;
+}
+
 async function runSeedance20(
   prompt: string,
   imageUrl: string | undefined,
@@ -220,6 +268,22 @@ export async function runCanvasBlock(
 }> {
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
+  const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
+  const visionImages = upstream.visionImages.filter((i) => i.url || i.gcsUri);
+  const uploadedVideoUrl =
+    block.refVideoUrl ||
+    block.uploadedAssets?.find((a) => a.kind === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(a.fileName || a.url))
+      ?.url;
+
+  if (block.kind === "video_reverse") {
+    const hint = formatCanvasUpstreamPrompt(
+      prompt || "反推分镜表与 Seedance 微动句",
+      refTexts,
+    );
+    const text = await runVideoReversePrompt(hint, uploadedVideoUrl, visionImages);
+    return { outputText: text };
+  }
+
   if (!prompt && !refTexts.length) {
     throw new Error("请先填写提示词，或连接上游方块传递内容");
   }
@@ -228,9 +292,6 @@ export async function runCanvasBlock(
     prompt || "请根据上游内容完成本步骤生成。",
     refTexts,
   );
-
-  const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
-  const visionImages = upstream.visionImages.filter((i) => i.url || i.gcsUri);
 
   if (block.kind === "text" || block.kind === "copy_organize") {
     if (visionImages.length > 0) {

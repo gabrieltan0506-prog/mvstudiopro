@@ -2300,6 +2300,12 @@ export default function WorkflowNodes() {
                   <Wand2 className="mr-2 h-4 w-4" />
                   打开建议节点
                 </Button>
+                <a href="/canvas">
+                  <Button variant="outline" className="rounded-xl border-rose-400/30 bg-rose-500/10 text-rose-50 hover:bg-rose-500/20">
+                    <Clapperboard className="mr-2 h-4 w-4" />
+                    漫剧工作室 / 视频反推
+                  </Button>
+                </a>
                 <a href="/workflow">
                   <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">查看旧版工作流</Button>
                 </a>

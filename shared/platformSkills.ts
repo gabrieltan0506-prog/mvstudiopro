@@ -100,6 +100,8 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "director-craft",
   "json-director-middleware",
   "seedance-i2v-motion",
+  "video-reverse-prompt",
+  "manhua-drama-studio",
   "xhs-virtual-goods",
   "cultural-diversity",
   "lifestyle-diversity",

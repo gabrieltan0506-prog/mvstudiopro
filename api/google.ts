@@ -389,6 +389,102 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(r.ok ? 200 : 502).json({ ok:r.ok, status:r.status, url:r.url, raw });
     }
 
+    // ---------------- Canvas / 工作流：视频反推提示词（帧序列 → Gemini） ----------------
+    if (op === "videoReversePrompt") {
+      const {
+        VIDEO_REVERSE_SYSTEM_PROMPT,
+        buildVideoReverseUserPrompt,
+      } = await import("../shared/videoReversePrompt");
+      const userHint = s(b.userHint || b.prompt || q.prompt || "");
+      const legacyUrls = Array.isArray(b.imageUrls)
+        ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
+        : [];
+      const rawImages = Array.isArray(b.images) ? b.images : legacyUrls.map((url: string) => ({ url }));
+      const images = rawImages
+        .map((item: { url?: unknown; gcsUri?: unknown; mimeType?: unknown; dataUrl?: unknown }) => ({
+          url: s(item?.url || item?.dataUrl).trim(),
+          gcsUri: s(item?.gcsUri).trim(),
+          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
+        }))
+        .filter((item: { url: string; gcsUri: string }) => item.url || item.gcsUri)
+        .slice(0, 32);
+      if (!images.length) return res.status(400).json({ ok: false, error: "missing_frames" });
+
+      const model = (s(b.model || q.model || "") || "gemini-3.1-pro-preview").trim();
+      const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
+      const base = baseUrlFor(location);
+      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+
+      const parts: Array<{
+        text?: string;
+        inlineData?: { mimeType: string; data: string };
+        fileData?: { mimeType: string; fileUri: string };
+      }> = [
+        {
+          text: [
+            VIDEO_REVERSE_SYSTEM_PROMPT,
+            "",
+            buildVideoReverseUserPrompt({
+              userHint,
+              targetEngine: s(b.targetEngine || "seedance-2.0") === "generic" ? "generic" : "seedance-2.0",
+            }),
+            "",
+            `（共 ${images.length} 帧，按时间顺序）`,
+          ].join("\n"),
+        },
+      ];
+
+      for (let i = 0; i < images.length; i++) {
+        const item = images[i];
+        parts.push({ text: `帧 ${i + 1}/${images.length}` });
+        if (item.gcsUri.startsWith("gs://")) {
+          parts.push({ fileData: { mimeType: item.mimeType, fileUri: item.gcsUri } });
+          continue;
+        }
+        if (item.url.startsWith("data:")) {
+          const m = item.url.match(/^data:([^;]+);base64,(.+)$/);
+          if (!m) return res.status(400).json({ ok: false, error: "bad_data_url" });
+          parts.push({ inlineData: { mimeType: m[1] || item.mimeType, data: m[2] } });
+          continue;
+        }
+        try {
+          const img = await fetchImageAsBase64(item.url);
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.b64 } });
+        } catch (fetchErr: any) {
+          const msg = fetchErr?.message || String(fetchErr);
+          return res.status(502).json({
+            ok: false,
+            error: "frame_fetch_failed",
+            message: `无法读取第 ${i + 1} 帧（${msg}）`,
+          });
+        }
+      }
+
+      const r = await fetchJson(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: {
+            maxOutputTokens: 65536,
+            temperature: 0.35,
+            topP: 0.95,
+            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
+          },
+        }),
+      });
+
+      const raw = r.json ?? r.rawText;
+      const markdown = String(
+        (raw as any)?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("") ||
+          (raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text ||
+          "",
+      ).trim();
+      if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "video_reverse_failed", raw });
+      if (!markdown) return res.status(502).json({ ok: false, error: "empty_markdown", raw });
+      return res.status(200).json({ ok: true, markdown, frameCount: images.length, model });
+    }
+
     // ---------------- Canvas：多图视觉 → Markdown ----------------
     if (op === "canvasVisionMarkdown") {
       const prompt = s(b.prompt || q.prompt || "");
