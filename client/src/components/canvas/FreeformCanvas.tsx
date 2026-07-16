@@ -834,8 +834,11 @@ export default function FreeformCanvas({
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
-                              ? "Seedance 2.0：有参考图时只发运镜+微动+氛围（EvoLink · 4–15s）"
+                              ? "Seedance 2.0：文生 / 图生 / 参考生（EvoLink · 默认 15s，上限 15s）"
                               : "Gemini Omini：有参考图时同样做微动减法"}
+                          </div>
+                          <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
+                            Seedance 2.5 Coming soon on MV Studio Pro
                           </div>
                         </>
                       ) : null}

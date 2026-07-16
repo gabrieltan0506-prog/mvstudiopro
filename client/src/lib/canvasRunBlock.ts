@@ -204,7 +204,7 @@ async function runSeedance20(
         imageUrl: imageUrl || undefined,
         resolution: "720p",
         aspectRatio,
-        duration: 8,
+        duration: 15,
         generateAudio: true,
         preferEvolink: true,
       }),
