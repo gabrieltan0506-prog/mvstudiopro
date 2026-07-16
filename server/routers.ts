@@ -24,12 +24,6 @@ import {
   resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
-import {
-  callGemini35FlashCopywriting,
-  GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS,
-  resolveGemini35FlashCopywritingMaxOutputTokens,
-  resolvePlatformStage2GeminiModel,
-} from "./services/gemini35FlashRuntime.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -525,37 +519,12 @@ const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
 /** Stage 1 / Stage 2 取樣溫度（GPT‑5 系 OpenAI 可能忽略 temperature，见 llm.ts）。 */
 const STAGE2_LLM_TEMPERATURE = 0.8;
 
-/** Stage 1 / Stage 2 / 深度追问：主路径 OhMyGPT GPT‑5.6 Sol；失败临时 fallback Gemini 3.1 Pro（`gemini-3.1-pro-preview`）；简体硬锁保留。 */
+/** Stage 1 / Stage 2 / 深度追问：仅 Evolink GPT‑5.6 Sol；已取消 OhMyGPT / Gemini fallback。 */
 function resolvePlatformCopyLlmMode(_input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
   return "openai";
 }
 
-/** GPT‑5.6 失败后临时改走 Gemini Flash 文案（需 GEMINI_API_KEY）。 */
-async function invokeGeminiFlashCopyFallback(options: {
-  systemInstruction: string;
-  userText: string;
-  abortSignal?: AbortSignal;
-  label?: string;
-}): Promise<string> {
-  const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(
-    `[platformCopy] GPT-5.6 失败 → Gemini 3.1 Pro fallback · model=${geminiModel}${
-      options.label ? ` · ${options.label}` : ""
-    }`,
-  );
-  return callGemini35FlashCopywriting({
-    taskSystemInstruction: options.systemInstruction,
-    userText: options.userText,
-    responseMimeType: "application/json",
-    maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-    temperature: STAGE2_LLM_TEMPERATURE,
-    topP: 0.95,
-    modelName: geminiModel,
-    abortSignal: options.abortSignal,
-  });
-}
-
-/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（Gemini 3.5 Flash 或 GPT‑5.6 Sol）。 */
+/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（仅 Evolink GPT‑5.6 Sol）。 */
 async function invokePlatformStructuredCopyLlm(options: {
   copyLlmMode: PlatformStage2LlmMode;
   systemInstruction: string;
@@ -564,50 +533,40 @@ async function invokePlatformStructuredCopyLlm(options: {
   /** 覆寫 GPT‑5.6 推理檔位：空回重試時降到 low/minimal，逼模型把预算用于直接输出 JSON 而非耗尽在推理。 */
   reasoningEffortOverride?: ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
 }): Promise<string> {
-  if (options.copyLlmMode === "openai") {
-    const modelName = getPlatformStage2OpenAiModel();
-    const reasoningEffort = options.reasoningEffortOverride ?? resolvePlatformStage2OpenAiReasoningEffort();
-    try {
-      const response = await invokeLLM({
-        provider: "openai",
-        modelName,
-        max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-        temperature: STAGE2_LLM_TEMPERATURE,
-        response_format: { type: "json_object" },
-        reasoningEffort,
-        messages: [
-          { role: "system", content: options.systemInstruction },
-          { role: "user", content: options.userText },
-        ],
-        abortSignal: options.abortSignal,
-      });
-      const text = extractFirstChoicePlainText(response).trim();
-      if (text) return text;
-      console.warn("[invokePlatformStructuredCopyLlm] GPT-5.6 空回 → Gemini 3.1 Pro fallback");
-    } catch (e) {
-      console.warn(
-        "[invokePlatformStructuredCopyLlm] GPT-5.6 failed → Gemini 3.1 Pro fallback:",
-        e instanceof Error ? e.message : e,
-      );
-    }
-    return invokeGeminiFlashCopyFallback({
-      systemInstruction: options.systemInstruction,
-      userText: options.userText,
-      abortSignal: options.abortSignal,
-      label: "structured",
-    });
-  }
-  const geminiModel = resolvePlatformStage2GeminiModel();
-  return callGemini35FlashCopywriting({
-    taskSystemInstruction: options.systemInstruction,
-    userText: options.userText,
-    responseMimeType: "application/json",
-    maxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+  const modelName = getPlatformStage2OpenAiModel();
+  const reasoningEffort = options.reasoningEffortOverride ?? resolvePlatformStage2OpenAiReasoningEffort();
+  const response = await invokeLLM({
+    provider: "openai",
+    modelName,
+    max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
     temperature: STAGE2_LLM_TEMPERATURE,
-    topP: 0.9,
-    modelName: geminiModel,
+    response_format: { type: "json_object" },
+    reasoningEffort,
+    messages: [
+      { role: "system", content: options.systemInstruction },
+      { role: "user", content: options.userText },
+    ],
     abortSignal: options.abortSignal,
   });
+  const text = extractFirstChoicePlainText(response).trim();
+  if (text) return text;
+  // 空回时降推理档位再试一次（仍走 Evolink，不切 Gemini）
+  const retry = await invokeLLM({
+    provider: "openai",
+    modelName,
+    max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
+    temperature: STAGE2_LLM_TEMPERATURE,
+    response_format: { type: "json_object" },
+    reasoningEffort: "minimal",
+    messages: [
+      { role: "system", content: options.systemInstruction },
+      { role: "user", content: options.userText },
+    ],
+    abortSignal: options.abortSignal,
+  });
+  const retryText = extractFirstChoicePlainText(retry).trim();
+  if (retryText) return retryText;
+  throw new Error("Evolink GPT-5.6 Sol 返回空内容（已取消 Gemini fallback）");
 }
 
 const zPlatformCopyLlmModeInput = z.enum(["vertex", "openai"]).optional();
@@ -654,15 +613,17 @@ function attachTitleVariantsToPlatformContent(
   };
 }
 
-const PLATFORM_MENU_TARGET_MIN = 3;
+const PLATFORM_MENU_TARGET_MIN = 1;
 const PLATFORM_MENU_TARGET_MAX = 4;
 
-/** LLM 有時只給 2 條 platformMenu；與輪播/文案提及的平台不一致時，用快照補齊至少 3 條（含快手等弱樣本）。 */
+/** 單平台趨勢時只補到 1 條；多平台時最多補到請求數量（上限 4）。 */
 function padPlatformMenuFromSnapshot(
   dashboard: z.infer<typeof platformDashboardResponseSchema>,
   snapshot: z.infer<typeof growthSnapshotSchema>,
+  targetMin: number = PLATFORM_MENU_TARGET_MIN,
 ): z.infer<typeof platformDashboardResponseSchema> {
   const menu: any[] = Array.isArray(dashboard.platformMenu) ? [...dashboard.platformMenu] : [];
+  const minNeeded = Math.max(1, Math.min(PLATFORM_MENU_TARGET_MAX, targetMin));
   const keyOf = (row: Record<string, unknown>): string => {
     const p = String(row.platform ?? row["平台"] ?? "").trim().toLowerCase();
     if (p) return p;
@@ -676,7 +637,7 @@ function padPlatformMenuFromSnapshot(
     if (k) seen.add(k);
   }
   for (const snap of snapshot.platformSnapshots.slice(0, PLATFORM_MENU_TARGET_MAX)) {
-    if (menu.length >= PLATFORM_MENU_TARGET_MIN) break;
+    if (menu.length >= minNeeded) break;
     const p = String(snap.platform || "").trim().toLowerCase();
     if (!p || seen.has(p)) continue;
     seen.add(p);
@@ -737,7 +698,8 @@ function buildSnapshotFallbackDashboard(
     actionCards: Array.isArray(partial?.actionCards) ? partial!.actionCards : [],
     conversationStarters: Array.isArray(partial?.conversationStarters) ? partial!.conversationStarters : [],
   });
-  return padPlatformMenuFromSnapshot(base, snapshot);
+  const targetMin = Math.max(1, Math.min(4, snapshot.platformSnapshots?.length || 1));
+  return padPlatformMenuFromSnapshot(base, snapshot, targetMin);
 }
 
 async function buildPlatformDashboard(params: {
@@ -899,7 +861,7 @@ async function buildPlatformDashboard(params: {
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清人设各维度中的身份与商业价值（职业、身份、兴趣、爱好、专长中至少点到 2～3 维，禁止只写「博主」）；若涉及古典文化，须写「跨朝代典籍与生活场域」而非只写「唐诗宋词」。
-3. platformMenu：**必须输出至少 3 条、至多 4 条**。凡是上方 \`platforms\` 数组中出现的抖音 / 快手 / 小红书 / B站，只要带有 summary 或动量/适配分数，就应各占一条 platformMenu（**快手样本稀疏也必须写 nextMove**，不得以「数据少」整条省略；顺位仍可 1→4 排序）。**严禁只输出 2 条就结束。** 每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
+3. platformMenu：**条数必须与上方 \`platforms\` 数组一致**（用户若只选 1 个平台则只输出 1 条；最多 4 条）。只分析用户请求的平台，禁止硬凑未选平台。每条必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
    每条 platformMenu 还须包含 **blueOceanWords（蓝海词）**：从该平台在 \`snapshot\` 热点/关键词中，挑选 3-5 个符合蓝海词定义的词条（搜索量大 >10万/月、同类笔记少 <200篇、用户意图精准离成交近）。如果该平台是小红书，优先从搜索下拉联想词和爆款笔记评论区高频需求词中提取。格式：字符串数组，每项为 2-8 字，例如 ["同城相亲攻略","油皮抗老水乳","家庭急救技巧"]。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向（须说明如何经人设各维——职业、身份、兴趣、爱好、专长——改写落地，禁止纯泛热榜）；actionCards：3 个立刻能做的动作。
    【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
@@ -1023,7 +985,8 @@ async function buildPlatformDashboard(params: {
   }
   const parseResult = platformDashboardResponseSchema.safeParse(partial);
   if (parseResult.success) {
-    return padPlatformMenuFromSnapshot(parseResult.data, params.snapshot);
+    const menuTarget = Math.max(1, Math.min(4, params.requestedPlatforms?.length || params.snapshot.platformSnapshots?.length || 1));
+    return padPlatformMenuFromSnapshot(parseResult.data, params.snapshot, menuTarget);
   }
   console.error("[buildPlatformDashboard] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
   console.warn("[buildPlatformDashboard] attempting loose parse with defaults");
@@ -1040,7 +1003,10 @@ async function buildPlatformDashboard(params: {
     actionCards: Array.isArray(partial.actionCards) ? partial.actionCards : [],
     conversationStarters: Array.isArray(partial.conversationStarters) ? partial.conversationStarters : [],
   });
-  if (looseResult.success) return padPlatformMenuFromSnapshot(looseResult.data, params.snapshot);
+  if (looseResult.success) {
+    const menuTarget = Math.max(1, Math.min(4, params.requestedPlatforms?.length || params.snapshot.platformSnapshots?.length || 1));
+    return padPlatformMenuFromSnapshot(looseResult.data, params.snapshot, menuTarget);
+  }
   console.error("[buildPlatformDashboard] loose parse also failed, 使用快照兜底:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
   return buildSnapshotFallbackDashboard(params.snapshot, partial);
 }
@@ -1686,7 +1652,7 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
   const stage2LlmMode: PlatformStage2LlmMode = "openai";
   diagnostics.stage2LlmMode = stage2LlmMode;
   diagnostics.stage2LlmModeSource = "gpt56_sol_then_gemini_flash_fallback";
-  diagnostics.stage2GeminiFallbackModel = resolvePlatformStage2GeminiModel();
+  diagnostics.stage2GeminiFallbackModel = "disabled_evolink_only";
   const openaiCreativeModel = getPlatformStage2OpenAiModel();
   const stage2ReasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
   diagnostics.platformStage2OpenAiModel = openaiCreativeModel;
@@ -1875,29 +1841,12 @@ ${styleDirective}
       }
       if (rawText) return parseSingleBlueprintRaw(rawText);
       console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) GPT-5.6 空回 → Gemini 3.1 Pro fallback`,
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) Evolink GPT-5.6 空回（已取消 Gemini fallback）`,
       );
+      return null;
     } catch (e) {
       console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) GPT-5.6 failed → Gemini 3.1 Pro fallback:`,
-        e instanceof Error ? e.message : e,
-      );
-    }
-
-    try {
-      const geminiRaw = (
-        await invokeGeminiFlashCopyFallback({
-          systemInstruction: systemContent + dimSystemSuffix,
-          userText: userContent,
-          abortSignal: params.abortSignal,
-          label: `dim ${dimIndex + 1} ${dimName}`,
-        })
-      ).trim();
-      if (!geminiRaw) return null;
-      return parseSingleBlueprintRaw(geminiRaw);
-    } catch (e) {
-      console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) Gemini 3.1 Pro fallback failed:`,
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) Evolink GPT-5.6 failed:`,
         e instanceof Error ? e.message : e,
       );
       return null;
@@ -1930,28 +1879,11 @@ ${styleDirective}
       });
       const rawText = extractFirstChoicePlainText(res).trim();
       if (rawText) return parseMonetizationRaw(rawText);
-      console.warn("[buildPlatformContent] monetization GPT-5.6 空回 → Gemini 3.1 Pro fallback");
+      console.warn("[buildPlatformContent] monetization Evolink GPT-5.6 空回（已取消 Gemini fallback）");
+      return [];
     } catch (e) {
       console.warn(
-        "[buildPlatformContent] monetization GPT-5.6 failed → Gemini 3.1 Pro fallback:",
-        e instanceof Error ? e.message : e,
-      );
-    }
-
-    try {
-      const geminiRaw = (
-        await invokeGeminiFlashCopyFallback({
-          systemInstruction: systemContent + monetizationSystemOverride,
-          userText: userContent,
-          abortSignal: params.abortSignal,
-          label: "monetization",
-        })
-      ).trim();
-      if (!geminiRaw) return [];
-      return parseMonetizationRaw(geminiRaw);
-    } catch (e) {
-      console.warn(
-        "[buildPlatformContent] monetization Gemini 3.1 Pro fallback failed:",
+        "[buildPlatformContent] monetization Evolink GPT-5.6 failed:",
         e instanceof Error ? e.message : e,
       );
       return [];

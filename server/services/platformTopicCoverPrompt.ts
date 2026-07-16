@@ -11,6 +11,8 @@ export const PLATFORM_SHARED_IMAGE_PHOTOGRAPHY_MODIFIERS = [
   "hyper-detailed textures, ultra-photorealistic, 8k",
   "award-winning photography: generous negative space for a short hero headline; lifestyle editorial, not encyclopedia poster",
   "color grade with chromatic intent—fresh contrast and one accent color; not muddy gray or oppressive dark-gold",
+  /** 封面字数硬锁：禁止说明书式多行文案（用户反馈 GPT-image/NB2 易印满屏字） */
+  "ON-IMAGE TEXT HARD LIMIT: at most ONE short Simplified Chinese hero line (8–14 chars) plus optional one tiny subline; NO paragraph, NO 3+ lines of copy, NO footer call-to-action walls, NO bullet lists of tips",
   PLATFORM_FASHION_EDITORIAL_CHARACTER_EN,
 ].join(", ");
 

@@ -1,17 +1,12 @@
 /**
- * 平台「深度追问 / 趋势续分析」：主路径 OhMyGPT GPT‑5.6；
- * 失败或空回临时 fallback Gemini Flash（与 Stage2 文案同模型）。
+ * 平台「深度追问 / 趋势续分析」：仅 Evolink GPT‑5.6 Sol（已取消 OhMyGPT / Gemini fallback）。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches.js";
-import {
-  callGemini35FlashCopywriting,
-  resolveGemini35FlashCopywritingMaxOutputTokens,
-  resolvePlatformStage2GeminiModel,
-} from "./gemini35FlashRuntime.js";
+import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime.js";
 
 const FOLLOW_UP_TEMPERATURE = 0.8;
 
@@ -101,7 +96,7 @@ export function buildPlatformFollowUpUserJson(input: {
   });
 }
 
-/** 深度追问 · 纯文本：平台文案主模型 · JSON 输出（GPT 失败走 Gemini Flash）。 */
+/** 深度追问 · 纯文本：仅 Evolink GPT-5.6 · JSON 输出。 */
 export async function invokePlatformFollowUpGpt55(options: {
   windowDays: number;
   context: string;
@@ -114,45 +109,22 @@ export async function invokePlatformFollowUpGpt55(options: {
   const openaiModel = getPlatformStage2OpenAiModel();
   const reasoningEffort = resolvePlatformStage2OpenAiReasoningEffort();
 
-  try {
-    const response = await invokeLLM({
-      provider: "openai",
-      modelName: openaiModel,
-      max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-      temperature: FOLLOW_UP_TEMPERATURE,
-      response_format: { type: "json_object" },
-      reasoningEffort,
-      messages: [
-        { role: "system", content: systemInstruction },
-        { role: "user", content: userText },
-      ],
-      abortSignal: options.abortSignal,
-    });
-    const raw = extractFirstChoicePlainText(response).trim();
-    if (raw) {
-      return { raw, modelName: openaiModel, provider: "openai", fallbackUsed: false };
-    }
-    console.warn("[platformFollowUp] GPT-5.6 空回 → Gemini 3.1 Pro fallback");
-  } catch (e) {
-    console.warn(
-      "[platformFollowUp] GPT-5.6 failed → Gemini 3.1 Pro fallback:",
-      e instanceof Error ? e.message : e,
-    );
+  const response = await invokeLLM({
+    provider: "openai",
+    modelName: openaiModel,
+    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
+    temperature: FOLLOW_UP_TEMPERATURE,
+    response_format: { type: "json_object" },
+    reasoningEffort,
+    messages: [
+      { role: "system", content: systemInstruction },
+      { role: "user", content: userText },
+    ],
+    abortSignal: options.abortSignal,
+  });
+  const raw = extractFirstChoicePlainText(response).trim();
+  if (!raw) {
+    throw new Error("Evolink GPT-5.6 Sol 深度追问返回空内容（已取消 Gemini fallback）");
   }
-
-  const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(`[platformFollowUp] Gemini 3.1 Pro fallback · model=${geminiModel}`);
-  const raw = (
-    await callGemini35FlashCopywriting({
-      taskSystemInstruction: systemInstruction,
-      userText,
-      responseMimeType: "application/json",
-      maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-      temperature: FOLLOW_UP_TEMPERATURE,
-      topP: 0.95,
-      modelName: geminiModel,
-      abortSignal: options.abortSignal,
-    })
-  ).trim();
-  return { raw, modelName: geminiModel, provider: "gemini", fallbackUsed: true };
+  return { raw, modelName: openaiModel, provider: "openai", fallbackUsed: false };
 }

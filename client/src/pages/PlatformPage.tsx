@@ -1757,8 +1757,9 @@ export default function PlatformPage() {
   const queryClient = useQueryClient();
   const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<PlatformWindowDays>(15);
+  /** 平台趋势分析：单选（默认小红书）；不再默认勾选全部平台 */
   const [selectedTrendPlatforms, setSelectedTrendPlatforms] = useState<TrendPlatformKey[]>([
-    ...ALL_TREND_PLATFORM_KEYS,
+    "xiaohongshu",
   ]);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
@@ -2576,13 +2577,28 @@ export default function PlatformPage() {
                   setSelectedShortlistIds(
                     new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)),
                   );
+                  if (!topics.length) {
+                    toast.error(
+                      "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
+                    );
+                    return;
+                  }
                   toast.success(
                     `已生成 ${topics.length} 条初选${
                       res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
                     }`,
                   );
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "初选生成失败");
+                  const msg = err instanceof Error ? err.message : String(err);
+                  const friendly =
+                    msg.includes("Unexpected token") ||
+                    msg.includes("is not valid JSON") ||
+                    msg.includes("An error o") ||
+                    msg.includes("timeout") ||
+                    msg.includes("504")
+                      ? "算力紧张或请求超时，请稍后重试选题初选"
+                      : msg || "初选生成失败";
+                  toast.error(friendly);
                 }
               })();
             }}
@@ -6603,8 +6619,8 @@ export default function PlatformPage() {
    * 供工作台顶部「平台趋势分析报表」区块独立启动，无需等全案分析。
    */
   const handleTrendStandaloneAnalyze = async () => {
-    if (!selectedTrendPlatforms.length) {
-      toast.error("请至少选择一个分析平台");
+    if (selectedTrendPlatforms.length !== 1) {
+      toast.error("请选择一个分析平台");
       return;
     }
     const visualPlatforms = toVisualReportPlatforms(selectedTrendPlatforms);
@@ -6670,6 +6686,7 @@ export default function PlatformPage() {
           windowDays: selectedWindowDays,
           snapshotSummary: snap as any,
           copyLlmMode: "openai" as const,
+          requestedPlatforms: selectedTrendPlatforms,
         }),
         generateVisualReportMutation.mutateAsync({
           windowDays: reportWindowDays,
@@ -6818,6 +6835,7 @@ export default function PlatformPage() {
         windowDays: selectedWindowDays,
         snapshotSummary: snap as any,
         copyLlmMode: "openai" as const,
+        requestedPlatforms: selectedTrendPlatforms,
       });
 
       if (!dashResult.platformDashboard) {
@@ -7430,7 +7448,6 @@ export default function PlatformPage() {
               <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析平台</span>
               {TREND_PLATFORM_OPTIONS.map((item) => {
                 const active = selectedTrendPlatforms.includes(item.key);
-                const isLastSelected = active && selectedTrendPlatforms.length === 1;
                 const isComingSoon = Boolean(item.comingSoon);
                 return (
                   <button
@@ -7438,16 +7455,10 @@ export default function PlatformPage() {
                     type="button"
                     onClick={() => {
                       if (isComingSoon) return;
-                      setSelectedTrendPlatforms((prev) => {
-                        if (prev.includes(item.key)) {
-                          if (prev.length === 1) return prev;
-                          return prev.filter((platform) => platform !== item.key);
-                        }
-                        return [...prev, item.key];
-                      });
+                      setSelectedTrendPlatforms([item.key]);
                     }}
-                    disabled={isAnalyzing || isDashboardLoading || isLastSelected || isComingSoon}
-                    title={isComingSoon ? "即将开放视频号数据抓取" : isLastSelected ? "至少保留一个平台" : undefined}
+                    disabled={isAnalyzing || isDashboardLoading || isComingSoon}
+                    title={isComingSoon ? "即将开放视频号数据抓取" : "单选：点击切换分析平台"}
                     className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       isComingSoon
                         ? "border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] text-[#fef08a]/50"

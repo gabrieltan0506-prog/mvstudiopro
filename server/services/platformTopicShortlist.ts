@@ -2,8 +2,9 @@
  * 选题初选（20）与勾选扩写（5–6）LLM 服务。
  */
 import { nanoid } from "nanoid";
-import { invokeLLM } from "../_core/llm.js";
+import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
+import { TRPCError } from "@trpc/server";
 import {
   PLATFORM_TOPIC_EXPAND_MAX,
   PLATFORM_TOPIC_EXPAND_MIN,
@@ -41,18 +42,6 @@ function extractJsonObject(raw: string): unknown {
   } catch {
     return null;
   }
-}
-
-function extractFirstChoiceText(res: unknown): string {
-  const r = res as { choices?: Array<{ message?: { content?: unknown } }> };
-  const c = r?.choices?.[0]?.message?.content;
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) {
-    return c
-      .map((p) => (typeof p === "object" && p && "text" in p ? String((p as { text?: string }).text || "") : ""))
-      .join("");
-  }
-  return "";
 }
 
 async function resolvePoolAndPrompt(params: {
@@ -161,8 +150,25 @@ export async function generatePlatformTopicShortlist(params: {
     reasoningEffort: "high",
   });
 
-  const parsed = extractJsonObject(extractFirstChoiceText(res)) as { topics?: unknown } | null;
+  const llmText = extractFirstChoicePlainText(res).trim();
+  if (!llmText) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "选题初选模型返回空内容，请稍后重试（Evolink GPT-5.6）",
+    });
+  }
+  const parsed = extractJsonObject(llmText) as { topics?: unknown } | null;
   const rawList = Array.isArray(parsed?.topics) ? parsed!.topics : [];
+  if (!rawList.length) {
+    console.error(
+      "[generatePlatformTopicShortlist] JSON 无 topics · preview:",
+      llmText.slice(0, 400),
+    );
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "选题初选解析失败（模型未返回 topics 数组），请重试",
+    });
+  }
   const normalized: PlatformTopicShortlistItem[] = [];
   for (const row of rawList) {
     if (!row || typeof row !== "object") continue;
@@ -216,6 +222,13 @@ export async function generatePlatformTopicShortlist(params: {
     existingTitles: params.existingTitles,
     max: targetCount,
   });
+
+  if (!topics.length) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: `选题初选过滤后为空（原始 ${rawList.length} 条 / 校验通过 ${normalized.length} 条），请调整人设或减少已有标题后重试`,
+    });
+  }
 
   return {
     topics,
@@ -301,7 +314,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
         reasoningEffort: "high",
       });
 
-      const parsed = extractJsonObject(extractFirstChoiceText(res)) as Record<string, unknown> | null;
+      const parsed = extractJsonObject(extractFirstChoicePlainText(res)) as Record<string, unknown> | null;
       let bp =
         parsed && typeof parsed.blueprint === "object" && parsed.blueprint
           ? (parsed.blueprint as Record<string, unknown>)

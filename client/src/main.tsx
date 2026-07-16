@@ -72,6 +72,9 @@ const queryClient = new QueryClient();
 const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.getGrowthSnapshot",
   "mvAnalysis.getPlatformDashboard",
+  "mvAnalysis.generateVisualReport",
+  "mvAnalysis.generatePlatformTopicShortlist",
+  "mvAnalysis.expandPlatformTopicPicks",
   "mvAnalysis.enqueuePlatformContentJob",
   "mvAnalysis.enqueueGenerateTopicImage",
   "mvAnalysis.enqueueTopicCoverAndCompositeBundle",

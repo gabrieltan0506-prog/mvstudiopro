@@ -7,12 +7,7 @@ import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches";
-import { isOhMyGptChatConfigured } from "./ohmygptChat";
-import {
-  callGemini35FlashCopywriting,
-  resolveGemini35FlashCopywritingMaxOutputTokens,
-  resolvePlatformStage2GeminiModel,
-} from "./gemini35FlashRuntime";
+import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -124,9 +119,8 @@ function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
 }
 
 async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" | "minimal"): Promise<string> {
-  const hasOhMy = isOhMyGptChatConfigured();
   const hasEvolink = Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
-  if (!hasOhMy && !hasEvolink) {
+  if (!hasEvolink) {
     throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({
@@ -142,22 +136,6 @@ async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" 
     response_format: { type: "json_object" },
   });
   return extractFirstChoicePlainText(response).trim();
-}
-
-async function invokeOptimizeViaGeminiFlash(userBlock: string): Promise<string> {
-  const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(`[optimizeCustomCopy] GPT-5.6 失败 → Gemini 3.1 Pro fallback · model=${geminiModel}`);
-  return (
-    await callGemini35FlashCopywriting({
-      taskSystemInstruction: SYSTEM_PROMPT,
-      userText: userBlock,
-      responseMimeType: "application/json",
-      maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-      temperature: 0.8,
-      topP: 0.95,
-      modelName: geminiModel,
-    })
-  ).trim();
 }
 
 export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promise<OptimizeCustomCopyResult> {
@@ -189,25 +167,14 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     } catch (err) {
       lastError = err;
       console.warn(
-        `[optimizeCustomCopy] GPT-5.6 失败 (reasoning=${reasoningEffort}):`,
+        `[optimizeCustomCopy] Evolink GPT-5.6 失败 (reasoning=${reasoningEffort}):`,
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }
   }
 
-  try {
-    const raw = await invokeOptimizeViaGeminiFlash(userBlock);
-    return parseOptimizeCustomCopyJson(raw);
-  } catch (err) {
-    lastError = err;
-    console.warn(
-      "[optimizeCustomCopy] Gemini 3.1 Pro fallback 失败:",
-      err instanceof Error ? err.message.slice(0, 240) : err,
-    );
-  }
-
   console.warn(
-    "[optimizeCustomCopy] GPT-5.6 + Gemini Flash 全部失败:",
+    "[optimizeCustomCopy] Evolink GPT-5.6 全部失败（已取消 Gemini fallback）:",
     lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
   );
   throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
