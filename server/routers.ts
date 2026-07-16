@@ -84,12 +84,17 @@ import {
   PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
   needsCulturalMaterialDiversity,
 } from "../shared/platformCulturalMaterialDiversity.js";
-import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "../shared/storyboardLightingEmotion.js";
+import {
+  STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH,
+  formatAssignedCraftTechniqueZh,
+  pickCraftTechniqueProfile,
+} from "../shared/storyboardLightingEmotion.js";
 import {
   normalizePlatformVariants,
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
+import { enrichScriptContextWithBianDaoDirectorBoard } from "../shared/bianDaoStoryboard.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
 import { PLATFORM_TOPIC_EXPAND_MAX, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
@@ -1817,11 +1822,18 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       : skillsBlockShared
         ? `\n${skillsBlockShared}\n`
         : "";
+    // 六维各绑一张手法卡：短视频→导演灵感画布；图文→封面/插画气质（成稿去名）
+    const craftProfile = pickCraftTechniqueProfile(`stage2-dim-${dimIndex}:${dimName}`);
+    const craftDirective = formatAssignedCraftTechniqueZh(craftProfile, {
+      slotLabel: `维度${dimIndex + 1}·${dimName}`,
+      forGraphic: preferGraphicNote,
+    });
 
     const dimSystemSuffix = `
 
 【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
 【体裁】${formatHint}
+${craftDirective}
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 【本条封面】platformVariants 三平台 coverHeadline 各写一句约 10–18 字高点击短钩（反差/反常识/数字拧巴），互不雷同；出图时只印该主句（+可选副标），禁止把长 title 印满屏。
 ${styleDirective}
@@ -5294,10 +5306,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           question: z.string().min(2).max(4000),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
+          /** 仅 supervisor/admin（或合法 supervisorToken）生效；一般用户服务端强制 Terra */
+          qaModel: z.enum(["gpt-5.6-terra", "gpt-5.6-sol"]).optional(),
+          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(
+          ctx.user,
+          input.supervisorToken,
+        );
         const { askPlatformSkillQa } = await import("./services/platformSkillQa.js");
         try {
           const result = await askPlatformSkillQa({
@@ -5306,6 +5325,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             allowBloggerTitle: Boolean(input.allowBloggerTitle),
             isAdmin: isAdminUser,
+            allowQaModelOverride: supervisorOpsAllowed,
+            qaModel: supervisorOpsAllowed ? input.qaModel : undefined,
           });
           return { success: true as const, ...result };
         } catch (e: unknown) {
@@ -5921,16 +5942,24 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const imagePromptTranslatorForComposite = "gpt54" as const;
 
         const enrichedBundleScriptContext = (() => {
-          const base = String(input.compositeScriptContext || "").trim();
+          const sheetKind =
+            input.compositeKind === "xiaohongshu_dual_note" ||
+            /图文/.test(String(finalFormatForPipeline || ""))
+              ? "graphic"
+              : "storyboard";
+          const base = enrichScriptContextWithBianDaoDirectorBoard(
+            String(input.compositeScriptContext || "").trim(),
+            {
+              sheetKind,
+              craftSeed: `${sid || "bundle"}:${finalTopicHook || input.compositeTitle || ""}`,
+              craftSlotLabel: String(finalTopicHook || input.compositeTitle || "").slice(0, 40) || undefined,
+            },
+          );
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             {
               routeContext: `${finalTopicHook}\n${enrichedContext}\n${input.compositeTitle || ""}\n${base.slice(0, 1200)}`,
-              sheetKind:
-                input.compositeKind === "xiaohongshu_dual_note" ||
-                /图文/.test(String(finalFormatForPipeline || ""))
-                  ? "graphic"
-                  : "video",
+              sheetKind: sheetKind === "graphic" ? "graphic" : "video",
               forceCoverShortCopy: true,
             },
           );
@@ -6336,12 +6365,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
           const compositeDeductionNote =
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-              ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
+              ? `编导分镜图文参考（导演板编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : input.kind === "single_page_knowledge_card"
                 ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`
                 : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag = compositePack
-            ? ` · 分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
+            ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
           await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
         }
@@ -6356,16 +6385,24 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
         const enrichedCompositeScriptContext = (() => {
-          const base = String(input.scriptContext || "").trim();
+          const sheetKind =
+            input.kind === "xiaohongshu_dual_note" ||
+            input.kind === "single_page_knowledge_card"
+              ? "graphic"
+              : "storyboard";
+          const base = enrichScriptContextWithBianDaoDirectorBoard(
+            String(input.scriptContext || "").trim(),
+            {
+              sheetKind,
+              craftSeed: `${input.sceneId || ""}:${input.title || ""}`,
+              craftSlotLabel: String(input.title || "").slice(0, 40) || undefined,
+            },
+          );
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             {
               routeContext: `${input.title || ""}\n${base.slice(0, 2000)}`,
-              sheetKind:
-                input.kind === "xiaohongshu_dual_note" ||
-                input.kind === "single_page_knowledge_card"
-                  ? "graphic"
-                  : "video",
+              sheetKind: sheetKind === "graphic" ? "graphic" : "video",
               forceCoverShortCopy: true,
             },
           );

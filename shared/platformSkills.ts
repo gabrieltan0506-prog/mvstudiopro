@@ -96,17 +96,7 @@ ${parts.join("\n\n---\n\n")}`;
   return block;
 }
 
-/** Canvas / Creative 专用：不进 /platform Skill 池与路由 */
-export const CANVAS_ONLY_SKILL_IDS = [
-  "seedance-i2v-motion",
-  "video-reverse-prompt",
-  "manhua-drama-studio",
-  "screenwriter-genre-templates",
-  "manhua-scene-asset-library",
-] as const;
-
-export type CanvasOnlySkillId = (typeof CANVAS_ONLY_SKILL_IDS)[number];
-
+/** /platform 内置池（不含 Canvas-only：Seedance/漫剧/反推/场景资产） */
 export const PLATFORM_BUILTIN_SKILL_IDS = [
   "director-craft",
   "json-director-middleware",
@@ -134,6 +124,11 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];
 
-export function isCanvasOnlySkillId(id: string): boolean {
-  return (CANVAS_ONLY_SKILL_IDS as readonly string[]).includes(id);
-}
+export {
+  CANVAS_ONLY_SKILL_IDS,
+  isCanvasOnlySkillId,
+  groupPlatformSkillsByCategory,
+  resolvePlatformSkillCategory,
+  PLATFORM_SKILL_CATEGORY_ORDER,
+  type CanvasOnlySkillId,
+} from "./platformSkillCategories.js";

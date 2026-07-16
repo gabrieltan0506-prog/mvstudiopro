@@ -163,13 +163,12 @@ export function resolveManhuaFactoryOrderedIds(
   if (ids.length < 2 && blocks.length) {
     const byParent: string[] = [];
     const roots = blocks.filter((b) => !b.parentId || !blocks.some((x) => x.id === b.parentId));
-    let cur = roots[0]?.id;
+    let curId = roots[0]?.id ?? "";
     const seen = new Set<string>();
-    while (cur && !seen.has(cur)) {
-      seen.add(cur);
-      byParent.push(cur);
-      const child = blocks.find((b) => b.parentId === cur);
-      cur = child?.id;
+    while (curId && !seen.has(curId)) {
+      seen.add(curId);
+      byParent.push(curId);
+      curId = blocks.find((b) => b.parentId === curId)?.id ?? "";
     }
     return byParent;
   }
@@ -256,6 +255,15 @@ export function resolveFactoryResumeStage(blocks: CanvasBlock[]): ManhuaFactoryS
   return null;
 }
 
+/** 去掉上次续跑灌入的反推/角色卡段，保留剧种与场景资产库原文 */
+function stripFactoryEnrichSections(prompt: string): string {
+  return String(prompt || "")
+    .replace(/\n*\n【来自编导反推】[\s\S]*?(?=\n\n【|\n*$)/g, "")
+    .replace(/\n*\n【角色卡锚点】[\s\S]*?(?=\n\n【|\n*$)/g, "")
+    .replace(/\n*\n【微动优先】[\s\S]*?(?=\n\n【|\n*$)/g, "")
+    .trim();
+}
+
 function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string): CanvasBlock[] {
   const stage = stageKeyFromBlockId(justFinishedId);
   if (stage !== "reverse") return working;
@@ -268,18 +276,20 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
   if (!keyArtHint && !seedanceHint && !bibleText) return working;
   return working.map((b) => {
     if (b.id.startsWith("keyart-") && (keyArtHint || bibleText)) {
-      const base = MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
+      // 保留铺节点时写入的场景资产库 / 剧种块，只追加反推与角色卡
+      const kept = stripFactoryEnrichSections(b.prompt) || MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
       const parts = [
-        base,
+        kept,
         keyArtHint ? `【来自编导反推】\n${keyArtHint}` : "",
         bibleText ? `【角色卡锚点】\n${bibleText}` : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
     }
     if (b.id.startsWith("clip-") && seedanceHint) {
+      const kept = stripFactoryEnrichSections(b.prompt) || MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip;
       return {
         ...b,
-        prompt: `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n\n【微动优先】\n${seedanceHint}`,
+        prompt: `${kept}\n\n【微动优先】\n${seedanceHint}`,
       };
     }
     return b;

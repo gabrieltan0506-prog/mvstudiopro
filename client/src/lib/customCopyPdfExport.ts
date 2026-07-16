@@ -16,7 +16,7 @@ export type CustomCopyPdfPayload = {
 
 const KIND_LABEL: Record<CustomCopyPdfKind, string> = {
   single_page_knowledge_card: "单页图文知识卡片",
-  storyboard_sheet_landscape: "2×4 分镜图",
+  storyboard_sheet_landscape: "2×4 编导分镜图",
   optimize_custom_copy: "深度优化文案",
 };
 

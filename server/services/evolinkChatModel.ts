@@ -68,6 +68,16 @@ export function getEvolinkGpt56SolModel(): string {
   );
 }
 
+/** 创作顾问免费问答默认：gpt-5.6-terra（可用 EVOLINK_GPT56_TERRA_MODEL / PLATFORM_SKILL_QA_OPENAI_MODEL 覆盖）。 */
+export function getEvolinkGpt56TerraModel(): string {
+  return normalizeEvolinkChatModel(
+    process.env.EVOLINK_GPT56_TERRA_MODEL ||
+      process.env.PLATFORM_SKILL_QA_OPENAI_MODEL ||
+      EVOLINK_CHAT_MODEL_GPT56_TERRA,
+    EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  );
+}
+
 export function isEvolinkChatModelNotFoundError(status: number, errorText: string): boolean {
   if (status === 404) return true;
   return /deployment to match the model|model not found|not_found_error|specified model not found/i.test(

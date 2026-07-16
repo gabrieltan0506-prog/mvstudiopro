@@ -1,10 +1,14 @@
 /**
  * /platform 创作顾问问答：每日免费额度 + 可选单页生图（首张封面九折）。
- * 文案仅 Evolink GPT-5.6 Sol（不对用户展示模型名）。
+ * 文案默认 GPT-5.6 Terra（reasoning high）；不对普通用户展示模型名。
+ * supervisor 可切换 Sol / Terra。
  */
 import { and, count, eq, gte } from "drizzle-orm";
 import { extractFirstChoicePlainText, extractJsonString, invokeLLM } from "../_core/llm.js";
-import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
+import {
+  resolvePlatformSkillQaOpenAiModel,
+  resolvePlatformSkillQaReasoningEffort,
+} from "../config/platformSwitches.js";
 import { getDb } from "../db.js";
 import { stripeUsageLogs } from "../../drizzle/schema-stripe.js";
 import {
@@ -160,7 +164,12 @@ export async function askPlatformSkillQa(params: {
   question: string;
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
+  /** 跳过每日免费次数上限（admin / supervisor 角色） */
   isAdmin?: boolean;
+  /** 允许覆盖问答模型（admin / supervisor / 合法 supervisorToken） */
+  allowQaModelOverride?: boolean;
+  /** supervisor 可选；一般用户忽略，强制 Terra */
+  qaModel?: string | null;
 }): Promise<PlatformSkillQaAskResult> {
   const question = String(params.question || "").trim();
   if (question.length < 2) throw new Error("请先输入问题");
@@ -170,6 +179,12 @@ export async function askPlatformSkillQa(params: {
   if (!params.isAdmin && usedToday >= dailyLimit) {
     throw new Error(`今日免费问答已达上限（${dailyLimit} 次），明天再来，或去「自定义 / 全案」继续创作。`);
   }
+
+  const modelName = resolvePlatformSkillQaOpenAiModel({
+    requested: params.qaModel,
+    isSupervisor: Boolean(params.allowQaModelOverride),
+  });
+  const reasoningEffort = resolvePlatformSkillQaReasoningEffort();
 
   const skillsPrompt = await resolvePlatformSkillsPrompt({
     userId: params.userId,
@@ -192,11 +207,11 @@ export async function askPlatformSkillQa(params: {
     try {
       const response = await invokeLLM({
         provider: "openai",
-        modelName: getPlatformStage2OpenAiModel(),
+        modelName,
         max_tokens: PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
         temperature: 0.7,
         response_format: { type: "json_object" },
-        reasoningEffort: "high",
+        reasoningEffort,
         messages: [
           { role: "system", content: ASK_SYSTEM },
           { role: "user", content: userText },

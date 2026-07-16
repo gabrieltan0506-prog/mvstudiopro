@@ -779,6 +779,24 @@ export default function FreeformCanvas({
                       {block.kind === "image" ? (
                         <>
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
+                            <span className="shrink-0 text-white/45">模式</span>
+                            <select
+                              value={block.imageMode || "generate"}
+                              onChange={(e) =>
+                                patchOne(block.id, {
+                                  imageMode: e.target.value === "edit" ? "edit" : "generate",
+                                  ...(e.target.value === "edit" && block.outputUrl
+                                    ? { refImageUrl: block.outputUrl }
+                                    : {}),
+                                })
+                              }
+                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                            >
+                              <option value="generate">文生图</option>
+                              <option value="edit">改图（Image Edit）</option>
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">模型</span>
                             <select
                               value={block.imageModel}
@@ -812,6 +830,29 @@ export default function FreeformCanvas({
                               ))}
                             </select>
                           </label>
+                          {block.imageMode === "edit" ? (
+                            <div className="rounded-lg border border-rose-400/25 bg-rose-500/10 px-2 py-1.5 text-[10px] leading-5 text-rose-50/90">
+                              改图：先上传参考图（或用上方已生成结果），提示词写「改什么」——例如「旁边加一只橘猫」「换成雨夜霓虹」。
+                              推荐模型 GPT-Image-2（EvoLink · 2K）。输出为 PNG/JPEG/WebP，不支持 SVG/PSD。
+                              {(block.outputUrl || block.refImageUrl) && (
+                                <button
+                                  type="button"
+                                  className="mt-1 block text-[10px] font-semibold text-[#8cefff] underline"
+                                  onClick={() =>
+                                    patchOne(block.id, {
+                                      imageMode: "edit",
+                                      refImageUrl: block.outputUrl || block.refImageUrl,
+                                      prompt: block.prompt?.trim()
+                                        ? block.prompt
+                                        : "微调画面：保持主体一致，优化光影与构图。",
+                                    })
+                                  }
+                                >
+                                  用当前结果作为改图底图
+                                </button>
+                              )}
+                            </div>
+                          ) : null}
                         </>
                       ) : null}
                       {block.kind === "video" ? (

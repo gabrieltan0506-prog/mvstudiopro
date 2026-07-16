@@ -136,7 +136,7 @@ function ExecutionCardBlock({ card }: { card: PlatformSessionExecutionCardArtifa
           {card.storyboardImageUrl ? (
             <div>
               <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-white/45">
-                <Layers size={12} /> 分镜图
+                <Layers size={12} /> 编导分镜图
               </div>
               <img
                 src={card.storyboardImageUrl}

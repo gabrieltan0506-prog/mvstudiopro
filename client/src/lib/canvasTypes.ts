@@ -6,6 +6,8 @@ export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "vi
 export type CanvasTextModel = "gemini-3.1-pro" | "gpt-5.5" | "gpt-5.4";
 export type CanvasImageModel = "nano-banana-2" | "gpt-image-2";
 export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0";
+/** 文生图 vs 改图（EvoLink image_urls edit） */
+export type CanvasImageMode = "generate" | "edit";
 
 export type CanvasBlockStatus = "idle" | "running" | "done" | "error";
 
@@ -56,6 +58,8 @@ export type CanvasBlock = {
   imageModel: CanvasImageModel;
   videoModel: CanvasVideoModel;
   aspectRatio: "9:16" | "16:9";
+  /** 图片方块：文生图 / 改图（需参考图） */
+  imageMode: CanvasImageMode;
   /** 图片方块一次生成张数 */
   imageBatchCount: CanvasImageBatchCount;
   /** 本地上传素材（可多张，供下游文本/视频引用） */
@@ -165,6 +169,7 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     imageModel: "nano-banana-2",
     videoModel: "gemini-omni-flash",
     aspectRatio: "9:16",
+    imageMode: "generate",
     width: CANVAS_BLOCK_DEFAULT_WIDTH,
     height: CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: 1,
@@ -188,6 +193,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   return {
     ...block,
     videoModel,
+    imageMode: block.imageMode === "edit" ? "edit" : "generate",
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: block.imageBatchCount ?? 1,

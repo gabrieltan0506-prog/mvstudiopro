@@ -16,7 +16,11 @@ import {
   PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
   needsCulturalMaterialDiversity,
 } from "@shared/platformCulturalMaterialDiversity";
-import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "@shared/storyboardLightingEmotion";
+import {
+  STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH,
+  formatAssignedCraftTechniqueZh,
+  pickCraftTechniqueProfile,
+} from "@shared/storyboardLightingEmotion";
 import { extractJsonString } from "../_core/llm";
 import { callDecisionIntelGpt55StructuredJson } from "./decisionIntelGpt55Copywriting.js";
 
@@ -114,15 +118,28 @@ ${skillsBlock ? `${skillsBlock}\n` : ""}${STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_
 - 扩写须放松向、可拍；禁止再写成「读《》领悟 / 哈佛实验室揭秘」论文腔；场景禁止多条扎堆书房黑胶古籍。
 - 若提供蓝海词/标签，须在 copywriting、detailedScript、publishingAdvice 中自然嵌入 1–3 个，禁止堆砌 hashtag。
 - 须严格延续输入选题的主线痛点与人设，不得偏题；语气专业、可拍、**简体中文**。
-- **高度需求** executionDetails.lightingAndCamera 与 stepByStepScript 写清运镜、灯光与情绪（见上方手法卡）；只借手法，禁止点名导演/致敬；分镜表六栏含运镜、灯光安排与情绪表达。
+- **高度需求** executionDetails 按「导演灵感画布」写：拍摄顺序 + 运镜 + 灯光情绪（见上方手法卡与下方每条指定主手法）；只借手法，禁止点名导演/致敬；短视频勿写成死板分镜清单。
 - 禁止 markdown 代码块；第一个字符必须是 {。`;
+
+  const craftAssignments = picks
+    .map((p, i) => {
+      const title = String(p.title || `选题${i + 1}`);
+      const profile = pickCraftTechniqueProfile(`decision-intel-${i}:${title}`);
+      return `### 选题 ${i + 1}「${title.slice(0, 48)}」\n${formatAssignedCraftTechniqueZh(profile, {
+        slotLabel: `战略扩写·第${i + 1}条`,
+      })}`;
+    })
+    .join("\n\n");
 
   const user = `【账号选题方向】${params.topic}
 【主战场平台】${platformLabel}
 【既有内容蓝图参考】${blueprintJsonForPrompt(params.contentBlueprint)}
 ${blueOceanBlock}
+【每条主手法卡·强制轮换】
+${craftAssignments}
+
 请为以下 ${picks.length} 条战略地图选题各写 1 套完整执行文案（顺序与编号一致）。
-每条必须先从主人公/人设推断「客户是谁、痛点是什么」，再写吸睛标题、钩子、半成品解法与咨询 CTA：
+每条必须先从主人公/人设推断「客户是谁、痛点是什么」，再写吸睛标题、钩子、半成品解法与咨询 CTA；短视频脚本须落实上方对应主手法卡的导演灵感画布：
 
 ${topicsBlock}`;
 

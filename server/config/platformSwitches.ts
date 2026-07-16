@@ -1,9 +1,9 @@
 /**
- * 默认：Creator Growth **Stage 1 / Stage 2 全案文案** = **EvoLink GPT‑5.6 Sol**（失败回退 **OhMyGPT gpt-5.6-sol**）。
+ * 默认：Creator Growth **Stage 1 / Stage 2 全案文案** = **OpenAI 官方 GPT‑5.6 Sol**（失败回退 **EvoLink gpt-5.6-sol**）。
  * **平台选题生图** = **OhMyGPT gpt-image-2**（失败回退 **EvoLink gpt-image-2**）。**平台图 = GCS**。
  * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
- * 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL` / `EVOLINK_GPT56_SOL_MODEL`（默认 `gpt-5.6-sol`）；OhMyGPT 退路同名。
+ * 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL` / `EVOLINK_GPT56_SOL_MODEL`（默认 `gpt-5.6-sol`）；密钥：`OPENAI_API_KEY` 优先，无则 `EVOLINK_API_KEY`。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
  *
@@ -14,10 +14,17 @@
  * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
 
-import { getEvolinkGpt56SolModel } from "../services/evolinkChatModel.js";
+import {
+  EVOLINK_CHAT_MODEL_GPT56_SOL,
+  EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  getEvolinkGpt56SolModel,
+  getEvolinkGpt56TerraModel,
+  normalizeEvolinkChatModel,
+} from "../services/evolinkChatModel.js";
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
+export type PlatformSkillQaModelChoice = "gpt-5.6-terra" | "gpt-5.6-sol";
 
 function norm(s: string | undefined): string {
   return String(s ?? "").trim().toLowerCase();
@@ -300,17 +307,55 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
     return "openai";
   }
 
-  /** 未显式指定时默认 EvoLink GPT‑5.6 Sol（失败回退 OhMyGPT）；`vertex`/`gemini` env 值走 Gemini API 退路。 */
+  /** 未显式指定时默认 OpenAI 官方 GPT‑5.6 Sol（失败回退 EvoLink）；`vertex`/`gemini` env 值走 Gemini API 退路。 */
   return "openai";
 }
 
 /**
- * Creator Growth **Stage 1 / Stage 2 全案 / 战略看板 / 深度追问 / 自定义选题文案** 主路径固定 **EvoLink GPT‑5.6 Sol**。  
- * Sol 报错时由 `invokeOpenAI` 自动改走 **OhMyGPT gpt-5.6-sol**。  
+ * Creator Growth **Stage 1 / Stage 2 全案 / 战略看板 / 深度追问 / 自定义选题文案** 主路径固定 **OpenAI 官方 GPT‑5.6 Sol**。  
+ * 官方失败或未配置 `OPENAI_API_KEY` 时由 `invokeOpenAI` / `resolveTarget` 改走 **EvoLink gpt-5.6-sol**。  
  * **生图：OhMyGPT gpt-image-2 → EvoLink gpt-image-2**。Gemini 文案退路：`PLATFORM_STAGE2_LLM=vertex`。
  */
 export function getPlatformStage2OpenAiModel(): string {
   return getEvolinkGpt56SolModel();
+}
+
+/**
+ * /platform 创作顾问免费问答默认模型：**gpt-5.6-terra**。
+ * 一般用户强制 Terra；supervisor/admin 可请求 Sol（见 {@link resolvePlatformSkillQaOpenAiModel}）。
+ */
+export function getPlatformSkillQaOpenAiModel(): string {
+  return getEvolinkGpt56TerraModel();
+}
+
+/** 创作顾问问答推理强度：固定 **high**（可用 `PLATFORM_SKILL_QA_REASONING_EFFORT` 覆盖）。 */
+export function resolvePlatformSkillQaReasoningEffort():
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh" {
+  const raw = norm(process.env.PLATFORM_SKILL_QA_REASONING_EFFORT);
+  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformSkillQaReasoningEffort>;
+  return "high";
+}
+
+/**
+ * 解析创作顾问问答模型：非 supervisor 一律 Terra；supervisor 可选 Sol / Terra。
+ */
+export function resolvePlatformSkillQaOpenAiModel(params: {
+  requested?: string | null;
+  isSupervisor: boolean;
+}): PlatformSkillQaModelChoice {
+  if (!params.isSupervisor) return EVOLINK_CHAT_MODEL_GPT56_TERRA;
+  const req = normalizeEvolinkChatModel(
+    params.requested || getEvolinkGpt56TerraModel(),
+    EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  );
+  if (req === EVOLINK_CHAT_MODEL_GPT56_SOL) return EVOLINK_CHAT_MODEL_GPT56_SOL;
+  return EVOLINK_CHAT_MODEL_GPT56_TERRA;
 }
 
 /** Stage 1 / Stage 2 文案 GPT‑5.6 推理强度：默认 **high**（结果优先；可用 `PLATFORM_STAGE2_OPENAI_REASONING_EFFORT` 下调）。 */
@@ -372,7 +417,7 @@ export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
 }
 
 /**
- * Stage 2 OpenAI **第二階** JSON 封裝：与文案主路径一致，固定 **EvoLink gpt-5.6-sol**（失败回退 OhMyGPT）。
+ * Stage 2 OpenAI **第二階** JSON 封裝：与文案主路径一致，固定 **gpt-5.6-sol**（官方 OpenAI → EvoLink fallback）。
  */
 export function getPlatformStage2StructureOpenAiModel(): string {
   return getEvolinkGpt56SolModel();

@@ -72,6 +72,8 @@ async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refIma
         prompt,
         aspectRatio,
         referenceImageUrl: refImageUrl || undefined,
+        imageMode: refImageUrl ? "edit" : "generate",
+        generalImageEdit: Boolean(refImageUrl),
       }),
     }),
   );
@@ -347,16 +349,24 @@ export async function runCanvasBlock(
   if (block.kind === "image") {
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
-    const imagePrompt = await resolveImagePromptViaJsonDirector(
-      deps,
-      mergedPrompt,
-      ar,
-      block.imageModel,
-    );
+    const isEdit = block.imageMode === "edit";
+    const editRef =
+      refUrl ||
+      block.uploadedAssets?.find((a) => a.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(a.fileName || a.url))
+        ?.url ||
+      block.outputUrl ||
+      block.outputUrls?.[0];
+    if (isEdit && !editRef) {
+      throw new Error("改图模式需要参考图：请先上传图片，或先文生图后再点「改图」");
+    }
+    // 改图：提示词即修改说明，直送模型（仍走 GPT-Image-2 edit / NB2 参考图）；文生图才走 JSON 导演中台
+    const imagePrompt = isEdit
+      ? mergedPrompt
+      : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, block.imageModel);
     const urls =
       block.imageModel === "gpt-image-2"
-        ? await runGptImage2Batch(imagePrompt, ar, refUrl, count)
-        : await runNanoBanana2(imagePrompt, ar, refUrl, count);
+        ? await runGptImage2Batch(imagePrompt, ar, isEdit ? editRef : refUrl, count)
+        : await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");
     return { outputUrl: filtered[0], outputUrls: filtered };

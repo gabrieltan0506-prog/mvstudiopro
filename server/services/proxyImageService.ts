@@ -1123,6 +1123,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   /** EvoLink edit 模式参考图（如用户上传的人像 URL）；非空则注入换人指令 + image_urls。 */
   referenceImageUrls?: string[];
   /**
+   * Canvas / 通用改图：有参考图时**不**注入换人/换脸指令，只按 prompt 做 image edit。
+   * 平台封面「锁脸换人」保持默认 false。
+   */
+  generalImageEdit?: boolean;
+  /**
    * 出参：失败时回填供上层做「快速失败 / 用户提示」。
    * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
    */
@@ -1139,16 +1144,19 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     .filter(Boolean)
     .slice(0, 16);
   const hasRef = refImageUrls.length > 0;
+  const generalEdit = Boolean(options.generalImageEdit);
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
   const base =
-    options.aspectRatio === "9:16"
+    options.aspectRatio === "9:16" && !generalEdit
       ? buildGptImage2AlignedPlatformTopicCoverPrompt(raw, suffix)
       : [raw, suffix].filter(Boolean).join("\n\n");
   const photoIntent =
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
-  const withProVisual = appendVertexProPhotographyPromptModifiers(base, photoIntent);
-  const prompt = hasRef ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
-  const sizes = options.aspectRatio === "16:9" ? GPT_IMAGE2_LANDSCAPE_SIZES : GPT_IMAGE2_PORTRAIT_SIZES;
+  const withProVisual = generalEdit
+    ? base
+    : appendVertexProPhotographyPromptModifiers(base, photoIntent);
+  const prompt =
+    hasRef && !generalEdit ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
 
   if (!isEvolinkGptImage2Configured()) {
     appendImageFlowLog(L, "[单帧] EVOLINK_API_KEY 未配置 · 平台生图仅走 EvoLink GPT-IMAGE-2（已取消 OhMyGPT/fal/NB2）");
@@ -1159,14 +1167,14 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   }
 
   const evoPrompt = hasRef ? prompt : withProVisual;
+  // EvoLink：比例 + 2K + high（勿传 WxH，否则 resolution 被忽略）
   appendImageFlowLog(
     L,
-    `[单帧·唯一路径] EvoLink GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${sizes[0]} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""} · prompt≈${evoPrompt.length}字`,
+    `[单帧·唯一路径] EvoLink GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · resolution=2K · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""} · prompt≈${evoPrompt.length}字`,
   );
   const evoErr: { message?: string } = {};
   const fromEvolink = await postEvolinkGptImage2AndUpload(evoPrompt, options.gcsSubdir, {
     aspectRatio: options.aspectRatio,
-    size: sizes[0],
     flowLog: L,
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
     imageUrls: hasRef ? refImageUrls : undefined,
@@ -1188,7 +1196,6 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       options.gcsSubdir,
       {
         aspectRatio: options.aspectRatio,
-        size: sizes[0],
         flowLog: L,
         quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
         imageUrls: refImageUrls,
@@ -1422,7 +1429,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（中文直送）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（中文直送）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 编导分镜主表（中文直送）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（中文直送）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
   appendImageFlowLog(
     L,
@@ -1580,10 +1587,10 @@ export async function generatePlatformCompositeSheetImage(options: {
           `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${
             options.gridSection
               ? isStoryboard
-                ? "3×4 横排四格分镜"
+                ? "3×4 横排四格编导分镜"
                 : "3×4 横排四格图文"
               : isStoryboard
-                ? "电影 2×4 分镜"
+                ? "电影 2×4 编导分镜"
                 : "小红书 2×4 八格"
           }）· 约 ${chineseCore.length} 字符`,
         );
@@ -1620,7 +1627,7 @@ export async function generatePlatformCompositeSheetImage(options: {
 
         appendImageFlowLog(
           L,
-          `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
+          `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 编导分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
         );
       }
 
