@@ -3,9 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
-import PlatformSignalsCarouselPanel, {
-  type PlatformSignalsCarouselItem,
-} from "@/components/platform/PlatformSignalsCarouselPanel";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
@@ -1783,7 +1780,6 @@ export default function PlatformPage() {
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
   const [platformCoverVertexNb2, setPlatformCoverVertexNb2] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -6536,80 +6532,6 @@ export default function PlatformPage() {
     })),
     [processingSteps, elapsedTime],
   );
-  const immersiveRotatingCards = useMemo(() => {
-    const trendLayers = snapshot?.trendLayers ?? [];
-    const competitionZh = (level: string) =>
-      level === "low" ? "低" : level === "medium" ? "中" : level === "high" ? "高" : String(level);
-
-    const platformCards = primaryPlatforms.slice(0, 4).map((item) => {
-      const topicLines = (item.sampleTopics || []).map((t) => String(t).trim()).filter(Boolean);
-      const layerLines = trendLayers
-        .filter((l) => l.platform === item.platform)
-        .flatMap((l) => (Array.isArray(l.items) ? l.items : []).map((i) => String(i).trim()))
-        .filter(Boolean);
-      const libraryLines = (snapshot?.topicLibrary ?? [])
-        .filter((row) => row.platform === item.platform)
-        .map((row) => String(row.title || "").trim())
-        .filter(Boolean);
-      const activityLines = (snapshot?.platformActivities ?? [])
-        .filter((a) => a.platform === item.platform)
-        .flatMap((a) =>
-          [...(a.hotTopics ?? []), ...(a.suggestedTopics ?? [])].map((s) => String(s).trim()).filter(Boolean),
-        );
-      const merged = Array.from(new Set([...topicLines, ...libraryLines, ...activityLines, ...layerLines])).slice(0, 5);
-      const summary =
-        merged.length > 0
-          ? merged.map((line, i) => `${i + 1}. ${line}`).join("\n")
-          : "本平台在当前快照里还没有可用的样本标题或趋势层条目。请先完成一次上方「平台趋势分析」（会按次扣减积分），采集回传后再查看具体热点。";
-
-      return {
-        title: `${item.displayName} 当前信号`,
-        summary,
-        detail: `动量 ${item.momentumScore} · 适配 ${item.audienceFitScore} · 竞争 ${competitionZh(item.competitionLevel)}`,
-        tone: "platform" as const,
-        purchaseCta: {
-          href: "/pricing",
-          label: "购买积分 · 用于平台趋势分析与续报",
-        },
-      };
-    });
-    const topicCards = topTopics.slice(0, 3).map((item) => ({
-      title: item.title,
-      summary: item.whyHot,
-      detail: item.howToUse,
-      tone: "topic",
-    }));
-    const actionCards = actionSteps.slice(0, 3).map((item) => ({
-      title: item.title,
-      summary: item.action,
-      detail: `第 ${item.day} 步先做这个。`,
-      tone: "action",
-    }));
-    const fallback = [
-      {
-        title: "平台优先级正在整理",
-        summary: "先把近窗口里的平台动量和适配度压成一页看板。",
-        detail: "你最终看到的是“先做哪里、为什么、先验证什么”。",
-        tone: "platform",
-      },
-      {
-        title: "热点赛道正在筛选",
-        summary: "不是泛热点，而是与你当前方向更接近的切口。",
-        detail: "会直接翻成可执行题目和表达方式。",
-        tone: "topic",
-      },
-      {
-        title: "商业化建议正在整理",
-        summary: "重点不是平台介绍，而是怎么形成真实承接。",
-        detail: "会优先告诉你先做什么、别做什么、怎么验证。",
-        tone: "action",
-      },
-    ];
-    return [...platformCards, ...topicCards, ...actionCards].length
-      ? ([...platformCards, ...topicCards, ...actionCards] as PlatformSignalsCarouselItem[])
-      : (fallback as PlatformSignalsCarouselItem[]);
-  }, [actionSteps, primaryPlatforms, topTopics, snapshot]);
-
   useEffect(() => {
     if (!isAnalyzing) {
       setElapsedTime(0);
@@ -6620,16 +6542,6 @@ export default function PlatformPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [isAnalyzing]);
-
-  useEffect(() => {
-    if (immersiveRotatingCards.length <= 1 || !hasAnalyzed) return;
-    const shouldRotate = isAnalyzing || Boolean(snapshot);
-    if (!shouldRotate) return;
-    const timer = window.setInterval(() => {
-      setRotatingCardIndex((value) => (value + 1) % immersiveRotatingCards.length);
-    }, 4500);
-    return () => window.clearInterval(timer);
-  }, [immersiveRotatingCards.length, isAnalyzing, hasAnalyzed, snapshot]);
 
   /**
    * 轻量版趋势分析：Stage 1 看板 + 可下载 PNG 图文报表（generateVisualReport），不入队 Stage 2。
@@ -6659,7 +6571,7 @@ export default function PlatformPage() {
         : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、信号轮播、Stage 1 看板，并同步生成含蓝海词的可下载 PNG 图文报表${windowNote}。\n\n扣除 ${cost} 积分，不含专属文案（需另行「开始全案分析」）。是否开始？`,
+        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、Stage 1 看板，并同步生成含蓝海词的可下载 PNG 图文报表${windowNote}。\n\n扣除 ${cost} 积分，不含专属文案 / 决策智库全景（需另行加购）。是否开始？`,
       )
     ) {
       return;
@@ -6682,7 +6594,6 @@ export default function PlatformPage() {
     setContentJobError(null);
     setContentJobPollTrace(null);
     setElapsedTime(0);
-    setRotatingCardIndex(0);
 
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
@@ -6843,7 +6754,6 @@ export default function PlatformPage() {
     setContentJobError(null);
     setContentJobPollTrace(null);
     setElapsedTime(0);
-    setRotatingCardIndex(0);
     setPlatformImageMap({});
     setPlatformStoryboardSheetMap({});
     setPlatformXhsNoteMap({});
@@ -7456,7 +7366,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  一次启动即可得到四格战略摘要、信号轮播、Stage 1 看板，以及含蓝海词的可下载 PNG 图文报表；素材分析或专属文案在后台跑时不必干等。
+                  一次启动即可得到四格战略摘要、Stage 1 看板，以及含蓝海词的可下载 PNG 图文报表（不含决策智库全景）；素材分析或专属文案在后台跑时不必干等。
                 </p>
               </div>
               {platformDashboard ? (
@@ -7577,19 +7487,9 @@ export default function PlatformPage() {
               ))}
             </div>
 
-            {immersiveRotatingCards.length > 0 ? (
-              <div className="mt-4">
-                <PlatformSignalsCarouselPanel
-                  eyebrow="自定义工作台 · 信号轮播"
-                  items={immersiveRotatingCards}
-                  activeIndex={rotatingCardIndex}
-                  onPickIndex={setRotatingCardIndex}
-                  subtitle="对照当前窗口的平台脉搏、热点切口与可先执行的动作；与素材分析同屏进行。"
-                />
-              </div>
-            ) : !platformDashboard && !snapshot && !isAnalyzing && !isDashboardLoading && !isVisualReportLoading ? (
+            {!platformDashboard && !snapshot && !isAnalyzing && !isDashboardLoading && !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动分析后，信号轮播将展示热点与可执行动作；上方四格会先出战略摘要，完成后可下载含蓝海词的 PNG 长图。
+                启动分析后，上方四格会先出战略摘要；完成后可下载含蓝海词的 PNG 长图（平台趋势报表，不是决策智库全景）。
               </p>
             ) : null}
 
@@ -8903,13 +8803,6 @@ export default function PlatformPage() {
               </div>
             </div>
 
-            <PlatformSignalsCarouselPanel
-              eyebrow="轮播看板"
-              items={immersiveRotatingCards}
-              activeIndex={rotatingCardIndex}
-              onPickIndex={setRotatingCardIndex}
-              subtitle="在报告生成阶段，用大卡轮换播放当前窗口里最关键的平台脉搏、热点切口与可先执行的动作，避免干等。"
-            />
           </section>
         ) : null}
 
@@ -9323,6 +9216,7 @@ export default function PlatformPage() {
 
             <div
               id={PLATFORM_SECTION_DECISION_INTEL_ID}
+              data-pdf-exclude="true"
               className="scroll-mt-20 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] p-4 md:p-5"
             >
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -9888,19 +9782,7 @@ export default function PlatformPage() {
             </section>
 
             <div className="space-y-4">
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(300px,420px)] xl:items-start xl:gap-8">
-                <aside className="order-1 w-full xl:sticky xl:top-28 xl:z-[8] xl:order-2 xl:self-start xl:overflow-y-auto xl:max-h-[calc(100dvh-7rem)]">
-                  {immersiveRotatingCards.length > 0 ? (
-                    <PlatformSignalsCarouselPanel
-                      eyebrow="与分镜并排 · 信号轮播"
-                      items={immersiveRotatingCards}
-                      activeIndex={rotatingCardIndex}
-                      onPickIndex={setRotatingCardIndex}
-                      subtitle="热点文案来自当前趋势分析中的样本题与趋势层，可对照您的账号方向选用。需要更大采集窗口或续报，请先购买积分（套餐页）后再跑趋势分析。"
-                    />
-                  ) : null}
-                </aside>
-                <div className="order-2 min-w-0 xl:order-1">
+              <div className="min-w-0">
               <div className={shellCardClasses("p-6")}>
                 <div className="mb-8 space-y-4 border-b border-white/10 pb-6">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -11323,7 +11205,6 @@ export default function PlatformPage() {
                   )}
                 </div>
               </div>
-            </div>
 
             <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -11389,7 +11270,11 @@ export default function PlatformPage() {
                   <span className="text-lg leading-none mt-0.5">⚡</span>
                   <div>
                     <div className="font-semibold mb-0.5">分析结果具有时效性</div>
-                    <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。2×4 编导分镜／八格图文请用上方画廊「一键导出全部」单独下载原图（PDF 不含编导分镜图，避免长图被截断）。</div>
+                    <div className="text-xs text-amber-200/80">
+                      平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。
+                      PDF <strong className="text-amber-100">不含</strong>决策智库全景（另购另存）；趋势含蓝海词请用上方「PNG 图文报表」。
+                      2×4 编导分镜／八格图文请用上方画廊「一键导出全部」单独下载原图（PDF 不含编导分镜图，避免长图被截断）。
+                    </div>
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">

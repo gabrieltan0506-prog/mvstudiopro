@@ -6,9 +6,9 @@
 |------|-----|------|
 | `director-craft.md` | director-craft | 开 |
 | `json-director-middleware.md` | json-director-middleware | 开 |
-| `seedance-i2v-motion.md` | seedance-i2v-motion | 开 |
-| `video-reverse-prompt.md` | video-reverse-prompt | 开 |
-| `manhua-drama-studio.md` | manhua-drama-studio | 开 |
+| `seedance-i2v-motion.md` | seedance-i2v-motion | **Canvas only**（不进 /platform） |
+| `video-reverse-prompt.md` | video-reverse-prompt | **Canvas only** |
+| `manhua-drama-studio.md` | manhua-drama-studio | **Canvas only** |
 | `xhs-virtual-goods.md` | xhs-virtual-goods | 开 |
 | `cultural-diversity.md` | cultural-diversity | 开 |
 | `lifestyle-diversity.md` | lifestyle-diversity | 开 |
@@ -58,7 +58,7 @@
 | 赛道 forensic | forensic-life-lens + authority |
 | 赛道 crossover | crossover-popsci · medical-resource-library · authority |
 | 赛道 contrast | contrast-reversal-climax |
-| 视频体裁 | director-craft · json-director-middleware · seedance-i2v-motion |
+| 视频体裁 | director-craft · json-director-middleware（Seedance/漫剧/反推仅 /canvas） |
 | 图文 | graphic-note-rhythm + xhs-collectible-note |
 
 ### 2026-07-16（JSON 导演中台 + Seedance 微动 + 虚拟资料店）

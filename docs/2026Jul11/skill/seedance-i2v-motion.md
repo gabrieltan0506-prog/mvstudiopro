@@ -2,14 +2,14 @@
 id: seedance-i2v-motion
 name: Seedance图生视频微动
 description: 有静帧时做减法；公式=运镜+主体微动+氛围；调度/空镜/阶段拆分
-version: 2026-07-16
-defaultEnabled: true
+version: 2026-07-16c
+defaultEnabled: false
 ---
 
 # Seedance 图生视频微动 Skill
 
 ## 用途
-**/platform 视频向文案、分镜运镜句、Canvas·Creative 的 Seedance/Veo 图生视频提示词**。静帧已经锁死光影与构图时，**禁止**把整段电影感 JSON/长形容词再贴一遍。
+**仅 /canvas · Creative**（不进 `/platform` Skill 池与路由）。静帧已经锁死光影与构图时，**禁止**把整段电影感 JSON/长形容词再贴一遍。
 
 样本：`json.mp4` 第四阶段 · [info-2570](https://www.super-i.cn/info-2570.html) · 调度公式见 [info-2917](https://www.super-i.cn/info-2917.html) · 空镜五要素 [info-2881](https://www.super-i.cn/info-2881.html)。  
 运行时：`compileI2VMotionPrompt`（`shared/jsonDirectorMiddleware.ts`）。

@@ -70,6 +70,7 @@ import {
   BLUE_OCEAN_USAGE_POLICY,
   buildBlueOceanLexicon,
   deriveTagCandidatesFromTrendSamples,
+  normalizeBlueOceanEntries,
 } from "../shared/blueOceanLexicon.js";
 import {
   PLATFORM_AUDIENCE_PAIN_DIMENSION_EXTRA,
@@ -4699,20 +4700,33 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 : rawDescription;
             return { title, description };
           };
-          const normalizeBlueOceanWords = (raw: unknown): Array<{ primary: string; secondary: string[] }> => {
-            if (!Array.isArray(raw)) return [];
-            return raw
-              .filter((b) => b && typeof b === "object" && (b as { primary?: unknown }).primary)
-              .map((b) => {
-                const item = b as { primary?: unknown; secondary?: unknown };
-                return {
-                  primary: safeStr(item.primary),
-                  secondary: Array.isArray(item.secondary)
-                    ? item.secondary.map((s) => safeStr(s)).filter(Boolean)
-                    : [],
-                };
-              })
-              .filter((b) => b.primary);
+          /** 兼容 string[] 与 {primary,secondary[]}，避免蓝海栏整段被滤空 */
+          const normalizeBlueOceanWords = (raw: unknown): Array<{ primary: string; secondary: string[] }> =>
+            normalizeBlueOceanEntries(raw).map((e) => ({
+              primary: e.primary,
+              secondary: e.secondary,
+            }));
+          const fallbackBlueOceanFromTracks = (
+            tracks: Array<{ name: string }>,
+            details: Array<{ hotTopics?: string[]; blueOceanWords?: Array<{ primary: string; secondary: string[] }> }>,
+          ): Array<{ primary: string; secondary: string[] }> => {
+            const out: Array<{ primary: string; secondary: string[] }> = [];
+            const seen = new Set<string>();
+            const push = (primary: string, secondary: string[] = []) => {
+              const p = safeStr(primary);
+              if (!p || seen.has(p) || out.length >= 6) return;
+              seen.add(p);
+              out.push({ primary: p, secondary: secondary.filter(Boolean).slice(0, 6) });
+            };
+            for (const d of details) for (const b of d.blueOceanWords || []) push(b.primary, b.secondary || []);
+            for (const t of tracks) push(t.name);
+            for (const d of details) {
+              for (const topic of d.hotTopics || []) {
+                const name = safeStr(topic);
+                if (name.length >= 2 && name.length <= 18) push(name);
+              }
+            }
+            return out;
           };
           appendRuntimeMetric("visual.report", {
             ok: true,
@@ -4752,11 +4766,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             : [];
           let globalBlueOceanWords = normalizeBlueOceanWords(parsed.globalBlueOceanWords);
           if (globalBlueOceanWords.length === 0) {
-            const aggregated = platformDetails.flatMap(
-              (p: { blueOceanWords?: Array<{ primary: string; secondary: string[] }> }) =>
-                p.blueOceanWords || [],
-            );
-            globalBlueOceanWords = aggregated.slice(0, 6);
+            globalBlueOceanWords = fallbackBlueOceanFromTracks(repairedTrackGrowth, platformDetails);
           }
           return {
             success: true,
