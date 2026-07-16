@@ -87,6 +87,18 @@ export default function OmniCanvas() {
               文本 / 图片 / 视频 / 视频反推 / 整理文案。可一键铺「漫剧工作室」六段链路：故事→角色→节拍→反推→静帧→Seedance。
               参考短片请本机上传（≤120s）；YouTube 勿指望云端抓取。
             </p>
+            <div className="mt-3 inline-flex max-w-3xl items-start gap-2 rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-50">
+              <span className="mt-0.5 shrink-0 rounded-full border border-amber-300/40 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-100">
+                Soon
+              </span>
+              <span>
+                <strong className="font-semibold text-amber-50">Seedance 2.5 Coming soon on MV Studio Pro</strong>
+                <span className="text-amber-100/75">
+                  {" "}
+                  · 文生 / 图生 / 参考生代码已就绪，待 EvoLink 上线后开放；当前请用 Seedance 2.0（默认 15s）。
+                </span>
+              </span>
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
