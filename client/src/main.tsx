@@ -87,6 +87,8 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.generateDecisionIntelligenceReport",
   "mvAnalysis.generateDecisionIntelTopicExecutionCopy",
   "mvAnalysis.optimizeCustomCopy",
+  "mvAnalysis.askPlatformSkillQa",
+  "mvAnalysis.confirmPlatformSkillQaImage",
   "mvAnalysis.getVideoUploadSignedUrl",
   "usage.checkFeatureAccess",
   "ambient.dashboardLive",

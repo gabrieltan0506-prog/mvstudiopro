@@ -295,8 +295,8 @@ export const CREDIT_COSTS = {
   decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
 
-/** Skill 问答：每日免费次数上限（登录用户） */
-export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 30;
+/** 创作顾问问答：每日免费次数上限（登录用户；可问任意问题，不限 Skill） */
+export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 10;
 
 /**
  * Skill 问答栏单页生图积分：账号生涯第 1 张九折，之后封面原价。

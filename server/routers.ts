@@ -5275,13 +5275,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * Skill 区上方·GPT‑5.5 免费问答（每日 30 次）。
+     * 创作顾问免费问答（每日 10 次，任意提问）。
      * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
      */
     askPlatformSkillQa: protectedProcedure
       .input(
         z.object({
-          question: z.string().min(2).max(2000),
+          question: z.string().min(2).max(4000),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
         }),
@@ -5300,9 +5300,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return { success: true as const, ...result };
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "问答失败";
+          const friendly =
+            /Unexpected token|is not valid JSON|An error o/i.test(msg)
+              ? "算力紧张或请求超时，请稍后重试"
+              : msg;
           throw new TRPCError({
             code: /上限/.test(msg) ? "TOO_MANY_REQUESTS" : "BAD_REQUEST",
-            message: msg,
+            message: friendly,
           });
         }
       }),

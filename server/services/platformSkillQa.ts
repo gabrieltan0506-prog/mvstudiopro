@@ -1,10 +1,10 @@
 /**
- * /platform Skill 区上方：GPT‑5.5 免费问答 + 可选单页生图（首张封面九折）。
+ * /platform 创作顾问问答：每日免费额度 + 可选单页生图（首张封面九折）。
+ * 文案仅 Evolink GPT-5.6 Sol（不对用户展示模型名）。
  */
 import { and, count, eq, gte } from "drizzle-orm";
 import { extractFirstChoicePlainText, extractJsonString, invokeLLM } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
-import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime.js";
 import { getDb } from "../db.js";
 import { stripeUsageLogs } from "../../drizzle/schema-stripe.js";
 import {
@@ -18,6 +18,9 @@ import { generateGptImage2FromRawEnglishPrompt, appendImageFlowLog } from "./pro
 
 export const PLATFORM_SKILL_QA_ACTION = "platformSkillQa";
 export const PLATFORM_SKILL_QA_IMAGE_ACTION = "platformSkillQaImage";
+
+/** 创作顾问问答输出上限（用户指定 65535） */
+const PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS = 65_535;
 
 export type PlatformSkillQaAskResult = {
   answer: string;
@@ -83,21 +86,22 @@ export async function logPlatformSkillQaFreeUse(userId: number, question: string
     action: PLATFORM_SKILL_QA_ACTION,
     creditsCost: 0,
     isFreeQuota: 1,
-    description: `Skill 问答（免费）· ${String(question || "").slice(0, 80)}`,
+    description: `创作顾问问答（免费）· ${String(question || "").slice(0, 80)}`,
     balanceAfter: null,
   });
 }
 
-const ASK_SYSTEM = `你是 mvstudiopro /platform 页的「Skill 顾问」，用 GPT‑5.6 回答用户关于内容创作、Skill 用法、选题文案、封面/图文节奏的问题。
+const ASK_SYSTEM = `你是 mvstudiopro /platform 页的「创作顾问」。用户可问任何问题：创作、Skill、选题文案、封面节奏、平台运营、行业时令、虚拟/电子资料赛道、生活咨询等——凡用户想问的都可以认真答。
 
 硬规则：
-1. 回答用简体中文，幽默清晰，禁说教训话；可给可执行建议。
-2. 主动告知：Skill **可自由勾选/取消**；若 Skill 没法满足诉求，请用户把要求写进「人物背景与创作诉求」或自定义提示词——**只要有提示词要求，优先级高于 Skill 设定**。
-3. 若用户只是提问/求写法/求改句/求解释 Skill → imageIntent=false。
+1. 回答用简体中文，幽默清晰，禁说教训话；可给可执行建议；需要时可分点、分时节/人群/行业展开。
+2. 若问题涉及 Skill：主动告知 Skill **可自由勾选/取消**；若 Skill 没法满足诉求，请用户把要求写进「人物背景与创作诉求」或自定义提示词——**只要有提示词要求，优先级高于 Skill 设定**。
+3. 若用户只是提问/求写法/求改句/求分析/求解释 → imageIntent=false。
 4. 若用户明确要求「生图/画一张/出封面图/生成图片」→ imageIntent=true，并写 suggestedImagePrompt（中文，可直接给生图模型，含主体/姿势/场景/少字封面气质）。
 5. 若生图诉求属于「创作相关」（选题封面、分镜格、全案人物设定、系列笔记视觉、人设 IP 视觉体系等）→ creationRelated=true，guideMessage 必须劝用户去「自定义创作工作台」或「开始全案分析」，说明按人设+选题推演再出图，效果远好于本栏盲盒抽卡；仍可提供 suggestedImagePrompt 供用户确认试一张。
 6. 若只是随便画无关创作体系的单张（风景、表情包试玩等）→ creationRelated=false，guideMessage 可简短说明本栏单页价。
 7. 若提供了挂载 Skill 摘要，回答与 suggestedImagePrompt **默认**参考；但用户提问/提示词里的明确要求冲突时，**以用户要求为准**。
+8. 禁止在回答里写出具体模型名称、API、供应商或内部引擎代号。
 
 只输出 JSON：
 {
@@ -108,6 +112,15 @@ const ASK_SYSTEM = `你是 mvstudiopro /platform 页的「Skill 顾问」，用 
   "guideMessage": ""
 }`;
 
+function looksLikeUpstreamGarbage(text: string): boolean {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  if (/^An error\b/i.test(t)) return true;
+  if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) return true;
+  if (/Unexpected token|is not valid JSON/i.test(t)) return true;
+  return false;
+}
+
 function parseAskJson(raw: string): {
   answer: string;
   imageIntent: boolean;
@@ -116,14 +129,25 @@ function parseAskJson(raw: string): {
   guideMessage: string;
 } {
   const text = String(raw || "").trim();
+  if (looksLikeUpstreamGarbage(text)) {
+    throw new Error("算力紧张或请求超时，请稍后重试");
+  }
   let parsed: Record<string, unknown> = {};
   try {
     parsed = JSON.parse(extractJsonString(text) || text) as Record<string, unknown>;
   } catch {
-    parsed = { answer: text || "暂时没理解，请换个问法再试。" };
+    // 非 JSON 但可读正文：直接当 answer（勿把网关错误原文抛给用户）
+    if (looksLikeUpstreamGarbage(text) || text.length < 8) {
+      throw new Error("算力紧张或请求超时，请稍后重试");
+    }
+    parsed = { answer: text };
+  }
+  const answer = String(parsed.answer || "").trim();
+  if (!answer || looksLikeUpstreamGarbage(answer)) {
+    throw new Error("算力紧张或请求超时，请稍后重试");
   }
   return {
-    answer: String(parsed.answer || text || "暂时没理解，请换个问法再试。").trim().slice(0, 8000),
+    answer: answer.slice(0, 8000),
     imageIntent: Boolean(parsed.imageIntent),
     creationRelated: Boolean(parsed.creationRelated),
     suggestedImagePrompt: String(parsed.suggestedImagePrompt || "").trim().slice(0, 2000),
@@ -161,19 +185,42 @@ export async function askPlatformSkillQa(params: {
     skillsPrompt ? `\n${skillsPrompt.slice(0, 10000)}` : "",
   ].join("\n");
 
-  const response = await invokeLLM({
-    provider: "openai",
-    modelName: getPlatformStage2OpenAiModel(),
-    max_tokens: Math.min(4096, resolveGemini35FlashCopywritingMaxOutputTokens()),
-    temperature: 0.7,
-    response_format: { type: "json_object" },
-    reasoningEffort: "medium",
-    messages: [
-      { role: "system", content: ASK_SYSTEM },
-      { role: "user", content: userText },
-    ],
-  });
-  const parsed = parseAskJson(extractFirstChoicePlainText(response));
+  const ASK_MAX_ATTEMPTS = 2;
+  let parsed: ReturnType<typeof parseAskJson> | null = null;
+  let lastErr = "";
+  for (let attempt = 1; attempt <= ASK_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await invokeLLM({
+        provider: "openai",
+        modelName: getPlatformStage2OpenAiModel(),
+        max_tokens: PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+        reasoningEffort: "high",
+        messages: [
+          { role: "system", content: ASK_SYSTEM },
+          { role: "user", content: userText },
+        ],
+      });
+      const raw = extractFirstChoicePlainText(response);
+      parsed = parseAskJson(raw);
+      lastErr = "";
+      break;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      console.warn(`[askPlatformSkillQa] attempt ${attempt}/${ASK_MAX_ATTEMPTS}:`, lastErr.slice(0, 240));
+      if (attempt < ASK_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 350 * attempt));
+      }
+    }
+  }
+  if (!parsed) {
+    const friendly =
+      /Unexpected token|is not valid JSON|An error|非 JSON|空内容|timeout|超时|fetch failed|算力/i.test(lastErr)
+        ? "算力紧张或请求超时，请稍后重试"
+        : lastErr.slice(0, 160) || "问答失败，请稍后重试";
+    throw new Error(friendly);
+  }
 
   if (!params.isAdmin) {
     await logPlatformSkillQaFreeUse(params.userId, question);
@@ -232,7 +279,7 @@ export async function confirmPlatformSkillQaImage(params: {
     isFirstImageDiscount: isFirstDiscount,
     runGenerate: async () => {
       const flowLog: string[] = [];
-      appendImageFlowLog(flowLog, `[Skill问答生图] 开始 · 九折首张=${isFirstDiscount} · 扣费=${cost}`);
+      appendImageFlowLog(flowLog, `[创作顾问生图] 开始 · 九折首张=${isFirstDiscount} · 扣费=${cost}`);
       const skillsPrompt = await resolvePlatformSkillsPrompt({
         userId: params.userId,
         enabledSkillIds: params.enabledSkillIds,

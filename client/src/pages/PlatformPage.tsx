@@ -2220,7 +2220,8 @@ export default function PlatformPage() {
       setSkillQaImageOffer(res.imageOffer ?? null);
       setSkillQaImageUrl(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "问答失败");
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(sanitizePlatformUserMessage(msg, "问答失败，请稍后重试"));
     }
   }, [
     skillQaQuestion,
@@ -2300,11 +2301,12 @@ export default function PlatformPage() {
       <div className="rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/8 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white">Skill 顾问问答 · GPT‑5.6</div>
+            <div className="text-sm font-semibold text-white">创作顾问问答</div>
             <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-              提问创作 / Skill 用法免费（每日 {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
+              可问任何问题（创作 / Skill / 平台运营 / 时令赛道等），每日免费{" "}
+              {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
               {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
-              ）。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
+              。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
               {CREDIT_COSTS.platformSkillQaImageFirst} 点），之后 {CREDIT_COSTS.platformTopicFrameGraphic}{" "}
               点。生图会带上你勾选的 Skill（你的提示词仍优先）。
             </p>
@@ -2314,7 +2316,7 @@ export default function PlatformPage() {
           value={skillQaQuestion}
           onChange={(e) => setSkillQaQuestion(e.target.value)}
           rows={3}
-          placeholder="例如：封面怎么写才不说教？跨界科普怎么开头？帮我画一张网球发球封面试试…"
+          placeholder="例如：小红书一年各时节热销的电子版/虚拟资料有哪些？封面怎么写才不说教？帮我画一张网球发球封面试试…"
           className="mt-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white placeholder:text-gray-600 focus:border-[#49e6ff]/50 focus:outline-none"
         />
         <div className="mt-2 flex flex-wrap gap-2">
@@ -2384,7 +2386,7 @@ export default function PlatformPage() {
         ) : null}
         {skillQaImageUrl ? (
           <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
-            <img src={skillQaImageUrl} alt="Skill 问答生图" className="max-h-[420px] w-full object-contain bg-black/40" />
+            <img src={skillQaImageUrl} alt="创作顾问生图" className="max-h-[420px] w-full object-contain bg-black/40" />
           </div>
         ) : null}
       </div>
@@ -2394,7 +2396,7 @@ export default function PlatformPage() {
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-white">生成 Skill（全案 + 自定义共用）</div>
           <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图，以及上方 Skill 顾问问答/生图。内置在{" "}
+            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图，以及上方创作顾问问答/生图。内置在{" "}
             <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
             ；可上传 .md 追加。
           </p>
@@ -3139,7 +3141,7 @@ export default function PlatformPage() {
         {imageTraces.length > 0 ? (
           <div className="rounded-xl border border-[#c4b5fd]/25 bg-[rgba(99,102,241,0.08)] p-3">
             <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#c4b5fd]">
-              英文化 · 模型翻译
+              英文化 · 版式翻译
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
               合计轮询{" "}
@@ -8733,9 +8735,9 @@ export default function PlatformPage() {
                 <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-white">文案模型（Stage 1 + Stage 2 + 深度追问）</div>
+                      <div className="text-sm font-semibold text-white">文案引擎（战略看板 + 专属文案 + 深度追问）</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        战略看板、专属选题文案与深度追问走平台文案引擎；Debug 会显示实际进度与 token。
+                        战略看板、专属选题文案与深度追问走平台文案引擎；Debug 会显示实际进度与用量。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
