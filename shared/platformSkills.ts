@@ -96,12 +96,18 @@ ${parts.join("\n\n---\n\n")}`;
   return block;
 }
 
-export const PLATFORM_BUILTIN_SKILL_IDS = [
-  "director-craft",
-  "json-director-middleware",
+/** Canvas / Creative 专用：不进 /platform Skill 池与路由 */
+export const CANVAS_ONLY_SKILL_IDS = [
   "seedance-i2v-motion",
   "video-reverse-prompt",
   "manhua-drama-studio",
+] as const;
+
+export type CanvasOnlySkillId = (typeof CANVAS_ONLY_SKILL_IDS)[number];
+
+export const PLATFORM_BUILTIN_SKILL_IDS = [
+  "director-craft",
+  "json-director-middleware",
   "xhs-virtual-goods",
   "cultural-diversity",
   "lifestyle-diversity",
@@ -125,3 +131,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];
+
+export function isCanvasOnlySkillId(id: string): boolean {
+  return (CANVAS_ONLY_SKILL_IDS as readonly string[]).includes(id);
+}

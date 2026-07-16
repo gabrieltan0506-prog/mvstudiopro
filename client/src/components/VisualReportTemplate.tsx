@@ -125,7 +125,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
 
         {/* TAG ROW */}
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "22px" }}>
-          {["运营看板","赛道判断","流量扶持","现金奖励","热门赛道","算法推荐信号"].map((t) => (
+          {["平台趋势","蓝海词","赛道判断","流量扶持","热门赛道","算法推荐信号"].map((t) => (
             <span key={t} style={{ fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "3px 10px" }}>{t}</span>
           ))}
         </div>
@@ -157,13 +157,13 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
           </>
         )}
 
-        {/* ── 蓝海词 · Blue Ocean Keywords（全局）── */}
-        {data.globalBlueOceanWords && data.globalBlueOceanWords.length > 0 && (
-          <>
-            <div style={sec}>🌊 蓝海词 · Blue Ocean Keywords</div>
-            <div style={{ background: isDark ? "rgba(62,237,255,0.05)" : "rgba(14,120,140,0.05)", border: `1px solid ${isDark ? "rgba(62,237,255,0.22)" : "rgba(14,120,140,0.3)"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+        {/* ── 蓝海词 · Blue Ocean Keywords（全局；空时仍占位，避免整栏消失）── */}
+        <>
+          <div style={sec}>🌊 蓝海词 · Blue Ocean Keywords</div>
+          <div style={{ background: isDark ? "rgba(62,237,255,0.05)" : "rgba(14,120,140,0.05)", border: `1px solid ${isDark ? "rgba(62,237,255,0.22)" : "rgba(14,120,140,0.3)"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+            {(data.globalBlueOceanWords?.length || 0) > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "14px" }}>
-                {data.globalBlueOceanWords.map((bow, bi) => (
+                {(data.globalBlueOceanWords || []).map((bow, bi) => (
                   <div key={bi} style={{ background: isDark ? "rgba(62,237,255,0.04)" : "rgba(14,120,140,0.04)", border: `1px solid ${isDark ? "rgba(62,237,255,0.18)" : "rgba(14,120,140,0.2)"}`, borderRadius: "8px", padding: "12px 14px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
                       <span style={{ fontSize: "10px", color: isDark ? "rgba(62,237,255,0.6)" : "#1a8a9a", fontWeight: 600, letterSpacing: "0.06em" }}>一级</span>
@@ -171,17 +171,21 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     </div>
                     {bow.secondary && bow.secondary.length > 0 && (
                       <div style={{ display: "flex", flexWrap: "wrap" as const, gap: "5px", paddingLeft: "8px" }}>
-                          {bow.secondary.map((s2, si) => (
-                            <span key={si} style={{ fontSize: "11px", color: isDark ? "#a5f3fc" : "#1a6a78", background: isDark ? "rgba(62,237,255,0.07)" : "rgba(14,120,140,0.07)", border: `1px solid ${isDark ? "rgba(62,237,255,0.2)" : "rgba(14,120,140,0.2)"}`, borderRadius: "4px", padding: "2px 8px" }}>{s2}</span>
-                          ))}
-                        </div>
+                        {bow.secondary.map((s2, si) => (
+                          <span key={si} style={{ fontSize: "11px", color: isDark ? "#a5f3fc" : "#1a6a78", background: isDark ? "rgba(62,237,255,0.07)" : "rgba(14,120,140,0.07)", border: `1px solid ${isDark ? "rgba(62,237,255,0.2)" : "rgba(14,120,140,0.2)"}`, borderRadius: "4px", padding: "2px 8px" }}>{s2}</span>
+                        ))}
+                      </div>
                     )}
                   </div>
                 ))}
               </div>
-            </div>
-          </>
-        )}
+            ) : (
+              <div style={{ fontSize: "12px", color: muted, lineHeight: 1.7 }}>
+                本窗样本未能稳定抽出分级蓝海词；请换窗口重跑「平台趋势分析」，或对照下方赛道增长与平台热词自行提炼搜索词。
+              </div>
+            )}
+          </div>
+        </>
 
         {/* ── trafficSupport + hotFestivals (g2) ── */}
         {((data.trafficSupport?.length || 0) > 0 || (data.hotFestivals?.length || 0) > 0) && (

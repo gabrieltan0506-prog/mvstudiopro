@@ -1,4 +1,5 @@
 import type { PlatformWindowDays } from "@shared/decisionIntelligencePlatformHint";
+import { normalizeBlueOceanEntries } from "@shared/blueOceanLexicon";
 import type { VisualReportData } from "@/components/VisualReportTemplate";
 
 export type VisualReportPlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "bilibili";
@@ -14,20 +15,43 @@ const PLATFORM_NAMES: Record<VisualReportPlatformKey, string> = {
 
 type BlueOceanWord = { primary: string; secondary: string[] };
 
-function normalizeBlueOceanWords(raw: unknown): BlueOceanWord[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((b) => b && typeof b === "object" && (b as { primary?: unknown }).primary)
-    .map((b) => {
-      const item = b as { primary?: unknown; secondary?: unknown };
-      return {
-        primary: String(item.primary || "").trim(),
-        secondary: Array.isArray(item.secondary)
-          ? item.secondary.map((s) => String(s).trim()).filter(Boolean)
-          : [],
-      };
-    })
-    .filter((b) => b.primary);
+/** 兼容 string[] 与 { primary, secondary[] }[]，避免模型吐扁平数组时整栏消失 */
+export function normalizeBlueOceanWords(raw: unknown): BlueOceanWord[] {
+  return normalizeBlueOceanEntries(raw).map((e) => ({
+    primary: e.primary,
+    secondary: e.secondary,
+  }));
+}
+
+/** 蓝海为空时，用赛道增长名 + 平台热词兜底，保证 PNG 仍有「蓝海词」区块 */
+export function fallbackBlueOceanWords(opts: {
+  trackGrowth?: Array<{ name?: string } | null> | null;
+  platformDetails?: Array<{ hotTopics?: string[] | null; blueOceanWords?: BlueOceanWord[] | null } | null> | null;
+}): BlueOceanWord[] {
+  const out: BlueOceanWord[] = [];
+  const seen = new Set<string>();
+  const push = (primary: string, secondary: string[] = []) => {
+    const p = String(primary || "").trim();
+    if (!p || seen.has(p) || out.length >= 6) return;
+    seen.add(p);
+    out.push({ primary: p, secondary: secondary.filter(Boolean).slice(0, 6) });
+  };
+
+  for (const row of opts.platformDetails || []) {
+    for (const bow of row?.blueOceanWords || []) {
+      if (bow?.primary) push(bow.primary, bow.secondary || []);
+    }
+  }
+  for (const t of opts.trackGrowth || []) {
+    if (t?.name) push(String(t.name).trim());
+  }
+  for (const row of opts.platformDetails || []) {
+    for (const topic of row?.hotTopics || []) {
+      const name = String(topic || "").trim();
+      if (name.length >= 2 && name.length <= 18) push(name);
+    }
+  }
+  return out;
 }
 
 /** generateVisualReport 仅支持 3/7/15/30 天；45 天窗口映射为 30 天报表。 */
@@ -60,12 +84,35 @@ export function mapGenerateVisualReportResult(
   const report = result.report;
   const windowDays = opts.windowDays;
 
+  const platformDetails = (Array.isArray(report.platformDetails) ? report.platformDetails : []).map(
+    (p: Record<string, unknown>) => ({
+      platform: String(p.platform || ""),
+      displayName:
+        PLATFORM_NAMES[p.platform as VisualReportPlatformKey] || String(p.platform || ""),
+      trafficBoosters: Array.isArray(p.trafficBoosters) ? (p.trafficBoosters as string[]) : [],
+      cashRewards: Array.isArray(p.cashRewards) ? (p.cashRewards as string[]) : [],
+      hotTopics: Array.isArray(p.hotTopics) ? (p.hotTopics as string[]) : [],
+      blueOceanWords: normalizeBlueOceanWords(p.blueOceanWords),
+    }),
+  );
+
+  const trackGrowth = Array.isArray(report.trackGrowth)
+    ? (report.trackGrowth as VisualReportData["trackGrowth"])
+    : [];
+
+  let globalBlueOceanWords = normalizeBlueOceanWords(report.globalBlueOceanWords);
+  if (globalBlueOceanWords.length === 0) {
+    globalBlueOceanWords = fallbackBlueOceanWords({ trackGrowth, platformDetails });
+  }
+
   return {
     reportTitle: String(report.reportTitle || `平台趋势看板 · 近${windowDays}天`),
     dateRange: buildVisualReportDateRange(windowDays),
     theme: opts.theme,
-    insightSummary: Array.isArray(report.insightSummary) ? (report.insightSummary as VisualReportData["insightSummary"]) : [],
-    trackGrowth: Array.isArray(report.trackGrowth) ? (report.trackGrowth as VisualReportData["trackGrowth"]) : [],
+    insightSummary: Array.isArray(report.insightSummary)
+      ? (report.insightSummary as VisualReportData["insightSummary"])
+      : [],
+    trackGrowth,
     audiencesAndBiz: Array.isArray(report.audiencesAndBiz)
       ? (report.audiencesAndBiz as VisualReportData["audiencesAndBiz"])
       : [],
@@ -74,15 +121,7 @@ export function mapGenerateVisualReportResult(
       : [],
     trafficSupport: Array.isArray(report.trafficSupport) ? (report.trafficSupport as string[]) : [],
     hotFestivals: Array.isArray(report.hotFestivals) ? (report.hotFestivals as string[]) : [],
-    globalBlueOceanWords: normalizeBlueOceanWords(report.globalBlueOceanWords),
-    platformDetails: (Array.isArray(report.platformDetails) ? report.platformDetails : []).map((p: Record<string, unknown>) => ({
-      platform: String(p.platform || ""),
-      displayName:
-        PLATFORM_NAMES[p.platform as VisualReportPlatformKey] || String(p.platform || ""),
-      trafficBoosters: Array.isArray(p.trafficBoosters) ? (p.trafficBoosters as string[]) : [],
-      cashRewards: Array.isArray(p.cashRewards) ? (p.cashRewards as string[]) : [],
-      hotTopics: Array.isArray(p.hotTopics) ? (p.hotTopics as string[]) : [],
-      blueOceanWords: normalizeBlueOceanWords(p.blueOceanWords),
-    })),
+    globalBlueOceanWords,
+    platformDetails,
   };
 }
