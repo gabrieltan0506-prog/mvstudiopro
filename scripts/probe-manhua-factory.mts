@@ -13,12 +13,16 @@ import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "../shared/videoReversePrompt.ts";
 const BASE = String(process.env.CANVAS_PROBE_BASE_URL || "https://www.mvstudiopro.com")
   .trim()
   .replace(/\/$/, "");
-const TIMEOUT_MS = Math.max(15_000, Number(process.env.CANVAS_PROBE_TIMEOUT_MS || 120_000) || 120_000);
+const TIMEOUT_MS = Math.max(15_000, Number(process.env.CANVAS_PROBE_TIMEOUT_MS || 180_000) || 180_000);
+const IMAGE_TIMEOUT_MS = Math.max(
+  TIMEOUT_MS,
+  Number(process.env.CANVAS_PROBE_IMAGE_TIMEOUT_MS || 240_000) || 240_000,
+);
 
-async function fetchJson(url: string, body: unknown) {
+async function fetchJson(url: string, body: unknown, timeoutMs = TIMEOUT_MS) {
   const t0 = Date.now();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const resp = await fetch(url, {
       method: "POST",
@@ -123,24 +127,33 @@ async function main() {
   const keyArtPrompt =
     `${MANHUA_DRAMA_DEFAULT_PROMPTS.key_art}\n` +
     reverseText.split("\n").slice(0, 12).join("\n").slice(0, 800);
-  const keyArt = await fetchJson(
-    `${BASE}/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`,
-    {
-      prompt: keyArtPrompt,
-      aspectRatio: "9:16",
-      imageSize: "1K",
-      tier: "flash",
-      model: "gemini-3.1-flash-image-preview",
-      numberOfImages: 1,
-    },
-  );
-  const urls = Array.isArray(keyArt.json?.imageUrls) ? keyArt.json.imageUrls : [];
-  const keyArtOk = keyArt.ok && Boolean(keyArt.json?.ok) && urls.length > 0;
-  console.log(
-    `[${keyArtOk ? "PASS" : "FAIL"}] 工厂·关键静帧 (${keyArt.ms}ms http=${keyArt.status}) ${
-      keyArtOk ? String(urls[0]).slice(0, 120) : String(keyArt.json?.error || keyArt.text).slice(0, 200)
-    }`,
-  );
+  let keyArtOk = false;
+  let keyArtDetail = "";
+  try {
+    const keyArt = await fetchJson(
+      `${BASE}/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`,
+      {
+        prompt: keyArtPrompt,
+        aspectRatio: "9:16",
+        imageSize: "1K",
+        tier: "flash",
+        model: "gemini-3.1-flash-image-preview",
+        numberOfImages: 1,
+      },
+      IMAGE_TIMEOUT_MS,
+    );
+    const urls = Array.isArray(keyArt.json?.imageUrls) ? keyArt.json.imageUrls : [];
+    keyArtOk = keyArt.ok && Boolean(keyArt.json?.ok) && urls.length > 0;
+    keyArtDetail = keyArtOk
+      ? String(urls[0]).slice(0, 120)
+      : String(keyArt.json?.error || keyArt.text).slice(0, 200);
+    console.log(
+      `[${keyArtOk ? "PASS" : "FAIL"}] 工厂·关键静帧 (${keyArt.ms}ms http=${keyArt.status}) ${keyArtDetail}`,
+    );
+  } catch (e: unknown) {
+    keyArtDetail = e instanceof Error ? e.message : String(e);
+    console.log(`[FAIL] 工厂·关键静帧 (exception) ${keyArtDetail.slice(0, 200)}`);
+  }
   if (!keyArtOk) process.exit(1);
 
   console.log("[manhua-factory-probe] 五段可用（故事→角色→节拍→反推→静帧）");
