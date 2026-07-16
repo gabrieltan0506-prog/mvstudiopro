@@ -10,31 +10,23 @@ export default function HomePricing() {
       style={{
         maxWidth: 1240,
         margin: "0 auto",
-        padding: "48px 20px 24px",
+        padding: "36px 20px 16px",
       }}
     >
       <h2
         style={{
           color: "white",
-          fontSize: 28,
+          fontSize: 24,
           fontWeight: 900,
           marginBottom: 8,
         }}
       >
-        积分包定价
-        <span style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.45)", marginLeft: 10 }}>
-          对外以积分加值包为准
-        </span>
+        积分包
       </h2>
-      <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 14, marginBottom: 24, maxWidth: 760 }}>
-        不再展示单功能逐项标价；创作所需 Credits 以您购买的积分包为准，在功能使用时从余额扣减。充值与周期优惠详见套餐页。
+      <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 14, marginBottom: 20, maxWidth: 640 }}>
+        按积分包充值，使用时从余额扣减。试用与体验账号导出可能带水印。
       </p>
-      <p style={{ color: "rgba(253,224,71,0.88)", fontSize: 13, marginBottom: 24, maxWidth: 760, lineHeight: 1.65, padding: "12px 14px", borderRadius: 14, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)" }}>
-        <strong style={{ color: "#fde68a" }}>试用与公平使用：</strong>
-        ¥19.9 试用包及免费、未订阅等体验账户，为防止多邮箱重复领取试用资源，<strong style={{ color: "white" }}>生成的图片与视频可能带有平台水印</strong>；正式积分包与会员档位可按规则减少或去除水印，以实际导出为准。
-      </p>
-
-      <h3 style={{ color: "white", fontSize: 18, fontWeight: 800, marginBottom: 14 }}>积分加值包</h3>
+      <h3 style={{ color: "white", fontSize: 16, fontWeight: 800, marginBottom: 12 }}>加值包</h3>
       <div
         style={{
           display: "grid",
