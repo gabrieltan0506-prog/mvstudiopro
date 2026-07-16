@@ -270,30 +270,42 @@ async function probeOmniGet(interactionId: string) {
 }
 
 async function probeSeedance(imageUrl?: string) {
-  const name = "视频·seedanceI2V（EvoLink / fal）";
-  const r = await fetchJson(`${BASE}/api/jobs?op=seedanceI2V`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt: "Cinematic tennis serve, stable camera, bright daylight",
-      imageUrl: imageUrl || undefined,
-      resolution: "720p",
-      aspectRatio: "9:16",
-      duration: 5,
-      generateAudio: false,
-      preferEvolink: true,
-    }),
-  });
-  const ok = r.ok && Boolean(r.json?.videoUrl || r.json?.ok);
-  record(
-    name,
-    ok,
-    r.ms,
-    ok
-      ? `provider=${r.json?.provider || "?"} ${trunc(r.json?.videoUrl, 100)}`
-      : trunc(r.json?.error || r.json?.message || r.json || r.text),
-    r.status,
+  // 与画布一致：优先打 api.mvstudiopro.com（Fly 直连），避开 www→Vercel 反代超时
+  const seedanceBases = Array.from(
+    new Set([
+      BASE.includes("www.mvstudiopro.com") || BASE.includes("://mvstudiopro.com")
+        ? "https://api.mvstudiopro.com"
+        : BASE,
+      BASE,
+    ]),
   );
+  for (const base of seedanceBases) {
+    const name = `视频·seedanceI2V（${base.includes("api.") ? "Fly直连" : "同源"}）`;
+    const r = await fetchJson(`${base}/api/jobs?op=seedanceI2V`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "Cinematic tennis serve, stable camera, bright daylight",
+        imageUrl: imageUrl || undefined,
+        resolution: "720p",
+        aspectRatio: "9:16",
+        duration: 5,
+        generateAudio: false,
+        preferEvolink: true,
+      }),
+    });
+    const ok = r.ok && Boolean(r.json?.videoUrl || r.json?.ok);
+    record(
+      name,
+      ok,
+      r.ms,
+      ok
+        ? `provider=${r.json?.provider || "?"} ${trunc(r.json?.videoUrl, 100)}`
+        : trunc(r.json?.error || r.json?.message || r.json || r.text),
+      r.status,
+    );
+    if (ok) return;
+  }
 }
 
 async function main() {

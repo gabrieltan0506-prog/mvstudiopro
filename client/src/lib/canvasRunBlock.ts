@@ -1,4 +1,6 @@
 import type { CanvasBlock } from "./canvasTypes";
+import { withFlyHealthGate } from "./flyHealthGate";
+import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import {
   createOmniInteraction,
   pollOmniInteractionUntilDone,
@@ -16,15 +18,20 @@ export type CanvasRunDeps = {
 
 async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refImageUrl?: string): Promise<string> {
   // 注意：勿再调用 workflowGenerateSceneImage（那是工作流分镜 API，强制要 workflowId）
-  const res = await fetch(`/api/jobs?op=canvasGptImage2`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      aspectRatio,
-      referenceImageUrl: refImageUrl || undefined,
+  const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
+  const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
+  const res = await withFlyHealthGate(probeOrigin, () =>
+    fetch(gptUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "omit",
+      body: JSON.stringify({
+        prompt,
+        aspectRatio,
+        referenceImageUrl: refImageUrl || undefined,
+      }),
     }),
-  });
+  );
   const text = await res.text();
   let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
   try {
@@ -99,20 +106,36 @@ async function runSeedance20(
   imageUrl: string | undefined,
   aspectRatio: "9:16" | "16:9",
 ): Promise<string> {
-  const res = await fetch(`/api/jobs?op=seedanceI2V`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      imageUrl: imageUrl || undefined,
-      resolution: "720p",
-      aspectRatio,
-      duration: 8,
-      generateAudio: true,
-      preferEvolink: true,
+  // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
+  const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
+  const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
+  const res = await withFlyHealthGate(probeOrigin, () =>
+    fetch(seedanceUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "omit",
+      body: JSON.stringify({
+        prompt,
+        imageUrl: imageUrl || undefined,
+        resolution: "720p",
+        aspectRatio,
+        duration: 8,
+        generateAudio: true,
+        preferEvolink: true,
+      }),
     }),
-  });
-  const json = (await res.json()) as { videoUrl?: string; error?: string; message?: string };
+  );
+  const text = await res.text();
+  let json: { videoUrl?: string; error?: string; message?: string; ok?: boolean } = {};
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(
+      /An error o|ROUTER_EXTERNAL/i.test(text)
+        ? "Seedance 网关超时，请稍后重试（已尽量直连长任务 API）"
+        : `Seedance 2.0 生成失败：${text.slice(0, 160)}`,
+    );
+  }
   if (!res.ok || !json.videoUrl) {
     throw new Error(json.error || json.message || "Seedance 2.0 生成失败");
   }
