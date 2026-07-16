@@ -337,8 +337,60 @@ Technique cards (pick per beat):
 ${formatCraftCardsEn()}
 Prefer larger glyphs; keep each cell short (≤12–14 chars).`;
 
-/** 写入 Stage2 / 自定义选题 */
-export const STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH = `【灯光·运镜·情绪·文案节奏·高度需求】lightingAndCamera 与 stepByStepScript **强烈建议**写清：主光/色温/明暗比、运镜意图、情绪弧线，以及口播咬字节奏。可借用包括但不限于：建筑高反差与信息缺口、温暖魔术时刻与发现感、光晕剪影与延迟揭示、工业冷光与世界感、运动闪切与群体羁绊、雾霾大光域与静默、霓虹暧昧余韵、精密顶侧冷光与细节不安、天气即光与群像浪潮、动机窗光诚实塑形、剧集家庭伦理长叙事光影、传奇隐忍与连载「下一拍」——按段落选用一种主手法。
+/**
+ * 按种子稳定选取手法卡（全案六维 / 自定义选题各条轮换，避免同批撞同一张卡）。
+ */
+export function pickCraftTechniqueProfile(seed: number | string): CraftTechniqueProfile {
+  const profiles = CRAFT_TECHNIQUE_PROFILES;
+  let h = 0;
+  const s = String(seed);
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
+  if (typeof seed === "number" && Number.isFinite(seed)) {
+    h = (h + (seed >>> 0)) >>> 0;
+  }
+  return profiles[h % profiles.length]!;
+}
+
+/**
+ * 注入 Stage2 / 自定义脚本：指定本条主手法卡（成稿只写手法词）。
+ */
+export function formatAssignedCraftTechniqueZh(
+  profile: CraftTechniqueProfile,
+  opts?: { slotLabel?: string; forGraphic?: boolean },
+): string {
+  const slot = opts?.slotLabel ? `（${opts.slotLabel}）` : "";
+  const motifs = profile.creativeMotifsZh.map((m) => `· ${m}`).join("\n");
+  if (opts?.forGraphic) {
+    return `【本条图文·视觉气质手法卡】${slot}
+- 系统手法卡 id（勿写入成稿）：${profile.id}
+- 可借用灯光气质：${profile.lightingZh}
+- 可借用情绪/构图感：${profile.emotionZh}；${profile.cameraZh}
+- 文案节奏：${profile.copyRhythmZh}
+- 创意母题（改写进用户场景）：
+${motifs}
+【输出形态】图文 detailedScript 仍是读者向笔记页；封面与内页插画可借上述光影/情绪词。禁止六栏拍摄教学格、禁止导演名/片名/致敬。`.trim();
+  }
+  return `【本条导演灵感画布·主手法卡】${slot}
+- 系统手法卡 id（勿写入成稿）：${profile.id}
+- 灯光：${profile.lightingZh}
+- 运镜：${profile.cameraZh}
+- 情绪：${profile.emotionZh}
+- 文案节奏：${profile.copyRhythmZh}
+- 创意母题（改写进用户场景）：
+${motifs}
+【输出形态】本条 detailedScript 与 executionDetails 是**导演灵感画布**（拍摄顺序 + 运镜方式 + 灯光情绪递进），不是死板分镜清单。
+- lightingAndCamera：写清本条主手法如何服务叙事（主光/色温/明暗比 + 运镜意图）。
+- stepByStepScript 每步建议：【时段·起/承/转/合】画面｜运镜｜灯光｜情绪｜口播（可压缩，但五项意识要在）。
+- 成稿禁止导演名、片名、「某某风/致敬」。`.trim();
+}
+
+/** 写入 Stage2 / 自定义选题 / 决策智库扩写 */
+export const STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH = `【编导·导演灵感画布·高度需求】
+短视频的 detailedScript 与 executionDetails **不是**死板分镜表，而是**导演灵感画布**：全局风格气质 + 起—承—转—合拍摄顺序 + 运镜方式 + 灯光情绪弧 + 观众必看点（为后续编导分镜图 / 多参考成片留可迁移光影走位）。
+- lightingAndCamera 与 stepByStepScript **强烈建议**写清：主光/色温/明暗比、运镜意图、情绪弧线、口播咬字节奏。
+- **每条选题主用 1 种手法卡**（优先遵循系统为本条指定的主手法卡；若无指定则从下列自选一种）；**下一条必须换卡**，禁止六条撞同一套光影。
+- 手法词库（只写手法，不写人名/片名）：建筑高反差与信息缺口、温暖魔术时刻与发现感、光晕剪影与延迟揭示、工业冷光与世界感、运动闪切与群体羁绊、雾霾大光域与静默、霓虹暧昧余韵、精密顶侧冷光与细节不安、天气即光与群像浪潮、动机窗光诚实塑形、剧集家庭伦理长叙事光影、传奇隐忍与连载「下一拍」。
+- 图文笔记：页大纲仍读者向；封面与内页插画气质可借手法卡光影/情绪词，禁止六栏拍摄教学格。
 ${CRAFT_BORROW_NOT_HOMAGE_GUIDANCE_ZH}`;
 
 /** @deprecated 兼容旧名；等同 CRAFT_BORROW_NOT_HOMAGE_GUIDANCE_ZH */
