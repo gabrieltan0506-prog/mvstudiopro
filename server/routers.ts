@@ -10128,11 +10128,15 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return { ok: true as const, analysis: text };
       }),
 
-    /** 图片编辑（gpt-image-2 edit endpoint，用现有图 + 新 prompt 修改） */
+    /** 图片编辑（gpt-image-2 edits：原图 + 可选多图融合 + 可选遮罩局部改） */
     edit: publicProcedure
       .input(z.object({
         imageUrl: z.string().min(1),
         prompt: z.string().min(1),
+        /** 额外融合参考图（与 imageUrl 合计最多 16） */
+        referenceImageUrls: z.array(z.string().min(1)).max(15).optional(),
+        /** 遮罩 PNG URL：透明=可改，不透明=保留 */
+        maskUrl: z.string().min(1).optional(),
         size: z.string().optional(),
         quality: z.string().optional(),
         output_format: z.string().optional(),
@@ -10141,12 +10145,25 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
         if (!apiKey) return { ok: false as const, error: "Missing OPENAI_API_KEY" };
 
-        // 下载原图为 Buffer
-        let imgBuf: Buffer;
+        const imageUrls = Array.from(
+          new Set(
+            [input.imageUrl, ...(input.referenceImageUrls || [])]
+              .map((u) => String(u || "").trim())
+              .filter(Boolean),
+          ),
+        ).slice(0, 16);
+
+        const downloadBuf = async (url: string): Promise<Buffer> => {
+          const imgRes = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+          if (!imgRes.ok) throw new Error(`download image failed: ${imgRes.status}`);
+          return Buffer.from(await imgRes.arrayBuffer());
+        };
+
+        let buffers: Buffer[];
+        let maskBuf: Buffer | null = null;
         try {
-          const imgRes = await fetch(input.imageUrl, { signal: AbortSignal.timeout(30_000) });
-          if (!imgRes.ok) return { ok: false as const, error: `download image failed: ${imgRes.status}` };
-          imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          buffers = await Promise.all(imageUrls.map((u) => downloadBuf(u)));
+          if (input.maskUrl) maskBuf = await downloadBuf(String(input.maskUrl).trim());
         } catch (e: any) {
           return { ok: false as const, error: `download image error: ${e?.message}` };
         }
@@ -10168,14 +10185,23 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         if (input.quality) addField("quality", input.quality);
         if (input.output_format) addField("output_format", input.output_format);
 
-        // 图片 part
         const ext = (input.output_format === "jpeg" ? "jpg" : (input.output_format || "png"));
         const mime = ext === "jpg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
-        parts.push(Buffer.from(
-          `--${boundary}${crlf}Content-Disposition: form-data; name="image[]"; filename="image.${ext}"${crlf}Content-Type: ${mime}${crlf}${crlf}`
-        ));
-        parts.push(imgBuf);
-        parts.push(Buffer.from(`${crlf}--${boundary}--${crlf}`));
+        for (let i = 0; i < buffers.length; i++) {
+          parts.push(Buffer.from(
+            `--${boundary}${crlf}Content-Disposition: form-data; name="image[]"; filename="image-${i}.${ext}"${crlf}Content-Type: ${mime}${crlf}${crlf}`
+          ));
+          parts.push(buffers[i]!);
+          parts.push(Buffer.from(crlf));
+        }
+        if (maskBuf) {
+          parts.push(Buffer.from(
+            `--${boundary}${crlf}Content-Disposition: form-data; name="mask"; filename="mask.png"${crlf}Content-Type: image/png${crlf}${crlf}`
+          ));
+          parts.push(maskBuf);
+          parts.push(Buffer.from(crlf));
+        }
+        parts.push(Buffer.from(`--${boundary}--${crlf}`));
 
         const body = Buffer.concat(parts);
 
@@ -10201,21 +10227,21 @@ ${input.lyrics || "（纯音乐，无歌词）"}
 
         const items: Array<{ b64_json?: string; url?: string }> = Array.isArray(json?.data) ? json.data : [];
         const { put } = await import("@vercel/blob");
-        const imageUrls: string[] = [];
+        const resultImageUrls: string[] = [];
         for (const item of items) {
-          if (item.url) { imageUrls.push(item.url); continue; }
+          if (item.url) { resultImageUrls.push(item.url); continue; }
           if (item.b64_json) {
             try {
               const buf = Buffer.from(item.b64_json, "base64");
               const blob = await put(`gpt-edit-${Date.now()}.png`, buf, { access: "public", contentType: "image/png" });
-              imageUrls.push(blob.url);
+              resultImageUrls.push(blob.url);
             } catch {
-              imageUrls.push(`data:image/png;base64,${item.b64_json}`);
+              resultImageUrls.push(`data:image/png;base64,${item.b64_json}`);
             }
           }
         }
-        if (imageUrls.length === 0) return { ok: false as const, error: "no image in response" };
-        return { ok: true as const, imageUrl: imageUrls[0] };
+        if (resultImageUrls.length === 0) return { ok: false as const, error: "no image in response" };
+        return { ok: true as const, imageUrl: resultImageUrls[0] };
       }),
   }),
 

@@ -1123,6 +1123,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   /** EvoLink edit 模式参考图（如用户上传的人像 URL）；非空则注入换人指令 + image_urls。 */
   referenceImageUrls?: string[];
   /**
+   * 局部重绘遮罩 PNG 的公网 URL（alpha：透明=可改区域，不透明=保留）。
+   * 仅在传了 referenceImageUrls 时生效；须服务器可直接抓取。
+   */
+  maskUrl?: string;
+  /**
    * Canvas / 通用改图：有参考图时**不**注入换人/换脸指令，只按 prompt 做 image edit。
    * 平台封面「锁脸换人」保持默认 false。
    */
@@ -1172,12 +1177,17 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     L,
     `[单帧·唯一路径] EvoLink GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · resolution=2K · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""} · prompt≈${evoPrompt.length}字`,
   );
+  const maskUrl = String(options.maskUrl || "").trim() || undefined;
+  if (hasRef && maskUrl) {
+    appendImageFlowLog(L, `[单帧·遮罩] mask_url 已附带 · ${maskUrl.slice(0, 96)}`);
+  }
   const evoErr: { message?: string } = {};
   const fromEvolink = await postEvolinkGptImage2AndUpload(evoPrompt, options.gcsSubdir, {
     aspectRatio: options.aspectRatio,
     flowLog: L,
     quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
     imageUrls: hasRef ? refImageUrls : undefined,
+    maskUrl: hasRef ? maskUrl : undefined,
     captureError: evoErr,
   });
   if (fromEvolink) {
@@ -1199,6 +1209,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
         flowLog: L,
         quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
         imageUrls: refImageUrls,
+        maskUrl,
         captureError: retryErr,
       },
     );
