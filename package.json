@@ -27,6 +27,7 @@
     "ambient:ping-gemini": "tsx scripts/ping-dashboard-gemini-models.mts",
     "gemini:monitor": "tsx scripts/gemini-monitor.ts",
     "canvas:probe": "tsx scripts/probe-canvas-apis.mts",
+    "manhua:probe": "tsx scripts/probe-manhua-factory.mts",
     "yt:local-fetch": "tsx scripts/yt-local-fetch.mts",
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
     "ambient:fetch-images:refresh": "node scripts/fetch-ambient-images.mjs --refresh",
