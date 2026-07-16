@@ -76,7 +76,7 @@ export const platformTopicShortlistItemSchema = z.object({
   hookSketch: z.string().min(4).max(200),
   conveyGoal: z.string().min(4).max(240),
   skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
-  primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "default"]),
+  primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "virtual", "default"]),
   formatHint: z.enum(["图文", "短视频"]).default("图文"),
   dedupeKey: z.string().min(1).max(80),
   commentHook: z.string().min(1).max(PLATFORM_COMMENT_HOOK_MAX_CHARS).optional(),
@@ -229,7 +229,7 @@ export function dedupeTopicShortlist<T extends { title: string; dedupeKey?: stri
 export const PLATFORM_SKILL_MASTER_READONLY = {
   title: "Skill 自动路由总管（只读）",
   summary:
-    "勾选 = 允许池，不是全灌。生成时默认 auto：先挂核心 Skill，再按选题互斥分配 specialty 赛道（fmcg / forensic / crossover / contrast）；同批 specialty 不重复。",
+    "勾选 = 允许池，不是全灌。生成时默认 auto：先挂核心 Skill，再按选题互斥分配 specialty 赛道（virtual / fmcg / forensic / crossover / contrast）；同批 specialty 不重复。视频向另挂 JSON 导演中台与 Seedance 微动。",
   coreIds: [
     "hook-solution-cta",
     "review-safe-voice",
@@ -240,6 +240,11 @@ export const PLATFORM_SKILL_MASTER_READONLY = {
     "lifestyle-diversity",
   ],
   lanes: [
+    {
+      id: "virtual",
+      label: "小红书虚拟资料店",
+      skills: "xhs-virtual-goods · xhs-collectible-note · cover-stop-scroll · json-director-middleware",
+    },
     { id: "fmcg", label: "畅销品痛点科普", skills: "4season-fmcg-popsci · label-debunk · authority · monetize" },
     { id: "forensic", label: "法医视角·还怎么活", skills: "forensic-life-lens · authority · medical-resource-library" },
     {

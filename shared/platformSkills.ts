@@ -98,6 +98,9 @@ ${parts.join("\n\n---\n\n")}`;
 
 export const PLATFORM_BUILTIN_SKILL_IDS = [
   "director-craft",
+  "json-director-middleware",
+  "seedance-i2v-motion",
+  "xhs-virtual-goods",
   "cultural-diversity",
   "lifestyle-diversity",
   "hook-solution-cta",

@@ -92,13 +92,13 @@ export const CANVAS_KIND_META: Record<
   },
   image: {
     label: "图片生成",
-    hint: "封面、海报、插图",
+    hint: "封面、海报、插图（JSON 导演中台→LLM 翻译后生图）",
     icon: ImageIcon,
     color: "from-emerald-500/30 to-teal-600/10",
   },
   video: {
     label: "视频生成",
-    hint: "Gemini Omini 或 Seedance 2.0 · 文生/图生视频",
+    hint: "Gemini Omini / Seedance：有参考图时自动做运镜+微动+氛围减法",
     icon: Video,
     color: "from-sky-500/30 to-cyan-600/10",
   },
@@ -128,8 +128,8 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
 
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
-  { kind: "image", label: "图片生成", hint: "生成插图、海报、封面" },
-  { kind: "video", label: "视频生成", hint: "Gemini Omini / Seedance 2.0" },
+  { kind: "image", label: "图片生成", hint: "JSON 导演中台→生图" },
+  { kind: "video", label: "视频生成", hint: "Seedance/Omini · I2V 微动公式" },
   { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
 

@@ -6,7 +6,7 @@ export type PlatformSkillRouteMode = "auto" | "all";
 
 export type PlatformSkillSheetKind = "graphic" | "video" | "unknown";
 
-export type PlatformSkillLane = "fmcg" | "forensic" | "crossover" | "contrast" | "default";
+export type PlatformSkillLane = "fmcg" | "forensic" | "crossover" | "contrast" | "virtual" | "default";
 
 export type PlatformSkillRouteResult = {
   selectedIds: string[];
@@ -35,8 +35,16 @@ type LaneDef = {
 
 const LANES: LaneDef[] = [
   {
-    id: "fmcg",
+    id: "virtual",
     priority: 1,
+    patterns: [
+      /虚拟电商|虚拟资料|资料店|数字产品|模板包|题库|计划书模板|家长会发言|虚拟带货|资料包|在线交付|可重复交付/,
+    ],
+    skillIds: ["xhs-virtual-goods", "xhs-collectible-note", "cover-stop-scroll", "json-director-middleware"],
+  },
+  {
+    id: "fmcg",
+    priority: 2,
     patterns: [
       /雪糕|冰淇淋|冰棍|冷饮|配料|营养成分|零食|奶茶|饮料|礼盒|月饼|火锅底料|畅销|0糖|零糖|代糖|植物基|低脂|添加剂|乳化剂|增稠剂|可可脂|白砂糖|添加糖|盐油糖|三减|包装背面|翻标签|识读/,
     ],
@@ -51,7 +59,7 @@ const LANES: LaneDef[] = [
   },
   {
     id: "forensic",
-    priority: 2,
+    priority: 3,
     patterns: [
       /法医|尸检|猝死|暴毙|安全带|头盔|保命|急症|喉头|窒息|口角|劝酒|硬扛|窗口期|死因|解剖(?!学课堂)/,
     ],
@@ -59,7 +67,7 @@ const LANES: LaneDef[] = [
   },
   {
     id: "crossover",
-    priority: 3,
+    priority: 4,
     patterns: [
       /器官|拟人|谢谢你|对不起.*心脏|我的心脏|胰岛|线粒体|迷走神经|终身劳动|拳头大|医学科普|默沙东|MSD|急救知识|3D\s*可视化|BioDigital|疾病机制|解剖动画|症状自查|硬核网站.*疾病|肿瘤细胞|心肺复苏|海姆立克/,
     ],
@@ -67,7 +75,7 @@ const LANES: LaneDef[] = [
   },
   {
     id: "contrast",
-    priority: 4,
+    priority: 5,
     patterns: [/反差身份|应徵服务员|应聘服务员|博士.*服务|身份错位|反转.*高潮|服务员.*博士/],
     skillIds: ["contrast-reversal-climax"],
   },
@@ -137,6 +145,8 @@ export function routePlatformSkillIds(params: {
 
 function laneAvailableInPool(lane: PlatformSkillLane, pool: Set<string>): boolean {
   if (lane === "default") return true;
+  // 虚拟电商赛道以主 Skill 是否在允许池为准，避免仅有封面 Skill 就误路由
+  if (lane === "virtual") return pool.has("xhs-virtual-goods");
   return laneSkillIds(lane).some((id) => pool.has(id));
 }
 
@@ -157,23 +167,28 @@ export function routePlatformSkillIdsForLane(params: {
   };
   const reasons = [`forcedLane=${params.lane}`];
   for (const id of PLATFORM_SKILL_ROUTER_CORE_IDS) add(id);
-  for (const id of laneSkillIds(params.lane)) add(id);
 
   const sheet = params.sheetKind || "unknown";
+  // 体裁 Skill 先于赛道，避免 maxSkills 截断时丢掉 JSON/Seedance 中台
   if (sheet === "graphic") {
     add("graphic-note-rhythm");
     add("xhs-collectible-note");
     reasons.push("sheet:graphic → graphic-note-rhythm + xhs-collectible-note");
   } else if (sheet === "video") {
     add("director-craft");
-    reasons.push("sheet:video → director-craft");
+    add("json-director-middleware");
+    add("seedance-i2v-motion");
+    reasons.push("sheet:video → director-craft + json-director-middleware + seedance-i2v-motion");
   } else {
     add("director-craft");
+    add("json-director-middleware");
     add("graphic-note-rhythm");
     add("xhs-collectible-note");
   }
 
-  const max = Math.max(4, Math.min(20, params.maxSkills ?? 12));
+  for (const id of laneSkillIds(params.lane)) add(id);
+
+  const max = Math.max(4, Math.min(20, params.maxSkills ?? 16));
   return {
     selectedIds: selected.slice(0, max),
     primaryLane: params.lane,
@@ -191,6 +206,7 @@ export const PLATFORM_SKILL_DIM_PREFERRED_LANES: readonly PlatformSkillLane[] = 
   "default", // 6 长尾常青
 ] as const;
 
+/** 六维互斥只用这四条；virtual 由上下文路由（选题短名单），不占六维坑位 */
 const SPECIALTY_LANES: PlatformSkillLane[] = ["forensic", "fmcg", "crossover", "contrast"];
 
 export type DiverseBlueprintLanePlan = {

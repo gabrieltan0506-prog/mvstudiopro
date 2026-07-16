@@ -833,8 +833,8 @@ export default function FreeformCanvas({
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
-                              ? "Seedance 2.0：文生/图生视频（EvoLink · 4–15s · 可带同步音频）"
-                              : "Gemini Omini：文生视频或图生视频"}
+                              ? "Seedance 2.0：有参考图时只发运镜+微动+氛围（EvoLink · 4–15s）"
+                              : "Gemini Omini：有参考图时同样做微动减法"}
                           </div>
                         </>
                       ) : null}

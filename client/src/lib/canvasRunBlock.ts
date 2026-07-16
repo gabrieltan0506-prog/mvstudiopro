@@ -7,6 +7,13 @@ import {
   runGeminiScript,
   runNanoImage,
 } from "./omniCanvasApi";
+import {
+  compileI2VMotionPrompt,
+  extractPlainImagePrompt,
+  fallbackEnglishFromJson,
+  prepareJsonDirectorImageJob,
+  type AspectRatio169Or916,
+} from "@shared/jsonDirectorMiddleware";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -15,6 +22,36 @@ const GEMINI_MODEL_MAP = {
 export type CanvasRunDeps = {
   optimizeCopy: (input: { sourceText: string; optimizationBrief?: string }) => Promise<string>;
 };
+
+/** JSON 导演中台 → LLM 翻译 → 生图可用英文提示词（失败则本地 fallback） */
+async function resolveImagePromptViaJsonDirector(
+  deps: CanvasRunDeps,
+  userPrompt: string,
+  aspectRatio: AspectRatio169Or916,
+  imageModel: CanvasBlock["imageModel"],
+): Promise<string> {
+  const target = imageModel === "gpt-image-2" ? "gpt-image-2" : "nano-banana";
+  const job = prepareJsonDirectorImageJob({
+    userPrompt,
+    aspectRatio,
+    targetModel: target,
+  });
+  try {
+    const llmOut = await deps.optimizeCopy({
+      sourceText: job.jsonText,
+      optimizationBrief: job.translationBrief,
+    });
+    const prompt = extractPlainImagePrompt(llmOut);
+    if (prompt.length >= 24) return prompt;
+  } catch {
+    /* fallback below */
+  }
+  try {
+    return fallbackEnglishFromJson(JSON.parse(job.jsonText));
+  } catch {
+    return extractPlainImagePrompt(userPrompt);
+  }
+}
 
 async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refImageUrl?: string): Promise<string> {
   // 注意：勿再调用 workflowGenerateSceneImage（那是工作流分镜 API，强制要 workflowId）
@@ -230,10 +267,16 @@ export async function runCanvasBlock(
   if (block.kind === "image") {
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
+    const imagePrompt = await resolveImagePromptViaJsonDirector(
+      deps,
+      mergedPrompt,
+      ar,
+      block.imageModel,
+    );
     const urls =
       block.imageModel === "gpt-image-2"
-        ? await runGptImage2Batch(mergedPrompt, ar, refUrl, count)
-        : await runNanoBanana2(mergedPrompt, ar, refUrl, count);
+        ? await runGptImage2Batch(imagePrompt, ar, refUrl, count)
+        : await runNanoBanana2(imagePrompt, ar, refUrl, count);
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");
     return { outputUrl: filtered[0], outputUrls: filtered };
@@ -241,11 +284,14 @@ export async function runCanvasBlock(
 
   if (block.kind === "video") {
     const ar = block.aspectRatio;
+    const motionPrompt = compileI2VMotionPrompt(mergedPrompt, {
+      hasReferenceImage: Boolean(refUrl),
+    });
     let url = "";
     if (block.videoModel === "seedance-2.0") {
-      url = await runSeedance20(mergedPrompt, refUrl, ar);
+      url = await runSeedance20(motionPrompt, refUrl, ar);
     } else {
-      url = await runOmniFlash(mergedPrompt, refUrl, ar);
+      url = await runOmniFlash(motionPrompt, refUrl, ar);
     }
     return { outputUrl: url };
   }
