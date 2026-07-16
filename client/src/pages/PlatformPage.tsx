@@ -94,6 +94,10 @@ import {
 } from "@shared/platformTopicShortlist";
 import { PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE } from "@shared/platformSkills";
 import {
+  formatAssignedCraftTechniqueZh,
+  pickCraftTechniqueProfile,
+} from "@shared/storyboardLightingEmotion";
+import {
   Activity,
   ArrowLeft,
   ArrowRight,
@@ -1012,14 +1016,22 @@ function buildPlatformSheetScriptContext(
   if (item.production) parts.push(`【制作】${item.production}`);
   const ex = item.executionDetails;
   if (ex?.environmentAndWardrobe) parts.push(`【环境与服装】${ex.environmentAndWardrobe}`);
-  if (ex?.lightingAndCamera) parts.push(`【灯光机位】${ex.lightingAndCamera}`);
+  if (ex?.lightingAndCamera) parts.push(`【灯光机位·导演灵感】${ex.lightingAndCamera}`);
   else {
     parts.push(
       "【灯光机位·高度需求】每格写清主光方向/质感/色温/明暗比（侧光、逆光、伦勃朗、窗光等），服务叙事，避免死白顶光。",
     );
   }
+  // 自定义/全案出图：按选题标题稳定绑一张手法卡，与 Stage2 同源库
+  const craftSeed = `${item.title || ""}:${item.hook || ""}`;
+  const craftProfile = pickCraftTechniqueProfile(craftSeed || "platform-sheet");
   parts.push(
-    "【编导分镜·导演板】本图为编导分镜图：全局须可读风格气质、建议时长节拍、角色表演提要、起—承—转—合、关键技法与观众情绪弧；每格仍填六栏。勿做成互不关联的静帧清单。",
+    formatAssignedCraftTechniqueZh(craftProfile, {
+      slotLabel: String(item.title || "编导分镜").slice(0, 40),
+    }),
+  );
+  parts.push(
+    "【编导分镜·导演板】本图为编导分镜图（导演灵感画布可视化）：全局须可读风格气质、建议时长节拍、角色表演提要、起—承—转—合、关键技法与观众情绪弧；每格仍填六栏。勿做成互不关联的静帧清单。",
   );
   parts.push(
     "【情绪·运镜·灯光·高度需求】每格点明运镜意图、微表情与气氛；光影与情绪同步递进。只借专业影视手法（高反差建筑光、温暖魔术时刻、光晕剪影揭示、雾霾大光域静默、霓虹余韵、精密冷光不安、天气即光群像、动机窗光等），禁止点名导演或写「某某风/致敬」。编导分镜表六栏：景别/运镜/灯光安排/情绪表达/画面内容/台词与音效。",
@@ -10791,14 +10803,14 @@ export default function PlatformPage() {
                             ) : null}
                             {(item as any).executionDetails?.lightingAndCamera ? (
                               <p>
-                                <strong className="text-[#9ddcff]">灯光 &amp; 机位：</strong>
+                                <strong className="text-[#9ddcff]">导演灵感 · 灯光 &amp; 运镜：</strong>
                                 {(item as any).executionDetails.lightingAndCamera}
                               </p>
                             ) : null}
                             {Array.isArray((item as any).executionDetails?.stepByStepScript) &&
                             (item as any).executionDetails.stepByStepScript.length > 0 ? (
                               <div>
-                                <strong className="text-[#9ddcff]">逐步执行脚本：</strong>
+                                <strong className="text-[#9ddcff]">编导拍摄顺序（灵感画布）：</strong>
                                 <div className="mt-1 space-y-1">
                                   {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
                                     <div key={si}>{step}</div>
@@ -10820,7 +10832,7 @@ export default function PlatformPage() {
                             ) : null}
                             {(item as any).detailedScript ? (
                               <div>
-                                <strong className="text-[#9ddcff]">详细脚本与大纲：</strong>
+                                <strong className="text-[#9ddcff]">详细脚本与大纲（导演灵感画布）：</strong>
                                 <div className="mt-1 whitespace-pre-wrap text-sm">{(item as any).detailedScript}</div>
                               </div>
                             ) : null}

@@ -83,7 +83,11 @@ import {
   PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
   needsCulturalMaterialDiversity,
 } from "../shared/platformCulturalMaterialDiversity.js";
-import { STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH } from "../shared/storyboardLightingEmotion.js";
+import {
+  STAGE2_LIGHTING_EMOTION_DIRECTOR_HINT_ZH,
+  formatAssignedCraftTechniqueZh,
+  pickCraftTechniqueProfile,
+} from "../shared/storyboardLightingEmotion.js";
 import {
   normalizePlatformVariants,
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
@@ -1817,11 +1821,18 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
       : skillsBlockShared
         ? `\n${skillsBlockShared}\n`
         : "";
+    // 六维各绑一张手法卡：短视频→导演灵感画布；图文→封面/插画气质（成稿去名）
+    const craftProfile = pickCraftTechniqueProfile(`stage2-dim-${dimIndex}:${dimName}`);
+    const craftDirective = formatAssignedCraftTechniqueZh(craftProfile, {
+      slotLabel: `维度${dimIndex + 1}·${dimName}`,
+      forGraphic: preferGraphicNote,
+    });
 
     const dimSystemSuffix = `
 
 【本次任務限制】本次請求只需輸出維度 ${dimIndex + 1}「${dimName}」的 **一條** blueprint。
 【体裁】${formatHint}
+${craftDirective}
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 【本条封面】platformVariants 三平台 coverHeadline 各写一句约 10–18 字高点击短钩（反差/反常识/数字拧巴），互不雷同；出图时只印该主句（+可选副标），禁止把长 title 印满屏。
 ${styleDirective}
@@ -5919,7 +5930,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : "storyboard";
           const base = enrichScriptContextWithBianDaoDirectorBoard(
             String(input.compositeScriptContext || "").trim(),
-            { sheetKind },
+            {
+              sheetKind,
+              craftSeed: `${sid || "bundle"}:${finalTopicHook || input.compositeTitle || ""}`,
+              craftSlotLabel: String(finalTopicHook || input.compositeTitle || "").slice(0, 40) || undefined,
+            },
           );
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
@@ -6358,7 +6373,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : "storyboard";
           const base = enrichScriptContextWithBianDaoDirectorBoard(
             String(input.scriptContext || "").trim(),
-            { sheetKind },
+            {
+              sheetKind,
+              craftSeed: `${input.sceneId || ""}:${input.title || ""}`,
+              craftSlotLabel: String(input.title || "").slice(0, 40) || undefined,
+            },
           );
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,

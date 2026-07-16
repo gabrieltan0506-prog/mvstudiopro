@@ -19,10 +19,12 @@
 5. 1–2 个关键技法（运镜/灯光）  
 6. 观众情绪弧 + 每格「观众必须看到」的信息点  
 
-## 代码接线
+## 代码接线（方案 A：全量融合）
 
-- `shared/bianDaoStoryboard.ts`：命名常量 + `enrichScriptContextWithBianDaoDirectorBoard`
-- `server/routers.ts`：`generatePlatformCompositeSheet` / 封面+合成套装 注入导演板
-- `buildCompositeSheetDirectChineseBody`：主体文案改为「编导分镜图」并要求顶栏含节奏/情绪弧
-- `composePlatformImageSkillHints`（`director-craft`）：编导分镜出图短约束
-- UI / 扣费 / PDF：用户可见「分镜图」→「编导分镜图」（平台合成分镜产品）
+- `shared/bianDaoStoryboard.ts`：命名常量 + `enrichScriptContextWithBianDaoDirectorBoard`（导演板 + 可选手法卡）
+- `shared/storyboardLightingEmotion.ts`：`pickCraftTechniqueProfile` / `formatAssignedCraftTechniqueZh`；Stage2 提示升级为「导演灵感画布」
+- **全案 Stage2**：六维各绑一张手法卡（短视频→灵感画布；图文→视觉气质）
+- **决策智库扩写**：每条选题强制轮换主手法卡
+- **自定义/全案出图**：`buildPlatformSheetScriptContext` + routers 合成链注入手法卡
+- `buildCompositeSheetDirectChineseBody`：主体文案「编导分镜图」+ 顶栏节奏/情绪弧
+- UI：灯光/逐步脚本标签改为导演灵感画布口径；产品名「编导分镜图」
