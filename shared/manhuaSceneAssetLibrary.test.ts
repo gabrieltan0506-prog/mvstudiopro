@@ -5,6 +5,7 @@ import {
   composeManhuaScenePromptBlock,
   getManhuaSceneTemplate,
   listManhuaScenes,
+  recommendPrimaryManhuaSceneId,
   resolveManhuaScenes,
 } from "./manhuaSceneAssetLibrary";
 
@@ -27,5 +28,12 @@ describe("manhuaSceneAssetLibrary", () => {
     expect(block).toContain("现代豪宅");
     expect(block).toContain("【漫剧场景资产库");
     expect(composeManhuaScenePromptBlock([])).toBe("");
+  });
+
+  it("recommends a single primary scene per genre", () => {
+    expect(recommendPrimaryManhuaSceneId("xianxia")).toBe("scene_01");
+    expect(recommendPrimaryManhuaSceneId("campus")).toBe("scene_14");
+    expect(resolveManhuaScenes({ genre: "xianxia", primaryOnly: true })).toHaveLength(1);
+    expect(resolveManhuaScenes({ genre: "xianxia", primaryOnly: true })[0]?.id).toBe("scene_01");
   });
 });
