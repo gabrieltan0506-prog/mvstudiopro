@@ -229,7 +229,7 @@ export function dedupeTopicShortlist<T extends { title: string; dedupeKey?: stri
 export const PLATFORM_SKILL_MASTER_READONLY = {
   title: "Skill 自动路由总管（只读）",
   summary:
-    "勾选 = 允许池，不是全灌。生成时默认 auto：先挂核心 Skill，再按选题互斥分配 specialty 赛道（virtual / fmcg / forensic / crossover / contrast）；同批 specialty 不重复。视频向另挂 JSON 导演中台与 Seedance 微动。",
+    "勾选 = 允许池，不是全灌。生成时默认 auto：先挂核心 Skill，再按选题互斥分配 specialty 赛道（virtual / fmcg / forensic / crossover / contrast）；同批 specialty 不重复。视频向另挂 director-craft + JSON 导演中台（Seedance/漫剧/反推仅 /canvas）。",
   coreIds: [
     "hook-solution-cta",
     "review-safe-voice",
