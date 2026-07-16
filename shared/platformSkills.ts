@@ -96,12 +96,10 @@ ${parts.join("\n\n---\n\n")}`;
   return block;
 }
 
+/** /platform 内置池（不含 Canvas-only：Seedance/漫剧/反推） */
 export const PLATFORM_BUILTIN_SKILL_IDS = [
   "director-craft",
   "json-director-middleware",
-  "seedance-i2v-motion",
-  "video-reverse-prompt",
-  "manhua-drama-studio",
   "xhs-virtual-goods",
   "cultural-diversity",
   "lifestyle-diversity",
@@ -125,3 +123,11 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];
+
+export {
+  CANVAS_ONLY_SKILL_IDS,
+  isCanvasOnlySkillId,
+  groupPlatformSkillsByCategory,
+  resolvePlatformSkillCategory,
+  PLATFORM_SKILL_CATEGORY_ORDER,
+} from "./platformSkillCategories.js";

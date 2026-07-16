@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   composePlatformSkillsPromptBlock,
+  isCanvasOnlySkillId,
   parsePlatformSkillMarkdown,
   PLATFORM_BUILTIN_SKILL_IDS,
   type PlatformSkillRecord,
@@ -44,6 +45,7 @@ export function loadBuiltinPlatformSkills(forceReload = false): PlatformSkillRec
       if (!name.endsWith(".md") || /^readme\.md$/i.test(name)) continue;
       const id = name.replace(/\.md$/i, "");
       if (PLATFORM_BUILTIN_SKILL_IDS.includes(id as (typeof PLATFORM_BUILTIN_SKILL_IDS)[number])) continue;
+      if (isCanvasOnlySkillId(id)) continue;
       if (out.some((s) => s.id === id)) continue;
       const raw = fs.readFileSync(path.join(dir, name), "utf8");
       out.push(parsePlatformSkillMarkdown(raw, { id, source: "builtin" }));

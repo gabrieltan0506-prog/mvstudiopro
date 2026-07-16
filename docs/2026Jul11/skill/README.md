@@ -6,9 +6,9 @@
 |------|-----|------|
 | `director-craft.md` | director-craft | 开 |
 | `json-director-middleware.md` | json-director-middleware | 开 |
-| `seedance-i2v-motion.md` | seedance-i2v-motion | 开 |
-| `video-reverse-prompt.md` | video-reverse-prompt | 开 |
-| `manhua-drama-studio.md` | manhua-drama-studio | 开 |
+| `seedance-i2v-motion.md` | seedance-i2v-motion | **Canvas only** |
+| `video-reverse-prompt.md` | video-reverse-prompt | **Canvas only** |
+| `manhua-drama-studio.md` | manhua-drama-studio | **Canvas only** |
 | `xhs-virtual-goods.md` | xhs-virtual-goods | 开 |
 | `cultural-diversity.md` | cultural-diversity | 开 |
 | `lifestyle-diversity.md` | lifestyle-diversity | 开 |

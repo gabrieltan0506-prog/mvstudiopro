@@ -177,12 +177,7 @@ export function routePlatformSkillIdsForLane(params: {
   } else if (sheet === "video") {
     add("director-craft");
     add("json-director-middleware");
-    add("seedance-i2v-motion");
-    add("video-reverse-prompt");
-    add("manhua-drama-studio");
-    reasons.push(
-      "sheet:video → director-craft + json-director + seedance-i2v + video-reverse + manhua-drama",
-    );
+    reasons.push("sheet:video → director-craft + json-director（Seedance/漫剧仅 /canvas）");
   } else {
     add("director-craft");
     add("json-director-middleware");

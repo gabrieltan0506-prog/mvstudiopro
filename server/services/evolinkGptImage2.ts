@@ -10,11 +10,19 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
 const EVOLINK_BASE = String(process.env.EVOLINK_API_BASE || "https://api.evolink.ai").replace(/\/$/, "");
 const EVOLINK_MODEL = "gpt-image-2" as const;
 /** EvoLink 默认 quality；请求方可传 `quality` 覆写（如 2×4 宽幅固定 low）。 */
-const EVOLINK_DEFAULT_QUALITY = String(process.env.EVOLINK_GPT_IMAGE2_QUALITY || "medium").trim() || "medium";
+/** 默认 high：对标文档 text_to_image_hd / 可发笔记清晰度；可用 EVOLINK_GPT_IMAGE2_QUALITY 下调。 */
+const EVOLINK_DEFAULT_QUALITY = String(process.env.EVOLINK_GPT_IMAGE2_QUALITY || "high").trim() || "high";
+/** 比例模式下生效；封面/分镜/图文默认 2K（约 4MP）。 */
 const EVOLINK_RESOLUTION = String(process.env.EVOLINK_GPT_IMAGE2_RESOLUTION || "2K").trim() || "2K";
-/** 与 OhMyGPT 主路径一致：竖封 1024×1536、横版 1536×1024（显式像素；resolution 在此模式下由 EvoLink 按像素预算分档）。 */
-export const EVOLINK_GPT_IMAGE2_PORTRAIT_SIZE = "1024x1536" as const;
-export const EVOLINK_GPT_IMAGE2_LANDSCAPE_SIZE = "1536x1024" as const;
+/**
+ * EvoLink 主路径用**比例** + `resolution: 2K`（文档推荐）。
+ * 显式 WxH 仍可用（此时 EvoLink 忽略 resolution）；OhMyGPT/fal 白名单另见 proxyImageService。
+ */
+export const EVOLINK_GPT_IMAGE2_PORTRAIT_SIZE = "9:16" as const;
+export const EVOLINK_GPT_IMAGE2_LANDSCAPE_SIZE = "16:9" as const;
+/** 兼容旧调用：显式像素档（仅当上层强制传入 size=WxH 时使用） */
+export const EVOLINK_GPT_IMAGE2_PORTRAIT_PIXEL = "1024x1536" as const;
+export const EVOLINK_GPT_IMAGE2_LANDSCAPE_PIXEL = "1536x1024" as const;
 
 /** EvoLink 任务轮询：默认 2s（原 3s）；可用 EVOLINK_GPT_IMAGE2_POLL_MS 覆写，范围 1000～5000。 */
 const POLL_INTERVAL_MS = Math.min(
