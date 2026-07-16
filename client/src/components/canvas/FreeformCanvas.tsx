@@ -29,8 +29,9 @@ import {
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
-import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
+import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
   LoaderCircle,
@@ -291,6 +292,7 @@ export default function FreeformCanvas({
   const [dragState, setDragState] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
+  const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
@@ -553,6 +555,27 @@ export default function FreeformCanvas({
     [getSignedUrlMutation, onBlocksChange],
   );
 
+  const uploadEditMaskForBlock = useCallback(
+    async (blockId: string, blob: Blob) => {
+      setMaskBusyId(blockId);
+      try {
+        const file = new File([blob], `edit-mask-${Date.now()}.png`, { type: "image/png" });
+        const asset = await uploadOneCanvasAsset({
+          file,
+          index: 0,
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+        });
+        patchOne(blockId, { editMaskUrl: asset.url });
+        toast.success("遮罩已保存 · 跑生成时只改涂抹区域");
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "遮罩上传失败");
+      } finally {
+        setMaskBusyId(null);
+      }
+    },
+    [getSignedUrlMutation, patchOne],
+  );
+
   useEffect(() => {
     if (!dragState) return;
     const onMove = (e: PointerEvent) => {
@@ -782,22 +805,29 @@ export default function FreeformCanvas({
                             <span className="shrink-0 text-white/45">模式</span>
                             <select
                               value={block.imageMode || "generate"}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const nextEdit = e.target.value === "edit";
                                 patchOne(block.id, {
-                                  imageMode: e.target.value === "edit" ? "edit" : "generate",
-                                  ...(e.target.value === "edit" && block.outputUrl
-                                    ? { refImageUrl: block.outputUrl }
+                                  imageMode: nextEdit ? "edit" : "generate",
+                                  ...(nextEdit
+                                    ? {
+                                        imageModel: "gpt-image-2" as const,
+                                        refImageUrl:
+                                          block.outputUrl ||
+                                          block.outputUrls?.[0] ||
+                                          block.refImageUrl,
+                                      }
                                     : {}),
-                                })
-                              }
+                                });
+                              }}
                               className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                             >
                               <option value="generate">文生图</option>
-                              <option value="edit">改图（Image Edit）</option>
+                              <option value="edit">微调这张图</option>
                             </select>
                           </label>
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
-                            <span className="shrink-0 text-white/45">模型</span>
+                            <span className="shrink-0 text-white/45">引擎</span>
                             <select
                               value={block.imageModel}
                               onChange={(e) =>
@@ -831,26 +861,113 @@ export default function FreeformCanvas({
                             </select>
                           </label>
                           {block.imageMode === "edit" ? (
-                            <div className="rounded-lg border border-rose-400/25 bg-rose-500/10 px-2 py-1.5 text-[10px] leading-5 text-rose-50/90">
-                              改图：先上传参考图（或用上方已生成结果），提示词写「改什么」——例如「旁边加一只橘猫」「换成雨夜霓虹」。
-                              推荐模型 GPT-Image-2（EvoLink · 2K）。输出为 PNG/JPEG/WebP，不支持 SVG/PSD。
-                              {(block.outputUrl || block.refImageUrl) && (
-                                <button
-                                  type="button"
-                                  className="mt-1 block text-[10px] font-semibold text-[#8cefff] underline"
-                                  onClick={() =>
-                                    patchOne(block.id, {
-                                      imageMode: "edit",
-                                      refImageUrl: block.outputUrl || block.refImageUrl,
-                                      prompt: block.prompt?.trim()
-                                        ? block.prompt
-                                        : "微调画面：保持主体一致，优化光影与构图。",
-                                    })
-                                  }
-                                >
-                                  用当前结果作为改图底图
-                                </button>
-                              )}
+                            <div className="space-y-2">
+                              <div className="rounded-lg border border-rose-400/25 bg-rose-500/10 px-2 py-1.5 text-[10px] leading-5 text-rose-50/90">
+                                <div className="font-semibold text-rose-100">怎么用 · 微调</div>
+                                <ol className="mt-1 list-decimal space-y-0.5 pl-4 text-rose-50/85">
+                                  <li>先有一张八九成像的底图（上传或文生图结果）。</li>
+                                  <li>提示词只写「要改的那一点」，并写清「其他保持不变」。例：丝带改成红色，脸与发型不动。</li>
+                                  <li>可选：画笔涂抹只改局部；或勾选更多参考图做融合（妆造/道具参考）。</li>
+                                  <li>整张都不对时，请重新生成或换角色，不要连续微调十几轮。</li>
+                                </ol>
+                                {(block.outputUrl || block.refImageUrl || block.outputUrls?.[0]) && (
+                                  <button
+                                    type="button"
+                                    className="mt-1.5 block text-[10px] font-semibold text-[#8cefff] underline"
+                                    onClick={() =>
+                                      patchOne(block.id, {
+                                        imageMode: "edit",
+                                        refImageUrl:
+                                          block.outputUrl || block.outputUrls?.[0] || block.refImageUrl,
+                                        prompt: block.prompt?.trim()
+                                          ? block.prompt
+                                          : "微调画面：保持人物身份与构图，只优化光影与小细节，其他保持不变。",
+                                      })
+                                    }
+                                  >
+                                    用当前结果作为微调底图
+                                  </button>
+                                )}
+                              </div>
+                              {(() => {
+                                const baseUrl =
+                                  block.refImageUrl ||
+                                  block.outputUrl ||
+                                  block.outputUrls?.[0] ||
+                                  block.uploadedAssets?.find((a) => a.kind === "image")?.url;
+                                if (!baseUrl) {
+                                  return (
+                                    <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] text-white/45">
+                                      请先上传或生成底图，再打开画笔遮罩。
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <CanvasImageEditMaskPainter
+                                    baseImageUrl={baseUrl}
+                                    uploading={maskBusyId === block.id}
+                                    hasSavedMask={Boolean(block.editMaskUrl)}
+                                    onClearMaskUrl={() => patchOne(block.id, { editMaskUrl: undefined })}
+                                    onExportMask={(blob) => void uploadEditMaskForBlock(block.id, blob)}
+                                  />
+                                );
+                              })()}
+                              {(() => {
+                                const baseUrl =
+                                  block.refImageUrl ||
+                                  block.outputUrl ||
+                                  block.outputUrls?.[0] ||
+                                  "";
+                                const imageAssets = (block.uploadedAssets || []).filter(
+                                  (a) =>
+                                    (a.kind ?? inferCanvasAssetKindFromFileName(a.fileName)) === "image" &&
+                                    a.url &&
+                                    a.url !== baseUrl &&
+                                    a.url !== block.editMaskUrl,
+                                );
+                                if (!imageAssets.length) {
+                                  return (
+                                    <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] leading-5 text-white/45">
+                                      <span className="font-semibold text-white/65">多图融合</span>
+                                      ：再上传 1～几张参考图（妆造/道具/光影），勾选后写入提示词一起微调。
+                                    </div>
+                                  );
+                                }
+                                const selected = new Set(block.editFusionUrls || []);
+                                return (
+                                  <div className="rounded-lg border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-[10px] leading-5 text-sky-50/90">
+                                    <div className="font-semibold text-sky-100">多图融合（可选）</div>
+                                    <div className="mt-0.5 text-sky-50/75">
+                                      勾选要参考的图；提示词写清「参考哪张做什么」。例：参考图 B 的耳环，脸保持底图。
+                                    </div>
+                                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                      {imageAssets.slice(0, 12).map((a) => {
+                                        const on = selected.has(a.url);
+                                        return (
+                                          <button
+                                            key={a.id}
+                                            type="button"
+                                            title={a.fileName}
+                                            onClick={() => {
+                                              const next = new Set(block.editFusionUrls || []);
+                                              if (on) next.delete(a.url);
+                                              else if (next.size < 15) next.add(a.url);
+                                              patchOne(block.id, { editFusionUrls: Array.from(next) });
+                                            }}
+                                            className={`relative h-12 w-12 overflow-hidden rounded-md border ${
+                                              on
+                                                ? "border-sky-300 ring-2 ring-sky-400/60"
+                                                : "border-white/15 opacity-80 hover:opacity-100"
+                                            }`}
+                                          >
+                                            <img src={a.previewUrl || a.url} alt="" className="h-full w-full object-cover" />
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           ) : null}
                         </>

@@ -59,7 +59,19 @@ async function resolveImagePromptViaJsonDirector(
   }
 }
 
-async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refImageUrl?: string): Promise<string> {
+async function runGptImage2(
+  prompt: string,
+  aspectRatio: "9:16" | "16:9",
+  opts?: {
+    refImageUrl?: string;
+    referenceImageUrls?: string[];
+    maskUrl?: string;
+  },
+): Promise<string> {
+  const refImageUrl = String(opts?.refImageUrl || "").trim();
+  const extraRefs = (opts?.referenceImageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const referenceImageUrls = Array.from(new Set([refImageUrl, ...extraRefs].filter(Boolean))).slice(0, 16);
+  const maskUrl = String(opts?.maskUrl || "").trim();
   // 注意：勿再调用 workflowGenerateSceneImage（那是工作流分镜 API，强制要 workflowId）
   const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
   const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
@@ -71,9 +83,11 @@ async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refIma
       body: JSON.stringify({
         prompt,
         aspectRatio,
-        referenceImageUrl: refImageUrl || undefined,
-        imageMode: refImageUrl ? "edit" : "generate",
-        generalImageEdit: Boolean(refImageUrl),
+        referenceImageUrl: referenceImageUrls[0] || undefined,
+        referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+        maskUrl: maskUrl || undefined,
+        imageMode: referenceImageUrls.length ? "edit" : "generate",
+        generalImageEdit: referenceImageUrls.length > 0,
       }),
     }),
   );
@@ -115,10 +129,14 @@ async function runNanoBanana2(
 async function runGptImage2Batch(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
-  refImageUrl: string | undefined,
+  opts: {
+    refImageUrl?: string;
+    referenceImageUrls?: string[];
+    maskUrl?: string;
+  },
   count: number,
 ): Promise<string[]> {
-  const tasks = Array.from({ length: count }, () => runGptImage2(prompt, aspectRatio, refImageUrl));
+  const tasks = Array.from({ length: count }, () => runGptImage2(prompt, aspectRatio, opts));
   return Promise.all(tasks);
 }
 
@@ -357,15 +375,35 @@ export async function runCanvasBlock(
       block.outputUrl ||
       block.outputUrls?.[0];
     if (isEdit && !editRef) {
-      throw new Error("改图模式需要参考图：请先上传图片，或先文生图后再点「改图」");
+      throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
     }
-    // 改图：提示词即修改说明，直送模型（仍走 GPT-Image-2 edit / NB2 参考图）；文生图才走 JSON 导演中台
+    const fusionUrls = (block.editFusionUrls || [])
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && u !== editRef)
+      .slice(0, 15);
+    const maskUrl = String(block.editMaskUrl || "").trim();
+    // 微调：提示词即修改说明；文生图才走 JSON 导演中台
     const imagePrompt = isEdit
-      ? mergedPrompt
+      ? [
+          mergedPrompt,
+          fusionUrls.length
+            ? `【多图融合】另有 ${fusionUrls.length} 张参考图：请按说明把风格/元素/妆造合理融合进底图，保持人物身份一致。`
+            : "",
+          maskUrl ? "【局部遮罩】仅修改遮罩透明区域，其余像素尽量原样保留。" : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
       : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, block.imageModel);
     const urls =
       block.imageModel === "gpt-image-2"
-        ? await runGptImage2Batch(imagePrompt, ar, isEdit ? editRef : refUrl, count)
+        ? await runGptImage2Batch(
+            imagePrompt,
+            ar,
+            isEdit
+              ? { refImageUrl: editRef, referenceImageUrls: fusionUrls, maskUrl: maskUrl || undefined }
+              : { refImageUrl: refUrl },
+            count,
+          )
         : await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");

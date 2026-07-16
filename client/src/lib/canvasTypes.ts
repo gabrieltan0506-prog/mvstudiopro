@@ -62,6 +62,16 @@ export type CanvasBlock = {
   imageMode: CanvasImageMode;
   /** 图片方块一次生成张数 */
   imageBatchCount: CanvasImageBatchCount;
+  /**
+   * 微调/改图：局部遮罩 PNG 公网 URL（透明=可改，不透明=保留）。
+   * 由画笔工具导出并上传后写入。
+   */
+  editMaskUrl?: string;
+  /**
+   * 微调/改图：额外融合参考图 URL（不含底图；与底图合计最多 16 张）。
+   * 通常从 uploadedAssets 勾选。
+   */
+  editFusionUrls?: string[];
   /** 本地上传素材（可多张，供下游文本/视频引用） */
   uploadedAssets: CanvasUploadedAsset[];
   /** 最近一次批量上传的失败项（便于在方块内展示） */
@@ -197,6 +207,10 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: block.imageBatchCount ?? 1,
+    editMaskUrl: block.editMaskUrl,
+    editFusionUrls: Array.isArray(block.editFusionUrls)
+      ? block.editFusionUrls.map((u) => String(u || "").trim()).filter(Boolean).slice(0, 15)
+      : [],
     uploadedAssets: block.uploadedAssets ?? [],
     uploadFailures: block.uploadFailures ?? [],
     uploadPhase: block.uploadPhase ?? "idle",
