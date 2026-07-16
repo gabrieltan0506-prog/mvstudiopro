@@ -265,7 +265,7 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
 /** 网关超时 / 瞬时 5xx / abort 等可重试 */
 export function isTransientFactoryError(message: string): boolean {
   const m = String(message || "");
-  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|rate.?limit|429/i.test(
+  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|算力紧张|rate.?limit|429/i.test(
     m,
   );
 }
@@ -356,7 +356,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
 }): Promise<ManhuaFactoryPipelineResult> {
   const stopOnError = opts.stopOnError !== false;
   const skipDone = opts.skipDone !== false;
-  const maxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
+  const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   let working = opts.blocks.map((b) => ({ ...b }));
   const edges = opts.edges;
   const orderedIds = resolveManhuaFactoryOrderedIds(working, opts.untilStage ?? "clip");
@@ -412,6 +412,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       ),
     );
 
+    // 角色卡阶段历史上易 503：多给一次退避机会
+    const maxRetries = stage === "bible" ? Math.min(4, defaultMaxRetries + 1) : defaultMaxRetries;
     let lastMessage = "生成失败";
     let succeeded = false;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -463,7 +465,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 : b,
             ),
           );
-          await sleep(1200 * (attempt + 1));
+          await sleep((stage === "bible" ? 1800 : 1200) * (attempt + 1));
           continue;
         }
         break;

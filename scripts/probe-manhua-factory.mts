@@ -43,6 +43,29 @@ async function fetchJson(url: string, body: unknown, timeoutMs = TIMEOUT_MS) {
   }
 }
 
+function isTransientProbeHttp(status: number) {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+/** 角色卡等文本段：对瞬时 5xx/429 有限次退避（对齐工厂 isTransientFactoryError） */
+async function fetchJsonWithBackoff(
+  url: string,
+  body: unknown,
+  opts?: { timeoutMs?: number; label?: string; maxAttempts?: number },
+) {
+  const maxAttempts = Math.max(1, opts?.maxAttempts ?? 3);
+  let last = await fetchJson(url, body, opts?.timeoutMs);
+  for (let attempt = 1; attempt < maxAttempts && isTransientProbeHttp(last.status); attempt += 1) {
+    const wait = 1200 * attempt;
+    console.warn(
+      `[manhua-factory-probe] ${opts?.label || "step"} http=${last.status} → 退避 ${wait}ms 后重试 ${attempt + 1}/${maxAttempts}`,
+    );
+    await new Promise((r) => setTimeout(r, wait));
+    last = await fetchJson(url, body, opts?.timeoutMs);
+  }
+  return last;
+}
+
 function extractGeminiText(json: any): string {
   return String(
     json?.raw?.candidates?.[0]?.content?.parts?.[0]?.text || json?.text || "",
@@ -68,16 +91,23 @@ async function main() {
   }
 
   const biblePrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible}\n\n【上游故事】\n${storyText.slice(0, 2000)}`;
-  const bible = await fetchJson(`${BASE}/api/google?op=geminiScript`, {
-    prompt: biblePrompt,
-    model: "gemini-3.1-pro-preview",
-  });
+  const bible = await fetchJsonWithBackoff(
+    `${BASE}/api/google?op=geminiScript`,
+    {
+      prompt: biblePrompt,
+      model: "gemini-3.1-pro-preview",
+    },
+    { label: "工厂·角色卡", maxAttempts: 3 },
+  );
   const bibleText = extractGeminiText(bible.json);
   const bibleOk = bible.ok && Boolean(bible.json?.ok) && bibleText.length >= 40;
   console.log(
     `[${bibleOk ? "PASS" : "FAIL"}] 工厂·角色卡 (${bible.ms}ms http=${bible.status}) ${bibleText.slice(0, 160)}`,
   );
-  if (!bibleOk) process.exit(1);
+  if (!bibleOk) {
+    console.error(bible.json?.error || bible.text.slice(0, 300));
+    process.exit(1);
+  }
 
   const beatsPrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats}\n\n【上游角色】\n${bibleText.slice(0, 2000)}\n\n【上游故事】\n${storyText.slice(0, 1200)}`;
   const beats = await fetchJson(`${BASE}/api/google?op=geminiScript`, {
