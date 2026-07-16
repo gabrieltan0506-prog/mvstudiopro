@@ -2,13 +2,14 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
 import HomePricing from "../components/HomePricing";
+import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import SampleReportDownload from "../components/SampleReportDownload";
 
 /**
- * 营销首页（方案 A）：导航 + Hero + 定价 + 试读样本；
- * 兑换/邀请收在页底次要区。天气路况、轮播介绍、Showcase 等噪音已移除。
+ * 营销首页（方案 A）：导航 + Hero + 定价占位 + 试读 + 我的作品；
+ * 兑换/邀请收在页底次要区。
  */
 export default function HomePage() {
   return (
@@ -23,11 +24,11 @@ export default function HomePage() {
         <HomeNavbar />
         <HomeHero />
 
-        <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
-          <HomePricing />
-        </div>
+        <HomePricing />
 
         <SampleReportDownload />
+
+        <HomeMyWorks />
 
         <section className="mx-auto w-full max-w-[720px] px-5 pb-16 pt-6">
           <details className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 open:pb-4">
