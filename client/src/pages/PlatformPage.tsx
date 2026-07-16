@@ -6680,7 +6680,7 @@ export default function PlatformPage() {
     setIsDashboardLoading(true);
     setIsVisualReportLoading(true);
     try {
-      // 看板与 PNG 报表彼此独立：一边失败不得拖垮另一边（旧 Promise.all 会导致「报错后整条不生成」）
+      // 平台趋势分析是独立功能：看板摘要 + PNG 图文报表并行；PNG 依赖 generateVisualReport（Evolink）
       const [dashSettled, visualSettled] = await Promise.allSettled([
         getPlatformDashboardMutation.mutateAsync({
           context: focusPrompt || undefined,
@@ -6741,15 +6741,16 @@ export default function PlatformPage() {
       }
 
       if (hasDash && hasReport) {
-        toast.success("平台趋势看板与 PNG 图文报表已就绪！可在此下载长图。");
-      } else if (hasDash) {
-        toast.success("平台趋势看板已就绪；PNG 报表未生成成功，可单独重试报表。");
-        if (errors[0]) toast.error(errors[0].slice(0, 120));
+        toast.success("平台趋势分析报表已就绪，可下载 PNG 长图。");
       } else if (hasReport) {
-        toast.success("PNG 图文报表已就绪，可下载长图。");
-        if (errors[0]) toast.error(errors[0].slice(0, 120));
+        toast.success("PNG 趋势报表已就绪，可下载长图。");
+        if (errors[0]) toast.error(`看板摘要：${errors[0].slice(0, 100)}`);
+      } else if (hasDash) {
+        toast.error(
+          `趋势 PNG 报表未生成：${(errors.find((e) => /报表|PNG|JSON|Evolink|网关|超时|算力/i.test(e)) || errors[0] || "请重试").slice(0, 140)}`,
+        );
       } else {
-        toast.error(errors[0] || "趋势分析失败，请稍后重试");
+        toast.error(errors[0] || "平台趋势分析失败，请稍后重试");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
