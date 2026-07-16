@@ -39,8 +39,8 @@ OCR 要点：不懂提示词也能做短剧；剧本摘要/资产拆解；多 Pr
 
 探针：`pnpm run manhua:probe`（故事→角色→节拍→无片反推→静帧）
 
-## 编剧剧种模板（骨架已留，正文待填）
-- 代码：`shared/screenwriterGenreTemplates.ts`
-- Skill：`docs/2026Jul11/skill/screenwriter-genre-templates.md`（Canvas only）
-- 粘贴区：`docs/2026Jul16/screenwriter-templates/`
-- `/canvas` 工厂下拉「剧种模板」：未 `ready` 显示「待填」且不覆盖默认 prompt
+## 编剧剧种 + 20 场景资产库（已灌入）
+- 场景库：`shared/manhuaSceneAssetLibrary.ts`（01–20：解析/元素/生图提示）
+- 剧种：`shared/screenwriterGenreTemplates.ts`（七剧种 ready，挂默认场景包）
+- Skill：`manhua-scene-asset-library` · `screenwriter-genre-templates`（Canvas only）
+- `/canvas`：剧种 + 场景模板下拉 → 故事/节拍/静帧注入，告别廉价拼贴感

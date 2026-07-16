@@ -102,6 +102,7 @@ export const CANVAS_ONLY_SKILL_IDS = [
   "video-reverse-prompt",
   "manhua-drama-studio",
   "screenwriter-genre-templates",
+  "manhua-scene-asset-library",
 ] as const;
 
 export type CanvasOnlySkillId = (typeof CANVAS_ONLY_SKILL_IDS)[number];

@@ -50,8 +50,10 @@ export type SpawnManhuaDramaStudioOpts = {
   originY?: number;
   /** 用户题材一句，会写入故事节点 prompt */
   topic?: string;
-  /** 编剧剧种模板 id（见 shared/screenwriterGenreTemplates；未 ready 则忽略） */
+  /** 编剧剧种：仙侠/古风/都市/校园/末日/科幻/悬疑 */
   genreId?: string;
+  /** 单选场景资产 id：scene_01…scene_20（可选，优先于剧种默认场景包） */
+  sceneId?: string;
 };
 
 function withTopic(basePrompt: string, topic?: string): string {
@@ -66,11 +68,14 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const gapX = 460;
   const genre = getScreenwriterGenreTemplate(opts.genreId);
   const genreId = genre?.ready ? genre.id : undefined;
+  const sceneId = String(opts.sceneId || "").trim() || undefined;
+  const stageOpts = { genreId, sceneId, topic: opts.topic };
+  const usePack = Boolean(genreId || sceneId);
 
   const story = defaultCanvasBlock("text", originX, originY);
   story.id = makeCanvasBlockId("story");
-  story.prompt = genreId
-    ? buildManhuaStagePromptWithGenre("story_brief", { genreId, topic: opts.topic })
+  story.prompt = usePack
+    ? buildManhuaStagePromptWithGenre("story_brief", stageOpts)
     : withTopic(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief, opts.topic);
   story.width = 400;
   story.height = 320;
@@ -78,29 +83,33 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const bible = defaultCanvasBlock("text", originX + gapX, originY);
   bible.id = makeCanvasBlockId("bible");
-  bible.prompt = genreId
-    ? buildManhuaStagePromptWithGenre("character_bible", { genreId })
+  bible.prompt = usePack
+    ? buildManhuaStagePromptWithGenre("character_bible", { genreId, sceneId })
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
   bible.parentId = story.id;
   bible.textModel = "gemini-3.1-pro";
 
   const beats = defaultCanvasBlock("text", originX + gapX * 2, originY);
   beats.id = makeCanvasBlockId("beats");
-  beats.prompt = genreId
-    ? buildManhuaStagePromptWithGenre("episode_beats", { genreId })
+  beats.prompt = usePack
+    ? buildManhuaStagePromptWithGenre("episode_beats", { genreId, sceneId })
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
   beats.parentId = bible.id;
   beats.textModel = "gemini-3.1-pro";
 
   const reverse = defaultCanvasBlock("video_reverse", originX + gapX * 3, originY);
   reverse.id = makeCanvasBlockId("reverse");
-  reverse.prompt = MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse;
+  reverse.prompt = usePack
+    ? buildManhuaStagePromptWithGenre("video_reverse", { genreId, sceneId })
+    : MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse;
   reverse.parentId = beats.id;
   reverse.height = 380;
 
   const keyArt = defaultCanvasBlock("image", originX + gapX * 4, originY);
   keyArt.id = makeCanvasBlockId("keyart");
-  keyArt.prompt = MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
+  keyArt.prompt = usePack
+    ? buildManhuaStagePromptWithGenre("key_art", { genreId, sceneId })
+    : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
   keyArt.parentId = reverse.id;
   keyArt.imageModel = "nano-banana-2";
   keyArt.aspectRatio = "9:16";

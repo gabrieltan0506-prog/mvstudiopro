@@ -15,6 +15,7 @@ import {
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
 import { listScreenwriterGenres } from "@shared/screenwriterGenreTemplates";
+import { listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, Loader2, Play, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
@@ -50,9 +51,15 @@ export default function OmniCanvas() {
   const [factoryBusy, setFactoryBusy] = useState(false);
   const [factoryTopic, setFactoryTopic] = useState("");
   const [factoryGenreId, setFactoryGenreId] = useState("");
+  const [factorySceneId, setFactorySceneId] = useState("");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
-  const genreOptions = useMemo(() => listScreenwriterGenres(), []);
+  const genreOptions = useMemo(() => listScreenwriterGenres({ onlyReady: true }), []);
+  const sceneOptions = useMemo(() => {
+    const g = genreOptions.find((x) => x.id === factoryGenreId);
+    if (g?.sceneGenre) return listManhuaScenes({ genre: g.sceneGenre });
+    return listManhuaScenes();
+  }, [factoryGenreId, genreOptions]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
 
@@ -117,13 +124,14 @@ export default function OmniCanvas() {
         originY: 80,
         topic,
         genreId: factoryGenreId || undefined,
+        sceneId: factorySceneId || undefined,
       });
       setBlocks(spawned.blocks);
       setEdges(spawned.edges);
       saveCanvasState(spawned.blocks, spawned.edges);
       return spawned;
     },
-    [blocks, edges, factoryGenreId],
+    [blocks, edges, factoryGenreId, factorySceneId],
   );
 
   const stopFactory = useCallback(() => {
@@ -227,21 +235,40 @@ export default function OmniCanvas() {
               已完成步骤会跳过，可从失败处续跑。参考短片请本机上传（≤120s）。
             </p>
 
-            <div className="mt-3 grid max-w-3xl gap-2 sm:grid-cols-[minmax(0,11rem)_1fr]">
+            <div className="mt-3 grid max-w-3xl gap-2 sm:grid-cols-[minmax(0,8.5rem)_minmax(0,12rem)_1fr]">
               <div>
-                <label className="block text-[11px] uppercase tracking-wider text-white/40">剧种模板</label>
+                <label className="block text-[11px] uppercase tracking-wider text-white/40">剧种</label>
                 <select
                   value={factoryGenreId}
-                  onChange={(e) => setFactoryGenreId(e.target.value)}
+                  onChange={(e) => {
+                    setFactoryGenreId(e.target.value);
+                    setFactorySceneId("");
+                  }}
                   disabled={factoryBusy}
                   className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/50 disabled:opacity-50"
-                  title="正文待填的剧种不会覆盖默认 prompt；你贴模板后 ready=true 即可套用"
+                  title="选剧种后自动带入该剧种场景资产包"
                 >
-                  <option value="">通用（无剧种）</option>
+                  <option value="">通用</option>
                   {genreOptions.map((g) => (
-                    <option key={g.id} value={g.id} disabled={!g.ready}>
+                    <option key={g.id} value={g.id}>
                       {g.labelZh}
-                      {g.ready ? "" : " · 待填"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-white/40">场景模板</label>
+                <select
+                  value={factorySceneId}
+                  onChange={(e) => setFactorySceneId(e.target.value)}
+                  disabled={factoryBusy}
+                  className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/50 disabled:opacity-50"
+                  title="可选：指定单一场景；空则用剧种默认场景包"
+                >
+                  <option value="">剧种默认包</option>
+                  {sceneOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {String(s.no).padStart(2, "0")} {s.nameZh}
                     </option>
                   ))}
                 </select>
@@ -252,7 +279,7 @@ export default function OmniCanvas() {
                   value={factoryTopic}
                   onChange={(e) => setFactoryTopic(e.target.value)}
                   disabled={factoryBusy}
-                  placeholder="例：星际车站离别，青涩校园情侣，15 秒竖屏虐心"
+                  placeholder="例：仙门外门弟子雨夜闯秘境，15 秒竖屏"
                   className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none focus:border-emerald-400/50"
                 />
               </div>
@@ -291,11 +318,16 @@ export default function OmniCanvas() {
                     originY: 80,
                     topic: factoryTopic,
                     genreId: factoryGenreId || undefined,
+                    sceneId: factorySceneId || undefined,
                   });
                   setBlocks(spawned.blocks);
                   setEdges(spawned.edges);
                   saveCanvasState(spawned.blocks, spawned.edges);
-                  toast.success("已铺好漫剧工厂六段节点");
+                  toast.success(
+                    factoryGenreId || factorySceneId
+                      ? "已铺节点并套入场景资产库"
+                      : "已铺好漫剧工厂六段节点",
+                  );
                 }}
               >
                 <Sparkles className="h-3.5 w-3.5" />

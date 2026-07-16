@@ -1,27 +1,24 @@
-# 编剧剧种模板正文（粘贴区）
+# 编剧剧种 + 漫剧场景资产库
 
-把你找到的模板按文件丢进来（或直接贴给我）。  
-代码侧注册表：`shared/screenwriterGenreTemplates.ts`；Skill：`docs/2026Jul11/skill/screenwriter-genre-templates.md`。
+## 介绍卡（你给的第一张）
+目标：告别 AI 漫剧「角色精美、场景廉价/拼贴」——用**场景资产库**做电影分镜感。  
+覆盖剧种：仙侠 / 古风 / 都市 / 校园 / 末日 / 科幻 / 悬疑。
 
-## 建议每份模板至少包含
-1. **钩子公式**（前 2 秒观众为什么停）  
-2. **角色槽位**（1–3 人：欲望 / 外形锚点 / 对白语气）  
-3. **节拍骨架**（6–8 镜，写清因果，勿只列景别）  
-4. **禁止崩坏**  
-5. **对白语气**  
+## 代码入口
+| 文件 | 作用 |
+|------|------|
+| `shared/manhuaSceneAssetLibrary.ts` | **20 个场景模板**（解析 / 核心元素 / 生图提示词） |
+| `shared/screenwriterGenreTemplates.ts` | 七剧种骨架，默认挂对应场景包 |
+| Skill | `docs/2026Jul11/skill/manhua-scene-asset-library.md` |
 
-## 文件命名
-与注册表 id 对齐，例如：
+## 模板清单 01–20
+01 仙侠宗门 · 02 云海仙山 · 03 练剑广场 · 04 秘境洞府 · 05 魔族宫殿  
+06 皇宫大殿 · 07 长安街市 · 08 古代府邸 · 09 战场废墟 · 10 边塞城墙  
+11 现代豪宅 · 12 都市办公室 · 13 酒吧夜店 · 14 校园教室  
+15 未来城市 · 16 太空基地 · 17 废土避难所 · 18 实验室  
+19 密室探案 · 20 黑客科技房间  
 
-| 文件 | id | 状态 |
-|------|-----|------|
-| `campus_angst.md` | campus_angst | 待填 |
-| `sweet_romance.md` | sweet_romance | 待填 |
-| `rebirth_revenge.md` | rebirth_revenge | 待填 |
-| `workplace_power.md` | workplace_power | 待填 |
-| `family_ethics.md` | family_ethics | 待填 |
-| `scifi_farewell.md` | scifi_farewell | 待填 |
-| `custom_slot_a.md` | custom_slot_a | 待填 |
-| `custom_slot_b.md` | custom_slot_b | 待填 |
-
-填好后把对应条目的 `ready` 改为 `true`，工厂下拉即可套用。
+## /canvas 用法
+1. 选**剧种**（自动带默认场景包）  
+2. 可选再指定**单一场景模板**  
+3. 题材一句 → 铺节点 / 跑工厂  

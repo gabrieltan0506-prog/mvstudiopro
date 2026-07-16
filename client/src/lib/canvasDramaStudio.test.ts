@@ -22,6 +22,18 @@ describe("canvasDramaStudio factory", () => {
     expect(blocks[0]!.prompt).toContain("星际车站离别");
   });
 
+  it("spawns with genre+scene injects scene asset into key art", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "外门弟子闯秘境",
+      genreId: "xianxia",
+      sceneId: "scene_04",
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.prompt).toContain("秘境洞府");
+    expect(key.prompt).toContain("发光晶石");
+    expect(blocks[0]!.prompt).toContain("仙侠");
+  });
+
   it("orders ids through reverse / keyart / clip", () => {
     const { blocks } = spawnManhuaDramaStudio();
     expect(resolveManhuaFactoryOrderedIds(blocks, "reverse")).toHaveLength(4);
