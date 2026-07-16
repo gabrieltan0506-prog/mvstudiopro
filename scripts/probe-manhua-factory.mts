@@ -156,7 +156,59 @@ async function main() {
   }
   if (!keyArtOk) process.exit(1);
 
-  console.log("[manhua-factory-probe] 五段可用（故事→角色→节拍→反推→静帧）");
+  // 第六段（可选、贵且久）：Seedance 2.0 ≈15s
+  //   CANVAS_PROBE_SEEDANCE=1 pnpm run manhua:probe
+  if (String(process.env.CANVAS_PROBE_SEEDANCE || "").trim() === "1") {
+    const seedanceBase = String(
+      process.env.CANVAS_PROBE_SEEDANCE_BASE || process.env.LONG_JOBS_API_ORIGIN || BASE,
+    )
+      .trim()
+      .replace(/\/$/, "");
+    const motionHint =
+      reverseText
+        .match(/##\s*可复制总提示[^\n]*\n+([\s\S]*?)(?=\n##|\n*$)/i)?.[1]
+        ?.trim()
+        .slice(0, 400) || reverseText.slice(0, 400);
+    const seedancePrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n${motionHint}`;
+    const imageUrl = keyArtDetail;
+    const SEEDANCE_TIMEOUT_MS = Math.max(
+      IMAGE_TIMEOUT_MS,
+      Number(process.env.CANVAS_PROBE_SEEDANCE_TIMEOUT_MS || 600_000) || 600_000,
+    );
+    try {
+      const clip = await fetchJson(
+        `${seedanceBase}/api/jobs?op=seedanceI2V`,
+        {
+          prompt: seedancePrompt,
+          imageUrl,
+          resolution: "720p",
+          aspectRatio: "9:16",
+          duration: 15,
+          generateAudio: true,
+          preferEvolink: true,
+        },
+        SEEDANCE_TIMEOUT_MS,
+      );
+      const videoUrl = String(clip.json?.videoUrl || "").trim();
+      const clipOk = clip.ok && Boolean(videoUrl);
+      console.log(
+        `[${clipOk ? "PASS" : "FAIL"}] 工厂·Seedance15s (${clip.ms}ms http=${clip.status}) ${
+          clipOk ? videoUrl.slice(0, 120) : String(clip.json?.error || clip.text).slice(0, 200)
+        }`,
+      );
+      if (!clipOk) process.exit(1);
+      console.log("[manhua-factory-probe] 六段可用（含 Seedance）");
+    } catch (e: unknown) {
+      console.log(
+        `[FAIL] 工厂·Seedance15s (exception) ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
+      );
+      process.exit(1);
+    }
+  } else {
+    console.log(
+      "[manhua-factory-probe] 五段可用（故事→角色→节拍→反推→静帧）；Seedance 设 CANVAS_PROBE_SEEDANCE=1 再测",
+    );
+  }
 }
 
 main().catch((e) => {
