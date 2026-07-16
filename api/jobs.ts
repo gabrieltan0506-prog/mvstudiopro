@@ -2623,6 +2623,10 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
       const aspectRatio = s(b.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
       const referenceImageUrl = s(b.referenceImageUrl || b.imageUrl || "").trim();
+      const generalImageEdit =
+        Boolean(b.generalImageEdit) ||
+        s(b.imageMode || "").toLowerCase() === "edit" ||
+        Boolean(referenceImageUrl);
       try {
         const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
         const captureError: { message?: string; moderationBlocked?: boolean } = {};
@@ -2631,6 +2635,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           aspectRatio,
           gcsSubdir: "canvas-gpt-image2",
           referenceImageUrls: referenceImageUrl ? [referenceImageUrl] : undefined,
+          // Canvas：有参考图即按通用改图，勿注入平台封面换脸指令
+          generalImageEdit: Boolean(referenceImageUrl) || generalImageEdit,
           captureError,
         });
         if (!imageUrl) {

@@ -89,7 +89,10 @@ import {
   platformTopicShortlistTotalCredits,
   type PlatformTopicShortlistItem,
 } from "@shared/platformTopicShortlist";
-import { PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE } from "@shared/platformSkills";
+import {
+  groupPlatformSkillsByCategory,
+  PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE,
+} from "@shared/platformSkills";
 import {
   Activity,
   ArrowLeft,
@@ -165,6 +168,21 @@ const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
 /** @deprecated 监管旧键；读取时 fallback */
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
+
+/** supervisor：创作顾问免费问答模型（一般用户服务端固定 Terra） */
+const PLATFORM_SKILL_QA_MODEL_LS_KEY = "mvstudiopro.platform.skillQaModel.v1";
+type PlatformSkillQaModelChoice = "gpt-5.6-terra" | "gpt-5.6-sol";
+
+function readPlatformSkillQaModelFromLs(): PlatformSkillQaModelChoice {
+  if (typeof window === "undefined") return "gpt-5.6-terra";
+  try {
+    const raw = window.localStorage.getItem(PLATFORM_SKILL_QA_MODEL_LS_KEY);
+    if (raw === "gpt-5.6-sol" || raw === "sol") return "gpt-5.6-sol";
+  } catch {
+    /* ignore */
+  }
+  return "gpt-5.6-terra";
+}
 
 /** /platform 挂载 Skill：勾选 id 列表（JSON string[]） */
 const PLATFORM_ENABLED_SKILL_IDS_LS_KEY = "mvstudiopro.platform.enabledSkillIds.v1";
@@ -1806,6 +1824,10 @@ export default function PlatformPage() {
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
+  /** 创作顾问问答模型切换：仅 supervisor / admin 可见；一般用户服务端固定 Terra */
+  const canConfigureSkillQaModel =
+    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+
   const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
     readPlatformCopyLlmEngineFromLs(),
   );
@@ -1975,6 +1997,16 @@ export default function PlatformPage() {
   const [skillQaQuestion, setSkillQaQuestion] = useState("");
   const [skillQaAnswer, setSkillQaAnswer] = useState("");
   const [skillQaRemaining, setSkillQaRemaining] = useState<number | null>(null);
+  const [skillQaModel, setSkillQaModel] = useState<PlatformSkillQaModelChoice>(() =>
+    readPlatformSkillQaModelFromLs(),
+  );
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLATFORM_SKILL_QA_MODEL_LS_KEY, skillQaModel);
+    } catch {
+      /* ignore */
+    }
+  }, [skillQaModel]);
   const [skillQaImageOffer, setSkillQaImageOffer] = useState<null | {
     creationRelated: boolean;
     suggestedPrompt: string;
@@ -2149,6 +2181,17 @@ export default function PlatformPage() {
     }
   }, [allowBloggerTitle]);
 
+  const togglePlatformSkillCategory = useCallback((ids: string[], enable: boolean) => {
+    setEnabledPlatformSkillIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (enable) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
   const togglePlatformSkillId = useCallback((id: string) => {
     setEnabledPlatformSkillIds((prev) => {
       const next = new Set(prev);
@@ -2206,10 +2249,17 @@ export default function PlatformPage() {
       return;
     }
     try {
+      const supervisorTok = getSupervisorTrpcToken();
       const res = await askPlatformSkillQaMutation.mutateAsync({
         question: q,
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
+        ...(canConfigureSkillQaModel
+          ? {
+              qaModel: skillQaModel,
+              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+            }
+          : {}),
       });
       setSkillQaAnswer(res.answer || "");
       setSkillQaRemaining(res.remainingFreeToday);
@@ -2225,6 +2275,8 @@ export default function PlatformPage() {
     askPlatformSkillQaMutation,
     enabledPlatformSkillIds,
     allowBloggerTitle,
+    canConfigureSkillQaModel,
+    skillQaModel,
   ]);
 
   const handleConfirmSkillQaImage = useCallback(async () => {
@@ -2307,6 +2359,23 @@ export default function PlatformPage() {
               点。生图会带上你勾选的 Skill（你的提示词仍优先）。
             </p>
           </div>
+          {canConfigureSkillQaModel ? (
+            <label className="flex shrink-0 flex-col gap-1 text-[10px] text-[#8cefff]/90">
+              <span className="font-semibold uppercase tracking-[0.12em]">Supervisor · 问答模型</span>
+              <select
+                value={skillQaModel}
+                onChange={(e) =>
+                  setSkillQaModel(
+                    e.target.value === "gpt-5.6-sol" ? "gpt-5.6-sol" : "gpt-5.6-terra",
+                  )
+                }
+                className="rounded-md border border-[#49e6ff]/35 bg-black/50 px-2 py-1.5 text-[11px] font-semibold text-white focus:border-[#49e6ff]/60 focus:outline-none"
+              >
+                <option value="gpt-5.6-terra">GPT-5.6 Terra（默认）</option>
+                <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+              </select>
+            </label>
+          ) : null}
         </div>
         <textarea
           value={skillQaQuestion}
@@ -2433,65 +2502,103 @@ export default function PlatformPage() {
           </span>
         </span>
       </label>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {(platformSkillsQuery.data?.skills ?? []).map((sk) => {
-          const on = enabledPlatformSkillIds.has(sk.id);
+      <div className="mt-3 space-y-3">
+        {groupPlatformSkillsByCategory(platformSkillsQuery.data?.skills ?? []).map(({ category, skills }) => {
+          const enabledCount = skills.filter((sk) => enabledPlatformSkillIds.has(sk.id)).length;
+          const allOn = enabledCount === skills.length && skills.length > 0;
           return (
-            <label
-              key={sk.id}
-              className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] transition ${
-                on
-                  ? "border-[#10B981]/50 bg-[#10B981]/12 text-white"
-                  : "border-white/10 bg-black/20 text-gray-400"
-              }`}
+            <details
+              key={category.id}
+              open={category.id === "core" || category.id === "lane"}
+              className="rounded-xl border border-white/10 bg-black/20"
             >
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={on}
-                onChange={() => togglePlatformSkillId(sk.id)}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="font-semibold text-white/90">{sk.name}</span>
-                <span className="ml-1 text-[10px] text-gray-500">
-                  {sk.source === "builtin" ? "内置" : "上传"} · {sk.id}
-                </span>
-                {sk.description ? (
-                  <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">
-                    {sk.description}
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-[11px]">
+                <span className="min-w-0">
+                  <span className="font-semibold text-white">{category.label}</span>
+                  <span className="ml-2 text-gray-500">
+                    {enabledCount}/{skills.length} 已开
                   </span>
-                ) : null}
-              </span>
-              {sk.source === "user" ? (
-                <button
-                  type="button"
-                  className="shrink-0 text-[10px] text-rose-300/80 hover:text-rose-200"
-                  onClick={(ev) => {
-                    ev.preventDefault();
-                    void (async () => {
-                      try {
-                        await deletePlatformSkillMutation.mutateAsync({ skillId: sk.id });
-                        setEnabledPlatformSkillIds((prev) => {
-                          const next = new Set(prev);
-                          next.delete(sk.id);
-                          return next;
-                        });
-                        toast.success("已删除上传 Skill");
-                        void platformSkillsQuery.refetch();
-                      } catch (err) {
-                        toast.error(err instanceof Error ? err.message : "删除失败");
-                      }
-                    })();
-                  }}
-                >
-                  删除
-                </button>
-              ) : null}
-            </label>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">{category.hint}</span>
+                </span>
+                <span className="flex shrink-0 gap-1.5">
+                  <button
+                    type="button"
+                    className="rounded border border-[#10B981]/35 bg-[#10B981]/10 px-2 py-1 text-[10px] font-semibold text-[#a7f3d0]"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      togglePlatformSkillCategory(
+                        skills.map((s) => s.id),
+                        !allOn,
+                      );
+                    }}
+                  >
+                    {allOn ? "本组全关" : "本组全开"}
+                  </button>
+                </span>
+              </summary>
+              <div className="grid gap-2 border-t border-white/5 px-2.5 py-2.5 sm:grid-cols-2">
+                {skills.map((sk) => {
+                  const on = enabledPlatformSkillIds.has(sk.id);
+                  return (
+                    <label
+                      key={sk.id}
+                      className={`flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] transition ${
+                        on
+                          ? "border-[#10B981]/50 bg-[#10B981]/12 text-white"
+                          : "border-white/10 bg-black/20 text-gray-400"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={on}
+                        onChange={() => togglePlatformSkillId(sk.id)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-semibold text-white/90">{sk.name}</span>
+                        <span className="ml-1 text-[10px] text-gray-500">
+                          {sk.source === "builtin" ? "内置" : "上传"}
+                        </span>
+                        {sk.description ? (
+                          <span className="mt-0.5 block text-[10px] leading-snug text-gray-500">
+                            {sk.description}
+                          </span>
+                        ) : null}
+                      </span>
+                      {sk.source === "user" ? (
+                        <button
+                          type="button"
+                          className="shrink-0 text-[10px] text-rose-300/80 hover:text-rose-200"
+                          onClick={(ev) => {
+                            ev.preventDefault();
+                            void (async () => {
+                              try {
+                                await deletePlatformSkillMutation.mutateAsync({ skillId: sk.id });
+                                setEnabledPlatformSkillIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(sk.id);
+                                  return next;
+                                });
+                                toast.success("已删除上传 Skill");
+                                void platformSkillsQuery.refetch();
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : "删除失败");
+                              }
+                            })();
+                          }}
+                        >
+                          删除
+                        </button>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            </details>
           );
         })}
         {!platformSkillsQuery.data?.skills?.length ? (
-          <div className="text-[11px] text-gray-500 sm:col-span-2">
+          <div className="text-[11px] text-gray-500">
             {platformSkillsQuery.isLoading ? "加载 Skill…" : "暂无 Skill（请确认 docs/2026Jul11/skill 已部署）"}
           </div>
         ) : null}
