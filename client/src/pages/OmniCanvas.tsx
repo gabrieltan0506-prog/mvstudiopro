@@ -234,6 +234,18 @@ export default function OmniCanvas() {
               输入题材后自动串联：故事→角色→节拍→编导反推→静帧→Seedance（约 15s）。
               已完成步骤会跳过，可从失败处续跑。参考短片请本机上传（≤120s）。
             </p>
+            <div className="mt-3 inline-flex max-w-3xl items-start gap-2 rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-50">
+              <span className="mt-0.5 shrink-0 rounded-full border border-amber-300/40 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-100">
+                Soon
+              </span>
+              <span>
+                <strong className="font-semibold text-amber-50">Seedance 2.5 Coming soon on MV Studio Pro</strong>
+                <span className="text-amber-100/75">
+                  {" "}
+                  · 文生 / 图生 / 参考生代码已就绪，待 EvoLink 上线后开放；当前请用 Seedance 2.0（默认 15s）。
+                </span>
+              </span>
+            </div>
 
             <div className="mt-3 grid max-w-3xl gap-2 sm:grid-cols-[minmax(0,8.5rem)_minmax(0,12rem)_1fr]">
               <div>

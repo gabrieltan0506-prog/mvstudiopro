@@ -1,3 +1,12 @@
+import {
+  SEEDANCE_25_COMING_SOON_LABEL_EN,
+  SEEDANCE_25_PUBLICLY_ENABLED,
+  clampSeedanceDuration,
+  inferSeedanceMode,
+  resolveSeedanceModelId,
+  type SeedanceEvolinkMode,
+  type SeedanceEvolinkVersion,
+} from "../../shared/seedanceEvolinkModels.js";
 import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
 
 const EVOLINK_BASE = String(process.env.EVOLINK_API_BASE || "https://api.evolink.ai").replace(/\/$/, "");
@@ -11,16 +20,21 @@ export function isEvolinkSeedanceConfigured(): boolean {
   return Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
 }
 
-function clampDuration(raw: unknown): number {
-  const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n)) return 8;
-  return Math.min(15, Math.max(4, n));
+/** 产品未开放；仅 SEEDANCE_25_ENABLED=1 时可走真实请求（联调）。 */
+export function isSeedance25Enabled(): boolean {
+  if (SEEDANCE_25_PUBLICLY_ENABLED) return true;
+  return /^(1|true|yes)$/i.test(String(process.env.SEEDANCE_25_ENABLED || ""));
 }
 
-function normalizeQuality(raw: unknown): "480p" | "720p" | "1080p" {
+function normalizeQuality20(raw: unknown): "480p" | "720p" | "1080p" {
   const q = String(raw || "720p").trim().toLowerCase();
   if (q === "480p" || q === "1080p") return q;
   return "720p";
+}
+
+function normalizeQuality25(raw: unknown): "480p" | "720p" {
+  const q = String(raw || "720p").trim().toLowerCase();
+  return q === "480p" ? "480p" : "720p";
 }
 
 type EvolinkVideoTask = {
@@ -31,6 +45,7 @@ type EvolinkVideoTask = {
   result?: { video_url?: string; thumbnail_url?: string };
   output?: { video_url?: string; url?: string };
   error?: { code?: string; message?: string };
+  message?: string;
 };
 
 function extractEvolinkVideoUrl(task: EvolinkVideoTask): string {
@@ -44,7 +59,7 @@ function extractEvolinkVideoUrl(task: EvolinkVideoTask): string {
   return nested.trim();
 }
 
-async function pollEvolinkVideoTask(taskId: string): Promise<string> {
+async function pollEvolinkVideoTask(taskId: string, label: string): Promise<string> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置");
 
@@ -63,55 +78,111 @@ async function pollEvolinkVideoTask(taskId: string): Promise<string> {
     const status = String(json.status || "").toLowerCase();
     if (status === "completed" || status === "succeeded" || status === "success") {
       const url = extractEvolinkVideoUrl(json);
-      if (!url) throw new Error("Seedance 2.0 任务完成但未返回视频 URL");
+      if (!url) throw new Error(`${label} 任务完成但未返回视频 URL`);
       return url;
     }
     if (status === "failed" || status === "cancelled") {
-      throw new Error(json.error?.message || "Seedance 2.0 视频生成失败");
+      throw new Error(json.error?.message || `${label} 视频生成失败`);
     }
 
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 
-  throw new Error(`Seedance 2.0 任务超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）`);
+  throw new Error(`${label} 任务超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）`);
 }
 
-/**
- * EvoLink Seedance 2.0 · 文生视频 / 图生视频（https://evolink.ai/seedance-2-0）
- */
-export async function runEvolinkSeedanceVideo(input: {
+export type EvolinkSeedanceRunInput = {
   prompt: string;
+  /** 兼容旧调用：单图图生 */
   imageUrl?: string;
+  imageUrls?: string[];
+  videoUrls?: string[];
+  audioUrls?: string[];
   aspectRatio?: string;
   duration?: number;
-  quality?: "480p" | "720p" | "1080p";
+  quality?: string;
   generateAudio?: boolean;
-}): Promise<{ videoUrl: string; model: string; provider: "evolink" }> {
+  contentFilter?: boolean;
+  /** 2.5 text-to-video 可选联网增强 */
+  webSearch?: boolean;
+  /** 强制模式；默认按素材推断 */
+  mode?: SeedanceEvolinkMode;
+  version?: SeedanceEvolinkVersion;
+};
+
+/**
+ * EvoLink Seedance · 文生 / 图生 / 参考生视频（2.0 默认开放；2.5 受闸门控制）
+ */
+export async function runEvolinkSeedanceVideo(
+  input: EvolinkSeedanceRunInput,
+): Promise<{ videoUrl: string; model: string; provider: "evolink"; version: SeedanceEvolinkVersion; mode: SeedanceEvolinkMode }> {
+  const version: SeedanceEvolinkVersion = input.version === "2.5" ? "2.5" : "2.0";
+  if (version === "2.5" && !isSeedance25Enabled()) {
+    throw new Error(`${SEEDANCE_25_COMING_SOON_LABEL_EN}（EvoLink 尚未开放，请先用 Seedance 2.0）`);
+  }
+
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置，无法使用 Seedance 2.0");
+  if (!apiKey) throw new Error(`EVOLINK_API_KEY 未配置，无法使用 Seedance ${version}`);
 
   const prompt = String(input.prompt || "").trim();
-  if (!prompt) throw new Error("Seedance 2.0 需要提示词");
+  if (!prompt) throw new Error(`Seedance ${version} 需要提示词`);
 
-  const imageUrl = String(input.imageUrl || "").trim();
-  const model = imageUrl ? "seedance-2.0-image-to-video" : "seedance-2.0-text-to-video";
-  const duration = clampDuration(input.duration);
-  const quality = normalizeQuality(input.quality);
+  const imageUrls = [
+    ...((input.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
+    ...(String(input.imageUrl || "").trim() ? [String(input.imageUrl).trim()] : []),
+  ];
+  const uniqueImages = Array.from(new Set(imageUrls));
+  const videoUrls = Array.from(
+    new Set((input.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
+  );
+  const audioUrls = Array.from(
+    new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
+  );
+
+  const mode =
+    input.mode ||
+    inferSeedanceMode({ imageUrls: uniqueImages, videoUrls, audioUrls });
+  const model = resolveSeedanceModelId(version, mode);
+  const duration = clampSeedanceDuration(version, input.duration);
   const aspectRatio = String(input.aspectRatio || "16:9").trim() || "16:9";
+  const label = `Seedance ${version}`;
 
   const body: Record<string, unknown> = {
     model,
     prompt,
     duration,
-    quality,
     aspect_ratio: aspectRatio,
     generate_audio: input.generateAudio !== false,
-    content_filter: true,
+    content_filter: input.contentFilter !== false,
   };
 
-  if (imageUrl) {
-    body.image_urls = [imageUrl];
+  if (version === "2.5") {
+    body.quality = normalizeQuality25(input.quality);
+    if (input.webSearch === true) {
+      body.model_params = { web_search: true };
+    }
+  } else {
+    body.quality = normalizeQuality20(input.quality);
   }
+
+  if (mode === "image_to_video") {
+    if (uniqueImages.length < 1) throw new Error(`${label} 图生视频需要至少 1 张参考图`);
+    body.image_urls = uniqueImages.slice(0, 1);
+  } else if (mode === "reference_to_video") {
+    if (uniqueImages.length + videoUrls.length + audioUrls.length < 1) {
+      throw new Error(`${label} 参考生视频需要至少 1 个 image/video/audio 参考`);
+    }
+    if (uniqueImages.length) {
+      body.image_urls = uniqueImages.slice(0, version === "2.5" ? 30 : 9);
+    }
+    if (videoUrls.length) {
+      body.video_urls = videoUrls.slice(0, version === "2.5" ? 10 : 3);
+    }
+    if (audioUrls.length) {
+      body.audio_urls = audioUrls.slice(0, version === "2.5" ? 10 : 3);
+    }
+  }
+  // text_to_video：不附媒体
 
   const createRes = await fetch(`${EVOLINK_BASE}/v1/videos/generations`, {
     method: "POST",
@@ -123,10 +194,7 @@ export async function runEvolinkSeedanceVideo(input: {
     signal: AbortSignal.timeout(60_000),
   });
 
-  const createJson = (await createRes.json().catch(() => ({}))) as EvolinkVideoTask & {
-    id?: string;
-    message?: string;
-  };
+  const createJson = (await createRes.json().catch(() => ({}))) as EvolinkVideoTask;
 
   if (!createRes.ok) {
     throw new Error(createJson.error?.message || createJson.message || `EvoLink 创建任务失败 (${createRes.status})`);
@@ -135,13 +203,21 @@ export async function runEvolinkSeedanceVideo(input: {
   const immediateUrl = extractEvolinkVideoUrl(createJson);
   if (immediateUrl && String(createJson.status || "").toLowerCase() === "completed") {
     const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(immediateUrl);
-    return { videoUrl, model, provider: "evolink" };
+    return { videoUrl, model, provider: "evolink", version, mode };
   }
 
   const taskId = String(createJson.id || "").trim();
   if (!taskId) throw new Error("EvoLink 未返回任务 ID");
 
-  const sourceUrl = await pollEvolinkVideoTask(taskId);
+  const sourceUrl = await pollEvolinkVideoTask(taskId, label);
   const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
-  return { videoUrl, model, provider: "evolink" };
+  return { videoUrl, model, provider: "evolink", version, mode };
+}
+
+/** @deprecated 兼容旧名；等同 runEvolinkSeedanceVideo（2.0） */
+export async function runEvolinkSeedance20(
+  input: Omit<EvolinkSeedanceRunInput, "version">,
+): Promise<{ videoUrl: string; model: string; provider: "evolink" }> {
+  const out = await runEvolinkSeedanceVideo({ ...input, version: "2.0" });
+  return { videoUrl: out.videoUrl, model: out.model, provider: out.provider };
 }
