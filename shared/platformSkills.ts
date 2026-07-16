@@ -96,7 +96,7 @@ ${parts.join("\n\n---\n\n")}`;
   return block;
 }
 
-/** /platform 内置池（不含 Canvas-only：Seedance/漫剧/反推） */
+/** /platform 内置池（不含 Canvas-only：Seedance/漫剧/反推/场景资产） */
 export const PLATFORM_BUILTIN_SKILL_IDS = [
   "director-craft",
   "json-director-middleware",

@@ -113,8 +113,8 @@ export const CANVAS_KIND_META: Record<
     color: "from-amber-500/30 to-orange-600/10",
   },
   video_reverse: {
-    label: "视频反推",
-    hint: "上传参考短片→Gemini 拉片→分镜表+Seedance 微动句",
+    label: "编导分镜/反推",
+    hint: "有片拉片 / 无片按节拍补全编导分镜+微动句",
     icon: Clapperboard,
     color: "from-rose-500/30 to-fuchsia-600/10",
   },
@@ -140,7 +140,7 @@ export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; h
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
   { kind: "image", label: "图片生成", hint: "JSON 导演中台→生图" },
   { kind: "video", label: "视频生成", hint: "Seedance/Omini · I2V 微动公式" },
-  { kind: "video_reverse", label: "视频反推", hint: "Gemini 拉片→分镜+微动句" },
+  { kind: "video_reverse", label: "编导分镜/反推", hint: "有片拉片 / 无片按节拍补全" },
   { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
 
