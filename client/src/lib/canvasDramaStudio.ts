@@ -239,14 +239,19 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
   const reverse = working.find((b) => b.id === justFinishedId);
   const md = reverse?.outputText || "";
   const { keyArtHint, seedanceHint } = extractFactoryMotionHints(md);
-  if (!keyArtHint && !seedanceHint) return working;
+  const bibleText = String(working.find((b) => b.id.startsWith("bible-"))?.outputText || "")
+    .trim()
+    .slice(0, 700);
+  if (!keyArtHint && !seedanceHint && !bibleText) return working;
   return working.map((b) => {
-    if (b.id.startsWith("keyart-") && keyArtHint) {
+    if (b.id.startsWith("keyart-") && (keyArtHint || bibleText)) {
       const base = MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
-      return {
-        ...b,
-        prompt: `${base}\n\n【来自编导反推】\n${keyArtHint}`,
-      };
+      const parts = [
+        base,
+        keyArtHint ? `【来自编导反推】\n${keyArtHint}` : "",
+        bibleText ? `【角色卡锚点】\n${bibleText}` : "",
+      ].filter(Boolean);
+      return { ...b, prompt: parts.join("\n\n") };
     }
     if (b.id.startsWith("clip-") && seedanceHint) {
       return {
