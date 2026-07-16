@@ -75,33 +75,24 @@ describe("platformOptimizeCustomCopy", () => {
     });
   });
 
-  it("falls back to Gemini Flash when GPT-5.6 fails", async () => {
+  it("does not fall back to Gemini when Evolink GPT-5.6 fails", async () => {
     vi.mocked(invokeLLM)
       .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"))
       .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"));
-    vi.mocked(callGemini35FlashCopywriting).mockResolvedValueOnce(
-      JSON.stringify({
-        summary: "gemini",
-        optimizedMarkdown: "## Gemini 优化稿\n内容",
-        titles: ["G"],
-        hooks: [],
-        platformNotes: [],
+
+    await expect(
+      optimizeCustomCopy({
+        sourceText: "这是一段足够长的测试文案，用于验证已取消 Gemini fallback。",
       }),
-    );
+    ).rejects.toThrow(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
 
-    const result = await optimizeCustomCopy({
-      sourceText: "这是一段足够长的测试文案，用于验证 Gemini fallback。",
-    });
-
-    expect(result.optimizedMarkdown).toContain("Gemini 优化稿");
-    expect(vi.mocked(callGemini35FlashCopywriting)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(callGemini35FlashCopywriting)).not.toHaveBeenCalled();
   });
 
-  it("throws capacity message when GPT and Gemini both fail", async () => {
+  it("throws capacity message when Evolink fails twice", async () => {
     vi.mocked(invokeLLM)
       .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"))
       .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"));
-    vi.mocked(callGemini35FlashCopywriting).mockRejectedValueOnce(new Error("gemini down"));
 
     await expect(
       optimizeCustomCopy({

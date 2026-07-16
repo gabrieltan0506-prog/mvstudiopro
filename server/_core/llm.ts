@@ -572,27 +572,15 @@ const resolveTarget = (
         EVOLINK_CHAT_MODEL_GPT56_SOL,
       );
       const evolinkKey = getEvolinkApiKey();
-      if (evolinkKey) {
-        return {
-          provider: "openai",
-          apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
-          apiKey: evolinkKey,
-          modelName,
-        };
+      if (!evolinkKey) {
+        throw new Error("EVOLINK_API_KEY is not configured（平台文案/回答仅走 Evolink GPT-5.6 Sol，已取消 OhMyGPT）");
       }
-      const ohmyKey = getOhMyGptApiKey();
-      if (ohmyKey) {
-        console.warn(
-          "[resolveTarget] EVOLINK_API_KEY missing → platform copy falls back to OhMyGPT gpt-5.6-sol",
-        );
-        return {
-          provider: "openai",
-          apiUrl: getOhMyGptChatCompletionsUrl(),
-          apiKey: ohmyKey,
-          modelName: normalizeOhMyGptGpt56Model(modelName, OHMYGPT_CHAT_MODEL_GPT56_SOL),
-        };
-      }
-      throw new Error("EVOLINK_API_KEY or OHMYGPT_API_KEY / PROXY_OPENAI_API_KEY is not configured");
+      return {
+        provider: "openai",
+        apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+        apiKey: evolinkKey,
+        modelName,
+      };
     }
 
     const fallback =
@@ -1260,73 +1248,16 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     }
   };
 
-  const primaryModel = String(target.modelName || "").trim();
   const isOhMyGptEndpoint = isOhMyGptChatEndpoint(String(target.apiUrl || ""));
   const isEvolinkEndpoint = isEvolinkChatEndpoint(String(target.apiUrl || ""));
-  const isGpt56FamilyPrimary =
-    isEvolinkGpt56FamilyModel(primaryModel) || isOhMyGptGpt56FamilyModel(primaryModel);
-  const solModel = EVOLINK_CHAT_MODEL_GPT56_SOL;
 
-  const tryOhMyGptSolFallback = async (reason: unknown): Promise<InvokeResult> => {
-    const ohmyKey = getOhMyGptApiKey();
-    if (!ohmyKey) throw reason instanceof Error ? reason : new Error(String(reason));
-    console.warn(
-      `[invokeOpenAI] EvoLink copy path failed → OhMyGPT ${solModel}:`,
-      reason instanceof Error ? reason.message.slice(0, 240) : reason,
-    );
-    return postChatCompletions(
-      getOhMyGptChatCompletionsUrl(),
-      ohmyKey,
-      { ...payload, model: normalizeOhMyGptGpt56Model(solModel, OHMYGPT_CHAT_MODEL_GPT56_SOL) },
-      "OhMyGPT",
-    );
-  };
-
-  const tryEvolinkSolFallback = async (reason: unknown): Promise<InvokeResult> => {
-    const evolinkKey = getEvolinkApiKey();
-    if (!evolinkKey) throw reason instanceof Error ? reason : new Error(String(reason));
-    console.warn(
-      `[invokeOpenAI] OhMyGPT copy path failed → Evolink ${solModel}:`,
-      reason instanceof Error ? reason.message.slice(0, 240) : reason,
-    );
-    return postChatCompletions(
-      EVOLINK_CHAT_COMPLETIONS_URL,
-      evolinkKey,
-      { ...payload, model: normalizeEvolinkChatModel(solModel, EVOLINK_CHAT_MODEL_GPT56_SOL) },
-      "Evolink",
-    );
-  };
-
-  try {
-    return await postChatCompletions(
-      String(target.apiUrl),
-      String(target.apiKey),
-      payload,
-      isOhMyGptEndpoint ? "OhMyGPT" : isEvolinkEndpoint ? "Evolink" : "OpenAI",
-    );
-  } catch (primaryErr) {
-    // EvoLink gpt-5.6-* 失败 → OhMyGPT gpt-5.6-sol
-    if (isEvolinkEndpoint && isGpt56FamilyPrimary) {
-      try {
-        return await tryOhMyGptSolFallback(primaryErr);
-      } catch (ohmyErr) {
-        throw ohmyErr instanceof Error
-          ? ohmyErr
-          : new Error("文案生成暂时不可用（EvoLink 与 OhMyGPT GPT-5.6 Sol 均失败），请稍后重试");
-      }
-    }
-
-    // OhMyGPT 主路径失败（无 EvoLink 密钥时）→ 仍尝试 EvoLink gpt-5.6-sol
-    if (isOhMyGptEndpoint && isGpt56FamilyPrimary) {
-      try {
-        return await tryEvolinkSolFallback(primaryErr);
-      } catch (evolinkErr) {
-        throw evolinkErr instanceof Error ? evolinkErr : primaryErr;
-      }
-    }
-
-    throw primaryErr;
-  }
+  // 平台文案/回答：仅 Evolink；失败直接抛错，不再 fallback OhMyGPT。
+  return postChatCompletions(
+    String(target.apiUrl),
+    String(target.apiKey),
+    payload,
+    isOhMyGptEndpoint ? "OhMyGPT" : isEvolinkEndpoint ? "Evolink" : "OpenAI",
+  );
 }
 
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {

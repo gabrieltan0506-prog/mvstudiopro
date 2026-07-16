@@ -25,7 +25,7 @@ defaultEnabled: true
 - `platform`：`xiaohongshu` | `bilibili` | `weixin_channels`
 - `format`：短视频 / 图文（遵守上方默认与配额）
 - `hook`：该平台停滑句（勿三平台同句）
-- `coverHeadline`：竖版封面主句 **8–14 字**
+- `coverHeadline`：竖版封面主句 **约 10–18 字**（高点击短钩：反差/反常识/数字拧巴）
 - `coverSubline`：可选，**≤18 字一行**；可空
 - `tags`：3–8 个平台标签
 - `blueOceanKeywords`：从本批共享词表选 **1–3 个**，三平台子集尽量不雷同

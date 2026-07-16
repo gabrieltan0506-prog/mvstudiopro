@@ -1757,8 +1757,9 @@ export default function PlatformPage() {
   const queryClient = useQueryClient();
   const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<PlatformWindowDays>(15);
+  /** 平台趋势分析：单选（默认小红书）；不再默认勾选全部平台 */
   const [selectedTrendPlatforms, setSelectedTrendPlatforms] = useState<TrendPlatformKey[]>([
-    ...ALL_TREND_PLATFORM_KEYS,
+    "xiaohongshu",
   ]);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
@@ -2219,7 +2220,8 @@ export default function PlatformPage() {
       setSkillQaImageOffer(res.imageOffer ?? null);
       setSkillQaImageUrl(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "问答失败");
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(sanitizePlatformUserMessage(msg, "问答失败，请稍后重试"));
     }
   }, [
     skillQaQuestion,
@@ -2299,11 +2301,12 @@ export default function PlatformPage() {
       <div className="rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/8 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white">Skill 顾问问答 · GPT‑5.6</div>
+            <div className="text-sm font-semibold text-white">创作顾问问答</div>
             <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-              提问创作 / Skill 用法免费（每日 {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
+              可问任何问题（创作 / Skill / 平台运营 / 时令赛道等），每日免费{" "}
+              {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
               {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
-              ）。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
+              。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
               {CREDIT_COSTS.platformSkillQaImageFirst} 点），之后 {CREDIT_COSTS.platformTopicFrameGraphic}{" "}
               点。生图会带上你勾选的 Skill（你的提示词仍优先）。
             </p>
@@ -2313,7 +2316,7 @@ export default function PlatformPage() {
           value={skillQaQuestion}
           onChange={(e) => setSkillQaQuestion(e.target.value)}
           rows={3}
-          placeholder="例如：封面怎么写才不说教？跨界科普怎么开头？帮我画一张网球发球封面试试…"
+          placeholder="例如：小红书一年各时节热销的电子版/虚拟资料有哪些？封面怎么写才不说教？帮我画一张网球发球封面试试…"
           className="mt-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white placeholder:text-gray-600 focus:border-[#49e6ff]/50 focus:outline-none"
         />
         <div className="mt-2 flex flex-wrap gap-2">
@@ -2383,7 +2386,7 @@ export default function PlatformPage() {
         ) : null}
         {skillQaImageUrl ? (
           <div className="mt-3 overflow-hidden rounded-lg border border-white/10">
-            <img src={skillQaImageUrl} alt="Skill 问答生图" className="max-h-[420px] w-full object-contain bg-black/40" />
+            <img src={skillQaImageUrl} alt="创作顾问生图" className="max-h-[420px] w-full object-contain bg-black/40" />
           </div>
         ) : null}
       </div>
@@ -2393,7 +2396,7 @@ export default function PlatformPage() {
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-white">生成 Skill（全案 + 自定义共用）</div>
           <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图，以及上方 Skill 顾问问答/生图。内置在{" "}
+            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图，以及上方创作顾问问答/生图。内置在{" "}
             <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
             ；可上传 .md 追加。
           </p>
@@ -2576,13 +2579,28 @@ export default function PlatformPage() {
                   setSelectedShortlistIds(
                     new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)),
                   );
+                  if (!topics.length) {
+                    toast.error(
+                      "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
+                    );
+                    return;
+                  }
                   toast.success(
                     `已生成 ${topics.length} 条初选${
                       res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
                     }`,
                   );
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "初选生成失败");
+                  const msg = err instanceof Error ? err.message : String(err);
+                  const friendly =
+                    msg.includes("Unexpected token") ||
+                    msg.includes("is not valid JSON") ||
+                    msg.includes("An error o") ||
+                    msg.includes("timeout") ||
+                    msg.includes("504")
+                      ? "算力紧张或请求超时，请稍后重试选题初选"
+                      : msg || "初选生成失败";
+                  toast.error(friendly);
                 }
               })();
             }}
@@ -3123,7 +3141,7 @@ export default function PlatformPage() {
         {imageTraces.length > 0 ? (
           <div className="rounded-xl border border-[#c4b5fd]/25 bg-[rgba(99,102,241,0.08)] p-3">
             <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#c4b5fd]">
-              英文化 · 模型翻译
+              英文化 · 版式翻译
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
               合计轮询{" "}
@@ -6603,8 +6621,8 @@ export default function PlatformPage() {
    * 供工作台顶部「平台趋势分析报表」区块独立启动，无需等全案分析。
    */
   const handleTrendStandaloneAnalyze = async () => {
-    if (!selectedTrendPlatforms.length) {
-      toast.error("请至少选择一个分析平台");
+    if (selectedTrendPlatforms.length !== 1) {
+      toast.error("请选择一个分析平台");
       return;
     }
     const visualPlatforms = toVisualReportPlatforms(selectedTrendPlatforms);
@@ -6664,12 +6682,14 @@ export default function PlatformPage() {
     setIsDashboardLoading(true);
     setIsVisualReportLoading(true);
     try {
-      const [dashResult, visualResult] = await Promise.all([
+      // 平台趋势分析是独立功能：看板摘要 + PNG 图文报表并行；PNG 依赖 generateVisualReport（Evolink）
+      const [dashSettled, visualSettled] = await Promise.allSettled([
         getPlatformDashboardMutation.mutateAsync({
           context: focusPrompt || undefined,
           windowDays: selectedWindowDays,
           snapshotSummary: snap as any,
           copyLlmMode: "openai" as const,
+          requestedPlatforms: selectedTrendPlatforms,
         }),
         generateVisualReportMutation.mutateAsync({
           windowDays: reportWindowDays,
@@ -6679,29 +6699,60 @@ export default function PlatformPage() {
         }),
       ]);
 
-      if (!dashResult.platformDashboard) {
-        toast.error(`趋势看板生成失败：AI 数据格式异常，请重试`);
+      let hasDash = false;
+      let hasReport = false;
+      const errors: string[] = [];
+
+      if (dashSettled.status === "fulfilled") {
+        const dashResult = dashSettled.value;
+        if (dashResult.platformDashboard) {
+          setPlatformDashboard(dashResult.platformDashboard as unknown as PlatformDashboard);
+          hasDash = true;
+        } else {
+          errors.push(
+            sanitizePlatformUserMessage(
+              String((dashResult as { debug?: { error?: string } }).debug?.error || ""),
+              "趋势看板生成失败，请重试",
+            ),
+          );
+        }
       } else {
-        const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
-        setPlatformDashboard(dash);
+        const msg = dashSettled.reason instanceof Error ? dashSettled.reason.message : String(dashSettled.reason);
+        errors.push(sanitizePlatformUserMessage(msg, "趋势看板生成失败，请稍后重试"));
       }
 
-      const mappedReport = mapGenerateVisualReportResult(visualResult, {
-        windowDays: reportWindowDays,
-        theme: visualReportTheme,
-      });
-      if (!mappedReport) {
-        toast.error("PNG 图文报表生成失败，请重试");
+      if (visualSettled.status === "fulfilled") {
+        const mappedReport = mapGenerateVisualReportResult(visualSettled.value, {
+          windowDays: reportWindowDays,
+          theme: visualReportTheme,
+        });
+        if (mappedReport) {
+          setVisualReportData(mappedReport);
+          hasReport = true;
+        } else {
+          const softErr =
+            typeof (visualSettled.value as { error?: unknown })?.error === "string"
+              ? String((visualSettled.value as { error?: string }).error)
+              : "";
+          errors.push(sanitizePlatformUserMessage(softErr, "PNG 图文报表生成失败，请重试"));
+        }
       } else {
-        setVisualReportData(mappedReport);
+        const msg =
+          visualSettled.reason instanceof Error ? visualSettled.reason.message : String(visualSettled.reason);
+        errors.push(sanitizePlatformUserMessage(msg, "PNG 图文报表生成失败，请稍后重试"));
       }
 
-      if (dashResult.platformDashboard && mappedReport) {
-        toast.success("平台趋势看板与 PNG 图文报表已就绪！可在此下载长图。");
-      } else if (dashResult.platformDashboard) {
-        toast.success("平台趋势看板已就绪；PNG 报表未生成成功，请重试。");
-      } else if (mappedReport) {
-        toast.success("PNG 图文报表已就绪，可下载长图。");
+      if (hasDash && hasReport) {
+        toast.success("平台趋势分析报表已就绪，可下载 PNG 长图。");
+      } else if (hasReport) {
+        toast.success("PNG 趋势报表已就绪，可下载长图。");
+        if (errors[0]) toast.error(`看板摘要：${errors[0].slice(0, 100)}`);
+      } else if (hasDash) {
+        toast.error(
+          `趋势 PNG 报表未生成：${(errors.find((e) => /报表|PNG|JSON|Evolink|网关|超时|算力/i.test(e)) || errors[0] || "请重试").slice(0, 140)}`,
+        );
+      } else {
+        toast.error(errors[0] || "平台趋势分析失败，请稍后重试");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -6818,6 +6869,7 @@ export default function PlatformPage() {
         windowDays: selectedWindowDays,
         snapshotSummary: snap as any,
         copyLlmMode: "openai" as const,
+        requestedPlatforms: selectedTrendPlatforms,
       });
 
       if (!dashResult.platformDashboard) {
@@ -7430,7 +7482,6 @@ export default function PlatformPage() {
               <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析平台</span>
               {TREND_PLATFORM_OPTIONS.map((item) => {
                 const active = selectedTrendPlatforms.includes(item.key);
-                const isLastSelected = active && selectedTrendPlatforms.length === 1;
                 const isComingSoon = Boolean(item.comingSoon);
                 return (
                   <button
@@ -7438,16 +7489,10 @@ export default function PlatformPage() {
                     type="button"
                     onClick={() => {
                       if (isComingSoon) return;
-                      setSelectedTrendPlatforms((prev) => {
-                        if (prev.includes(item.key)) {
-                          if (prev.length === 1) return prev;
-                          return prev.filter((platform) => platform !== item.key);
-                        }
-                        return [...prev, item.key];
-                      });
+                      setSelectedTrendPlatforms([item.key]);
                     }}
-                    disabled={isAnalyzing || isDashboardLoading || isLastSelected || isComingSoon}
-                    title={isComingSoon ? "即将开放视频号数据抓取" : isLastSelected ? "至少保留一个平台" : undefined}
+                    disabled={isAnalyzing || isDashboardLoading || isComingSoon}
+                    title={isComingSoon ? "即将开放视频号数据抓取" : "单选：点击切换分析平台"}
                     className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
                       isComingSoon
                         ? "border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] text-[#fef08a]/50"
@@ -8690,9 +8735,9 @@ export default function PlatformPage() {
                 <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-white">文案模型（Stage 1 + Stage 2 + 深度追问）</div>
+                      <div className="text-sm font-semibold text-white">文案引擎（战略看板 + 专属文案 + 深度追问）</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        战略看板、专属选题文案与深度追问走平台文案引擎；Debug 会显示实际进度与 token。
+                        战略看板、专属选题文案与深度追问走平台文案引擎；Debug 会显示实际进度与用量。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">

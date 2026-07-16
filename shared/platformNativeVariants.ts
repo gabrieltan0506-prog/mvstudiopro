@@ -34,7 +34,7 @@ export const PLATFORM_NATIVE_VARIANT_LABEL_ZH: Record<string, string> = {
 
 /** Stage2 / 扩写：要求输出 platformVariants 的硬约束摘要（Skill md 已详述时仍可短提醒） */
 export const PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT = `【platformVariants·必须】每条 contentBlueprint 须含 platformVariants 数组，恰好覆盖 xiaohongshu、bilibili、weixin_channels 三项。
-每项字段：platform, format, hook, coverHeadline(8–14字), coverSubline(可选≤18字), tags(3–8), blueOceanKeywords(1–3且三平台子集不同), reuseMainCopy。
+每项字段：platform, format, hook, coverHeadline(约10–18字高点击短钩), coverSubline(可选≤18字), tags(3–8), blueOceanKeywords(1–3且三平台子集不同), reuseMainCopy。
 - **图文配额**：全案 6 条中至少 3 条主 format=图文；主 format=图文时 xiaohongshu.format 必须=图文且 reuseMainCopy=false。
 - 小红书：主 format=短视频时可为短视频 reuseMainCopy=true；tags/蓝海可偏女性向生活词。
 - B站、视频号：默认 format=短视频。
@@ -191,7 +191,7 @@ export function composePlatformCoverNativeVisualDirective(
       : `【平台母语·小红书短视频封面】主句偏情绪停滑、种草感；明快生活场域；主句大而少字，禁止百科堆字。`;
   }
   if (id === "bilibili") {
-    return `【平台母语·B站封面】主句偏知识反差/信息缺口（仍≤14字）；略偏清晰信息密度与「想点开搞懂」；禁止空泛鸡汤与多图标清单栏。`;
+    return `【平台母语·B站封面】主句偏知识反差/信息缺口（约10–18字高点击短钩）；略偏清晰信息密度与「想点开搞懂」；禁止空泛鸡汤与多图标清单栏。`;
   }
   if (id === "weixin_channels") {
     return `【平台母语·视频号封面】主句偏生活一句人话、温暖易转发；私域聊天感而非广告腔；光影有温度，禁止审讯室/葬礼感暗调。`;
@@ -203,7 +203,7 @@ export function composePlatformCoverNativeVisualDirective(
  * 出图链路专用：禁止灌入全文 Skill（会显著拖慢双语编导 / 像素模型）。
  * 仅返回与封面、图文格、手法相关的短硬约束。
  * 默认按选题路由子集；`skillRouteMode: "all"` 时对勾选池全开短约束。
- * 封面少字硬限始终附加（专治 fallback 模型把长 hook 印满屏）。
+ * 封面「高点击短钩」始终附加：精简是为了停滑，不是恐吓砍字导致模型空转。
  */
 export function composePlatformImageSkillHints(
   enabledSkillIds?: string[] | null,
@@ -211,7 +211,7 @@ export function composePlatformImageSkillHints(
     routeContext?: string | null;
     sheetKind?: "graphic" | "video" | "unknown" | null;
     skillRouteMode?: "auto" | "all" | null;
-    /** 出图任务默认 true：强制封面少字句 */
+    /** 出图任务默认 true：强制封面高点击短钩 */
     forceCoverShortCopy?: boolean;
   },
 ): string {
@@ -235,7 +235,7 @@ export function composePlatformImageSkillHints(
   const forceCover = opts?.forceCoverShortCopy !== false;
   if (forceCover || on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图·少字硬限】coverHeadline 须 8–14 字；屏上可见文案最多 2 行；只提亮 2–6 字重点色；禁止把长标题/整段 hook/论文式副标印满屏；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
+      "【封面出图·高点击短钩】coverHeadline 约 10–18 字，须带数字反差/反常识/猎奇缺口（例：天天打游戏怎么考上北大）；屏上最多 2 行大字；只提亮 2–6 字重点色；禁止论文式长 hook/CTA 墙；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
       "【封面出图·清单蓝海（x1/x3）】选题含清单/必备/带娃/攻略时：优先 flat lay 神器墙或行李箱 POV + 大数字件数 + 结果钉（安静/不踩雷/省事/建议收藏）；杀伤词可用必備/清單/保姆級/被問爆/無廣；禁论文腔封面。",
       "【封面出图·医学高赞（mk/mk1/mk3）】医学/急救/机制向：壳三选一——①大数字选题包（100个/谁写谁火/选一个就行+收藏角标）②屏幕证据种草（MSD大众版或3D怼镜+3D讲清原理）③漫画/八卦钩（好员工黑化/不当切片课）；禁病名分型论文封面与空白大褂证件照。",
     );
@@ -253,7 +253,7 @@ export function composePlatformImageSkillHints(
   }
   if (on("xhs-collectible-note")) {
     parts.push(
-      "【高收藏图文·m1密度】8–12页；封面城市+时段+大数字+价值钉；页2编号总览墙；中段detail细卡（档期/门槛/一句钉子）；解法写「在这里我先分享一些」；封面少字硬限。",
+      "【高收藏图文·m1密度】8–12页；封面城市+时段+大数字+价值钉；页2编号总览墙；中段detail细卡（档期/门槛/一句钉子）；解法写「在这里我先分享一些」；封面高点击短钩。",
       "【高收藏图文·清单蓝海x1/x3】带娃/出行清单：flat lay或行李箱证据；细卡写结果句（全程安静/装湿衣服等）；目标藏≥赞工具帖气质。",
       "【高收藏图文·医学mk】选题包：封面大数字+类目条→页2类目总览墙→细卡「题+一句覆盖什么」；漫画机制可用分镜页；末页/导语附公开资源链；目标藏≥赞。",
     );

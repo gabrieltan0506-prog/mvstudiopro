@@ -324,7 +324,7 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
     product: "平台数据分析",
     subFeature: "Skill 问答·单页生图（首张九折）",
     credits: CREDIT_COSTS.platformSkillQaImageFirst,
-    note: "Skill 区上方问答确认生图：生涯首张 43 cr（封面九折），之后按封面 48 cr；问答本身每日 30 次免费",
+    note: "创作顾问问答确认生图：生涯首张 43 cr（封面九折），之后按封面 48 cr；问答本身每日 10 次免费（任意提问）",
   },
   { product: "平台数据分析", subFeature: "分镜图文参考（原生 2×4 · 单条）", credits: CREDIT_COSTS.platformStoryboardSheet, note: "短视频向 2×4 分镜主表 60 cr/次（kind: storyboard_sheet_*）· 非图文笔记八格" },
   {

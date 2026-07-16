@@ -7,12 +7,8 @@ import {
   getPlatformStage2OpenAiModel,
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches";
-import { isOhMyGptChatConfigured } from "./ohmygptChat";
-import {
-  callGemini35FlashCopywriting,
-  resolveGemini35FlashCopywritingMaxOutputTokens,
-  resolvePlatformStage2GeminiModel,
-} from "./gemini35FlashRuntime";
+import { PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE } from "../../shared/platformCreatorInsightFraming.js";
+import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -46,7 +42,9 @@ const SYSTEM_PROMPT = `你是 mvstudiopro 平台页的资深内容顾问，专�
 2. **禁止**输出与用户素材无关的示例标题；禁止「首先其次综上所述」公文腔；禁止空泛平台话术堆砌。
 3. 若用户提到封面 / 分镜 / 八格 / 2×4，分别给出可执行的优化建议（主标、副标、各格叙事节奏、口播/字幕要点）。
 4. 若提供【Platform 挂载 Skill】块，优化稿**必须遵守**（文化/生活场域、封面停滑、蓝海词、平台母语、强监管表达等）；与软建议冲突时以 Skill 为准。
-5. 输出 JSON，字段见 schema；optimizedMarkdown 为完整可读 Markdown（含分段标题，便于复制到生图或发布）。
+5. titles / coverNotes 须符合高反差选题与高点击封面短钩（约10–18字主句，数字拧巴/反常识）；禁止正确无聊百科题。
+${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
+6. 输出 JSON，字段见 schema；optimizedMarkdown 为完整可读 Markdown（含分段标题，便于复制到生图或发布）。
 
 JSON schema:
 {
@@ -124,9 +122,8 @@ function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
 }
 
 async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" | "minimal"): Promise<string> {
-  const hasOhMy = isOhMyGptChatConfigured();
   const hasEvolink = Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
-  if (!hasOhMy && !hasEvolink) {
+  if (!hasEvolink) {
     throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({
@@ -142,22 +139,6 @@ async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" 
     response_format: { type: "json_object" },
   });
   return extractFirstChoicePlainText(response).trim();
-}
-
-async function invokeOptimizeViaGeminiFlash(userBlock: string): Promise<string> {
-  const geminiModel = resolvePlatformStage2GeminiModel();
-  console.warn(`[optimizeCustomCopy] GPT-5.6 失败 → Gemini 3.1 Pro fallback · model=${geminiModel}`);
-  return (
-    await callGemini35FlashCopywriting({
-      taskSystemInstruction: SYSTEM_PROMPT,
-      userText: userBlock,
-      responseMimeType: "application/json",
-      maxOutputTokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-      temperature: 0.8,
-      topP: 0.95,
-      modelName: geminiModel,
-    })
-  ).trim();
 }
 
 export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promise<OptimizeCustomCopyResult> {
@@ -189,25 +170,14 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     } catch (err) {
       lastError = err;
       console.warn(
-        `[optimizeCustomCopy] GPT-5.6 失败 (reasoning=${reasoningEffort}):`,
+        `[optimizeCustomCopy] Evolink GPT-5.6 失败 (reasoning=${reasoningEffort}):`,
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }
   }
 
-  try {
-    const raw = await invokeOptimizeViaGeminiFlash(userBlock);
-    return parseOptimizeCustomCopyJson(raw);
-  } catch (err) {
-    lastError = err;
-    console.warn(
-      "[optimizeCustomCopy] Gemini 3.1 Pro fallback 失败:",
-      err instanceof Error ? err.message.slice(0, 240) : err,
-    );
-  }
-
   console.warn(
-    "[optimizeCustomCopy] GPT-5.6 + Gemini Flash 全部失败:",
+    "[optimizeCustomCopy] Evolink GPT-5.6 全部失败（已取消 Gemini fallback）:",
     lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
   );
   throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);

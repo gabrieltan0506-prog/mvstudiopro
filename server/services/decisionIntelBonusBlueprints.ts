@@ -7,6 +7,7 @@ import type { DecisionIntelTopicPick } from "@shared/decisionIntelTopicPicks";
 import { selectDecisionIntelBonusTopics } from "@shared/decisionIntelBonusTopics";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
 import {
+  PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE,
   PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE,
   PLATFORM_REVIEW_SAFE_VOICE_GUIDANCE,
   needsReviewSafeVoice,
@@ -102,8 +103,9 @@ export async function generateDecisionIntelTopicBlueprints(params: {
   const system = `你是资深内容策划，负责把「战略地图选题结构」扩写为可立刻开拍、并能促成咨询意向的执行方案。
 【规则】
 - 只输出一个 JSON 对象，键名 contentBlueprints，数组长度必须恰好等于输入选题条数（${picks.length}）。
-- 每条须含：title、format（「短视频」或「图文」）、hook（≥30字）、copywriting（≥180字）、suitablePlatforms（字符串数组）、actionableSteps（≥3条）、detailedScript（≥280字）、publishingAdvice、highlightKeywords（字符串数组 2–6 个）、executionDetails（含 environmentAndWardrobe、lightingAndCamera、stepByStepScript 数组≥4步）。
+- 每条须含：title、format（「短视频」或「图文」）、hook（≥30字）、copywriting（≥180字）、suitablePlatforms（字符串数组）、actionableSteps（≥3条）、detailedScript（≥280字）、publishingAdvice、highlightKeywords（字符串数组 2–6 个）、platformVariants（xiaohongshu/bilibili/weixin_channels，各含约10–18字 coverHeadline 高点击短钩）、executionDetails（含 environmentAndWardrobe、lightingAndCamera、stepByStepScript 数组≥4步）。
 - 【场景生动化】文案与分镜中的拍摄场景须具体、可拍、能打动用户；包括但不局限于例如博物馆、户外旅行、知名景区、游泳池、网球场、音乐厅、饭店餐厅、路边大排档、商场、街景、自然风光等（可据人设拓展）；禁止多条扎堆书房、客厅等同质布景。
+${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 ${PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE}
 ${reviewBlock}
 ${diversityBlock}
