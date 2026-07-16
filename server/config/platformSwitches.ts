@@ -14,10 +14,17 @@
  * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
 
-import { getEvolinkGpt56SolModel } from "../services/evolinkChatModel.js";
+import {
+  EVOLINK_CHAT_MODEL_GPT56_SOL,
+  EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  getEvolinkGpt56SolModel,
+  getEvolinkGpt56TerraModel,
+  normalizeEvolinkChatModel,
+} from "../services/evolinkChatModel.js";
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
+export type PlatformSkillQaModelChoice = "gpt-5.6-terra" | "gpt-5.6-sol";
 
 function norm(s: string | undefined): string {
   return String(s ?? "").trim().toLowerCase();
@@ -311,6 +318,44 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
  */
 export function getPlatformStage2OpenAiModel(): string {
   return getEvolinkGpt56SolModel();
+}
+
+/**
+ * /platform 创作顾问免费问答默认模型：**gpt-5.6-terra**。
+ * 一般用户强制 Terra；supervisor/admin 可请求 Sol（见 {@link resolvePlatformSkillQaOpenAiModel}）。
+ */
+export function getPlatformSkillQaOpenAiModel(): string {
+  return getEvolinkGpt56TerraModel();
+}
+
+/** 创作顾问问答推理强度：固定 **high**（可用 `PLATFORM_SKILL_QA_REASONING_EFFORT` 覆盖）。 */
+export function resolvePlatformSkillQaReasoningEffort():
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh" {
+  const raw = norm(process.env.PLATFORM_SKILL_QA_REASONING_EFFORT);
+  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+  if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformSkillQaReasoningEffort>;
+  return "high";
+}
+
+/**
+ * 解析创作顾问问答模型：非 supervisor 一律 Terra；supervisor 可选 Sol / Terra。
+ */
+export function resolvePlatformSkillQaOpenAiModel(params: {
+  requested?: string | null;
+  isSupervisor: boolean;
+}): PlatformSkillQaModelChoice {
+  if (!params.isSupervisor) return EVOLINK_CHAT_MODEL_GPT56_TERRA;
+  const req = normalizeEvolinkChatModel(
+    params.requested || getEvolinkGpt56TerraModel(),
+    EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  );
+  if (req === EVOLINK_CHAT_MODEL_GPT56_SOL) return EVOLINK_CHAT_MODEL_GPT56_SOL;
+  return EVOLINK_CHAT_MODEL_GPT56_TERRA;
 }
 
 /** Stage 1 / Stage 2 文案 GPT‑5.6 推理强度：默认 **high**（结果优先；可用 `PLATFORM_STAGE2_OPENAI_REASONING_EFFORT` 下调）。 */

@@ -5284,10 +5284,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           question: z.string().min(2).max(4000),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
+          /** 仅 supervisor/admin（或合法 supervisorToken）生效；一般用户服务端强制 Terra */
+          qaModel: z.enum(["gpt-5.6-terra", "gpt-5.6-sol"]).optional(),
+          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(
+          ctx.user,
+          input.supervisorToken,
+        );
         const { askPlatformSkillQa } = await import("./services/platformSkillQa.js");
         try {
           const result = await askPlatformSkillQa({
@@ -5296,6 +5303,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             allowBloggerTitle: Boolean(input.allowBloggerTitle),
             isAdmin: isAdminUser,
+            allowQaModelOverride: supervisorOpsAllowed,
+            qaModel: supervisorOpsAllowed ? input.qaModel : undefined,
           });
           return { success: true as const, ...result };
         } catch (e: unknown) {
