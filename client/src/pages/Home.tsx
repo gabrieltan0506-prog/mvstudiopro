@@ -1,82 +1,49 @@
 import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
-import HomeNoticeBar from "../components/HomeNoticeBar";
 import HomeHero from "../components/HomeHero";
-import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
-import HomeEducation from "../components/HomeEducation";
-import HomeFeedback from "../components/HomeFeedback";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
-import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
-import HomeUpdateTicker from "../components/HomeUpdateTicker";
 import SampleReportDownload from "../components/SampleReportDownload";
-import WorkAmbientPanel from "../components/WorkAmbientPanel";
 
-// 以下 section 在正式版开放前暂时隐藏
-// import HomeWorkflow from "../components/HomeWorkflow";
-// import HomeCreatorEco from "../components/HomeCreatorEco";
-// import HomePlans from "../components/HomePlans";
-
+/**
+ * 营销首页（方案 A）：导航 + Hero + 定价占位 + 试读 + 我的作品；
+ * 兑换/邀请收在页底次要区。
+ */
 export default function HomePage() {
   return (
-      <div className="relative" style={{ minHeight: "100dvh" }}>
-        <div
-          className="relative z-[1]"
-          style={{
-            minHeight: "100dvh",
-            background:
-              "radial-gradient(circle at top center, rgba(255,79,179,0.12), transparent 18%), radial-gradient(circle at 0% 0%, rgba(139,92,246,0.18), transparent 24%), radial-gradient(circle at 100% 40%, rgba(59,130,246,0.10), transparent 20%), linear-gradient(180deg, rgba(10,8,20,0.4) 0%, rgba(10,13,31,0.4) 40%, rgba(9,9,21,0.4) 100%)",
-          }}
-        >
-      <HomeNavbar />
+    <div className="relative min-h-dvh bg-[#0a0915]">
+      <div
+        className="relative z-[1] min-h-dvh"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(99,102,241,0.14), transparent 55%), #0a0915",
+        }}
+      >
+        <HomeNavbar />
+        <HomeHero />
 
-      <HomeUpdateTicker />
-
-      <HomeHero />
-
-      <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
         <HomePricing />
+
+        <SampleReportDownload />
+
+        <HomeMyWorks />
+
+        <section className="mx-auto w-full max-w-[720px] px-5 pb-16 pt-6">
+          <details className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 open:pb-4">
+            <summary className="cursor-pointer list-none text-sm font-semibold text-white/70 marker:content-none [&::-webkit-details-marker]:hidden">
+              邀请码兑换 / 申请内测
+              <span className="ml-2 text-xs font-normal text-white/40">可选 · 点击展开</span>
+            </summary>
+            <div className="mt-4 space-y-4 border-t border-white/8 pt-4">
+              <div id="redeem-invite" style={{ scrollMarginTop: 80 }} />
+              <HomeRedeemCode />
+              <HomeInviteApply />
+            </div>
+          </details>
+        </section>
       </div>
-
-      {/* 全页底图与下列卡片区共用 Context：时段（显示时区）× 天气轮播 Unsplash；路况（Gemini）、国内/国际新闻 */}
-      <div className="mx-auto w-full max-w-[1240px] px-5 pb-2">
-        <WorkAmbientPanel />
-      </div>
-
-      {/* 试读样本 · 紧贴 Hero 正下方（黄金视觉位，让访客一滚屏就能下载） */}
-      <SampleReportDownload />
-
-      {/* 核心功能介绍 + 更新日志（试读完看平台能做什么） */}
-      <HomeFeatureCarousel />
-
-      {/* 工具与作品（沉浸式浏览） */}
-      {/* HomeRemixStrip 已收入 /platform · 首页仅展示三主站 */}
-
-      <HomeShowcase />
-
-      <HomeMyWorks />
-
-      {/* 企业定制（HomeEnterpriseAgentCard）产品未收尾前不展示入口 */}
-
-      {/* 兑换邀请码 / 申请邀请码（推到决策点之后）；锚点供更新日志等入口跳转 */}
-      <div id="redeem-invite" style={{ scrollMarginTop: 80 }} />
-      <HomeRedeemCode />
-
-      <HomeInviteApply />
-
-      <HomeEducation />
-
-      <HomeFeedback />
-
-      {/* 内测阶段暂时隐藏，正式版再开放 */}
-      {/* <HomeWorkflow /> */}
-      {/* <HomeCreatorEco /> */}
-      {/* <HomePlans /> */}
-
-      <div style={{ height: 60 }} />
-        </div>
-      </div>
+    </div>
   );
 }
