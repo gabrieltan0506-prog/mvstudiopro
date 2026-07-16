@@ -26,6 +26,7 @@ import {
   type PlatformSkillLane,
 } from "../../shared/platformSkillRouter.js";
 import { listAllPlatformSkillsForUser, composePlatformSkillsPromptBlock } from "./platformSkillsService.js";
+import { PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE } from "../../shared/platformCreatorInsightFraming.js";
 
 function extractJsonObject(raw: string): unknown {
   const t = String(raw || "").trim();
@@ -116,16 +117,13 @@ export async function generatePlatformTopicShortlist(params: {
 
   const system = `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
 任务：基于人设与 Skill 池，生成恰好 ${targetCount} 条**互不重复**的选题初选（不是完整长文）。
+${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
 1. 每条必须含：title, hookSketch, conveyGoal, skillsUsed(数组,从池内真实 id 选), primaryLane(fmcg|forensic|crossover|contrast|default), formatHint(图文|短视频), dedupeKey, commentHook(≤3个汉字生活词), linkedCampaigns(1–2个官方活动名，必须从下方 officialCampaigns.name 选)。
 2. 同人物/同母题只能出现一次（如王安石、苏轼、深夜高压各最多一条）。
 3. skillsUsed 必须能解释这条要传达什么；conveyGoal 写清「要传达的核心」1–2 句。
 4. 至少一半 formatHint=图文；赛道尽量拉开（参考 laneHints）。
-5. **标题杀伤力（最高优先级）**：每条 title 必须具备「高反差 / 反认知 / 反常识 / 猎奇缺口」至少一种，让人想点开；禁止正确但无聊、百科定义、读论文式。气质对标：
-   - 「我每天吃了十碗饭，反而瘦了十斤」
-   - 「来到上海，我以为是到了美国，这里有全国最贵的……」
-   - 「他天天打游戏，放榜怎么考上了北大？」
-   title 约 12–28 字可带悬念省略号；hookSketch 把反差钉再拧紧一句。**选题结构对齐雪糕公式**：一眼懂生活局 → 痛点1（猫腻/反常识）→ 痛点2（后果）→ 以后会选。conveyGoal 写成能力感（如「以后懂怎么选雪糕」），不要写成「理解添加糖代谢机制」。禁止空壳「博主」自称（除非政策允许）。
+5. hookSketch 把反差钉再拧紧一句（可比 title 更拧）。**选题结构对齐雪糕公式**：一眼懂生活局 → 痛点1（猫腻/反常识）→ 痛点2（后果）→ 以后会选。conveyGoal 写成能力感（如「以后懂怎么选雪糕」），不要写成「理解添加糖代谢机制」。禁止空壳「博主」自称（除非政策允许）。
 6. 对外解法话术用「在这里我先分享一些」，禁止写「半成本/半成品解法」刺耳词。
 7. 图文向选题对标高赞合集笔记（m1）：封面「城市+时段+大数字场次+价值钉」；总览墙+细卡；**笔记要丰富（规划 8–12 页）**。短视频向对标 m2：只推3个；字幕一句一钉；**成片约 1.5–2 分钟，硬上限 ≤2 分半**，不要规划成长片。
 8. 要有生活画面，不是方法论课；优先把官方活动话题与人设方向结合（暑假生活/城市漫步/好物测评/运动日常/读书笔记等）。
@@ -282,8 +280,11 @@ export async function expandPlatformTopicPicks(params: {
       const isVideo = pick.formatHint === "短视频";
       const system = `你是平台执行文案编辑。只输出一个 JSON 对象：{ "blueprint": { ... } }。
 必须遵守挂载 Skill。本条赛道 primaryLane=${pick.primaryLane}。
+${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
-- title/hook/copywriting/detailedScript/format/suitablePlatforms/actionableSteps/publishingAdvice/highlightKeywords/commentHooks/graphicNotePages
+- title/hook/copywriting/detailedScript/format/suitablePlatforms/actionableSteps/publishingAdvice/highlightKeywords/commentHooks/graphicNotePages/platformVariants
+- platformVariants 必须覆盖 xiaohongshu/bilibili/weixin_channels，各含约 10–18 字 coverHeadline（高点击短钩，互不雷同）
+- 保留初选 title 的反差杀伤力，可微调拧得更紧；禁止改回正确无聊题
 - format 优先用「${pick.formatHint}」
 - commentHooks：1–3 个，每个≤3个汉字生活词（想要/求带/慢生活…），禁止「预约诊断通话」整句
 - 对外写法用「在这里我先分享一些」，禁止「半成本/半成品解法」刺耳词
