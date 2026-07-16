@@ -6662,7 +6662,7 @@ export default function PlatformPage() {
     () =>
       cleanUserCopy(
         platformDashboard?.personaSummary || "",
-        "在右侧填写人物背景与创作诉求，并载入 IP 基因；我们会结合近窗口样本，给出平台优先级、切入方向与可落地建议。",
+        "在「自定义创作」选题初选上方填写人物背景与创作诉求（与全案共用），并载入 IP 基因；我们会结合近窗口样本，给出平台优先级、切入方向与可落地建议。",
       ),
     [platformDashboard],
   );
