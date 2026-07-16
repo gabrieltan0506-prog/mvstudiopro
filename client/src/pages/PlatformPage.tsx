@@ -11192,7 +11192,6 @@ export default function PlatformPage() {
                   )}
                 </div>
               </div>
-            </div>
 
             <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
