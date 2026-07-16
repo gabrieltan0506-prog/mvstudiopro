@@ -6579,7 +6579,6 @@ export default function PlatformPage() {
     setContentJobError(null);
     setContentJobPollTrace(null);
     setElapsedTime(0);
-    setRotatingCardIndex(0);
 
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
@@ -6740,7 +6739,6 @@ export default function PlatformPage() {
     setContentJobError(null);
     setContentJobPollTrace(null);
     setElapsedTime(0);
-    setRotatingCardIndex(0);
     setPlatformImageMap({});
     setPlatformStoryboardSheetMap({});
     setPlatformXhsNoteMap({});
