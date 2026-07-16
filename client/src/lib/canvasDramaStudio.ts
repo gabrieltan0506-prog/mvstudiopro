@@ -188,13 +188,49 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
     .slice(0, 600);
   const summaryMatch = text.match(/##\s*一句话摘要\n+([^\n]+)/);
   const summary = String(summaryMatch?.[1] || "").trim();
+  const boardMatch = text.match(/##\s*分镜表\n+([\s\S]*?)(?=\n##|\n*$)/i);
+  const boardSnippet = String(boardMatch?.[1] || "")
+    .trim()
+    .split("\n")
+    .filter((line) => line.trim() && !/^\|?\s*-{2,}/.test(line))
+    .slice(0, 6)
+    .join("\n")
+    .slice(0, 500);
+  const lockMatch = text.match(/##\s*角色与场景锁定\n+([\s\S]*?)(?=\n##|\n*$)/i);
+  const lockSnippet = String(lockMatch?.[1] || "")
+    .trim()
+    .slice(0, 280);
   const keyArtHint = [
     summary ? `题材摘要：${summary}` : "",
+    lockSnippet ? `角色/场景锁定：\n${lockSnippet}` : "",
+    boardSnippet ? `分镜要点：\n${boardSnippet}` : "",
     "竖屏电影感关键静帧：主体清晰、角色外形锁定、无字幕、无水印。",
   ]
     .filter(Boolean)
     .join("\n");
   return { keyArtHint, seedanceHint };
+}
+
+/** 网关超时 / 瞬时 5xx / abort 等可重试 */
+export function isTransientFactoryError(message: string): boolean {
+  const m = String(message || "");
+  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|rate.?limit|429/i.test(
+    m,
+  );
+}
+
+/**
+ * 续跑起点：优先第一个 error；否则第一个未完成（非 done 有产出）。
+ * 全完成则返回 null。
+ */
+export function resolveFactoryResumeStage(blocks: CanvasBlock[]): ManhuaFactoryStageKey | null {
+  for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
+    const b = blocks.find((x) => x.id.startsWith(`${stage}-`));
+    if (!b) return stage;
+    if (b.status === "error") return stage;
+    if (!blockLooksDone(b)) return stage;
+  }
+  return null;
 }
 
 function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string): CanvasBlock[] {
@@ -242,14 +278,18 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   forceFromStage?: ManhuaFactoryStageKey;
   skipDone?: boolean;
   stopOnError?: boolean;
+  /** 单阶段瞬时失败重试次数（不含首次），默认 2 */
+  maxRetries?: number;
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
   onStageSkip?: (blockId: string, label: string) => void;
+  onStageRetry?: (blockId: string, label: string, attempt: number, message: string) => void;
   signal?: AbortSignal;
 }): Promise<ManhuaFactoryPipelineResult> {
   const stopOnError = opts.stopOnError !== false;
   const skipDone = opts.skipDone !== false;
+  const maxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   let working = opts.blocks.map((b) => ({ ...b }));
   const edges = opts.edges;
   const orderedIds = resolveManhuaFactoryOrderedIds(working, opts.untilStage ?? "clip");
@@ -264,6 +304,20 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     working = next;
     opts.onBlocksChange?.(next);
   };
+
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve, reject) => {
+      if (opts.signal?.aborted) {
+        reject(new Error("已取消"));
+        return;
+      }
+      const timer = setTimeout(resolve, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new Error("已取消"));
+      };
+      opts.signal?.addEventListener("abort", onAbort, { once: true });
+    });
 
   for (let i = 0; i < orderedIds.length; i++) {
     if (opts.signal?.aborted) {
@@ -291,43 +345,71 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       ),
     );
 
-    try {
-      const visionImages = collectVisionImages(blockId, working, edges);
-      const texts = collectUpstreamTexts(blockId, working, edges);
-      const nearestRef =
-        block.kind === "image" || block.kind === "video"
-          ? block.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
-          : block.refImageUrl;
-      const runBlockPayload =
-        nearestRef && nearestRef !== block.refImageUrl
-          ? { ...block, refImageUrl: nearestRef }
-          : block;
+    let lastMessage = "生成失败";
+    let succeeded = false;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (opts.signal?.aborted) {
+        lastMessage = "已取消";
+        break;
+      }
+      try {
+        const current = working.find((b) => b.id === blockId) || block;
+        const visionImages = collectVisionImages(blockId, working, edges);
+        const texts = collectUpstreamTexts(blockId, working, edges);
+        const nearestRef =
+          current.kind === "image" || current.kind === "video"
+            ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
+            : current.refImageUrl;
+        const runBlockPayload =
+          nearestRef && nearestRef !== current.refImageUrl
+            ? { ...current, refImageUrl: nearestRef }
+            : current;
 
-      const out = await runCanvasBlock(opts.deps, runBlockPayload, { visionImages, texts });
-      let next = working.map((b) =>
-        b.id === blockId
-          ? {
-              ...b,
-              status: "done" as const,
-              outputText: out.outputText,
-              outputUrl: out.outputUrl,
-              outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
-              error: undefined,
-            }
-          : b,
-      );
-      next = enrichDownstreamPrompts(next, blockId);
-      publish(next);
-      completedIds.push(blockId);
-      opts.onStageDone?.(blockId, i, orderedIds.length, label);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "生成失败";
+        const out = await runCanvasBlock(opts.deps, runBlockPayload, { visionImages, texts });
+        let next = working.map((b) =>
+          b.id === blockId
+            ? {
+                ...b,
+                status: "done" as const,
+                outputText: out.outputText,
+                outputUrl: out.outputUrl,
+                outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
+                error: undefined,
+              }
+            : b,
+        );
+        next = enrichDownstreamPrompts(next, blockId);
+        publish(next);
+        completedIds.push(blockId);
+        opts.onStageDone?.(blockId, i, orderedIds.length, label);
+        succeeded = true;
+        break;
+      } catch (e: unknown) {
+        lastMessage = e instanceof Error ? e.message : "生成失败";
+        if (lastMessage === "已取消" || opts.signal?.aborted) break;
+        if (attempt < maxRetries && isTransientFactoryError(lastMessage)) {
+          opts.onStageRetry?.(blockId, label, attempt + 1, lastMessage);
+          publish(
+            working.map((b) =>
+              b.id === blockId
+                ? { ...b, status: "running" as const, error: `重试 ${attempt + 1}/${maxRetries}：${lastMessage}` }
+                : b,
+            ),
+          );
+          await sleep(1200 * (attempt + 1));
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (!succeeded) {
       publish(
         working.map((b) =>
-          b.id === blockId ? { ...b, status: "error" as const, error: message } : b,
+          b.id === blockId ? { ...b, status: "error" as const, error: lastMessage } : b,
         ),
       );
-      errors.push({ id: blockId, message });
+      errors.push({ id: blockId, message: lastMessage });
       if (stopOnError) break;
     }
   }

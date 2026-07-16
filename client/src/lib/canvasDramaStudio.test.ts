@@ -3,6 +3,8 @@ import {
   MANHUA_FACTORY_STAGE_ORDER,
   applyTopicToFactoryStory,
   extractFactoryMotionHints,
+  isTransientFactoryError,
+  resolveFactoryResumeStage,
   resolveManhuaFactoryOrderedIds,
   spawnManhuaDramaStudio,
 } from "./canvasDramaStudio";
@@ -37,6 +39,13 @@ describe("canvasDramaStudio factory", () => {
     const md = `## 一句话摘要
 星际离别的青涩痛感
 
+## 分镜表
+| 镜号 | 景别 | 内容 |
+| 1 | 近景 | 雨夜月台对视 |
+
+## 角色与场景锁定
+女主短发校服，男主黑伞
+
 ## Seedance / I2V 微动提示词（每镜一句）
 1. slow push on face
 
@@ -45,6 +54,22 @@ slow dolly in, soft rain, trembling hand
 `;
     const h = extractFactoryMotionHints(md);
     expect(h.keyArtHint).toContain("星际离别");
+    expect(h.keyArtHint).toContain("雨夜月台");
+    expect(h.keyArtHint).toContain("短发校服");
     expect(h.seedanceHint).toContain("slow dolly");
+  });
+
+  it("detects transient errors and resume stage", () => {
+    expect(isTransientFactoryError("网关超时，请稍后重试")).toBe(true);
+    expect(isTransientFactoryError("积分不足")).toBe(false);
+    const { blocks } = spawnManhuaDramaStudio();
+    const withError = blocks.map((b) =>
+      b.id.startsWith("beats-")
+        ? { ...b, status: "error" as const, error: "timeout" }
+        : b.id.startsWith("story-") || b.id.startsWith("bible-")
+          ? { ...b, status: "done" as const, outputText: "ok" }
+          : b,
+    );
+    expect(resolveFactoryResumeStage(withError)).toBe("beats");
   });
 });

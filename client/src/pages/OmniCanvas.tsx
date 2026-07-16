@@ -8,6 +8,7 @@ import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
   applyTopicToFactoryStory,
+  resolveFactoryResumeStage,
   runManhuaDramaFactoryPipeline,
   spawnManhuaDramaStudio,
   stageKeyFromBlockId,
@@ -160,6 +161,12 @@ export default function OmniCanvas() {
           onStageSkip: (_id, label) => {
             setFactoryProgress(`跳过已完成 · ${label}`);
           },
+          onStageRetry: (_id, label, attempt, message) => {
+            setFactoryProgress(`重试 ${attempt} · ${label}`);
+            toast.message(`瞬时失败，自动重试 ${attempt}`, {
+              description: `${label}：${message.slice(0, 120)}`,
+            });
+          },
         });
         if (result.errors.length) {
           const errStage = stageKeyFromBlockId(result.errors[0]!.id);
@@ -185,6 +192,16 @@ export default function OmniCanvas() {
     },
     [ensureStudioSpawned, factoryBusy, factoryTopic, runDeps],
   );
+
+  const resumeFromFailure = useCallback(() => {
+    const stage = resolveFactoryResumeStage(blocks);
+    if (!stage) {
+      toast.message("六段都已完成，无需续跑");
+      return;
+    }
+    toast.message(`从「${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]}」续跑`);
+    void runFactory("clip", { forceFromStage: stage });
+  }, [blocks, runFactory]);
 
   return (
     <div className="min-h-dvh bg-transparent text-white">
@@ -293,6 +310,15 @@ export default function OmniCanvas() {
                 title="从反推起强制重跑，前面已完成步骤仍跳过"
               >
                 从反推续跑
+              </button>
+              <button
+                type="button"
+                disabled={factoryBusy}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-orange-400/35 bg-orange-500/15 px-3 py-2 text-xs font-semibold text-orange-50 hover:bg-orange-500/25 disabled:opacity-50"
+                onClick={resumeFromFailure}
+                title="自动定位第一个失败/未完成阶段并强制续跑到成片"
+              >
+                从失败处续跑
               </button>
               {factoryBusy ? (
                 <button

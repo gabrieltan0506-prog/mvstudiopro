@@ -28,3 +28,13 @@ OCR 要点：不懂提示词也能做短剧；剧本摘要/资产拆解；多 Pr
 - API：`/api/google?op=videoReversePrompt`（Gemini 看帧）  
 - Skill：`video-reverse-prompt` · `manhua-drama-studio`  
 - 浏览器本地抽帧，云端只吃 JPEG 帧（体积可控）
+
+## 自动漫剧工厂（`/canvas`，PR #770）
+链路：题材一句 → 故事 → 角色卡 → 镜头节拍 → 编导反推（**无片可跑**）→ 关键静帧 → Seedance≈15s。
+
+编排核：`client/src/lib/canvasDramaStudio.ts`
+- `skipDone` 跳过已完成；`forceFromStage` /「从失败处续跑」
+- 反推完成后把分镜表/锁定/微动句灌进静帧与成片 prompt
+- 瞬时失败（超时/502/网关）单阶段自动重试最多 2 次
+
+探针：`pnpm run manhua:probe`（故事→角色→节拍→无片反推→静帧）
