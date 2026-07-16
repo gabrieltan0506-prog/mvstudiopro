@@ -101,6 +101,7 @@ export const CANVAS_ONLY_SKILL_IDS = [
   "seedance-i2v-motion",
   "video-reverse-prompt",
   "manhua-drama-studio",
+  "screenwriter-genre-templates",
 ] as const;
 
 export type CanvasOnlySkillId = (typeof CANVAS_ONLY_SKILL_IDS)[number];

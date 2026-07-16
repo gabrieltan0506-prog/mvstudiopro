@@ -38,3 +38,9 @@ OCR 要点：不懂提示词也能做短剧；剧本摘要/资产拆解；多 Pr
 - 瞬时失败（超时/502/网关）单阶段自动重试最多 2 次
 
 探针：`pnpm run manhua:probe`（故事→角色→节拍→无片反推→静帧）
+
+## 编剧剧种模板（骨架已留，正文待填）
+- 代码：`shared/screenwriterGenreTemplates.ts`
+- Skill：`docs/2026Jul11/skill/screenwriter-genre-templates.md`（Canvas only）
+- 粘贴区：`docs/2026Jul16/screenwriter-templates/`
+- `/canvas` 工厂下拉「剧种模板」：未 `ready` 显示「待填」且不覆盖默认 prompt

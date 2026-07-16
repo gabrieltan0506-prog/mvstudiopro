@@ -9,6 +9,7 @@
 | `seedance-i2v-motion.md` | seedance-i2v-motion | **Canvas only**（不进 /platform） |
 | `video-reverse-prompt.md` | video-reverse-prompt | **Canvas only** |
 | `manhua-drama-studio.md` | manhua-drama-studio | **Canvas only** |
+| `screenwriter-genre-templates.md` | screenwriter-genre-templates | **Canvas only**（剧种模板，正文待填） |
 | `xhs-virtual-goods.md` | xhs-virtual-goods | 开 |
 | `cultural-diversity.md` | cultural-diversity | 开 |
 | `lifestyle-diversity.md` | lifestyle-diversity | 开 |

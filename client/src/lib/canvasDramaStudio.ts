@@ -14,6 +14,10 @@ import {
 } from "./canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
+import {
+  buildManhuaStagePromptWithGenre,
+  getScreenwriterGenreTemplate,
+} from "@shared/screenwriterGenreTemplates";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -46,6 +50,8 @@ export type SpawnManhuaDramaStudioOpts = {
   originY?: number;
   /** 用户题材一句，会写入故事节点 prompt */
   topic?: string;
+  /** 编剧剧种模板 id（见 shared/screenwriterGenreTemplates；未 ready 则忽略） */
+  genreId?: string;
 };
 
 function withTopic(basePrompt: string, topic?: string): string {
@@ -58,23 +64,31 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const originX = opts.originX ?? 80;
   const originY = opts.originY ?? 80;
   const gapX = 460;
+  const genre = getScreenwriterGenreTemplate(opts.genreId);
+  const genreId = genre?.ready ? genre.id : undefined;
 
   const story = defaultCanvasBlock("text", originX, originY);
   story.id = makeCanvasBlockId("story");
-  story.prompt = withTopic(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief, opts.topic);
+  story.prompt = genreId
+    ? buildManhuaStagePromptWithGenre("story_brief", { genreId, topic: opts.topic })
+    : withTopic(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief, opts.topic);
   story.width = 400;
   story.height = 320;
   story.textModel = "gemini-3.1-pro";
 
   const bible = defaultCanvasBlock("text", originX + gapX, originY);
   bible.id = makeCanvasBlockId("bible");
-  bible.prompt = MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
+  bible.prompt = genreId
+    ? buildManhuaStagePromptWithGenre("character_bible", { genreId })
+    : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
   bible.parentId = story.id;
   bible.textModel = "gemini-3.1-pro";
 
   const beats = defaultCanvasBlock("text", originX + gapX * 2, originY);
   beats.id = makeCanvasBlockId("beats");
-  beats.prompt = MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
+  beats.prompt = genreId
+    ? buildManhuaStagePromptWithGenre("episode_beats", { genreId })
+    : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
   beats.parentId = bible.id;
   beats.textModel = "gemini-3.1-pro";
 
