@@ -225,7 +225,8 @@ function CanvasBlockPreviewPanel({
               );
             })}
           </div>
-          {(block.kind === "image" || block.kind === "video") && !hasGeneratedOutput ? (
+          {(block.kind === "image" || block.kind === "video" || block.kind === "video_reverse") &&
+          !hasGeneratedOutput ? (
             <p className="text-center text-[10px] text-emerald-200/90">素材已就绪，点击顶部「运行」开始生成</p>
           ) : null}
         </div>
@@ -833,12 +834,20 @@ export default function FreeformCanvas({
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
-                              ? "Seedance 2.0：文生/图生视频（EvoLink · 4–15s · 可带同步音频）"
-                              : "Gemini Omini：文生视频或图生视频"}
+                              ? "Seedance 2.0：有参考图时只发运镜+微动+氛围（EvoLink · 4–15s）"
+                              : "Gemini Omini：有参考图时同样做微动减法"}
                           </div>
                         </>
                       ) : null}
-                      {(block.kind === "text" || block.kind === "copy_organize") && visionCount > 0 ? (
+                      {block.kind === "video_reverse" ? (
+                        <div className="text-[10px] leading-5 text-white/50">
+                          浏览器本地抽帧 → Gemini 3.1 Pro 拉片（≤120s）。输出分镜表 + Seedance 微动句。YouTube 请用本机脚本下载后上传。
+                        </div>
+                      ) : null}
+                      {(block.kind === "text" ||
+                        block.kind === "copy_organize" ||
+                        block.kind === "video_reverse") &&
+                      visionCount > 0 ? (
                         <div className="text-[10px] text-white/50">已接入 {visionCount} 张图片</div>
                       ) : null}
                     </div>
@@ -846,7 +855,9 @@ export default function FreeformCanvas({
                     <div className="mb-2 shrink-0 space-y-2">
                       <div className="text-[10px] uppercase tracking-wider text-white/40">素材上传</div>
                       <div className="flex flex-wrap gap-2">
-                        {(block.kind === "image" || block.kind === "video") && (
+                        {(block.kind === "image" ||
+                          block.kind === "video" ||
+                          block.kind === "video_reverse") && (
                           <select
                             value={block.aspectRatio}
                             onChange={(e) =>

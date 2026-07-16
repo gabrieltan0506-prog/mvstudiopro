@@ -2614,6 +2614,38 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       });
     }
 
+    /** /canvas 自由画布 · GPT-Image-2（EvoLink）；勿与 workflowGenerateSceneImage 混淆 */
+    if (opNormalized === "canvasgptimage2") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const prompt = s(b.prompt || b.scenePrompt || "").trim();
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
+      const aspectRatio = s(b.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
+      const referenceImageUrl = s(b.referenceImageUrl || b.imageUrl || "").trim();
+      try {
+        const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
+        const captureError: { message?: string; moderationBlocked?: boolean } = {};
+        const imageUrl = await generateGptImage2FromRawEnglishPrompt({
+          englishPrompt: prompt,
+          aspectRatio,
+          gcsSubdir: "canvas-gpt-image2",
+          referenceImageUrls: referenceImageUrl ? [referenceImageUrl] : undefined,
+          captureError,
+        });
+        if (!imageUrl) {
+          return res.status(502).json({
+            ok: false,
+            error: captureError.message || "gpt_image2_empty",
+            moderationBlocked: Boolean(captureError.moderationBlocked),
+          });
+        }
+        return res.status(200).json({ ok: true, imageUrl, imageUrls: [imageUrl] });
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, error: e?.message || "canvas_gpt_image2_failed" });
+      }
+    }
+
     if (op === "klingT2V" || op === "klingI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });

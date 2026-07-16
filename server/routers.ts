@@ -5233,7 +5233,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 hookSketch: z.string().min(4).max(200),
                 conveyGoal: z.string().min(4).max(240),
                 skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
-                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "default"]),
+                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "virtual", "default"]),
                 formatHint: z.enum(["图文", "短视频"]),
                 dedupeKey: z.string().min(1).max(80),
                 commentHook: z.string().max(8).optional(),

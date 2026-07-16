@@ -4,8 +4,10 @@ import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { normalizeCanvasBlock } from "@/lib/canvasTypes";
 import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { spawnManhuaDramaStudio } from "@/lib/canvasDramaStudio";
 import { trpc } from "@/lib/trpc";
-import { Clapperboard } from "lucide-react";
+import { Clapperboard, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 const LS_KEY = "mv-freeform-canvas-v1";
 
@@ -78,12 +80,29 @@ export default function OmniCanvas() {
           <div className="mb-5">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
               <Clapperboard className="h-3.5 w-3.5" />
-              自由画布 · 可创建 / 拖动 / 引用生成
+              自由画布 · 漫剧工作室 · 视频反推
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Gemini Omini 创作画布</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
-              点击左侧 + 在加号旁创建方块；可选文本 / 图片 / 视频 / 整理文案 / 上传素材（图片·视频·PDF/TXT/MD）。选中方块后拖动右下角可放大缩小。
+              文本 / 图片 / 视频 / 视频反推 / 整理文案。可一键铺「漫剧工作室」六段链路：故事→角色→节拍→反推→静帧→Seedance。
+              参考短片请本机上传（≤120s）；YouTube 勿指望云端抓取。
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-50 hover:bg-rose-500/25"
+                onClick={() => {
+                  const spawned = spawnManhuaDramaStudio(60, 80);
+                  setBlocks(spawned.blocks);
+                  setEdges(spawned.edges);
+                  saveCanvasState(spawned.blocks, spawned.edges);
+                  toast.success("已铺好漫剧工作室六段节点");
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                一键漫剧工作室
+              </button>
+            </div>
           </div>
 
           <FreeformCanvas

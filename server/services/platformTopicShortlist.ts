@@ -178,7 +178,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
     const r = row as Record<string, unknown>;
     const title = String(r.title || "").trim();
     if (title.length < 4) continue;
-    const lane = (["fmcg", "forensic", "crossover", "contrast", "default"].includes(String(r.primaryLane))
+    const lane = (["fmcg", "forensic", "crossover", "contrast", "virtual", "default"].includes(String(r.primaryLane))
       ? String(r.primaryLane)
       : "default") as PlatformSkillLane;
     const routed = routePlatformSkillIdsForLane({

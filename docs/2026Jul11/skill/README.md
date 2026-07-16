@@ -5,6 +5,11 @@
 | 文件 | id | 默认 |
 |------|-----|------|
 | `director-craft.md` | director-craft | 开 |
+| `json-director-middleware.md` | json-director-middleware | 开 |
+| `seedance-i2v-motion.md` | seedance-i2v-motion | 开 |
+| `video-reverse-prompt.md` | video-reverse-prompt | 开 |
+| `manhua-drama-studio.md` | manhua-drama-studio | 开 |
+| `xhs-virtual-goods.md` | xhs-virtual-goods | 开 |
 | `cultural-diversity.md` | cultural-diversity | 开 |
 | `lifestyle-diversity.md` | lifestyle-diversity | 开 |
 | `hook-solution-cta.md` | hook-solution-cta | 开 |
@@ -48,11 +53,18 @@
 | 组 | id |
 |----|-----|
 | 核心 | hook-solution-cta · review-safe-voice · vivid-anti-boring · cover-stop-scroll · platform-native · cultural-diversity · lifestyle-diversity |
+| 赛道 virtual | xhs-virtual-goods · xhs-collectible-note · cover-stop-scroll · json-director-middleware |
 | 赛道 fmcg | 4season + label-debunk + authority + monetize |
 | 赛道 forensic | forensic-life-lens + authority |
 | 赛道 crossover | crossover-popsci · medical-resource-library · authority |
 | 赛道 contrast | contrast-reversal-climax |
+| 视频体裁 | director-craft · json-director-middleware · seedance-i2v-motion |
 | 图文 | graphic-note-rhythm + xhs-collectible-note |
+
+### 2026-07-16（JSON 导演中台 + Seedance 微动 + 虚拟资料店）
+- 样本：`~/Downloads/2026Jul16/json.mp4` 与 1–10/d1/d2 虚拟电商图文；公开教程对齐 super-i 2570/2574/2917。
+- 代码：`shared/jsonDirectorMiddleware.ts`；Canvas / Creative 生图与图生视频已接线。
+- 纪要：`docs/2026Jul16/json-director-scan.md`。
 
 ### 更早变更
 见 git 历史与 `~/Downloads/2026Jul13/grokskp2.md`。

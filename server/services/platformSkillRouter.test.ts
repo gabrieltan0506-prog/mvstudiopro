@@ -18,6 +18,11 @@ const FULL_POOL = [
   "medical-resource-library",
   "contrast-reversal-climax",
   "director-craft",
+  "json-director-middleware",
+  "seedance-i2v-motion",
+  "video-reverse-prompt",
+  "manhua-drama-studio",
+  "xhs-virtual-goods",
   "graphic-note-rhythm",
   "xhs-collectible-note",
 ];
@@ -43,8 +48,24 @@ describe("routePlatformSkillIds", () => {
     expect(r.selectedIds).toContain("label-debunk-copy");
     expect(r.selectedIds).toContain("hook-solution-cta");
     expect(r.selectedIds).toContain("director-craft");
+    expect(r.selectedIds).toContain("json-director-middleware");
+    expect(r.selectedIds).toContain("seedance-i2v-motion");
+    expect(r.selectedIds).toContain("video-reverse-prompt");
+    expect(r.selectedIds).toContain("manhua-drama-studio");
     expect(r.selectedIds).not.toContain("forensic-life-lens");
     expect(r.selectedIds).not.toContain("crossover-popsci");
+  });
+
+  it("routes virtual lane for 虚拟资料店 context", () => {
+    const r = routePlatformSkillIds({
+      poolIds: FULL_POOL,
+      context: "小红书虚拟资料店：三年级语文古诗词默写模板包怎么做",
+      sheetKind: "graphic",
+    });
+    expect(r.primaryLane).toBe("virtual");
+    expect(r.selectedIds).toContain("xhs-virtual-goods");
+    expect(r.selectedIds).toContain("xhs-collectible-note");
+    expect(r.selectedIds).toContain("json-director-middleware");
   });
 
   it("routes forensic lane for seatbelt / 保命 context", () => {

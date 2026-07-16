@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
-import { FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
+import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 
-export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize";
+export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
 
 export type CanvasTextModel = "gemini-3.1-pro" | "gpt-5.5" | "gpt-5.4";
 export type CanvasImageModel = "nano-banana-2" | "gpt-image-2";
@@ -92,13 +92,13 @@ export const CANVAS_KIND_META: Record<
   },
   image: {
     label: "图片生成",
-    hint: "封面、海报、插图",
+    hint: "封面、海报、插图（JSON 导演中台→LLM 翻译后生图）",
     icon: ImageIcon,
     color: "from-emerald-500/30 to-teal-600/10",
   },
   video: {
     label: "视频生成",
-    hint: "Gemini Omini 或 Seedance 2.0 · 文生/图生视频",
+    hint: "Gemini Omini / Seedance：有参考图时自动做运镜+微动+氛围减法",
     icon: Video,
     color: "from-sky-500/30 to-cyan-600/10",
   },
@@ -107,6 +107,12 @@ export const CANVAS_KIND_META: Record<
     hint: "结构化提纲与发布稿",
     icon: LayoutTemplate,
     color: "from-amber-500/30 to-orange-600/10",
+  },
+  video_reverse: {
+    label: "视频反推",
+    hint: "上传参考短片→Gemini 拉片→分镜表+Seedance 微动句",
+    icon: Clapperboard,
+    color: "from-rose-500/30 to-fuchsia-600/10",
   },
 };
 
@@ -128,8 +134,9 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
 
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
-  { kind: "image", label: "图片生成", hint: "生成插图、海报、封面" },
-  { kind: "video", label: "视频生成", hint: "Gemini Omini / Seedance 2.0" },
+  { kind: "image", label: "图片生成", hint: "JSON 导演中台→生图" },
+  { kind: "video", label: "视频生成", hint: "Seedance/Omini · I2V 微动公式" },
+  { kind: "video_reverse", label: "视频反推", hint: "Gemini 拉片→分镜+微动句" },
   { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
 
@@ -151,7 +158,9 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
           ? "写一段 15 秒竖屏短视频旁白，语气自然、有钩子。"
           : kind === "image"
             ? "电影感竖屏封面，主体清晰，留白适合放标题。"
-            : "镜头缓慢推进，主体动作自然，电影级光影。",
+            : kind === "video_reverse"
+              ? "反推分镜表与 Seedance 微动句；成稿去导演名。可先上传 ≤120s 参考短片。"
+              : "镜头缓慢推进，主体动作自然，电影级光影。",
     textModel: "gemini-3.1-pro",
     imageModel: "nano-banana-2",
     videoModel: "gemini-omni-flash",

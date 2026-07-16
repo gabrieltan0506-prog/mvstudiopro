@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import {
+  compileI2VMotionPrompt,
+  extractPlainImagePrompt,
+  fallbackEnglishFromJson,
+  prepareJsonDirectorImageJob,
+  type AspectRatio169Or916,
+} from "@shared/jsonDirectorMiddleware";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
 
 /** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
@@ -22,12 +29,14 @@ export default function CreativePage() {
   const [videoUrl, setVideoUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [pipelineNote, setPipelineNote] = useState("");
   const [videoModel, setVideoModel] = useState("seedance-2.0");
   const [videoAspect, setVideoAspect] = useState("16:9");
   const [imageModel, setImageModel] = useState("gemini-3.1-flash-image-preview");
   
   const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
   const refundStepMutation = trpc.workflow.refundStep.useMutation();
+  const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
 
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, {
     enabled: !!user,
@@ -36,6 +45,39 @@ export default function CreativePage() {
   const userPlan = (subQuery.data?.plan || "free") as string;
   const isAdmin = user?.role === "admin" || user?.role === "supervisor";
   const isPaidUser = isAdmin || userPlan !== "free";
+  const aspectRatio = useMemo<AspectRatio169Or916>(
+    () => (videoAspect === "16:9" ? "16:9" : "9:16"),
+    [videoAspect],
+  );
+
+  async function resolveImagePromptViaJsonDirector(userPrompt: string): Promise<string> {
+    const target = imageModel === "gpt-image-2" ? "gpt-image-2" : "nano-banana";
+    const job = prepareJsonDirectorImageJob({
+      userPrompt,
+      aspectRatio,
+      targetModel: target,
+    });
+    setPipelineNote(
+      job.usedCompiledTemplate
+        ? "JSON 导演中台 → LLM 翻译 → 生图（成稿去导演名）"
+        : "检测到 JSON 剧本 → LLM 翻译 → 生图（成稿去导演名）",
+    );
+    try {
+      const llmOut = await optimizeCopyMutation.mutateAsync({
+        sourceText: job.jsonText,
+        optimizationBrief: job.translationBrief,
+      });
+      const out = extractPlainImagePrompt(llmOut.result.optimizedMarkdown);
+      if (out.length >= 24) return out;
+    } catch {
+      /* local fallback */
+    }
+    try {
+      return fallbackEnglishFromJson(JSON.parse(job.jsonText));
+    } catch {
+      return extractPlainImagePrompt(userPrompt);
+    }
+  }
 
   async function generateImage() {
     if (!prompt.trim()) return;
@@ -43,6 +85,7 @@ export default function CreativePage() {
     setError("");
     setImageUrl("");
     setVideoUrl("");
+    setPipelineNote("");
     
     let chargedCost = 0;
     try {
@@ -58,44 +101,53 @@ export default function CreativePage() {
          }
          localStorage.setItem(usageKey, (usedCount + 1).toString());
       }
+
+      const imagePrompt = await resolveImagePromptViaJsonDirector(prompt);
       
       const charge = await chargeStepMutation.mutateAsync({ step: "scene_image", quantity: 1, creditsOverride: overrideCost });
       chargedCost = charge.cost;
       
-      let res;
       if (isGptImage2) {
-        // 调用后台 /api/jobs 进行 GPT-image-2 生图 (复用生成参考图接口，由于其底层是 generateGptImage2FromRawEnglishPrompt)
-        res = await fetch(`/api/jobs?op=workflowGenerateSceneImage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scenePrompt: prompt,
-            imageModel: "gpt-image-1", // Backend mapping
-            sceneCount: 1,
-            // GPT-image-2 只支持 9:16 或 16:9
-            aspectRatio: videoAspect === "16:9" ? "16:9" : "9:16",
-          })
-        });
-        const json = await res.json();
-        if (!res.ok) {
+        // 与 Canvas 一致：canvasGptImage2 + 长任务直连（勿用 workflowGenerateSceneImage）
+        const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
+        const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
+        const res = await withFlyHealthGate(probeOrigin, () =>
+          fetch(gptUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "omit",
+            body: JSON.stringify({
+              prompt: imagePrompt,
+              aspectRatio,
+            }),
+          }),
+        );
+        const text = await res.text();
+        let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
+        try {
+          json = JSON.parse(text) as typeof json;
+        } catch {
+          throw new Error(
+            /An error o|ROUTER_EXTERNAL/i.test(text)
+              ? "算力紧张或网关超时，请稍后重试"
+              : `生图失败：${text.slice(0, 160)}`,
+          );
+        }
+        if (!res.ok || !json.ok || !json.imageUrl) {
           throw new Error(json.error || json.message || "生图失败");
         }
-        if (json.storyboardImages && json.storyboardImages[0]?.selectedSceneImageUrl) {
-           setImageUrl(json.storyboardImages[0].selectedSceneImageUrl);
-        } else {
-           throw new Error("返回结果缺失图片 URL");
-        }
+        setImageUrl(String(json.imageUrl));
       } else {
         // Nano Banana 2 (Flash) 生图
-        res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {
+        const res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt,
+            prompt: imagePrompt,
             tier: "flash",
             model: "gemini-3.1-flash-image-preview",
-            imageSize: videoAspect === "16:9" ? "16:9" : "9:16",
-            aspectRatio: videoAspect === "16:9" ? "16:9" : "9:16",
+            imageSize: aspectRatio,
+            aspectRatio,
             numberOfImages: 1,
             guidanceScale: 4
           })
@@ -139,6 +191,10 @@ export default function CreativePage() {
       
       let finalVideoUrl = "";
 
+      // 有静帧时做减法：只指挥运镜+微动+氛围（JSON 长文留给生图阶段）
+      const motionPrompt = compileI2VMotionPrompt(prompt, { hasReferenceImage: true });
+      setPipelineNote(`图生视频已做减法：${motionPrompt}`);
+
       if (videoModel === "seedance-2.0") {
         const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
         const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
@@ -148,15 +204,26 @@ export default function CreativePage() {
             headers: { "Content-Type": "application/json" },
             credentials: "omit",
             body: JSON.stringify({
-              prompt,
+              prompt: motionPrompt,
               imageUrl,
               resolution: "720p",
               aspectRatio: videoAspect,
               duration: CREATIVE_VIDEO_DURATION_SEEDANCE_SEC,
+              preferEvolink: true,
             }),
           }),
         );
-        const json = await res.json().catch(() => ({}));
+        const text = await res.text();
+        let json: { videoUrl?: string; error?: string; message?: string } = {};
+        try {
+          json = JSON.parse(text) as typeof json;
+        } catch {
+          throw new Error(
+            /An error o|ROUTER_EXTERNAL/i.test(text)
+              ? "Seedance 网关超时，请稍后重试"
+              : `Seedance 生成失败：${text.slice(0, 160)}`,
+          );
+        }
         if (!res.ok || !json.videoUrl) {
           throw new Error(json.error || json.message || "Seedance 生成失败");
         }
@@ -167,7 +234,7 @@ export default function CreativePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt,
+            prompt: motionPrompt,
             imageUrl,
             provider: "pro",
             durationSeconds: CREATIVE_VIDEO_DURATION_VEO_SEC,
@@ -223,9 +290,13 @@ export default function CreativePage() {
         <div className="w-full max-w-3xl">
           <h1 className="mb-6 text-3xl font-black tracking-tight">文字生图 / 图生视频</h1>
           <p className="mb-4 text-white/60 text-sm">
-            文字生图，再图生视频。<code className="text-white/80">/creative</code>、
-            <code className="text-white/80">/create</code>。
+            文字生图（JSON 导演中台→LLM 翻译），再图生视频（运镜+微动+氛围做减法）。
+            <code className="text-white/80">/creative</code>、
+            <code className="text-white/80">/create</code>。成稿去导演名。
           </p>
+          {pipelineNote ? (
+            <p className="mb-4 text-xs text-emerald-300/85 leading-relaxed">{pipelineNote}</p>
+          ) : null}
 
           <div className="mb-6 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95 leading-relaxed">
             <div className="font-bold text-amber-200 mb-1">积分</div>
@@ -250,7 +321,7 @@ export default function CreativePage() {
                 <textarea 
                   value={prompt} 
                   onChange={e => setPrompt(e.target.value)}
-                  placeholder="请输入画面描述..."
+                  placeholder="画面意图，或粘贴导演 JSON（Subject / Environment / Cinematography_Lock）…"
                   rows={4}
                   className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white outline-none"
                 />
