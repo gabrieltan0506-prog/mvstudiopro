@@ -17,6 +17,14 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
   if (/模型暂不可用|非积分问题|Could not find an existing deployment|Specified model not found/i.test(text)) {
     return "文案模型暂不可用（非积分问题）；系统将尝试备用模型，请稍后重试";
   }
+  // 网关 HTML / 非 JSON 被当成 JSON 解析（常见：Unexpected token 'A', "An error o"...）
+  if (
+    /Unexpected token|is not valid JSON|An error o|SyntaxError.*JSON|Failed to execute 'json'|Unexpected end of JSON/i.test(
+      text,
+    )
+  ) {
+    return "算力紧张或请求超时，请稍后重试";
+  }
   if (INTERNAL_ENGINE_PATTERN.test(text)) return fallback;
   return text;
 }

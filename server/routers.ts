@@ -923,23 +923,33 @@ async function buildPlatformDashboard(params: {
   const DASHBOARD_LLM_MAX_ATTEMPTS = 3;
   let rawContent = "";
   for (let attempt = 1; attempt <= DASHBOARD_LLM_MAX_ATTEMPTS; attempt += 1) {
-    rawContent = await invokePlatformStructuredCopyLlm({
-      copyLlmMode,
-      systemInstruction: dashboardSystemInstruction,
-      userText: dashboardUserPayload,
-      abortSignal: params.abortSignal,
-      reasoningEffortOverride: "low",
-    });
-    if (String(rawContent || "").trim()) break;
-    console.warn(
-      `[buildPlatformDashboard] LLM 第 ${attempt}/${DASHBOARD_LLM_MAX_ATTEMPTS} 次返回空内容` +
-        `（low 推理仍空，疑似 Evolink 瞬时空回）${attempt < DASHBOARD_LLM_MAX_ATTEMPTS ? "，重试…" : "，放弃重试，转用快照兜底"}`,
-    );
+    try {
+      rawContent = await invokePlatformStructuredCopyLlm({
+        copyLlmMode,
+        systemInstruction: dashboardSystemInstruction,
+        userText: dashboardUserPayload,
+        abortSignal: params.abortSignal,
+        reasoningEffortOverride: "low",
+      });
+      if (String(rawContent || "").trim()) break;
+      console.warn(
+        `[buildPlatformDashboard] LLM 第 ${attempt}/${DASHBOARD_LLM_MAX_ATTEMPTS} 次返回空内容` +
+          `（low 推理仍空，疑似 Evolink 瞬时空回）${attempt < DASHBOARD_LLM_MAX_ATTEMPTS ? "，重试…" : "，放弃重试，转用快照兜底"}`,
+      );
+    } catch (llmErr) {
+      console.warn(
+        `[buildPlatformDashboard] LLM 第 ${attempt}/${DASHBOARD_LLM_MAX_ATTEMPTS} 次抛错 → ${
+          attempt < DASHBOARD_LLM_MAX_ATTEMPTS ? "重试" : "快照兜底"
+        }:`,
+        llmErr instanceof Error ? llmErr.message.slice(0, 240) : llmErr,
+      );
+      rawContent = "";
+    }
     if (params.abortSignal?.aborted) break;
   }
-  // 三次仍空 → 直接用 live 快照合成兜底看板，不让 Stage 1 硬失败。
+  // 三次仍空/抛错 → 直接用 live 快照合成兜底看板，不让 Stage 1 硬失败。
   if (!String(rawContent || "").trim()) {
-    console.warn("[buildPlatformDashboard] LLM 持续空回，使用快照兜底看板（headline/platformMenu 取自 live snapshot）。");
+    console.warn("[buildPlatformDashboard] LLM 持续空回/失败，使用快照兜底看板（headline/platformMenu 取自 live snapshot）。");
     return buildSnapshotFallbackDashboard(params.snapshot);
   }
 
@@ -4781,16 +4791,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             },
           };
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           appendRuntimeMetric("visual.report", {
             ok: false,
             engineEnv: visualReportEngineRaw || "openai(default)",
             provider: visualReportUsesGeminiConsumer ? `gemini_consumer:${visualReportGeminiModel}` : "openai_json",
             durationMs: Date.now() - llmStartedAtMs,
-            message: error instanceof Error ? error.message.slice(0, 800) : String(error).slice(0, 800),
+            message: message.slice(0, 800),
             windowDays: input.windowDays,
             platformCount: input.platforms.length,
           });
-          throw new Error(`generateVisualReport failed: ${error instanceof Error ? error.message : String(error)}`);
+          // 软失败：勿 throw，避免客户端 Promise.all 连带拖垮已成功的看板
+          console.error("[generateVisualReport] soft-fail:", message.slice(0, 400));
+          return {
+            success: false,
+            report: null,
+            error: message.slice(0, 400),
+          };
         }
       }),
 

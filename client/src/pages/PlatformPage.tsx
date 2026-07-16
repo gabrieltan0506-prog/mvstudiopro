@@ -6680,7 +6680,8 @@ export default function PlatformPage() {
     setIsDashboardLoading(true);
     setIsVisualReportLoading(true);
     try {
-      const [dashResult, visualResult] = await Promise.all([
+      // 看板与 PNG 报表彼此独立：一边失败不得拖垮另一边（旧 Promise.all 会导致「报错后整条不生成」）
+      const [dashSettled, visualSettled] = await Promise.allSettled([
         getPlatformDashboardMutation.mutateAsync({
           context: focusPrompt || undefined,
           windowDays: selectedWindowDays,
@@ -6696,29 +6697,59 @@ export default function PlatformPage() {
         }),
       ]);
 
-      if (!dashResult.platformDashboard) {
-        toast.error(`趋势看板生成失败：AI 数据格式异常，请重试`);
+      let hasDash = false;
+      let hasReport = false;
+      const errors: string[] = [];
+
+      if (dashSettled.status === "fulfilled") {
+        const dashResult = dashSettled.value;
+        if (dashResult.platformDashboard) {
+          setPlatformDashboard(dashResult.platformDashboard as unknown as PlatformDashboard);
+          hasDash = true;
+        } else {
+          errors.push(
+            sanitizePlatformUserMessage(
+              String((dashResult as { debug?: { error?: string } }).debug?.error || ""),
+              "趋势看板生成失败，请重试",
+            ),
+          );
+        }
       } else {
-        const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
-        setPlatformDashboard(dash);
+        const msg = dashSettled.reason instanceof Error ? dashSettled.reason.message : String(dashSettled.reason);
+        errors.push(sanitizePlatformUserMessage(msg, "趋势看板生成失败，请稍后重试"));
       }
 
-      const mappedReport = mapGenerateVisualReportResult(visualResult, {
-        windowDays: reportWindowDays,
-        theme: visualReportTheme,
-      });
-      if (!mappedReport) {
-        toast.error("PNG 图文报表生成失败，请重试");
+      if (visualSettled.status === "fulfilled") {
+        const mappedReport = mapGenerateVisualReportResult(visualSettled.value, {
+          windowDays: reportWindowDays,
+          theme: visualReportTheme,
+        });
+        if (mappedReport) {
+          setVisualReportData(mappedReport);
+          hasReport = true;
+        } else {
+          const softErr =
+            typeof (visualSettled.value as { error?: unknown })?.error === "string"
+              ? String((visualSettled.value as { error?: string }).error)
+              : "";
+          errors.push(sanitizePlatformUserMessage(softErr, "PNG 图文报表生成失败，请重试"));
+        }
       } else {
-        setVisualReportData(mappedReport);
+        const msg =
+          visualSettled.reason instanceof Error ? visualSettled.reason.message : String(visualSettled.reason);
+        errors.push(sanitizePlatformUserMessage(msg, "PNG 图文报表生成失败，请稍后重试"));
       }
 
-      if (dashResult.platformDashboard && mappedReport) {
+      if (hasDash && hasReport) {
         toast.success("平台趋势看板与 PNG 图文报表已就绪！可在此下载长图。");
-      } else if (dashResult.platformDashboard) {
-        toast.success("平台趋势看板已就绪；PNG 报表未生成成功，请重试。");
-      } else if (mappedReport) {
+      } else if (hasDash) {
+        toast.success("平台趋势看板已就绪；PNG 报表未生成成功，可单独重试报表。");
+        if (errors[0]) toast.error(errors[0].slice(0, 120));
+      } else if (hasReport) {
         toast.success("PNG 图文报表已就绪，可下载长图。");
+        if (errors[0]) toast.error(errors[0].slice(0, 120));
+      } else {
+        toast.error(errors[0] || "趋势分析失败，请稍后重试");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

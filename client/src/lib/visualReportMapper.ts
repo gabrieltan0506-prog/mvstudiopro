@@ -53,7 +53,7 @@ export function buildVisualReportDateRange(windowDays: VisualReportWindowDays): 
 }
 
 export function mapGenerateVisualReportResult(
-  result: { report?: Record<string, unknown> },
+  result: { report?: Record<string, unknown> | null; error?: string },
   opts: { windowDays: VisualReportWindowDays; theme: VisualReportTheme },
 ): VisualReportData | null {
   if (!result.report) return null;
