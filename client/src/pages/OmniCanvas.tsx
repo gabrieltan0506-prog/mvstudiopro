@@ -211,7 +211,7 @@ export default function OmniCanvas() {
           <div className="mb-5">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
               <Clapperboard className="h-3.5 w-3.5" />
-              自由画布 · 漫剧工厂 · 视频反推
+              自由画布 · 漫剧工厂 · 编导分镜
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Gemini Omini 创作画布</h1>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
