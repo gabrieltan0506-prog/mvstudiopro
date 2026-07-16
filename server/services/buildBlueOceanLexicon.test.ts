@@ -1,9 +1,45 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBlueOceanLexicon,
+  buildEvidenceBlueOceanFallback,
+  coerceBlueOceanRaw,
   deriveTagCandidatesFromTrendSamples,
   normalizeBlueOceanEntries,
 } from "../../shared/blueOceanLexicon";
+
+describe("normalize / coerce blue ocean shapes", () => {
+  it("accepts 一级/二级 Chinese keys and object wrappers", () => {
+    expect(
+      normalizeBlueOceanEntries({
+        蓝海词: [{ 一级: "暑期亲子游", 二级: ["带娃酒店", "避暑清单"] }],
+      }),
+    ).toEqual([{ primary: "暑期亲子游", secondary: ["带娃酒店", "避暑清单"] }]);
+    expect(coerceBlueOceanRaw("A、B；C")).toEqual(["A", "B", "C"]);
+  });
+
+  it("drops placeholder empty-state sentences", () => {
+    expect(normalizeBlueOceanEntries(["目前尚未检索到蓝海词", "城市漫步"])).toEqual([
+      { primary: "城市漫步", secondary: [] },
+    ]);
+  });
+
+  it("builds evidence fallback from long hotTopics and industry keys", () => {
+    const rows = buildEvidenceBlueOceanFallback({
+      trackGrowth: [],
+      platformDetails: [
+        {
+          hotTopics: ["城市漫步指南：周末半日线怎么拍才有完播"],
+          blueOceanWords: [],
+        },
+      ],
+      industryKeys: ["生活方式"],
+      evidenceTitles: ["OOTD 通勤穿搭一周不重样"],
+    });
+    expect(rows.some((r) => r.primary.includes("城市漫步"))).toBe(true);
+    expect(rows.some((r) => r.primary === "生活方式")).toBe(true);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+  });
+});
 
 describe("buildBlueOceanLexicon", () => {
   it("merges platformMenu string words and graded global words", () => {

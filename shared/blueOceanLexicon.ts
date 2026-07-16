@@ -30,29 +30,114 @@ function pushUnique(list: string[], word: string, max: number): void {
   list.push(w);
 }
 
-/** 兼容 string[] 与 { primary, secondary[] }[] */
+/**
+ * 将模型乱七八糟的蓝海字段收成数组：
+ * - 已是数组 → 原样
+ * - 字符串 → 按顿号/逗号拆
+ * - `{ words|items|list|蓝海词: [...] }` 或「平台 → 数组」对象 → flatten
+ */
+export function coerceBlueOceanRaw(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    return raw
+      .split(/[,，、;；\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (!raw || typeof raw !== "object") return [];
+  const o = raw as Record<string, unknown>;
+  for (const key of ["words", "items", "list", "entries", "blueOceanWords", "蓝海词", "data"]) {
+    if (Array.isArray(o[key])) return o[key] as unknown[];
+  }
+  const nested = Object.values(o).filter(Array.isArray) as unknown[][];
+  if (nested.length > 0) return nested.flat();
+  return [];
+}
+
+/** 长句热词压成可检索短标签（取冒号/破折号前段） */
+export function shortBlueOceanLabel(raw: unknown, max = 18): string {
+  const s = String(raw ?? "").trim().replace(/\s+/g, " ");
+  if (!s) return "";
+  const head = s.split(/[：:|｜·•—–\-]|(?:\s+——\s+)/)[0]?.trim() || s;
+  return clipWord(head, max);
+}
+
+/** 兼容 string[] 与 { primary, secondary[] }[]（含一级/二级中文键） */
 export function normalizeBlueOceanEntries(
   raw: unknown,
   platform?: string,
 ): BlueOceanGroupedEntry[] {
-  if (!Array.isArray(raw)) return [];
+  const list = coerceBlueOceanRaw(raw);
   const out: BlueOceanGroupedEntry[] = [];
-  for (const item of raw) {
+  for (const item of list) {
     if (typeof item === "string") {
-      const primary = clipWord(item);
-      if (primary) out.push({ platform, primary, secondary: [] });
+      const primary = shortBlueOceanLabel(item) || clipWord(item);
+      if (primary && !/尚未检索|尚未檢索|找不到|无可用|暂无/.test(primary)) {
+        out.push({ platform, primary, secondary: [] });
+      }
       continue;
     }
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
-    const primary = clipWord(o.primary ?? o.word ?? o.label ?? o.name);
-    if (!primary) continue;
-    const secondaryRaw = o.secondary ?? o.children ?? o.subs ?? o.tags;
+    const primary = clipWord(
+      o.primary ?? o.word ?? o.label ?? o.name ?? o["一级"] ?? o["一级词"] ?? o["一级蓝海词"] ?? o.parent,
+    );
+    if (!primary || /尚未检索|尚未檢索|找不到|无可用|暂无/.test(primary)) continue;
+    const secondaryRaw = o.secondary ?? o.children ?? o.subs ?? o.tags ?? o["二级"] ?? o["二级词"];
     const secondary = Array.isArray(secondaryRaw)
-      ? secondaryRaw.map((s) => clipWord(s)).filter(Boolean).slice(0, 8)
+      ? secondaryRaw.map((s) => shortBlueOceanLabel(s) || clipWord(s)).filter(Boolean).slice(0, 8)
       : [];
     out.push({ platform, primary, secondary });
   }
+  return out;
+}
+
+/**
+ * 趋势 PNG / 报表：LLM 漏出或空数组时，用赛道 / 热词 / 样本标题 / 行业 key 兜底，
+ * 避免「蓝海词」整栏空白。
+ */
+export function buildEvidenceBlueOceanFallback(opts: {
+  trackGrowth?: Array<{ name?: string } | null> | null;
+  platformDetails?: Array<{
+    hotTopics?: string[] | null;
+    blueOceanWords?: unknown;
+  } | null> | null;
+  industryKeys?: string[] | null;
+  evidenceTitles?: string[] | null;
+  topicHints?: string[] | null;
+  maxGroups?: number;
+}): BlueOceanGroupedEntry[] {
+  const maxGroups = opts.maxGroups ?? 6;
+  const out: BlueOceanGroupedEntry[] = [];
+  const seen = new Set<string>();
+  const push = (primaryRaw: unknown, secondary: string[] = []) => {
+    const primary = shortBlueOceanLabel(primaryRaw) || clipWord(primaryRaw);
+    if (!primary || primary.length < 2 || seen.has(primary) || out.length >= maxGroups) return;
+    if (/尚未检索|尚未檢索|找不到|无可用|暂无|N\/A/i.test(primary)) return;
+    seen.add(primary);
+    out.push({
+      primary,
+      secondary: secondary
+        .map((s) => shortBlueOceanLabel(s) || clipWord(s))
+        .filter((s) => s && s !== primary)
+        .slice(0, 6),
+    });
+  };
+
+  for (const row of opts.platformDetails || []) {
+    for (const bow of normalizeBlueOceanEntries(row?.blueOceanWords)) {
+      push(bow.primary, bow.secondary);
+    }
+  }
+  for (const t of opts.trackGrowth || []) {
+    if (t?.name) push(t.name);
+  }
+  for (const key of opts.industryKeys || []) push(key);
+  for (const row of opts.platformDetails || []) {
+    for (const topic of row?.hotTopics || []) push(topic);
+  }
+  for (const title of opts.evidenceTitles || []) push(title);
+  for (const hint of opts.topicHints || []) push(hint);
   return out;
 }
 

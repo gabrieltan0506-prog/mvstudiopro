@@ -181,7 +181,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               </div>
             ) : (
               <div style={{ fontSize: "12px", color: muted, lineHeight: 1.7 }}>
-                本窗样本未能稳定抽出分级蓝海词；请换窗口重跑「平台趋势分析」，或对照下方赛道增长与平台热词自行提炼搜索词。
+                本窗暂无可用蓝海词种子；请换更长窗口或更多平台后重跑「平台趋势分析」。下方赛道与热词仍可作选题参考。
               </div>
             )}
           </div>

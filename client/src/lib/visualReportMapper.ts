@@ -1,5 +1,8 @@
 import type { PlatformWindowDays } from "@shared/decisionIntelligencePlatformHint";
-import { normalizeBlueOceanEntries } from "@shared/blueOceanLexicon";
+import {
+  buildEvidenceBlueOceanFallback,
+  normalizeBlueOceanEntries,
+} from "@shared/blueOceanLexicon";
 import type { VisualReportData } from "@/components/VisualReportTemplate";
 
 export type VisualReportPlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "bilibili";
@@ -23,35 +26,18 @@ export function normalizeBlueOceanWords(raw: unknown): BlueOceanWord[] {
   }));
 }
 
-/** 蓝海为空时，用赛道增长名 + 平台热词兜底，保证 PNG 仍有「蓝海词」区块 */
+/** 蓝海为空时，用赛道 / 热词 / 行业口径兜底，保证 PNG 仍有「蓝海词」区块 */
 export function fallbackBlueOceanWords(opts: {
   trackGrowth?: Array<{ name?: string } | null> | null;
   platformDetails?: Array<{ hotTopics?: string[] | null; blueOceanWords?: BlueOceanWord[] | null } | null> | null;
+  industryKeys?: string[] | null;
+  evidenceTitles?: string[] | null;
+  topicHints?: string[] | null;
 }): BlueOceanWord[] {
-  const out: BlueOceanWord[] = [];
-  const seen = new Set<string>();
-  const push = (primary: string, secondary: string[] = []) => {
-    const p = String(primary || "").trim();
-    if (!p || seen.has(p) || out.length >= 6) return;
-    seen.add(p);
-    out.push({ primary: p, secondary: secondary.filter(Boolean).slice(0, 6) });
-  };
-
-  for (const row of opts.platformDetails || []) {
-    for (const bow of row?.blueOceanWords || []) {
-      if (bow?.primary) push(bow.primary, bow.secondary || []);
-    }
-  }
-  for (const t of opts.trackGrowth || []) {
-    if (t?.name) push(String(t.name).trim());
-  }
-  for (const row of opts.platformDetails || []) {
-    for (const topic of row?.hotTopics || []) {
-      const name = String(topic || "").trim();
-      if (name.length >= 2 && name.length <= 18) push(name);
-    }
-  }
-  return out;
+  return buildEvidenceBlueOceanFallback(opts).map((e) => ({
+    primary: e.primary,
+    secondary: e.secondary,
+  }));
 }
 
 /** generateVisualReport 仅支持 3/7/15/30 天；45 天窗口映射为 30 天报表。 */
@@ -100,9 +86,22 @@ export function mapGenerateVisualReportResult(
     ? (report.trackGrowth as VisualReportData["trackGrowth"])
     : [];
 
+  const topicExamples: NonNullable<VisualReportData["topicExamples"]> = Array.isArray(
+    report.topicExamples,
+  )
+    ? (report.topicExamples as NonNullable<VisualReportData["topicExamples"]>)
+    : [];
+  const topicHints = topicExamples
+    .flatMap((ex) => [ex?.structure, ex?.realCase, ex?.concept])
+    .filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+
   let globalBlueOceanWords = normalizeBlueOceanWords(report.globalBlueOceanWords);
   if (globalBlueOceanWords.length === 0) {
-    globalBlueOceanWords = fallbackBlueOceanWords({ trackGrowth, platformDetails });
+    globalBlueOceanWords = fallbackBlueOceanWords({
+      trackGrowth,
+      platformDetails,
+      topicHints,
+    });
   }
 
   return {
@@ -116,9 +115,7 @@ export function mapGenerateVisualReportResult(
     audiencesAndBiz: Array.isArray(report.audiencesAndBiz)
       ? (report.audiencesAndBiz as VisualReportData["audiencesAndBiz"])
       : [],
-    topicExamples: Array.isArray(report.topicExamples)
-      ? (report.topicExamples as VisualReportData["topicExamples"])
-      : [],
+    topicExamples,
     trafficSupport: Array.isArray(report.trafficSupport) ? (report.trafficSupport as string[]) : [],
     hotFestivals: Array.isArray(report.hotFestivals) ? (report.hotFestivals as string[]) : [],
     globalBlueOceanWords,

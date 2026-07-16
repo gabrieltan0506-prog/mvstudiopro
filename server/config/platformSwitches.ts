@@ -15,6 +15,7 @@
  */
 
 import {
+  EVOLINK_CHAT_MODEL_GPT55,
   EVOLINK_CHAT_MODEL_GPT56_SOL,
   EVOLINK_CHAT_MODEL_GPT56_TERRA,
   getEvolinkGpt56SolModel,
@@ -318,6 +319,17 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
  */
 export function getPlatformStage2OpenAiModel(): string {
   return getEvolinkGpt56SolModel();
+}
+
+/**
+ * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **gpt-5.5**。
+ * 勿用 gpt-5.4（七月底官方下线）；可用 `VISUAL_REPORT_OPENAI_MODEL` 覆盖。
+ */
+export function getVisualReportOpenAiModel(): string {
+  return normalizeEvolinkChatModel(
+    process.env.VISUAL_REPORT_OPENAI_MODEL || EVOLINK_CHAT_MODEL_GPT55,
+    EVOLINK_CHAT_MODEL_GPT55,
+  );
 }
 
 /**

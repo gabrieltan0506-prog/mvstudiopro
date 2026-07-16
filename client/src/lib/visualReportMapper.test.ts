@@ -40,9 +40,25 @@ describe("mapGenerateVisualReportResult", () => {
 describe("fallbackBlueOceanWords", () => {
   it("aggregates platform blue ocean first", () => {
     const words = fallbackBlueOceanWords({
-      trackGrowth: [{ name: "A" }],
-      platformDetails: [{ blueOceanWords: [{ primary: "B", secondary: ["b1"] }], hotTopics: ["C"] }],
+      trackGrowth: [{ name: "赛道甲" }],
+      platformDetails: [
+        { blueOceanWords: [{ primary: "蓝海乙", secondary: ["子词"] }], hotTopics: ["热词丙"] },
+      ],
     });
-    expect(words[0]?.primary).toBe("B");
+    expect(words[0]?.primary).toBe("蓝海乙");
+  });
+
+  it("falls back from long hotTopics (>18) via short label", () => {
+    const words = fallbackBlueOceanWords({
+      trackGrowth: [],
+      platformDetails: [
+        {
+          hotTopics: ["极简生活收纳：租房也能空出一间书房的方法合集"],
+          blueOceanWords: [],
+        },
+      ],
+    });
+    expect(words.length).toBeGreaterThan(0);
+    expect(words[0]?.primary.length).toBeGreaterThanOrEqual(2);
   });
 });
