@@ -119,7 +119,31 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("[manhua-factory-probe] 四段可用（故事→角色→节拍→反推）");
+  // 第五段：关键静帧（Nano Banana）——用反推摘要作 prompt
+  const keyArtPrompt =
+    `${MANHUA_DRAMA_DEFAULT_PROMPTS.key_art}\n` +
+    reverseText.split("\n").slice(0, 12).join("\n").slice(0, 800);
+  const keyArt = await fetchJson(
+    `${BASE}/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`,
+    {
+      prompt: keyArtPrompt,
+      aspectRatio: "9:16",
+      imageSize: "1K",
+      tier: "flash",
+      model: "gemini-3.1-flash-image-preview",
+      numberOfImages: 1,
+    },
+  );
+  const urls = Array.isArray(keyArt.json?.imageUrls) ? keyArt.json.imageUrls : [];
+  const keyArtOk = keyArt.ok && Boolean(keyArt.json?.ok) && urls.length > 0;
+  console.log(
+    `[${keyArtOk ? "PASS" : "FAIL"}] 工厂·关键静帧 (${keyArt.ms}ms http=${keyArt.status}) ${
+      keyArtOk ? String(urls[0]).slice(0, 120) : String(keyArt.json?.error || keyArt.text).slice(0, 200)
+    }`,
+  );
+  if (!keyArtOk) process.exit(1);
+
+  console.log("[manhua-factory-probe] 五段可用（故事→角色→节拍→反推→静帧）");
 }
 
 main().catch((e) => {
