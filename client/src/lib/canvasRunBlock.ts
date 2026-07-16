@@ -165,8 +165,27 @@ async function runVideoReversePrompt(
     })).filter((i) => i.url);
   }
 
+  // 无片/无帧：仍可根据上游节拍文案生成编导分镜表（工厂自动跑必需）
   if (!images.length) {
-    throw new Error("请先在本方块上传参考短片（MP4），或连接上游图片帧");
+    const md = await runGeminiScript(
+      [
+        "你是影视拉片与 AI 视频提示词编译器。没有参考帧时，请仅根据用户节拍/故事补全输出。",
+        "硬规则：只输出 Markdown；成稿禁止导演名/片名/致敬；只写景别运镜光影微动。",
+        "",
+        "请严格按下列结构输出：",
+        "## 一句话摘要",
+        "## 分镜表",
+        "| 镜号 | 约时码 | 景别/角度 | 运镜 | 画面内容 | 音频/对白/BGM | 时长建议 |",
+        "## 角色与场景锁定",
+        "## Seedance / I2V 微动提示词（每镜一句）",
+        "## 可复制总提示（首镜）",
+        "",
+        `【用户关注点】${userHint || "根据上游节拍补全编导分镜表与 Seedance 微动句"}`,
+      ].join("\n"),
+      GEMINI_MODEL_MAP["gemini-3.1-pro"],
+    );
+    if (!md.trim()) throw new Error("无片反推返回为空");
+    return md.trim();
   }
 
   const resp = await fetch("/api/google?op=videoReversePrompt", {
@@ -204,7 +223,7 @@ async function runSeedance20(
         imageUrl: imageUrl || undefined,
         resolution: "720p",
         aspectRatio,
-        duration: 8,
+        duration: 15,
         generateAudio: true,
         preferEvolink: true,
       }),

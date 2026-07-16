@@ -87,7 +87,39 @@ async function main() {
   );
 
   if (!beatsOk) process.exit(1);
-  console.log("[manhua-factory-probe] 文本三段可用（故事→角色→节拍）");
+
+  // 第四段：无片反推（与画布工厂同逻辑：无帧时走 geminiScript 编导分镜表）
+  const reversePrompt = [
+    "你是影视拉片与 AI 视频提示词编译器。没有参考帧时，请仅根据用户节拍补全输出。",
+    "硬规则：只输出 Markdown；成稿禁止导演名/片名；只写景别运镜光影微动。",
+    "## 一句话摘要",
+    "## 分镜表",
+    "## Seedance / I2V 微动提示词（每镜一句）",
+    "## 可复制总提示（首镜）",
+    "",
+    MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse,
+    "",
+    `【上游节拍】\n${beatsText.slice(0, 3000)}`,
+  ].join("\n");
+  const reverse = await fetchJson(`${BASE}/api/google?op=geminiScript`, {
+    prompt: reversePrompt,
+    model: "gemini-3.1-pro-preview",
+  });
+  const reverseText = extractGeminiText(reverse.json);
+  const reverseOk =
+    reverse.ok &&
+    Boolean(reverse.json?.ok) &&
+    reverseText.length >= 80 &&
+    (/分镜|景别|运镜|Seedance|微动/i.test(reverseText));
+  console.log(
+    `[${reverseOk ? "PASS" : "FAIL"}] 工厂·无片反推 (${reverse.ms}ms http=${reverse.status}) ${reverseText.slice(0, 160)}`,
+  );
+  if (!reverseOk) {
+    console.error(reverse.json?.error || reverse.text.slice(0, 400));
+    process.exit(1);
+  }
+
+  console.log("[manhua-factory-probe] 四段可用（故事→角色→节拍→反推）");
 }
 
 main().catch((e) => {
