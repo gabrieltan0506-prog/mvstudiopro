@@ -2,6 +2,9 @@
  * /platform 创作顾问问答：每日免费额度 + 可选单页生图（首张封面九折）。
  * 文案默认 GPT-5.6 Terra（reasoning high）；不对普通用户展示模型名。
  * supervisor 可切换 Sol / Terra。
+ *
+ * 核心口径：像可调用趋势库的 ChatGPT——**先直接回答用户问题**；
+ * Skill 仅作软参考，禁止被 Skill 带跑成全案策略看板。
  */
 import { and, count, eq, gte } from "drizzle-orm";
 import { extractFirstChoicePlainText, extractJsonString, invokeLLM } from "../_core/llm.js";
@@ -47,6 +50,25 @@ export type PlatformSkillQaImageResult = {
   englishPrompt: string;
   imageGenFlowLog: string[];
 };
+
+/** 市场/赛道/定价类提问：需趋势库证据，且不应灌入大量创作 Skill */
+export type PlatformSkillQaKind = "market_research" | "creative_help" | "general";
+
+export function classifyPlatformSkillQaKind(question: string): PlatformSkillQaKind {
+  const q = String(question || "").trim();
+  if (!q) return "general";
+  if (
+    /虚拟资料|电子资料|资料包|网盘|课件|题库|模板店|小报童|知识付费|卖什么|销量|持续量大|利润|定价|价格带|客单价|时间节点|节点营销|赛道|蓝海|能不能卖|卖点类型|哪些类型/.test(
+      q,
+    )
+  ) {
+    return "market_research";
+  }
+  if (/改写|封面|分镜|选题|文案|钩子|Skill|怎么写|润色|人设|脚本/.test(q)) {
+    return "creative_help";
+  }
+  return "general";
+}
 
 function startOfTodayLocal(): Date {
   const d = new Date();
@@ -95,21 +117,24 @@ export async function logPlatformSkillQaFreeUse(userId: number, question: string
   });
 }
 
-const ASK_SYSTEM = `你是 mvstudiopro /platform 页的「创作顾问」。用户可问任何问题：创作、Skill、选题文案、封面节奏、平台运营、行业时令、虚拟/电子资料赛道、生活咨询等——凡用户想问的都可以认真答。
+const ASK_SYSTEM = `你是 mvstudiopro「创作顾问」——行为对标「可查内部趋势库、也可参考联网摘要的 ChatGPT」：
+用户问什么就答什么；工具与资料都是辅助，不是牢笼。
 
-硬规则：
-1. 回答用简体中文，幽默清晰，禁说教训话；可给可执行建议；需要时可分点、分时节/人群/行业展开。
-2. 若问题涉及 Skill：主动告知 Skill **可自由勾选/取消**；若 Skill 没法满足诉求，请用户把要求写进「人物背景与创作诉求」或自定义提示词——**只要有提示词要求，优先级高于 Skill 设定**。
-3. 若用户只是提问/求写法/求改句/求分析/求解释 → imageIntent=false。
-4. 若用户明确要求「生图/画一张/出封面图/生成图片」→ imageIntent=true，并写 suggestedImagePrompt（中文，可直接给生图模型，含主体/姿势/场景/少字封面气质）。
-5. 若生图诉求属于「创作相关」（选题封面、分镜格、全案人物设定、系列笔记视觉、人设 IP 视觉体系等）→ creationRelated=true，guideMessage 必须劝用户去「自定义创作工作台」或「开始全案分析」，说明按人设+选题推演再出图，效果远好于本栏盲盒抽卡；仍可提供 suggestedImagePrompt 供用户确认试一张。
-6. 若只是随便画无关创作体系的单张（风景、表情包试玩等）→ creationRelated=false，guideMessage 可简短说明本栏单页价。
-7. 若提供了挂载 Skill 摘要，回答与 suggestedImagePrompt **默认**参考；但用户提问/提示词里的明确要求冲突时，**以用户要求为准**。
-8. 禁止在回答里写出具体模型名称、API、供应商或内部引擎代号。
+【绝对优先】
+1. 【用户提问】是唯一主任务。回答结构必须对齐用户问法（例如「类型 / 持续量大 / 利润高 / 时间节点 / 定价」就按块答）。缺证据就写清「库内不足 / 联网未证实 / 需再验证」，禁止装懂。
+2. 禁止被 Skill 带跑成全案看板：禁止「平台优先级与切入方式」「个性化分析」「现在就能执行的动作」「第1步发帖排期」等格式，除非用户明确要排期计划。
+3. 证据用法（都可用，按需组合，勿写死只用一种）：
+   - 【趋势库样本】：平台真实抓取痕迹，适合看「什么内容在冒头」。
+   - 【联网检索摘要】：公开网页/资讯归纳，适合政策、品类、定价口径、行业常识；注明「来自公开信息归纳」。
+   - 两者都可引用；冲突时说明差异；都没有就给可执行验证步骤。
+4. 禁止伪造精确成交额、精确搜索量、伪造「官方数据」链接。可给价格带区间并标明假设。
+5. Skill 摘要仅在文案/封面/钩子写法时软参考；与本问无关则忽略。冲突以用户提问为准。
+6. 简体中文；禁止写出模型名、API、供应商、内部引擎代号。
+7. 生图：只提问/求分析 → imageIntent=false；明确要生图 → imageIntent=true。
 
 只输出 JSON：
 {
-  "answer": "给用户看的完整回答（Markdown 短文可）",
+  "answer": "完整回答（Markdown 可，必须直接回应用户每一问）",
   "imageIntent": false,
   "creationRelated": false,
   "suggestedImagePrompt": "",
@@ -140,7 +165,6 @@ function parseAskJson(raw: string): {
   try {
     parsed = JSON.parse(extractJsonString(text) || text) as Record<string, unknown>;
   } catch {
-    // 非 JSON 但可读正文：直接当 answer（勿把网关错误原文抛给用户）
     if (looksLikeUpstreamGarbage(text) || text.length < 8) {
       throw new Error("算力紧张或请求超时，请稍后重试");
     }
@@ -150,13 +174,115 @@ function parseAskJson(raw: string): {
   if (!answer || looksLikeUpstreamGarbage(answer)) {
     throw new Error("算力紧张或请求超时，请稍后重试");
   }
+  // 若模型仍吐出看板腔，硬拒并让上层重试
+  if (
+    /平台优先级与切入方式|现在就能执行的动作|个性化分析\s*$/m.test(answer) &&
+    /第\s*1\s*步|周四|周六|周日/.test(answer)
+  ) {
+    throw new Error("回答偏离用户问题（策略看板腔），请重试");
+  }
   return {
-    answer: answer.slice(0, 8000),
+    answer: answer.slice(0, 12_000),
     imageIntent: Boolean(parsed.imageIntent),
     creationRelated: Boolean(parsed.creationRelated),
     suggestedImagePrompt: String(parsed.suggestedImagePrompt || "").trim().slice(0, 2000),
     guideMessage: String(parsed.guideMessage || "").trim().slice(0, 1200),
   };
+}
+
+/** 是否值得拉趋势库（软启发，非硬门禁） */
+export function shouldFetchTrendEvidence(question: string): boolean {
+  return /小红书|小紅書|抖音|快手|B站|bilibili|赛道|选题|爆款|虚拟资料|电子资料|销量|笔记|带货|趋势|热搜|平台/.test(
+    String(question || ""),
+  );
+}
+
+/** 是否值得联网检索（软启发；用户点名「网络/官网/政策」时更积极） */
+export function shouldFetchWebEvidence(question: string): boolean {
+  const q = String(question || "");
+  if (/根据数据库以及网络|网络的相关|联网|官网|政策|合规|最新|现在|目前|公开信息|搜索一下/.test(q)) {
+    return true;
+  }
+  return /定价|利润|虚拟资料|电子资料|知识付费|小报童|资料包|赛道|能不能卖|哪些类型|时间节点/.test(q);
+}
+
+async function buildTrendEvidenceForQuestion(question: string): Promise<string> {
+  if (!shouldFetchTrendEvidence(question)) return "";
+  const q = String(question || "");
+  const wantsXhs = /小红书|小紅書|xhs|rednote/i.test(q);
+  const platforms = (wantsXhs
+    ? (["xiaohongshu"] as const)
+    : (["xiaohongshu", "douyin", "bilibili", "kuaishou"] as const)
+  ).slice(0, wantsXhs ? 1 : 2);
+
+  try {
+    const { readTrendStoreForPlatforms } = await import("../growth/trendStore.js");
+    const store = await Promise.race([
+      readTrendStoreForPlatforms([...platforms], { preferDerivedFiles: true }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+    ]);
+    if (!store) return "";
+
+    const lines: string[] = [];
+    for (const platform of platforms) {
+      const col = (store.collections as Record<string, { items?: unknown[] }> | undefined)?.[platform];
+      const items = Array.isArray(col?.items) ? col!.items! : [];
+      const picked = items
+        .slice(0, 18)
+        .map((raw) => {
+          const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+          const title = String(o.title || o.keyword || o.desc || "").trim().slice(0, 80);
+          const tags = Array.isArray(o.tags)
+            ? o.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 4).join("/")
+            : "";
+          const likes = Number(o.likes || o.likeCount || o.diggCount || 0);
+          if (!title) return "";
+          return `- ${title}${tags ? ` · 标签:${tags}` : ""}${likes > 0 ? ` · 赞≈${likes}` : ""}`;
+        })
+        .filter(Boolean);
+      if (picked.length) {
+        lines.push(`平台=${platform} · 近窗样本 ${picked.length} 条：`);
+        lines.push(...picked);
+      }
+    }
+    if (!lines.length) return "";
+    return [
+      "【趋势库样本（内部抓取痕迹；只作论据，勿编造成交额/精确搜索量）】",
+      ...lines.slice(0, 40),
+    ].join("\n");
+  } catch (e) {
+    console.warn("[askPlatformSkillQa] trend evidence failed:", e instanceof Error ? e.message : e);
+    return "";
+  }
+}
+
+/** 联网摘要：Gemini googleSearch；失败则空串，不阻断主问答 */
+async function buildWebEvidenceForQuestion(question: string): Promise<string> {
+  if (!shouldFetchWebEvidence(question)) return "";
+  try {
+    const { callGemini35FlashCopywriting } = await import("./gemini35FlashRuntime.js");
+    const brief = await Promise.race([
+      callGemini35FlashCopywriting({
+        taskSystemInstruction: `你是调研助手。请针对用户问题做简短联网核实摘要（简体中文）。
+要求：
+1. 只输出事实要点与可核对方向，不要写成发帖计划或策略看板。
+2. 分点：品类/类型、需求是否持续、利润与定价常见口径、时间节点/合规注意。
+3. 不确定就写「未证实」；禁止伪造具体成交额、伪造链接。
+4. 全文控制在 800 字以内。`,
+        userText: `用户问题：\n${question}\n\n请检索公开信息后给出摘要。`,
+        responseMimeType: "text/plain",
+        maxOutputTokens: 2048,
+        temperature: 0.3,
+      }),
+      new Promise<string>((resolve) => setTimeout(() => resolve(""), 28_000)),
+    ]);
+    const text = String(brief || "").trim();
+    if (!text || text.length < 40) return "";
+    return `【联网检索摘要（公开信息归纳，非内部库；可与趋势库对照）】\n${text.slice(0, 2400)}`;
+  } catch (e) {
+    console.warn("[askPlatformSkillQa] web evidence failed:", e instanceof Error ? e.message : e);
+    return "";
+  }
 }
 
 export async function askPlatformSkillQa(params: {
@@ -185,22 +311,58 @@ export async function askPlatformSkillQa(params: {
     isSupervisor: Boolean(params.allowQaModelOverride),
   });
   const reasoningEffort = resolvePlatformSkillQaReasoningEffort();
+  const qaKind = classifyPlatformSkillQaKind(question);
 
-  const skillsPrompt = await resolvePlatformSkillsPrompt({
-    userId: params.userId,
-    enabledSkillIds: params.enabledSkillIds,
-    allowBloggerTitle: Boolean(params.allowBloggerTitle),
-    routeContext: question,
-    sheetKind: "unknown",
-  }).catch(() => "");
+  // Skill：创作类可挂；市场调研类默认不灌，避免勾选 Skill 把答案带成全案卡
+  let skillsPrompt = "";
+  if (qaKind === "creative_help") {
+    skillsPrompt = await resolvePlatformSkillsPrompt({
+      userId: params.userId,
+      enabledSkillIds: params.enabledSkillIds,
+      allowBloggerTitle: Boolean(params.allowBloggerTitle),
+      routeContext: question,
+      sheetKind: "unknown",
+    }).catch(() => "");
+  } else if (qaKind === "general") {
+    const full = await resolvePlatformSkillsPrompt({
+      userId: params.userId,
+      enabledSkillIds: params.enabledSkillIds,
+      allowBloggerTitle: Boolean(params.allowBloggerTitle),
+      routeContext: question,
+      sheetKind: "unknown",
+    }).catch(() => "");
+    skillsPrompt = full.slice(0, 1800);
+  }
+
+  // 证据：库 + 网 可并行，按问题软启发取用；不是「只能查库」
+  const [trendEvidence, webEvidence] = await Promise.all([
+    buildTrendEvidenceForQuestion(question),
+    buildWebEvidenceForQuestion(question),
+  ]);
+
+  const evidenceBlocks = [
+    trendEvidence || null,
+    webEvidence || null,
+    !trendEvidence && !webEvidence
+      ? "【证据】本问未取到趋势库样本且联网摘要为空；请给可执行框架与验证方法，勿伪造数据。"
+      : null,
+  ].filter(Boolean);
 
   const userText = [
-    "【用户提问】",
+    "【用户提问——必须完整回答，勿改写成发帖计划】",
     question,
-    skillsPrompt ? `\n${skillsPrompt.slice(0, 10000)}` : "",
+    "",
+    "【回答自检】若答案像「平台优先级 / 现在就能执行的动作 / 发帖排期」，即跑偏，请重写成直接答问。",
+    "【证据说明】下面可能同时有「趋势库」与「联网摘要」：按需引用，不必只用一种；都没有就老实说。",
+    ...evidenceBlocks.map((b) => `\n${b}`),
+    skillsPrompt && qaKind === "creative_help"
+      ? `\n【Skill 软参考·仅文案创作相关时参考，可忽略】\n${skillsPrompt.slice(0, 6000)}`
+      : skillsPrompt && qaKind === "general"
+        ? `\n【Skill 极短摘要·可忽略】\n${skillsPrompt}`
+        : "\n【Skill】本问偏事实/赛道分析，已弱化 Skill 灌入，专心答用户问题。",
   ].join("\n");
 
-  const ASK_MAX_ATTEMPTS = 2;
+  const ASK_MAX_ATTEMPTS = 3;
   let parsed: ReturnType<typeof parseAskJson> | null = null;
   let lastErr = "";
   for (let attempt = 1; attempt <= ASK_MAX_ATTEMPTS; attempt += 1) {
@@ -209,7 +371,7 @@ export async function askPlatformSkillQa(params: {
         provider: "openai",
         modelName,
         max_tokens: PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
-        temperature: 0.7,
+        temperature: qaKind === "market_research" ? 0.45 : 0.7,
         response_format: { type: "json_object" },
         reasoningEffort,
         messages: [
@@ -231,8 +393,10 @@ export async function askPlatformSkillQa(params: {
   }
   if (!parsed) {
     const friendly =
-      /Unexpected token|is not valid JSON|An error|非 JSON|空内容|timeout|超时|fetch failed|算力/i.test(lastErr)
-        ? "算力紧张或请求超时，请稍后重试"
+      /Unexpected token|is not valid JSON|An error|非 JSON|空内容|timeout|超时|fetch failed|算力|偏离用户问题/i.test(
+        lastErr,
+      )
+        ? "算力紧张或回答跑偏，请稍后重试同一问题"
         : lastErr.slice(0, 160) || "问答失败，请稍后重试";
     throw new Error(friendly);
   }
