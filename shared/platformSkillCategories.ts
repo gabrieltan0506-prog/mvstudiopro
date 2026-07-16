@@ -39,6 +39,8 @@ export const CANVAS_ONLY_SKILL_IDS = [
   "manhua-drama-studio",
 ] as const;
 
+export type CanvasOnlySkillId = (typeof CANVAS_ONLY_SKILL_IDS)[number];
+
 export function isCanvasOnlySkillId(id: string): boolean {
   return (CANVAS_ONLY_SKILL_IDS as readonly string[]).includes(id);
 }

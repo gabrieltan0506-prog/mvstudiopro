@@ -177,7 +177,7 @@ export function routePlatformSkillIdsForLane(params: {
   } else if (sheet === "video") {
     add("director-craft");
     add("json-director-middleware");
-    reasons.push("sheet:video → director-craft + json-director（Seedance/漫剧仅 /canvas）");
+    reasons.push("sheet:video → director-craft + json-director（Seedance/漫剧 Skill 仅 /canvas）");
   } else {
     add("director-craft");
     add("json-director-middleware");

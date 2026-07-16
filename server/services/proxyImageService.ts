@@ -1196,7 +1196,6 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       options.gcsSubdir,
       {
         aspectRatio: options.aspectRatio,
-        size: sizes[0],
         flowLog: L,
         quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
         imageUrls: refImageUrls,

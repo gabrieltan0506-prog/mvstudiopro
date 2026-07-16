@@ -45,6 +45,7 @@ export function loadBuiltinPlatformSkills(forceReload = false): PlatformSkillRec
       if (!name.endsWith(".md") || /^readme\.md$/i.test(name)) continue;
       const id = name.replace(/\.md$/i, "");
       if (PLATFORM_BUILTIN_SKILL_IDS.includes(id as (typeof PLATFORM_BUILTIN_SKILL_IDS)[number])) continue;
+      // Canvas 专用 md 留在目录供文档，但不进 /platform 内置池
       if (isCanvasOnlySkillId(id)) continue;
       if (out.some((s) => s.id === id)) continue;
       const raw = fs.readFileSync(path.join(dir, name), "utf8");

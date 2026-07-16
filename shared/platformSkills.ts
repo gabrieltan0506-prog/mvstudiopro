@@ -130,4 +130,5 @@ export {
   groupPlatformSkillsByCategory,
   resolvePlatformSkillCategory,
   PLATFORM_SKILL_CATEGORY_ORDER,
+  type CanvasOnlySkillId,
 } from "./platformSkillCategories.js";

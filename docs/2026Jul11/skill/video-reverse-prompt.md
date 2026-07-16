@@ -2,14 +2,14 @@
 id: video-reverse-prompt
 name: 视频反推提示词
 description: Gemini 拉片→分镜表+Seedance 微动句；浏览器本地抽帧；成稿去导演名
-version: 2026-07-16b
-defaultEnabled: true
+version: 2026-07-16c
+defaultEnabled: false
 ---
 
 # 视频反推提示词 Skill
 
 ## 用途
-Canvas「视频反推」方块、漫剧工作室、工作流参考片拉片时启用。对齐 nanophoto 思路，**主看片用 Gemini**，非 GPT 纯文编译。
+**仅 /canvas**（不进 `/platform` Skill 池与路由）。「视频反推」方块、漫剧工作室拉片时启用。对齐 nanophoto 思路，**主看片用 Gemini**，非 GPT 纯文编译。
 
 运行时：`/api/google?op=videoReversePrompt` · 浏览器 `extractVideoFramesFromUrl`。
 
