@@ -2,7 +2,7 @@
 id: manhua-drama-studio
 name: 漫剧工作室链路
 description: 故事→角色→节拍→反推→静帧→Seedance；借鉴 AI-CanvasPro 阶段感但不抄闭源桌面
-version: 2026-07-16c
+version: 2026-07-17a
 defaultEnabled: false
 ---
 
@@ -13,20 +13,27 @@ defaultEnabled: false
 
 开源对照：https://github.com/ashuoAI/AI-CanvasPro —— **Electron 桌面二进制**，非可调用 API/Skill 库；许可证禁止商业抄袭。我们只学阶段感，用 Web + 自有导演中台做得更好。
 
-## 六段硬链路
-1. **story_brief**：标题钩子 + 欲望 + 冲突 + 收束  
+## 编剧室闸门（先剧情，后编导）
+1. 用户给题材 + 三到五句条件，选 **2–6 集**（默认 3），点「扩写剧情」
+2. 预览连载包（每集正文 + **片尾钩子** + 人物/道具/场景）
+3. 「确认并进入编导」后才解锁节拍 / 静帧 / 成片；可「跳过连载扩写」进编导（无剧情包）
+4. **前台禁止**出现模型名、供应商、私下话术（如「仿写某某」）；内部 prompt 仍可写硬禁令
+
+## 六段硬链路（确认后）
+1. **story_brief**：标题钩子 + 欲望 + 冲突 + 收束（可注入编剧室剧情包）  
 2. **character_bible**：1–3 角色外形锚点与禁止崩坏点（去真人名）  
-3. **episode_beats**：6–10 镜，每镜 2–4s  
-4. **video_reverse**：有参考片则 Gemini 反推；无片则节拍补全分镜  
+3. **episode_beats**：6–10 镜，每镜 2–4s（可挂编导手法块）  
+4. **video_reverse**：有参考片则反推；无片则节拍补全分镜  
 5. **key_art**：JSON 导演中台→竖屏静帧  
 6. **seedance_clip**：I2V 微动公式成片  
 
 ## 比桌面竞品更好的点（必须兑现）
 - 与 Platform Skill / 成稿去导演名统一口径  
 - JSON 导演中台锁摄影，系列镜只换 Subject/Environment  
-- 反推结果可直接连 Seedance，无需另开客户端  
+- 反推结果可直接连成片引擎，无需另开客户端  
 - 云端 job + 计费一体，非本机塞一堆 API Key  
 
 ## 禁止
 - 整段照搬 AI-CanvasPro 文案/UI 商标  
 - 把闭源二进制当可嵌入 workflow library  
+- 前台泄漏后台技术口径（模型 / 供应商 / 仿写话术）
