@@ -14,7 +14,10 @@ import {
   stageKeyFromBlockId,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
-import { listScreenwriterGenres } from "@shared/screenwriterGenreTemplates";
+import {
+  listScreenwriterGenres,
+  MANHUA_SCENE_GENRE_LABEL_ZH,
+} from "@shared/screenwriterGenreTemplates";
 import { listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, Loader2, Play, Sparkles, Square } from "lucide-react";
@@ -126,6 +129,12 @@ export default function OmniCanvas() {
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
       });
+      if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
+        setFactoryGenreId(spawned.resolvedGenreId);
+        toast.message(
+          `已按题材自动套用剧种「${MANHUA_SCENE_GENRE_LABEL_ZH[spawned.resolvedGenreId as keyof typeof MANHUA_SCENE_GENRE_LABEL_ZH] || spawned.resolvedGenreId}」`,
+        );
+      }
       setBlocks(spawned.blocks);
       setEdges(spawned.edges);
       saveCanvasState(spawned.blocks, spawned.edges);
@@ -230,96 +239,87 @@ export default function OmniCanvas() {
               自由画布 · 漫剧工厂 · 编导分镜
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Gemini Omini 创作画布</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-white/65">
-              输入题材后自动串联：故事→角色→节拍→编导反推→静帧→Seedance（约 15s）。
-              已完成步骤会跳过，可从失败处续跑。参考短片请本机上传（≤120s）。
+            <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
+              题材一句进，六段出片：故事→角色→节拍→编导反推→静帧→Seedance（约 15s）。可续跑、可取消。
             </p>
-            <div className="mt-3 inline-flex max-w-3xl items-start gap-2 rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-50">
-              <span className="mt-0.5 shrink-0 rounded-full border border-amber-300/40 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-100">
-                Soon
-              </span>
-              <span>
-                <strong className="font-semibold text-amber-50">Seedance 2.5 Coming soon on MV Studio Pro</strong>
-                <span className="text-amber-100/75">
-                  {" "}
-                  · 文生 / 图生 / 参考生代码已就绪，待 EvoLink 上线后开放；当前请用 Seedance 2.0（默认 15s）。
-                </span>
-              </span>
-            </div>
 
-            <div className="mt-3 grid max-w-3xl gap-2 sm:grid-cols-[minmax(0,8.5rem)_minmax(0,12rem)_1fr]">
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-white/40">剧种</label>
-                <select
-                  value={factoryGenreId}
-                  onChange={(e) => {
-                    setFactoryGenreId(e.target.value);
-                    setFactorySceneId("");
-                  }}
-                  disabled={factoryBusy}
-                  className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/50 disabled:opacity-50"
-                  title="选剧种后自动带入该剧种场景资产包"
-                >
-                  <option value="">通用</option>
-                  {genreOptions.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.labelZh}
-                    </option>
-                  ))}
-                </select>
+            {/* 工厂控制台：题材为主，剧种/场景为辅 */}
+            <div className="mt-5 max-w-3xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <label className="text-sm font-semibold tracking-wide text-white/90">题材一句</label>
+                <span className="text-[11px] text-white/40">主入口 · 未选手动剧种时自动匹配场景包</span>
               </div>
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-white/40">场景模板</label>
-                <select
-                  value={factorySceneId}
-                  onChange={(e) => setFactorySceneId(e.target.value)}
-                  disabled={factoryBusy}
-                  className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/50 disabled:opacity-50"
-                  title="可选：指定单一场景；空则用剧种默认场景包"
-                >
-                  <option value="">剧种默认包</option>
-                  {sceneOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {String(s.no).padStart(2, "0")} {s.nameZh}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-white/40">题材一句（工厂入口）</label>
-                <input
-                  value={factoryTopic}
-                  onChange={(e) => setFactoryTopic(e.target.value)}
-                  disabled={factoryBusy}
-                  placeholder="例：仙门外门弟子雨夜闯秘境，15 秒竖屏"
-                  className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none focus:border-emerald-400/50"
-                />
-              </div>
-            </div>
+              <input
+                value={factoryTopic}
+                onChange={(e) => setFactoryTopic(e.target.value)}
+                disabled={factoryBusy}
+                placeholder="例：仙门外门弟子雨夜闯秘境，15 秒竖屏虐心"
+                className="mt-2 w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-3 text-[15px] text-white placeholder:text-white/30 outline-none transition focus:border-emerald-400/55 focus:ring-1 focus:ring-emerald-400/25 disabled:opacity-50"
+              />
 
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {stageChipStatus.map((s) => (
-                <span
-                  key={s.stage}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                    s.status === "done"
-                      ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-100"
-                      : s.status === "running"
-                        ? "border-sky-400/40 bg-sky-500/15 text-sky-100"
-                        : s.status === "error"
-                          ? "border-red-400/40 bg-red-500/15 text-red-100"
-                          : "border-white/10 bg-white/5 text-white/55"
-                  }`}
-                >
-                  {s.label}
-                </span>
-              ))}
-            </div>
-            {factoryProgress ? (
-              <div className="mt-2 text-xs text-sky-200/90">进度：{factoryProgress}</div>
-            ) : null}
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
+                <div>
+                  <label className="block text-[11px] text-white/45">剧种</label>
+                  <select
+                    value={factoryGenreId}
+                    onChange={(e) => {
+                      setFactoryGenreId(e.target.value);
+                      setFactorySceneId("");
+                    }}
+                    disabled={factoryBusy}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                    title="空=按题材自动推断"
+                  >
+                    <option value="">自动</option>
+                    {genreOptions.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.labelZh}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">场景</label>
+                  <select
+                    value={factorySceneId}
+                    onChange={(e) => setFactorySceneId(e.target.value)}
+                    disabled={factoryBusy}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                    title="空=剧种默认场景包"
+                  >
+                    <option value="">默认包</option>
+                    {sceneOptions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {String(s.no).padStart(2, "0")} {s.nameZh}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-            <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/8 pt-3">
+                {stageChipStatus.map((s) => (
+                  <span
+                    key={s.stage}
+                    className={`rounded-md border px-2 py-0.5 text-[10px] tracking-wide ${
+                      s.status === "done"
+                        ? "border-emerald-400/35 bg-emerald-500/12 text-emerald-100"
+                        : s.status === "running"
+                          ? "border-sky-400/35 bg-sky-500/12 text-sky-100"
+                          : s.status === "error"
+                            ? "border-red-400/35 bg-red-500/12 text-red-100"
+                            : "border-white/10 bg-white/[0.03] text-white/45"
+                    }`}
+                  >
+                    {s.label}
+                  </span>
+                ))}
+                {factoryProgress ? (
+                  <span className="ml-auto text-[11px] text-sky-200/85">{factoryProgress}</span>
+                ) : null}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={factoryBusy}
@@ -332,13 +332,18 @@ export default function OmniCanvas() {
                     genreId: factoryGenreId || undefined,
                     sceneId: factorySceneId || undefined,
                   });
+                  if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
+                    setFactoryGenreId(spawned.resolvedGenreId);
+                  }
                   setBlocks(spawned.blocks);
                   setEdges(spawned.edges);
                   saveCanvasState(spawned.blocks, spawned.edges);
                   toast.success(
-                    factoryGenreId || factorySceneId
-                      ? "已铺节点并套入场景资产库"
-                      : "已铺好漫剧工厂六段节点",
+                    spawned.genreInferred && spawned.resolvedGenreId
+                      ? `已铺节点 · 题材推断剧种「${MANHUA_SCENE_GENRE_LABEL_ZH[spawned.resolvedGenreId as keyof typeof MANHUA_SCENE_GENRE_LABEL_ZH] || spawned.resolvedGenreId}」`
+                      : factoryGenreId || factorySceneId
+                        ? "已铺节点并套入场景资产库"
+                        : "已铺好漫剧工厂六段节点",
                   );
                 }}
               >
@@ -403,7 +408,14 @@ export default function OmniCanvas() {
                   取消
                 </button>
               ) : null}
+              </div>
             </div>
+
+            <p className="mt-3 max-w-3xl text-[11px] leading-5 text-amber-100/70">
+              <span className="font-semibold text-amber-100/90">Seedance 2.5 Coming soon</span>
+              {" · "}
+              文生 / 图生 / 参考生已就绪，待开放；当前 Seedance 2.0（默认 15s）。
+            </p>
           </div>
 
           <FreeformCanvas

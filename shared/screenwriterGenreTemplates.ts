@@ -138,6 +138,58 @@ export function getScreenwriterGenreTemplate(id: string | undefined | null): Scr
   return SCREENWRITER_GENRE_TEMPLATES.find((g) => g.id === key) || null;
 }
 
+/** 题材关键词 → 剧种（未选手动剧种时自动套场景包） */
+const GENRE_TOPIC_KEYWORDS: Record<string, string[]> = {
+  xianxia: ["仙侠", "宗门", "修仙", "御剑", "灵气", "秘境", "仙门", "练剑", "魔族", "洞府", "云海"],
+  ancient: ["古风", "皇宫", "朝堂", "长安", "府邸", "边塞", "龙椅", "宅斗", "权谋", "大殿", "烽火"],
+  urban: ["都市", "豪门", "霸总", "办公室", "酒吧", "夜店", "豪宅", "职场", "总裁"],
+  campus: ["校园", "教室", "校服", "青春", "高考", "同学", "课桌"],
+  apocalypse: ["末日", "废土", "避难所", "幸存者", "荒原", "丧尸"],
+  scifi: ["科幻", "星际", "太空", "飞船", "未来", "全息", "赛博", "星舰", "实验室", "AI觉醒"],
+  suspense: ["悬疑", "密室", "探案", "黑客", "线索", "搜证", "推理", "信息战"],
+};
+
+export type InferManhuaGenreResult = {
+  genreId: string;
+  labelZh: string;
+  score: number;
+  matched: string[];
+};
+
+/**
+ * 从题材一句推断剧种。无命中返回 null；平分时按登记顺序取先。
+ */
+export function inferManhuaGenreFromTopic(topic: string | undefined | null): InferManhuaGenreResult | null {
+  const text = String(topic || "").trim();
+  if (!text) return null;
+  let best: InferManhuaGenreResult | null = null;
+  for (const g of SCREENWRITER_GENRE_TEMPLATES) {
+    if (!g.ready) continue;
+    const kws = GENRE_TOPIC_KEYWORDS[g.id] || [];
+    const matched = kws.filter((k) => text.includes(k));
+    if (!matched.length) continue;
+    const score = matched.length;
+    if (!best || score > best.score) {
+      best = { genreId: g.id, labelZh: g.labelZh, score, matched };
+    }
+  }
+  return best;
+}
+
+/** 手动剧种优先；否则从题材推断 */
+export function resolveManhuaGenreId(opts?: {
+  genreId?: string;
+  topic?: string;
+}): { genreId?: string; inferred: boolean; infer?: InferManhuaGenreResult | null } {
+  const explicit = getScreenwriterGenreTemplate(opts?.genreId);
+  if (explicit?.ready) {
+    return { genreId: explicit.id, inferred: false };
+  }
+  const infer = inferManhuaGenreFromTopic(opts?.topic);
+  if (infer) return { genreId: infer.genreId, inferred: true, infer };
+  return { genreId: undefined, inferred: false, infer: null };
+}
+
 export function composeGenreTemplatePromptBlock(genre: ScreenwriterGenreTemplate | null | undefined): string {
   if (!genre || !genre.ready) return "";
   const lines = [
