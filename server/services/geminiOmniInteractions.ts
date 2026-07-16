@@ -135,7 +135,8 @@ export async function createOmniFlashInteraction(input: OmniInteractionCreateInp
     background: true,
     generation_config: {
       max_output_tokens: 128480,
-      thinkingLevel: "high",
+      // Google Interactions API 要求 snake_case；thinkingLevel 会 400
+      thinking_level: "high",
       video_config: { task },
     },
     response_modalities: modalities,

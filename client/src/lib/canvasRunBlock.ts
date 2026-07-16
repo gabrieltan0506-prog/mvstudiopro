@@ -15,24 +15,29 @@ export type CanvasRunDeps = {
 };
 
 async function runGptImage2(prompt: string, aspectRatio: "9:16" | "16:9", refImageUrl?: string): Promise<string> {
-  const res = await fetch(`/api/jobs?op=workflowGenerateSceneImage`, {
+  // 注意：勿再调用 workflowGenerateSceneImage（那是工作流分镜 API，强制要 workflowId）
+  const res = await fetch(`/api/jobs?op=canvasGptImage2`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      scenePrompt: prompt,
-      imageModel: "gpt-image-1",
-      sceneCount: 1,
+      prompt,
       aspectRatio,
       referenceImageUrl: refImageUrl || undefined,
     }),
   });
-  const json = (await res.json()) as {
-    error?: string;
-    message?: string;
-    storyboardImages?: Array<{ selectedSceneImageUrl?: string }>;
-  };
-  if (!res.ok) throw new Error(json.error || json.message || "GPT-Image-2 生图失败");
-  const url = json.storyboardImages?.[0]?.selectedSceneImageUrl;
+  const text = await res.text();
+  let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(
+      /An error o|ROUTER_EXTERNAL/i.test(text)
+        ? "算力紧张或网关超时，请稍后重试"
+        : `GPT-Image-2 生图失败：${text.slice(0, 160)}`,
+    );
+  }
+  if (!res.ok || !json.ok) throw new Error(json.error || json.message || "GPT-Image-2 生图失败");
+  const url = String(json.imageUrl || "").trim();
   if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
   return url;
 }

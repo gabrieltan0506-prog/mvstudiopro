@@ -431,8 +431,17 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           parts.push({ fileData: { mimeType: item.mimeType, fileUri: item.gcsUri } });
           continue;
         }
-        const img = await fetchImageAsBase64(item.url);
-        parts.push({ inlineData: { mimeType: img.mimeType, data: img.b64 } });
+        try {
+          const img = await fetchImageAsBase64(item.url);
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.b64 } });
+        } catch (fetchErr: any) {
+          const msg = fetchErr?.message || String(fetchErr);
+          return res.status(502).json({
+            ok: false,
+            error: "image_fetch_failed",
+            message: `无法读取参考图（${msg}）。请改用画布内已上传的素材 URL，或重新上传后再试。`,
+          });
+        }
       }
 
       const r = await fetchJson(url, {

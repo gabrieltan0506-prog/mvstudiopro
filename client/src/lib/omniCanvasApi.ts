@@ -13,7 +13,10 @@ async function parseJson(resp: Response) {
   try {
     return JSON.parse(text) as Record<string, unknown>;
   } catch {
-    return { ok: false, rawText: text };
+    if (/^An error\b/i.test(text) || /ROUTER_EXTERNAL_TARGET_ERROR/i.test(text)) {
+      return { ok: false, error: "算力紧张或网关超时，请稍后重试", rawText: text.slice(0, 200) };
+    }
+    return { ok: false, error: "上游返回非 JSON", rawText: text.slice(0, 200) };
   }
 }
 
