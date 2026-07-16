@@ -1763,7 +1763,9 @@ function PlatformIpDimensionGuide() {
           </div>
         ))}
       </div>
-      <p className="mt-4 text-[11px] text-gray-500">提示：在上方 IP 定位中把职业、身份、兴趣、专长写具体，生成更贴脸。</p>
+      <p className="mt-4 text-[11px] text-gray-500">
+        提示：在「自定义创作」里选题初选上方的「人物背景与创作诉求」写清职业、身份、兴趣、专长，生成更贴脸。
+      </p>
     </div>
   );
 }
@@ -2351,7 +2353,7 @@ export default function PlatformPage() {
           <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/30 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
             <p>
               Skill <strong className="text-white">可以自由勾选或取消</strong>
-              ，不必全开。若觉得 Skill 没法满足你的要求，直接把要求写进「人物背景与创作诉求」或自定义提示词。
+              ，不必全开。若觉得 Skill 没法满足你的要求，直接写进下方「人物背景与创作诉求」（与选题初选同一块），或自定义提示词。
             </p>
             <p className="mt-1.5 text-[#b8f4ff]">
               <strong className="text-white">只要有提示词要求，优先级高于 Skill 设定</strong>
@@ -2636,14 +2638,49 @@ export default function PlatformPage() {
         </div>
       </div>
 
+      <div
+        id="platform-persona-focus"
+        className="mt-3 rounded-lg border border-[#fbbf24]/35 bg-[rgba(251,191,36,0.08)] px-3 py-2.5"
+      >
+        <div className="flex items-center gap-2 text-[12px] font-semibold text-[#fef08a]">
+          <Target className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          人物背景与创作诉求
+          <span className="rounded border border-[#fbbf24]/35 bg-black/20 px-1.5 py-0.5 text-[9px] font-medium text-[#fde68a]">
+            选题初选必填 · 与全案共用
+          </span>
+        </div>
+        <p className="mt-1 text-[10px] leading-snug text-gray-400">
+          写清职业、专长、兴趣与目标；下方「生成初选 / 扩写」与全案分析都读这一栏，不必翻到页面底部去找。
+        </p>
+        <div className="relative mt-2">
+          <textarea
+            value={focusPrompt}
+            onChange={(event) => setFocusPrompt(event.target.value)}
+            placeholder="例如：我是医学背景创作者，做小红书虚拟资料店；擅长慢病科普与资料包变现，想找持续量大、利润清晰的品类与定价。"
+            rows={4}
+            className="min-h-[96px] w-full rounded-md border border-white/15 bg-[#0c061e] px-3 py-2 pr-11 text-[12px] leading-relaxed text-white outline-none transition focus:border-[#fbbf24]/45"
+          />
+          <div className="absolute right-2 top-2">
+            <VoiceInputButton
+              onTranscript={(t) => setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t))}
+              onDebugLog={addVoiceDebug}
+              size={26}
+            />
+          </div>
+        </div>
+        {!focusPrompt.trim() ? (
+          <p className="mt-1.5 text-[10px] text-amber-200/90">未填写时无法生成初选（避免空背景抽卡）。</p>
+        ) : null}
+      </div>
+
       <div className="mt-3 rounded-lg border border-[#49e6ff]/25 bg-[#49e6ff]/6 px-3 py-2.5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold text-white">选题初选（先挑再写）</div>
             <p className="mt-0.5 text-[10px] leading-snug text-gray-400">
-              默认生成 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条（每条写明 Skill 与传达目标）；超出按条另计费（最多{" "}
-              {PLATFORM_TOPIC_SHORTLIST_MAX}）。勾选后扩写正式文案。基础{" "}
-              {CREDIT_COSTS.platformTopicShortlist} 点
+              先填上方人物背景，再生成初选。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条（每条写明 Skill
+              与传达目标）；超出按条另计费（最多 {PLATFORM_TOPIC_SHORTLIST_MAX}
+              ）。勾选后扩写正式文案。基础 {CREDIT_COSTS.platformTopicShortlist} 点
               {topicShortlistPrice.extraCount > 0
                 ? ` + 加量 ${topicShortlistPrice.extraCount}×${CREDIT_COSTS.platformTopicShortlistExtra}=${topicShortlistPrice.total} 点`
                 : ""}
@@ -2677,6 +2714,11 @@ export default function PlatformPage() {
             }
             onClick={() => {
               void (async () => {
+                if (!focusPrompt.trim()) {
+                  toast.error("请先填写上方「人物背景与创作诉求」，再生成初选");
+                  scrollToPlatformSection("platform-persona-focus");
+                  return;
+                }
                 try {
                   const existingTitles = [
                     ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) =>
@@ -8775,13 +8817,24 @@ export default function PlatformPage() {
                 </div>
               ) : null}
 
-              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <div id="platform-persona-focus-fullcase" className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white">
                   <Target className="h-4 w-4 text-[#ffdd44]" />
                   人物背景与创作诉求
+                  <span className="rounded-full border border-[#fbbf24]/35 bg-[rgba(251,191,36,0.12)] px-2 py-0.5 text-[10px] font-medium text-[#fde68a]">
+                    与自定义「选题初选」共用同一栏
+                  </span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#b7add8]">
-                  请写清职业、专长、兴趣与商业目标；系统将据此生成<strong className="text-white">平台优先级与切入方向</strong>，并写入选题文案与分镜脚本（不含封面图、编导分镜图与决策智库报告）。
+                  与上方自定义创作工作台为同一输入；请写清职业、专长、兴趣与商业目标。系统将据此生成<strong className="text-white">平台优先级与切入方向</strong>，并写入选题文案与分镜脚本（不含封面图、编导分镜图与决策智库报告）。也可
+                  <button
+                    type="button"
+                    className="mx-1 font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
+                    onClick={() => scrollToPlatformSection("platform-persona-focus")}
+                  >
+                    跳到选题初选旁填写
+                  </button>
+                  。
                 </p>
                 <div className="relative mt-4">
                   <textarea
