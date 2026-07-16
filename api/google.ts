@@ -187,6 +187,18 @@ function shouldRetryVertexImage(status:number, json:any, rawText:string){
   return status === 429 || message.includes("RESOURCE_EXHAUSTED");
 }
 
+/** 文本 generateContent：配额 / 瞬时不可用可短退避重试（角色卡曾 503） */
+function shouldRetryVertexText(status: number, json: any, rawText: string) {
+  if (status === 429 || status === 503 || status === 502 || status === 504) return true;
+  const message = String(json?.error?.status || json?.error?.message || rawText || "").toUpperCase();
+  return (
+    message.includes("RESOURCE_EXHAUSTED") ||
+    message.includes("UNAVAILABLE") ||
+    message.includes("DEADLINE_EXCEEDED") ||
+    message.includes("HIGH_DEMAND")
+  );
+}
+
 async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -375,18 +387,34 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const base = baseUrlFor(location);
       const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-
-      const r = await fetchJson(url,{
-        method:"POST",
-        headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
-        body: JSON.stringify({
-          contents:[{role:"user",parts:[{text:prompt}]}],
-          generationConfig,
-        })
+      const body = JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig,
       });
 
+      let r = await fetchJson(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body,
+      });
+      for (let attempt = 0; attempt < 3 && !r.ok && shouldRetryVertexText(r.status, r.json, r.rawText); attempt += 1) {
+        await sleep(900 * (attempt + 1));
+        r = await fetchJson(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body,
+        });
+      }
+
       const raw = r.json ?? r.rawText;
-      return res.status(r.ok ? 200 : 502).json({ ok:r.ok, status:r.status, url:r.url, raw });
+      const httpOut = r.ok ? 200 : r.status === 429 ? 429 : r.status === 503 ? 503 : 502;
+      return res.status(httpOut).json({
+        ok: r.ok,
+        status: r.status,
+        url: r.url,
+        raw,
+        error: r.ok ? undefined : "算力紧张，请稍后重试",
+      });
     }
 
     // ---------------- Canvas / 工作流：视频反推提示词（帧序列 → Gemini） ----------------

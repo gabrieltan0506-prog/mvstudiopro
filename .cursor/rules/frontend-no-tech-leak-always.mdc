@@ -1,0 +1,34 @@
+---
+description: 前台与用户可见文案禁止泄漏模型名、供应商、内部引擎与仿写话术
+alwaysApply: true
+---
+
+# 前台零技术泄漏（用户可见面）
+
+面向**终端用户**的 UI 文案、Toast、空态、帮助提示、导出 PDF/图片水印旁说明、创作顾问回答、Prompt 里要求模型「对用户说的话」——一律按本规则。
+
+## 禁止出现（用户可见）
+
+- 模型名 / 部署名：如 GPT-×、Claude、Gemini、Terra、Sol、NB2、Nano Banana、Veo、Omni 等
+- 供应商 / 云厂商：OpenAI、Google、Anthropic、EvoLink、Vertex、Fly、Vercel（除非用户在看**运维/账单**专用页且已登录监管）
+- 内部引擎代号、路由名、Skill 文件名堆砌成「技术炫耀」
+- 「仿写某某导演 / 致敬某某」等点名抄袭口径（手法可用中性标签，不写人名致敬）
+- 把 Debug / supervisor 专用控件文案暴露给一般用户路径
+
+## 允许（非用户主路径）
+
+- `debugMode` / supervisor / admin 面板内的技术标注
+- 服务端日志、代码注释、内部 docs、Cursor rules
+- API 错误映射时：对用户只给**业务友好句**（如「算力紧张，请稍后重试」），原始 upstream 进日志
+
+## 正确写法示例
+
+- ❌ 「本页使用 GPT-5.6-Sol 生成」→ ✅ 「正在生成文案…」
+- ❌ 「Vertex googleSearch 失败」→ ✅ 「联网摘要暂不可用，已改用库内样本」
+- ❌ 「仿诺兰式运镜」→ ✅ 「长镜头压迫感 / 时间折叠剪辑感」（不点名）
+
+## 改代码时自检
+
+1. 新增 `toast.*` / 按钮 label / 段落说明前：能否在截图里被普通创作者看懂且无供应商？
+2. 若必须区分引擎：只放 supervisor 开关，默认文案保持中性。
+3. 与 [`ask-before-design-choices-always.mdc`](./ask-before-design-choices-always.mdc) 冲突时：先问用户再改对外口径。

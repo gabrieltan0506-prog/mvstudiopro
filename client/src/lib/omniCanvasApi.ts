@@ -97,9 +97,18 @@ export async function runGeminiScript(prompt: string, model?: string) {
     }),
   });
   const json = await parseJson(resp);
-  if (!resp.ok || !json.ok) throw new Error(String(json.error || "文字生成失败"));
+  if (!resp.ok || !json.ok) {
+    const upstream = Number(json?.status || resp.status || 0) || resp.status;
+    // 带状态码，供工厂 isTransientFactoryError 识别并退避（勿泄漏供应商/模型名）
+    throw new Error(
+      String(json.error || "").trim() ||
+        (upstream >= 500 || upstream === 429
+          ? `算力紧张，请稍后重试（${upstream}）`
+          : "文字生成失败，请稍后重试"),
+    );
+  }
   const text = String((json.raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || json.text || "").trim();
-  if (!text) throw new Error("文字生成返回为空");
+  if (!text) throw new Error("文字生成返回为空，请稍后重试");
   return text;
 }
 

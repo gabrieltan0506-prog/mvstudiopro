@@ -17,8 +17,9 @@ import {
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
+  recommendManhuaSceneIdFromTopic,
 } from "@shared/screenwriterGenreTemplates";
-import { listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
+import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
@@ -89,6 +90,13 @@ export default function OmniCanvas() {
     if (g?.sceneGenre) return listManhuaScenes({ genre: g.sceneGenre });
     return listManhuaScenes();
   }, [factoryGenreId, genreOptions]);
+  const recommendedScene = useMemo(() => {
+    const rec = recommendManhuaSceneIdFromTopic({
+      genreId: factoryGenreId || undefined,
+      topic: factoryTopic,
+    });
+    return rec.sceneId ? getManhuaSceneTemplate(rec.sceneId) : null;
+  }, [factoryGenreId, factoryTopic]);
   const writerContext = useMemo(() => {
     if (!writerConfirmed || !writerPack) return undefined;
     return composeWriterPackFactoryContext(writerPack, writerFocusEpisode);
@@ -166,6 +174,9 @@ export default function OmniCanvas() {
         toast.message(
           `已按题材自动套用剧种「${MANHUA_SCENE_GENRE_LABEL_ZH[spawned.resolvedGenreId as keyof typeof MANHUA_SCENE_GENRE_LABEL_ZH] || spawned.resolvedGenreId}」`,
         );
+      }
+      if (spawned.resolvedSceneId && !factorySceneId) {
+        setFactorySceneId(spawned.resolvedSceneId);
       }
       setBlocks(spawned.blocks);
       setEdges(spawned.edges);
@@ -509,8 +520,13 @@ export default function OmniCanvas() {
                   <select
                     value={factoryGenreId}
                     onChange={(e) => {
-                      setFactoryGenreId(e.target.value);
-                      setFactorySceneId("");
+                      const next = e.target.value;
+                      setFactoryGenreId(next);
+                      const rec = recommendManhuaSceneIdFromTopic({
+                        genreId: next || undefined,
+                        topic: factoryTopic,
+                      });
+                      setFactorySceneId(rec.sceneId || "");
                     }}
                     disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
@@ -524,14 +540,18 @@ export default function OmniCanvas() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-white/45">场景</label>
+                  <label className="block text-[11px] text-white/45">场景（推荐单一）</label>
                   <select
                     value={factorySceneId}
                     onChange={(e) => setFactorySceneId(e.target.value)}
                     disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
                   >
-                    <option value="">默认包</option>
+                    <option value="">
+                      {recommendedScene
+                        ? `推荐 · ${String(recommendedScene.no).padStart(2, "0")} ${recommendedScene.nameZh}`
+                        : "按题材自动推荐一条"}
+                    </option>
                     {sceneOptions.map((s) => (
                       <option key={s.id} value={s.id}>
                         {String(s.no).padStart(2, "0")} {s.nameZh}
@@ -540,6 +560,16 @@ export default function OmniCanvas() {
                   </select>
                 </div>
               </div>
+              {recommendedScene ? (
+                <p className="mt-1.5 text-[10px] leading-snug text-emerald-200/80">
+                  当前推荐主场景：{String(recommendedScene.no).padStart(2, "0")} {recommendedScene.nameZh}
+                  （未手选时工厂只套这一条，可下拉更换）
+                </p>
+              ) : (
+                <p className="mt-1.5 text-[10px] text-white/35">
+                  填写题材或选手动剧种后，将自动推荐一条主场景。
+                </p>
+              )}
 
               <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/8 pt-3">
                 {stageChipStatus.map((s) => (
@@ -580,6 +610,9 @@ export default function OmniCanvas() {
                     });
                     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
                       setFactoryGenreId(spawned.resolvedGenreId);
+                    }
+                    if (spawned.resolvedSceneId && !factorySceneId) {
+                      setFactorySceneId(spawned.resolvedSceneId);
                     }
                     setBlocks(spawned.blocks);
                     setEdges(spawned.edges);

@@ -254,7 +254,7 @@ export function getManhuaSceneTemplate(id: string | undefined | null): ManhuaSce
   return MANHUA_SCENE_ASSET_LIBRARY.find((s) => s.id === key || s.id === `scene_${key}`) || null;
 }
 
-/** 剧种默认推荐场景（节拍/静帧优先从中选，避免空镜拼贴） */
+/** 剧种默认场景池（可换）；自动推荐时只取第一条作「单一场景」 */
 export const MANHUA_SCENE_GENRE_DEFAULTS: Record<ManhuaSceneGenre, string[]> = {
   xianxia: ["scene_01", "scene_02", "scene_03", "scene_04", "scene_05"],
   ancient: ["scene_06", "scene_07", "scene_08", "scene_09", "scene_10"],
@@ -265,13 +265,32 @@ export const MANHUA_SCENE_GENRE_DEFAULTS: Record<ManhuaSceneGenre, string[]> = {
   suspense: ["scene_19", "scene_20", "scene_18"],
 };
 
+/** 题材/剧种 → 推荐**一条**主场景（池内首条；用户可再换） */
+export function recommendPrimaryManhuaSceneId(genre: ManhuaSceneGenre | undefined | null): string | null {
+  if (!genre) return null;
+  const id = MANHUA_SCENE_GENRE_DEFAULTS[genre]?.[0];
+  return id && getManhuaSceneTemplate(id) ? id : null;
+}
+
+export function recommendPrimaryManhuaScene(
+  genre: ManhuaSceneGenre | undefined | null,
+): ManhuaSceneTemplate | null {
+  return getManhuaSceneTemplate(recommendPrimaryManhuaSceneId(genre));
+}
+
 export function resolveManhuaScenes(opts?: {
   genre?: ManhuaSceneGenre;
   sceneId?: string;
+  /** true：无 sceneId 时只回推荐的一条，不灌整包 */
+  primaryOnly?: boolean;
 }): ManhuaSceneTemplate[] {
   const one = getManhuaSceneTemplate(opts?.sceneId);
   if (one) return [one];
   if (opts?.genre) {
+    if (opts.primaryOnly) {
+      const primary = recommendPrimaryManhuaScene(opts.genre);
+      return primary ? [primary] : [];
+    }
     const ids = MANHUA_SCENE_GENRE_DEFAULTS[opts.genre] || [];
     return ids
       .map((id) => getManhuaSceneTemplate(id))

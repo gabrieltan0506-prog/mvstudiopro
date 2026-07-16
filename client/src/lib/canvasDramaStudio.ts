@@ -16,6 +16,7 @@ import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
   buildManhuaStagePromptWithGenre,
+  recommendManhuaSceneIdFromTopic,
   resolveManhuaGenreId,
 } from "@shared/screenwriterGenreTemplates";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
@@ -26,6 +27,8 @@ export type DramaStudioSpawn = {
   /** 实际套用的剧种（含题材自动推断） */
   resolvedGenreId?: string;
   genreInferred?: boolean;
+  /** 实际套用的单一推荐场景（手选优先） */
+  resolvedSceneId?: string;
 };
 
 /** 漫剧工厂固定阶段顺序（与 spawn id 前缀对齐） */
@@ -76,7 +79,10 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const gapX = 460;
   const resolved = resolveManhuaGenreId({ genreId: opts.genreId, topic: opts.topic });
   const genreId = resolved.genreId;
-  const sceneId = String(opts.sceneId || "").trim() || undefined;
+  const sceneId =
+    String(opts.sceneId || "").trim() ||
+    recommendManhuaSceneIdFromTopic({ genreId, topic: opts.topic }).sceneId ||
+    undefined;
   const writerContext = String(opts.writerContext || "").trim();
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
   const stageOpts = {
@@ -152,6 +158,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     edges,
     resolvedGenreId: genreId,
     genreInferred: resolved.inferred,
+    resolvedSceneId: sceneId,
   };
 }
 
@@ -258,7 +265,7 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
 /** 网关超时 / 瞬时 5xx / abort 等可重试 */
 export function isTransientFactoryError(message: string): boolean {
   const m = String(message || "");
-  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|rate.?limit|429/i.test(
+  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|算力紧张|rate.?limit|429/i.test(
     m,
   );
 }
@@ -349,7 +356,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
 }): Promise<ManhuaFactoryPipelineResult> {
   const stopOnError = opts.stopOnError !== false;
   const skipDone = opts.skipDone !== false;
-  const maxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
+  const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   let working = opts.blocks.map((b) => ({ ...b }));
   const edges = opts.edges;
   const orderedIds = resolveManhuaFactoryOrderedIds(working, opts.untilStage ?? "clip");
@@ -405,6 +412,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       ),
     );
 
+    // 角色卡阶段历史上易 503：多给一次退避机会
+    const maxRetries = stage === "bible" ? Math.min(4, defaultMaxRetries + 1) : defaultMaxRetries;
     let lastMessage = "生成失败";
     let succeeded = false;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -456,7 +465,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 : b,
             ),
           );
-          await sleep(1200 * (attempt + 1));
+          await sleep((stage === "bible" ? 1800 : 1200) * (attempt + 1));
           continue;
         }
         break;
