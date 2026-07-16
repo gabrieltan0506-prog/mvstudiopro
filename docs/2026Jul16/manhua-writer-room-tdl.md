@@ -10,4 +10,4 @@
 - [x] Canvas 编剧室 UI：题材 / 条件 / 集数 / 扩写 / 确认进编导
 - [x] 确认后注入现有工厂六段；节拍·反推·静帧挂编导手法块
 - [x] 单测 + `manhua:writer-probe`（本地解析 ×2；线上扩写可选 `CANVAS_PROBE_WRITER_LIVE=1`）
-- [ ] 本地 `tsc` → push → **开 PR，不自行 merge**
+- [x] 本地 `tsc` → push → **开 PR #775，不自行 merge**
