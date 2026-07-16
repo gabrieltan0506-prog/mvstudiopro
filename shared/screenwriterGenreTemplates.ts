@@ -5,9 +5,9 @@
 
 import {
   MANHUA_SCENE_GENRE_LABEL_ZH,
-  composeManhuaSceneCatalogForGenre,
   composeManhuaScenePromptBlock,
   getManhuaSceneTemplate,
+  recommendPrimaryManhuaSceneId,
   resolveManhuaScenes,
   type ManhuaSceneGenre,
 } from "./manhuaSceneAssetLibrary.js";
@@ -190,6 +190,21 @@ export function resolveManhuaGenreId(opts?: {
   return { genreId: undefined, inferred: false, infer: null };
 }
 
+/** 题材/剧种 → 推荐单一场景 id（⑤A） */
+export function recommendManhuaSceneIdFromTopic(opts?: {
+  genreId?: string;
+  topic?: string;
+}): { genreId?: string; sceneId: string | null; inferredGenre: boolean } {
+  const resolved = resolveManhuaGenreId(opts);
+  const genre = getScreenwriterGenreTemplate(resolved.genreId);
+  const sceneId = recommendPrimaryManhuaSceneId(genre?.sceneGenre || (resolved.genreId as ManhuaSceneGenre)) || null;
+  return {
+    genreId: resolved.genreId,
+    sceneId,
+    inferredGenre: resolved.inferred,
+  };
+}
+
 export function composeGenreTemplatePromptBlock(genre: ScreenwriterGenreTemplate | null | undefined): string {
   if (!genre || !genre.ready) return "";
   const lines = [
@@ -232,17 +247,20 @@ export function buildManhuaStagePromptWithGenre(
   const writerContext = String(opts?.writerContext || "").trim();
 
   const sceneGenre = genre?.sceneGenre;
+  // ⑤A：无手选 sceneId 时只注入「推荐单一场景」，不再灌整包目录
+  const effectiveSceneId =
+    String(opts?.sceneId || "").trim() ||
+    (sceneGenre ? recommendPrimaryManhuaSceneId(sceneGenre) || "" : "");
   const scenes = resolveManhuaScenes({
     genre: sceneGenre,
-    sceneId: opts?.sceneId,
+    sceneId: effectiveSceneId || undefined,
+    primaryOnly: true,
   });
   const sceneBlock =
     stage === "story_brief" || stage === "episode_beats" || stage === "key_art" || stage === "video_reverse"
-      ? opts?.sceneId
+      ? scenes.length
         ? composeManhuaScenePromptBlock(scenes)
-        : sceneGenre
-          ? composeManhuaSceneCatalogForGenre(sceneGenre)
-          : ""
+        : ""
       : "";
 
   const parts = [base];
