@@ -3,7 +3,9 @@ import {
   buildManhuaStagePromptWithGenre,
   composeGenreTemplatePromptBlock,
   getScreenwriterGenreTemplate,
+  inferManhuaGenreFromTopic,
   listScreenwriterGenres,
+  resolveManhuaGenreId,
 } from "./screenwriterGenreTemplates";
 
 describe("screenwriterGenreTemplates + scene library", () => {
@@ -38,5 +40,18 @@ describe("screenwriterGenreTemplates + scene library", () => {
     });
     expect(key).toContain("校园教室");
     expect(key).toContain("本集主场景优先");
+  });
+
+  it("infers genre from topic keywords", () => {
+    const x = inferManhuaGenreFromTopic("外门弟子雨夜闯秘境修仙");
+    expect(x?.genreId).toBe("xianxia");
+    expect(x?.matched.length).toBeGreaterThan(0);
+    expect(inferManhuaGenreFromTopic("霸总办公室夜景对峙")?.genreId).toBe("urban");
+    expect(inferManhuaGenreFromTopic("普通吃饭") ).toBeNull();
+    const r = resolveManhuaGenreId({ topic: "校园教室青春告白" });
+    expect(r.inferred).toBe(true);
+    expect(r.genreId).toBe("campus");
+    expect(resolveManhuaGenreId({ genreId: "scifi", topic: "校园" }).inferred).toBe(false);
+    expect(resolveManhuaGenreId({ genreId: "scifi", topic: "校园" }).genreId).toBe("scifi");
   });
 });

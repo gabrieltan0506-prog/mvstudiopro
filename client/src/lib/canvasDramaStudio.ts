@@ -16,12 +16,15 @@ import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
   buildManhuaStagePromptWithGenre,
-  getScreenwriterGenreTemplate,
+  resolveManhuaGenreId,
 } from "@shared/screenwriterGenreTemplates";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
+  /** 实际套用的剧种（含题材自动推断） */
+  resolvedGenreId?: string;
+  genreInferred?: boolean;
 };
 
 /** 漫剧工厂固定阶段顺序（与 spawn id 前缀对齐） */
@@ -66,8 +69,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const originX = opts.originX ?? 80;
   const originY = opts.originY ?? 80;
   const gapX = 460;
-  const genre = getScreenwriterGenreTemplate(opts.genreId);
-  const genreId = genre?.ready ? genre.id : undefined;
+  const resolved = resolveManhuaGenreId({ genreId: opts.genreId, topic: opts.topic });
+  const genreId = resolved.genreId;
   const sceneId = String(opts.sceneId || "").trim() || undefined;
   const stageOpts = { genreId, sceneId, topic: opts.topic };
   const usePack = Boolean(genreId || sceneId);
@@ -130,7 +133,12 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     { fromId: keyArt.id, toId: clip.id },
   ];
 
-  return { blocks, edges };
+  return {
+    blocks,
+    edges,
+    resolvedGenreId: genreId,
+    genreInferred: resolved.inferred,
+  };
 }
 
 /** 把用户题材注入已存在的故事节点（幂等） */
