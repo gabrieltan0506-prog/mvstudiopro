@@ -210,6 +210,11 @@ export type BuildManhuaStagePromptOpts = {
   /** 单选场景模板 id（scene_01…）；优先于剧种默认场景包 */
   sceneId?: string;
   topic?: string;
+  /** 编剧室已确认剧情包（注入故事/角色/节拍） */
+  writerContext?: string;
+  /** 编导阶段注入灯光运镜手法约束 */
+  includeDirectorCraft?: boolean;
+  directorCraftBlock?: string;
 };
 
 /**
@@ -224,6 +229,7 @@ export function buildManhuaStagePromptWithGenre(
   const genreBlock = composeGenreTemplatePromptBlock(genre);
   const addon = genre?.ready ? String(genre.stageAddons?.[stage] || "").trim() : "";
   const topic = String(opts?.topic || "").trim();
+  const writerContext = String(opts?.writerContext || "").trim();
 
   const sceneGenre = genre?.sceneGenre;
   const scenes = resolveManhuaScenes({
@@ -240,10 +246,20 @@ export function buildManhuaStagePromptWithGenre(
       : "";
 
   const parts = [base];
+  if (writerContext && (stage === "story_brief" || stage === "character_bible" || stage === "episode_beats")) {
+    parts.push(writerContext.slice(0, 6000));
+  }
   if (genreBlock && (stage === "story_brief" || stage === "character_bible" || stage === "episode_beats")) {
     parts.push(genreBlock);
   }
   if (sceneBlock) parts.push(sceneBlock);
+  if (
+    opts?.includeDirectorCraft &&
+    (stage === "episode_beats" || stage === "video_reverse" || stage === "key_art")
+  ) {
+    const craft = String(opts.directorCraftBlock || "").trim();
+    if (craft) parts.push(craft);
+  }
   if (addon) parts.push(`【剧种阶段附加·${stage}】\n${addon}`);
   if (topic) {
     parts.push(`【用户题材硬约束】${topic.slice(0, 800)}\n必须围绕该题材展开，禁止跑题。`);

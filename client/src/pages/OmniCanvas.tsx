@@ -19,9 +19,28 @@ import {
   MANHUA_SCENE_GENRE_LABEL_ZH,
 } from "@shared/screenwriterGenreTemplates";
 import { listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
+import {
+  MANHUA_WRITER_EPISODE_DEFAULT,
+  MANHUA_WRITER_EPISODE_MAX,
+  MANHUA_WRITER_EPISODE_MIN,
+  buildManhuaWriterExpandPrompt,
+  clampWriterEpisodeCount,
+  composeWriterPackFactoryContext,
+  parseManhuaWriterPack,
+  writerPackLooksReady,
+  type ManhuaWriterPack,
+} from "@shared/manhuaWriterRoom";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, Loader2, Play, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
+
+function extractGeminiScriptText(json: unknown): string {
+  const j = json as {
+    text?: string;
+    raw?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  };
+  return String(j?.raw?.candidates?.[0]?.content?.parts?.[0]?.text || j?.text || "").trim();
+}
 
 const LS_KEY = "mv-freeform-canvas-v1";
 
@@ -56,6 +75,13 @@ export default function OmniCanvas() {
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
+  const [writerBrief, setWriterBrief] = useState("");
+  const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
+  const [writerBusy, setWriterBusy] = useState(false);
+  const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(null);
+  const [writerConfirmed, setWriterConfirmed] = useState(false);
+  const [writerFocusEpisode, setWriterFocusEpisode] = useState(1);
+  const [directorUnlocked, setDirectorUnlocked] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const genreOptions = useMemo(() => listScreenwriterGenres({ onlyReady: true }), []);
   const sceneOptions = useMemo(() => {
@@ -63,6 +89,10 @@ export default function OmniCanvas() {
     if (g?.sceneGenre) return listManhuaScenes({ genre: g.sceneGenre });
     return listManhuaScenes();
   }, [factoryGenreId, genreOptions]);
+  const writerContext = useMemo(() => {
+    if (!writerConfirmed || !writerPack) return undefined;
+    return composeWriterPackFactoryContext(writerPack, writerFocusEpisode);
+  }, [writerConfirmed, writerPack, writerFocusEpisode]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
 
@@ -128,6 +158,8 @@ export default function OmniCanvas() {
         topic,
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
+        writerContext,
+        includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
       });
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
@@ -140,8 +172,79 @@ export default function OmniCanvas() {
       saveCanvasState(spawned.blocks, spawned.edges);
       return spawned;
     },
-    [blocks, edges, factoryGenreId, factorySceneId],
+    [blocks, edges, factoryGenreId, factorySceneId, writerContext, directorUnlocked],
   );
+
+  const expandWriterRoom = useCallback(async () => {
+    const topic = factoryTopic.trim();
+    const brief = writerBrief.trim();
+    if (!topic && !brief) {
+      toast.error("请先填写题材，或至少写几句补充条件");
+      return;
+    }
+    setWriterBusy(true);
+    setWriterConfirmed(false);
+    try {
+      const count = clampWriterEpisodeCount(writerEpisodeCount);
+      const prompt = buildManhuaWriterExpandPrompt({ topic, brief, episodeCount: count });
+      const resp = await fetch("/api/google?op=geminiScript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, model: "gemini-3.1-pro-preview" }),
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json?.ok) {
+        throw new Error(String(json?.error || json?.message || "扩写失败，请稍后重试"));
+      }
+      const text = extractGeminiScriptText(json);
+      if (text.length < 80) throw new Error("扩写结果过短，请再试一次");
+      const pack = parseManhuaWriterPack(text, count);
+      if (!writerPackLooksReady(pack)) {
+        toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
+      }
+      setWriterPack(pack);
+      setWriterFocusEpisode(1);
+      toast.success(`已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "扩写失败");
+    } finally {
+      setWriterBusy(false);
+    }
+  }, [factoryTopic, writerBrief, writerEpisodeCount]);
+
+  const confirmWriterToDirector = useCallback(() => {
+    if (!writerPack || !writerPackLooksReady(writerPack)) {
+      toast.error("请先扩写并检查剧情包是否完整");
+      return;
+    }
+    setWriterConfirmed(true);
+    setDirectorUnlocked(true);
+    if (!factoryTopic.trim()) {
+      setFactoryTopic(writerPack.seriesTitle || writerPack.logline || "连载短剧");
+    }
+    const spawned = spawnManhuaDramaStudio({
+      originX: 60,
+      originY: 80,
+      topic: factoryTopic.trim() || writerPack.seriesTitle,
+      genreId: factoryGenreId || undefined,
+      sceneId: factorySceneId || undefined,
+      writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
+      includeDirectorCraft: true,
+    });
+    if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
+      setFactoryGenreId(spawned.resolvedGenreId);
+    }
+    setBlocks(spawned.blocks);
+    setEdges(spawned.edges);
+    saveCanvasState(spawned.blocks, spawned.edges);
+    toast.success("已确认剧情，编导分镜链路已就绪");
+  }, [
+    writerPack,
+    factoryTopic,
+    factoryGenreId,
+    factorySceneId,
+    writerFocusEpisode,
+  ]);
 
   const stopFactory = useCallback(() => {
     abortRef.current?.abort();
@@ -236,26 +339,169 @@ export default function OmniCanvas() {
           <div className="mb-5">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
               <Clapperboard className="h-3.5 w-3.5" />
-              自由画布 · 漫剧工厂 · 编导分镜
+              自由画布 · 编剧室 · 编导分镜
             </div>
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Gemini Omini 创作画布</h1>
             <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
-              题材一句进，六段出片：故事→角色→节拍→编导反推→静帧→Seedance（约 15s）。可续跑、可取消。
+              先扩写连载剧情并确认人物场景，再进入编导分镜与成片。每集片尾都会留钩子。
             </p>
 
-            {/* 工厂控制台：题材为主，剧种/场景为辅 */}
-            <div className="mt-5 max-w-3xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5">
-              <div className="flex items-baseline justify-between gap-3">
-                <label className="text-sm font-semibold tracking-wide text-white/90">题材一句</label>
-                <span className="text-[11px] text-white/40">主入口 · 未选手动剧种时自动匹配场景包</span>
+            {/* ① 编剧室 */}
+            <div className="mt-5 max-w-3xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-transparent p-4 md:p-5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-sm font-semibold text-white/90">① 编剧室</div>
+                <span className="text-[11px] text-white/40">题材 + 三到五句条件 → 连载剧情包</span>
               </div>
+              <label className="mt-3 block text-[11px] text-white/45">题材</label>
               <input
                 value={factoryTopic}
-                onChange={(e) => setFactoryTopic(e.target.value)}
-                disabled={factoryBusy}
-                placeholder="例：仙门外门弟子雨夜闯秘境，15 秒竖屏虐心"
-                className="mt-2 w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-3 text-[15px] text-white placeholder:text-white/30 outline-none transition focus:border-emerald-400/55 focus:ring-1 focus:ring-emerald-400/25 disabled:opacity-50"
+                onChange={(e) => {
+                  setFactoryTopic(e.target.value);
+                  setWriterConfirmed(false);
+                }}
+                disabled={writerBusy || factoryBusy}
+                placeholder="例：女主权谋翻盘的情感连载，宫墙内外步步为营"
+                className="mt-1 w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-3 text-[15px] text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 focus:ring-1 focus:ring-emerald-400/25 disabled:opacity-50"
               />
+              <label className="mt-3 block text-[11px] text-white/45">补充条件（三到五句）</label>
+              <textarea
+                value={writerBrief}
+                onChange={(e) => {
+                  setWriterBrief(e.target.value);
+                  setWriterConfirmed(false);
+                }}
+                disabled={writerBusy || factoryBusy}
+                rows={4}
+                placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
+                className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
+              />
+              <div className="mt-3 flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="block text-[11px] text-white/45">集数</label>
+                  <select
+                    value={writerEpisodeCount}
+                    onChange={(e) => setWriterEpisodeCount(clampWriterEpisodeCount(e.target.value))}
+                    disabled={writerBusy || factoryBusy}
+                    className="mt-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                  >
+                    {Array.from(
+                      { length: MANHUA_WRITER_EPISODE_MAX - MANHUA_WRITER_EPISODE_MIN + 1 },
+                      (_, i) => MANHUA_WRITER_EPISODE_MIN + i,
+                    ).map((n) => (
+                      <option key={n} value={n}>
+                        {n} 集{n === MANHUA_WRITER_EPISODE_DEFAULT ? "（默认）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  disabled={writerBusy || factoryBusy}
+                  onClick={() => void expandWriterRoom()}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/35 bg-emerald-500/20 px-3.5 py-2 text-xs font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-50"
+                >
+                  {writerBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  扩写剧情
+                </button>
+                <button
+                  type="button"
+                  disabled={writerBusy || factoryBusy || !writerPack}
+                  onClick={confirmWriterToDirector}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/35 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-50 hover:bg-sky-500/25 disabled:opacity-50"
+                >
+                  确认并进入编导
+                </button>
+                <button
+                  type="button"
+                  disabled={writerBusy || factoryBusy}
+                  onClick={() => {
+                    setDirectorUnlocked(true);
+                    setWriterConfirmed(false);
+                    toast.message("已解锁编导区（未带连载剧情包）");
+                  }}
+                  className="text-[11px] text-white/40 underline-offset-2 hover:text-white/70 hover:underline"
+                >
+                  跳过连载扩写
+                </button>
+              </div>
+
+              {writerPack ? (
+                <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-sm font-semibold text-white">{writerPack.seriesTitle}</div>
+                    {writerPack.logline ? (
+                      <div className="text-[11px] text-white/50">{writerPack.logline}</div>
+                    ) : null}
+                    {writerConfirmed ? (
+                      <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100">
+                        已确认
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {writerPack.episodes.map((ep) => (
+                      <button
+                        key={ep.index}
+                        type="button"
+                        onClick={() => setWriterFocusEpisode(ep.index)}
+                        className={`rounded-md border px-2 py-0.5 text-[10px] ${
+                          writerFocusEpisode === ep.index
+                            ? "border-sky-400/40 bg-sky-500/15 text-sky-50"
+                            : "border-white/10 text-white/55 hover:border-white/25"
+                        }`}
+                      >
+                        第{ep.index}集
+                      </button>
+                    ))}
+                  </div>
+                  {(() => {
+                    const ep =
+                      writerPack.episodes.find((e) => e.index === writerFocusEpisode) ||
+                      writerPack.episodes[0];
+                    if (!ep) return null;
+                    return (
+                      <div className="mt-3 space-y-2 text-xs leading-6 text-white/75">
+                        <div className="font-medium text-white/90">
+                          第{ep.index}集 · {ep.title}
+                        </div>
+                        <div className="max-h-40 overflow-y-auto whitespace-pre-wrap">{ep.body}</div>
+                        <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-2.5 py-2 text-amber-50/90">
+                          <span className="font-semibold">片尾钩子 · </span>
+                          {ep.endHook || "（未解析到，请重新扩写）"}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-[11px] text-white/40 hover:text-white/65">
+                      人物 / 道具 / 场景表
+                    </summary>
+                    <div className="mt-2 max-h-48 space-y-2 overflow-y-auto whitespace-pre-wrap text-[11px] leading-5 text-white/60">
+                      <div>{writerPack.charactersMd}</div>
+                      <div>{writerPack.propsMd}</div>
+                      <div>{writerPack.locationsMd}</div>
+                    </div>
+                  </details>
+                </div>
+              ) : null}
+            </div>
+
+            {/* ② 编导工厂：确认或跳过后解锁 */}
+            <div
+              className={`mt-4 max-w-3xl rounded-2xl border p-4 md:p-5 ${
+                directorUnlocked || writerConfirmed
+                  ? "border-white/10 bg-gradient-to-b from-white/[0.05] to-transparent"
+                  : "border-white/5 bg-white/[0.02] opacity-70"
+              }`}
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-sm font-semibold text-white/90">② 编导分镜</div>
+                <span className="text-[11px] text-white/40">
+                  {directorUnlocked || writerConfirmed
+                    ? "节拍 · 灯光运镜 · 静帧 · 成片"
+                    : "请先在编剧室确认，或点「跳过连载扩写」"}
+                </span>
+              </div>
 
               <div className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
                 <div>
@@ -266,9 +512,8 @@ export default function OmniCanvas() {
                       setFactoryGenreId(e.target.value);
                       setFactorySceneId("");
                     }}
-                    disabled={factoryBusy}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                    title="空=按题材自动推断"
                   >
                     <option value="">自动</option>
                     {genreOptions.map((g) => (
@@ -283,9 +528,8 @@ export default function OmniCanvas() {
                   <select
                     value={factorySceneId}
                     onChange={(e) => setFactorySceneId(e.target.value)}
-                    disabled={factoryBusy}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                    title="空=剧种默认场景包"
                   >
                     <option value="">默认包</option>
                     {sceneOptions.map((s) => (
@@ -320,94 +564,88 @@ export default function OmniCanvas() {
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={factoryBusy}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-50 hover:bg-rose-500/25 disabled:opacity-50"
-                onClick={() => {
-                  const spawned = spawnManhuaDramaStudio({
-                    originX: 60,
-                    originY: 80,
-                    topic: factoryTopic,
-                    genreId: factoryGenreId || undefined,
-                    sceneId: factorySceneId || undefined,
-                  });
-                  if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
-                    setFactoryGenreId(spawned.resolvedGenreId);
-                  }
-                  setBlocks(spawned.blocks);
-                  setEdges(spawned.edges);
-                  saveCanvasState(spawned.blocks, spawned.edges);
-                  toast.success(
-                    spawned.genreInferred && spawned.resolvedGenreId
-                      ? `已铺节点 · 题材推断剧种「${MANHUA_SCENE_GENRE_LABEL_ZH[spawned.resolvedGenreId as keyof typeof MANHUA_SCENE_GENRE_LABEL_ZH] || spawned.resolvedGenreId}」`
-                      : factoryGenreId || factorySceneId
-                        ? "已铺节点并套入场景资产库"
-                        : "已铺好漫剧工厂六段节点",
-                  );
-                }}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                铺节点
-              </button>
-              <button
-                type="button"
-                disabled={factoryBusy}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/35 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-50"
-                onClick={() => void runFactory("reverse")}
-              >
-                {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                自动跑到反推
-              </button>
-              <button
-                type="button"
-                disabled={factoryBusy}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-400/35 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-50"
-                onClick={() => void runFactory("keyart")}
-              >
-                {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                跑到静帧
-              </button>
-              <button
-                type="button"
-                disabled={factoryBusy}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-50"
-                onClick={() => {
-                  if (!window.confirm("将跑完整链路（静帧 + Seedance≈15s），耗时与积分较高。继续？")) return;
-                  void runFactory("clip");
-                }}
-              >
-                {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                全自动到成片
-              </button>
-              <button
-                type="button"
-                disabled={factoryBusy}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
-                onClick={() => void runFactory("clip", { forceFromStage: "reverse" })}
-                title="从反推起强制重跑，前面已完成步骤仍跳过"
-              >
-                从反推续跑
-              </button>
-              <button
-                type="button"
-                disabled={factoryBusy}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-orange-400/35 bg-orange-500/15 px-3 py-2 text-xs font-semibold text-orange-50 hover:bg-orange-500/25 disabled:opacity-50"
-                onClick={resumeFromFailure}
-                title="自动定位第一个失败/未完成阶段并强制续跑到成片"
-              >
-                从失败处续跑
-              </button>
-              {factoryBusy ? (
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/40 bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-500/25"
-                  onClick={stopFactory}
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-50 hover:bg-rose-500/25 disabled:opacity-50"
+                  onClick={() => {
+                    const spawned = spawnManhuaDramaStudio({
+                      originX: 60,
+                      originY: 80,
+                      topic: factoryTopic,
+                      genreId: factoryGenreId || undefined,
+                      sceneId: factorySceneId || undefined,
+                      writerContext,
+                      includeDirectorCraft: true,
+                    });
+                    if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
+                      setFactoryGenreId(spawned.resolvedGenreId);
+                    }
+                    setBlocks(spawned.blocks);
+                    setEdges(spawned.edges);
+                    saveCanvasState(spawned.blocks, spawned.edges);
+                    toast.success("已铺好编导六段节点");
+                  }}
                 >
-                  <Square className="h-3.5 w-3.5" />
-                  取消
+                  <Sparkles className="h-3.5 w-3.5" />
+                  铺节点
                 </button>
-              ) : null}
+                <button
+                  type="button"
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/35 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-50"
+                  onClick={() => void runFactory("reverse")}
+                >
+                  {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  自动跑到反推
+                </button>
+                <button
+                  type="button"
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-400/35 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-50"
+                  onClick={() => void runFactory("keyart")}
+                >
+                  {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  跑到静帧
+                </button>
+                <button
+                  type="button"
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-50"
+                  onClick={() => {
+                    if (!window.confirm("将跑完整链路（静帧 + 成片），耗时与积分较高。继续？")) return;
+                    void runFactory("clip");
+                  }}
+                >
+                  {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  全自动到成片
+                </button>
+                <button
+                  type="button"
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                  onClick={() => void runFactory("clip", { forceFromStage: "reverse" })}
+                >
+                  从反推续跑
+                </button>
+                <button
+                  type="button"
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-orange-400/35 bg-orange-500/15 px-3 py-2 text-xs font-semibold text-orange-50 hover:bg-orange-500/25 disabled:opacity-50"
+                  onClick={resumeFromFailure}
+                >
+                  从失败处续跑
+                </button>
+                {factoryBusy ? (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/40 bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-500/25"
+                    onClick={stopFactory}
+                  >
+                    <Square className="h-3.5 w-3.5" />
+                    取消
+                  </button>
+                ) : null}
               </div>
             </div>
 

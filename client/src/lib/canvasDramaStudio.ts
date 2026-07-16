@@ -18,6 +18,7 @@ import {
   buildManhuaStagePromptWithGenre,
   resolveManhuaGenreId,
 } from "@shared/screenwriterGenreTemplates";
+import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -57,6 +58,10 @@ export type SpawnManhuaDramaStudioOpts = {
   genreId?: string;
   /** 单选场景资产 id：scene_01…scene_20（可选，优先于剧种默认场景包） */
   sceneId?: string;
+  /** 编剧室已确认上下文（人物/道具/场景/本集+钩子） */
+  writerContext?: string;
+  /** 进入编导后为节拍/反推/静帧注入手法约束 */
+  includeDirectorCraft?: boolean;
 };
 
 function withTopic(basePrompt: string, topic?: string): string {
@@ -72,8 +77,17 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const resolved = resolveManhuaGenreId({ genreId: opts.genreId, topic: opts.topic });
   const genreId = resolved.genreId;
   const sceneId = String(opts.sceneId || "").trim() || undefined;
-  const stageOpts = { genreId, sceneId, topic: opts.topic };
-  const usePack = Boolean(genreId || sceneId);
+  const writerContext = String(opts.writerContext || "").trim();
+  const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
+  const stageOpts = {
+    genreId,
+    sceneId,
+    topic: opts.topic,
+    writerContext: writerContext || undefined,
+    includeDirectorCraft,
+    directorCraftBlock: includeDirectorCraft ? CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK : undefined,
+  };
+  const usePack = Boolean(genreId || sceneId || writerContext);
 
   const story = defaultCanvasBlock("text", originX, originY);
   story.id = makeCanvasBlockId("story");
@@ -87,7 +101,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const bible = defaultCanvasBlock("text", originX + gapX, originY);
   bible.id = makeCanvasBlockId("bible");
   bible.prompt = usePack
-    ? buildManhuaStagePromptWithGenre("character_bible", { genreId, sceneId })
+    ? buildManhuaStagePromptWithGenre("character_bible", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
   bible.parentId = story.id;
   bible.textModel = "gemini-3.1-pro";
@@ -95,7 +109,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const beats = defaultCanvasBlock("text", originX + gapX * 2, originY);
   beats.id = makeCanvasBlockId("beats");
   beats.prompt = usePack
-    ? buildManhuaStagePromptWithGenre("episode_beats", { genreId, sceneId })
+    ? buildManhuaStagePromptWithGenre("episode_beats", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
   beats.parentId = bible.id;
   beats.textModel = "gemini-3.1-pro";
@@ -103,7 +117,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const reverse = defaultCanvasBlock("video_reverse", originX + gapX * 3, originY);
   reverse.id = makeCanvasBlockId("reverse");
   reverse.prompt = usePack
-    ? buildManhuaStagePromptWithGenre("video_reverse", { genreId, sceneId })
+    ? buildManhuaStagePromptWithGenre("video_reverse", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse;
   reverse.parentId = beats.id;
   reverse.height = 380;
@@ -111,7 +125,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const keyArt = defaultCanvasBlock("image", originX + gapX * 4, originY);
   keyArt.id = makeCanvasBlockId("keyart");
   keyArt.prompt = usePack
-    ? buildManhuaStagePromptWithGenre("key_art", { genreId, sceneId })
+    ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
   keyArt.parentId = reverse.id;
   keyArt.imageModel = "nano-banana-2";
