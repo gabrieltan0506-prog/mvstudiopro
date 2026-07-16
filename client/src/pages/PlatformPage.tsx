@@ -1019,15 +1019,18 @@ function buildPlatformSheetScriptContext(
     );
   }
   parts.push(
-    "【情绪·运镜·灯光·高度需求】每格点明运镜意图、微表情与气氛；光影与情绪同步递进。只借专业影视手法（高反差建筑光、温暖魔术时刻、光晕剪影揭示、雾霾大光域静默、霓虹余韵、精密冷光不安、天气即光群像、动机窗光等），禁止点名导演或写「某某风/致敬」。分镜表六栏：景别/运镜/灯光安排/情绪表达/画面内容/台词与音效。",
+    "【编导分镜·导演板】本图为编导分镜图：全局须可读风格气质、建议时长节拍、角色表演提要、起—承—转—合、关键技法与观众情绪弧；每格仍填六栏。勿做成互不关联的静帧清单。",
+  );
+  parts.push(
+    "【情绪·运镜·灯光·高度需求】每格点明运镜意图、微表情与气氛；光影与情绪同步递进。只借专业影视手法（高反差建筑光、温暖魔术时刻、光晕剪影揭示、雾霾大光域静默、霓虹余韵、精密冷光不安、天气即光群像、动机窗光等），禁止点名导演或写「某某风/致敬」。编导分镜表六栏：景别/运镜/灯光安排/情绪表达/画面内容/台词与音效。",
   );
   if (is3x4) {
     parts.push(
-      "【版式·3×4 十二格分镜】须按 3 行 × 4 列 = 12 格展开镜头节拍；现代主人公跨格同脸（锁参考人像），衣着可随场景微调。",
+      "【版式·3×4 十二格编导分镜】须按 3 行 × 4 列 = 12 格展开镜头节拍；现代主人公跨格同脸（锁参考人像），衣着可随场景微调。",
     );
   }
   if (Array.isArray(ex?.stepByStepScript) && ex.stepByStepScript.length) {
-    parts.push(`【分镜步骤】\n${ex.stepByStepScript.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
+    parts.push(`【编导分镜步骤】\n${ex.stepByStepScript.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
   }
   if (item.actionableSteps?.length) {
     parts.push(`【落地步骤】\n${item.actionableSteps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
@@ -1280,7 +1283,7 @@ function executionCardToSnapshotBlueprint(card: PlatformContentExecutionCard): R
 /** 生图请求速率：滚动窗口长度（毫秒），与上游「每分钟 N 次」配额对齐。 */
 const PLATFORM_IMAGE_RATE_WINDOW_MS = 60_000;
 /**
- * 上述窗口内最多**发起**几次生图（封面单帧 · 2×4 分镜 · 小红书 2×4 八格图文合成等共用同一节流器）。
+ * 上述窗口内最多**发起**几次生图（封面单帧 · 2×4 编导分镜 · 小红书 2×4 八格图文合成等共用同一节流器）。
  * 可用 `VITE_PLATFORM_IMAGE_MAX_STARTS_PER_60S` 覆写（整数 1～24，预设 24；付费生图不设低上限）。
  */
 const PLATFORM_IMAGE_MAX_STARTS_PER_60S = Math.min(
@@ -1380,7 +1383,7 @@ function buildPendingImageGenLines(kind: "cover_batch" | "storyboard" | "xiaohon
     ];
   }
   if (kind === "storyboard") {
-    return [`${ts}  [客户端] 电影级分镜生成已发起 · sceneId=${sceneId || "N/A"}（详见下方服务端流水）`];
+    return [`${ts}  [客户端] 编导分镜生成已发起 · sceneId=${sceneId || "N/A"}（详见下方服务端流水）`];
   }
   return [`${ts}  [客户端] 小红书 2×4 八格图文生成已发起 · sceneId=${sceneId || "N/A"}（详见下方服务端流水）`];
 }
@@ -1411,10 +1414,10 @@ function buildCompositeImageGenPendingLines(input: {
       : input.kind === "storyboard_sheet_landscape"
         ? is3x4
           ? "视频向 3×4 十二格分镜主表 · 横版"
-          : "视频向 2×4 分镜主表 · 横版"
+          : "视频向 2×4 编导分镜主表 · 横版"
         : is3x4
           ? "视频向 3×4 十二格分镜主表"
-          : "视频向 2×4 分镜主表 · 竖版";
+          : "视频向 2×4 编导分镜主表 · 竖版";
   const pid = String(input.progressJobId ?? "").trim();
   return [
     `${ts}  [客户端] 宽幅合成已发起 · ${kindLabel}`,
@@ -1438,7 +1441,7 @@ function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServer
     return "整链重试：重新英文化 + 生图，可能仍需数分钟…";
   }
   if (/\[2×4·NB2主路径]|Nano Banana|\[2×4·步骤3\] Vertex/.test(tail)) {
-    return "绘制中 · 宽幅分镜生成（偶需数分钟）…";
+    return "绘制中 · 宽幅编导分镜生成（偶需数分钟）…";
   }
   if (/\[GPT-IMAGE-2\]|GPT-IMAGE-2/.test(tail)) {
     return "绘制中 · 高清封面生成（单尺寸偶需 3～5 分钟）…";
@@ -1876,7 +1879,7 @@ export default function PlatformPage() {
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `点击「开始全案分析」将基于你的背景生成平台优先级、切入方向、选题文案与分镜脚本（入队时扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分；不含封面图、分镜图与决策智库报告）。`;
+    return `点击「开始全案分析」将基于你的背景生成平台优先级、切入方向、选题文案与分镜脚本（入队时扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分；不含封面图、编导分镜图与决策智库报告）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -4131,8 +4134,8 @@ export default function PlatformPage() {
             ? "图文笔记 · 3×4 十二格合成"
             : "图文笔记 · 2×4 八格合成"
           : is3x4Dbg
-            ? "分镜图 · 3×4 十二格合成"
-            : "分镜图 · 2×4 宽幅合成";
+            ? "编导分镜图 · 3×4 十二格合成"
+            : "编导分镜图 · 2×4 宽幅合成";
       if (pid.length >= 8) {
         setCompositeJobPollTrace({
           jobId: pid,
@@ -4208,7 +4211,7 @@ export default function PlatformPage() {
         }
         const label =
           variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
-            ? "分镜图文参考"
+            ? "编导分镜图文参考"
             : "小红书 2×4 八格图文参考";
         if (!compositeBatchSilentUiRef.current) {
           toast.success(`已生成${label}${res.totalCost ? `（${res.totalCost} 点）` : ""}`);
@@ -4884,7 +4887,7 @@ export default function PlatformPage() {
         kind: "batch_composite_2x4",
         lines: [
           `${new Date().toISOString()}  [客户端] 一键 ${batchIs3x4 ? "3×4 十二格" : "2×4/八格"}批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
-          `${new Date().toISOString()}  [等待中] 分镜套装合计 ${platformCompositeBundleTotalCreditsForGrid(cards.length, batchIs3x4)} 积分（${batchIs3x4 ? 108 : 54}×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
+          `${new Date().toISOString()}  [等待中] 编导分镜套装合计 ${platformCompositeBundleTotalCreditsForGrid(cards.length, batchIs3x4)} 积分（${batchIs3x4 ? 108 : 54}×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
         ],
         meta: {
           localOpId,
@@ -5011,8 +5014,8 @@ export default function PlatformPage() {
                     ? "图文笔记 · 3×4 十二格合成"
                     : "图文笔记 · 2×4 八格合成"
                   : batchIs3x4Label
-                    ? "分镜图 · 3×4 十二格合成"
-                    : "分镜图 · 2×4 宽幅合成";
+                    ? "编导分镜图 · 3×4 十二格合成"
+                    : "编导分镜图 · 2×4 宽幅合成";
               const j = await pollJobUntilTerminal(pollJobId, {
                 intervalMs: compositeSheetLivePollIntervalMs,
                 maxWaitMs: 18 * 60_000,
@@ -5113,7 +5116,7 @@ export default function PlatformPage() {
         }),
       );
       toast.success(
-        `已为 ${successCount}/${cards.length} 个选题完成 2×4 分镜／八格图文（合计 ${platformBulkCompositeCost} 积分）`,
+        `已为 ${successCount}/${cards.length} 个选题完成 2×4 编导分镜／八格图文（合计 ${platformBulkCompositeCost} 积分）`,
       );
     }
   };
@@ -5611,7 +5614,7 @@ export default function PlatformPage() {
   const heroTrustPoints = useMemo(
     () => [
       { label: "全案交付", value: "平台优先级、切入方向、选题文案与分镜脚本" },
-      { label: "不含在内", value: "封面图、分镜图、MV Studio Pro AI 决策智库报告（均需另购）" },
+      { label: "不含在内", value: "封面图、编导分镜图、MV Studio Pro AI 决策智库报告（均需另购）" },
       { label: "分析方式", value: `${getWindowLabel(selectedWindowDays)} 窗口 + 人物背景与诉求，不做泛建议` },
     ],
     [selectedWindowDays],
@@ -6354,7 +6357,7 @@ export default function PlatformPage() {
     const items: StripItem[] = [];
     const pend = pendingCompositeSheet;
     const is3x4 = compositeGridVariant === "3x4";
-    const sbLabel = is3x4 ? "分镜 · 3×4 十二格合成" : "分镜 · 2×4 合成";
+    const sbLabel = is3x4 ? "编导分镜 · 3×4 十二格合成" : "编导分镜 · 2×4 合成";
     const xhsLabel = is3x4 ? "小红书 · 3×4 十二格图文" : "小红书 · 2×4 八格图文";
     for (const row of visibleExecutionCards) {
       const id = row.id;
@@ -6447,20 +6450,20 @@ export default function PlatformPage() {
     }
   }, []);
   const buildStoryboardSheetFilename = useCallback((item: { key: string; title: string }, index: number) => {
-    const safeTitle = (item.title || "分镜").replace(/[\\/:*?"<>|]+/g, "").slice(0, 24);
+    const safeTitle = (item.title || "编导分镜").replace(/[\\/:*?"<>|]+/g, "").slice(0, 24);
     const kindTag = item.key.includes("xhs")
       ? compositeGridVariant === "3x4"
         ? "小红书十二格图文"
         : "小红书八格图文"
       : compositeGridVariant === "3x4"
-        ? "分镜3x4"
-        : "分镜2x4";
+        ? "编导分镜3x4"
+        : "编导分镜2x4";
     return `mvstudiopro-${kindTag}-${safeTitle}-${index + 1}.png`;
   }, [compositeGridVariant]);
   const handleExportAllStoryboardSheets = useCallback(async () => {
     const items = storyboardSheetDownloadItems;
     if (items.length === 0) {
-      toast.error("暂无可导出的分镜图");
+      toast.error("暂无可导出的编导分镜图");
       return;
     }
     setIsExportingStoryboardSheets(true);
@@ -6475,7 +6478,7 @@ export default function PlatformPage() {
       await new Promise((r) => setTimeout(r, 450));
     }
     setIsExportingStoryboardSheets(false);
-    if (fallback === 0) toast.success(`已导出全部 ${ok} 张分镜图`);
+    if (fallback === 0) toast.success(`已导出全部 ${ok} 张编导分镜图`);
     else toast.message(`已导出 ${ok} 张，另有 ${fallback} 张已在新标签打开，可右键/长按保存原图`);
   }, [storyboardSheetDownloadItems, downloadSingleImageFile, buildStoryboardSheetFilename]);
 
@@ -7304,7 +7307,7 @@ export default function PlatformPage() {
           </div>
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-amber-50/90">
             入队扣除 <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>
-            。不含封面图、分镜图、决策智库报告。全程约数分钟，请勿关闭页面。
+            。不含封面图、编导分镜图、决策智库报告。全程约数分钟，请勿关闭页面。
           </div>
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <button
@@ -7739,7 +7742,7 @@ export default function PlatformPage() {
                     }`}
                   >
                     <Film className="h-3.5 w-3.5 shrink-0" />
-                    2×4 分镜图
+                    2×4 编导分镜图
                   </button>
                   <button
                     type="button"
@@ -7764,7 +7767,7 @@ export default function PlatformPage() {
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
                       ? "粘贴中文文案 / Markdown，直接生成单页连贯图文知识卡片（上篇 + 下篇两张）…（建议 200–1500 字）"
-                      : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 分镜图…（建议 100–800 字）"
+                      : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
                 onChange={(e) => setCustomNoteText(e.target.value)}
@@ -7799,7 +7802,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "single_page_knowledge_card" ? (
                     <><Sparkles className="h-4 w-4" />生成图文卡片（上 + 下篇）</>
                   ) : (
-                    <><Film className="h-4 w-4" />生成分镜图</>
+                    <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
                 </button>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
@@ -7887,7 +7890,7 @@ export default function PlatformPage() {
                       className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                     >
                       <Film className="h-3.5 w-3.5" />
-                      用优化稿生成分镜（60 积分）
+                      用优化稿生成编导分镜（60 积分）
                     </button>
                     <button
                       type="button"
@@ -7907,11 +7910,11 @@ export default function PlatformPage() {
                   {customNoteImageUpper && (
                     <div className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
-                        {customNoteKind === "single_page_knowledge_card" ? "图文卡片 ·（上篇）" : "分镜图生成结果"}
+                        {customNoteKind === "single_page_knowledge_card" ? "图文卡片 ·（上篇）" : "编导分镜图生成结果"}
                       </div>
                       <img
                         src={customNoteImageUpper}
-                        alt={customNoteKind === "single_page_knowledge_card" ? "单页图文知识卡片（上篇）" : "2×4 分镜图"}
+                        alt={customNoteKind === "single_page_knowledge_card" ? "单页图文知识卡片（上篇）" : "2×4 编导分镜图"}
                         className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
                         onError={(e) => {
                           (e.target as HTMLImageElement).style.display = "none";
@@ -8183,7 +8186,7 @@ export default function PlatformPage() {
                           ? "生成封面与分镜…"
                           : customTopicGenCover
                             ? "生成封面…"
-                            : "生成分镜…"}
+                            : "生成编导分镜…"}
                     </>
                   ) : (
                     <>
@@ -8759,7 +8762,7 @@ export default function PlatformPage() {
                   人物背景与创作诉求
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#b7add8]">
-                  请写清职业、专长、兴趣与商业目标；系统将据此生成<strong className="text-white">平台优先级与切入方向</strong>，并写入选题文案与分镜脚本（不含封面图、分镜图与决策智库报告）。
+                  请写清职业、专长、兴趣与商业目标；系统将据此生成<strong className="text-white">平台优先级与切入方向</strong>，并写入选题文案与分镜脚本（不含封面图、编导分镜图与决策智库报告）。
                 </p>
                 <div className="relative mt-4">
                   <textarea
@@ -8799,7 +8802,7 @@ export default function PlatformPage() {
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
-                    title="含平台优先级、切入方向、选题文案与分镜脚本；任务入队时扣除右侧积分（不含封面图、分镜图与决策智库报告）"
+                    title="含平台优先级、切入方向、选题文案与分镜脚本；任务入队时扣除右侧积分（不含封面图、编导分镜图与决策智库报告）"
                   >
                     {CREDIT_COSTS.platformStage2Copywriting} 积分
                   </span>
@@ -8820,7 +8823,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-2 max-w-xl text-[11px] leading-5 text-white/38">
-                  点击后会基于你的背景生成<strong className="text-white/80">平台优先级、切入方向、选题文案与分镜脚本</strong>；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>。封面图、分镜图与决策智库报告需<strong className="text-white/70">另行加购</strong>。
+                  点击后会基于你的背景生成<strong className="text-white/80">平台优先级、切入方向、选题文案与分镜脚本</strong>；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>。封面图、编导分镜图与决策智库报告需<strong className="text-white/70">另行加购</strong>。
                   {hasAnalyzed ? (
                     <>
                       {" "}
@@ -9238,7 +9241,7 @@ export default function PlatformPage() {
                 <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
                   「开始全案分析」会基于你填写的人物背景与 IP 基因，结合近 {selectedWindowDays} 天窗口样本，写入<strong className="text-white">平台优先级、切入方向、选题文案与分镜脚本</strong>。任务<strong className="text-white">入队时</strong>扣除{" "}
                   <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
-                  <strong className="text-white">不含</strong>封面图、分镜图与 MV Studio Pro AI 决策智库报告（均需另购）。
+                  <strong className="text-white">不含</strong>封面图、编导分镜图与 MV Studio Pro AI 决策智库报告（均需另购）。
                   任务失败、逾时或结果不满意，<strong className="text-red-200">积分不予退还</strong>。若之后点「重新生成」，<strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
                 </div>
               </div>
@@ -9256,7 +9259,7 @@ export default function PlatformPage() {
                   </div>
                   <p className="text-[11px] leading-relaxed text-[#b7add8]">
                     基于当前窗口热点切口，可将选题<strong className="text-white">扩写为文案与分镜脚本</strong>（同一选题<strong className="text-white">首次免费</strong>）。
-                    <strong className="text-white">封面图与分镜图</strong>需在下方执行区<strong className="text-white">另行加购</strong>出图积分。
+                    <strong className="text-white">封面图与编导分镜图</strong>需在下方执行区<strong className="text-white">另行加购</strong>出图积分。
                   </p>
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -9323,7 +9326,7 @@ export default function PlatformPage() {
                       与全案入队扣点<strong className="text-white">分开计费</strong>：首次体验{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
-                      <strong className="text-white">不含</strong>封面图、分镜图（出图需在执行区另购）。
+                      <strong className="text-white">不含</strong>封面图、编导分镜图（出图需在执行区另购）。
                       扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
                   </div>
@@ -9367,7 +9370,7 @@ export default function PlatformPage() {
                         }
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与分镜图。报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与编导分镜图。报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
                           );
                           if (!ok) return;
                         }
@@ -9892,9 +9895,9 @@ export default function PlatformPage() {
                     <div className="min-w-0 flex-1">
                       <h3 className="flex items-center gap-2 text-xl font-bold text-white">
                         <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
-                        视频图文分镜表
+                        视频图文编导分镜表
                       </h3>
-                      <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成分镜套装、一键生成封面加分镜。</p>
+                      <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成编导分镜套装、一键生成封面加编导分镜。</p>
                     </div>
                   </div>
                   {platformSkillsMountPanel}
@@ -9915,7 +9918,7 @@ export default function PlatformPage() {
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold text-white">全局主人公照片（推荐先上传）</div>
                           <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-                            套用全部选题的封面、分镜表与图文笔记解说人物：<strong className="text-white/80">锁脸</strong>
+                            套用全部选题的封面、编导分镜表与图文笔记解说人物：<strong className="text-white/80">锁脸</strong>
                             ，衣着可随场景微调。单卡可另传照片覆盖。
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -10041,7 +10044,7 @@ export default function PlatformPage() {
                           )}
                           {isSequentialCompositeBatchGenerating
                             ? "生成中…"
-                            : `一键生成分镜套装 · ${platformBulkCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
+                            : `一键生成编导分镜套装 · ${platformBulkCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                         </button>
                         <button
                           type="button"
@@ -10066,7 +10069,7 @@ export default function PlatformPage() {
                           )}
                           {isSequentialCoverCompositeBundleBatchGenerating
                             ? "生成中…"
-                            : `一键生成封面加分镜 · ${platformBulkCoverCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
+                            : `一键生成封面加编导分镜 · ${platformBulkCoverCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                         </button>
                         <button
                           type="button"
@@ -10105,8 +10108,8 @@ export default function PlatformPage() {
                         <div className="h-6 w-1.5 shrink-0 rounded-full bg-[#10B981]" />
                         <h3 className="text-xl font-bold tracking-tight text-white">
                           {compositeGridVariant === "3x4"
-                            ? "3×4 十二格分镜 · 小红书十二格图文 画廊"
-                            : "2×4 分镜 · 小红书 2×4 八格图文 画廊"}
+                            ? "3×4 十二格编导分镜 · 小红书十二格图文 画廊"
+                            : "2×4 编导分镜 · 小红书 2×4 八格图文 画廊"}
                         </h3>
                         {!isTrial && storyboardSheetDownloadItems.length > 0 ? (
                           <button
@@ -10114,7 +10117,7 @@ export default function PlatformPage() {
                             onClick={() => void handleExportAllStoryboardSheets()}
                             disabled={isExportingStoryboardSheets}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-[#10B981]/40 bg-[#10B981]/15 px-3 py-1.5 text-xs font-bold text-[#6ee7b7] transition hover:bg-[#10B981]/25 disabled:cursor-not-allowed disabled:opacity-50"
-                            title="把全部分镜图下载为原始高清图片（不经 PDF，不会被截断）"
+                            title="把全部编导分镜图下载为原始高清图片（不经 PDF，不会被截断）"
                           >
                             {isExportingStoryboardSheets ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -10162,7 +10165,7 @@ export default function PlatformPage() {
                         尚未生成{" "}
                         {compositeGridVariant === "3x4"
                           ? "3×4 十二格分镜或小红书十二格图文"
-                          : "2×4 分镜或小红书 2×4 八格图文"}
+                          : "2×4 编导分镜或小红书 2×4 八格图文"}
                         （请在下方选题卡片中点击生成）
                       </div>
                     ) : (
@@ -10379,7 +10382,7 @@ export default function PlatformPage() {
                         : (is3x4 ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet);
                       const compositeLabel = isGraphicFormat
                         ? (is3x4 ? "小红书 3×4 十二格图文" : "小红书 2×4 八格图文")
-                        : (is3x4 ? "3×4 十二格分镜表" : "2×4 高定分镜表");
+                        : (is3x4 ? "3×4 十二格编导分镜表" : "2×4 高定编导分镜表");
                       const CompositeIcon = isGraphicFormat ? Heart : Film;
                       const compositeColorClass = isGraphicFormat
                         ? "text-[#ff9fe0] bg-[#ff4fb8]/10 border-[#ff4fb8]/40 hover:bg-[#ff4fb8]/20"
@@ -11374,7 +11377,7 @@ export default function PlatformPage() {
                   <span className="text-lg leading-none mt-0.5">⚡</span>
                   <div>
                     <div className="font-semibold mb-0.5">分析结果具有时效性</div>
-                    <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。2×4 分镜／八格图文请用上方画廊「一键导出全部」单独下载原图（PDF 不含分镜图，避免长图被截断）。</div>
+                    <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析基于当前时间点快照。建议立即下载 PDF 保存，下载后快照记录将同步保存至「我的作品」。2×4 编导分镜／八格图文请用上方画廊「一键导出全部」单独下载原图（PDF 不含编导分镜图，避免长图被截断）。</div>
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">

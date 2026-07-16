@@ -89,6 +89,7 @@ import {
   PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT,
   composePlatformImageSkillHints,
 } from "../shared/platformNativeVariants.js";
+import { enrichScriptContextWithBianDaoDirectorBoard } from "../shared/bianDaoStoryboard.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
 import { PLATFORM_TOPIC_EXPAND_MAX, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
@@ -5911,16 +5912,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const imagePromptTranslatorForComposite = "gpt54" as const;
 
         const enrichedBundleScriptContext = (() => {
-          const base = String(input.compositeScriptContext || "").trim();
+          const sheetKind =
+            input.compositeKind === "xiaohongshu_dual_note" ||
+            /图文/.test(String(finalFormatForPipeline || ""))
+              ? "graphic"
+              : "storyboard";
+          const base = enrichScriptContextWithBianDaoDirectorBoard(
+            String(input.compositeScriptContext || "").trim(),
+            { sheetKind },
+          );
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             {
               routeContext: `${finalTopicHook}\n${enrichedContext}\n${input.compositeTitle || ""}\n${base.slice(0, 1200)}`,
-              sheetKind:
-                input.compositeKind === "xiaohongshu_dual_note" ||
-                /图文/.test(String(finalFormatForPipeline || ""))
-                  ? "graphic"
-                  : "video",
+              sheetKind: sheetKind === "graphic" ? "graphic" : "video",
               forceCoverShortCopy: true,
             },
           );
@@ -6326,12 +6331,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
           const compositeDeductionNote =
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
-              ? `分镜图文参考（双语编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
+              ? `编导分镜图文参考（导演板编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : input.kind === "single_page_knowledge_card"
                 ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`
                 : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag = compositePack
-            ? ` · 分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
+            ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
           await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
         }
@@ -6346,16 +6351,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
         const enrichedCompositeScriptContext = (() => {
-          const base = String(input.scriptContext || "").trim();
+          const sheetKind =
+            input.kind === "xiaohongshu_dual_note" ||
+            input.kind === "single_page_knowledge_card"
+              ? "graphic"
+              : "storyboard";
+          const base = enrichScriptContextWithBianDaoDirectorBoard(
+            String(input.scriptContext || "").trim(),
+            { sheetKind },
+          );
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             {
               routeContext: `${input.title || ""}\n${base.slice(0, 2000)}`,
-              sheetKind:
-                input.kind === "xiaohongshu_dual_note" ||
-                input.kind === "single_page_knowledge_card"
-                  ? "graphic"
-                  : "video",
+              sheetKind: sheetKind === "graphic" ? "graphic" : "video",
               forceCoverShortCopy: true,
             },
           );

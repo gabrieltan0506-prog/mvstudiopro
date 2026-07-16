@@ -867,8 +867,8 @@ export default function PlatformAssetAnalysisPanel({
             <div className="space-y-2 pt-1 border-t border-white/10">
               <p className="text-xs leading-relaxed text-[#c9c0e6]/75">
                 <span className="font-semibold text-[#fcd34d]/90">步骤 2 · 深度优化</span>
-                {" "}会把上方视觉点评改写成可直接发布的封面主副标、2×4 分镜叙事与各平台文案（含近期热词），
-                不是重复分析。完成后可用步骤 3 一键出分镜图或图文卡片。
+                {" "}会把上方视觉点评改写成可直接发布的封面主副标、2×4 编导分镜叙事与各平台文案（含近期热词），
+                不是重复分析。完成后可用步骤 3 一键出编导分镜图或图文卡片。
               </p>
               <div className="flex flex-wrap gap-2">
               <button
@@ -917,7 +917,7 @@ export default function PlatformAssetAnalysisPanel({
                     setGenerateBusy(true);
                     try {
                       await onGenerateFromText(optimizedMarkdown, "storyboard_sheet_landscape");
-                      toast.success("分镜图生成完成，请在本 Tab 下方查看");
+                      toast.success("编导分镜图生成完成，请在本 Tab 下方查看");
                     } catch (e: unknown) {
                       toast.error(e instanceof Error ? e.message : "生成失败");
                     } finally {
@@ -928,7 +928,7 @@ export default function PlatformAssetAnalysisPanel({
                 className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
                 {generateBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Film className="h-3.5 w-3.5" />}
-                步骤 3 · 生成分镜（{storyboardCost} 积分）
+                步骤 3 · 生成编导分镜（{storyboardCost} 积分）
               </button>
               <button
                 type="button"

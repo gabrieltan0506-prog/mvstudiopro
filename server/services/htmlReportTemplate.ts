@@ -401,9 +401,9 @@ function buildHtmlStoryboardSheetSection(data: HtmlReportStoryboardSheet, fallba
   if (!safeUrl) return "";
   const safeTitle = escapeHtml(String(data.reportTitle || fallbackTitle || "战略情报报告").trim());
 
-  return `<section class="report-storyboard-visual-ref" aria-label="分镜图文参考" style="padding:40px;background:#0a0a0a;border-radius:20px;margin:40px 0;page-break-inside:avoid;border:1px solid rgba(255,255,255,0.1);">
+  return `<section class="report-storyboard-visual-ref" aria-label="编导分镜图文参考" style="padding:40px;background:#0a0a0a;border-radius:20px;margin:40px 0;page-break-inside:avoid;border:1px solid rgba(255,255,255,0.1);">
   <div style="margin-bottom:30px;border-left:6px solid #10B981;padding-left:20px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;">
-    <h2 style="color:#fff;margin:0;font-size:24px;font-family:'Noto Serif CJK SC',Georgia,serif;">${safeTitle} - 分镜图文参考</h2>
+    <h2 style="color:#fff;margin:0;font-size:24px;font-family:'Noto Serif CJK SC',Georgia,serif;">${safeTitle} - 编导分镜图文参考</h2>
     <span style="color:#10B981;font-size:12px;border:1px solid rgba(16,185,129,0.3);padding:4px 10px;border-radius:20px;">AI 原生排版</span>
   </div>
   <div style="width:100%;border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.5);background:#000;">

@@ -1422,7 +1422,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 分镜主表（中文直送）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（中文直送）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
+    `[宽幅合成] kind=${k} · ${isStoryboard ? "视频向 2×4 编导分镜主表（中文直送）" : isKnowledgeCard ? "单页连贯图文知识卡片（中文直送·buildSinglePageKnowledgeCardImagePrompt）" : "小红书 2×4 八格图文笔记（中文直送）"} · 标题: ${String(options.title || "").slice(0, 60)}`,
   );
   appendImageFlowLog(
     L,
@@ -1580,10 +1580,10 @@ export async function generatePlatformCompositeSheetImage(options: {
           `[2×4·步骤1·中文直送] 中文主体 + 英文像素锁送 GPT-IMAGE-2（${
             options.gridSection
               ? isStoryboard
-                ? "3×4 横排四格分镜"
+                ? "3×4 横排四格编导分镜"
                 : "3×4 横排四格图文"
               : isStoryboard
-                ? "电影 2×4 分镜"
+                ? "电影 2×4 编导分镜"
                 : "小红书 2×4 八格"
           }）· 约 ${chineseCore.length} 字符`,
         );
@@ -1620,7 +1620,7 @@ export async function generatePlatformCompositeSheetImage(options: {
 
         appendImageFlowLog(
           L,
-          `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
+          `[2×4·步骤2·前] 已拼像素锁（${isStoryboard ? "电影 2×4 编导分镜" : "小红书 2×4 八格"}）+ 与 Vertex 共用鏡頭/光影語彙 · 送生图总长约 ${promptForImage.length} 字符`,
         );
       }
 

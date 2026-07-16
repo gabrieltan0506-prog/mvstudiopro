@@ -264,7 +264,9 @@ export function composePlatformImageSkillHints(
     );
   }
   if (on("director-craft")) {
-    parts.push("【分镜出图】只借灯光运镜情绪手法词，成稿画面与画内字禁止导演名/片名致敬。");
+    parts.push(
+      "【编导分镜出图】输出编导分镜图（分镜格+导演板）：风格气质、起承转合节奏、关键运镜/灯光技法、观众情绪弧须可读；只借手法词，成稿画面与画内字禁止导演名/片名致敬。",
+    );
   }
   if (on("contrast-reversal-climax")) {
     parts.push(
