@@ -118,4 +118,17 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 皇宫 from 御书房", () => {
     expect(recommendManhuaSceneFromTopic("御书房金銮殿").sceneId).toBe("scene_06");
   });
+
+  it("recommends 宗门 from 外门", () => {
+    expect(recommendManhuaSceneFromTopic("外门内门考核").sceneId).toBe("scene_01");
+  });
+
+  it("recommends 云海 from 仙鹤", () => {
+    expect(recommendManhuaSceneFromTopic("仙鹤悬崖仙亭").sceneId).toBe("scene_02");
+  });
+
+  it("recommends 校园 from 天台告白", () => {
+    expect(recommendManhuaSceneFromTopic("天台告白操场").sceneId).toBe("scene_14");
+  });
+
 });
