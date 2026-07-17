@@ -68,4 +68,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 魔宫 from 炼狱魔域", () => {
     expect(recommendManhuaSceneFromTopic("炼狱魔域黑曜宫殿").sceneId).toBe("scene_05");
   });
+
+  it("recommends 长安街市 from 夜市花灯", () => {
+    expect(recommendManhuaSceneFromTopic("夜市花灯烟火气").sceneId).toBe("scene_07");
+  });
 });
