@@ -4,6 +4,7 @@ import {
   buildMotionPromptInjectBlock,
   getMotionPromptById,
   listMotionPromptsByCategory,
+  recommendMotionPromptFromTopic,
 } from "./motionPromptBank";
 
 describe("motionPromptBank", () => {
@@ -22,5 +23,11 @@ describe("motionPromptBank", () => {
     expect(block).toContain("词环头顶");
     expect(block).toContain("RGB 色散快闪");
     expect(block).not.toMatch(/HyperFrames|xiaolan|小蓝不打工/i);
+  });
+
+  it("recommends motion from product topic", () => {
+    const rec = recommendMotionPromptFromTopic("产品拆解种草开箱");
+    expect(rec.motionId).toBe("product_05_exploded_view");
+    expect(rec.reasonZh).toMatch(/产品|拆解/);
   });
 });

@@ -28,6 +28,7 @@ import {
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
+  recommendMotionPromptFromTopic,
   type MotionPromptCategory,
 } from "@shared/motionPromptBank";
 import {
@@ -102,6 +103,7 @@ export default function OmniCanvas() {
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   /** 手选手法后不再被题材自动覆盖 */
   const [craftShotManual, setCraftShotManual] = useState(false);
+  const [motionManual, setMotionManual] = useState(false);
   const [factoryReverseMode, setFactoryReverseMode] = useState<VideoReverseOutputMode>("zh");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
@@ -171,6 +173,17 @@ export default function OmniCanvas() {
       setFactoryCraftShotId(recommendedCraft.craftShotId);
     }
   }, [recommendedCraft.craftShotId, craftShotManual]);
+
+  const recommendedMotion = useMemo(
+    () => recommendMotionPromptFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  useEffect(() => {
+    if (motionManual) return;
+    if (recommendedMotion.motionId) {
+      setFactoryMotionId(recommendedMotion.motionId);
+    }
+  }, [recommendedMotion.motionId, motionManual]);
 
   const selectedCharacterIds = useMemo(
     () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
@@ -857,7 +870,10 @@ export default function OmniCanvas() {
                   <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
                   <select
                     value={factoryMotionId}
-                    onChange={(e) => setFactoryMotionId(e.target.value)}
+                    onChange={(e) => {
+                      setMotionManual(true);
+                      setFactoryMotionId(e.target.value);
+                    }}
                     disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
                   >
@@ -872,8 +888,10 @@ export default function OmniCanvas() {
                       </optgroup>
                     ))}
                   </select>
-                  <p className="mt-1 text-[10px] text-white/30">
-                    注入微动成片 / 视频改写；与拍摄手法分表。
+                  <p className="mt-1 text-[10px] leading-snug text-white/45">
+                    {recommendedMotion.reasonZh}
+                    {motionManual ? " · 手选锁定" : ""}
+                    ；注入微动成片 / 视频改写。
                   </p>
                 </div>
               </div>
