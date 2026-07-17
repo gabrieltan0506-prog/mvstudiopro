@@ -148,6 +148,23 @@ describe("canvasDramaStudio factory", () => {
     expect(bible).toMatch(/char_f_01|女主|短发|长发|角色/);
   });
 
+  it("applyFactoryPrefs keeps craft when only scene changes", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      genreId: "xianxia",
+      sceneId: "scene_01",
+      topic: "外门弟子",
+      craftShotIds: ["light_03_high_contrast"],
+    });
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      sceneId: "scene_04",
+      craftShotIds: ["light_03_high_contrast"],
+      motionPromptIds: [],
+    });
+    const beats = next.find((b) => b.id.startsWith("beats-"))!.prompt;
+    expect(beats).toContain("秘境洞府");
+    expect(beats).toContain("高反差");
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",
