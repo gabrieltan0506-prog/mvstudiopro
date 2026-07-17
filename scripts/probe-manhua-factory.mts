@@ -257,7 +257,7 @@ async function main() {
     }
   } else {
     console.log(
-      "[manhua-factory-probe] 五段可用；Seedance Mini 设 CANVAS_PROBE_SEEDANCE=1（默认 5s/480p/2.0-mini）",
+      "[manhua-factory-probe] 五段可用；Seedance Mini 设 CANVAS_PROBE_SEEDANCE=1（默认见 resolveSeedanceProbeDefaults：2.0-mini/5s/480p）；独立脚本 pnpm run manhua:seedance-probe",
     );
   }
 
