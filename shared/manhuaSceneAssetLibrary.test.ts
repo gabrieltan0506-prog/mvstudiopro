@@ -72,4 +72,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 长安街市 from 夜市花灯", () => {
     expect(recommendManhuaSceneFromTopic("夜市花灯烟火气").sceneId).toBe("scene_07");
   });
+
+  it("recommends 府邸 from 内宅闺阁", () => {
+    expect(recommendManhuaSceneFromTopic("内宅闺阁宅斗").sceneId).toBe("scene_08");
+  });
 });
