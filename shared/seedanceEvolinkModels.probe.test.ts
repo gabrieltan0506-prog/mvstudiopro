@@ -24,4 +24,9 @@ describe("resolveSeedanceProbeDefaults", () => {
     const d = resolveSeedanceProbeDefaults({ version: "9.9-unknown" });
     expect(d.version).toBe("2.0-mini");
   });
+
+  it("falls back invalid duration to default", () => {
+    const d = resolveSeedanceProbeDefaults({ duration: "nope" });
+    expect(d.duration).toBe(SEEDANCE_PROBE_DEFAULT_DURATION_SEC);
+  });
 });
