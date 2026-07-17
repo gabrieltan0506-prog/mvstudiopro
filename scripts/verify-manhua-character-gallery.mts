@@ -20,6 +20,7 @@ import {
   recommendManhuaCouplePacksFromTopic,
   serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
+  suggestManhuaContrastPartner,
 } from "../shared/manhuaCharacterAssetLibrary";
 
 const root = process.cwd();
@@ -109,6 +110,10 @@ if (
 const coupleRec = recommendManhuaCouplePacksFromTopic("都市霸总职场情感");
 if (!coupleRec.packIds.includes("urban_cold")) bad("题材软推都市套组", coupleRec.packIds.join(","));
 else ok(`题材软推套组 ${coupleRec.packIds.join(",")}`);
+
+const contrast = suggestManhuaContrastPartner("char_f_01", { limit: 3 });
+if (!contrast.length || contrast.some((c) => c.gender !== "male")) bad("反差配对返回异性");
+else ok(`反差配对 ${contrast.map((c) => c.id).join(",")}`);
 
 if (failed) {
   console.error(`\n验收失败：${failed} 项`);

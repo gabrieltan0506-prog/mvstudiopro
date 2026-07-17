@@ -633,6 +633,39 @@ export function parseManhuaCoupleSelection(raw: string): {
   }
 }
 
+/**
+ * 反差配对：相对当前人选，找气质重叠尽量少、但同题材池仍合理的异性。
+ * 重叠越低分越高；完全无交集优先。
+ */
+export function suggestManhuaContrastPartner(
+  characterId: string,
+  opts?: { excludeIds?: string[]; limit?: number },
+): ManhuaCharacterTemplate[] {
+  const base = getManhuaCharacterById(characterId);
+  if (!base) return [];
+  const targetGender: ManhuaCharacterGender = base.gender === "female" ? "male" : "female";
+  const exclude = new Set((opts?.excludeIds || []).map(String));
+  const baseTags = base.temperamentTags;
+  const limit = Math.max(1, Math.min(opts?.limit || 5, 8));
+  return listManhuaCharactersByGender(targetGender)
+    .filter((c) => !exclude.has(c.id))
+    .map((c) => {
+      const overlap = c.temperamentTags.reduce(
+        (n, t) => n + (baseTags.includes(t) || baseTags.some((b) => b.includes(t) || t.includes(b)) ? 1 : 0),
+        0,
+      );
+      return { c, overlap };
+    })
+    .sort(
+      (a, b) =>
+        a.overlap - b.overlap ||
+        Math.abs((a.c.age || 27) - (base.age || 27)) - Math.abs((b.c.age || 27) - (base.age || 27)) ||
+        a.c.nameZh.localeCompare(b.c.nameZh, "zh"),
+    )
+    .slice(0, limit)
+    .map((x) => x.c);
+}
+
 /** 题材关键词 → 气质标签种子（4.B 自动套用） */
 const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["清冷", "克制", "冷感", "疏离", "高冷"], tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },

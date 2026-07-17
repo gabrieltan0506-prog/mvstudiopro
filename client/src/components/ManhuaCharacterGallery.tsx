@@ -20,6 +20,7 @@ import {
   recommendManhuaCouplePacksFromTopic,
   serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
+  suggestManhuaContrastPartner,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
   type ManhuaCharacterTemplate,
@@ -583,6 +584,14 @@ export default function ManhuaCharacterGallery({
       .slice(0, 5)
       .map((x) => x.c);
   }, [pool, libraryTab, femaleId, maleId]);
+  const contrastPartners = useMemo(() => {
+    const anchorId = libraryTab === "female" ? femaleId : maleId;
+    if (!anchorId) return [] as ManhuaCharacterTemplate[];
+    return suggestManhuaContrastPartner(anchorId, {
+      excludeIds: [femaleId, maleId],
+      limit: 5,
+    });
+  }, [libraryTab, femaleId, maleId]);
 
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -676,6 +685,54 @@ export default function ManhuaCharacterGallery({
 
   const removeCustomCouple = (id: string) => {
     setCustomCouples(saveCustomCouples(customCouples.filter((x) => x.id !== id)));
+  };
+
+  const exportCustomCouples = async () => {
+    const payload = JSON.stringify({ v: 1, kind: "manhua-character-custom-couples", items: customCouples });
+    const ok = await copyText(payload);
+    setCopyFlash(ok ? `已导出我的套组 ${customCouples.length}` : "导出失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  const importCustomCouples = async () => {
+    try {
+      const raw = await navigator.clipboard.readText();
+      const parsed = JSON.parse(raw) as { kind?: string; items?: CustomCouple[] };
+      if (!parsed || parsed.kind !== "manhua-character-custom-couples" || !Array.isArray(parsed.items)) {
+        setCopyFlash("剪贴板无有效「我的套组」JSON");
+        window.setTimeout(() => setCopyFlash(""), 1800);
+        return;
+      }
+      const incoming = parsed.items
+        .filter(
+          (x) =>
+            x &&
+            getManhuaCharacterById(x.femaleId)?.gender === "female" &&
+            getManhuaCharacterById(x.maleId)?.gender === "male",
+        )
+        .map((x) => ({
+          id: String(x.id || `custom_${x.femaleId}_${x.maleId}`),
+          labelZh: String(x.labelZh || "我的套组").slice(0, 24),
+          femaleId: String(x.femaleId),
+          maleId: String(x.maleId),
+          artStyleId: x.artStyleId,
+        }));
+      if (!incoming.length) {
+        setCopyFlash("导入套组为空或 id 无效");
+        window.setTimeout(() => setCopyFlash(""), 1800);
+        return;
+      }
+      const merged = [...incoming, ...customCouples.filter((c) => !incoming.some((i) => i.id === c.id))].slice(
+        0,
+        8,
+      );
+      setCustomCouples(saveCustomCouples(merged));
+      setCopyFlash(`已导入套组 ${incoming.length}`);
+      window.setTimeout(() => setCopyFlash(""), 1600);
+    } catch {
+      setCopyFlash("无法读取/解析剪贴板");
+      window.setTimeout(() => setCopyFlash(""), 1800);
+    }
   };
 
   const pickRandomCouplePack = () => {
@@ -1016,6 +1073,24 @@ export default function ManhuaCharacterGallery({
               </button>
             );
           })}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={disabled || !customCouples.length}
+            onClick={() => void exportCustomCouples()}
+            className="text-[10px] text-white/55 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            导出我的套组
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => void importCustomCouples()}
+            className="text-[10px] text-white/55 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            导入我的套组
+          </button>
         </div>
         {customCouples.length ? (
           <div className="mt-2">
@@ -1418,6 +1493,26 @@ export default function ManhuaCharacterGallery({
                   disabled={disabled}
                   onClick={() => rememberSelect(c.id, libraryTab)}
                   className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/55 hover:border-white/25 disabled:opacity-40"
+                >
+                  {c.nameZh}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {contrastPartners.length ? (
+          <div className="mb-2">
+            <div className="mb-1 text-[10px] text-white/40">
+              反差配对（异性 · 气质少重叠）→ 点选即换{libraryTab === "female" ? "男主" : "女主"}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {contrastPartners.map((c) => (
+                <button
+                  key={`contrast-${c.id}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => rememberSelect(c.id, c.gender)}
+                  className="rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] text-fuchsia-100/85 hover:border-fuchsia-300/50 disabled:opacity-40"
                 >
                   {c.nameZh}
                 </button>
