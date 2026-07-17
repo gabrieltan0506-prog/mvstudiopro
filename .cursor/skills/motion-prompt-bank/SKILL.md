@@ -23,10 +23,16 @@ description: 短视频包装动效库施工手册（Logo/产品/数据/字幕）
 3. 占位符换成用户品牌词 / 文案 / 数据
 4. 验收：对照条目 `effectZh`；字幕故障类遵守「Cut never fade / 全片最多一次」
 
+## 自动推荐
+- `recommendMotionPromptFromTopic(topic)`：题材关键词 → 1 条包装建议（可选手选覆盖）
+- 细项优先于泛词：如「电竞/RGB」先于「片头」；「揭晓/反转句」先于「字幕」
+- Canvas 工厂：未手选时自动写入；手选后锁定，可「恢复自动推荐」
+
 ## 与产品边界
 
 | 库 | 用途 |
 |----|------|
 | `motionPromptBank` | 后制包装动效 |
-| `CRAFT_TECHNIQUE_PROFILES` | 拍摄灯光运镜情绪 |
+| `craftShotBank` | 叙事镜头手法（灯光/运镜/情绪） |
+| `CRAFT_TECHNIQUE_PROFILES` | 整卡气质（成稿去名） |
 | `manhuaCharacterAssetLibrary` | 男女主外形 |
