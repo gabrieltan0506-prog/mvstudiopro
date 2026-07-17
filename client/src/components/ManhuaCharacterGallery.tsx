@@ -394,7 +394,7 @@ export default function ManhuaCharacterGallery({
   const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [unselectedOnly, setUnselectedOnly] = useState(false);
-  const [lockArtStyle, setLockArtStyle] = useState(false);
+  const [lockArtStyle, setLockArtStyle] = useState(() => Boolean(initialPrefs.lockArtStyle));
   const [compareId, setCompareId] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
@@ -850,8 +850,9 @@ export default function ManhuaCharacterGallery({
       packFilterId: packFilterId || undefined,
       sortMode,
       dense: denseGrid,
+      lockArtStyle,
     });
-  }, [libraryTab, packFilterId, sortMode, denseGrid]);
+  }, [libraryTab, packFilterId, sortMode, denseGrid, lockArtStyle]);
 
   const focusLibrary = (gender: ManhuaCharacterGender) => {
     setLibraryTab(gender);

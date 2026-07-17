@@ -17,6 +17,7 @@ export type LibraryPrefs = {
   packFilterId?: string;
   sortMode?: "default" | "name" | "age";
   dense?: boolean;
+  lockArtStyle?: boolean;
 };
 
 export type CustomCouple = {
