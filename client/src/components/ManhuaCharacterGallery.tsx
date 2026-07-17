@@ -681,6 +681,15 @@ export default function ManhuaCharacterGallery({
         applyCouplePack(topicCoupleRec.packIds[0]!);
         return;
       }
+      if ((e.key === "i" || e.key === "I") && selectedInTab) {
+        e.preventDefault();
+        void (async () => {
+          const ok = await copyText(selectedInTab);
+          setCopyFlash(ok ? `已复制 id ${selectedInTab}` : "复制失败");
+          window.setTimeout(() => setCopyFlash(""), 1400);
+        })();
+        return;
+      }
       if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const pack = MANHUA_COUPLE_PACKS[Number(e.key) - 1];
         if (pack) {
