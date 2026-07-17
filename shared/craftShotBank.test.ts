@@ -67,6 +67,12 @@ describe("craftShotBank ⑧A", () => {
     expect(recommendCraftShotFromTopic("声先画后硬切卡点").craftShotId).toBe("tr_05_audio_lead");
   });
 
+  it("recommends craft from viral 边关/吞噬/团宠 keywords", () => {
+    expect(recommendCraftShotFromTopic("发配边关罪妻开荒").craftShotId).toBe("cam_07_wide_scale");
+    expect(recommendCraftShotFromTopic("吞噬进化洞府").craftShotId).toBe("cam_07_wide_scale");
+    expect(recommendCraftShotFromTopic("剑宗团宠小师妹").craftShotId).toBe("light_05_neon_spill");
+  });
+
   it("recommends craft from 古风 keyword", () => {
     expect(recommendCraftShotFromTopic("古风皇宫长安府邸").craftShotId).toBe("light_03_high_contrast");
   });

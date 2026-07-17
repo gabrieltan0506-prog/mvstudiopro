@@ -281,27 +281,93 @@ export function recommendPrimaryManhuaScene(
 /**
  * 题材关键词 → 具体场景（⑤D）。
  * 比「剧种池首条」更细：如「秘境」→ scene_04，而非仙侠默认 scene_01。
- * 多命中时按匹配词数 + 最长词优先；可按剧种收窄候选。
+ * 多命中时：**最长命中词优先**，再比总字数、命中条数（避免「仙门+外门」压过「闯秘境」）。
+ * 可按剧种收窄候选。
  */
 const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
-  { sceneId: "scene_04", keys: ["秘境", "洞府", "寻宝", "闭关", "奇遇", "法阵", "灵泉", "水晶洞窟", "闯关", "试炼"] },
+  {
+    sceneId: "scene_04",
+    keys: [
+      "闯秘境",
+      "秘境洞府",
+      "杂灵根",
+      "吞噬进化",
+      "秘境",
+      "洞府",
+      "寻宝",
+      "闭关",
+      "奇遇",
+      "法阵",
+      "灵泉",
+      "水晶洞窟",
+      "闯关",
+      "试炼",
+      "吞噬",
+      "进化",
+      "灵根",
+      "系统",
+    ],
+  },
   { sceneId: "scene_03", keys: ["练剑", "对决", "剑气", "比武", "演武", "宗门大比", "弟子考核"] },
   { sceneId: "scene_02", keys: ["云海", "浮空山", "飞瀑", "仙山", "空镜", "仙鹤", "悬崖仙亭"] },
-  { sceneId: "scene_01", keys: ["宗门", "山门", "拜师", "仙门", "弟子入门", "外门", "内门考核"] },
-  { sceneId: "scene_05", keys: ["魔族", "魔宫", "深渊", "反派宫殿", "黑曜", "炼狱", "魔域"] },
+  {
+    sceneId: "scene_01",
+    keys: ["剑宗", "宗门", "山门", "拜师", "仙门", "弟子入门", "外门", "内门考核", "小师妹", "团宠"],
+  },
+  {
+    sceneId: "scene_05",
+    keys: ["万妖图录", "万妖", "妖界", "魔族", "魔宫", "深渊", "反派宫殿", "黑曜", "炼狱", "魔域", "妖"],
+  },
   { sceneId: "scene_06", keys: ["皇宫", "大殿", "朝堂", "龙椅", "登基", "百官", "御书房", "金銮殿"] },
-  { sceneId: "scene_07", keys: ["长安", "街市", "市井", "灯笼商铺", "烟火气", "夜市", "花灯"] },
+  {
+    sceneId: "scene_07",
+    keys: ["渔乡", "种田", "田园", "长安", "街市", "市井", "灯笼商铺", "烟火气", "夜市", "花灯", "开荒致富"],
+  },
   { sceneId: "scene_08", keys: ["府邸", "宅斗", "庭院", "世家", "回廊", "内宅", "闺阁"] },
-  { sceneId: "scene_09", keys: ["战场", "废墟", "残垣", "战旗", "大战", "攻城", "尸横"] },
-  { sceneId: "scene_10", keys: ["边塞", "城墙", "烽火", "关隘", "黄沙", "戍边", "狼烟"] },
-  { sceneId: "scene_12", keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙", "谈判桌", "年会"] },
-  { sceneId: "scene_11", keys: ["豪宅", "豪门", "泳池", "落地窗", "别墅", "顶层公寓", "天台酒会"] },
-  { sceneId: "scene_13", keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台", "地下拳场", "黑拳", "地下赛车"] },
+  { sceneId: "scene_09", keys: ["战场", "废墟", "残垣", "战旗", "大战", "攻城", "尸横", "战神"] },
+  {
+    sceneId: "scene_10",
+    keys: ["发配边关", "边关", "边塞", "城墙", "烽火", "关隘", "黄沙", "戍边", "狼烟", "发配", "罪妻", "开荒"],
+  },
+  {
+    sceneId: "scene_12",
+    keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙", "谈判桌", "年会", "赘婿"],
+  },
+  {
+    sceneId: "scene_11",
+    keys: ["财神天降", "豪宅", "豪门", "泳池", "落地窗", "别墅", "顶层公寓", "天台酒会", "财神", "逆袭"],
+  },
+  {
+    sceneId: "scene_13",
+    keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台", "地下拳场", "黑拳", "地下赛车", "狼人", "吸血鬼"],
+  },
   { sceneId: "scene_14", keys: ["校园", "教室", "校服", "课桌", "青春", "同学", "操场", "天台告白"] },
   { sceneId: "scene_16", keys: ["太空", "星舰", "飞船", "基地", "舷窗", "星际", "轨道站", "登陆舱"] },
-  { sceneId: "scene_15", keys: ["未来城市", "全息", "飞行器", "赛博", "天际线", "霓虹都市", "悬浮车"] },
-  { sceneId: "scene_17", keys: ["避难所", "废土", "末日", "幸存者", "营地", "辐射区", "废墟城"] },
-  { sceneId: "scene_18", keys: ["实验室", "实验舱", "科研", "AI觉醒", "玻璃舱", "克隆舱", "禁区实验"] },
+  {
+    sceneId: "scene_15",
+    keys: [
+      "气运三角洲",
+      "未来城市",
+      "全息",
+      "飞行器",
+      "赛博",
+      "天际线",
+      "霓虹都市",
+      "悬浮车",
+      "电竞",
+      "游戏",
+      "竞技",
+      "操作碾压",
+    ],
+  },
+  {
+    sceneId: "scene_17",
+    keys: ["避难所", "废土", "末日", "末世", "幸存者", "营地", "辐射区", "废墟城", "废柴"],
+  },
+  {
+    sceneId: "scene_18",
+    keys: ["实验室", "实验舱", "科研", "AI觉醒", "系统觉醒", "觉醒系统", "玻璃舱", "克隆舱", "禁区实验", "觉醒"],
+  },
   { sceneId: "scene_19", keys: ["密室", "探案", "搜证", "线索", "推理现场", "证物袋", "案发现场"] },
   { sceneId: "scene_20", keys: ["黑客", "代码", "多屏", "信息战", "服务器", "暗网", "入侵终端"] },
 ];
@@ -333,9 +399,18 @@ export function recommendManhuaSceneFromTopic(
   let best: {
     sceneId: string;
     matched: string[];
-    score: number;
     longest: number;
+    sumLen: number;
+    count: number;
   } | null = null;
+
+  const beats = (
+    next: { longest: number; sumLen: number; count: number },
+    cur: { longest: number; sumLen: number; count: number },
+  ) =>
+    next.longest > cur.longest ||
+    (next.longest === cur.longest && next.sumLen > cur.sumLen) ||
+    (next.longest === cur.longest && next.sumLen === cur.sumLen && next.count > cur.count);
 
   for (const row of SCENE_TOPIC_KEYWORDS) {
     const entry = getManhuaSceneTemplate(row.sceneId);
@@ -344,14 +419,9 @@ export function recommendManhuaSceneFromTopic(
     const matched = row.keys.filter((k) => text.includes(k));
     if (!matched.length) continue;
     const longest = Math.max(...matched.map((m) => m.length));
-    const score = matched.length * 10 + longest;
-    if (
-      !best ||
-      score > best.score ||
-      (score === best.score && matched.length > best.matched.length)
-    ) {
-      best = { sceneId: row.sceneId, matched, score, longest };
-    }
+    const sumLen = matched.reduce((n, m) => n + m.length, 0);
+    const cand = { sceneId: row.sceneId, matched, longest, sumLen, count: matched.length };
+    if (!best || beats(cand, best)) best = cand;
   }
 
   // 弱匹配：场景名出现在题材里
@@ -362,8 +432,9 @@ export function recommendManhuaSceneFromTopic(
       best = {
         sceneId: entry.id,
         matched: [entry.nameZh],
-        score: entry.nameZh.length,
         longest: entry.nameZh.length,
+        sumLen: entry.nameZh.length,
+        count: 1,
       };
       break;
     }
