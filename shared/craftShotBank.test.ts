@@ -74,4 +74,8 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft from 武侠 keyword", () => {
     expect(recommendCraftShotFromTopic("江湖刀光比武").craftShotId).toBe("cam_03_track_follow");
   });
+
+  it("recommends craft from 谍战 keyword", () => {
+    expect(recommendCraftShotFromTopic("谍战卧底情报对峙").craftShotId).toBe("cam_02_push_in");
+  });
 });
