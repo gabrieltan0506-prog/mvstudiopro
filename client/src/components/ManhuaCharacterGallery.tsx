@@ -149,6 +149,15 @@ function pushRecentId(id: string) {
   }
 }
 
+function clearRecentIds(): string[] {
+  try {
+    localStorage.removeItem(RECENT_LS_KEY);
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 function loadFavoriteIds(): string[] {
   return loadIdList(FAV_LS_KEY, 24);
 }
@@ -902,6 +911,11 @@ export default function ManhuaCharacterGallery({
         setCompareId((prev) => (prev === selectedInTab ? "" : selectedInTab));
         return;
       }
+      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+        e.preventDefault();
+        setShowShortcuts((v) => !v);
+        return;
+      }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       if (!filteredPool.length) return;
       e.preventDefault();
@@ -1544,7 +1558,17 @@ export default function ManhuaCharacterGallery({
         ) : null}
         {recentInTab.length ? (
           <div className="mb-2">
-            <div className="mb-1 text-[10px] text-white/40">最近选用</div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[10px] text-white/40">最近选用</span>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setRecentIds(clearRecentIds())}
+                className="text-[10px] text-white/40 underline-offset-2 hover:underline disabled:opacity-40"
+              >
+                清空最近
+              </button>
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {recentInTab.map((c) => (
                 <button
@@ -1588,7 +1612,7 @@ export default function ManhuaCharacterGallery({
         {showShortcuts ? (
           <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
             <li>悬停看三视图 · 右键钉住预览</li>
-            <li>★ 收藏 · R 随机换人 · F 收藏当前 · C 钉对比基准</li>
+            <li>★ 收藏 · R 随机换人 · F 收藏当前 · C 钉对比基准 · ? 开关本说明</li>
             <li>Esc 清空筛选/对比 · ←/→ 在筛选结果换人</li>
             <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
           </ul>
