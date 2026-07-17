@@ -21,6 +21,11 @@
 ## 3. Git / PR（與本倉庫 `.cursor/rules` 對齊）
 
 - 改動落在 **功能分支**，**push 分支** 並以 **PR 合併 `main`** 為常規路徑（除非對方聲明緊急直推）。
+- **開 PR 日上限**：同一自然日 **`gh pr create` ≤ 20**；另須遵守兩次 create ≥15 分鐘、串行合併、上一 Fly Deploy success 才可合下一刀。詳見 [`.cursor/rules/git-pr-workflow-always.mdc`](../.cursor/rules/git-pr-workflow-always.mdc)。
+
+## 3b. 視頻生成測試探針
+
+- **一律 Seedance 2.0 Mini · 480p**（默認約 5s）。禁止探針默認打標準 2.0 / 高分辨率 / 2.5。詳見 [`.cursor/rules/seedance-probe-always.mdc`](../.cursor/rules/seedance-probe-always.mdc)。
 
 ## 4. 任務完整性
 

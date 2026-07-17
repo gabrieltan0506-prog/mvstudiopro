@@ -25,4 +25,8 @@ alwaysApply: true
 
 ## PR
 
-- 與 [`git-pr-workflow-always.mdc`](./git-pr-workflow-always.mdc) 一致：常規走分支 + PR，非緊急不直推 `main`。
+- 與 [`git-pr-workflow-always.mdc`](./git-pr-workflow-always.mdc) 一致：常規走分支 + PR，非緊急不直推 `main`；**同一自然日開 PR ≤ 20 次**。
+
+## 視頻探針
+
+- 與 [`seedance-probe-always.mdc`](./seedance-probe-always.mdc) 一致：測試探針一律 **Seedance Mini · 480p**。
