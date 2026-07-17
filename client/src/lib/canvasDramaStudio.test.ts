@@ -145,6 +145,7 @@ describe("canvasDramaStudio factory", () => {
     });
     const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
     expect(bible).toContain("【角色库锚点】");
+    expect(bible).toMatch(/char_f_01|女主|短发|长发|角色/);
   });
 
   it("infers genre from topic when genreId omitted", () => {
