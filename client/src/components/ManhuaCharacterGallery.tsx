@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
   formatManhuaCharacterLookSummary,
+  getManhuaArtStylePreset,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
   listManhuaCharactersByGender,
@@ -76,13 +77,16 @@ function CharacterSheetPreview({
   accent,
   autoApplied,
   compact,
+  artStyleId,
 }: {
   character: ManhuaCharacterTemplate;
   accent: "cyan" | "amber";
   autoApplied?: boolean;
   compact?: boolean;
+  artStyleId?: ManhuaArtStyleId;
 }) {
   const url = getManhuaCharacterPreviewUrl(character.id);
+  const style = getManhuaArtStylePreset(artStyleId);
   const ring =
     accent === "cyan"
       ? "border-cyan-400/55 shadow-[0_0_24px_rgba(34,211,238,0.12)]"
@@ -106,6 +110,9 @@ function CharacterSheetPreview({
                 已选中
               </span>
             )}
+            <span className="rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/55">
+              {style.labelZh}
+            </span>
           </div>
           <p className="mt-1 text-[11px] text-white/55">
             {character.jobZh}
@@ -333,7 +340,13 @@ export default function ManhuaCharacterGallery({
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-cyan-100/80">女主（青色高亮）</div>
           {selectedFemale ? (
-            <CharacterSheetPreview character={selectedFemale} accent="cyan" autoApplied={femaleAutoApplied} compact />
+            <CharacterSheetPreview
+              character={selectedFemale}
+              accent="cyan"
+              autoApplied={femaleAutoApplied}
+              artStyleId={artStyleId}
+              compact
+            />
           ) : (
             <EmptyLead label="女主" />
           )}
@@ -368,7 +381,13 @@ export default function ManhuaCharacterGallery({
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-amber-100/80">男主（琥珀高亮）</div>
           {selectedMale ? (
-            <CharacterSheetPreview character={selectedMale} accent="amber" autoApplied={maleAutoApplied} compact />
+            <CharacterSheetPreview
+              character={selectedMale}
+              accent="amber"
+              autoApplied={maleAutoApplied}
+              artStyleId={artStyleId}
+              compact
+            />
           ) : (
             <EmptyLead label="男主" />
           )}
