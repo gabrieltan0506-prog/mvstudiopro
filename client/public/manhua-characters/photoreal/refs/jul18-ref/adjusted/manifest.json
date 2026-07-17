@@ -1,0 +1,21 @@
+{
+  "adjustedAt": "2026-07-17T23:00:30.211Z",
+  "policy": "去刘亦菲/高圆圆/景甜可识别脸；保留版式与华服",
+  "results": [
+    {
+      "id": "r02",
+      "ok": true,
+      "out": "r02_江晚星_adjusted.jpg"
+    },
+    {
+      "id": "r03",
+      "ok": true,
+      "out": "r03_林暮雪_adjusted.jpg"
+    },
+    {
+      "id": "r09",
+      "ok": true,
+      "out": "r09_唐听澜_adjusted.jpg"
+    }
+  ]
+}
