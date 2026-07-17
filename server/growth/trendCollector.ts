@@ -2534,6 +2534,9 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       const deduped = dedupeById(items);
       const feedYield = deduped.filter((item) => item.bucket === "douyin_feed").length;
       const creatorYield = deduped.filter((item) => String(item.bucket || "").startsWith("douyin_creator_")).length;
+      const dramaYield = deduped.filter((item) => item.isDrama).length;
+      const aiManhuaYield = deduped.filter((item) => item.dramaKind === "ai_manhua").length;
+      notes.push(`Douyin drama yield: isDrama=${dramaYield}, ai_manhua=${aiManhuaYield}, searchItems=${dramaSearch.items.length}.`);
       await recordAdaptiveRouteRun({
         platform: "douyin",
         routeKey: "feed_live",

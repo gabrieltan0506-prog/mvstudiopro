@@ -136,7 +136,10 @@ export function buildAiManhuaRisingBoard(params: {
         totalEpisodes: agg.totalEpisodes,
         sampleTitle: agg.sampleTitle,
         author: agg.author,
-        url: agg.url,
+        url: agg.url
+          || (agg.mixName
+            ? `https://www.douyin.com/search/${encodeURIComponent(agg.mixName)}`
+            : undefined),
         status: pickStatus({ delta7d, mixPlayCount: agg.mixPlayCount, publishedWithin7d: agg.publishedWithin7d }),
       };
     })
