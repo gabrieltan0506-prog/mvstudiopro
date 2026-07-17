@@ -11,6 +11,7 @@ config({ path: ".env" });
 import {
   SEEDANCE_PROBE_DEFAULT_DURATION_SEC,
   SEEDANCE_PROBE_DEFAULT_QUALITY,
+  resolveSeedanceProbeDefaults,
 } from "../shared/seedanceEvolinkModels.ts";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "../shared/videoReversePrompt.ts";
 
@@ -211,13 +212,14 @@ async function main() {
         .slice(0, 400) || reverseText.slice(0, 400);
     const seedancePrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n${motionHint}`;
     const imageUrl = keyArtDetail;
-    const version = String(process.env.CANVAS_PROBE_SEEDANCE_VERSION || "2.0-mini").trim() || "2.0-mini";
-    const resolution =
-      String(process.env.CANVAS_PROBE_SEEDANCE_QUALITY || SEEDANCE_PROBE_DEFAULT_QUALITY).trim() ||
-      SEEDANCE_PROBE_DEFAULT_QUALITY;
-    const duration =
-      Number(process.env.CANVAS_PROBE_SEEDANCE_DURATION || SEEDANCE_PROBE_DEFAULT_DURATION_SEC) ||
-      SEEDANCE_PROBE_DEFAULT_DURATION_SEC;
+    const probeDefaults = resolveSeedanceProbeDefaults({
+      version: process.env.CANVAS_PROBE_SEEDANCE_VERSION,
+      quality: process.env.CANVAS_PROBE_SEEDANCE_QUALITY,
+      duration: process.env.CANVAS_PROBE_SEEDANCE_DURATION,
+    });
+    const version = probeDefaults.version;
+    const resolution = probeDefaults.quality;
+    const duration = probeDefaults.duration;
     const SEEDANCE_TIMEOUT_MS = Math.max(
       IMAGE_TIMEOUT_MS,
       Number(process.env.CANVAS_PROBE_SEEDANCE_TIMEOUT_MS || 600_000) || 600_000,
