@@ -644,7 +644,27 @@ export function suggestManhuaContrastPartner(
     .map((x) => x.c);
 }
 
-/** 同行/相近职业异性（职位关键词粗匹配） */
+function jobFieldTokens(jobZh: string): string[] {
+  const raw = String(jobZh || "").replace(/[的与和及]/g, "").trim();
+  if (!raw) return [];
+  const out = new Set<string>();
+  for (const part of raw.split(/[/·、，,\s]+/)) {
+    const p = part.trim();
+    if (p.length >= 2) out.add(p);
+  }
+  // 滑动二字：古典钢琴演奏家 → 钢琴 / 演奏 …
+  for (let i = 0; i < raw.length - 1; i += 1) {
+    const bi = raw.slice(i, i + 2);
+    if (/^[\u4e00-\u9fff]{2}$/.test(bi)) out.add(bi);
+  }
+  // 领域种子（短词优先命中）
+  for (const seed of ["钢琴", "律师", "医生", "建筑", "博物馆", "策展", "古董", "外交", "投行", "时尚", "赛车", "指挥", "摄影", "科技", "收藏"]) {
+    if (raw.includes(seed)) out.add(seed);
+  }
+  return Array.from(out);
+}
+
+/** 同行/相近职业异性（职位关键词 + 二字滑窗粗匹配） */
 export function suggestManhuaSameFieldPartner(
   characterId: string,
   opts?: { excludeIds?: string[]; limit?: number },
@@ -654,17 +674,16 @@ export function suggestManhuaSameFieldPartner(
   const targetGender: ManhuaCharacterGender = base.gender === "female" ? "male" : "female";
   const exclude = new Set((opts?.excludeIds || []).map(String));
   const limit = Math.max(1, Math.min(opts?.limit || 5, 8));
-  const tokens = String(base.jobZh || "")
-    .replace(/[的与和及]/g, "")
-    .split(/[/·、，,\s]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length >= 2);
+  const tokens = jobFieldTokens(base.jobZh);
   if (!tokens.length) return [];
   return listManhuaCharactersByGender(targetGender)
     .filter((c) => !exclude.has(c.id))
     .map((c) => {
       const job = c.jobZh || "";
-      const score = tokens.reduce((n, t) => n + (job.includes(t) ? 2 : 0), 0);
+      const score = tokens.reduce((n, t) => {
+        if (!job.includes(t)) return n;
+        return n + (t.length >= 3 ? 3 : 2);
+      }, 0);
       return { c, score };
     })
     .filter((x) => x.score > 0)
