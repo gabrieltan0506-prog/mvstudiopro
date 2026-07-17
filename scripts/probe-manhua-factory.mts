@@ -8,6 +8,10 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
 
+import {
+  SEEDANCE_PROBE_DEFAULT_DURATION_SEC,
+  SEEDANCE_PROBE_DEFAULT_QUALITY,
+} from "../shared/seedanceEvolinkModels.ts";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "../shared/videoReversePrompt.ts";
 
 const BASE = String(process.env.CANVAS_PROBE_BASE_URL || "https://www.mvstudiopro.com")
@@ -208,8 +212,12 @@ async function main() {
     const seedancePrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n${motionHint}`;
     const imageUrl = keyArtDetail;
     const version = String(process.env.CANVAS_PROBE_SEEDANCE_VERSION || "2.0-mini").trim() || "2.0-mini";
-    const resolution = String(process.env.CANVAS_PROBE_SEEDANCE_QUALITY || "480p").trim() || "480p";
-    const duration = Number(process.env.CANVAS_PROBE_SEEDANCE_DURATION || 5) || 5;
+    const resolution =
+      String(process.env.CANVAS_PROBE_SEEDANCE_QUALITY || SEEDANCE_PROBE_DEFAULT_QUALITY).trim() ||
+      SEEDANCE_PROBE_DEFAULT_QUALITY;
+    const duration =
+      Number(process.env.CANVAS_PROBE_SEEDANCE_DURATION || SEEDANCE_PROBE_DEFAULT_DURATION_SEC) ||
+      SEEDANCE_PROBE_DEFAULT_DURATION_SEC;
     const SEEDANCE_TIMEOUT_MS = Math.max(
       IMAGE_TIMEOUT_MS,
       Number(process.env.CANVAS_PROBE_SEEDANCE_TIMEOUT_MS || 600_000) || 600_000,
