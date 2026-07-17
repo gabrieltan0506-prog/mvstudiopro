@@ -716,7 +716,7 @@ export default function OmniCanvas() {
 
               <div className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
                 <div>
-                  <label className="block text-[11px] text-white/45">剧种</label>
+                  <label className="block text-[11px] text-white/45">剧种（已铺板可同步）</label>
                   <select
                     value={factoryGenreId}
                     onChange={(e) => {
