@@ -886,7 +886,7 @@ export default function OmniCanvas() {
               <div className="mt-3 max-w-md space-y-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
+                    <label className="block text-[11px] text-white/45">拍摄手法（已铺可同步）（可选 · 1 条）</label>
                     {craftAutoApplied ? (
                       <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
                         已按题材自动套用
