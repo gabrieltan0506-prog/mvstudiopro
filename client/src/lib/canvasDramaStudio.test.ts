@@ -23,6 +23,7 @@ describe("canvasDramaStudio factory", () => {
     expect(blocks).toHaveLength(7);
     expect(edges).toHaveLength(6);
     for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
+      if (stage === "recap_card") continue; // 仅第3集起铺板
       expect(blocks.some((b) => b.id.startsWith(`${stage}-`))).toBe(true);
     }
     expect(blocks[0]!.prompt).toContain("星际车站离别");
@@ -340,9 +341,9 @@ slow dolly in, soft rain, trembling hand
       topic: "仙侠外门闯秘境",
       genreId: "xianxia",
       episodes: [
-        { index: 1, title: "石门异响", endHook: "门缝透出冷光" },
-        { index: 2, title: "冷光之后", endHook: "身后有人叫她本名" },
-        { index: 3, title: "本名", endHook: "玉佩碎裂" },
+        { index: 1, title: "石门异响", body: "听见异响", endHook: "门缝透出冷光" },
+        { index: 2, title: "冷光之后", body: "推门", endHook: "身后有人叫她本名" },
+        { index: 3, title: "本名", body: "回头", endHook: "玉佩碎裂" },
       ],
       writerContextForEpisode: (ep) => `【本集优先】第${ep.index}集《${ep.title}》\n${ep.body || ""}`,
       rowGap: 400,
@@ -350,8 +351,9 @@ slow dolly in, soft rain, trembling hand
     });
     expect(episodeCount).toBe(3);
     expect(episodeIndexes).toEqual([1, 2, 3]);
-    expect(blocks).toHaveLength(21);
-    expect(edges).toHaveLength(18);
+    // 7+7+8（第3集多前情提要 recap_card）
+    expect(blocks).toHaveLength(22);
+    expect(edges).toHaveLength(19);
 
     const stories = blocks.filter((b) => b.id.startsWith("story-"));
     expect(stories).toHaveLength(3);
@@ -365,6 +367,8 @@ slow dolly in, soft rain, trembling hand
     expect(stories[0]!.prompt).not.toContain("【上集钩子】");
     expect(stories[1]!.prompt).toContain("【上集钩子】门缝透出冷光");
     expect(stories[2]!.prompt).toContain("【上集钩子】身后有人叫她本名");
+    expect(stories[2]!.prompt).toContain("【前情提要·片头】");
+    expect(blocks.some((b) => b.id.startsWith("recap_card-e03-"))).toBe(true);
 
     const ep2 = filterBlocksByEpisode(blocks, 2);
     expect(ep2).toHaveLength(7);

@@ -6,7 +6,7 @@ import JSZip from "jszip";
 import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, stageKeyFromBlockId, type ManhuaFactoryStageKey } from "./canvasDramaStudio";
 
-export const MANHUA_CLIP_DOCK_STAGES = ["keyart", "clip", "omni_edit", "story"] as const;
+export const MANHUA_CLIP_DOCK_STAGES = ["recap_card", "keyart", "clip", "omni_edit", "story"] as const;
 export type ManhuaClipDockStage = (typeof MANHUA_CLIP_DOCK_STAGES)[number];
 
 export type ManhuaClipDockItem = {
@@ -21,6 +21,7 @@ export type ManhuaClipDockItem = {
 };
 
 const STAGE_FILE: Partial<Record<ManhuaFactoryStageKey, { base: string; extHint: "jpg" | "mp4" | "md" }>> = {
+  recap_card: { base: "recap_card", extHint: "jpg" },
   keyart: { base: "keyart", extHint: "jpg" },
   clip: { base: "clip", extHint: "mp4" },
   omni_edit: { base: "omni_edit", extHint: "mp4" },
@@ -42,13 +43,15 @@ export function collectManhuaClipDockItems(blocks: CanvasBlock[]): ManhuaClipDoc
       episodeIndex,
       episodeTitle: b.episodeTitle,
       label:
-        stage === "keyart"
-          ? "关键静帧"
-          : stage === "clip"
-            ? "微动成片"
-            : stage === "omni_edit"
-              ? "视频改写"
-              : "故事大纲",
+        stage === "recap_card"
+          ? "前情提要片头"
+          : stage === "keyart"
+            ? "关键静帧"
+            : stage === "clip"
+              ? "微动成片"
+              : stage === "omni_edit"
+                ? "视频改写"
+                : "故事大纲",
       outputUrl: b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,

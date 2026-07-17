@@ -34,10 +34,11 @@ function fakePack(): ManhuaWriterPack {
 }
 
 describe("manhua series MVP acceptance (jobstodo §6)", () => {
-  it("3 集铺板：三行链 + 上集钩子 + 焦点集 orderedIds 不串集", () => {
+  it("3 集铺板：三行链 + 上集钩子 + 第3集前情提要片头 + 焦点集 orderedIds 不串集", () => {
     const pack = fakePack();
     const { blocks, episodeCount } = spawnManhuaDramaStudioSeries({
       topic: pack.seriesTitle,
+      seriesTitle: pack.seriesTitle,
       genreId: "xianxia",
       episodes: pack.episodes,
       writerContextForEpisode: (ep) => composeWriterPackFactoryContext(pack, ep.index),
@@ -48,12 +49,24 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
     expect(stories).toHaveLength(3);
     expect(stories[1]!.prompt).toContain("【上集钩子】门缝透出冷光");
     expect(stories[2]!.prompt).toContain("【上集钩子】身后有人叫她本名");
+    expect(stories[2]!.prompt).toContain("【前情提要·片头】");
+    expect(stories[2]!.prompt).toContain("门缝透出冷光");
+    expect(stories[0]!.prompt).not.toContain("【前情提要·片头】");
     expect(stories[1]!.prompt).toContain("## 本集优先：第2集《冷光之后》");
 
+    const recapCards = blocks.filter((b) => b.id.startsWith("recap_card-"));
+    expect(recapCards).toHaveLength(1);
+    expect(recapCards[0]!.id).toContain("-e03-");
+    expect(recapCards[0]!.prompt).toMatch(/前情提要/);
+
     const ep2Ids = resolveManhuaFactoryOrderedIds(blocks, "clip", 2);
-    expect(ep2Ids).toHaveLength(6); // until clip，不含 omni_edit
+    expect(ep2Ids).toHaveLength(6); // until clip，不含 omni_edit；无 recap
     expect(ep2Ids.every((id) => id.includes("-e02-"))).toBe(true);
+    const ep3Ids = resolveManhuaFactoryOrderedIds(blocks, "clip", 3);
+    expect(ep3Ids[0]).toMatch(/^recap_card-e03-/);
+    expect(ep3Ids).toHaveLength(7); // recap_card + 六段至 clip
     expect(filterBlocksByEpisode(blocks, 1)).toHaveLength(7);
+    expect(filterBlocksByEpisode(blocks, 3)).toHaveLength(8);
   });
 
   it("成片坞勾选 → 导出 zip 含 manifest 与 ep 目录", async () => {
