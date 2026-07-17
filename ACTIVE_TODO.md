@@ -9,8 +9,7 @@
 
 ## 此刻
 - [x] #805 角色卡主路径 MERGED · Fly 绿
-- [ ] `feat/manhua-character-card-gallery` 跟进批（**57 commits / 未开 PR**）
-  - 10 套组 · 工作区导入导出 · 精简模式 · 全套快捷键 · 随机双人跟筛选
-  - 已拆：DualCompare / TriView / LibraryCard / SheetPreview / CoupleKits / FilterChips / storage
-  - 线上仍以 #805 Fly 验收；本批只在分支
+- [ ] [#806](https://github.com/gabrieltan0506-prog/mvstudiopro/pull/806) 角色卡跟进批 OPEN（~59 commits）
+  - 等 CI + Fly Deploy；串行门禁：MERGED + Deploy success 再合下一刀
+  - 验收：`/canvas` 套组/筛选/快捷键；勿点「同版式运行」
 - 排队：`feat/seedance-probe-cli`
