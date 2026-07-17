@@ -326,14 +326,15 @@ export default function ManhuaCharacterGallery({
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
   const pool = libraryTab === "female" ? females : males;
-  const recentInTab = useMemo(
-    () =>
-      recentIds
-        .map(getManhuaCharacterById)
-        .filter((c): c is ManhuaCharacterTemplate => Boolean(c) && c.gender === libraryTab)
-        .slice(0, 6),
-    [recentIds, libraryTab],
-  );
+  const recentInTab = useMemo(() => {
+    const out: ManhuaCharacterTemplate[] = [];
+    for (const id of recentIds) {
+      const c = getManhuaCharacterById(id);
+      if (c && c.gender === libraryTab) out.push(c);
+      if (out.length >= 6) break;
+    }
+    return out;
+  }, [recentIds, libraryTab]);
 
   const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
     if (gender === "female") onSelectFemale(id);
