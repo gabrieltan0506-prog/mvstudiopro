@@ -2,7 +2,7 @@
  * 漫剧工厂 · 角色库卡片墙 + 设定卡三视图预览 + 画风 A/B/C
  * 设定卡图底部为 FRONT/SIDE/BACK；上方为人像与文案。
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
   formatManhuaCharacterLookSummary,
@@ -26,6 +26,8 @@ type Props = {
   onSelectMale: (id: string) => void;
   onSelectArtStyle: (id: ManhuaArtStyleId) => void;
   onClearManual?: () => void;
+  /** 同版式：铺设定卡生图节点（不自动跑） */
+  onGenerateSameLayout?: (gender: ManhuaCharacterGender) => void;
   reasonZh?: string;
 };
 
@@ -41,7 +43,10 @@ function CharacterSheetPreview({
   compact?: boolean;
 }) {
   const url = getManhuaCharacterPreviewUrl(character.id);
-  const ring = accent === "cyan" ? "border-cyan-400/55 shadow-[0_0_24px_rgba(34,211,238,0.12)]" : "border-amber-400/55 shadow-[0_0_24px_rgba(251,191,36,0.12)]";
+  const ring =
+    accent === "cyan"
+      ? "border-cyan-400/55 shadow-[0_0_24px_rgba(34,211,238,0.12)]"
+      : "border-amber-400/55 shadow-[0_0_24px_rgba(251,191,36,0.12)]";
   const tag =
     accent === "cyan"
       ? "bg-cyan-500/15 text-cyan-100 border-cyan-400/35"
@@ -79,11 +84,14 @@ function CharacterSheetPreview({
 
       {url ? (
         <>
-          <div className={`relative mx-3 mt-2 overflow-hidden rounded-lg border border-white/10 bg-black/50 ${compact ? "h-36" : "h-44"}`}>
+          {/* 设定卡上半左侧为人像；用左上定位裁切，避免裁到右侧文案 */}
+          <div
+            className={`relative mx-3 mt-2 overflow-hidden rounded-lg border border-white/10 bg-black/50 ${compact ? "h-28" : "h-40"}`}
+          >
             <img
               src={url}
               alt={`${character.nameZh} 人像`}
-              className="absolute inset-0 h-[165%] w-full object-cover object-top"
+              className="absolute inset-0 h-full w-[210%] max-w-none object-cover object-[12%_18%]"
               loading="lazy"
             />
           </div>
@@ -95,11 +103,14 @@ function CharacterSheetPreview({
                 已锁定妆造
               </span>
             </div>
-            <div className={`relative overflow-hidden rounded-lg border border-white/10 bg-black/60 ${compact ? "h-28" : "h-32"}`}>
+            {/* 设定卡下半为 FRONT/SIDE/BACK 横排 */}
+            <div
+              className={`relative overflow-hidden rounded-lg border border-white/10 bg-black/60 ${compact ? "h-24" : "h-28"}`}
+            >
               <img
                 src={url}
                 alt={`${character.nameZh} 三视图`}
-                className="absolute inset-0 h-[240%] w-full object-cover object-bottom"
+                className="absolute inset-0 h-[255%] w-full object-cover object-bottom"
                 loading="lazy"
               />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 grid grid-cols-3 bg-gradient-to-t from-black/70 to-transparent px-1 pb-1 pt-4 text-center text-[9px] font-semibold tracking-wide text-white/80">
@@ -133,7 +144,9 @@ function LibraryCard({
   disabled?: boolean;
 }) {
   const [hover, setHover] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const url = getManhuaCharacterPreviewUrl(character.id);
+  const showPreview = hover || pinned;
   const border = selected
     ? accent === "cyan"
       ? "border-cyan-400 shadow-[0_0_0_1px_rgba(34,211,238,0.45)]"
@@ -148,6 +161,10 @@ function LibraryCard({
         onClick={onSelect}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setPinned((v) => !v);
+        }}
         className={`w-full overflow-hidden rounded-xl border bg-black/35 text-left transition disabled:opacity-45 ${border}`}
       >
         <div className="relative h-28 overflow-hidden bg-black/50">
@@ -155,7 +172,7 @@ function LibraryCard({
             <img
               src={url}
               alt={character.nameZh}
-              className="absolute inset-0 h-[160%] w-full object-cover object-top"
+              className="absolute inset-0 h-full w-[200%] max-w-none object-cover object-[12%_16%]"
               loading="lazy"
             />
           ) : (
@@ -177,11 +194,14 @@ function LibraryCard({
         </div>
       </button>
 
-      {hover && url ? (
+      {showPreview && url ? (
         <div className="pointer-events-none absolute left-1/2 top-0 z-30 w-56 -translate-x-1/2 -translate-y-[92%] rounded-xl border border-white/20 bg-[#0c081c]/95 p-2 shadow-2xl backdrop-blur">
-          <div className="mb-1 text-[10px] font-semibold text-white/70">悬停预览妆造 · 三视图</div>
+          <div className="mb-1 flex items-center justify-between text-[10px] font-semibold text-white/70">
+            <span>预览妆造 · 三视图</span>
+            {pinned ? <span className="text-cyan-200/80">已钉住</span> : null}
+          </div>
           <div className="relative h-24 overflow-hidden rounded-lg border border-white/10">
-            <img src={url} alt="" className="absolute inset-0 h-[240%] w-full object-cover object-bottom" />
+            <img src={url} alt="" className="absolute inset-0 h-[255%] w-full object-cover object-bottom" />
             <div className="absolute inset-x-0 bottom-0 grid grid-cols-3 bg-black/55 py-0.5 text-center text-[8px] text-white/85">
               <span>正</span>
               <span>侧</span>
@@ -193,6 +213,14 @@ function LibraryCard({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function EmptyLead({ label }: { label: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-white/15 px-3 py-10 text-center text-[11px] text-white/40">
+      尚未选择{label}
     </div>
   );
 }
@@ -209,17 +237,23 @@ export default function ManhuaCharacterGallery({
   onSelectMale,
   onSelectArtStyle,
   onClearManual,
+  onGenerateSameLayout,
   reasonZh,
 }: Props) {
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
+  const libraryRef = useRef<HTMLDivElement | null>(null);
   const females = useMemo(() => listManhuaCharactersByGender("female"), []);
   const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
-  const focus = libraryTab === "female" ? selectedFemale : selectedMale;
-  const focusAuto = libraryTab === "female" ? femaleAutoApplied : maleAutoApplied;
-  const focusAccent: "cyan" | "amber" = libraryTab === "female" ? "cyan" : "amber";
   const pool = libraryTab === "female" ? females : males;
+
+  const focusLibrary = (gender: ManhuaCharacterGender) => {
+    setLibraryTab(gender);
+    requestAnimationFrame(() => {
+      libraryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  };
 
   return (
     <div className="rounded-xl border border-white/10 bg-black/30 p-3">
@@ -228,7 +262,8 @@ export default function ManhuaCharacterGallery({
           <div className="text-[12px] font-semibold text-white/90">② 角色卡</div>
           <div className="mt-1.5 max-w-xl rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[10px] leading-relaxed text-white/55">
             <span className="font-semibold text-white/70">怎么用：</span>
-            题材自动套用 → 悬停看三视图妆造 → 点选更换（女主青 / 男主琥珀）→ 下方统一画风 → 已选注入角色卡节点
+            题材自动套用 → 悬停/长按看三视图 → 点选更换（女主青 / 男主琥珀）→ 下方统一画风 →
+            「同版式」铺生图节点（需你点运行）
           </div>
         </div>
         {onClearManual ? (
@@ -244,104 +279,120 @@ export default function ManhuaCharacterGallery({
       </div>
       {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+      {/* 双人同显 */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <div className="space-y-2">
-          {focus ? (
-            <CharacterSheetPreview character={focus} accent={focusAccent} autoApplied={focusAuto} />
+          <div className="text-[11px] font-semibold text-cyan-100/80">女主（青色高亮）</div>
+          {selectedFemale ? (
+            <CharacterSheetPreview character={selectedFemale} accent="cyan" autoApplied={femaleAutoApplied} compact />
           ) : (
-            <div className="rounded-xl border border-dashed border-white/15 px-3 py-10 text-center text-[11px] text-white/40">
-              尚未选择{libraryTab === "female" ? "女主" : "男主"}
-            </div>
+            <EmptyLead label="女主" />
           )}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={disabled}
-              onClick={() => {
-                /* 焦点已在右侧库；切到当前性别 Tab 便于换人 */
-                setLibraryTab(libraryTab);
-              }}
-              className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40 ${
-                libraryTab === "female"
-                  ? "border border-cyan-400/40 bg-cyan-500/20 text-cyan-50"
-                  : "border border-amber-400/40 bg-amber-500/20 text-amber-50"
-              }`}
+              onClick={() => focusLibrary("female")}
+              className="rounded-lg border border-cyan-400/40 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-40"
             >
-              更换角色
+              更换女主
             </button>
             <button
               type="button"
-              disabled
-              title="稍后接入生图：同版式生成新人"
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] text-white/40 disabled:opacity-60"
+              disabled={disabled || !onGenerateSameLayout}
+              onClick={() => onGenerateSameLayout?.("female")}
+              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
             >
               同版式生成新人
             </button>
             <button
               type="button"
-              disabled={disabled || !focus}
-              onClick={() => {
-                if (libraryTab === "female") onSelectFemale("");
-                else onSelectMale("");
-              }}
+              disabled={disabled || !selectedFemale}
+              onClick={() => onSelectFemale("")}
               className="rounded-lg border border-white/15 bg-transparent px-3 py-1.5 text-[11px] text-white/55 disabled:opacity-40"
             >
-              清除当前
+              清除
             </button>
           </div>
         </div>
 
-        <div>
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold text-white/70">从角色库更换</div>
-            <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
-              <button
-                type="button"
-                onClick={() => setLibraryTab("female")}
-                className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
-                  libraryTab === "female" ? "bg-cyan-500/25 text-cyan-100" : "text-white/55"
-                }`}
-              >
-                女主
-              </button>
-              <button
-                type="button"
-                onClick={() => setLibraryTab("male")}
-                className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
-                  libraryTab === "male" ? "bg-amber-500/25 text-amber-100" : "text-white/55"
-                }`}
-              >
-                男主
-              </button>
-            </div>
-          </div>
-          <div className="mb-2 text-[10px] text-white/40">悬停预览三视图 · 点选即注入</div>
-          <div className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
-            {pool.map((c) => (
-              <LibraryCard
-                key={c.id}
-                character={c}
-                selected={(libraryTab === "female" ? femaleId : maleId) === c.id}
-                accent={libraryTab === "female" ? "cyan" : "amber"}
-                disabled={disabled}
-                onSelect={() => {
-                  if (libraryTab === "female") onSelectFemale(c.id);
-                  else onSelectMale(c.id);
-                }}
-              />
-            ))}
+        <div className="space-y-2">
+          <div className="text-[11px] font-semibold text-amber-100/80">男主（琥珀高亮）</div>
+          {selectedMale ? (
+            <CharacterSheetPreview character={selectedMale} accent="amber" autoApplied={maleAutoApplied} compact />
+          ) : (
+            <EmptyLead label="男主" />
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => focusLibrary("male")}
+              className="rounded-lg border border-amber-400/40 bg-amber-500/20 px-3 py-1.5 text-[11px] font-semibold text-amber-50 disabled:opacity-40"
+            >
+              更换男主
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !onGenerateSameLayout}
+              onClick={() => onGenerateSameLayout?.("male")}
+              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
+            >
+              同版式生成新人
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !selectedMale}
+              onClick={() => onSelectMale("")}
+              className="rounded-lg border border-white/15 bg-transparent px-3 py-1.5 text-[11px] text-white/55 disabled:opacity-40"
+            >
+              清除
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 px-2.5 py-2 text-[11px] text-cyan-100/80">
-          女主：{selectedFemale ? `${selectedFemale.nameZh} · ${selectedFemale.temperamentTags.slice(0, 2).join("·")}` : "未选"}
-          {femaleAutoApplied ? " ·自动" : ""}
+      <div ref={libraryRef} className="mt-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] font-semibold text-white/70">从角色库更换</div>
+          <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
+            <button
+              type="button"
+              onClick={() => setLibraryTab("female")}
+              className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
+                libraryTab === "female" ? "bg-cyan-500/25 text-cyan-100" : "text-white/55"
+              }`}
+            >
+              女主
+            </button>
+            <button
+              type="button"
+              onClick={() => setLibraryTab("male")}
+              className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
+                libraryTab === "male" ? "bg-amber-500/25 text-amber-100" : "text-white/55"
+              }`}
+            >
+              男主
+            </button>
+          </div>
         </div>
-        <div className="rounded-lg border border-amber-400/20 bg-amber-500/5 px-2.5 py-2 text-[11px] text-amber-100/80">
-          男主：{selectedMale ? `${selectedMale.nameZh} · ${selectedMale.temperamentTags.slice(0, 2).join("·")}` : "未选"}
-          {maleAutoApplied ? " ·自动" : ""}
+        <div className="mb-2 text-[10px] text-white/40">
+          桌面悬停预览三视图 · 手机长按钉住预览 · 右键也可钉住/取消
+        </div>
+        <div className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4">
+          {pool.map((c) => (
+            <LibraryCard
+              key={c.id}
+              character={c}
+              selected={(libraryTab === "female" ? femaleId : maleId) === c.id}
+              accent={libraryTab === "female" ? "cyan" : "amber"}
+              disabled={disabled}
+              onSelect={() => {
+                if (libraryTab === "female") onSelectFemale(c.id);
+                else onSelectMale(c.id);
+              }}
+            />
+          ))}
         </div>
       </div>
 
@@ -381,7 +432,7 @@ export default function ManhuaCharacterGallery({
           })}
         </div>
         <p className="mt-2 text-[10px] leading-snug text-white/40">
-          仙侠/权谋偏 CG，都市情感偏仿真人，轻喜可用二维。选定后写入角色卡与关键静帧提示词；库预览图目前为 CG 设定卡底图。
+          选定后写入角色卡与关键静帧提示词。库预览图目前为 CG 设定卡底图；「同版式生成新人」会铺一张竖版设定卡生图节点，需你在画布上点运行。
         </p>
       </div>
     </div>

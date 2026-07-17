@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
-import { normalizeCanvasBlock } from "@/lib/canvasTypes";
+import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
@@ -23,9 +23,12 @@ import {
 import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
 import {
   DEFAULT_MANHUA_ART_STYLE_ID,
+  buildManhuaCharacterSheetGenPrompt,
+  getManhuaArtStylePreset,
   recommendManhuaArtStyleFromTopic,
   recommendManhuaCharactersFromTopic,
   type ManhuaArtStyleId,
+  type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import {
@@ -66,6 +69,16 @@ function extractGeminiScriptText(json: unknown): string {
 }
 
 const LS_KEY = "mv-freeform-canvas-v1";
+const LS_FACTORY_PREFS_KEY = "mv-manhua-factory-character-prefs-v1";
+
+type FactoryCharacterPrefs = {
+  femaleId?: string;
+  maleId?: string;
+  artStyleId?: ManhuaArtStyleId;
+  femaleLeadManual?: boolean;
+  maleLeadManual?: boolean;
+  artStyleManual?: boolean;
+};
 
 function loadCanvasState(): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   try {
@@ -89,8 +102,27 @@ function saveCanvasState(blocks: CanvasBlock[], edges: CanvasEdge[]) {
   }
 }
 
+function loadFactoryCharacterPrefs(): FactoryCharacterPrefs {
+  try {
+    const raw = localStorage.getItem(LS_FACTORY_PREFS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as FactoryCharacterPrefs;
+  } catch {
+    return {};
+  }
+}
+
+function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
+  try {
+    localStorage.setItem(LS_FACTORY_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore quota */
+  }
+}
+
 export default function OmniCanvas() {
   const initial = useMemo(() => loadCanvasState(), []);
+  const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
@@ -99,13 +131,15 @@ export default function OmniCanvas() {
   const [factorySceneId, setFactorySceneId] = useState("");
   /** 手选场景后不再被题材自动覆盖（⑤D） */
   const [sceneManual, setSceneManual] = useState(false);
-  const [factoryFemaleId, setFactoryFemaleId] = useState("");
-  const [factoryMaleId, setFactoryMaleId] = useState("");
+  const [factoryFemaleId, setFactoryFemaleId] = useState(initialFactoryPrefs.femaleId || "");
+  const [factoryMaleId, setFactoryMaleId] = useState(initialFactoryPrefs.maleId || "");
   /** 用户手选后不再被题材自动覆盖（4.B） */
-  const [femaleLeadManual, setFemaleLeadManual] = useState(false);
-  const [maleLeadManual, setMaleLeadManual] = useState(false);
-  const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(DEFAULT_MANHUA_ART_STYLE_ID);
-  const [artStyleManual, setArtStyleManual] = useState(false);
+  const [femaleLeadManual, setFemaleLeadManual] = useState(Boolean(initialFactoryPrefs.femaleLeadManual));
+  const [maleLeadManual, setMaleLeadManual] = useState(Boolean(initialFactoryPrefs.maleLeadManual));
+  const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(
+    initialFactoryPrefs.artStyleId || DEFAULT_MANHUA_ART_STYLE_ID,
+  );
+  const [artStyleManual, setArtStyleManual] = useState(Boolean(initialFactoryPrefs.artStyleManual));
   const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   /** 手选手法后不再被题材自动覆盖 */
@@ -179,6 +213,56 @@ export default function OmniCanvas() {
       setFactoryArtStyleId(recommendedArtStyle.artStyleId);
     }
   }, [recommendedArtStyle.artStyleId, artStyleManual]);
+
+  useEffect(() => {
+    saveFactoryCharacterPrefs({
+      femaleId: factoryFemaleId,
+      maleId: factoryMaleId,
+      artStyleId: factoryArtStyleId,
+      femaleLeadManual,
+      maleLeadManual,
+      artStyleManual,
+    });
+  }, [
+    factoryFemaleId,
+    factoryMaleId,
+    factoryArtStyleId,
+    femaleLeadManual,
+    maleLeadManual,
+    artStyleManual,
+  ]);
+
+  const spawnSameLayoutSheet = useCallback(
+    (gender: ManhuaCharacterGender) => {
+      const seedId = gender === "female" ? factoryFemaleId : factoryMaleId;
+      const style = getManhuaArtStylePreset(factoryArtStyleId);
+      const prompt = buildManhuaCharacterSheetGenPrompt({
+        characterId: seedId || undefined,
+        gender,
+        artStyleId: factoryArtStyleId,
+      });
+      const originX = blocks.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
+      const originY = 120;
+      const sheet = defaultCanvasBlock("image", originX, originY);
+      sheet.id = makeCanvasBlockId("charsheet");
+      sheet.prompt = prompt;
+      sheet.aspectRatio = "9:16";
+      sheet.imageModel = "nano-banana-2";
+      // 仅预填 prompt；不挂本地 /manhua-characters 相对路径（云端生图拉不到）
+      sheet.imageMode = "generate";
+      sheet.refImageUrl = undefined;
+      sheet.width = 380;
+      sheet.height = 420;
+      const nextBlocks = [...blocks, sheet];
+      setBlocks(nextBlocks);
+      saveCanvasState(nextBlocks, edges);
+      toast.success(
+        `已铺「同版式设定卡·${gender === "female" ? "女主" : "男主"}」节点（${style.labelZh}）`,
+        { description: "节点已预填，打开即可核对 prompt。点运行才会扣费——验收阶段请勿点运行。" },
+      );
+    },
+    [blocks, edges, factoryFemaleId, factoryMaleId, factoryArtStyleId],
+  );
 
   const recommendedCraft = useMemo(
     () => recommendCraftShotFromTopic(factoryTopic),
@@ -709,7 +793,43 @@ export default function OmniCanvas() {
               ) : null}
             </div>
 
-            {/* ② 编导工厂：确认或跳过后解锁 */}
+            {/* ② 角色卡：始终可预览/换人/选画风（不烧 token；不依赖编剧解锁） */}
+            <div className="mt-4 max-w-4xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5">
+              <ManhuaCharacterGallery
+                femaleId={factoryFemaleId}
+                maleId={factoryMaleId}
+                femaleAutoApplied={femaleAutoApplied}
+                maleAutoApplied={maleAutoApplied}
+                artStyleId={factoryArtStyleId}
+                artStyleAutoApplied={artStyleAutoApplied}
+                disabled={factoryBusy}
+                reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
+                  selectedCharacterIds.length
+                    ? "；已选将在「铺编导节点」时注入角色卡。预览/换人/画风/铺同版式节点均不烧 token。"
+                    : "；预览与换人不烧 token。"
+                }`}
+                onSelectFemale={(id) => {
+                  setFemaleLeadManual(true);
+                  setFactoryFemaleId(id);
+                }}
+                onSelectMale={(id) => {
+                  setMaleLeadManual(true);
+                  setFactoryMaleId(id);
+                }}
+                onSelectArtStyle={(id) => {
+                  setArtStyleManual(true);
+                  setFactoryArtStyleId(id);
+                }}
+                onGenerateSameLayout={spawnSameLayoutSheet}
+                onClearManual={() => {
+                  setFemaleLeadManual(false);
+                  setMaleLeadManual(false);
+                  setArtStyleManual(false);
+                }}
+              />
+            </div>
+
+            {/* ③ 编导工厂：确认或跳过后解锁 */}
             <div
               className={`mt-4 max-w-3xl rounded-2xl border p-4 md:p-5 ${
                 directorUnlocked || writerConfirmed
@@ -718,7 +838,7 @@ export default function OmniCanvas() {
               }`}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div className="text-sm font-semibold text-white/90">② 编导分镜</div>
+                <div className="text-sm font-semibold text-white/90">③ 编导分镜</div>
                 <span className="text-[11px] text-white/40">
                   {directorUnlocked || writerConfirmed
                     ? "节拍 · 灯光运镜 · 静帧 · 成片"
@@ -800,38 +920,6 @@ export default function OmniCanvas() {
                   填写题材或选手动剧种后，将按关键词自动推荐一条主场景（如「秘境」→ 洞府）。
                 </p>
               )}
-
-              <div className="mt-3 max-w-4xl">
-                <ManhuaCharacterGallery
-                  femaleId={factoryFemaleId}
-                  maleId={factoryMaleId}
-                  femaleAutoApplied={femaleAutoApplied}
-                  maleAutoApplied={maleAutoApplied}
-                  artStyleId={factoryArtStyleId}
-                  artStyleAutoApplied={artStyleAutoApplied}
-                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                  reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
-                    selectedCharacterIds.length ? "；已选将注入「角色卡」节点（外形锚点 + 画风 + 提示词）。" : ""
-                  }`}
-                  onSelectFemale={(id) => {
-                    setFemaleLeadManual(true);
-                    setFactoryFemaleId(id);
-                  }}
-                  onSelectMale={(id) => {
-                    setMaleLeadManual(true);
-                    setFactoryMaleId(id);
-                  }}
-                  onSelectArtStyle={(id) => {
-                    setArtStyleManual(true);
-                    setFactoryArtStyleId(id);
-                  }}
-                  onClearManual={() => {
-                    setFemaleLeadManual(false);
-                    setMaleLeadManual(false);
-                    setArtStyleManual(false);
-                  }}
-                />
-              </div>
 
               <div className="mt-3 max-w-md space-y-3">
                 <div>

@@ -3,6 +3,7 @@ import {
   MANHUA_CHARACTER_ASSET_LIBRARY,
   MANHUA_CHARACTER_FORMULA_ZH,
   buildManhuaCharacterPromptBlock,
+  buildManhuaCharacterSheetGenPrompt,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
   listManhuaCharactersByGender,
@@ -53,5 +54,16 @@ describe("manhuaCharacterAssetLibrary", () => {
     const rec = recommendManhuaCharactersFromTopic("");
     expect(rec.femaleId).toBe("char_f_01");
     expect(rec.maleId).toBe("char_m_02");
+  });
+
+  it("builds same-layout character sheet prompt", () => {
+    const prompt = buildManhuaCharacterSheetGenPrompt({
+      characterId: "char_f_01",
+      artStyleId: "cg_drama",
+    });
+    expect(prompt).toContain("FRONT / SIDE / BACK");
+    expect(prompt).toContain("沈清辞");
+    expect(prompt).toContain("新面孔新人");
+    expect(prompt).toContain("CG 漫剧");
   });
 });
