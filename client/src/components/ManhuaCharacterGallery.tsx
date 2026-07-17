@@ -8,6 +8,7 @@ import {
   MANHUA_COUPLE_PACKS,
   MANHUA_TEMPERAMENT_PACKS,
   buildManhuaCharacterClipboardText,
+  buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
   formatManhuaCharacterLookSummary,
   getManhuaArtStylePreset,
@@ -727,6 +728,13 @@ export default function ManhuaCharacterGallery({
     window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
+  const copyDualBrief = async () => {
+    const text = buildManhuaDualLeadBrief(femaleId, maleId, { artStyleId });
+    const ok = await copyText(text);
+    setCopyFlash(ok ? "双人短名片已复制" : "复制失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
   const exportCoupleSelection = async () => {
     const payload = serializeManhuaCoupleSelection({ femaleId, maleId, artStyleId });
     const ok = await copyText(payload);
@@ -892,6 +900,14 @@ export default function ManhuaCharacterGallery({
             className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
           >
             复制双人锚点
+          </button>
+          <button
+            type="button"
+            disabled={disabled || (!femaleId && !maleId)}
+            onClick={() => void copyDualBrief()}
+            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            复制短名片
           </button>
           <button
             type="button"

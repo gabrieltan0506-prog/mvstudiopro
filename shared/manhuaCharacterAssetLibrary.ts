@@ -555,6 +555,25 @@ export function parseManhuaFavoriteIds(raw: string): string[] {
     .filter((id) => Boolean(getManhuaCharacterById(id)));
 }
 
+/** 双人短名片（适合贴进剧本备注） */
+export function buildManhuaDualLeadBrief(
+  femaleId?: string | null,
+  maleId?: string | null,
+  opts?: { artStyleId?: string | null },
+): string {
+  const f = femaleId ? getManhuaCharacterById(femaleId) : null;
+  const m = maleId ? getManhuaCharacterById(maleId) : null;
+  if (!f && !m) return "";
+  const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const line = (c: ManhuaCharacterTemplate, role: string) =>
+    `${role}：${c.nameZh}（${c.jobZh}${c.age ? `·${c.age}岁` : ""}）· ${c.temperamentTags.slice(0, 3).join("、")}`;
+  return [
+    f ? line(f, "女主") : "女主：未选",
+    m ? line(m, "男主") : "男主：未选",
+    `画风：${style.labelZh}`,
+  ].join("\n");
+}
+
 /** 当前双人选型导出（可粘贴给协作 / 以后导入） */
 export function serializeManhuaCoupleSelection(opts: {
   femaleId?: string | null;
