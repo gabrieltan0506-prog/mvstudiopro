@@ -6,7 +6,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
   MANHUA_COUPLE_PACKS,
-  MANHUA_TEMPERAMENT_PACKS,
   buildManhuaCharacterClipboardText,
   buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
@@ -48,12 +47,13 @@ import {
 } from "@/lib/manhuaCharacterGalleryStorage";
 import ManhuaCharacterCoupleKitsPanel from "@/components/ManhuaCharacterCoupleKitsPanel";
 import ManhuaCharacterLibraryCard from "@/components/ManhuaCharacterLibraryCard";
+import ManhuaCharacterLibraryFilterChips, {
+  type ManhuaAgeBand,
+} from "@/components/ManhuaCharacterLibraryFilterChips";
 import ManhuaCharacterSheetPreview from "@/components/ManhuaCharacterSheetPreview";
 import ManhuaDualCompareStrip from "@/components/ManhuaDualCompareStrip";
 
-type AgeBand = "" | "le25" | "26_28" | "ge29";
-
-function matchesAgeBand(c: ManhuaCharacterTemplate, band: AgeBand): boolean {
+function matchesAgeBand(c: ManhuaCharacterTemplate, band: ManhuaAgeBand): boolean {
   if (!band) return true;
   const age = c.age || 0;
   if (!age) return false;
@@ -119,7 +119,7 @@ export default function ManhuaCharacterGallery({
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [jobFilter, setJobFilter] = useState("");
-  const [ageBand, setAgeBand] = useState<AgeBand>("");
+  const [ageBand, setAgeBand] = useState<ManhuaAgeBand>("");
   const [packFilterId, setPackFilterId] = useState(() => initialPrefs.packFilterId || "");
   const [sortMode, setSortMode] = useState<"default" | "name" | "age">(
     () => initialPrefs.sortMode || "default",
@@ -1155,141 +1155,21 @@ export default function ManhuaCharacterGallery({
                 收藏筛选结果
               </button>
             </div>
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => setPackFilterId("")}
-                className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                  !packFilterId ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-                }`}
-              >
-                全部组合
-              </button>
-              {MANHUA_TEMPERAMENT_PACKS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={disabled}
-                  title={p.tags.join(" · ")}
-                  onClick={() => {
-                    setPackFilterId((prev) => (prev === p.id ? "" : p.id));
-                    setTagFilter("");
-                  }}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                    packFilterId === p.id
-                      ? "border-violet-400/45 bg-violet-500/15 text-violet-100"
-                      : "border-white/10 text-white/50 hover:border-white/25"
-                  }`}
-                >
-                  {p.labelZh}
-                </button>
-              ))}
-            </div>
-            {tagOptions.length ? (
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setTagFilter("")}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                    !tagFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-                  }`}
-                >
-                  全部气质
-                </button>
-                {tagOptions.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => setTagFilter((prev) => (prev === t ? "" : t))}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                      tagFilter === t
-                        ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
-                        : "border-white/10 text-white/50 hover:border-white/25"
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {(
-                [
-                  ["", "全部年龄"],
-                  ["le25", "≤25"],
-                  ["26_28", "26–28"],
-                  ["ge29", "≥29"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id || "all-age"}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setAgeBand(id)}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                    ageBand === id
-                      ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
-                      : "border-white/10 text-white/50 hover:border-white/25"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-              {(
-                [
-                  [0, "不限年龄差"],
-                  [3, "年龄差≤3"],
-                  [5, "年龄差≤5"],
-                ] as const
-              ).map(([n, label]) => (
-                <button
-                  key={`gap-${n}`}
-                  type="button"
-                  disabled={disabled}
-                  title="相对另一侧已选角色的年龄差"
-                  onClick={() => setAgeGapMax(n)}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                    ageGapMax === n
-                      ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
-                      : "border-white/10 text-white/50 hover:border-white/25"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {jobOptions.length ? (
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setJobFilter("")}
-                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                    !jobFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-                  }`}
-                >
-                  全部职业
-                </button>
-                {jobOptions.map((j) => (
-                  <button
-                    key={j}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => setJobFilter((prev) => (prev === j ? "" : j))}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                      jobFilter === j
-                        ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
-                        : "border-white/10 text-white/50 hover:border-white/25"
-                    }`}
-                  >
-                    {j}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            <ManhuaCharacterLibraryFilterChips
+              disabled={disabled}
+              packFilterId={packFilterId}
+              tagFilter={tagFilter}
+              jobFilter={jobFilter}
+              ageBand={ageBand}
+              ageGapMax={ageGapMax}
+              tagOptions={tagOptions}
+              jobOptions={jobOptions}
+              onPackFilterId={setPackFilterId}
+              onTagFilter={setTagFilter}
+              onJobFilter={setJobFilter}
+              onAgeBand={setAgeBand}
+              onAgeGapMax={setAgeGapMax}
+            />
           </>
         ) : null}
         {!compactUi && similarInTab.length ? (
