@@ -78,6 +78,13 @@ describe("canvasDramaStudio factory", () => {
     expect(beats.prompt).not.toMatch(/Nolan|王家卫/i);
   });
 
+  it("auto-injects craft shot from topic when craftShotIds omitted", () => {
+    const { blocks } = spawnManhuaDramaStudio({ topic: "宫斗权谋翻盘" });
+    const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
+    expect(beats.prompt).toContain("【手法条目库·原子镜头】");
+    expect(beats.prompt).toContain("高反差");
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",
