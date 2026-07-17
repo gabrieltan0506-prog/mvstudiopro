@@ -350,14 +350,16 @@ export function getCraftShotById(id: string) {
 
 /** 题材关键词 → 手法条目（与角色库 4.B 同口径：可自动套、可更换） */
 const TOPIC_CRAFT_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
-  { keys: ["权谋", "宫斗", "对峙", "翻盘", "步步为营"], preferIds: ["light_03_high_contrast", "cam_01_slow_push", "emo_01_restrained_dread"] },
-  { keys: ["清冷", "克制", "高冷", "疏离"], preferIds: ["light_01_window_motivated", "cam_02_locked_long", "emo_04_cold_control"] },
-  { keys: ["甜", "恋爱", "暧昧", "治愈"], preferIds: ["light_05_neon_spill", "cam_06_intimate_cu", "emo_03_ambiguous_longing"] },
-  { keys: ["悬疑", "秘密", "揭秘", "调查"], preferIds: ["light_07_top_cut", "cam_04_whip_insert", "emo_07_obsessive_calm"] },
-  { keys: ["追逐", "赛车", "速度", "动作"], preferIds: ["cam_03_track_follow", "tr_04_whip_bridge", "emo_06_ensemble_pulse"] },
-  { keys: ["家庭", "伦理", "饭桌", "长辈"], preferIds: ["cam_08_shot_reverse", "emo_05_family_tension", "light_01_window_motivated"] },
-  { keys: ["奇观", "秘境", "史诗", "巨物"], preferIds: ["cam_07_wide_scale", "light_04_volumetric", "emo_08_solemn_quiet"] },
-  { keys: ["和解", "亲情", "温暖", "发现"], preferIds: ["light_06_magic_hour", "cam_05_low_wonder", "emo_02_warm_wonder"] },
+  { keys: ["权谋", "宫斗", "对峙", "翻盘", "步步为营", "宫墙"], preferIds: ["light_03_high_contrast", "cam_01_slow_push", "emo_01_restrained_dread"] },
+  { keys: ["清冷", "克制", "高冷", "疏离", "冷感"], preferIds: ["light_01_window_motivated", "cam_02_locked_long", "emo_04_cold_control"] },
+  { keys: ["甜", "恋爱", "暧昧", "治愈", "心动"], preferIds: ["light_05_neon_spill", "cam_06_intimate_cu", "emo_03_ambiguous_longing"] },
+  { keys: ["悬疑", "秘密", "揭秘", "调查", "推理"], preferIds: ["light_07_top_cut", "cam_04_whip_insert", "emo_07_obsessive_calm"] },
+  { keys: ["追逐", "赛车", "速度", "动作", "逃"], preferIds: ["cam_03_track_follow", "tr_04_whip_bridge", "emo_06_ensemble_pulse"] },
+  { keys: ["家庭", "伦理", "饭桌", "长辈", "团圆"], preferIds: ["cam_08_shot_reverse", "emo_05_family_tension", "light_01_window_motivated"] },
+  { keys: ["奇观", "秘境", "史诗", "巨物", "星际"], preferIds: ["cam_07_wide_scale", "light_04_volumetric", "emo_08_solemn_quiet"] },
+  { keys: ["和解", "亲情", "温暖", "发现", "重逢"], preferIds: ["light_06_magic_hour", "cam_05_low_wonder", "emo_02_warm_wonder"] },
+  { keys: ["谈判", "商战", "霸总", "会议室"], preferIds: ["emo_04_cold_control", "cam_08_shot_reverse", "light_07_top_cut"] },
+  { keys: ["雨夜", "霓虹", "都市夜"], preferIds: ["light_05_neon_spill", "cam_06_intimate_cu", "tr_05_audio_lead"] },
 ];
 
 export type CraftShotRecommendResult = {
