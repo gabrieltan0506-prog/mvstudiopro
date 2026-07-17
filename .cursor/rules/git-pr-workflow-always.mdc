@@ -13,6 +13,7 @@ alwaysApply: true
 - **串行合併門禁**：開出 PR 後，必須監測到該 PR **MERGED**，才可 **開下一個** PR。禁止上一個還開著就連開下一個。
 - **Deploy 門禁（硬）**：上一 PR 的 `main` Fly Deploy 必須是 **success**，才可 **`gh pr merge` 下一 PR**。`cancelled` / `failure` / `in_progress` 都不算过。禁止「刚 MERGED 十几秒就合下一刀」——会把上一刀 Deploy **顶掉取消**（#790 被 #791 挤掉即此错）。
 - **合併 ≠ 部署成功**：`gh pr view` 顯示 MERGED 不夠；還要查对应 Actions 是否 **success**。若 Deploy **failure** / **cancelled**，视同未完成：等下一次含该提交的 Deploy 绿，或重跑/热修，直到绿。
+- **部署門禁只認 Fly**：Vercel 已 Disconnect / Git 自動部署關閉。PR 上若仍有舊 Vercel check 紅燈可忽略；**不以 Vercel 為 merge/deploy 門禁**。
 - **合併期間不停工**：可繼續在功能分支**寫代碼**；**开 PR** 受 15–20 分钟节流 + Deploy 门禁约束。禁止「盯 Deploy → 立刻开合下一 PR」的自动连合脚本。
 - **自动化时可代合**：用户说「全面自动化 / 自己 merge」时，须同时满足：CI 过、**上一 Deploy 已绿**、**距上一张 PR 创建 ≥15 分钟**。仅用户明文「我来合 / 不要代合」时才停手。
 - **合并/部署失败自修**：无法 merge / CI 红 / Deploy failure·cancelled → 自己查原因、改、再推，直到 Deploy success；不要甩给用户（除非缺密钥/权限）。

@@ -12,9 +12,11 @@ alwaysApply: true
 - 使用者要 **線上生效 / 推送部署 / 要能上網址驗證** → 必須做到 **遠端有對應提交（push 分支或依流程合併）**，**不可**只在本地 `checkout`/`reset` 就結束。
 - `git push` 失敗 → **立即回報錯誤與已做嘗試**，不要假裝完成。
 
-## Fly
+## 部署通道（Fly only）
 
-- **不主動**提 Fly 部署、不預設使用者要去 Fly；**僅在其明文要求** Fly/ worker / `fly.toml` 等時再接。
+- **線上只走 Fly**（`main` → Actions `Fly Deploy`）。Vercel Git 自動部署已關閉；**禁止**再開/依賴 Vercel Preview 當門禁。
+- 使用者要求線上生效 → 以 **Fly Deploy success** 為準，忽略 Vercel 紅燈（含 rate limit）。
+- 對方明文要求時可操作 Fly / `fly.toml` / Deploy workflow。
 
 ## 任務閉環
 
