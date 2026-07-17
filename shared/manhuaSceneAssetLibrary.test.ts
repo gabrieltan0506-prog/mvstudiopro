@@ -76,4 +76,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 府邸 from 内宅闺阁", () => {
     expect(recommendManhuaSceneFromTopic("内宅闺阁宅斗").sceneId).toBe("scene_08");
   });
+
+  it("recommends 战场 from 攻城", () => {
+    expect(recommendManhuaSceneFromTopic("攻城大战战旗").sceneId).toBe("scene_09");
+  });
 });
