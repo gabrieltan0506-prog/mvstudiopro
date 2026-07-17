@@ -946,7 +946,7 @@ export default function OmniCanvas() {
                   <p className="mt-1 text-[10px] text-white/30">写入编导反推节点输出结构。</p>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
+                  <label className="block text-[11px] text-white/45">包装动效（已铺可同步）（可选 · 1 条）</label>
                   <select
                     value={factoryMotionId}
                     onChange={(e) => {
