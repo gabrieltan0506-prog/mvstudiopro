@@ -49,4 +49,8 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft from 校园 keyword", () => {
     expect(recommendCraftShotFromTopic("校园教室校服青春").craftShotId).toBe("light_01_window_motivated");
   });
+
+  it("recommends craft from 末日 keyword", () => {
+    expect(recommendCraftShotFromTopic("废土避难所末日求生").craftShotId).toBe("cam_07_wide_scale");
+  });
 });
