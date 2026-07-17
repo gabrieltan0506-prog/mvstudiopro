@@ -326,11 +326,16 @@ function DualCompareStrip({
 }) {
   if (!female && !male) return null;
   const style = getManhuaArtStylePreset(artStyleId);
+  const ageGap =
+    female?.age && male?.age ? Math.abs(female.age - male.age) : null;
   return (
     <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="text-[11px] font-semibold text-white/75">双人对照</div>
-        <div className="text-[10px] text-white/40">画风 · {style.labelZh}</div>
+        <div className="text-[10px] text-white/40">
+          画风 · {style.labelZh}
+          {ageGap != null ? ` · 年龄差 ${ageGap} 岁` : ""}
+        </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {[
