@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MANHUA_FACTORY_STAGE_ORDER,
+  applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
   extractFactoryMotionHints,
   isTransientFactoryError,
@@ -83,6 +84,18 @@ describe("canvasDramaStudio factory", () => {
     const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
     expect(beats.prompt).toContain("【手法条目库·原子镜头】");
     expect(beats.prompt).toContain("高反差");
+  });
+
+  it("applyFactoryPrefsToBlocks updates reverse mode and craft inject", () => {
+    const { blocks } = spawnManhuaDramaStudio({ topic: "都市恋爱" });
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      craftShotIds: ["cam_06_intimate_cu"],
+      videoReverseOutputMode: "en",
+      motionPromptIds: [],
+    });
+    const reverse = next.find((b) => b.id.startsWith("reverse-"))!;
+    expect(reverse.videoReverseOutputMode).toBe("en");
+    expect(reverse.prompt).toContain("贴身近景");
   });
 
   it("infers genre from topic when genreId omitted", () => {

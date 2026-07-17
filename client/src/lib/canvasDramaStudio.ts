@@ -225,6 +225,51 @@ export function applyTopicToFactoryStory(blocks: CanvasBlock[], topic: string): 
   });
 }
 
+function stripInjectBlock(prompt: string, marker: string): string {
+  const p = String(prompt || "");
+  const idx = p.indexOf(marker);
+  if (idx < 0) return p.trim();
+  return p.slice(0, idx).trim();
+}
+
+/**
+ * 把当前工厂选择的手法 / 动效 / 反推档应用到已铺好的节点（不必整板重铺）。
+ */
+export function applyFactoryPrefsToBlocks(
+  blocks: CanvasBlock[],
+  opts: {
+    craftShotIds?: string[];
+    motionPromptIds?: string[];
+    videoReverseOutputMode?: "zh" | "en" | "compact";
+  },
+): CanvasBlock[] {
+  const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
+  const motionBlock = buildMotionPromptInjectBlock(opts.motionPromptIds || []);
+  const reverseMode =
+    opts.videoReverseOutputMode === "en" || opts.videoReverseOutputMode === "compact"
+      ? opts.videoReverseOutputMode
+      : "zh";
+
+  return blocks.map((b) => {
+    if (b.id.startsWith("beats-") || b.id.startsWith("reverse-") || b.id.startsWith("keyart-")) {
+      const base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
+      return {
+        ...b,
+        prompt: craftBlock ? `${base}\n\n${craftBlock}` : base,
+        ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
+      };
+    }
+    if (b.id.startsWith("clip-") || b.id.startsWith("omni_edit-")) {
+      const base = stripInjectBlock(b.prompt, "【包装动效手法】");
+      return {
+        ...b,
+        prompt: motionBlock ? `${base}\n\n${motionBlock}` : base,
+      };
+    }
+    return b;
+  });
+}
+
 export function resolveManhuaFactoryOrderedIds(
   blocks: CanvasBlock[],
   untilStage: ManhuaFactoryStageKey = "clip",
