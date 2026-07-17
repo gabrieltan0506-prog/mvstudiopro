@@ -19,6 +19,10 @@ import {
   recommendManhuaSceneIdFromTopic,
   resolveManhuaGenreId,
 } from "@shared/screenwriterGenreTemplates";
+import {
+  composeManhuaScenePromptBlock,
+  getManhuaSceneTemplate,
+} from "@shared/manhuaSceneAssetLibrary";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import { buildManhuaCharacterPromptBlock } from "@shared/manhuaCharacterAssetLibrary";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
@@ -232,32 +236,71 @@ function stripInjectBlock(prompt: string, marker: string): string {
   return p.slice(0, idx).trim();
 }
 
+/** 去掉 marker 起至下一「【」段（或文末），保留后续注入块 */
+function stripMarkedSection(prompt: string, marker: string): string {
+  const p = String(prompt || "");
+  const idx = p.indexOf(marker);
+  if (idx < 0) return p.trim();
+  const after = p.slice(idx);
+  const nextRel = after.slice(marker.length).search(/\n【/);
+  if (nextRel < 0) return p.slice(0, idx).trim();
+  const cutEnd = idx + marker.length + nextRel;
+  return `${p.slice(0, idx).trimEnd()}\n\n${p.slice(cutEnd).trimStart()}`.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /**
- * 把当前工厂选择的手法 / 动效 / 反推档应用到已铺好的节点（不必整板重铺）。
+ * 把当前工厂选择的手法 / 动效 / 场景 / 反推档应用到已铺好的节点（不必整板重铺）。
  */
 export function applyFactoryPrefsToBlocks(
   blocks: CanvasBlock[],
   opts: {
     craftShotIds?: string[];
     motionPromptIds?: string[];
+    sceneId?: string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
   const motionBlock = buildMotionPromptInjectBlock(opts.motionPromptIds || []);
+  const scene = getManhuaSceneTemplate(opts.sceneId);
+  const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
   const reverseMode =
     opts.videoReverseOutputMode === "en" || opts.videoReverseOutputMode === "compact"
       ? opts.videoReverseOutputMode
       : "zh";
 
   return blocks.map((b) => {
+    const syncScene =
+      b.id.startsWith("story-") ||
+      b.id.startsWith("beats-") ||
+      b.id.startsWith("reverse-") ||
+      b.id.startsWith("keyart-");
+
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-") || b.id.startsWith("keyart-")) {
-      const base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
+      let base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
+      if (syncScene) {
+        base = stripMarkedSection(base, "【漫剧场景资产库");
+        if (b.id.startsWith("keyart-")) {
+          base = stripMarkedSection(base, "【本集主场景优先】");
+        }
+      }
+      const parts = [
+        base,
+        sceneBlock && syncScene ? sceneBlock : "",
+        b.id.startsWith("keyart-") && scene
+          ? `【本集主场景优先】${scene.nameZh}\n直接吸收其生图提示词与核心元素，角色必须融入场景：\n${scene.promptZh}`
+          : "",
+        craftBlock,
+      ].filter(Boolean);
       return {
         ...b,
-        prompt: craftBlock ? `${base}\n\n${craftBlock}` : base,
+        prompt: parts.join("\n\n"),
         ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
       };
+    }
+    if (b.id.startsWith("story-") && sceneBlock) {
+      let base = stripMarkedSection(b.prompt, "【漫剧场景资产库");
+      return { ...b, prompt: `${base}\n\n${sceneBlock}` };
     }
     if (b.id.startsWith("clip-") || b.id.startsWith("omni_edit-")) {
       const base = stripInjectBlock(b.prompt, "【包装动效手法】");

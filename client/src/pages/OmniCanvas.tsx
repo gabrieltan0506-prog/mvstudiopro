@@ -217,7 +217,7 @@ export default function OmniCanvas() {
     [factoryCraftShotId],
   );
 
-  /** 已铺工厂板时：手法/动效/反推档变更同步进节点，不必整板重铺（短防抖） */
+  /** 已铺工厂板时：手法/动效/场景/反推档变更同步进节点，不必整板重铺（短防抖） */
   useEffect(() => {
     const hasFactory = blocks.some((b) => MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)));
     if (!hasFactory || factoryBusy) return;
@@ -226,6 +226,7 @@ export default function OmniCanvas() {
         const next = applyFactoryPrefsToBlocks(prev, {
           craftShotIds: selectedCraftShotIds,
           motionPromptIds: selectedMotionIds,
+          sceneId: factorySceneId || undefined,
           videoReverseOutputMode: factoryReverseMode,
         });
         const changed = next.some((b, i) => {
@@ -243,7 +244,14 @@ export default function OmniCanvas() {
     }, 180);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅跟工厂选择器
-  }, [factoryCraftShotId, factoryMotionId, factoryReverseMode, selectedCraftShotIds, selectedMotionIds]);
+  }, [
+    factoryCraftShotId,
+    factoryMotionId,
+    factorySceneId,
+    factoryReverseMode,
+    selectedCraftShotIds,
+    selectedMotionIds,
+  ]);
   const motionGrouped = useMemo(() => {
     const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
     return cats.map((category) => ({

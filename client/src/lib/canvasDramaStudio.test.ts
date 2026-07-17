@@ -98,6 +98,26 @@ describe("canvasDramaStudio factory", () => {
     expect(reverse.prompt).toContain("贴身近景");
   });
 
+  it("applyFactoryPrefsToBlocks syncs scene into story/keyart", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      genreId: "xianxia",
+      sceneId: "scene_01",
+      topic: "外门弟子",
+    });
+    expect(blocks.find((b) => b.id.startsWith("story-"))!.prompt).toContain("仙侠宗门");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      sceneId: "scene_04",
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const story = next.find((b) => b.id.startsWith("story-"))!.prompt;
+    const key = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(story).toContain("秘境洞府");
+    expect(story).not.toContain("仙侠宗门场景");
+    expect(key).toContain("秘境洞府");
+    expect(key).toContain("本集主场景优先");
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",
