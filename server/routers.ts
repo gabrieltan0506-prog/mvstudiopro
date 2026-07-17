@@ -62,8 +62,9 @@ import { synthesizeGrowthAnalyses } from "./growth/synthesizeGrowthAnalyses";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
+import { buildAiManhuaRisingBoard } from "./growth/aiManhuaRising";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadArchiveItemsNearDaysAgo, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
@@ -4844,6 +4845,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               globalBlueOceanWords,
               platformDetails,
               officialCampaignTopicExamples: officialCampaigns.topicExamples || [],
+              aiManhuaRising: await (async () => {
+                try {
+                  const douyinItems = ((store.collections as any)?.douyin?.items || []) as TrendItem[];
+                  if (!douyinItems.length || !input.platforms.includes("douyin")) return null;
+                  const baseline = await loadArchiveItemsNearDaysAgo("douyin", Number(input.windowDays) || 7, 2);
+                  return buildAiManhuaRisingBoard({
+                    items: douyinItems,
+                    baselineItems: baseline.items,
+                    windowDays: Number(input.windowDays) || 7,
+                    limit: 10,
+                  });
+                } catch {
+                  return null;
+                }
+              })(),
             },
           };
         } catch (error) {
@@ -6910,13 +6926,32 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
         }
 
+        let dashboardWithDrama = platformDashboard;
+        if (platformDashboard) {
+          try {
+            const douyinItems = ((store.collections as any)?.douyin?.items || []) as TrendItem[];
+            if (douyinItems.length) {
+              const baseline = await loadArchiveItemsNearDaysAgo("douyin", selectedWindowDays >= 7 ? 7 : selectedWindowDays, 2);
+              const aiManhuaRising = buildAiManhuaRisingBoard({
+                items: douyinItems,
+                baselineItems: baseline.items,
+                windowDays: selectedWindowDays >= 7 ? 7 : selectedWindowDays,
+                limit: 10,
+              });
+              dashboardWithDrama = { ...platformDashboard, aiManhuaRising };
+            }
+          } catch {
+            dashboardWithDrama = platformDashboard;
+          }
+        }
+
         return {
           success: true,
-          platformDashboard,
+          platformDashboard: dashboardWithDrama,
           debug: {
             route: "mvAnalysis.getPlatformDashboard",
             totalMs: Date.now() - t0,
-            hasDashboard: Boolean(platformDashboard),
+            hasDashboard: Boolean(dashboardWithDrama),
             error: null as string | null,
           },
         };

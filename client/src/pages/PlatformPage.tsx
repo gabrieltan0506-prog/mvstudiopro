@@ -413,6 +413,22 @@ type PlatformDashboard = {
   }>;
   actionCards: Array<{ title: string; detail: string }>;
   conversationStarters: any[];
+  /** 抖音 AI 漫剧合集飙升（服务端结构化，非 LLM） */
+  aiManhuaRising?: {
+    windowDays: number;
+    hasBaseline: boolean;
+    note: string;
+    entries: Array<{
+      mixId: string;
+      mixName: string;
+      dramaKind: string;
+      mixPlayCount: number;
+      delta7d: number | null;
+      status: string;
+      author?: string;
+      sampleTitle?: string;
+    }>;
+  } | null;
 };
 
 type ProcessingStepCard = {
@@ -7641,6 +7657,47 @@ export default function PlatformPage() {
                 启动分析后，上方四格会先出战略摘要；完成后可下载含蓝海词的 PNG 长图（平台趋势报表，不是决策智库全景）。
               </p>
             ) : null}
+
+            {(() => {
+              const rising =
+                platformDashboard?.aiManhuaRising?.entries?.length
+                  ? platformDashboard.aiManhuaRising
+                  : visualReportData?.aiManhuaRising?.entries?.length
+                    ? visualReportData.aiManhuaRising
+                    : null;
+              if (!rising?.entries?.length) return null;
+              const fmt = (n: number) =>
+                n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n || 0);
+              return (
+                <div className="mt-4 rounded-2xl border border-[#ff4fb8]/25 bg-[rgba(255,79,184,0.06)] p-4">
+                  <div className="text-sm font-semibold text-[#ff9fe0]">
+                    AI 漫剧 · {rising.windowDays} 天飙升榜
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/60">{rising.note}</p>
+                  <div className="mt-3 space-y-2">
+                    {rising.entries.slice(0, 8).map((row, idx) => (
+                      <div
+                        key={row.mixId || idx}
+                        className="grid grid-cols-[28px_1fr_auto_auto] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
+                      >
+                        <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-white">{row.mixName}</div>
+                          <div className="truncate text-[10px] text-[#c9c0e6]/50">
+                            {row.author ? `${row.author} · ` : ""}
+                            {row.sampleTitle || row.dramaKind}
+                          </div>
+                        </div>
+                        <span className="font-semibold text-[#3eedff]">{fmt(row.mixPlayCount)}</span>
+                        <span className="font-semibold text-[#ff4fb8]">
+                          {row.delta7d == null ? "—" : `+${fmt(row.delta7d)}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {visualReportData ? (
               <div className="mt-4 rounded-2xl border border-[#6fffb0]/20 bg-[rgba(111,255,176,0.06)] p-4">

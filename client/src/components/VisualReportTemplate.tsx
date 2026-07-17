@@ -18,6 +18,22 @@ export type VisualReportData = {
    * 不区分平台，聚合各平台高价值词条。
    */
   globalBlueOceanWords?: Array<{ primary: string; secondary: string[] }>;
+  /** 抖音 AI 漫剧合集飙升榜（由 mix_info.mixPlayCount 聚合，非 LLM 编造） */
+  aiManhuaRising?: {
+    windowDays: number;
+    hasBaseline: boolean;
+    note: string;
+    entries: Array<{
+      mixId: string;
+      mixName: string;
+      dramaKind: string;
+      mixPlayCount: number;
+      delta7d: number | null;
+      status: string;
+      author?: string;
+      sampleTitle?: string;
+    }>;
+  } | null;
   platformDetails: Array<{
     platform: string;
     displayName: string;
@@ -186,6 +202,59 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
             )}
           </div>
         </>
+
+        {/* ── AI 漫剧飙升榜（抖音 mix_info 结构化）── */}
+        {(data.aiManhuaRising?.entries?.length || 0) > 0 && (
+          <>
+            <div style={sec}>🎬 AI 漫剧 · {data.aiManhuaRising!.windowDays} 天飙升榜</div>
+            <div style={{ background: isDark ? "rgba(255,79,184,0.05)" : "rgba(180,40,100,0.04)", border: `1px solid ${isDark ? "rgba(255,79,184,0.25)" : "rgba(180,40,100,0.25)"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+              <div style={{ fontSize: "11px", color: muted, marginBottom: "12px", lineHeight: 1.6 }}>{data.aiManhuaRising!.note}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {data.aiManhuaRising!.entries.slice(0, 8).map((row, idx) => {
+                  const statusLabel =
+                    row.status === "surging" ? "飙升"
+                      : row.status === "hot" ? "高热"
+                        : row.status === "new" ? "新爆"
+                          : "稳态";
+                  const statusColor =
+                    row.status === "surging" ? C[2]
+                      : row.status === "hot" ? C[3]
+                        : row.status === "new" ? C[1]
+                          : C[6];
+                  const playTxt = row.mixPlayCount >= 10000
+                    ? `${(row.mixPlayCount / 10000).toFixed(1)}万`
+                    : String(row.mixPlayCount || 0);
+                  const deltaTxt = row.delta7d == null
+                    ? "—"
+                    : row.delta7d >= 10000
+                      ? `+${(row.delta7d / 10000).toFixed(1)}万`
+                      : `+${row.delta7d}`;
+                  return (
+                    <div key={row.mixId || idx} style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", alignItems: "center", padding: "8px 10px", background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)", borderRadius: "8px" }}>
+                      <span style={{ fontSize: "12px", fontWeight: 800, color: muted }}>#{idx + 1}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: "13px", fontWeight: 700, color: txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.mixName}</div>
+                        <div style={{ fontSize: "10px", color: muted, marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {row.author ? `${row.author} · ` : ""}{row.sampleTitle || row.dramaKind}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: C[0], textAlign: "right" }}>{playTxt}</span>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: statusColor, textAlign: "right" }}>{deltaTxt}</span>
+                      <span style={{ fontSize: "10px", fontWeight: 700, color: statusColor, textAlign: "right" }}>{statusLabel}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", marginTop: "8px", padding: "0 10px", fontSize: "10px", color: muted }}>
+                <span />
+                <span>剧名</span>
+                <span style={{ textAlign: "right" }}>合集播放</span>
+                <span style={{ textAlign: "right" }}>{data.aiManhuaRising!.hasBaseline ? "环比增量" : "环比(待建)"}</span>
+                <span style={{ textAlign: "right" }}>状态</span>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* ── trafficSupport + hotFestivals (g2) ── */}
         {((data.trafficSupport?.length || 0) > 0 || (data.hotFestivals?.length || 0) > 0) && (

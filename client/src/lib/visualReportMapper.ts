@@ -104,6 +104,26 @@ export function mapGenerateVisualReportResult(
     });
   }
 
+  const aiManhuaRisingRaw = report.aiManhuaRising;
+  const aiManhuaRising =
+    aiManhuaRisingRaw && typeof aiManhuaRisingRaw === "object" && Array.isArray((aiManhuaRisingRaw as any).entries)
+      ? {
+          windowDays: Number((aiManhuaRisingRaw as any).windowDays) || Number(windowDays) || 7,
+          hasBaseline: Boolean((aiManhuaRisingRaw as any).hasBaseline),
+          note: String((aiManhuaRisingRaw as any).note || ""),
+          entries: ((aiManhuaRisingRaw as any).entries as any[]).map((row) => ({
+            mixId: String(row?.mixId || ""),
+            mixName: String(row?.mixName || ""),
+            dramaKind: String(row?.dramaKind || "unknown"),
+            mixPlayCount: Number(row?.mixPlayCount || 0) || 0,
+            delta7d: row?.delta7d == null ? null : Number(row.delta7d) || 0,
+            status: String(row?.status || "steady"),
+            author: row?.author ? String(row.author) : undefined,
+            sampleTitle: row?.sampleTitle ? String(row.sampleTitle) : undefined,
+          })),
+        }
+      : null;
+
   return {
     reportTitle: String(report.reportTitle || `平台趋势看板 · 近${windowDays}天`),
     dateRange: buildVisualReportDateRange(windowDays),
@@ -119,6 +139,7 @@ export function mapGenerateVisualReportResult(
     trafficSupport: Array.isArray(report.trafficSupport) ? (report.trafficSupport as string[]) : [],
     hotFestivals: Array.isArray(report.hotFestivals) ? (report.hotFestivals as string[]) : [],
     globalBlueOceanWords,
+    aiManhuaRising,
     platformDetails,
   };
 }

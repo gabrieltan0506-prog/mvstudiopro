@@ -12,6 +12,18 @@ import { getAdaptiveRouteDecision, prioritizeAdaptiveSeeds, recordAdaptiveRouteR
 
 export type TrendSource = "live" | "seed";
 
+/** 抖音合集/短剧分类：AI 漫剧 vs 普通短剧 vs 无法判定 */
+export type DouyinDramaKind = "ai_manhua" | "short_drama" | "unknown";
+
+export type DouyinDramaInfo = {
+  mixId: string;
+  mixName: string;
+  currentEpisode?: number;
+  totalEpisodes?: number;
+  /** 合集总播放量（剧级热度主指标） */
+  mixPlayCount?: number;
+};
+
 export type TrendItem = {
   id: string;
   title: string;
@@ -50,6 +62,11 @@ export type TrendItem = {
   /** 信息流 / DOU+ / 薯条 / 品牌合作标等——平台若返回则标记，便于从「自然爆款」池剔除 */
   isPaidPromotion?: boolean;
   paidPromotionReason?: string;
+  /** 是否为短剧/合集（抖音 aweme.mix_info） */
+  isDrama?: boolean;
+  /** AI 漫剧 / 普通短剧 / 未知（标题+合集名启发式） */
+  dramaKind?: DouyinDramaKind;
+  dramaInfo?: DouyinDramaInfo;
 };
 
 /** 抖音 Web author 常见字段：企业认证、政务媒体、蓝标文案（用于结构化排除商业号） */
@@ -73,23 +90,130 @@ function metaFromDouyinAuthor(author: unknown): Partial<Pick<TrendItem, "account
   return {};
 }
 
-/** 抖音单条：信息流广告 / raw_ad 等 */
-function metaFromDouyinAweme(item: unknown): Partial<Pick<TrendItem, "isPaidPromotion" | "paidPromotionReason">> {
+const AI_MANHUA_HINT_RE = /AI\s*漫剧|AI漫|动态漫|漫剧|条漫剧|AI\s*短剧|虚拟角色剧/i;
+const SHORT_DRAMA_HINT_RE = /短剧|红果|竖屏剧|微短剧|连载剧/;
+
+/** 标题 / 合集名 / 标签 → AI 漫剧 vs 普通短剧 */
+export function inferDouyinDramaKind(text: string, tags: string[] = []): DouyinDramaKind {
+  const hay = `${text} ${tags.join(" ")}`.trim();
+  if (!hay) return "unknown";
+  if (AI_MANHUA_HINT_RE.test(hay)) return "ai_manhua";
+  if (SHORT_DRAMA_HINT_RE.test(hay)) return "short_drama";
+  return "unknown";
+}
+
+/** 从 aweme.mix_info 提取短剧合集字段 */
+export function dramaMetaFromDouyinAweme(
+  item: unknown,
+  fallbackTitle = "",
+  fallbackTags: string[] = [],
+): Partial<Pick<TrendItem, "isDrama" | "dramaKind" | "dramaInfo">> {
   const it = item as Record<string, any> | null | undefined;
   if (!it || typeof it !== "object") return {};
+  const mix = it.mix_info ?? it.mixInfo ?? it.aweme_info?.mix_info ?? it.aweme_info?.mixInfo;
+  if (!mix || typeof mix !== "object") return {};
+
+  const mixId = String(mix.mix_id ?? mix.mixId ?? mix.mix_id_str ?? "").trim();
+  const mixName = String(mix.mix_name ?? mix.mixName ?? mix.title ?? "").trim();
+  if (!mixId && !mixName) return { isDrama: true, dramaKind: "unknown" };
+
+  const statis = mix.statis ?? mix.stats ?? mix.statistics ?? {};
+  const currentEpisode = Number(statis.current_episode ?? statis.currentEpisode ?? mix.current_episode ?? 0) || undefined;
+  const totalEpisodes = Number(
+    statis.updated_to_episode
+    ?? statis.updatedToEpisode
+    ?? statis.total_episode
+    ?? statis.totalEpisode
+    ?? mix.total_episode
+    ?? 0,
+  ) || undefined;
+  const mixPlayCount = Number(
+    statis.play_view_count
+    ?? statis.playViewCount
+    ?? statis.play_count
+    ?? statis.playCount
+    ?? mix.play_count
+    ?? 0,
+  ) || undefined;
+
+  const dramaKind = inferDouyinDramaKind(
+    `${mixName} ${fallbackTitle} ${String(it.desc ?? "")}`,
+    fallbackTags,
+  );
+
+  return {
+    isDrama: true,
+    dramaKind,
+    dramaInfo: {
+      mixId: mixId || mixName,
+      mixName: mixName || mixId || fallbackTitle || "未命名合集",
+      currentEpisode,
+      totalEpisodes,
+      mixPlayCount,
+    },
+  };
+}
+
+/** 抖音单条：信息流广告 / raw_ad + 短剧合集 mix_info */
+function metaFromDouyinAweme(
+  item: unknown,
+  options?: { title?: string; tags?: string[] },
+): Partial<Pick<TrendItem, "isPaidPromotion" | "paidPromotionReason" | "isDrama" | "dramaKind" | "dramaInfo">> {
+  const it = item as Record<string, any> | null | undefined;
+  if (!it || typeof it !== "object") return {};
+  const out: Partial<Pick<TrendItem, "isPaidPromotion" | "paidPromotionReason" | "isDrama" | "dramaKind" | "dramaInfo">> = {
+    ...dramaMetaFromDouyinAweme(it, options?.title, options?.tags),
+  };
   if (it.is_ads === 1 || it.is_ads === true) {
-    return { isPaidPromotion: true, paidPromotionReason: "douyin:is_ads" };
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "douyin:is_ads";
+  } else if (it.raw_ad_data != null && typeof it.raw_ad_data === "object") {
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "douyin:raw_ad_data";
+  } else if (it.advertisement != null || it.aweme_advertisement != null) {
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "douyin:advertisement";
+  } else if (Number(it.ad_label_version ?? it.adLabelVersion ?? 0) > 0) {
+    out.isPaidPromotion = true;
+    out.paidPromotionReason = "douyin:ad_label_version";
   }
-  if (it.raw_ad_data != null && typeof it.raw_ad_data === "object") {
-    return { isPaidPromotion: true, paidPromotionReason: "douyin:raw_ad_data" };
+  return out;
+}
+
+/** 网页搜索返回体 → aweme 节点列表（兼容 data[].aweme_info / aweme_list） */
+export function extractDouyinSearchAwemes(payload: unknown): Array<Record<string, any>> {
+  const root = payload as Record<string, any> | null | undefined;
+  if (!root || typeof root !== "object") return [];
+  const out: Array<Record<string, any>> = [];
+  const pushAweme = (aweme: unknown) => {
+    if (!aweme || typeof aweme !== "object") return;
+    const id = String((aweme as any).aweme_id ?? (aweme as any).group_id ?? "").trim();
+    if (!id) return;
+    out.push(aweme as Record<string, any>);
+  };
+
+  if (Array.isArray(root.aweme_list)) {
+    root.aweme_list.forEach(pushAweme);
   }
-  if (it.advertisement != null || it.aweme_advertisement != null) {
-    return { isPaidPromotion: true, paidPromotionReason: "douyin:advertisement" };
+
+  const data = root.data;
+  if (Array.isArray(data)) {
+    for (const entry of data) {
+      if (!entry || typeof entry !== "object") continue;
+      if ((entry as any).aweme_info) pushAweme((entry as any).aweme_info);
+      if (Array.isArray((entry as any).aweme_list)) {
+        (entry as any).aweme_list.forEach(pushAweme);
+      }
+      // 部分搜索卡片本身就是 aweme
+      if ((entry as any).aweme_id) pushAweme(entry);
+    }
+  } else if (data && typeof data === "object") {
+    if (Array.isArray((data as any).aweme_list)) {
+      (data as any).aweme_list.forEach(pushAweme);
+    }
   }
-  if (Number(it.ad_label_version ?? it.adLabelVersion ?? 0) > 0) {
-    return { isPaidPromotion: true, paidPromotionReason: "douyin:ad_label_version" };
-  }
-  return {};
+
+  return out;
 }
 
 /** 小红书 noteCard / 搜索 note：企业专业号、品牌合作笔记 */
@@ -766,7 +890,9 @@ function extractDouyinCreatorItems(state: unknown) {
             .filter(Boolean)
           : [],
         ...metaFromDouyinAuthor(author),
-        ...metaFromDouyinAweme(record.aweme_info ?? record),
+        ...metaFromDouyinAweme(record.aweme_info ?? record, { title, tags: Array.isArray(record.text_extra)
+          ? record.text_extra.map((entry: any) => String(entry?.hashtag_name ?? "").trim()).filter(Boolean)
+          : [] }),
       });
     }
 
@@ -809,7 +935,12 @@ function extractDouyinCreatorBillboardItems(payload: unknown, bucket: string) {
             ? record.key_words.map((item) => String(item ?? "").trim()).filter(Boolean)
             : [],
           ...metaFromDouyinAuthor(author),
-          ...metaFromDouyinAweme(entry),
+          ...metaFromDouyinAweme(entry, {
+            title,
+            tags: Array.isArray(record.key_words)
+              ? record.key_words.map((item: any) => String(item ?? "").trim()).filter(Boolean)
+              : [],
+          }),
         });
       });
       return;
@@ -2077,6 +2208,159 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   });
 }
 
+function mapDouyinAwemeToTrendItem(
+  aweme: Record<string, any>,
+  bucket: string,
+): TrendItem | null {
+  const title = String(aweme.desc ?? aweme.caption ?? "").trim();
+  const awemeId = String(aweme.aweme_id ?? aweme.group_id ?? "").trim();
+  if (!awemeId || !title) return null;
+  const stats = aweme.statistics ?? {};
+  const author = aweme.author ?? {};
+  const tags = Array.isArray(aweme.text_extra)
+    ? aweme.text_extra
+      .map((entry: any) => String(entry?.hashtag_name ?? "").trim())
+      .filter(Boolean)
+    : [];
+  return {
+    id: awemeId,
+    title,
+    bucket,
+    author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
+    url: `https://www.douyin.com/video/${awemeId}`,
+    publishedAt: safeDateFromUnix(Number(aweme.create_time)),
+    likes: Number(stats.digg_count ?? 0) || undefined,
+    comments: Number(stats.comment_count ?? 0) || undefined,
+    shares: Number(stats.share_count ?? 0) || undefined,
+    views: Number(stats.play_count ?? 0) || undefined,
+    hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
+    contentType: "video",
+    tags,
+    ...metaFromDouyinAuthor(author),
+    ...metaFromDouyinAweme(aweme, { title, tags }),
+  };
+}
+
+/** 默认 AI 漫剧 / 短剧搜索词（可用 DOUYIN_DRAMA_SEARCH_KEYWORDS 覆盖） */
+const DEFAULT_DOUYIN_DRAMA_SEARCH_KEYWORDS = [
+  "AI漫剧",
+  "AI短剧",
+  "重生漫剧",
+  "动态漫",
+  "红果漫剧",
+];
+
+async function collectDouyinWebSearchItems(
+  cookies: string[],
+  keywords: string[],
+): Promise<{ items: TrendItem[]; notes: string[]; requestCount: number }> {
+  const notes: string[] = [];
+  const items: TrendItem[] = [];
+  let requestCount = 0;
+  if (!cookies.length) {
+    notes.push("Douyin web search skipped: no DOUYIN_COOKIE.");
+    return { items, notes, requestCount };
+  }
+  if (!keywords.length) {
+    notes.push("Douyin web search skipped: no drama search keywords.");
+    return { items, notes, requestCount };
+  }
+
+  const enabled = String(process.env.DOUYIN_DRAMA_SEARCH_ENABLED || "1") !== "0";
+  if (!enabled) {
+    notes.push("Douyin web search skipped: DOUYIN_DRAMA_SEARCH_ENABLED=0.");
+    return { items, notes, requestCount };
+  }
+
+  const pages = Math.max(1, Math.min(3, parseNumberEnv("DOUYIN_DRAMA_SEARCH_PAGES", 1)));
+  const pageSize = Math.max(4, Math.min(20, parseNumberEnv("DOUYIN_DRAMA_SEARCH_PAGE_SIZE", 10)));
+  const cookie = cookies[0];
+  const searchRoute = await getAdaptiveRouteDecision("douyin", "drama_web_search", {
+    keywordLimit: keywords.length,
+    pageCount: pages,
+    enabled: true,
+  });
+  if (!searchRoute.enabled) {
+    notes.push("Douyin web search skipped by adaptive config due to sustained low yield.");
+    return { items, notes, requestCount };
+  }
+
+  const keywordWindow = keywords.slice(0, Math.max(1, searchRoute.keywordLimit || keywords.length));
+  const tasks = keywordWindow.map((keyword) => async () => {
+    const keywordItems: TrendItem[] = [];
+    for (let page = 0; page < pages; page += 1) {
+      const offset = page * pageSize;
+      const url = new URL("https://www.douyin.com/aweme/v1/web/general/search/single/");
+      url.searchParams.set("device_platform", "webapp");
+      url.searchParams.set("aid", "6383");
+      url.searchParams.set("channel", "channel_pc_web");
+      url.searchParams.set("search_channel", "aweme_general");
+      url.searchParams.set("keyword", keyword);
+      url.searchParams.set("search_source", "normal_search");
+      url.searchParams.set("query_correct_type", "1");
+      url.searchParams.set("is_filter_search", "0");
+      url.searchParams.set("from_group_id", "");
+      url.searchParams.set("offset", String(offset));
+      url.searchParams.set("count", String(pageSize));
+      url.searchParams.set("cookie_enabled", "true");
+      url.searchParams.set("browser_language", "zh-CN");
+      url.searchParams.set("browser_platform", "MacIntel");
+      url.searchParams.set("browser_name", "Chrome");
+      url.searchParams.set("browser_version", "120.0.0.0");
+
+      try {
+        const response = await fetch(url.toString(), {
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            cookie,
+            referer: `https://www.douyin.com/search/${encodeURIComponent(keyword)}`,
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+        });
+        requestCount += 1;
+        if (!response.ok) {
+          notes.push(`Douyin web search "${keyword}" page ${page + 1} responded with ${response.status}.`);
+          break;
+        }
+        const payload = await response.json() as Record<string, any>;
+        const statusCode = Number(payload?.status_code ?? 0);
+        if (statusCode !== 0 && statusCode !== 200) {
+          notes.push(`Douyin web search "${keyword}" page ${page + 1} status_code=${statusCode} (${String(payload?.status_msg ?? "unknown")}).`);
+          break;
+        }
+        const awemes = extractDouyinSearchAwemes(payload);
+        for (const aweme of awemes) {
+          const mapped = mapDouyinAwemeToTrendItem(aweme, `douyin_search_drama:${keyword}`);
+          if (mapped) keywordItems.push(mapped);
+        }
+        notes.push(`Fetched ${awemes.length} Douyin web search items for "${keyword}" page ${page + 1}.`);
+        if (!awemes.length) break;
+      } catch (error) {
+        notes.push(`Douyin web search "${keyword}" page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+        break;
+      }
+    }
+    return keywordItems;
+  });
+
+  const results = await runBatches(tasks, Math.min(2, keywordWindow.length));
+  results.forEach((list) => items.push(...list));
+  await recordAdaptiveRouteRun({
+    platform: "douyin",
+    routeKey: "drama_web_search",
+    yieldCount: items.length,
+    requestCount,
+  });
+  await recordAdaptiveSeedRun({
+    platform: "douyin",
+    routeKey: "drama_web_search",
+    seeds: keywordWindow,
+    yieldedCount: items.length,
+  });
+  notes.push(`Douyin drama web search keywords=${keywordWindow.join(", ")}, items=${items.length}.`);
+  return { items, notes, requestCount };
+}
+
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookies = parseCookiePool("DOUYIN_COOKIE", "DOUYIN_COOKIE_BACKUP");
   const creatorKeywordLimit = Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6));
@@ -2097,6 +2381,11 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     getPlatformSeeds("douyin"),
     creatorIndexRoute.keywordLimit || creatorKeywordLimit,
   );
+  const explicitDramaKeywords = parseCsvEnv("DOUYIN_DRAMA_SEARCH_KEYWORDS");
+  const dramaSearchKeywords = Array.from(new Set([
+    ...(explicitDramaKeywords.length ? explicitDramaKeywords : DEFAULT_DOUYIN_DRAMA_SEARCH_KEYWORDS),
+    ...creatorKeywords.filter((k) => /漫剧|短剧|动态漫|红果/i.test(k)),
+  ])).slice(0, Math.max(2, parseNumberEnv("DOUYIN_DRAMA_SEARCH_KEYWORD_LIMIT", 5)));
   const creatorCenterEnabled = String(process.env.DOUYIN_CREATOR_CENTER_ENABLED || "1") !== "0";
   const creatorIndexEnabled = String(process.env.DOUYIN_CREATOR_INDEX_ENABLED || "1") !== "0";
   const topicItems: TrendItem[] = [];
@@ -2185,7 +2474,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
               contentType: "video" as const,
               tags,
               ...metaFromDouyinAuthor(author),
-              ...metaFromDouyinAweme(item),
+              ...metaFromDouyinAweme(item, { title, tags }),
             } satisfies TrendItem;
           })
           .filter(Boolean) as TrendItem[];
@@ -2228,6 +2517,11 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       notes.push("Douyin creator index skipped: disabled by DOUYIN_CREATOR_INDEX_ENABLED=0.");
     }
 
+    const dramaSearch = await collectDouyinWebSearchItems(cookies, dramaSearchKeywords);
+    items.push(...dramaSearch.items);
+    notes.push(...dramaSearch.notes);
+    requestCount += dramaSearch.requestCount;
+
     if (items.length) {
       const deduped = dedupeById(items);
       const feedYield = deduped.filter((item) => item.bucket === "douyin_feed").length;
@@ -2243,7 +2537,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
           platform: "douyin",
           routeKey: "creator_index",
           yieldCount: creatorYield,
-          requestCount: Math.max(0, requestCount - feedRequestCount),
+          requestCount: Math.max(0, requestCount - feedRequestCount - dramaSearch.requestCount),
         });
         await recordAdaptiveSeedRun({
           platform: "douyin",

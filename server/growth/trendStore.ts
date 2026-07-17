@@ -550,6 +550,21 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
       bucket.set(item.id, item);
       continue;
     }
+    const mergedDramaInfo = item.dramaInfo || current.dramaInfo
+      ? {
+          mixId: String(item.dramaInfo?.mixId || current.dramaInfo?.mixId || "").trim(),
+          mixName: String(item.dramaInfo?.mixName || current.dramaInfo?.mixName || "").trim(),
+          currentEpisode: item.dramaInfo?.currentEpisode ?? current.dramaInfo?.currentEpisode,
+          totalEpisodes: Math.max(
+            item.dramaInfo?.totalEpisodes || 0,
+            current.dramaInfo?.totalEpisodes || 0,
+          ) || undefined,
+          mixPlayCount: Math.max(
+            item.dramaInfo?.mixPlayCount || 0,
+            current.dramaInfo?.mixPlayCount || 0,
+          ) || undefined,
+        }
+      : undefined;
     bucket.set(item.id, {
       ...current,
       ...item,
@@ -566,6 +581,11 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
       publishedAt: item.publishedAt || current.publishedAt,
       url: item.url || current.url,
       author: item.author || current.author,
+      isDrama: Boolean(item.isDrama || current.isDrama) || undefined,
+      dramaKind: item.dramaKind && item.dramaKind !== "unknown"
+        ? item.dramaKind
+        : (current.dramaKind || item.dramaKind),
+      dramaInfo: mergedDramaInfo?.mixId || mergedDramaInfo?.mixName ? mergedDramaInfo : undefined,
     });
   }
   return sortItems(Array.from(bucket.values()));
@@ -2650,4 +2670,28 @@ export function isTrendCollectionStale(collectedAt?: string, maxAgeHours = 6) {
   const timestamp = new Date(collectedAt).getTime();
   if (!Number.isFinite(timestamp)) return true;
   return Date.now() - timestamp > maxAgeHours * 60 * 60 * 1000;
+}
+
+/** 读取最接近 N 天前的平台 archive 条目样本（用于合集播放环比） */
+export async function loadArchiveItemsNearDaysAgo(
+  platform: GrowthPlatform,
+  daysAgo = 7,
+  toleranceDays = 2,
+): Promise<{ archivedAt?: string; items: TrendItem[] }> {
+  const archiveIndex = await readArchiveIndexFile();
+  const targetMs = Date.now() - Math.max(1, daysAgo) * 24 * 60 * 60 * 1000;
+  const toleranceMs = Math.max(1, toleranceDays) * 24 * 60 * 60 * 1000;
+  const candidates = archiveIndex
+    .filter((entry) => entry.platform === platform && entry.itemCount > 0)
+    .map((entry) => ({
+      entry,
+      dist: Math.abs(new Date(entry.archivedAt).getTime() - targetMs),
+    }))
+    .filter((row) => Number.isFinite(row.dist) && row.dist <= toleranceMs)
+    .sort((a, b) => a.dist - b.dist);
+
+  const best = candidates[0]?.entry;
+  if (!best) return { items: [] };
+  const items = await readArchiveCollectionItems(best);
+  return { archivedAt: best.archivedAt, items };
 }
