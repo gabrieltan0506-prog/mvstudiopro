@@ -967,7 +967,7 @@ async function appendDramaMixDailySnapshot(collection: PlatformTrendCollection) 
     const id = String(row.mixId || "").trim();
     if (id) merged.set(id, row);
   }
-  for (const row of byMix.values()) {
+  for (const row of Array.from(byMix.values())) {
     const prev = merged.get(row.mixId);
     const prevPlay = Number(prev?.mixPlayCount || 0);
     if (!prev || row.mixPlayCount >= prevPlay) merged.set(row.mixId, row);

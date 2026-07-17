@@ -248,7 +248,7 @@ export function selectByGrowthPotential(
       + Number(it.likes || 0);
     if (nextScore > prevScore) mixBest.set(mixId, it);
   }
-  afterMixDedupe.push(...mixBest.values());
+  afterMixDedupe.push(...Array.from(mixBest.values()));
 
   // ── 3. 同账号均值（用于 breakout 检测） ────────────────────────────────
   const authorAvg = buildAuthorAvgEngagement(afterMixDedupe);
