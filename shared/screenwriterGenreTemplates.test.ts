@@ -5,6 +5,7 @@ import {
   getScreenwriterGenreTemplate,
   inferManhuaGenreFromTopic,
   listScreenwriterGenres,
+  recommendManhuaSceneIdFromTopic,
   resolveManhuaGenreId,
 } from "./screenwriterGenreTemplates";
 
@@ -31,7 +32,8 @@ describe("screenwriterGenreTemplates + scene library", () => {
       topic: "外门弟子闯秘境",
     });
     expect(story).toContain("【编剧剧种模板");
-    expect(story).toContain("仙侠宗门");
+    // ⑤D：题材「秘境」优先于剧种默认宗门
+    expect(story).toContain("秘境洞府");
     expect(story).toContain("外门弟子闯秘境");
 
     const key = buildManhuaStagePromptWithGenre("key_art", {
@@ -40,6 +42,16 @@ describe("screenwriterGenreTemplates + scene library", () => {
     });
     expect(key).toContain("校园教室");
     expect(key).toContain("本集主场景优先");
+  });
+
+  it("recommends scene id from topic keywords not only genre default", () => {
+    const rec = recommendManhuaSceneIdFromTopic({ topic: "外门弟子闯秘境" });
+    expect(rec.inferredGenre).toBe(true);
+    expect(rec.genreId).toBe("xianxia");
+    expect(rec.sceneId).toBe("scene_04");
+    expect(recommendManhuaSceneIdFromTopic({ genreId: "urban", topic: "办公室谈判" }).sceneId).toBe(
+      "scene_12",
+    );
   });
 
   it("infers genre from topic keywords", () => {

@@ -105,7 +105,8 @@ describe("canvasDramaStudio factory", () => {
     expect(spawned.genreInferred).toBe(true);
     expect(spawned.resolvedGenreId).toBe("scifi");
     expect(spawned.blocks[0]!.prompt).toContain("科幻");
-    expect(spawned.blocks.find((b) => b.id.startsWith("keyart-"))!.prompt).toContain("未来城市");
+    // ⑤D：题材「飞船/舷窗」细匹配太空基地，而非科幻默认「未来城市」
+    expect(spawned.blocks.find((b) => b.id.startsWith("keyart-"))!.prompt).toContain("太空基地");
   });
 
   it("keeps scene asset in keyart after reverse enrich", async () => {
