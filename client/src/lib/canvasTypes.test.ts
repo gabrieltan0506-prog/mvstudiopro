@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  collectDocumentAssets,
   collectUpstreamBlockIds,
   collectUpstreamTexts,
   collectVisionImages,
@@ -127,6 +128,33 @@ describe("canvas upstream handoff", () => {
 
     const urls = collectVisionImages("c", [a, b, c], edges).map((item) => item.url);
     expect(urls).toEqual(["https://example.com/a.png", "https://example.com/b.png"]);
+  });
+
+  it("does not treat uploaded documents as vision images", () => {
+    const block = defaultCanvasBlock("copy_organize", 0, 0);
+    block.id = "org";
+    block.uploadedAssets = [
+      {
+        id: "doc1",
+        url: "https://example.com/day3.txt",
+        previewUrl: "https://example.com/day3.txt",
+        fileName: "day3.txt",
+        kind: "document",
+        mimeType: "text/plain",
+      },
+      {
+        id: "img1",
+        url: "https://example.com/cover.png",
+        previewUrl: "https://example.com/cover.png",
+        fileName: "cover.png",
+        kind: "image",
+        mimeType: "image/png",
+      },
+    ];
+
+    const vision = collectVisionImages("org", [block], []);
+    expect(vision.map((i) => i.url)).toEqual(["https://example.com/cover.png"]);
+    expect(collectDocumentAssets("org", [block], []).map((a) => a.fileName)).toEqual(["day3.txt"]);
   });
 
   it("picks nearest upstream image for reference", () => {

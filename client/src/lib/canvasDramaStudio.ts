@@ -4,6 +4,7 @@
  */
 
 import {
+  collectDocumentAssets,
   collectUpstreamTexts,
   collectVisionImages,
   defaultCanvasBlock,
@@ -12,6 +13,7 @@ import {
   type CanvasBlock,
   type CanvasEdge,
 } from "./canvasTypes";
+import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
@@ -595,7 +597,6 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       try {
         const current = working.find((b) => b.id === blockId) || block;
         const visionImages = collectVisionImages(blockId, working, edges);
-        const texts = collectUpstreamTexts(blockId, working, edges);
         const nearestRef =
           current.kind === "image" || current.kind === "video"
             ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
@@ -605,6 +606,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             ? { ...current, refImageUrl: nearestRef }
             : current;
 
+        const docTexts =
+          current.kind === "text" || current.kind === "copy_organize"
+            ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, working, edges))
+            : [];
+        const texts = [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
         const out = await runCanvasBlock(opts.deps, runBlockPayload, { visionImages, texts });
         let next = working.map((b) =>
           b.id === blockId

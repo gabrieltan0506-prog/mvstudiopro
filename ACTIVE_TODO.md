@@ -13,5 +13,6 @@
   - [x] V1/V4/V7 模板 + Skill 分类 + V5 抢镜 + V2 Hero
   - [x] UI 分类排布（文案/模板/素材 · Skill 分篮）
   - [x] V6 HTML PPT：页面清单可编辑确认后再导出
+  - [x] Canvas 整理文案：TXT/MD 勿误走 vision（读正文→optimizeCopy）
   - 其后：V3 Home 增强（光标遮罩/滚动控视频）另成模块再议（#807 攒齐再合，或独立模块）
 - 排队：`feat/seedance-probe-cli`
