@@ -31,6 +31,7 @@
     "manhua:genre-probe": "tsx scripts/probe-manhua-genre-infer.mts",
     "manhua:writer-probe": "tsx scripts/probe-manhua-writer-room.mts",
     "manhua:seedance-probe": "tsx scripts/probe-seedance-clip.mts",
+    "manhua:character-verify": "tsx scripts/verify-manhua-character-gallery.mts",
     "yt:local-fetch": "tsx scripts/yt-local-fetch.mts",
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
     "ambient:fetch-images:refresh": "node scripts/fetch-ambient-images.mjs --refresh",

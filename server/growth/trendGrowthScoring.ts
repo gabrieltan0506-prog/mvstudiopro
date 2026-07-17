@@ -93,6 +93,7 @@ const CATEGORY_RULES: Array<{ label: string; patterns: RegExp[] }> = [
   { label: "汽车 · 出行",      patterns: [/(汽车|新能源|特斯拉|比亚迪|理想|蔚来|自驾|车评|提车|改装|新车)/] },
   { label: "宠物 · 萌宠",      patterns: [/(宠物|猫咪|狗狗|柯基|金毛|博美|猫粮|狗粮|铲屎|养宠)/] },
   { label: "情感 · 婚恋",      patterns: [/(情感|恋爱|分手|离婚|婚姻|相亲|脱单|约会|挽回|心理学|两性)/] },
+  { label: "AI漫剧 · 动态漫",  patterns: [/(AI\s*漫剧|AI漫|动态漫|漫剧|条漫剧|AI\s*短剧|虚拟角色剧)/i] },
   { label: "搞笑 · 娱乐",      patterns: [/(搞笑|沙雕|段子|爆笑|整活|尴尬|名场面|短剧|reaction|玩梗)/] },
   { label: "影视 · 剧情解说",  patterns: [/(影视|短剧|剧情|解说|追剧|电视剧|电影|预告|影评|综艺)/] },
   { label: "游戏 · 二次元",    patterns: [/(游戏|手游|主机|switch|原神|王者|吃鸡|二次元|动漫|COS|配音)/] },
@@ -106,12 +107,18 @@ const FALLBACK_CATEGORY = "泛生活方式";
 
 /** 强制归类：industryLabels 缺失或含"待判定" → 启发式补一个 */
 function forceCategorize(item: TrendItem): string {
+  if (item.dramaKind === "ai_manhua") return "AI漫剧 · 动态漫";
+  if (item.dramaKind === "short_drama" || item.isDrama) {
+    const hay = `${item.dramaInfo?.mixName || ""} ${item.title || ""}`;
+    if (/(AI\s*漫剧|AI漫|动态漫|漫剧)/i.test(hay)) return "AI漫剧 · 动态漫";
+  }
+
   const existing = (item.industryLabels || []).find(
     (label) => label && !/待(判定|定)|未分类|通用|其他/.test(label),
   );
   if (existing) return existing;
 
-  const haystack = `${item.title || ""} ${(item.tags || []).join(" ")} ${item.bucket || ""}`;
+  const haystack = `${item.title || ""} ${item.dramaInfo?.mixName || ""} ${(item.tags || []).join(" ")} ${item.bucket || ""}`;
   for (const rule of CATEGORY_RULES) {
     if (rule.patterns.some((p) => p.test(haystack))) {
       return rule.label;
@@ -219,11 +226,35 @@ export function selectByGrowthPotential(
     survivors.push(it);
   }
 
-  // ── 2. 同账号均值（用于 breakout 检测） ────────────────────────────────
-  const authorAvg = buildAuthorAvgEngagement(survivors);
+  // ── 2. 短剧/漫剧：同一 mixId 只留合集播放最高（或互动最高）的一集 ─────
+  const mixBest = new Map<string, TrendItem>();
+  const afterMixDedupe: TrendItem[] = [];
+  for (const it of survivors) {
+    const mixId = String(it.dramaInfo?.mixId || "").trim();
+    if (!mixId) {
+      afterMixDedupe.push(it);
+      continue;
+    }
+    const prev = mixBest.get(mixId);
+    if (!prev) {
+      mixBest.set(mixId, it);
+      continue;
+    }
+    const prevScore = Number(prev.dramaInfo?.mixPlayCount || 0) * 10
+      + Number(prev.comments || 0) * 4
+      + Number(prev.likes || 0);
+    const nextScore = Number(it.dramaInfo?.mixPlayCount || 0) * 10
+      + Number(it.comments || 0) * 4
+      + Number(it.likes || 0);
+    if (nextScore > prevScore) mixBest.set(mixId, it);
+  }
+  afterMixDedupe.push(...Array.from(mixBest.values()));
 
-  // ── 3. 算 growthScore ────────────────────────────────────────────────
-  const scored: ScoredTrendItem[] = survivors.map((it) => {
+  // ── 3. 同账号均值（用于 breakout 检测） ────────────────────────────────
+  const authorAvg = buildAuthorAvgEngagement(afterMixDedupe);
+
+  // ── 4. 算 growthScore ────────────────────────────────────────────────
+  const scored: ScoredTrendItem[] = afterMixDedupe.map((it) => {
     const ageDays = getAgeDays(it.publishedAt) ?? windowDays;
     const views = Number(it.views || 0);
     const comments = Number(it.comments || 0);
@@ -246,7 +277,13 @@ export function selectByGrowthPotential(
     const isBreakout = breakoutRatio >= BREAKOUT_RATIO;
     const breakoutBoost = isBreakout ? Math.min(breakoutRatio, 5) : 1; // 最多 5x
 
-    const growthScore = engagement * freshness * breakoutBoost + commentDensity * 1_000_000;
+    // 短剧/漫剧：合集总播放比单集 views 更能代表剧级热度（对数压缩，避免碾压口播样本）
+    const mixPlay = Number(it.dramaInfo?.mixPlayCount || 0);
+    const dramaBoost = it.isDrama && mixPlay > 0
+      ? Math.log10(mixPlay + 10) * (it.dramaKind === "ai_manhua" ? 180 : 120)
+      : 0;
+
+    const growthScore = engagement * freshness * breakoutBoost + commentDensity * 1_000_000 + dramaBoost;
 
     return {
       item: it,
@@ -259,7 +296,7 @@ export function selectByGrowthPotential(
     };
   });
 
-  // ── 4. 按 growthScore 降序，取 topN，再算百分位 ──────────────────────
+  // ── 5. 按 growthScore 降序，取 topN，再算百分位 ──────────────────────
   scored.sort((a, b) => b.growthScore - a.growthScore);
   const selected = scored.slice(0, topN);
 

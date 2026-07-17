@@ -10,6 +10,10 @@ describe("collectPlatformTrends douyin", () => {
     process.env.DOUYIN_CREATOR_CENTER_COOKIE = "sessionid=creator";
     process.env.DOUYIN_CREATOR_INDEX_COOKIE = "sessionid=index";
     process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN = "csrf-token";
+    process.env.DOUYIN_CREATOR_CENTER_ENABLED = "1";
+    process.env.DOUYIN_CREATOR_INDEX_ENABLED = "1";
+    process.env.DOUYIN_DRAMA_SEARCH_ENABLED = "1";
+    process.env.DOUYIN_DRAMA_SEARCH_KEYWORDS = "AI漫剧";
     process.env.DOUYIN_CREATOR_INDEX_KEYWORDS = "卖健身器材";
     process.env.DOUYIN_CREATOR_INDEX_TOPIC_IDS = "1569262495473665";
     process.env.DOUYIN_CREATOR_INDEX_BRANDS = "耐克:16";
@@ -48,9 +52,51 @@ describe("collectPlatformTrends douyin", () => {
                 author: { nickname: "feed-user" },
                 statistics: { digg_count: 10, comment_count: 2, share_count: 1, play_count: 100 },
               },
+              {
+                aweme_id: "feed-drama-1",
+                desc: "第1集 AI漫剧开局团宠",
+                create_time: Math.floor(Date.now() / 1000),
+                author: { nickname: "drama-user" },
+                statistics: { digg_count: 20, comment_count: 3, share_count: 1, play_count: 500 },
+                text_extra: [{ hashtag_name: "AI漫剧" }],
+                mix_info: {
+                  mix_id: "mix-drama-1",
+                  mix_name: "咱家剑宗团宠小师妹",
+                  statis: {
+                    current_episode: 1,
+                    updated_to_episode: 40,
+                    play_view_count: 3_200_000,
+                  },
+                },
+              },
             ],
             has_more: 0,
             max_cursor: 0,
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/aweme/v1/web/general/search/single/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status_code: 0,
+            data: [
+              {
+                aweme_info: {
+                  aweme_id: "search-drama-1",
+                  desc: "AI漫剧搜索结果",
+                  create_time: Math.floor(Date.now() / 1000),
+                  author: { nickname: "search-user" },
+                  statistics: { digg_count: 5, comment_count: 1, share_count: 0, play_count: 88 },
+                  mix_info: {
+                    mix_id: "mix-search-1",
+                    mix_name: "聚宝仙盆之杂灵根才是真BOSS",
+                    statis: { play_view_count: 8_800_000, current_episode: 2, updated_to_episode: 60 },
+                  },
+                },
+              },
+            ],
           }),
         } as Response;
       }
@@ -237,9 +283,16 @@ describe("collectPlatformTrends douyin", () => {
     expect(result.items.some((item) => item.bucket === "douyin_creator_index_keyword_probe")).toBe(true);
     expect(result.items.some((item) => item.bucket === "douyin_creator_index_topic_probe")).toBe(true);
     expect(result.items.some((item) => item.bucket === "douyin_creator_index_brand_probe")).toBe(true);
+    const feedDrama = result.items.find((item) => item.id === "feed-drama-1");
+    expect(feedDrama?.isDrama).toBe(true);
+    expect(feedDrama?.dramaKind).toBe("ai_manhua");
+    expect(feedDrama?.dramaInfo?.mixId).toBe("mix-drama-1");
+    expect(feedDrama?.dramaInfo?.mixPlayCount).toBe(3_200_000);
+    expect(result.items.some((item) => item.id === "search-drama-1" && item.isDrama)).toBe(true);
     expect(result.notes.some((note) => note.includes("Douyin creator center"))).toBe(true);
     expect(result.notes.some((note) => note.includes("creator index"))).toBe(true);
-    expect(result.notes.some((note) => note.includes("keyword trend 卖健身器材 returned encrypted payload"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("drama web search"))).toBe(true);
+    expect(result.notes.some((note) => /keyword trend .+ returned encrypted payload/.test(note))).toBe(true);
     expect(result.notes.some((note) => note.includes("topics (1) returned encrypted payload"))).toBe(true);
     expect(result.notes.some((note) => note.includes("brand radar returned encrypted payload"))).toBe(true);
   });

@@ -44,6 +44,10 @@ const PLATFORM_SEEDS: Partial<Record<GrowthPlatform, string[]>> = {
     "医美护肤",
     "穿搭模板",
     "健身减脂",
+    "AI漫剧",
+    "AI短剧",
+    "重生漫剧",
+    "动态漫",
   ],
   xiaohongshu: [
     "清单推荐",
