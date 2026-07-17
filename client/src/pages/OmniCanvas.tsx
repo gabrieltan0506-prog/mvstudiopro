@@ -217,7 +217,7 @@ export default function OmniCanvas() {
     [factoryCraftShotId],
   );
 
-  /** 已铺工厂板时：手法/动效/场景/反推档变更同步进节点，不必整板重铺（短防抖） */
+  /** 已铺工厂板时：手法/动效/场景/反推档（已铺可同步）变更同步进节点，不必整板重铺（短防抖） */
   useEffect(() => {
     const hasFactory = blocks.some((b) => MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)));
     if (!hasFactory || factoryBusy) return;
