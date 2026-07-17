@@ -388,15 +388,61 @@ export default function ManhuaCharacterGallery({
     if (pick) applyCouplePack(pick.id);
   };
 
+  const randomBothPools = useMemo(() => {
+    const filterLeadCandidates = (source: ManhuaCharacterTemplate[]) =>
+      source.filter((c) => {
+        if (favoritesOnly && !favoriteSet.has(c.id)) return false;
+        if (!characterMatchesTemperamentPack(c, packFilter)) return false;
+        if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
+        if (jobFilter && c.jobZh !== jobFilter) return false;
+        if (!matchesAgeBand(c, ageBand)) return false;
+        return matchesCharacterQuery(c, libraryQuery);
+      });
+    return {
+      females: filterLeadCandidates(females),
+      males: filterLeadCandidates(males),
+    };
+  }, [
+    females,
+    males,
+    favoritesOnly,
+    favoriteSet,
+    packFilter,
+    tagFilter,
+    jobFilter,
+    ageBand,
+    libraryQuery,
+  ]);
+
   const pickRandomBothLeads = () => {
-    const fPool = females.filter((c) => characterMatchesTemperamentPack(c, packFilter));
-    const mPool = males.filter((c) => characterMatchesTemperamentPack(c, packFilter));
-    if (!fPool.length || !mPool.length) return;
+    const fPool = randomBothPools.females;
+    const mPool = randomBothPools.males;
+    if (!fPool.length || !mPool.length) {
+      setCopyFlash("当前筛选下无法随机双人");
+      window.setTimeout(() => setCopyFlash(""), 1600);
+      return;
+    }
     const fBag = fPool.filter((c) => c.id !== femaleId);
-    const mBag = mPool.filter((c) => c.id !== maleId);
-    const f = (fBag.length ? fBag : fPool)[Math.floor(Math.random() * (fBag.length ? fBag.length : fPool.length))];
-    const m = (mBag.length ? mBag : mPool)[Math.floor(Math.random() * (mBag.length ? mBag.length : mPool.length))];
-    if (f && m) applyCouplePair(f.id, m.id, { artStyleId, labelZh: `${f.nameZh}×${m.nameZh}` });
+    const fBagUse = fBag.length ? fBag : fPool;
+    for (let tries = 0; tries < 16; tries++) {
+      const f = fBagUse[Math.floor(Math.random() * fBagUse.length)];
+      if (!f) break;
+      let mBag = mPool.filter((c) => c.id !== maleId && c.id !== f.id);
+      if (!mBag.length) mBag = mPool.filter((c) => c.id !== f.id);
+      if (ageGapMax && f.age) {
+        const gapOk = mBag.filter((m) => m.age && Math.abs(m.age - f.age) <= ageGapMax);
+        if (gapOk.length) mBag = gapOk;
+        else if (tries < 15) continue;
+      }
+      if (!mBag.length) continue;
+      const m = mBag[Math.floor(Math.random() * mBag.length)];
+      if (m) {
+        applyCouplePair(f.id, m.id, { artStyleId, labelZh: `${f.nameZh}×${m.nameZh}` });
+        return;
+      }
+    }
+    setCopyFlash("当前筛选下无法随机双人");
+    window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
   const favoriteBothLeads = () => {
@@ -856,7 +902,7 @@ export default function ManhuaCharacterGallery({
         disabled={disabled}
         femaleId={femaleId}
         maleId={maleId}
-        canRandomBoth={Boolean(females.length && males.length)}
+        canRandomBoth={Boolean(randomBothPools.females.length && randomBothPools.males.length)}
         topicReasonZh={topicCoupleRec.reasonZh}
         topicFirstPackId={topicCoupleRec.packIds[0]}
         topicCoupleIds={topicCoupleSet}
