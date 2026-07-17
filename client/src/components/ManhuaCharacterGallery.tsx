@@ -332,13 +332,14 @@ function DualCompareStrip({
   const style = getManhuaArtStylePreset(artStyleId);
   const ageGap =
     female?.age && male?.age ? Math.abs(female.age - male.age) : null;
+  const ageGapWide = ageGap != null && ageGap >= 6;
   return (
     <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="text-[11px] font-semibold text-white/75">双人对照</div>
-        <div className="text-[10px] text-white/40">
+        <div className={`text-[10px] ${ageGapWide ? "text-amber-200/75" : "text-white/40"}`}>
           画风 · {style.labelZh}
-          {ageGap != null ? ` · 年龄差 ${ageGap} 岁` : ""}
+          {ageGap != null ? ` · 年龄差 ${ageGap} 岁${ageGapWide ? "（偏大）" : ""}` : ""}
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
@@ -909,7 +910,16 @@ export default function ManhuaCharacterGallery({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [disabled, filteredPool, selectedInTab, libraryTab, hasActiveFilters, compareId, lockArtStyle]);
+  }, [
+    disabled,
+    filteredPool,
+    selectedInTab,
+    libraryTab,
+    hasActiveFilters,
+    compareId,
+    lockArtStyle,
+    compactUi,
+  ]);
 
   useEffect(() => {
     if (!selectedInTab || !gridRef.current) return;
@@ -1725,7 +1735,7 @@ export default function ManhuaCharacterGallery({
         {showShortcuts ? (
           <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
             <li>悬停看三视图 · 右键钉住预览</li>
-            <li>★ 收藏 · R 随机 · Shift+R 随机双人 · F 收藏 · C 对比 · L 锁画风 · ? 说明</li>
+            <li>★ 收藏 · R/Shift+R 随机 · F 收藏 · C 对比 · L 锁画风 · U 精简 · ? 说明</li>
             <li>1–8 套用预设套组 · Esc 清筛选/对比 · ←/→ 换人</li>
             <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
           </ul>
