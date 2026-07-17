@@ -10,10 +10,7 @@ import {
   buildManhuaCharacterClipboardText,
   buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
-  formatManhuaCharacterLookSummary,
-  getManhuaArtStylePreset,
   getManhuaCharacterById,
-  getManhuaCharacterPreviewUrl,
   getManhuaCouplePackById,
   getManhuaTemperamentPackById,
   listManhuaCharactersByGender,
@@ -50,8 +47,8 @@ import {
   type CustomCouple,
 } from "@/lib/manhuaCharacterGalleryStorage";
 import ManhuaCharacterLibraryCard from "@/components/ManhuaCharacterLibraryCard";
+import ManhuaCharacterSheetPreview from "@/components/ManhuaCharacterSheetPreview";
 import ManhuaDualCompareStrip from "@/components/ManhuaDualCompareStrip";
-import ManhuaTriViewStrip from "@/components/ManhuaTriViewStrip";
 
 type AgeBand = "" | "le25" | "26_28" | "ge29";
 
@@ -89,96 +86,6 @@ type Props = {
   /** 题材文案：软高亮套组，不自动覆盖 */
   topicHint?: string;
 };
-
-function CharacterSheetPreview({
-  character,
-  accent,
-  autoApplied,
-  compact,
-  artStyleId,
-}: {
-  character: ManhuaCharacterTemplate;
-  accent: "cyan" | "amber";
-  autoApplied?: boolean;
-  compact?: boolean;
-  artStyleId?: ManhuaArtStyleId;
-}) {
-  const url = getManhuaCharacterPreviewUrl(character.id);
-  const style = getManhuaArtStylePreset(artStyleId);
-  const ring =
-    accent === "cyan"
-      ? "border-cyan-400/55 shadow-[0_0_24px_rgba(34,211,238,0.12)]"
-      : "border-amber-400/55 shadow-[0_0_24px_rgba(251,191,36,0.12)]";
-  const tag =
-    accent === "cyan"
-      ? "bg-cyan-500/15 text-cyan-100 border-cyan-400/35"
-      : "bg-amber-500/15 text-amber-100 border-amber-400/35";
-  const look = formatManhuaCharacterLookSummary(character);
-
-  return (
-    <div className={`overflow-hidden rounded-xl border ${ring} bg-black/40`}>
-      <div className="flex flex-wrap items-start justify-between gap-2 px-3 pt-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-bold text-white">{character.nameZh}</h4>
-            {autoApplied ? (
-              <span className={`rounded-md border px-1.5 py-0.5 text-[10px] ${tag}`}>已自动套用</span>
-            ) : (
-              <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
-                已选中
-              </span>
-            )}
-            <span className="rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/55">
-              {style.labelZh}
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-white/55">
-            {character.jobZh}
-            {character.age ? ` · ${character.age}岁` : ""}
-          </p>
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {character.temperamentTags.map((t) => (
-              <span key={t} className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/75">
-                {t}
-              </span>
-            ))}
-          </div>
-          {look ? <p className="mt-2 text-[10px] leading-snug text-white/50">{look}</p> : null}
-        </div>
-      </div>
-
-      {url ? (
-        <>
-          {/* 设定卡上半左侧为人像；用左上定位裁切，避免裁到右侧文案 */}
-          <div
-            className={`relative mx-3 mt-2 overflow-hidden rounded-lg border border-white/10 bg-black/50 ${compact ? "h-28" : "h-40"}`}
-          >
-            <img
-              src={url}
-              alt={`${character.nameZh} 人像`}
-              className="absolute inset-0 h-full w-[210%] max-w-none object-cover object-[12%_18%]"
-              loading="lazy"
-            />
-          </div>
-          <div className="mx-3 mt-2 mb-3">
-            <div className="mb-1 flex items-center justify-between text-[10px] text-white/45">
-              <span>三视图 · 正 / 侧 / 背</span>
-              <span className="inline-flex items-center gap-1 text-emerald-200/70">
-                <span className="text-emerald-300">✓</span>
-                已锁定妆造
-              </span>
-            </div>
-            <ManhuaTriViewStrip url={url} compact={compact} />
-          </div>
-        </>
-      ) : (
-        <div className="m-3 rounded-lg border border-dashed border-white/15 px-3 py-8 text-center text-[11px] text-white/40">
-          暂无预览图
-        </div>
-      )}
-    </div>
-  );
-}
 
 function EmptyLead({ label }: { label: string }) {
   return (
@@ -751,6 +658,19 @@ export default function ManhuaCharacterGallery({
         window.setTimeout(() => setCopyFlash(""), 1200);
         return;
       }
+      if (e.key === "[" || e.key === "]") {
+        e.preventDefault();
+        setLibraryTab(e.key === "[" ? "female" : "male");
+        setLibraryQuery("");
+        setTagFilter("");
+        setJobFilter("");
+        return;
+      }
+      if ((e.key === "b" || e.key === "B") && (femaleId || maleId)) {
+        e.preventDefault();
+        void copyDualBrief();
+        return;
+      }
       if (/^[1-8]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const pack = MANHUA_COUPLE_PACKS[Number(e.key) - 1];
         if (pack) {
@@ -784,6 +704,8 @@ export default function ManhuaCharacterGallery({
     compareId,
     lockArtStyle,
     compactUi,
+    femaleId,
+    maleId,
   ]);
 
   useEffect(() => {
@@ -1080,7 +1002,7 @@ export default function ManhuaCharacterGallery({
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-cyan-100/80">女主（青色高亮）</div>
           {selectedFemale ? (
-            <CharacterSheetPreview
+            <ManhuaCharacterSheetPreview
               character={selectedFemale}
               accent="cyan"
               autoApplied={femaleAutoApplied}
@@ -1129,7 +1051,7 @@ export default function ManhuaCharacterGallery({
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-amber-100/80">男主（琥珀高亮）</div>
           {selectedMale ? (
-            <CharacterSheetPreview
+            <ManhuaCharacterSheetPreview
               character={selectedMale}
               accent="amber"
               autoApplied={maleAutoApplied}
@@ -1631,8 +1553,8 @@ export default function ManhuaCharacterGallery({
         {showShortcuts ? (
           <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
             <li>悬停看三视图 · 右键钉住预览</li>
-            <li>★ 收藏 · R/Shift+R 随机 · F 收藏 · C 对比 · L 锁画风 · U 精简 · ? 说明</li>
-            <li>1–8 套用预设套组 · Esc 清筛选/对比 · ←/→ 换人</li>
+            <li>★ 收藏 · R/Shift+R 随机 · F 收藏 · C 对比 · L 锁画风 · U 精简 · B 短名片 · ? 说明</li>
+            <li>[ 女主库 · ] 男主库 · 1–8 套组 · Esc 清筛选 · ←/→ 换人</li>
             <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
           </ul>
         ) : null}
@@ -1642,7 +1564,7 @@ export default function ManhuaCharacterGallery({
               <div className="mb-1 text-[10px] font-semibold text-violet-100/80">
                 对比钉 · {compareCharacter.nameZh}
               </div>
-              <CharacterSheetPreview
+              <ManhuaCharacterSheetPreview
                 character={compareCharacter}
                 accent={libraryTab === "female" ? "cyan" : "amber"}
                 artStyleId={artStyleId}
@@ -1653,7 +1575,7 @@ export default function ManhuaCharacterGallery({
               <div className="mb-1 text-[10px] font-semibold text-white/70">
                 当前选 · {selectedForCompare.nameZh}
               </div>
-              <CharacterSheetPreview
+              <ManhuaCharacterSheetPreview
                 character={selectedForCompare}
                 accent={libraryTab === "female" ? "cyan" : "amber"}
                 artStyleId={artStyleId}
