@@ -229,6 +229,18 @@ export function parseManhuaGalleryWorkspace(raw: string): ManhuaGalleryWorkspace
   }
 }
 
+export function resetManhuaGalleryLocalState(): void {
+  try {
+    localStorage.removeItem(RECENT_LS_KEY);
+    localStorage.removeItem(FAV_LS_KEY);
+    localStorage.removeItem(CUSTOM_COUPLE_LS_KEY);
+    localStorage.removeItem(LIBRARY_PREFS_LS_KEY);
+    localStorage.removeItem(RECENT_COUPLE_PACK_LS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function applyManhuaGalleryWorkspace(ws: ManhuaGalleryWorkspace): ManhuaGalleryWorkspace {
   const favorites = saveFavoriteIds(ws.favorites);
   const customCouples = saveCustomCouples(ws.customCouples || []);

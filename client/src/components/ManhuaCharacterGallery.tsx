@@ -41,6 +41,7 @@ import {
   parseManhuaGalleryWorkspace,
   pushRecentCouplePackId,
   pushRecentId,
+  resetManhuaGalleryLocalState,
   saveCustomCouples,
   saveFavoriteIds,
   saveLibraryPrefs,
@@ -773,6 +774,25 @@ export default function ManhuaCharacterGallery({
     }
   };
 
+  const resetLocalWorkspace = () => {
+    if (typeof window !== "undefined" && !window.confirm("清空本机角色卡收藏/套组/最近/筛选偏好？不可撤销。")) {
+      return;
+    }
+    resetManhuaGalleryLocalState();
+    setFavoriteIds([]);
+    setCustomCouples([]);
+    setRecentIds([]);
+    setRecentCouplePackIds([]);
+    setPackFilterId("");
+    setSortMode("default");
+    setDenseGrid(false);
+    setLockArtStyle(false);
+    setCompactUi(false);
+    clearLibraryFilters();
+    setCopyFlash("已重置本机角色卡工作区");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
   const importCoupleSelection = async () => {
     try {
       const raw = await navigator.clipboard.readText();
@@ -803,6 +823,23 @@ export default function ManhuaCharacterGallery({
     setUnselectedOnly(false);
     setAgeGapMax(0);
     setSortMode("default");
+  };
+
+  const resetLocalWorkspace = () => {
+    if (typeof window !== "undefined" && !window.confirm("清空本机角色卡收藏/套组/最近/筛选偏好？不可撤销。")) {
+      return;
+    }
+    resetManhuaGalleryLocalState();
+    setFavoriteIds([]);
+    setCustomCouples([]);
+    setRecentIds([]);
+    setRecentCouplePackIds([]);
+    setDenseGrid(false);
+    setLockArtStyle(false);
+    setCompactUi(false);
+    clearLibraryFilters();
+    setCopyFlash("已重置本机角色卡工作区");
+    window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
   const hasActiveFilters = Boolean(
@@ -999,6 +1036,14 @@ export default function ManhuaCharacterGallery({
             className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
           >
             导入工作区
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={resetLocalWorkspace}
+            className="text-[10px] text-rose-200/70 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            重置本机工作区
           </button>
           {onClearManual ? (
             <button
