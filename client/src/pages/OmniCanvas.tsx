@@ -33,8 +33,11 @@ import {
 import {
   CRAFT_SHOT_BANK,
   CRAFT_SHOT_CATEGORY_LABEL_ZH,
+  getCraftShotById,
+  recommendCraftShotFromTopic,
   type CraftShotCategory,
 } from "@shared/craftShotBank";
+import type { VideoReverseOutputMode } from "@shared/videoReversePrompt";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
@@ -97,6 +100,9 @@ export default function OmniCanvas() {
   const [maleLeadManual, setMaleLeadManual] = useState(false);
   const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
+  /** 手选手法后不再被题材自动覆盖 */
+  const [craftShotManual, setCraftShotManual] = useState(false);
+  const [factoryReverseMode, setFactoryReverseMode] = useState<VideoReverseOutputMode>("zh");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
@@ -146,6 +152,25 @@ export default function OmniCanvas() {
       setFactoryMaleId(recommendedLeads.maleId);
     }
   }, [recommendedLeads.femaleId, recommendedLeads.maleId, femaleLeadManual, maleLeadManual]);
+
+  const recommendedCraft = useMemo(
+    () => recommendCraftShotFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const selectedCraftShot = useMemo(
+    () => (factoryCraftShotId ? getCraftShotById(factoryCraftShotId) : null),
+    [factoryCraftShotId],
+  );
+  const craftAutoApplied =
+    !craftShotManual &&
+    Boolean(factoryCraftShotId) &&
+    factoryCraftShotId === recommendedCraft.craftShotId;
+
+  useEffect(() => {
+    if (!craftShotManual && recommendedCraft.craftShotId) {
+      setFactoryCraftShotId(recommendedCraft.craftShotId);
+    }
+  }, [recommendedCraft.craftShotId, craftShotManual]);
 
   const selectedCharacterIds = useMemo(
     () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
@@ -247,6 +272,7 @@ export default function OmniCanvas() {
         characterIds: selectedCharacterIds,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
+        videoReverseOutputMode: factoryReverseMode,
         writerContext,
         includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
       });
@@ -272,6 +298,7 @@ export default function OmniCanvas() {
       selectedCharacterIds,
       selectedMotionIds,
       selectedCraftShotIds,
+      factoryReverseMode,
       writerContext,
       directorUnlocked,
     ],
@@ -333,6 +360,7 @@ export default function OmniCanvas() {
       characterIds: selectedCharacterIds,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
+      videoReverseOutputMode: factoryReverseMode,
       writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
       includeDirectorCraft: true,
     });
@@ -349,6 +377,7 @@ export default function OmniCanvas() {
     selectedCharacterIds,
     selectedMotionIds,
     selectedCraftShotIds,
+    factoryReverseMode,
     factoryGenreId,
     factorySceneId,
     writerFocusEpisode,
@@ -764,10 +793,30 @@ export default function OmniCanvas() {
 
               <div className="mt-3 max-w-md space-y-3">
                 <div>
-                  <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
+                    {craftAutoApplied ? (
+                      <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
+                        已按题材自动套用
+                      </span>
+                    ) : null}
+                    {craftShotManual ? (
+                      <button
+                        type="button"
+                        disabled={factoryBusy}
+                        onClick={() => setCraftShotManual(false)}
+                        className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+                      >
+                        恢复自动推荐
+                      </button>
+                    ) : null}
+                  </div>
                   <select
                     value={factoryCraftShotId}
-                    onChange={(e) => setFactoryCraftShotId(e.target.value)}
+                    onChange={(e) => {
+                      setCraftShotManual(true);
+                      setFactoryCraftShotId(e.target.value);
+                    }}
                     disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-violet-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-violet-300/40 disabled:opacity-50"
                   >
@@ -782,9 +831,27 @@ export default function OmniCanvas() {
                       </optgroup>
                     ))}
                   </select>
-                  <p className="mt-1 text-[10px] text-white/30">
-                    注入节拍 / 反推 / 静帧；成稿只写手法词。
+                  <p className="mt-1 text-[10px] leading-snug text-violet-100/70">
+                    {recommendedCraft.reasonZh}
+                    {selectedCraftShot
+                      ? ` · 当前「${selectedCraftShot.nameZh}」${craftAutoApplied ? "·自动" : craftShotManual ? "·手选" : ""}`
+                      : ""}
+                    ；注入节拍 / 反推 / 静帧。
                   </p>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">反推输出档</label>
+                  <select
+                    value={factoryReverseMode}
+                    onChange={(e) => setFactoryReverseMode(e.target.value as VideoReverseOutputMode)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                  >
+                    <option value="zh">完整中文八维</option>
+                    <option value="compact">精简档</option>
+                    <option value="en">English</option>
+                  </select>
+                  <p className="mt-1 text-[10px] text-white/30">写入编导反推节点输出结构。</p>
                 </div>
                 <div>
                   <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
@@ -848,6 +915,7 @@ export default function OmniCanvas() {
                       characterIds: selectedCharacterIds,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
+                      videoReverseOutputMode: factoryReverseMode,
                       writerContext,
                       includeDirectorCraft: true,
                     });

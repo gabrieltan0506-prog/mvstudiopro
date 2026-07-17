@@ -348,6 +348,70 @@ export function getCraftShotById(id: string) {
   return CRAFT_SHOT_BANK.find((e) => e.id === key) || null;
 }
 
+/** 题材关键词 → 手法条目（与角色库 4.B 同口径：可自动套、可更换） */
+const TOPIC_CRAFT_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
+  { keys: ["权谋", "宫斗", "对峙", "翻盘", "步步为营"], preferIds: ["light_03_high_contrast", "cam_01_slow_push", "emo_01_restrained_dread"] },
+  { keys: ["清冷", "克制", "高冷", "疏离"], preferIds: ["light_01_window_motivated", "cam_02_locked_long", "emo_04_cold_control"] },
+  { keys: ["甜", "恋爱", "暧昧", "治愈"], preferIds: ["light_05_neon_spill", "cam_06_intimate_cu", "emo_03_ambiguous_longing"] },
+  { keys: ["悬疑", "秘密", "揭秘", "调查"], preferIds: ["light_07_top_cut", "cam_04_whip_insert", "emo_07_obsessive_calm"] },
+  { keys: ["追逐", "赛车", "速度", "动作"], preferIds: ["cam_03_track_follow", "tr_04_whip_bridge", "emo_06_ensemble_pulse"] },
+  { keys: ["家庭", "伦理", "饭桌", "长辈"], preferIds: ["cam_08_shot_reverse", "emo_05_family_tension", "light_01_window_motivated"] },
+  { keys: ["奇观", "秘境", "史诗", "巨物"], preferIds: ["cam_07_wide_scale", "light_04_volumetric", "emo_08_solemn_quiet"] },
+  { keys: ["和解", "亲情", "温暖", "发现"], preferIds: ["light_06_magic_hour", "cam_05_low_wonder", "emo_02_warm_wonder"] },
+];
+
+export type CraftShotRecommendResult = {
+  craftShotId: string | null;
+  entry?: CraftShotEntry | null;
+  reasonZh: string;
+};
+
+/**
+ * 按题材气质推荐 1 条原子手法（灯光/运镜/情绪优先；无命中给高反差默认）。
+ */
+export function recommendCraftShotFromTopic(topic?: string): CraftShotRecommendResult {
+  const t = String(topic || "").trim();
+  if (!t) {
+    const fallback = getCraftShotById("light_03_high_contrast");
+    return {
+      craftShotId: fallback?.id || null,
+      entry: fallback,
+      reasonZh: "未填题材时默认高反差切面（可更换）",
+    };
+  }
+
+  for (const hint of TOPIC_CRAFT_HINTS) {
+    if (!hint.keys.some((k) => t.includes(k))) continue;
+    for (const id of hint.preferIds) {
+      const entry = getCraftShotById(id);
+      if (!entry) continue;
+      return {
+        craftShotId: entry.id,
+        entry,
+        reasonZh: `题材偏「${hint.keys.find((k) => t.includes(k))}」→ 推荐「${entry.nameZh}」`,
+      };
+    }
+  }
+
+  // 弱匹配：条目名出现在题材里
+  for (const entry of CRAFT_SHOT_BANK) {
+    if (t.includes(entry.nameZh)) {
+      return {
+        craftShotId: entry.id,
+        entry,
+        reasonZh: `题材命中「${entry.nameZh}」`,
+      };
+    }
+  }
+
+  const fallback = getCraftShotById("cam_01_slow_push");
+  return {
+    craftShotId: fallback?.id || null,
+    entry: fallback,
+    reasonZh: "按题材未强命中，推荐缓慢推进压迫（可更换）",
+  };
+}
+
 /** 注入节拍 / 反推 / 静帧：只写手法，不写来源名 */
 export function buildCraftShotInjectBlock(ids: string[]): string {
   const picked = ids.map(getCraftShotById).filter(Boolean) as CraftShotEntry[];

@@ -4,6 +4,7 @@ import {
   buildCraftShotInjectBlock,
   getCraftShotById,
   listCraftShotsByCategory,
+  recommendCraftShotFromTopic,
 } from "./craftShotBank";
 
 describe("craftShotBank ⑧A", () => {
@@ -23,5 +24,11 @@ describe("craftShotBank ⑧A", () => {
     expect(block).toContain("高反差");
     expect(block).toContain("缓慢推进");
     expect(block).not.toMatch(/Nolan|王家卫|HyperFrames|小蓝|EvoLink|fal/i);
+  });
+
+  it("recommends craft shot from 权谋 topic", () => {
+    const rec = recommendCraftShotFromTopic("女主权谋翻盘，宫墙对峙");
+    expect(rec.craftShotId).toBe("light_03_high_contrast");
+    expect(rec.reasonZh).toMatch(/权谋|宫斗|对峙/);
   });
 });

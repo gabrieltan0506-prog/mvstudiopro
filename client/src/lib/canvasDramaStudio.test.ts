@@ -66,6 +66,7 @@ describe("canvasDramaStudio factory", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "权谋对峙",
       craftShotIds: ["light_03_high_contrast", "cam_01_slow_push"],
+      videoReverseOutputMode: "compact",
     });
     const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
     const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
@@ -73,6 +74,7 @@ describe("canvasDramaStudio factory", () => {
     expect(beats.prompt).toContain("【手法条目库·原子镜头】");
     expect(reverse.prompt).toContain("高反差");
     expect(keyart.prompt).toContain("缓慢推进");
+    expect(reverse.videoReverseOutputMode).toBe("compact");
     expect(beats.prompt).not.toMatch(/Nolan|王家卫/i);
   });
 
