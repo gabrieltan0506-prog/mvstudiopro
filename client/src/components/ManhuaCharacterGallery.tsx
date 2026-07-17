@@ -17,6 +17,7 @@ import {
 } from "@shared/manhuaCharacterAssetLibrary";
 
 const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
+const FAV_LS_KEY = "mv-manhua-character-fav-v1";
 
 function matchesCharacterQuery(c: ManhuaCharacterTemplate, q: string): boolean {
   const needle = q.trim().toLowerCase();
@@ -25,15 +26,19 @@ function matchesCharacterQuery(c: ManhuaCharacterTemplate, q: string): boolean {
   return hay.includes(needle);
 }
 
-function loadRecentIds(): string[] {
+function loadIdList(key: string, max: number): string[] {
   try {
-    const raw = localStorage.getItem(RECENT_LS_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean).slice(0, 8) : [];
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean).slice(0, max) : [];
   } catch {
     return [];
   }
+}
+
+function loadRecentIds(): string[] {
+  return loadIdList(RECENT_LS_KEY, 8);
 }
 
 function pushRecentId(id: string) {
@@ -45,6 +50,23 @@ function pushRecentId(id: string) {
   } catch {
     /* ignore */
   }
+}
+
+function loadFavoriteIds(): string[] {
+  return loadIdList(FAV_LS_KEY, 24);
+}
+
+function toggleFavoriteId(id: string): string[] {
+  const key = String(id || "").trim();
+  if (!key) return loadFavoriteIds();
+  const cur = loadFavoriteIds();
+  const next = cur.includes(key) ? cur.filter((x) => x !== key) : [key, ...cur].slice(0, 24);
+  try {
+    localStorage.setItem(FAV_LS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next;
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -213,14 +235,18 @@ function CharacterSheetPreview({
 function LibraryCard({
   character,
   selected,
+  favorited,
   accent,
   onSelect,
+  onToggleFavorite,
   disabled,
 }: {
   character: ManhuaCharacterTemplate;
   selected: boolean;
+  favorited: boolean;
   accent: "cyan" | "amber";
   onSelect: () => void;
+  onToggleFavorite: () => void;
   disabled?: boolean;
 }) {
   const [hover, setHover] = useState(false);
@@ -246,13 +272,15 @@ function LibraryCard({
           setPinned((v) => !v);
         }}
         data-character-id={character.id}
-        className={`w-full overflow-hidden rounded-xl border bg-black/35 text-left transition disabled:opacity-45 ${border}`}
+        aria-label={`选用 ${character.nameZh}${favorited ? "（已收藏）" : ""}`}
+        aria-pressed={selected}
+        className={`w-full overflow-hidden rounded-xl border bg-black/35 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300/70 disabled:opacity-45 ${border}`}
       >
         <div className="relative h-28 overflow-hidden bg-black/50">
           {url ? (
             <img
               src={url}
-              alt={character.nameZh}
+              alt=""
               className="absolute inset-0 h-full w-[200%] max-w-none object-cover object-[12%_16%]"
               loading="lazy"
             />
@@ -274,6 +302,24 @@ function LibraryCard({
           <div className="truncate text-[10px] text-white/45">{character.temperamentTags.slice(0, 3).join(" · ")}</div>
         </div>
       </button>
+      <button
+        type="button"
+        disabled={disabled}
+        title={favorited ? "取消收藏" : "收藏"}
+        aria-label={favorited ? `取消收藏 ${character.nameZh}` : `收藏 ${character.nameZh}`}
+        aria-pressed={favorited}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleFavorite();
+        }}
+        className={`absolute left-1.5 top-1.5 z-10 rounded-full border px-1.5 py-0.5 text-[11px] leading-none backdrop-blur disabled:opacity-40 ${
+          favorited
+            ? "border-rose-300/50 bg-rose-500/30 text-rose-100"
+            : "border-white/20 bg-black/50 text-white/55 hover:border-white/35 hover:text-white/85"
+        }`}
+      >
+        ★
+      </button>
 
       {showPreview && url ? (
         <div className="pointer-events-none absolute left-1/2 top-0 z-30 w-64 -translate-x-1/2 -translate-y-[92%] rounded-xl border border-white/20 bg-[#0c081c]/95 p-2 shadow-2xl backdrop-blur">
@@ -287,6 +333,47 @@ function LibraryCard({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function DualCompareStrip({
+  female,
+  male,
+  artStyleId,
+}: {
+  female: ManhuaCharacterTemplate | null;
+  male: ManhuaCharacterTemplate | null;
+  artStyleId: ManhuaArtStyleId;
+}) {
+  if (!female && !male) return null;
+  const style = getManhuaArtStylePreset(artStyleId);
+  return (
+    <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] font-semibold text-white/75">双人对照</div>
+        <div className="text-[10px] text-white/40">画风 · {style.labelZh}</div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {[
+          { c: female, label: "女主", tone: "text-cyan-100/85" },
+          { c: male, label: "男主", tone: "text-amber-100/85" },
+        ].map(({ c, label, tone }) => (
+          <div key={label} className="rounded-lg border border-white/10 bg-black/30 px-2.5 py-2">
+            <div className={`text-[10px] font-semibold ${tone}`}>{label}</div>
+            {c ? (
+              <>
+                <div className="mt-0.5 truncate text-[12px] font-semibold text-white">{c.nameZh}</div>
+                <div className="mt-0.5 text-[10px] leading-snug text-white/50">
+                  {formatManhuaCharacterLookSummary(c)}
+                </div>
+              </>
+            ) : (
+              <div className="mt-1 text-[10px] text-white/35">未选</div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -317,7 +404,9 @@ export default function ManhuaCharacterGallery({
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
+  const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [copyFlash, setCopyFlash] = useState("");
   const libraryRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -325,6 +414,7 @@ export default function ManhuaCharacterGallery({
   const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
+  const favoriteSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
   const pool = libraryTab === "female" ? females : males;
   const recentInTab = useMemo(() => {
     const out: ManhuaCharacterTemplate[] = [];
@@ -335,6 +425,15 @@ export default function ManhuaCharacterGallery({
     }
     return out;
   }, [recentIds, libraryTab]);
+  const favoritesInTab = useMemo(() => {
+    const out: ManhuaCharacterTemplate[] = [];
+    for (const id of favoriteIds) {
+      const c = getManhuaCharacterById(id);
+      if (c && c.gender === libraryTab) out.push(c);
+      if (out.length >= 8) break;
+    }
+    return out;
+  }, [favoriteIds, libraryTab]);
 
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -349,10 +448,11 @@ export default function ManhuaCharacterGallery({
   const filteredPool = useMemo(
     () =>
       pool.filter((c) => {
+        if (favoritesOnly && !favoriteSet.has(c.id)) return false;
         if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
         return matchesCharacterQuery(c, libraryQuery);
       }),
-    [pool, libraryQuery, tagFilter],
+    [pool, libraryQuery, tagFilter, favoritesOnly, favoriteSet],
   );
   const selectedInTab = libraryTab === "female" ? femaleId : maleId;
 
@@ -363,6 +463,18 @@ export default function ManhuaCharacterGallery({
       pushRecentId(id);
       setRecentIds(loadRecentIds());
     }
+  };
+
+  const toggleFavorite = (id: string) => {
+    setFavoriteIds(toggleFavoriteId(id));
+  };
+
+  const pickRandomInTab = () => {
+    if (!filteredPool.length) return;
+    const others = filteredPool.filter((c) => c.id !== selectedInTab);
+    const bag = others.length ? others : filteredPool;
+    const pick = bag[Math.floor(Math.random() * bag.length)];
+    if (pick) rememberSelect(pick.id, libraryTab);
   };
 
   const copySelected = async (gender: ManhuaCharacterGender) => {
@@ -387,6 +499,16 @@ export default function ManhuaCharacterGallery({
       if (disabled) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        pickRandomInTab();
+        return;
+      }
+      if ((e.key === "f" || e.key === "F") && selectedInTab) {
+        e.preventDefault();
+        toggleFavorite(selectedInTab);
         return;
       }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -456,6 +578,7 @@ export default function ManhuaCharacterGallery({
       </div>
       {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
       {copyFlash ? <p className="mt-1 text-[10px] text-emerald-200/85">{copyFlash}</p> : null}
+      <DualCompareStrip female={selectedFemale} male={selectedMale} artStyleId={artStyleId} />
 
       {/* 双人同显 */}
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
@@ -596,8 +719,29 @@ export default function ManhuaCharacterGallery({
             onChange={(e) => setLibraryQuery(e.target.value)}
             disabled={disabled}
             placeholder="搜索名字 / 职业 / 气质…"
+            aria-label="搜索角色库"
             className="min-w-[180px] flex-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 text-[11px] text-white/90 outline-none focus:border-white/25 disabled:opacity-45"
           />
+          <button
+            type="button"
+            disabled={disabled || !filteredPool.length}
+            onClick={pickRandomInTab}
+            className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
+          >
+            随机换人
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setFavoritesOnly((v) => !v)}
+            className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
+              favoritesOnly
+                ? "border-rose-300/45 bg-rose-500/15 text-rose-100"
+                : "border-white/15 bg-white/5 text-white/70"
+            }`}
+          >
+            只看收藏{favoritesInTab.length ? ` (${favoritesInTab.length})` : ""}
+          </button>
           <span className="text-[10px] text-white/35">
             {filteredPool.length}/{pool.length}
           </span>
@@ -631,6 +775,28 @@ export default function ManhuaCharacterGallery({
             ))}
           </div>
         ) : null}
+        {favoritesInTab.length ? (
+          <div className="mb-2">
+            <div className="mb-1 text-[10px] text-white/40">收藏</div>
+            <div className="flex flex-wrap gap-1.5">
+              {favoritesInTab.map((c) => (
+                <button
+                  key={`fav-${c.id}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => rememberSelect(c.id, libraryTab)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
+                    selectedInTab === c.id
+                      ? "border-rose-300/45 bg-rose-500/15 text-rose-100"
+                      : "border-white/10 text-white/55 hover:border-white/25"
+                  }`}
+                >
+                  ★ {c.nameZh}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {recentInTab.length ? (
           <div className="mb-2">
             <div className="mb-1 text-[10px] text-white/40">最近选用</div>
@@ -656,25 +822,31 @@ export default function ManhuaCharacterGallery({
           </div>
         ) : null}
         <div className="mb-2 text-[10px] text-white/40">
-          悬停预览三视图 · 右键钉住/取消 · ←/→ 在筛选结果里换人
+          悬停预览三视图 · 右键钉住 · ★收藏 · 随机换人 / R · F 收藏当前 · ←/→ 换人
         </div>
         <div
           ref={gridRef}
           className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4"
+          role="listbox"
+          aria-label={`${libraryTab === "female" ? "女主" : "男主"}角色库`}
         >
           {filteredPool.map((c) => (
             <LibraryCard
               key={c.id}
               character={c}
               selected={selectedInTab === c.id}
+              favorited={favoriteSet.has(c.id)}
               accent={libraryTab === "female" ? "cyan" : "amber"}
               disabled={disabled}
               onSelect={() => rememberSelect(c.id, libraryTab)}
+              onToggleFavorite={() => toggleFavorite(c.id)}
             />
           ))}
           {!filteredPool.length ? (
             <div className="col-span-full rounded-lg border border-dashed border-white/15 px-3 py-8 text-center text-[11px] text-white/40">
-              无匹配角色，试试清空搜索或气质筛选
+              {favoritesOnly
+                ? "当前没有收藏角色，点卡片左上角 ★ 收藏后再筛"
+                : "无匹配角色，试试清空搜索或气质筛选"}
             </div>
           ) : null}
         </div>
@@ -719,6 +891,10 @@ export default function ManhuaCharacterGallery({
           选定后写入角色卡与关键静帧提示词。库预览图目前为 CG 设定卡底图；「同版式生成新人」会铺一张竖版设定卡生图节点，需你在画布上点运行。
         </p>
       </div>
+
+      <p className="mt-3 text-[10px] leading-snug text-white/35">
+        验收口径：三视图=设定卡裁切（非三张独立渲染）；换画风只改 prompt，预览仍为 CG 底图；「同版式」勿点运行以免烧生图。
+      </p>
     </div>
   );
 }

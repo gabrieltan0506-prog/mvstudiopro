@@ -798,6 +798,15 @@ export default function OmniCanvas() {
 
             {/* ② 角色卡：始终可预览/换人/选画风（不烧 token；不依赖编剧解锁） */}
             <div className="mt-4 max-w-4xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5">
+              {factoryGenreId ? (
+                <p className="mb-3 text-[10px] leading-snug text-white/45">
+                  题材已选：角色与画风会软推荐；手选后点「恢复自动推荐」可再跟题材走。切换题材不烧 token。
+                </p>
+              ) : (
+                <p className="mb-3 text-[10px] leading-snug text-white/40">
+                  可先选上方题材，再在此换人/定画风；未选题材时也可自由点选角色库。
+                </p>
+              )}
               <ManhuaCharacterGallery
                 femaleId={factoryFemaleId}
                 maleId={factoryMaleId}
