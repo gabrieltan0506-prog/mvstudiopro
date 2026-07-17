@@ -50,6 +50,7 @@ import {
   type CustomCouple,
 } from "@/lib/manhuaCharacterGalleryStorage";
 import ManhuaDualCompareStrip from "@/components/ManhuaDualCompareStrip";
+import ManhuaTriViewStrip from "@/components/ManhuaTriViewStrip";
 
 type AgeBand = "" | "le25" | "26_28" | "ge29";
 
@@ -87,39 +88,6 @@ type Props = {
   /** 题材文案：软高亮套组，不自动覆盖 */
   topicHint?: string;
 };
-
-/** 设定卡下半 FRONT/SIDE/BACK：三栏各自裁切，而不是整条糊一层标签 */
-function TriViewStrip({ url, compact }: { url: string; compact?: boolean }) {
-  const h = compact ? "h-24" : "h-28";
-  const panels: Array<{ label: string; bgPos: string }> = [
-    { label: "正面", bgPos: "0% 100%" },
-    { label: "侧面", bgPos: "50% 100%" },
-    { label: "背面", bgPos: "100% 100%" },
-  ];
-  return (
-    <div className="grid grid-cols-3 gap-1.5">
-      {panels.map((p) => (
-        <div key={p.label} className={`relative overflow-hidden rounded-md border border-white/10 bg-black/50 ${h}`}>
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage: `url(${url})`,
-              backgroundRepeat: "no-repeat",
-              // 宽×3 取下半三视图之一；高放大以锁底部全身条
-              backgroundSize: "300% 255%",
-              backgroundPosition: p.bgPos,
-            }}
-            role="img"
-            aria-label={p.label}
-          />
-          <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[9px] font-semibold tracking-wide text-white/85">
-            {p.label}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function CharacterSheetPreview({
   character,
@@ -199,7 +167,7 @@ function CharacterSheetPreview({
                 已锁定妆造
               </span>
             </div>
-            <TriViewStrip url={url} compact={compact} />
+            <ManhuaTriViewStrip url={url} compact={compact} />
           </div>
         </>
       ) : (
@@ -314,7 +282,7 @@ function LibraryCard({
             <span>预览妆造 · 三视图</span>
             {pinned ? <span className="text-cyan-200/80">已钉住</span> : null}
           </div>
-          <TriViewStrip url={url} compact />
+          <ManhuaTriViewStrip url={url} compact />
           <div className="mt-1 truncate text-[10px] text-white/55">
             {character.nameZh} · {character.jobZh}
           </div>
