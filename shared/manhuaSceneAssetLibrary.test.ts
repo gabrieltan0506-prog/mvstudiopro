@@ -64,4 +64,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 练剑广场 from 宗门大比", () => {
     expect(recommendManhuaSceneFromTopic("宗门大比弟子考核").sceneId).toBe("scene_03");
   });
+
+  it("recommends 魔宫 from 炼狱魔域", () => {
+    expect(recommendManhuaSceneFromTopic("炼狱魔域黑曜宫殿").sceneId).toBe("scene_05");
+  });
 });
