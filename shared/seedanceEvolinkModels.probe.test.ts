@@ -34,4 +34,9 @@ describe("resolveSeedanceProbeDefaults", () => {
     const d = resolveSeedanceProbeDefaults({ quality: "   " });
     expect(d.quality).toBe(SEEDANCE_PROBE_DEFAULT_QUALITY);
   });
+
+  it("accepts 2.5 version", () => {
+    const d = resolveSeedanceProbeDefaults({ version: "2.5" });
+    expect(d.version).toBe("2.5");
+  });
 });
