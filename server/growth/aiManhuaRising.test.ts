@@ -12,6 +12,8 @@ describe("inferDouyinDramaKind / dramaMetaFromDouyinAweme", () => {
     expect(inferDouyinDramaKind("重生漫剧开局团宠")).toBe("ai_manhua");
     expect(inferDouyinDramaKind("红果短剧连载")).toBe("short_drama");
     expect(inferDouyinDramaKind("探店测评")).toBe("unknown");
+    expect(inferDouyinDramaKind("发配边关罪妻开荒养出战神")).toBe("ai_manhua");
+    expect(inferDouyinDramaKind("聚宝仙盆之杂灵根才是真BOSS")).toBe("ai_manhua");
   });
 
   it("parses mix_info into dramaInfo", () => {

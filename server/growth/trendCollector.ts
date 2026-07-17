@@ -91,6 +91,8 @@ function metaFromDouyinAuthor(author: unknown): Partial<Pick<TrendItem, "account
 }
 
 const AI_MANHUA_HINT_RE = /AI\s*漫剧|AI漫|动态漫|漫剧|条漫剧|AI\s*短剧|虚拟角色剧/i;
+/** DataEye/红果常见漫剧题材切口（无「漫剧」二字时的软判定） */
+const AI_MANHUA_SOFT_TITLE_RE = /剑宗|师妹|仙盆|杂灵根|万妖图|罪妻开荒|团宠|重生之|穿越成|系统觉醒|修仙|灵根|宗门/;
 const SHORT_DRAMA_HINT_RE = /短剧|红果|竖屏剧|微短剧|连载剧/;
 
 /** 标题 / 合集名 / 标签 → AI 漫剧 vs 普通短剧 */
@@ -98,7 +100,12 @@ export function inferDouyinDramaKind(text: string, tags: string[] = []): DouyinD
   const hay = `${text} ${tags.join(" ")}`.trim();
   if (!hay) return "unknown";
   if (AI_MANHUA_HINT_RE.test(hay)) return "ai_manhua";
+  // 已是合集语境且命中漫剧题材词 → 倾向 AI 漫剧（避免把所有短剧都标成漫剧）
+  if (AI_MANHUA_SOFT_TITLE_RE.test(hay) && (tags.includes("AI漫剧检索") || /漫|仙|妖|灵|宗|穿越|重生/.test(hay))) {
+    return "ai_manhua";
+  }
   if (SHORT_DRAMA_HINT_RE.test(hay)) return "short_drama";
+  if (AI_MANHUA_SOFT_TITLE_RE.test(hay)) return "ai_manhua";
   return "unknown";
 }
 
