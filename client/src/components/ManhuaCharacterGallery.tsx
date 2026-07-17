@@ -469,7 +469,9 @@ export default function ManhuaCharacterGallery({
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [jobFilter, setJobFilter] = useState("");
   const [packFilterId, setPackFilterId] = useState("");
+  const [sortMode, setSortMode] = useState<"default" | "name" | "age">("default");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
@@ -528,16 +530,33 @@ export default function ManhuaCharacterGallery({
       .map(([t]) => t)
       .slice(0, 10);
   }, [pool]);
-  const filteredPool = useMemo(
-    () =>
-      pool.filter((c) => {
-        if (favoritesOnly && !favoriteSet.has(c.id)) return false;
-        if (!characterMatchesTemperamentPack(c, packFilter)) return false;
-        if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
-        return matchesCharacterQuery(c, libraryQuery);
-      }),
-    [pool, libraryQuery, tagFilter, favoritesOnly, favoriteSet, packFilter],
-  );
+  const jobOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of pool) {
+      const j = String(c.jobZh || "").trim();
+      if (j) counts.set(j, (counts.get(j) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh"))
+      .map(([j]) => j)
+      .slice(0, 8);
+  }, [pool]);
+  const filteredPool = useMemo(() => {
+    const list = pool.filter((c) => {
+      if (favoritesOnly && !favoriteSet.has(c.id)) return false;
+      if (!characterMatchesTemperamentPack(c, packFilter)) return false;
+      if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
+      if (jobFilter && c.jobZh !== jobFilter) return false;
+      return matchesCharacterQuery(c, libraryQuery);
+    });
+    if (sortMode === "name") {
+      return [...list].sort((a, b) => a.nameZh.localeCompare(b.nameZh, "zh"));
+    }
+    if (sortMode === "age") {
+      return [...list].sort((a, b) => (a.age || 99) - (b.age || 99) || a.nameZh.localeCompare(b.nameZh, "zh"));
+    }
+    return list;
+  }, [pool, libraryQuery, tagFilter, jobFilter, favoritesOnly, favoriteSet, packFilter, sortMode]);
   const selectedInTab = libraryTab === "female" ? femaleId : maleId;
 
   const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
@@ -592,6 +611,26 @@ export default function ManhuaCharacterGallery({
 
   const removeCustomCouple = (id: string) => {
     setCustomCouples(saveCustomCouples(customCouples.filter((x) => x.id !== id)));
+  };
+
+  const pickRandomCouplePack = () => {
+    if (!MANHUA_COUPLE_PACKS.length) return;
+    const others = MANHUA_COUPLE_PACKS.filter((p) => !(p.femaleId === femaleId && p.maleId === maleId));
+    const bag = others.length ? others : MANHUA_COUPLE_PACKS;
+    const pick = bag[Math.floor(Math.random() * bag.length)];
+    if (pick) applyCouplePack(pick.id);
+  };
+
+  const favoriteBothLeads = () => {
+    const ids = [femaleId, maleId].filter(Boolean);
+    if (!ids.length) return;
+    let next = [...favoriteIds];
+    for (const id of ids) {
+      if (!next.includes(id)) next = [id, ...next];
+    }
+    setFavoriteIds(saveFavoriteIds(next.slice(0, 24)));
+    setCopyFlash("已收藏当前女主/男主");
+    window.setTimeout(() => setCopyFlash(""), 1400);
   };
 
   const toggleFavorite = (id: string) => {
@@ -701,6 +740,7 @@ export default function ManhuaCharacterGallery({
     setLibraryTab(gender);
     setLibraryQuery("");
     setTagFilter("");
+    setJobFilter("");
     setPackFilterId("");
     requestAnimationFrame(() => {
       libraryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -747,6 +787,22 @@ export default function ManhuaCharacterGallery({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] font-semibold text-white/75">男女套组（一键选用）</div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={disabled || !MANHUA_COUPLE_PACKS.length}
+              onClick={pickRandomCouplePack}
+              className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              随机套组
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !femaleId || !maleId}
+              onClick={favoriteBothLeads}
+              className="text-[10px] text-rose-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              收藏当前双人
+            </button>
             <button
               type="button"
               disabled={disabled || !femaleId || !maleId}
@@ -933,6 +989,7 @@ export default function ManhuaCharacterGallery({
                 setLibraryTab("female");
                 setLibraryQuery("");
                 setTagFilter("");
+                setJobFilter("");
                 setPackFilterId("");
               }}
               className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
@@ -947,6 +1004,7 @@ export default function ManhuaCharacterGallery({
                 setLibraryTab("male");
                 setLibraryQuery("");
                 setTagFilter("");
+                setJobFilter("");
                 setPackFilterId("");
               }}
               className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
@@ -1010,6 +1068,27 @@ export default function ManhuaCharacterGallery({
           >
             清空收藏
           </button>
+          <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
+            {(
+              [
+                ["default", "默认"],
+                ["name", "姓名"],
+                ["age", "年龄"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                disabled={disabled}
+                onClick={() => setSortMode(id)}
+                className={`rounded-md px-2 py-1 text-[10px] ${
+                  sortMode === id ? "bg-white/15 text-white" : "text-white/45"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <span className="text-[10px] text-white/35">
             {filteredPool.length}/{pool.length}
           </span>
@@ -1070,6 +1149,35 @@ export default function ManhuaCharacterGallery({
                 }`}
               >
                 {t}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {jobOptions.length ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setJobFilter("")}
+              className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                !jobFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+              }`}
+            >
+              全部职业
+            </button>
+            {jobOptions.map((j) => (
+              <button
+                key={j}
+                type="button"
+                disabled={disabled}
+                onClick={() => setJobFilter((prev) => (prev === j ? "" : j))}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                  jobFilter === j
+                    ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
+                    : "border-white/10 text-white/50 hover:border-white/25"
+                }`}
+              >
+                {j}
               </button>
             ))}
           </div>
