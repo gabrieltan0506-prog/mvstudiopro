@@ -406,6 +406,33 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         });
       }
 
+      // 角色卡等 Pro 文本历史上易 503：同请求内换 Flash 再试（不向外泄漏模型名）
+      if (!r.ok && shouldRetryVertexText(r.status, r.json, r.rawText)) {
+        const { resolveGeminiScriptFallbackModel } = await import("../shared/geminiScriptFallback");
+        const fallbackModel = resolveGeminiScriptFallbackModel(model);
+        if (fallbackModel && fallbackModel !== model) {
+          const fbUrl = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${fallbackModel}:generateContent`;
+          const fbBody = JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 32768,
+              temperature: 0.8,
+              topP: 0.95,
+              thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
+            },
+          });
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (attempt > 0) await sleep(1100 * attempt);
+            r = await fetchJson(fbUrl, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: fbBody,
+            });
+            if (r.ok || !shouldRetryVertexText(r.status, r.json, r.rawText)) break;
+          }
+        }
+      }
+
       const raw = r.json ?? r.rawText;
       const httpOut = r.ok ? 200 : r.status === 429 ? 429 : r.status === 503 ? 503 : 502;
       return res.status(httpOut).json({

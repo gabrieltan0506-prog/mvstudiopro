@@ -94,45 +94,57 @@ function isTransientGeminiHttp(status: number): boolean {
 
 /**
  * Canvas 文案（故事/角色卡/节拍等）。
- * 对 429/5xx 在客户端再退避 1–2 次（角色卡历史上易 503；勿泄漏供应商/模型名）。
+ * 对 429/5xx 在客户端再退避；Pro 仍失败时换 Flash 再试（服务端也会换；勿泄漏模型名）。
  */
 export async function runGeminiScript(prompt: string, model?: string) {
-  const maxAttempts = 3;
+  const { resolveGeminiScriptFallbackModel } = await import("@shared/geminiScriptFallback");
+  const primary = model || "gemini-3.1-pro-preview";
+  const models = [primary];
+  const fallback = resolveGeminiScriptFallbackModel(primary);
+  if (fallback && fallback !== primary) models.push(fallback);
+
   let lastError = "文字生成失败，请稍后重试";
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const resp = await fetch("/api/google?op=geminiScript", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        model: model || "gemini-3.1-pro-preview",
-      }),
-    });
-    const json = await parseJson(resp);
-    if (resp.ok && json.ok) {
-      const text = String(
-        (json.raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || json.text || "",
-      ).trim();
-      if (text) return text;
-      lastError = "文字生成返回为空，请稍后重试";
-      // 空正文也偶发，短暂退避再试一次
-      if (attempt < maxAttempts - 1) {
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+  for (let mi = 0; mi < models.length; mi++) {
+    const useModel = models[mi]!;
+    const maxAttempts = mi === 0 ? 3 : 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const resp = await fetch("/api/google?op=geminiScript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          model: useModel,
+        }),
+      });
+      const json = await parseJson(resp);
+      if (resp.ok && json.ok) {
+        const text = String(
+          (json.raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || json.text || "",
+        ).trim();
+        if (text) return text;
+        lastError = "文字生成返回为空，请稍后重试";
+        if (attempt < maxAttempts - 1) {
+          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          continue;
+        }
+        break;
+      }
+      const upstream = Number(json?.status || resp.status || 0) || resp.status;
+      lastError =
+        String(json.error || "").trim() ||
+        (upstream >= 500 || upstream === 429
+          ? `算力紧张，请稍后重试（${upstream}）`
+          : "文字生成失败，请稍后重试");
+      if (attempt < maxAttempts - 1 && isTransientGeminiHttp(upstream)) {
+        await new Promise((r) => setTimeout(r, 1600 * (attempt + 1)));
         continue;
+      }
+      // 主模型瞬时失败 → 换下一模型；非瞬时直接抛
+      if (!isTransientGeminiHttp(upstream)) {
+        throw new Error(lastError);
       }
       break;
     }
-    const upstream = Number(json?.status || resp.status || 0) || resp.status;
-    lastError =
-      String(json.error || "").trim() ||
-      (upstream >= 500 || upstream === 429
-        ? `算力紧张，请稍后重试（${upstream}）`
-        : "文字生成失败，请稍后重试");
-    if (attempt < maxAttempts - 1 && isTransientGeminiHttp(upstream)) {
-      await new Promise((r) => setTimeout(r, 1600 * (attempt + 1)));
-      continue;
-    }
-    break;
   }
   throw new Error(lastError);
 }
