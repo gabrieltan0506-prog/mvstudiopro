@@ -645,6 +645,27 @@ function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHist
   };
 }
 
+function mergeHistoryLedgerEntry(
+  current: TrendHistoryLedgerEntry,
+  entry: TrendHistoryLedgerEntry,
+): TrendHistoryLedgerEntry {
+  return {
+    ...current,
+    bucket: entry.bucket || current.bucket,
+    industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
+    ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
+    contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
+    firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
+    lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+    mixId: entry.mixId || current.mixId,
+    mixName: entry.mixName || current.mixName,
+    dramaKind: entry.dramaKind && entry.dramaKind !== "unknown"
+      ? entry.dramaKind
+      : (current.dramaKind || entry.dramaKind),
+    mixPlayCount: Math.max(current.mixPlayCount || 0, entry.mixPlayCount || 0) || undefined,
+  };
+}
+
 function summarizeHistoryLedger(
   platform: GrowthPlatform,
   ledger: Record<string, TrendHistoryLedgerEntry>,
@@ -889,21 +910,7 @@ async function updateHistoryFromCollections(
         ledger[entry.key] = entry;
         continue;
       }
-      ledger[entry.key] = {
-        ...current,
-        bucket: entry.bucket || current.bucket,
-        industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
-        ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
-        contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
-        firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
-        lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
-        mixId: entry.mixId || current.mixId,
-        mixName: entry.mixName || current.mixName,
-        dramaKind: entry.dramaKind && entry.dramaKind !== "unknown"
-          ? entry.dramaKind
-          : (current.dramaKind || entry.dramaKind),
-        mixPlayCount: Math.max(current.mixPlayCount || 0, entry.mixPlayCount || 0) || undefined,
-      };
+      ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
     }
     await writeHistoryLedger(platform, ledger);
     touched.add(platform);
@@ -1715,21 +1722,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
           ledger[entry.key] = entry;
           continue;
         }
-        ledger[entry.key] = {
-          ...current,
-          bucket: entry.bucket || current.bucket,
-          industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
-          ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
-          contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
-          firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
-          lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
-          mixId: entry.mixId || current.mixId,
-          mixName: entry.mixName || current.mixName,
-          dramaKind: entry.dramaKind && entry.dramaKind !== "unknown"
-            ? entry.dramaKind
-            : (current.dramaKind || entry.dramaKind),
-          mixPlayCount: Math.max(current.mixPlayCount || 0, entry.mixPlayCount || 0) || undefined,
-        };
+        ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
       }
       ledgers.set(platform, ledger);
     }
@@ -1749,15 +1742,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
           ledger[historyEntry.key] = historyEntry;
           continue;
         }
-        ledger[historyEntry.key] = {
-          ...current,
-          bucket: historyEntry.bucket || current.bucket,
-          industryLabels: normalizeLabels([...(current.industryLabels || []), ...historyEntry.industryLabels]),
-          ageLabels: normalizeLabels([...(current.ageLabels || []), ...historyEntry.ageLabels]),
-          contentLabels: normalizeLabels([...(current.contentLabels || []), ...historyEntry.contentLabels]),
-          firstSeenAt: current.firstSeenAt < historyEntry.firstSeenAt ? current.firstSeenAt : historyEntry.firstSeenAt,
-          lastSeenAt: current.lastSeenAt > historyEntry.lastSeenAt ? current.lastSeenAt : historyEntry.lastSeenAt,
-        };
+        ledger[historyEntry.key] = mergeHistoryLedgerEntry(current, historyEntry);
       }
       ledgers.set(entry.platform, ledger);
     }
