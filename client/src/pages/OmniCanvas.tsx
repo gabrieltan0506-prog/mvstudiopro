@@ -1,20 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
+import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
+  MANHUA_SERIES_SPAWN_MAX,
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
+  filterBlocksByEpisode,
+  getBlockEpisodeIndex,
   resolveFactoryResumeStage,
   runManhuaDramaFactoryPipeline,
   spawnManhuaDramaStudio,
+  spawnManhuaDramaStudioSeries,
   stageKeyFromBlockId,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
+import {
+  collectManhuaClipDockItems,
+  episodeIndexesFromDockSelection,
+} from "@/lib/manhuaProjectExport";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -155,6 +164,10 @@ export default function OmniCanvas() {
   const [writerConfirmed, setWriterConfirmed] = useState(false);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(1);
   const [directorUnlocked, setDirectorUnlocked] = useState(false);
+  /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
+  const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
+  const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
+  const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const genreOptions = useMemo(() => listScreenwriterGenres({ onlyReady: true }), []);
   const factoryGenreLabel = useMemo(() => {
@@ -413,15 +426,33 @@ export default function OmniCanvas() {
   }, []);
 
   const stageChipStatus = useMemo(() => {
+    const scoped = filterBlocksByEpisode(blocks, writerFocusEpisode);
+    const pool = scoped.length ? scoped : blocks;
     return MANHUA_FACTORY_STAGE_ORDER.map((stage) => {
-      const b = blocks.find((x) => x.id.startsWith(`${stage}-`));
+      const b = pool.find((x) => x.id.startsWith(`${stage}-`));
       return {
         stage,
         label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
         status: b?.status || ("idle" as const),
       };
     });
-  }, [blocks]);
+  }, [blocks, writerFocusEpisode]);
+
+  const resolveRunEpisodeIndexes = useCallback((): number[] => {
+    if (factoryRunScope === "dock") {
+      const items = collectManhuaClipDockItems(blocks);
+      const fromDock = episodeIndexesFromDockSelection(items, dockSelectedIds);
+      if (fromDock.length) return fromDock;
+      toast.message("坞内未勾选片段，改跑焦点集");
+    }
+    const onCanvas = new Set(
+      blocks.map((b) => getBlockEpisodeIndex(b)).filter((n): n is number => n != null),
+    );
+    if (onCanvas.size && !onCanvas.has(writerFocusEpisode)) {
+      return [Array.from(onCanvas).sort((a, b) => a - b)[0]!];
+    }
+    return [writerFocusEpisode];
+  }, [factoryRunScope, blocks, dockSelectedIds, writerFocusEpisode]);
 
   const ensureStudioSpawned = useCallback(
     (topic?: string) => {
@@ -526,6 +557,8 @@ export default function OmniCanvas() {
     if (!factoryTopic.trim()) {
       setFactoryTopic(writerPack.seriesTitle || writerPack.logline || "连载短剧");
     }
+    const focusEp =
+      writerPack.episodes.find((e) => e.index === writerFocusEpisode) || writerPack.episodes[0];
     const spawned = spawnManhuaDramaStudio({
       originX: 60,
       originY: 80,
@@ -539,6 +572,9 @@ export default function OmniCanvas() {
       videoReverseOutputMode: factoryReverseMode,
       writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
       includeDirectorCraft: true,
+      episodeIndex: focusEp?.index ?? writerFocusEpisode,
+      episodeTitle: focusEp?.title,
+      endingHook: focusEp?.endHook,
     });
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
       setFactoryGenreId(spawned.resolvedGenreId);
@@ -546,7 +582,7 @@ export default function OmniCanvas() {
     setBlocks(spawned.blocks);
     setEdges(spawned.edges);
     saveCanvasState(spawned.blocks, spawned.edges);
-    toast.success("已确认剧情，编导分镜链路已就绪");
+    toast.success("已确认剧情，编导分镜链路已就绪（焦点集）");
   }, [
     writerPack,
     factoryTopic,
@@ -558,6 +594,71 @@ export default function OmniCanvas() {
     factoryGenreId,
     factorySceneId,
     writerFocusEpisode,
+  ]);
+
+  const confirmWriterSeriesSpawn = useCallback(() => {
+    if (!writerPack || !writerPackLooksReady(writerPack)) {
+      toast.error("请先扩写并检查剧情包是否完整");
+      return;
+    }
+    const episodes = [...writerPack.episodes]
+      .sort((a, b) => a.index - b.index)
+      .slice(0, MANHUA_SERIES_SPAWN_MAX);
+    const n = episodes.length;
+    const nodeEstimate = n * 7;
+    if (
+      !window.confirm(
+        `将按集铺 ${n} 条工厂链（约 ${nodeEstimate} 个节点，最多 ${MANHUA_SERIES_SPAWN_MAX} 集同屏），积分与耗时较高。继续？`,
+      )
+    ) {
+      return;
+    }
+    setWriterConfirmed(true);
+    setDirectorUnlocked(true);
+    if (!factoryTopic.trim()) {
+      setFactoryTopic(writerPack.seriesTitle || writerPack.logline || "连载短剧");
+    }
+    const spawned = spawnManhuaDramaStudioSeries({
+      originX: 60,
+      originY: 80,
+      topic: factoryTopic.trim() || writerPack.seriesTitle,
+      genreId: factoryGenreId || undefined,
+      sceneId: factorySceneId || undefined,
+      characterIds: selectedCharacterIds,
+      artStyleId: factoryArtStyleId,
+      motionPromptIds: selectedMotionIds,
+      craftShotIds: selectedCraftShotIds,
+      videoReverseOutputMode: factoryReverseMode,
+      episodes: episodes.map((ep) => ({
+        index: ep.index,
+        title: ep.title,
+        endHook: ep.endHook,
+        body: ep.body,
+      })),
+      writerContextForEpisode: (ep) => composeWriterPackFactoryContext(writerPack, ep.index),
+      includeDirectorCraft: true,
+      maxEpisodes: MANHUA_SERIES_SPAWN_MAX,
+    });
+    if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
+      setFactoryGenreId(spawned.resolvedGenreId);
+    }
+    if (spawned.resolvedSceneId && !factorySceneId) {
+      setFactorySceneId(spawned.resolvedSceneId);
+    }
+    setBlocks(spawned.blocks);
+    setEdges(spawned.edges);
+    saveCanvasState(spawned.blocks, spawned.edges);
+    toast.success(`已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入）`);
+  }, [
+    writerPack,
+    factoryTopic,
+    selectedCharacterIds,
+    selectedMotionIds,
+    selectedCraftShotIds,
+    factoryArtStyleId,
+    factoryReverseMode,
+    factoryGenreId,
+    factorySceneId,
   ]);
 
   const stopFactory = useCallback(() => {
@@ -574,54 +675,71 @@ export default function OmniCanvas() {
       setFactoryProgress("准备中…");
       try {
         const spawned = ensureStudioSpawned(factoryTopic);
+        const episodeIndexes = resolveRunEpisodeIndexes();
         toast.message(
           untilStage === "reverse"
-            ? "漫剧工厂：故事→角色→节拍→反推"
+            ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
             : untilStage === "keyart"
-              ? "漫剧工厂：跑到关键静帧"
-              : "漫剧工厂全自动：含静帧 + Seedance（约 15s）",
+              ? `漫剧工厂：跑到关键静帧（第 ${episodeIndexes.join("、")} 集）`
+              : `漫剧工厂全自动：含静帧 + Seedance（第 ${episodeIndexes.join("、")} 集）`,
         );
-        const result = await runManhuaDramaFactoryPipeline({
-          deps: runDeps,
-          blocks: spawned.blocks,
-          edges: spawned.edges,
-          untilStage,
-          forceFromStage: opts?.forceFromStage,
-          skipDone: true,
-          signal: ac.signal,
-          onBlocksChange: (next) => {
-            setBlocks(next);
-            setEdges((eds) => {
-              saveCanvasState(next, eds);
-              return eds;
-            });
-          },
-          onStageStart: (_id, index, total, label) => {
-            setFactoryProgress(`${index + 1}/${total} · ${label}`);
-            toast.message(`工厂 ${index + 1}/${total}`, { description: label });
-          },
-          onStageSkip: (_id, label) => {
-            setFactoryProgress(`跳过已完成 · ${label}`);
-          },
-          onStageRetry: (_id, label, attempt, message) => {
-            setFactoryProgress(`重试 ${attempt} · ${label}`);
-            toast.message(`瞬时失败，自动重试 ${attempt}`, {
-              description: `${label}：${message.slice(0, 120)}`,
-            });
-          },
-        });
-        if (result.errors.length) {
-          const errStage = stageKeyFromBlockId(result.errors[0]!.id);
+        let completed = 0;
+        let skipped = 0;
+        let lastError: { id: string; message: string } | null = null;
+        let workingBlocks = spawned.blocks;
+        let workingEdges = spawned.edges;
+        for (const episodeIndex of episodeIndexes) {
+          if (ac.signal.aborted) break;
+          setFactoryProgress(`第${episodeIndex}集 · 准备…`);
+          const result = await runManhuaDramaFactoryPipeline({
+            deps: runDeps,
+            blocks: workingBlocks,
+            edges: workingEdges,
+            untilStage,
+            episodeIndex,
+            forceFromStage: opts?.forceFromStage,
+            skipDone: true,
+            signal: ac.signal,
+            onBlocksChange: (next) => {
+              workingBlocks = next;
+              setBlocks(next);
+              setEdges((eds) => {
+                workingEdges = eds;
+                saveCanvasState(next, eds);
+                return eds;
+              });
+            },
+            onStageStart: (_id, index, total, label) => {
+              setFactoryProgress(`第${episodeIndex}集 · ${index + 1}/${total} · ${label}`);
+              toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, { description: label });
+            },
+            onStageSkip: (_id, label) => {
+              setFactoryProgress(`第${episodeIndex}集 · 跳过已完成 · ${label}`);
+            },
+            onStageRetry: (_id, label, attempt, message) => {
+              setFactoryProgress(`第${episodeIndex}集 · 重试 ${attempt} · ${label}`);
+              toast.message(`瞬时失败，自动重试 ${attempt}`, {
+                description: `${label}：${message.slice(0, 120)}`,
+              });
+            },
+          });
+          workingBlocks = result.blocks;
+          completed += result.completedIds.length;
+          skipped += result.skippedIds.length;
+          if (result.errors.length) {
+            lastError = result.errors[0]!;
+            break;
+          }
+        }
+        if (lastError) {
+          const errStage = stageKeyFromBlockId(lastError.id);
           toast.error(
-            `完成 ${result.completedIds.length} 段` +
-              (result.skippedIds.length ? `、跳过 ${result.skippedIds.length}` : "") +
-              `，中断于${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "未知"}：${result.errors[0]?.message || ""}`,
+            `完成 ${completed} 段` +
+              (skipped ? `、跳过 ${skipped}` : "") +
+              `，中断于${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "未知"}：${lastError.message || ""}`,
           );
         } else {
-          toast.success(
-            `漫剧工厂完成：新跑 ${result.completedIds.length}` +
-              (result.skippedIds.length ? ` · 跳过 ${result.skippedIds.length}` : ""),
-          );
+          toast.success(`漫剧工厂完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
         }
         setFactoryProgress("");
       } catch (e: unknown) {
@@ -632,18 +750,20 @@ export default function OmniCanvas() {
         setFactoryBusy(false);
       }
     },
-    [ensureStudioSpawned, factoryBusy, factoryTopic, runDeps],
+    [ensureStudioSpawned, factoryBusy, factoryTopic, runDeps, resolveRunEpisodeIndexes],
   );
 
   const resumeFromFailure = useCallback(() => {
-    const stage = resolveFactoryResumeStage(blocks);
+    const episodeIndexes = resolveRunEpisodeIndexes();
+    const episodeIndex = episodeIndexes[0] ?? writerFocusEpisode;
+    const stage = resolveFactoryResumeStage(blocks, episodeIndex);
     if (!stage) {
-      toast.message("六段都已完成，无需续跑");
+      toast.message(`第${episodeIndex}集链路都已完成，无需续跑`);
       return;
     }
-    toast.message(`从「${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]}」续跑`);
+    toast.message(`第${episodeIndex}集从「${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]}」续跑`);
     void runFactory("clip", { forceFromStage: stage });
-  }, [blocks, runFactory]);
+  }, [blocks, runFactory, resolveRunEpisodeIndexes, writerFocusEpisode]);
 
   return (
     <div className="min-h-dvh bg-transparent text-white">
@@ -724,6 +844,14 @@ export default function OmniCanvas() {
                   className="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/35 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-50 hover:bg-sky-500/25 disabled:opacity-50"
                 >
                   确认并进入编导
+                </button>
+                <button
+                  type="button"
+                  disabled={writerBusy || factoryBusy || !writerPack}
+                  onClick={confirmWriterSeriesSpawn}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/35 bg-violet-500/15 px-3.5 py-2 text-xs font-semibold text-violet-50 hover:bg-violet-500/25 disabled:opacity-50"
+                >
+                  按集铺板（最多 {MANHUA_SERIES_SPAWN_MAX}）
                 </button>
                 <button
                   type="button"
@@ -1052,6 +1180,30 @@ export default function OmniCanvas() {
                 ) : null}
               </div>
 
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-white/55">
+                <span>运行范围</span>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="factory-run-scope"
+                    checked={factoryRunScope === "focus"}
+                    onChange={() => setFactoryRunScope("focus")}
+                    className="accent-sky-400"
+                  />
+                  当前焦点集（第{writerFocusEpisode}集）
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="factory-run-scope"
+                    checked={factoryRunScope === "dock"}
+                    onChange={() => setFactoryRunScope("dock")}
+                    className="accent-amber-400"
+                  />
+                  成片坞已勾选集
+                </label>
+              </div>
+
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -1071,6 +1223,8 @@ export default function OmniCanvas() {
                       videoReverseOutputMode: factoryReverseMode,
                       writerContext,
                       includeDirectorCraft: true,
+                      episodeIndex: writerFocusEpisode,
+                      episodeTitle: writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.title,
                     });
                     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
                       setFactoryGenreId(spawned.resolvedGenreId);
@@ -1150,7 +1304,22 @@ export default function OmniCanvas() {
               <span className="font-semibold text-amber-100/90">Seedance 2.5 Coming soon</span>
               {" · "}
               文生 / 图生 / 参考生已就绪，待开放；当前 Seedance 2.0（默认 15s）。
+              {" · "}
+              工程包导出为素材 zip，不含自动拼接长片。
             </p>
+
+            <div className="mt-4 max-w-3xl">
+              <ManhuaClipDock
+                blocks={blocks}
+                topic={factoryTopic}
+                seriesTitle={writerPack?.seriesTitle}
+                characterIds={selectedCharacterIds}
+                artStyleId={factoryArtStyleId}
+                selectedIds={dockSelectedIds}
+                onSelectedIdsChange={setDockSelectedIds}
+                onFocusBlock={(id) => setFocusBlockId(id)}
+              />
+            </div>
           </div>
 
           <FreeformCanvas
@@ -1159,6 +1328,8 @@ export default function OmniCanvas() {
             onBlocksChange={handleBlocksChange}
             onEdgesChange={handleEdgesChange}
             runDeps={runDeps}
+            focusBlockId={focusBlockId}
+            onFocusBlockConsumed={() => setFocusBlockId(null)}
           />
         </div>
       </main>

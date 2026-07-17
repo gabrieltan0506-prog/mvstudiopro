@@ -92,6 +92,10 @@ export type CanvasBlock = {
   error?: string;
   /** 编导反推输出档：zh | en | compact */
   videoReverseOutputMode?: "zh" | "en" | "compact";
+  /** 连载集号（多集铺板时挂在链上各节点，可序列化） */
+  episodeIndex?: number;
+  /** 本集标题（坞列表 / story 注释用） */
+  episodeTitle?: string;
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -230,6 +234,11 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
         : block.videoReverseOutputMode === "zh"
           ? "zh"
           : undefined,
+    episodeIndex:
+      typeof block.episodeIndex === "number" && Number.isFinite(block.episodeIndex) && block.episodeIndex >= 1
+        ? Math.floor(block.episodeIndex)
+        : undefined,
+    episodeTitle: block.episodeTitle ? String(block.episodeTitle).trim().slice(0, 120) || undefined : undefined,
   };
 }
 

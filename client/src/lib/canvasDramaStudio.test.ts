@@ -4,11 +4,14 @@ import {
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
   extractFactoryMotionHints,
+  filterBlocksByEpisode,
+  getBlockEpisodeIndex,
   isTransientFactoryError,
   resolveFactoryResumeStage,
   resolveManhuaFactoryOrderedIds,
   runManhuaDramaFactoryPipeline,
   spawnManhuaDramaStudio,
+  spawnManhuaDramaStudioSeries,
 } from "./canvasDramaStudio";
 import type { CanvasRunDeps } from "./canvasRunBlock";
 
@@ -330,5 +333,58 @@ slow dolly in, soft rain, trembling hand
           : b,
     );
     expect(resolveFactoryResumeStage(withError)).toBe("beats");
+  });
+
+  it("spawns series with staggered rows, eXX ids, and previous ending hook", () => {
+    const { blocks, edges, episodeCount, episodeIndexes } = spawnManhuaDramaStudioSeries({
+      topic: "仙侠外门闯秘境",
+      genreId: "xianxia",
+      episodes: [
+        { index: 1, title: "石门异响", endHook: "门缝透出冷光" },
+        { index: 2, title: "冷光之后", endHook: "身后有人叫她本名" },
+        { index: 3, title: "本名", endHook: "玉佩碎裂" },
+      ],
+      writerContextForEpisode: (ep) => `【本集优先】第${ep.index}集《${ep.title}》\n${ep.body || ""}`,
+      rowGap: 400,
+      originY: 40,
+    });
+    expect(episodeCount).toBe(3);
+    expect(episodeIndexes).toEqual([1, 2, 3]);
+    expect(blocks).toHaveLength(21);
+    expect(edges).toHaveLength(18);
+
+    const stories = blocks.filter((b) => b.id.startsWith("story-"));
+    expect(stories).toHaveLength(3);
+    expect(stories.every((b) => /story-e0[123]-/.test(b.id))).toBe(true);
+    expect(stories.map((b) => b.episodeIndex)).toEqual([1, 2, 3]);
+    expect(stories[0]!.y).toBe(40);
+    expect(stories[1]!.y).toBe(440);
+    expect(stories[2]!.y).toBe(840);
+
+    expect(stories[0]!.prompt).toContain("第1集·石门异响");
+    expect(stories[0]!.prompt).not.toContain("【上集钩子】");
+    expect(stories[1]!.prompt).toContain("【上集钩子】门缝透出冷光");
+    expect(stories[2]!.prompt).toContain("【上集钩子】身后有人叫她本名");
+
+    const ep2 = filterBlocksByEpisode(blocks, 2);
+    expect(ep2).toHaveLength(7);
+    expect(resolveManhuaFactoryOrderedIds(blocks, "clip", 2).every((id) => id.includes("-e02-"))).toBe(
+      true,
+    );
+    expect(getBlockEpisodeIndex(ep2[0]!)).toBe(2);
+  });
+
+  it("caps series spawn at 4 episodes", () => {
+    const eps = [1, 2, 3, 4, 5, 6].map((i) => ({
+      index: i,
+      title: `集${i}`,
+      endHook: `钩子${i}`,
+    }));
+    const { episodeCount, blocks } = spawnManhuaDramaStudioSeries({
+      topic: "连载",
+      episodes: eps,
+    });
+    expect(episodeCount).toBe(4);
+    expect(blocks.filter((b) => b.id.startsWith("story-"))).toHaveLength(4);
   });
 });
