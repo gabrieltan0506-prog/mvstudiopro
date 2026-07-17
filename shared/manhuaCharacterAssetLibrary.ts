@@ -506,6 +506,44 @@ export function getManhuaCouplePackById(id: string): ManhuaCouplePack | null {
   return MANHUA_COUPLE_PACKS.find((p) => p.id === key) || null;
 }
 
+/** 题材 → 套组软推荐（只高亮，不自动覆盖手选） */
+export function recommendManhuaCouplePacksFromTopic(topic: string): {
+  packIds: string[];
+  reasonZh: string;
+} {
+  const t = String(topic || "").trim();
+  if (!t) return { packIds: [], reasonZh: "" };
+  const scored = MANHUA_COUPLE_PACKS.map((p) => {
+    const f = getManhuaCharacterById(p.femaleId);
+    const m = getManhuaCharacterById(p.maleId);
+    const hay = [p.labelZh, p.blurbZh, f?.jobZh, m?.jobZh, ...(f?.temperamentTags || []), ...(m?.temperamentTags || [])]
+      .filter(Boolean)
+      .join(" ");
+    let score = 0;
+    for (const hint of TOPIC_TEMPERAMENT_HINTS) {
+      if (!hint.keys.some((k) => t.includes(k))) continue;
+      const hit = hint.tags.some((tag) => hay.includes(tag));
+      if (hit) score += 2;
+    }
+    if (/律政|律师|法庭/.test(t) && p.id === "law_duel") score += 4;
+    if (/钢琴|音乐|古典/.test(t) && p.id === "piano_echo") score += 4;
+    if (/博物馆|文物|策展/.test(t) && (p.id === "museum_night" || p.id === "antique_mystery")) score += 3;
+    if (/时尚|杂志|主编|创始/.test(t) && p.id === "fashion_power") score += 4;
+    if (/古董|悬疑|神秘/.test(t) && p.id === "antique_mystery") score += 4;
+    if (/霸总|职场|都市|商战/.test(t) && p.id === "urban_cold") score += 3;
+    return { id: p.id, score };
+  })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const packIds = scored.slice(0, 3).map((x) => x.id);
+  if (!packIds.length) return { packIds: [], reasonZh: "" };
+  const labels = packIds
+    .map((id) => MANHUA_COUPLE_PACKS.find((p) => p.id === id)?.labelZh)
+    .filter(Boolean)
+    .join(" / ");
+  return { packIds, reasonZh: `题材软推套组：${labels}` };
+}
+
 export function getManhuaTemperamentPackById(id: string): ManhuaTemperamentPack | null {
   const key = String(id || "").trim();
   return MANHUA_TEMPERAMENT_PACKS.find((p) => p.id === key) || null;

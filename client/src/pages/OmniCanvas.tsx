@@ -157,6 +157,10 @@ export default function OmniCanvas() {
   const [directorUnlocked, setDirectorUnlocked] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const genreOptions = useMemo(() => listScreenwriterGenres({ onlyReady: true }), []);
+  const factoryGenreLabel = useMemo(() => {
+    const g = genreOptions.find((x) => x.id === factoryGenreId);
+    return String(g?.labelZh || g?.id || "").trim();
+  }, [factoryGenreId, genreOptions]);
   const sceneOptions = useMemo(() => {
     const g = genreOptions.find((x) => x.id === factoryGenreId);
     if (g?.sceneGenre) return listManhuaScenes({ genre: g.sceneGenre });
@@ -815,6 +819,7 @@ export default function OmniCanvas() {
                 artStyleId={factoryArtStyleId}
                 artStyleAutoApplied={artStyleAutoApplied}
                 disabled={factoryBusy}
+                topicHint={[factoryGenreLabel, factoryTopic].filter(Boolean).join(" ")}
                 reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
                   selectedCharacterIds.length
                     ? "；已选将在「铺编导节点」时注入角色卡。预览/换人/画风/铺同版式节点均不烧 token。"

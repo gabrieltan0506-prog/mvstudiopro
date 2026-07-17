@@ -17,12 +17,24 @@ import {
   listManhuaCharactersByGender,
   parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
+  recommendManhuaCouplePacksFromTopic,
   serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
+
+type AgeBand = "" | "le25" | "26_28" | "ge29";
+
+function matchesAgeBand(c: ManhuaCharacterTemplate, band: AgeBand): boolean {
+  if (!band) return true;
+  const age = c.age || 0;
+  if (!age) return false;
+  if (band === "le25") return age <= 25;
+  if (band === "26_28") return age >= 26 && age <= 28;
+  return age >= 29;
+}
 
 const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
 const FAV_LS_KEY = "mv-manhua-character-fav-v1";
@@ -201,6 +213,8 @@ type Props = {
   /** 同版式：铺设定卡生图节点（不自动跑） */
   onGenerateSameLayout?: (gender: ManhuaCharacterGender) => void;
   reasonZh?: string;
+  /** 题材文案：软高亮套组，不自动覆盖 */
+  topicHint?: string;
 };
 
 /** 设定卡下半 FRONT/SIDE/BACK：三栏各自裁切，而不是整条糊一层标签 */
@@ -500,6 +514,7 @@ export default function ManhuaCharacterGallery({
   onClearManual,
   onGenerateSameLayout,
   reasonZh,
+  topicHint,
 }: Props) {
   const initialPrefs = useMemo(() => loadLibraryPrefs(), []);
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>(
@@ -508,6 +523,7 @@ export default function ManhuaCharacterGallery({
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [jobFilter, setJobFilter] = useState("");
+  const [ageBand, setAgeBand] = useState<AgeBand>("");
   const [packFilterId, setPackFilterId] = useState(() => initialPrefs.packFilterId || "");
   const [sortMode, setSortMode] = useState<"default" | "name" | "age">(
     () => initialPrefs.sortMode || "default",
@@ -522,6 +538,11 @@ export default function ManhuaCharacterGallery({
   const libraryRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const packFilter = useMemo(() => getManhuaTemperamentPackById(packFilterId), [packFilterId]);
+  const topicCoupleRec = useMemo(
+    () => recommendManhuaCouplePacksFromTopic(topicHint || ""),
+    [topicHint],
+  );
+  const topicCoupleSet = useMemo(() => new Set(topicCoupleRec.packIds), [topicCoupleRec.packIds]);
   const females = useMemo(() => listManhuaCharactersByGender("female"), []);
   const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
@@ -589,6 +610,7 @@ export default function ManhuaCharacterGallery({
       if (!characterMatchesTemperamentPack(c, packFilter)) return false;
       if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
       if (jobFilter && c.jobZh !== jobFilter) return false;
+      if (!matchesAgeBand(c, ageBand)) return false;
       return matchesCharacterQuery(c, libraryQuery);
     });
     if (sortMode === "name") {
@@ -598,7 +620,7 @@ export default function ManhuaCharacterGallery({
       return [...list].sort((a, b) => (a.age || 99) - (b.age || 99) || a.nameZh.localeCompare(b.nameZh, "zh"));
     }
     return list;
-  }, [pool, libraryQuery, tagFilter, jobFilter, favoritesOnly, favoriteSet, packFilter, sortMode]);
+  }, [pool, libraryQuery, tagFilter, jobFilter, ageBand, favoritesOnly, favoriteSet, packFilter, sortMode]);
   const selectedInTab = libraryTab === "female" ? femaleId : maleId;
 
   const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
@@ -768,13 +790,20 @@ export default function ManhuaCharacterGallery({
     setLibraryQuery("");
     setTagFilter("");
     setJobFilter("");
+    setAgeBand("");
     setPackFilterId("");
     setFavoritesOnly(false);
     setSortMode("default");
   };
 
   const hasActiveFilters = Boolean(
-    libraryQuery || tagFilter || jobFilter || packFilterId || favoritesOnly || sortMode !== "default",
+    libraryQuery ||
+      tagFilter ||
+      jobFilter ||
+      ageBand ||
+      packFilterId ||
+      favoritesOnly ||
+      sortMode !== "default",
   );
 
   const compareCharacter =
@@ -942,9 +971,13 @@ export default function ManhuaCharacterGallery({
             <span className="text-[10px] text-white/35">会同步画风 · 不烧 token</span>
           </div>
         </div>
+        {topicCoupleRec.reasonZh ? (
+          <p className="mb-2 text-[10px] text-violet-100/70">{topicCoupleRec.reasonZh}（仅高亮，不自动套用）</p>
+        ) : null}
         <div className="flex flex-wrap gap-1.5">
           {MANHUA_COUPLE_PACKS.map((p) => {
             const active = femaleId === p.femaleId && maleId === p.maleId;
+            const soft = topicCoupleSet.has(p.id);
             return (
               <button
                 key={p.id}
@@ -955,10 +988,17 @@ export default function ManhuaCharacterGallery({
                 className={`rounded-lg border px-2.5 py-1.5 text-left text-[10px] disabled:opacity-40 ${
                   active
                     ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100"
-                    : "border-white/10 bg-black/30 text-white/70 hover:border-white/25"
+                    : soft
+                      ? "border-violet-400/40 bg-violet-500/10 text-violet-50 hover:border-violet-300/55"
+                      : "border-white/10 bg-black/30 text-white/70 hover:border-white/25"
                 }`}
               >
-                <div className="font-semibold">{p.labelZh}</div>
+                <div className="flex items-center gap-1.5 font-semibold">
+                  {p.labelZh}
+                  {soft && !active ? (
+                    <span className="rounded px-1 text-[9px] font-normal text-violet-200/80">题材</span>
+                  ) : null}
+                </div>
                 <div className="mt-0.5 text-white/40">{p.blurbZh}</div>
               </button>
             );
@@ -1301,6 +1341,30 @@ export default function ManhuaCharacterGallery({
             ))}
           </div>
         ) : null}
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {(
+            [
+              ["", "全部年龄"],
+              ["le25", "≤25"],
+              ["26_28", "26–28"],
+              ["ge29", "≥29"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id || "all-age"}
+              type="button"
+              disabled={disabled}
+              onClick={() => setAgeBand(id)}
+              className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                ageBand === id
+                  ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
+                  : "border-white/10 text-white/50 hover:border-white/25"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {jobOptions.length ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
             <button

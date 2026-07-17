@@ -17,6 +17,7 @@ import {
   parseManhuaFavoriteIds,
   recommendManhuaArtStyleFromTopic,
   recommendManhuaCharactersFromTopic,
+  recommendManhuaCouplePacksFromTopic,
   serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
 } from "../shared/manhuaCharacterAssetLibrary";
@@ -104,6 +105,10 @@ if (
 ) {
   bad("双人选型序列化往返");
 } else ok("双人选型序列化往返");
+
+const coupleRec = recommendManhuaCouplePacksFromTopic("都市霸总职场情感");
+if (!coupleRec.packIds.includes("urban_cold")) bad("题材软推都市套组", coupleRec.packIds.join(","));
+else ok(`题材软推套组 ${coupleRec.packIds.join(",")}`);
 
 if (failed) {
   console.error(`\n验收失败：${failed} 项`);
