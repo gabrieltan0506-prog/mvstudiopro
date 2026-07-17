@@ -136,6 +136,17 @@ describe("canvasDramaStudio factory", () => {
     expect(story).not.toMatch(/编剧剧种模板·仙侠/);
   });
 
+  it("applyFactoryPrefsToBlocks syncs character anchors on bible", () => {
+    const { blocks } = spawnManhuaDramaStudio({ topic: "都市恋爱" });
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      characterIds: ["char_f_01", "char_m_01"],
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
+    expect(bible).toContain("【角色库锚点】");
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",
