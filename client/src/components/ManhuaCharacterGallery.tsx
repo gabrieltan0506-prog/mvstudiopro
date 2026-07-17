@@ -1088,36 +1088,43 @@ export default function ManhuaCharacterGallery({
           </div>
         ) : null}
         <div className="flex flex-wrap gap-1.5">
-          {MANHUA_COUPLE_PACKS.map((p, idx) => {
-            const active = femaleId === p.femaleId && maleId === p.maleId;
-            const soft = topicCoupleSet.has(p.id);
-            const hotkey = idx < 8 ? String(idx + 1) : "";
-            return (
-              <button
-                key={p.id}
-                type="button"
-                disabled={disabled}
-                title={hotkey ? `${p.blurbZh}（快捷键 ${hotkey}）` : p.blurbZh}
-                onClick={() => applyCouplePack(p.id)}
-                className={`rounded-lg border px-2.5 py-1.5 text-left text-[10px] disabled:opacity-40 ${
-                  active
-                    ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100"
-                    : soft
-                      ? "border-violet-400/40 bg-violet-500/10 text-violet-50 hover:border-violet-300/55"
-                      : "border-white/10 bg-black/30 text-white/70 hover:border-white/25"
-                }`}
-              >
-                <div className="flex items-center gap-1.5 font-semibold">
-                  {hotkey ? <span className="text-white/35">{hotkey}.</span> : null}
-                  {p.labelZh}
-                  {soft && !active ? (
-                    <span className="rounded px-1 text-[9px] font-normal text-violet-200/80">题材</span>
-                  ) : null}
-                </div>
-                <div className="mt-0.5 text-white/40">{p.blurbZh}</div>
-              </button>
-            );
-          })}
+          {[...MANHUA_COUPLE_PACKS]
+            .map((p, idx) => ({ p, idx }))
+            .sort((a, b) => {
+              const as = topicCoupleSet.has(a.p.id) ? 0 : 1;
+              const bs = topicCoupleSet.has(b.p.id) ? 0 : 1;
+              return as - bs || a.idx - b.idx;
+            })
+            .map(({ p, idx }) => {
+              const active = femaleId === p.femaleId && maleId === p.maleId;
+              const soft = topicCoupleSet.has(p.id);
+              const hotkey = idx < 8 ? String(idx + 1) : "";
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={disabled}
+                  title={hotkey ? `${p.blurbZh}（快捷键 ${hotkey}）` : p.blurbZh}
+                  onClick={() => applyCouplePack(p.id)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-left text-[10px] disabled:opacity-40 ${
+                    active
+                      ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100"
+                      : soft
+                        ? "border-violet-400/40 bg-violet-500/10 text-violet-50 hover:border-violet-300/55"
+                        : "border-white/10 bg-black/30 text-white/70 hover:border-white/25"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-semibold">
+                    {hotkey ? <span className="text-white/35">{hotkey}.</span> : null}
+                    {p.labelZh}
+                    {soft && !active ? (
+                      <span className="rounded px-1 text-[9px] font-normal text-violet-200/80">题材</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-0.5 text-white/40">{p.blurbZh}</div>
+                </button>
+              );
+            })}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button
