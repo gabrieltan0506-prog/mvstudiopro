@@ -96,4 +96,13 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 未来城市 from 悬浮车", () => {
     expect(recommendManhuaSceneFromTopic("赛博悬浮车天际线").sceneId).toBe("scene_15");
   });
+
+  it("recommends 避难所 from 辐射区", () => {
+    expect(recommendManhuaSceneFromTopic("辐射区废墟城").sceneId).toBe("scene_17");
+  });
+
+  it("recommends 实验室 from 克隆舱", () => {
+    expect(recommendManhuaSceneFromTopic("克隆舱禁区实验").sceneId).toBe("scene_18");
+  });
+
 });

@@ -300,8 +300,8 @@ const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
   { sceneId: "scene_14", keys: ["校园", "教室", "校服", "课桌", "青春", "同学"] },
   { sceneId: "scene_16", keys: ["太空", "星舰", "飞船", "基地", "舷窗", "星际", "轨道站", "登陆舱"] },
   { sceneId: "scene_15", keys: ["未来城市", "全息", "飞行器", "赛博", "天际线", "霓虹都市", "悬浮车"] },
-  { sceneId: "scene_17", keys: ["避难所", "废土", "末日", "幸存者", "营地"] },
-  { sceneId: "scene_18", keys: ["实验室", "实验舱", "科研", "AI觉醒", "玻璃舱"] },
+  { sceneId: "scene_17", keys: ["避难所", "废土", "末日", "幸存者", "营地", "辐射区", "废墟城"] },
+  { sceneId: "scene_18", keys: ["实验室", "实验舱", "科研", "AI觉醒", "玻璃舱", "克隆舱", "禁区实验"] },
   { sceneId: "scene_19", keys: ["密室", "探案", "搜证", "线索", "推理现场"] },
   { sceneId: "scene_20", keys: ["黑客", "代码", "多屏", "信息战", "服务器"] },
 ];
