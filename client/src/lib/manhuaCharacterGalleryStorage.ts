@@ -177,6 +177,83 @@ export function clearRecentCouplePackIds(): string[] {
   return [];
 }
 
+/** 一次性导出本地角色卡偏好（收藏/套组/最近/筛选） */
+export function serializeManhuaGalleryWorkspace(): string {
+  return JSON.stringify(
+    {
+      v: 1,
+      kind: "manhua-character-gallery-workspace",
+      favorites: loadFavoriteIds(),
+      customCouples: loadCustomCouples(),
+      recent: loadRecentIds(),
+      recentCouplePacks: loadRecentCouplePackIds(),
+      prefs: loadLibraryPrefs(),
+    },
+    null,
+    0,
+  );
+}
+
+export type ManhuaGalleryWorkspace = {
+  favorites: string[];
+  customCouples: CustomCouple[];
+  recent: string[];
+  recentCouplePacks: string[];
+  prefs: LibraryPrefs;
+};
+
+export function parseManhuaGalleryWorkspace(raw: string): ManhuaGalleryWorkspace | null {
+  try {
+    const parsed = JSON.parse(String(raw || "").trim()) as {
+      kind?: string;
+      favorites?: unknown;
+      customCouples?: unknown;
+      recent?: unknown;
+      recentCouplePacks?: unknown;
+      prefs?: LibraryPrefs;
+    };
+    if (!parsed || parsed.kind !== "manhua-character-gallery-workspace") return null;
+    return {
+      favorites: Array.isArray(parsed.favorites) ? parsed.favorites.map(String) : [],
+      customCouples: Array.isArray(parsed.customCouples)
+        ? (parsed.customCouples as CustomCouple[])
+        : [],
+      recent: Array.isArray(parsed.recent) ? parsed.recent.map(String) : [],
+      recentCouplePacks: Array.isArray(parsed.recentCouplePacks)
+        ? parsed.recentCouplePacks.map(String)
+        : [],
+      prefs: parsed.prefs && typeof parsed.prefs === "object" ? parsed.prefs : {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function applyManhuaGalleryWorkspace(ws: ManhuaGalleryWorkspace): ManhuaGalleryWorkspace {
+  const favorites = saveFavoriteIds(ws.favorites);
+  const customCouples = saveCustomCouples(ws.customCouples || []);
+  const recent = ws.recent.map(String).filter(Boolean).slice(0, 8);
+  try {
+    localStorage.setItem(RECENT_LS_KEY, JSON.stringify(recent));
+  } catch {
+    /* ignore */
+  }
+  const recentCouplePacks = ws.recentCouplePacks.map(String).filter(Boolean).slice(0, 6);
+  try {
+    localStorage.setItem(RECENT_COUPLE_PACK_LS_KEY, JSON.stringify(recentCouplePacks));
+  } catch {
+    /* ignore */
+  }
+  saveLibraryPrefs(ws.prefs || {});
+  return {
+    favorites,
+    customCouples,
+    recent,
+    recentCouplePacks,
+    prefs: loadLibraryPrefs(),
+  };
+}
+
 export async function copyText(text: string): Promise<boolean> {
   const t = String(text || "").trim();
   if (!t) return false;

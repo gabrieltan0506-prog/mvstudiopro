@@ -29,6 +29,7 @@ import {
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
 import {
+  applyManhuaGalleryWorkspace,
   clearRecentCouplePackIds,
   clearRecentIds,
   copyText,
@@ -37,11 +38,13 @@ import {
   loadLibraryPrefs,
   loadRecentCouplePackIds,
   loadRecentIds,
+  parseManhuaGalleryWorkspace,
   pushRecentCouplePackId,
   pushRecentId,
   saveCustomCouples,
   saveFavoriteIds,
   saveLibraryPrefs,
+  serializeManhuaGalleryWorkspace,
   toggleFavoriteId,
   type CustomCouple,
 } from "@/lib/manhuaCharacterGalleryStorage";
@@ -736,6 +739,40 @@ export default function ManhuaCharacterGallery({
     window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
+  const exportWorkspace = async () => {
+    const ok = await copyText(serializeManhuaGalleryWorkspace());
+    setCopyFlash(ok ? "已导出角色卡工作区 JSON" : "导出失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  const importWorkspace = async () => {
+    try {
+      const raw = await navigator.clipboard.readText();
+      const parsed = parseManhuaGalleryWorkspace(raw);
+      if (!parsed) {
+        setCopyFlash("剪贴板无有效工作区 JSON");
+        window.setTimeout(() => setCopyFlash(""), 1800);
+        return;
+      }
+      const applied = applyManhuaGalleryWorkspace(parsed);
+      setFavoriteIds(applied.favorites);
+      setCustomCouples(applied.customCouples);
+      setRecentIds(applied.recent);
+      setRecentCouplePackIds(applied.recentCouplePacks);
+      if (applied.prefs.tab) setLibraryTab(applied.prefs.tab);
+      if (applied.prefs.sortMode) setSortMode(applied.prefs.sortMode);
+      if (typeof applied.prefs.dense === "boolean") setDenseGrid(applied.prefs.dense);
+      if (typeof applied.prefs.lockArtStyle === "boolean") setLockArtStyle(applied.prefs.lockArtStyle);
+      if (typeof applied.prefs.compactUi === "boolean") setCompactUi(applied.prefs.compactUi);
+      if (applied.prefs.packFilterId !== undefined) setPackFilterId(applied.prefs.packFilterId || "");
+      setCopyFlash("已导入角色卡工作区");
+      window.setTimeout(() => setCopyFlash(""), 1600);
+    } catch {
+      setCopyFlash("无法读取剪贴板（需权限）");
+      window.setTimeout(() => setCopyFlash(""), 1800);
+    }
+  };
+
   const importCoupleSelection = async () => {
     try {
       const raw = await navigator.clipboard.readText();
@@ -946,6 +983,22 @@ export default function ManhuaCharacterGallery({
             className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
           >
             导入双人选型
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => void exportWorkspace()}
+            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            导出工作区
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => void importWorkspace()}
+            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            导入工作区
           </button>
           {onClearManual ? (
             <button
