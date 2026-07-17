@@ -118,6 +118,24 @@ describe("canvasDramaStudio factory", () => {
     expect(key).toContain("本集主场景优先");
   });
 
+  it("applyFactoryPrefsToBlocks syncs genre template on story/bible", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      genreId: "xianxia",
+      topic: "外门弟子",
+    });
+    expect(blocks.find((b) => b.id.startsWith("story-"))!.prompt).toContain("仙侠");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      genreId: "urban",
+      sceneId: "scene_12",
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const story = next.find((b) => b.id.startsWith("story-"))!.prompt;
+    expect(story).toContain("都市");
+    expect(story).toContain("都市办公室");
+    expect(story).not.toMatch(/编剧剧种模板·仙侠/);
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",

@@ -16,6 +16,8 @@ import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
   buildManhuaStagePromptWithGenre,
+  composeGenreTemplatePromptBlock,
+  getScreenwriterGenreTemplate,
   recommendManhuaSceneIdFromTopic,
   resolveManhuaGenreId,
 } from "@shared/screenwriterGenreTemplates";
@@ -257,6 +259,7 @@ export function applyFactoryPrefsToBlocks(
     craftShotIds?: string[];
     motionPromptIds?: string[];
     sceneId?: string;
+    genreId?: string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
 ): CanvasBlock[] {
@@ -264,6 +267,7 @@ export function applyFactoryPrefsToBlocks(
   const motionBlock = buildMotionPromptInjectBlock(opts.motionPromptIds || []);
   const scene = getManhuaSceneTemplate(opts.sceneId);
   const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
+  const genreBlock = composeGenreTemplatePromptBlock(getScreenwriterGenreTemplate(opts.genreId));
   const reverseMode =
     opts.videoReverseOutputMode === "en" || opts.videoReverseOutputMode === "compact"
       ? opts.videoReverseOutputMode
@@ -275,9 +279,12 @@ export function applyFactoryPrefsToBlocks(
       b.id.startsWith("beats-") ||
       b.id.startsWith("reverse-") ||
       b.id.startsWith("keyart-");
+    const syncGenre =
+      b.id.startsWith("story-") || b.id.startsWith("bible-") || b.id.startsWith("beats-");
 
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-") || b.id.startsWith("keyart-")) {
       let base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
+      if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (syncScene) {
         base = stripMarkedSection(base, "【漫剧场景资产库");
         if (b.id.startsWith("keyart-")) {
@@ -286,6 +293,7 @@ export function applyFactoryPrefsToBlocks(
       }
       const parts = [
         base,
+        genreBlock && syncGenre ? genreBlock : "",
         sceneBlock && syncScene ? sceneBlock : "",
         b.id.startsWith("keyart-") && scene
           ? `【本集主场景优先】${scene.nameZh}\n直接吸收其生图提示词与核心元素，角色必须融入场景：\n${scene.promptZh}`
@@ -298,9 +306,16 @@ export function applyFactoryPrefsToBlocks(
         ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
       };
     }
-    if (b.id.startsWith("story-") && sceneBlock) {
-      let base = stripMarkedSection(b.prompt, "【漫剧场景资产库");
-      return { ...b, prompt: `${base}\n\n${sceneBlock}` };
+    if (b.id.startsWith("story-") || b.id.startsWith("bible-")) {
+      let base = b.prompt;
+      if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
+      if (b.id.startsWith("story-")) base = stripMarkedSection(base, "【漫剧场景资产库");
+      const parts = [
+        base,
+        genreBlock && syncGenre ? genreBlock : "",
+        b.id.startsWith("story-") && sceneBlock ? sceneBlock : "",
+      ].filter(Boolean);
+      return { ...b, prompt: parts.join("\n\n") };
     }
     if (b.id.startsWith("clip-") || b.id.startsWith("omni_edit-")) {
       const base = stripInjectBlock(b.prompt, "【包装动效手法】");

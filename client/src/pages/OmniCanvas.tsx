@@ -227,6 +227,7 @@ export default function OmniCanvas() {
           craftShotIds: selectedCraftShotIds,
           motionPromptIds: selectedMotionIds,
           sceneId: factorySceneId || undefined,
+          genreId: factoryGenreId || undefined,
           videoReverseOutputMode: factoryReverseMode,
         });
         const changed = next.some((b, i) => {
@@ -248,6 +249,7 @@ export default function OmniCanvas() {
     factoryCraftShotId,
     factoryMotionId,
     factorySceneId,
+    factoryGenreId,
     factoryReverseMode,
     selectedCraftShotIds,
     selectedMotionIds,
