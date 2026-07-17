@@ -910,8 +910,8 @@ export default function ManhuaCharacterGallery({
           <div className="text-[12px] font-semibold text-white/90">② 角色卡</div>
           <div className="mt-1.5 max-w-xl rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[10px] leading-relaxed text-white/55">
             <span className="font-semibold text-white/70">怎么用：</span>
-            题材自动套用 → 悬停/长按看三视图 → 点选更换（女主青 / 男主琥珀）→ 下方统一画风 →
-            「同版式」铺生图节点（需你点运行）
+            题材软推套组 → 点选/1–8 换双人 → 悬停看三视图 → 统一画风（L 可锁）→
+            「同版式」只铺节点（需你点运行，勿误触）
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
