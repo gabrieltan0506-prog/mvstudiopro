@@ -21,7 +21,12 @@ import {
   recommendManhuaSceneIdFromTopic,
 } from "@shared/screenwriterGenreTemplates";
 import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
-import { recommendManhuaCharactersFromTopic } from "@shared/manhuaCharacterAssetLibrary";
+import {
+  DEFAULT_MANHUA_ART_STYLE_ID,
+  recommendManhuaArtStyleFromTopic,
+  recommendManhuaCharactersFromTopic,
+  type ManhuaArtStyleId,
+} from "@shared/manhuaCharacterAssetLibrary";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import {
   MOTION_PROMPT_BANK,
@@ -99,6 +104,8 @@ export default function OmniCanvas() {
   /** 用户手选后不再被题材自动覆盖（4.B） */
   const [femaleLeadManual, setFemaleLeadManual] = useState(false);
   const [maleLeadManual, setMaleLeadManual] = useState(false);
+  const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(DEFAULT_MANHUA_ART_STYLE_ID);
+  const [artStyleManual, setArtStyleManual] = useState(false);
   const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   /** 手选手法后不再被题材自动覆盖 */
@@ -151,6 +158,12 @@ export default function OmniCanvas() {
     !femaleLeadManual && Boolean(factoryFemaleId) && factoryFemaleId === recommendedLeads.femaleId;
   const maleAutoApplied =
     !maleLeadManual && Boolean(factoryMaleId) && factoryMaleId === recommendedLeads.maleId;
+  const recommendedArtStyle = useMemo(
+    () => recommendManhuaArtStyleFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const artStyleAutoApplied =
+    !artStyleManual && factoryArtStyleId === recommendedArtStyle.artStyleId;
 
   useEffect(() => {
     if (!femaleLeadManual && recommendedLeads.femaleId) {
@@ -160,6 +173,12 @@ export default function OmniCanvas() {
       setFactoryMaleId(recommendedLeads.maleId);
     }
   }, [recommendedLeads.femaleId, recommendedLeads.maleId, femaleLeadManual, maleLeadManual]);
+
+  useEffect(() => {
+    if (!artStyleManual) {
+      setFactoryArtStyleId(recommendedArtStyle.artStyleId);
+    }
+  }, [recommendedArtStyle.artStyleId, artStyleManual]);
 
   const recommendedCraft = useMemo(
     () => recommendCraftShotFromTopic(factoryTopic),
@@ -216,6 +235,7 @@ export default function OmniCanvas() {
           sceneId: factorySceneId || undefined,
           genreId: factoryGenreId || undefined,
           characterIds: selectedCharacterIds,
+          artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
         });
         const changed = next.some((b, i) => {
@@ -240,6 +260,7 @@ export default function OmniCanvas() {
     factoryGenreId,
     factoryFemaleId,
     factoryMaleId,
+    factoryArtStyleId,
     factoryReverseMode,
     selectedCraftShotIds,
     selectedMotionIds,
@@ -331,6 +352,7 @@ export default function OmniCanvas() {
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
         characterIds: selectedCharacterIds,
+        artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
         videoReverseOutputMode: factoryReverseMode,
@@ -356,6 +378,7 @@ export default function OmniCanvas() {
       edges,
       factoryGenreId,
       factorySceneId,
+      factoryArtStyleId,
       selectedCharacterIds,
       selectedMotionIds,
       selectedCraftShotIds,
@@ -419,6 +442,7 @@ export default function OmniCanvas() {
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
       characterIds: selectedCharacterIds,
+      artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
       videoReverseOutputMode: factoryReverseMode,
@@ -438,6 +462,7 @@ export default function OmniCanvas() {
     selectedCharacterIds,
     selectedMotionIds,
     selectedCraftShotIds,
+    factoryArtStyleId,
     factoryReverseMode,
     factoryGenreId,
     factorySceneId,
@@ -782,9 +807,11 @@ export default function OmniCanvas() {
                   maleId={factoryMaleId}
                   femaleAutoApplied={femaleAutoApplied}
                   maleAutoApplied={maleAutoApplied}
+                  artStyleId={factoryArtStyleId}
+                  artStyleAutoApplied={artStyleAutoApplied}
                   disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                  reasonZh={`${recommendedLeads.reasonZh}${
-                    selectedCharacterIds.length ? "；已选将注入「角色卡」节点（外形锚点 + 提示词）。" : ""
+                  reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
+                    selectedCharacterIds.length ? "；已选将注入「角色卡」节点（外形锚点 + 画风 + 提示词）。" : ""
                   }`}
                   onSelectFemale={(id) => {
                     setFemaleLeadManual(true);
@@ -794,9 +821,14 @@ export default function OmniCanvas() {
                     setMaleLeadManual(true);
                     setFactoryMaleId(id);
                   }}
+                  onSelectArtStyle={(id) => {
+                    setArtStyleManual(true);
+                    setFactoryArtStyleId(id);
+                  }}
                   onClearManual={() => {
                     setFemaleLeadManual(false);
                     setMaleLeadManual(false);
+                    setArtStyleManual(false);
                   }}
                 />
               </div>
@@ -928,6 +960,7 @@ export default function OmniCanvas() {
                       genreId: factoryGenreId || undefined,
                       sceneId: factorySceneId || undefined,
                       characterIds: selectedCharacterIds,
+                      artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
                       videoReverseOutputMode: factoryReverseMode,
