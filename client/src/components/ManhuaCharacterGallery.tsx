@@ -29,6 +29,7 @@ import {
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
 import {
+  clearRecentCouplePackIds,
   clearRecentIds,
   copyText,
   loadCustomCouples,
@@ -1025,6 +1026,22 @@ export default function ManhuaCharacterGallery({
                 一键套用首推
               </button>
             ) : null}
+          </div>
+        ) : null}
+        {recentCouplePacks.length ? (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-white/40">最近套组</span>
+            {recentCouplePacks.map((p) => (
+              <button
+                key={`recent-pack-${p.id}`}
+                type="button"
+                disabled={disabled}
+                onClick={() => applyCouplePack(p.id)}
+                className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/60 hover:border-white/25 disabled:opacity-40"
+              >
+                {p.labelZh}
+              </button>
+            ))}
           </div>
         ) : null}
         <div className="flex flex-wrap gap-1.5">

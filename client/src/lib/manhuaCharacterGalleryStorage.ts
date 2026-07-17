@@ -168,6 +168,15 @@ export function pushRecentCouplePackId(id: string): string[] {
   return next;
 }
 
+export function clearRecentCouplePackIds(): string[] {
+  try {
+    localStorage.removeItem(RECENT_COUPLE_PACK_LS_KEY);
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 export async function copyText(text: string): Promise<boolean> {
   const t = String(text || "").trim();
   if (!t) return false;
