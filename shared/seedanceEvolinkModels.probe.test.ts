@@ -19,4 +19,9 @@ describe("resolveSeedanceProbeDefaults", () => {
     expect(d.quality).toBe("720p");
     expect(d.duration).toBe(15);
   });
+
+  it("falls back unknown version to 2.0-mini", () => {
+    const d = resolveSeedanceProbeDefaults({ version: "9.9-unknown" });
+    expect(d.version).toBe("2.0-mini");
+  });
 });
