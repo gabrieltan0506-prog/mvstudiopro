@@ -94,7 +94,82 @@ export type SpawnManhuaDramaStudioOpts = {
   writerContext?: string;
   /** 进入编导后为节拍/反推/静帧注入手法约束 */
   includeDirectorCraft?: boolean;
+  /** 连载集号；有值时 id 带 eXX，并写入 block.episodeIndex */
+  episodeIndex?: number;
+  /** 本集标题 */
+  episodeTitle?: string;
+  /** 上集片尾钩子（写入本集 story） */
+  previousEndingHook?: string;
+  /** 本集片尾钩子（写入 story 顶部注释） */
+  endingHook?: string;
 };
+
+/** 同屏最多铺几条六段链（避积分爆） */
+export const MANHUA_SERIES_SPAWN_MAX = 4;
+
+export type ManhuaSeriesEpisodeInput = {
+  index: number;
+  title: string;
+  endHook: string;
+  body?: string;
+};
+
+export type SpawnManhuaDramaStudioSeriesOpts = Omit<
+  SpawnManhuaDramaStudioOpts,
+  "episodeIndex" | "episodeTitle" | "previousEndingHook" | "endingHook" | "writerContext"
+> & {
+  episodes: ManhuaSeriesEpisodeInput[];
+  /** 默认 MANHUA_SERIES_SPAWN_MAX */
+  maxEpisodes?: number;
+  /** 行间距，默认 420 */
+  rowGap?: number;
+  /** 按集生成编剧上下文（不含上集钩子；钩子由 spawn 追加） */
+  writerContextForEpisode?: (episode: ManhuaSeriesEpisodeInput) => string;
+};
+
+/** 从 id 解析集号：story-e02-… → 2 */
+export function parseEpisodeIndexFromBlockId(blockId: string): number | null {
+  const m = String(blockId || "").match(/^[a-z_]+-e(\d{2})-/i);
+  if (!m) return null;
+  const n = Number.parseInt(m[1]!, 10);
+  return Number.isFinite(n) && n >= 1 ? n : null;
+}
+
+export function getBlockEpisodeIndex(block: Pick<CanvasBlock, "id" | "episodeIndex">): number | null {
+  if (typeof block.episodeIndex === "number" && block.episodeIndex >= 1) {
+    return Math.floor(block.episodeIndex);
+  }
+  return parseEpisodeIndexFromBlockId(block.id);
+}
+
+export function filterBlocksByEpisode(blocks: CanvasBlock[], episodeIndex: number): CanvasBlock[] {
+  return blocks.filter((b) => {
+    const ep = getBlockEpisodeIndex(b);
+    if (ep == null) return episodeIndex === 1;
+    return ep === episodeIndex;
+  });
+}
+
+function makeFactoryStageId(stage: string, episodeIndex?: number): string {
+  if (typeof episodeIndex === "number" && episodeIndex >= 1) {
+    const ep = String(Math.floor(episodeIndex)).padStart(2, "0");
+    return makeCanvasBlockId(`${stage}-e${ep}`);
+  }
+  return makeCanvasBlockId(stage);
+}
+
+function stampEpisodeMeta(
+  block: CanvasBlock,
+  episodeIndex?: number,
+  episodeTitle?: string,
+): CanvasBlock {
+  if (typeof episodeIndex !== "number" || episodeIndex < 1) return block;
+  return {
+    ...block,
+    episodeIndex: Math.floor(episodeIndex),
+    episodeTitle: episodeTitle?.trim() ? episodeTitle.trim().slice(0, 120) : undefined,
+  };
+}
 
 function withTopic(basePrompt: string, topic?: string): string {
   const t = String(topic || "").trim();
@@ -126,6 +201,13 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   }
   const craftShotBlock = buildCraftShotInjectBlock(craftShotIds);
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
+  const episodeIndex =
+    typeof opts.episodeIndex === "number" && opts.episodeIndex >= 1
+      ? Math.floor(opts.episodeIndex)
+      : undefined;
+  const episodeTitle = String(opts.episodeTitle || "").trim().slice(0, 120) || undefined;
+  const previousEndingHook = String(opts.previousEndingHook || "").trim();
+  const endingHook = String(opts.endingHook || "").trim();
   const stageOpts = {
     genreId,
     sceneId,
@@ -137,16 +219,29 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const usePack = Boolean(genreId || sceneId || writerContext || characterBlock || craftShotBlock);
 
   const story = defaultCanvasBlock("text", originX, originY);
-  story.id = makeCanvasBlockId("story");
-  story.prompt = usePack
+  story.id = makeFactoryStageId("story", episodeIndex);
+  let storyPrompt = usePack
     ? buildManhuaStagePromptWithGenre("story_brief", stageOpts)
     : withTopic(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief, opts.topic);
+  const episodeHeader = [
+    episodeIndex != null
+      ? `【第${episodeIndex}集${episodeTitle ? `·${episodeTitle}` : ""}】`
+      : "",
+    endingHook ? `片尾钩子（本集）：${endingHook}` : "",
+    previousEndingHook ? `【上集钩子】${previousEndingHook}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (episodeHeader) {
+    storyPrompt = `${episodeHeader}\n\n${storyPrompt}`;
+  }
+  story.prompt = storyPrompt;
   story.width = 400;
   story.height = 320;
   story.textModel = "gemini-3.1-pro";
 
   const bible = defaultCanvasBlock("text", originX + gapX, originY);
-  bible.id = makeCanvasBlockId("bible");
+  bible.id = makeFactoryStageId("bible", episodeIndex);
   const bibleBase = usePack
     ? buildManhuaStagePromptWithGenre("character_bible", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
@@ -155,7 +250,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   bible.textModel = "gemini-3.1-pro";
 
   const beats = defaultCanvasBlock("text", originX + gapX * 2, originY);
-  beats.id = makeCanvasBlockId("beats");
+  beats.id = makeFactoryStageId("beats", episodeIndex);
   const beatsBase = usePack
     ? buildManhuaStagePromptWithGenre("episode_beats", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
@@ -164,7 +259,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   beats.textModel = "gemini-3.1-pro";
 
   const reverse = defaultCanvasBlock("video_reverse", originX + gapX * 3, originY);
-  reverse.id = makeCanvasBlockId("reverse");
+  reverse.id = makeFactoryStageId("reverse", episodeIndex);
   const reverseBase = usePack
     ? buildManhuaStagePromptWithGenre("video_reverse", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse;
@@ -177,7 +272,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       : "zh";
 
   const keyArt = defaultCanvasBlock("image", originX + gapX * 4, originY);
-  keyArt.id = makeCanvasBlockId("keyart");
+  keyArt.id = makeFactoryStageId("keyart", episodeIndex);
   const keyArtBase = usePack
     ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
@@ -189,7 +284,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   keyArt.aspectRatio = "9:16";
 
   const clip = defaultCanvasBlock("video", originX + gapX * 5, originY);
-  clip.id = makeCanvasBlockId("clip");
+  clip.id = makeFactoryStageId("clip", episodeIndex);
   clip.prompt = motionBlock
     ? `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n\n${motionBlock}`
     : MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip;
@@ -199,7 +294,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   /** Gemini Omni · 自然语言视频改写（GEMINI_API_KEY；可续 previous_interaction_id） */
   const omniEdit = defaultCanvasBlock("video", originX + gapX * 6, originY);
-  omniEdit.id = makeCanvasBlockId("omni_edit");
+  omniEdit.id = makeFactoryStageId("omni_edit", episodeIndex);
   const omniBase =
     "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。";
   omniEdit.prompt = motionBlock ? `${omniBase}\n\n${motionBlock}` : omniBase;
@@ -207,7 +302,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   omniEdit.videoModel = "gemini-omni-flash";
   omniEdit.aspectRatio = "9:16";
 
-  const blocks = [story, bible, beats, reverse, keyArt, clip, omniEdit];
+  const blocks = [story, bible, beats, reverse, keyArt, clip, omniEdit].map((b) =>
+    stampEpisodeMeta(b, episodeIndex, episodeTitle),
+  );
   const edges: CanvasEdge[] = [
     { fromId: story.id, toId: bible.id },
     { fromId: bible.id, toId: beats.id },
@@ -223,6 +320,69 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     resolvedGenreId: genreId,
     genreInferred: resolved.inferred,
     resolvedSceneId: sceneId,
+    characterIds,
+  };
+}
+
+/**
+ * 按集铺多条六段链（纵向错开）。默认最多 4 集；第 2+ 集 story 注入上集钩子。
+ */
+export function spawnManhuaDramaStudioSeries(opts: SpawnManhuaDramaStudioSeriesOpts): DramaStudioSpawn & {
+  episodeCount: number;
+  episodeIndexes: number[];
+} {
+  const maxEpisodes = Math.max(
+    1,
+    Math.min(MANHUA_SERIES_SPAWN_MAX, Math.floor(opts.maxEpisodes ?? MANHUA_SERIES_SPAWN_MAX)),
+  );
+  const rowGap = Math.max(280, Math.floor(opts.rowGap ?? 420));
+  const originX = opts.originX ?? 80;
+  const originY = opts.originY ?? 80;
+  const episodes = [...(opts.episodes || [])]
+    .filter((e) => e && Number.isFinite(e.index) && e.index >= 1)
+    .sort((a, b) => a.index - b.index)
+    .slice(0, maxEpisodes);
+
+  const blocks: CanvasBlock[] = [];
+  const edges: CanvasEdge[] = [];
+  const episodeIndexes: number[] = [];
+  let resolvedGenreId: string | undefined;
+  let genreInferred = false;
+  let resolvedSceneId: string | undefined;
+  let characterIds: string[] | undefined;
+
+  for (let i = 0; i < episodes.length; i++) {
+    const ep = episodes[i]!;
+    const prev = i > 0 ? episodes[i - 1] : undefined;
+    const writerContext = String(opts.writerContextForEpisode?.(ep) || "").trim();
+    const spawned = spawnManhuaDramaStudio({
+      ...opts,
+      originX,
+      originY: originY + i * rowGap,
+      episodeIndex: ep.index,
+      episodeTitle: ep.title,
+      endingHook: ep.endHook,
+      previousEndingHook: prev?.endHook,
+      writerContext: writerContext || undefined,
+      includeDirectorCraft: opts.includeDirectorCraft ?? Boolean(writerContext),
+    });
+    blocks.push(...spawned.blocks);
+    edges.push(...spawned.edges);
+    episodeIndexes.push(ep.index);
+    if (!resolvedGenreId && spawned.resolvedGenreId) resolvedGenreId = spawned.resolvedGenreId;
+    if (spawned.genreInferred) genreInferred = true;
+    if (!resolvedSceneId && spawned.resolvedSceneId) resolvedSceneId = spawned.resolvedSceneId;
+    if (!characterIds && spawned.characterIds?.length) characterIds = spawned.characterIds;
+  }
+
+  return {
+    blocks,
+    edges,
+    episodeCount: episodes.length,
+    episodeIndexes,
+    resolvedGenreId,
+    genreInferred,
+    resolvedSceneId,
     characterIds,
   };
 }
@@ -354,23 +514,32 @@ export function applyFactoryPrefsToBlocks(
 export function resolveManhuaFactoryOrderedIds(
   blocks: CanvasBlock[],
   untilStage: ManhuaFactoryStageKey = "clip",
+  episodeIndex?: number | null,
 ): string[] {
+  const storyNodes = blocks.filter((b) => b.id.startsWith("story-"));
+  let scoped = blocks;
+  if (typeof episodeIndex === "number" && episodeIndex >= 1) {
+    scoped = filterBlocksByEpisode(blocks, episodeIndex);
+  } else if (storyNodes.length > 1) {
+    const firstEp = getBlockEpisodeIndex(storyNodes[0]!) ?? 1;
+    scoped = filterBlocksByEpisode(blocks, firstEp);
+  }
   const untilIdx = MANHUA_FACTORY_STAGE_ORDER.indexOf(untilStage);
   const ids: string[] = [];
   for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
     if (MANHUA_FACTORY_STAGE_ORDER.indexOf(stage) > untilIdx) break;
-    const byToken = blocks.find((b) => b.id.startsWith(`${stage}-`));
+    const byToken = scoped.find((b) => b.id.startsWith(`${stage}-`));
     if (byToken && !ids.includes(byToken.id)) ids.push(byToken.id);
   }
-  if (ids.length < 2 && blocks.length) {
+  if (ids.length < 2 && scoped.length) {
     const byParent: string[] = [];
-    const roots = blocks.filter((b) => !b.parentId || !blocks.some((x) => x.id === b.parentId));
+    const roots = scoped.filter((b) => !b.parentId || !scoped.some((x) => x.id === b.parentId));
     let curId = roots[0]?.id ?? "";
     const seen = new Set<string>();
     while (curId && !seen.has(curId)) {
       seen.add(curId);
       byParent.push(curId);
-      curId = blocks.find((b) => b.parentId === curId)?.id ?? "";
+      curId = scoped.find((b) => b.parentId === curId)?.id ?? "";
     }
     return byParent;
   }
@@ -447,9 +616,20 @@ export function isTransientFactoryError(message: string): boolean {
  * 续跑起点：优先第一个 error；否则第一个未完成（非 done 有产出）。
  * 全完成则返回 null。
  */
-export function resolveFactoryResumeStage(blocks: CanvasBlock[]): ManhuaFactoryStageKey | null {
+export function resolveFactoryResumeStage(
+  blocks: CanvasBlock[],
+  episodeIndex?: number | null,
+): ManhuaFactoryStageKey | null {
+  const storyNodes = blocks.filter((b) => b.id.startsWith("story-"));
+  let scoped = blocks;
+  if (typeof episodeIndex === "number" && episodeIndex >= 1) {
+    scoped = filterBlocksByEpisode(blocks, episodeIndex);
+  } else if (storyNodes.length > 1) {
+    const firstEp = getBlockEpisodeIndex(storyNodes[0]!) ?? 1;
+    scoped = filterBlocksByEpisode(blocks, firstEp);
+  }
   for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
-    const b = blocks.find((x) => x.id.startsWith(`${stage}-`));
+    const b = scoped.find((x) => x.id.startsWith(`${stage}-`));
     if (!b) return stage;
     if (b.status === "error") return stage;
     if (!blockLooksDone(b)) return stage;
@@ -470,13 +650,23 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
   const stage = stageKeyFromBlockId(justFinishedId);
   if (stage !== "reverse") return working;
   const reverse = working.find((b) => b.id === justFinishedId);
-  const md = reverse?.outputText || "";
+  if (!reverse) return working;
+  const ep = getBlockEpisodeIndex(reverse);
+  const sameEpisode = (b: CanvasBlock) => {
+    if (ep == null) return true;
+    const be = getBlockEpisodeIndex(b);
+    return be == null ? ep === 1 : be === ep;
+  };
+  const md = reverse.outputText || "";
   const { keyArtHint, seedanceHint } = extractFactoryMotionHints(md);
-  const bibleText = String(working.find((b) => b.id.startsWith("bible-"))?.outputText || "")
+  const bibleText = String(
+    working.find((b) => b.id.startsWith("bible-") && sameEpisode(b))?.outputText || "",
+  )
     .trim()
     .slice(0, 700);
   if (!keyArtHint && !seedanceHint && !bibleText) return working;
   return working.map((b) => {
+    if (!sameEpisode(b)) return b;
     if (b.id.startsWith("keyart-") && (keyArtHint || bibleText)) {
       // 保留铺节点时写入的场景资产库 / 剧种块，只追加反推与角色卡
       const kept = stripFactoryEnrichSections(b.prompt) || MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
@@ -514,6 +704,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   blocks: CanvasBlock[];
   edges: CanvasEdge[];
   untilStage?: ManhuaFactoryStageKey;
+  /** 只跑该集工厂链（多集铺板时必传焦点集，避免串到第 1 集） */
+  episodeIndex?: number | null;
   /** 从该阶段开始强制重跑（含）；之前的 done 仍跳过 */
   forceFromStage?: ManhuaFactoryStageKey;
   skipDone?: boolean;
@@ -532,7 +724,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   let working = opts.blocks.map((b) => ({ ...b }));
   const edges = opts.edges;
-  const orderedIds = resolveManhuaFactoryOrderedIds(working, opts.untilStage ?? "clip");
+  const orderedIds = resolveManhuaFactoryOrderedIds(
+    working,
+    opts.untilStage ?? "clip",
+    opts.episodeIndex,
+  );
   const forceIdx = opts.forceFromStage
     ? MANHUA_FACTORY_STAGE_ORDER.indexOf(opts.forceFromStage)
     : -1;

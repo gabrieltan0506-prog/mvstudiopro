@@ -55,6 +55,9 @@ type FreeformCanvasProps = {
   onBlocksChange: (blocks: BlocksUpdater) => void;
   onEdgesChange: (edges: CanvasEdge[]) => void;
   runDeps: CanvasRunDeps;
+  /** 外部请求选中并滚入视口（成片坞定位） */
+  focusBlockId?: string | null;
+  onFocusBlockConsumed?: () => void;
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
@@ -284,6 +287,8 @@ export default function FreeformCanvas({
   onBlocksChange,
   onEdgesChange,
   runDeps,
+  focusBlockId,
+  onFocusBlockConsumed,
 }: FreeformCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
@@ -299,6 +304,23 @@ export default function FreeformCanvas({
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
+
+  useEffect(() => {
+    if (!focusBlockId) return;
+    const block = blockMap.get(focusBlockId);
+    if (!block) {
+      onFocusBlockConsumed?.();
+      return;
+    }
+    setSelectedId(focusBlockId);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const targetLeft = Math.max(0, block.x - 80);
+      const targetTop = Math.max(0, block.y - 60);
+      canvas.scrollTo({ left: targetLeft, top: targetTop, behavior: "smooth" });
+    }
+    onFocusBlockConsumed?.();
+  }, [focusBlockId, blockMap, onFocusBlockConsumed]);
 
   const getViewportSpawnPosition = useCallback((width: number, height: number, staggerIndex: number) => {
     const canvas = canvasRef.current;
