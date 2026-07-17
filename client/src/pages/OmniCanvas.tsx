@@ -7,6 +7,7 @@ import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
+  applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
   resolveFactoryResumeStage,
   runManhuaDramaFactoryPipeline,
@@ -197,6 +198,29 @@ export default function OmniCanvas() {
     () => (factoryCraftShotId.trim() ? [factoryCraftShotId.trim()] : []),
     [factoryCraftShotId],
   );
+
+  /** 已铺工厂板时：手法/动效/反推档变更同步进节点，不必整板重铺 */
+  useEffect(() => {
+    const hasFactory = blocks.some((b) => MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)));
+    if (!hasFactory || factoryBusy) return;
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      craftShotIds: selectedCraftShotIds,
+      motionPromptIds: selectedMotionIds,
+      videoReverseOutputMode: factoryReverseMode,
+    });
+    const changed = next.some((b, i) => {
+      const prev = blocks[i];
+      return (
+        !prev ||
+        prev.prompt !== b.prompt ||
+        prev.videoReverseOutputMode !== b.videoReverseOutputMode
+      );
+    });
+    if (!changed) return;
+    setBlocks(next);
+    saveCanvasState(next, edges);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅跟工厂选择器与板存在性
+  }, [factoryCraftShotId, factoryMotionId, factoryReverseMode, selectedCraftShotIds, selectedMotionIds]);
   const motionGrouped = useMemo(() => {
     const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
     return cats.map((category) => ({
