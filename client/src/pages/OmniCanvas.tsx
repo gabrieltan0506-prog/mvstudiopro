@@ -622,6 +622,7 @@ export default function OmniCanvas() {
       originX: 60,
       originY: 80,
       topic: factoryTopic.trim() || writerPack.seriesTitle,
+      seriesTitle: writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
       characterIds: selectedCharacterIds,
@@ -648,7 +649,9 @@ export default function OmniCanvas() {
     setBlocks(spawned.blocks);
     setEdges(spawned.edges);
     saveCanvasState(spawned.blocks, spawned.edges);
-    toast.success(`已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入）`);
+    toast.success(
+      `已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入；第3集起含前情提要片头）`,
+    );
   }, [
     writerPack,
     factoryTopic,
