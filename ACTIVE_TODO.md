@@ -1,6 +1,6 @@
 # 动态 TDL · 工作区置顶
 
-**最后刷新：** 2026-07-18 03:20
+**最后刷新：** 2026-07-18 03:22
 
 ## 铁律
 - **改完先 `git push` 功能分支**；本地改完不悬空
@@ -9,6 +9,7 @@
 
 ## 此刻
 - [x] #805 / #806 角色卡已合
-- [x] [#807](https://github.com/gabrieltan0506-prog/mvstudiopro/pull/807) HB V1–V7 + Canvas 文档修复 + V3 Home **MERGED**
-- [ ] **开 PR：** `fix/manhua-scene-mijing-priority`（闯秘境优先级 + 爆款题材词映射 + 今日纪要）
-- 排队：`feat/seedance-probe-cli`（等本 PR Deploy 绿后再开合）
+- [x] [#807](https://github.com/gabrieltan0506-prog/mvstudiopro/pull/807) HB 批 MERGED（Fly Deploy 进行中）
+- [ ] [#808](https://github.com/gabrieltan0506-prog/mvstudiopro/pull/808) 工厂场景题材命中 + `grokjob-codes.md` OPEN
+  - 等 #807 Deploy **success** 再 merge
+- 排队：`feat/seedance-probe-cli`
