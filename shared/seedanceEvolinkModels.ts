@@ -117,3 +117,19 @@ export function inferSeedanceMode(input: {
   if (images.length === 1) return "image_to_video";
   return "text_to_video";
 }
+
+/** 探针默认档（Mini 廉价）；仅脚本/联调用，产品成片仍走 15s 默认 */
+export function resolveSeedanceProbeDefaults(env: {
+  version?: string;
+  quality?: string;
+  duration?: string | number;
+} = {}): { version: SeedanceEvolinkVersion; quality: string; duration: number } {
+  const versionRaw = String(env.version || "2.0-mini").trim() || "2.0-mini";
+  const version = (versionRaw === "2.0" || versionRaw === "2.5" || versionRaw === "2.0-mini"
+    ? versionRaw
+    : "2.0-mini") as SeedanceEvolinkVersion;
+  const quality = String(env.quality || SEEDANCE_PROBE_DEFAULT_QUALITY).trim() || SEEDANCE_PROBE_DEFAULT_QUALITY;
+  const duration = Number(env.duration || SEEDANCE_PROBE_DEFAULT_DURATION_SEC) || SEEDANCE_PROBE_DEFAULT_DURATION_SEC;
+  return { version, quality, duration };
+}
+
