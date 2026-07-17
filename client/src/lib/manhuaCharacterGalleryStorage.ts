@@ -18,6 +18,8 @@ export type LibraryPrefs = {
   sortMode?: "default" | "name" | "age";
   dense?: boolean;
   lockArtStyle?: boolean;
+  /** 精简模式：隐藏进阶筛选条 */
+  compactUi?: boolean;
 };
 
 export type CustomCouple = {

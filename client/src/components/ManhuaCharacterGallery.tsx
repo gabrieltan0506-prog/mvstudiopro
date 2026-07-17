@@ -402,6 +402,7 @@ export default function ManhuaCharacterGallery({
   const [unselectedOnly, setUnselectedOnly] = useState(false);
   const [ageGapMax, setAgeGapMax] = useState<0 | 3 | 5>(0);
   const [lockArtStyle, setLockArtStyle] = useState(() => Boolean(initialPrefs.lockArtStyle));
+  const [compactUi, setCompactUi] = useState(() => Boolean(initialPrefs.compactUi));
   const [compareId, setCompareId] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
@@ -882,8 +883,9 @@ export default function ManhuaCharacterGallery({
       sortMode,
       dense: denseGrid,
       lockArtStyle,
+      compactUi,
     });
-  }, [libraryTab, packFilterId, sortMode, denseGrid, lockArtStyle]);
+  }, [libraryTab, packFilterId, sortMode, denseGrid, lockArtStyle, compactUi]);
 
   const focusLibrary = (gender: ManhuaCharacterGender) => {
     setLibraryTab(gender);
@@ -1205,7 +1207,21 @@ export default function ManhuaCharacterGallery({
 
       <div ref={libraryRef} className="mt-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[11px] font-semibold text-white/70">从角色库更换</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-[11px] font-semibold text-white/70">从角色库更换</div>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setCompactUi((v) => !v)}
+              className={`rounded-md border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
+                compactUi
+                  ? "border-white/25 bg-white/10 text-white/80"
+                  : "border-white/10 text-white/45 hover:border-white/25"
+              }`}
+            >
+              {compactUi ? "精简模式" : "完整筛选"}
+            </button>
+          </div>
           <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
             <button
               type="button"
@@ -1270,229 +1286,235 @@ export default function ManhuaCharacterGallery({
           </button>
           <button
             type="button"
-            disabled={disabled}
-            onClick={() => setUnselectedOnly((v) => !v)}
-            className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
-              unselectedOnly
-                ? "border-sky-300/45 bg-sky-500/15 text-sky-100"
-                : "border-white/15 bg-white/5 text-white/70"
-            }`}
-          >
-            仅未选中
-          </button>
-          <button
-            type="button"
-            disabled={disabled || !favoriteIds.length}
-            onClick={() => void exportFavorites()}
-            className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 disabled:opacity-40"
-          >
-            导出收藏
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => void importFavorites()}
-            className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 disabled:opacity-40"
-          >
-            导入收藏
-          </button>
-          <button
-            type="button"
-            disabled={disabled || !favoriteIds.length}
-            onClick={clearFavorites}
-            className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
-          >
-            清空收藏
-          </button>
-          <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
-            {(
-              [
-                ["default", "默认"],
-                ["name", "姓名"],
-                ["age", "年龄"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                disabled={disabled}
-                onClick={() => setSortMode(id)}
-                className={`rounded-md px-2 py-1 text-[10px] ${
-                  sortMode === id ? "bg-white/15 text-white" : "text-white/45"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setDenseGrid((v) => !v)}
-            className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
-              denseGrid
-                ? "border-white/30 bg-white/10 text-white"
-                : "border-white/15 bg-white/5 text-white/70"
-            }`}
-          >
-            {denseGrid ? "紧凑" : "宽松"}
-          </button>
-          <button
-            type="button"
             disabled={disabled || !hasActiveFilters}
             onClick={clearLibraryFilters}
             className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
           >
             清空筛选
           </button>
-          <button
-            type="button"
-            disabled={disabled || !filteredPool.length}
-            onClick={() => void copyFilteredIds()}
-            className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
-          >
-            复制筛选 id
-          </button>
           <span className="text-[10px] text-white/35">
             {filteredPool.length}/{pool.length}
           </span>
         </div>
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setPackFilterId("")}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-              !packFilterId ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-            }`}
-          >
-            全部组合
-          </button>
-          {MANHUA_TEMPERAMENT_PACKS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              disabled={disabled}
-              title={p.tags.join(" · ")}
-              onClick={() => {
-                setPackFilterId((prev) => (prev === p.id ? "" : p.id));
-                setTagFilter("");
-              }}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                packFilterId === p.id
-                  ? "border-violet-400/45 bg-violet-500/15 text-violet-100"
-                  : "border-white/10 text-white/50 hover:border-white/25"
-              }`}
-            >
-              {p.labelZh}
-            </button>
-          ))}
-        </div>
-        {tagOptions.length ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => setTagFilter("")}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                !tagFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-              }`}
-            >
-              全部气质
-            </button>
-            {tagOptions.map((t) => (
+        {!compactUi ? (
+          <>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
               <button
-                key={t}
                 type="button"
                 disabled={disabled}
-                onClick={() => setTagFilter((prev) => (prev === t ? "" : t))}
-                className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                  tagFilter === t
-                    ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
-                    : "border-white/10 text-white/50 hover:border-white/25"
+                onClick={() => setUnselectedOnly((v) => !v)}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
+                  unselectedOnly
+                    ? "border-sky-300/45 bg-sky-500/15 text-sky-100"
+                    : "border-white/15 bg-white/5 text-white/70"
                 }`}
               >
-                {t}
+                仅未选中
               </button>
-            ))}
-          </div>
-        ) : null}
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {(
-            [
-              ["", "全部年龄"],
-              ["le25", "≤25"],
-              ["26_28", "26–28"],
-              ["ge29", "≥29"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id || "all-age"}
-              type="button"
-              disabled={disabled}
-              onClick={() => setAgeBand(id)}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                ageBand === id
-                  ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
-                  : "border-white/10 text-white/50 hover:border-white/25"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-          {(
-            [
-              [0, "不限年龄差"],
-              [3, "年龄差≤3"],
-              [5, "年龄差≤5"],
-            ] as const
-          ).map(([n, label]) => (
-            <button
-              key={`gap-${n}`}
-              type="button"
-              disabled={disabled}
-              title="相对另一侧已选角色的年龄差"
-              onClick={() => setAgeGapMax(n)}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                ageGapMax === n
-                  ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
-                  : "border-white/10 text-white/50 hover:border-white/25"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {jobOptions.length ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => setJobFilter("")}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                !jobFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-              }`}
-            >
-              全部职业
-            </button>
-            {jobOptions.map((j) => (
               <button
-                key={j}
+                type="button"
+                disabled={disabled || !favoriteIds.length}
+                onClick={() => void exportFavorites()}
+                className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 disabled:opacity-40"
+              >
+                导出收藏
+              </button>
+              <button
                 type="button"
                 disabled={disabled}
-                onClick={() => setJobFilter((prev) => (prev === j ? "" : j))}
-                className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                  jobFilter === j
-                    ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
-                    : "border-white/10 text-white/50 hover:border-white/25"
+                onClick={() => void importFavorites()}
+                className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 disabled:opacity-40"
+              >
+                导入收藏
+              </button>
+              <button
+                type="button"
+                disabled={disabled || !favoriteIds.length}
+                onClick={clearFavorites}
+                className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
+              >
+                清空收藏
+              </button>
+              <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
+                {(
+                  [
+                    ["default", "默认"],
+                    ["name", "姓名"],
+                    ["age", "年龄"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setSortMode(id)}
+                    className={`rounded-md px-2 py-1 text-[10px] ${
+                      sortMode === id ? "bg-white/15 text-white" : "text-white/45"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setDenseGrid((v) => !v)}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
+                  denseGrid
+                    ? "border-white/30 bg-white/10 text-white"
+                    : "border-white/15 bg-white/5 text-white/70"
                 }`}
               >
-                {j}
+                {denseGrid ? "紧凑" : "宽松"}
               </button>
-            ))}
-          </div>
+              <button
+                type="button"
+                disabled={disabled || !filteredPool.length}
+                onClick={() => void copyFilteredIds()}
+                className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
+              >
+                复制筛选 id
+              </button>
+            </div>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setPackFilterId("")}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                  !packFilterId ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+                }`}
+              >
+                全部组合
+              </button>
+              {MANHUA_TEMPERAMENT_PACKS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={disabled}
+                  title={p.tags.join(" · ")}
+                  onClick={() => {
+                    setPackFilterId((prev) => (prev === p.id ? "" : p.id));
+                    setTagFilter("");
+                  }}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                    packFilterId === p.id
+                      ? "border-violet-400/45 bg-violet-500/15 text-violet-100"
+                      : "border-white/10 text-white/50 hover:border-white/25"
+                  }`}
+                >
+                  {p.labelZh}
+                </button>
+              ))}
+            </div>
+            {tagOptions.length ? (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setTagFilter("")}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                    !tagFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+                  }`}
+                >
+                  全部气质
+                </button>
+                {tagOptions.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setTagFilter((prev) => (prev === t ? "" : t))}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                      tagFilter === t
+                        ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
+                        : "border-white/10 text-white/50 hover:border-white/25"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {(
+                [
+                  ["", "全部年龄"],
+                  ["le25", "≤25"],
+                  ["26_28", "26–28"],
+                  ["ge29", "≥29"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id || "all-age"}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setAgeBand(id)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                    ageBand === id
+                      ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
+                      : "border-white/10 text-white/50 hover:border-white/25"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              {(
+                [
+                  [0, "不限年龄差"],
+                  [3, "年龄差≤3"],
+                  [5, "年龄差≤5"],
+                ] as const
+              ).map(([n, label]) => (
+                <button
+                  key={`gap-${n}`}
+                  type="button"
+                  disabled={disabled}
+                  title="相对另一侧已选角色的年龄差"
+                  onClick={() => setAgeGapMax(n)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                    ageGapMax === n
+                      ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
+                      : "border-white/10 text-white/50 hover:border-white/25"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {jobOptions.length ? (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setJobFilter("")}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                    !jobFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+                  }`}
+                >
+                  全部职业
+                </button>
+                {jobOptions.map((j) => (
+                  <button
+                    key={j}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setJobFilter((prev) => (prev === j ? "" : j))}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                      jobFilter === j
+                        ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
+                        : "border-white/10 text-white/50 hover:border-white/25"
+                    }`}
+                  >
+                    {j}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
-        {similarInTab.length ? (
+        {!compactUi && similarInTab.length ? (
           <div className="mb-2">
             <div className="mb-1 text-[10px] text-white/40">同类气质（相对当前人选）</div>
             <div className="flex flex-wrap gap-1.5">
@@ -1510,7 +1532,7 @@ export default function ManhuaCharacterGallery({
             </div>
           </div>
         ) : null}
-        {contrastPartners.length ? (
+        {!compactUi && contrastPartners.length ? (
           <div className="mb-2">
             <div className="mb-1 text-[10px] text-white/40">
               反差配对（异性 · 气质少重叠）→ 点选即换{libraryTab === "female" ? "男主" : "女主"}
@@ -1530,7 +1552,7 @@ export default function ManhuaCharacterGallery({
             </div>
           </div>
         ) : null}
-        {sameFieldPartners.length ? (
+        {!compactUi && sameFieldPartners.length ? (
           <div className="mb-2">
             <div className="mb-1 text-[10px] text-white/40">
               同行异性（职业关键词相近）→ 点选即换{libraryTab === "female" ? "男主" : "女主"}
