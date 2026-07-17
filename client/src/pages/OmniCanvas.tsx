@@ -781,7 +781,7 @@ export default function OmniCanvas() {
                   当前推荐主场景：{String(recommendedScene.no).padStart(2, "0")} {recommendedScene.nameZh}
                   {sceneAutoApplied ? " ·自动" : sceneManual ? " ·手选" : ""}
                   {recommendedSceneRec.reasonZh ? ` · ${recommendedSceneRec.reasonZh}` : ""}
-                  （未手选时工厂只套这一条，可下拉更换）
+                  （未手选时自动套；已铺板更换会同步进节点，可下拉手选）
                 </p>
               ) : (
                 <p className="mt-1.5 text-[10px] text-white/35">
