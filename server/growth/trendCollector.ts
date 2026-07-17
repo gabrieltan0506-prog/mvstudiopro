@@ -2211,17 +2211,21 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 function mapDouyinAwemeToTrendItem(
   aweme: Record<string, any>,
   bucket: string,
+  extraTags: string[] = [],
 ): TrendItem | null {
   const title = String(aweme.desc ?? aweme.caption ?? "").trim();
   const awemeId = String(aweme.aweme_id ?? aweme.group_id ?? "").trim();
   if (!awemeId || !title) return null;
   const stats = aweme.statistics ?? {};
   const author = aweme.author ?? {};
-  const tags = Array.isArray(aweme.text_extra)
-    ? aweme.text_extra
-      .map((entry: any) => String(entry?.hashtag_name ?? "").trim())
-      .filter(Boolean)
-    : [];
+  const tags = Array.from(new Set([
+    ...(Array.isArray(aweme.text_extra)
+      ? aweme.text_extra
+        .map((entry: any) => String(entry?.hashtag_name ?? "").trim())
+        .filter(Boolean)
+      : []),
+    ...extraTags.map((tag) => String(tag || "").trim()).filter(Boolean),
+  ]));
   return {
     id: awemeId,
     title,
@@ -2330,7 +2334,11 @@ async function collectDouyinWebSearchItems(
         }
         const awemes = extractDouyinSearchAwemes(payload);
         for (const aweme of awemes) {
-          const mapped = mapDouyinAwemeToTrendItem(aweme, `douyin_search_drama:${keyword}`);
+          const mapped = mapDouyinAwemeToTrendItem(
+            aweme,
+            `douyin_search_drama:${keyword}`,
+            [keyword, "AI漫剧检索"],
+          );
           if (mapped) keywordItems.push(mapped);
         }
         notes.push(`Fetched ${awemes.length} Douyin web search items for "${keyword}" page ${page + 1}.`);

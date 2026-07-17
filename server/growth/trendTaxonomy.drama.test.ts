@@ -69,4 +69,38 @@ describe("growth scoring drama boost", () => {
     expect(selected[0].item.id).toBe("b");
     expect(selected[0].category).toBe("AI漫剧 · 动态漫");
   });
+
+  it("dedupes same mixId to one entry", () => {
+    const publishedAt = new Date().toISOString();
+    const ep1: TrendItem = {
+      id: "ep1",
+      title: "第1集",
+      author: "创作者丙",
+      publishedAt,
+      likes: 8,
+      comments: 1,
+      shares: 0,
+      views: 500,
+      isDrama: true,
+      dramaKind: "ai_manhua",
+      dramaInfo: { mixId: "same-mix", mixName: "同剧", mixPlayCount: 1_000_000, currentEpisode: 1 },
+    };
+    const ep2: TrendItem = {
+      id: "ep2",
+      title: "第2集",
+      author: "创作者丙",
+      publishedAt,
+      likes: 20,
+      comments: 5,
+      shares: 2,
+      views: 900,
+      isDrama: true,
+      dramaKind: "ai_manhua",
+      dramaInfo: { mixId: "same-mix", mixName: "同剧", mixPlayCount: 1_200_000, currentEpisode: 2 },
+    };
+    const { selected, debug } = selectByGrowthPotential([ep1, ep2], { topN: 5, windowDays: 18 });
+    expect(selected).toHaveLength(1);
+    expect(selected[0].item.id).toBe("ep2");
+    expect(debug.kept).toBe(1);
+  });
 });

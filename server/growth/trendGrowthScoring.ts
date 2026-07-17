@@ -226,11 +226,35 @@ export function selectByGrowthPotential(
     survivors.push(it);
   }
 
-  // ── 2. 同账号均值（用于 breakout 检测） ────────────────────────────────
-  const authorAvg = buildAuthorAvgEngagement(survivors);
+  // ── 2. 短剧/漫剧：同一 mixId 只留合集播放最高（或互动最高）的一集 ─────
+  const mixBest = new Map<string, TrendItem>();
+  const afterMixDedupe: TrendItem[] = [];
+  for (const it of survivors) {
+    const mixId = String(it.dramaInfo?.mixId || "").trim();
+    if (!mixId) {
+      afterMixDedupe.push(it);
+      continue;
+    }
+    const prev = mixBest.get(mixId);
+    if (!prev) {
+      mixBest.set(mixId, it);
+      continue;
+    }
+    const prevScore = Number(prev.dramaInfo?.mixPlayCount || 0) * 10
+      + Number(prev.comments || 0) * 4
+      + Number(prev.likes || 0);
+    const nextScore = Number(it.dramaInfo?.mixPlayCount || 0) * 10
+      + Number(it.comments || 0) * 4
+      + Number(it.likes || 0);
+    if (nextScore > prevScore) mixBest.set(mixId, it);
+  }
+  afterMixDedupe.push(...mixBest.values());
 
-  // ── 3. 算 growthScore ────────────────────────────────────────────────
-  const scored: ScoredTrendItem[] = survivors.map((it) => {
+  // ── 3. 同账号均值（用于 breakout 检测） ────────────────────────────────
+  const authorAvg = buildAuthorAvgEngagement(afterMixDedupe);
+
+  // ── 4. 算 growthScore ────────────────────────────────────────────────
+  const scored: ScoredTrendItem[] = afterMixDedupe.map((it) => {
     const ageDays = getAgeDays(it.publishedAt) ?? windowDays;
     const views = Number(it.views || 0);
     const comments = Number(it.comments || 0);
@@ -272,7 +296,7 @@ export function selectByGrowthPotential(
     };
   });
 
-  // ── 4. 按 growthScore 降序，取 topN，再算百分位 ──────────────────────
+  // ── 5. 按 growthScore 降序，取 topN，再算百分位 ──────────────────────
   scored.sort((a, b) => b.growthScore - a.growthScore);
   const selected = scored.slice(0, topN);
 
