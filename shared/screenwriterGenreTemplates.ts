@@ -7,6 +7,7 @@ import {
   MANHUA_SCENE_GENRE_LABEL_ZH,
   composeManhuaScenePromptBlock,
   getManhuaSceneTemplate,
+  recommendManhuaSceneFromTopic,
   recommendPrimaryManhuaSceneId,
   resolveManhuaScenes,
   type ManhuaSceneGenre,
@@ -190,18 +191,33 @@ export function resolveManhuaGenreId(opts?: {
   return { genreId: undefined, inferred: false, infer: null };
 }
 
-/** 题材/剧种 → 推荐单一场景 id（⑤A） */
+/** 题材/剧种 → 推荐单一场景 id（⑤A + ⑤D 关键词细匹配） */
 export function recommendManhuaSceneIdFromTopic(opts?: {
   genreId?: string;
   topic?: string;
-}): { genreId?: string; sceneId: string | null; inferredGenre: boolean } {
+}): {
+  genreId?: string;
+  sceneId: string | null;
+  inferredGenre: boolean;
+  reasonZh: string;
+  matched: string[];
+} {
   const resolved = resolveManhuaGenreId(opts);
   const genre = getScreenwriterGenreTemplate(resolved.genreId);
-  const sceneId = recommendPrimaryManhuaSceneId(genre?.sceneGenre || (resolved.genreId as ManhuaSceneGenre)) || null;
+  const sceneGenre =
+    genre?.sceneGenre ||
+    (resolved.genreId && MANHUA_SCENE_GENRE_LABEL_ZH[resolved.genreId as ManhuaSceneGenre]
+      ? (resolved.genreId as ManhuaSceneGenre)
+      : undefined);
+  const rec = recommendManhuaSceneFromTopic(opts?.topic, { genre: sceneGenre });
+  const sceneId =
+    rec.sceneId || recommendPrimaryManhuaSceneId(sceneGenre) || null;
   return {
     genreId: resolved.genreId,
     sceneId,
     inferredGenre: resolved.inferred,
+    reasonZh: rec.reasonZh,
+    matched: rec.matched,
   };
 }
 
@@ -247,9 +263,13 @@ export function buildManhuaStagePromptWithGenre(
   const writerContext = String(opts?.writerContext || "").trim();
 
   const sceneGenre = genre?.sceneGenre;
-  // ⑤A：无手选 sceneId 时只注入「推荐单一场景」，不再灌整包目录
+  // ⑤A+⑤D：无手选 sceneId 时按题材关键词推荐一条；否则剧种池首条
   const effectiveSceneId =
     String(opts?.sceneId || "").trim() ||
+    recommendManhuaSceneIdFromTopic({
+      genreId: opts?.genreId,
+      topic: opts?.topic,
+    }).sceneId ||
     (sceneGenre ? recommendPrimaryManhuaSceneId(sceneGenre) || "" : "");
   const scenes = resolveManhuaScenes({
     genre: sceneGenre,
