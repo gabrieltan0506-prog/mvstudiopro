@@ -59,6 +59,7 @@ async function fetchJson(url: string, body: unknown, timeoutMs: number) {
 if (!ENABLED) {
   console.log("[seedance-probe] SKIP（默认关，不烧额度）");
   console.log("  开启：CANVAS_PROBE_SEEDANCE=1 pnpm run manhua:seedance-probe");
+  console.log("[seedance-probe] SKIP_OK (exit 0, no quota burn)");
   console.log(
     `  默认档：2.0-mini · ${SEEDANCE_PROBE_DEFAULT_DURATION_SEC}s · ${SEEDANCE_PROBE_DEFAULT_QUALITY}`,
   );
