@@ -110,10 +110,14 @@ async function main() {
   }
 
   const beatsPrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats}\n\n【上游角色】\n${bibleText.slice(0, 2000)}\n\n【上游故事】\n${storyText.slice(0, 1200)}`;
-  const beats = await fetchJson(`${BASE}/api/google?op=geminiScript`, {
-    prompt: beatsPrompt,
-    model: "gemini-3.1-pro-preview",
-  });
+  const beats = await fetchJsonWithBackoff(
+    `${BASE}/api/google?op=geminiScript`,
+    {
+      prompt: beatsPrompt,
+      model: "gemini-3.1-pro-preview",
+    },
+    { label: "工厂·节拍", maxAttempts: 3 },
+  );
   const beatsText = extractGeminiText(beats.json);
   const beatsOk = beats.ok && Boolean(beats.json?.ok) && beatsText.length >= 40;
   console.log(
