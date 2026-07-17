@@ -92,4 +92,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 星舰 from 轨道站", () => {
     expect(recommendManhuaSceneFromTopic("轨道站登陆舱").sceneId).toBe("scene_16");
   });
+
+  it("recommends 未来城市 from 悬浮车", () => {
+    expect(recommendManhuaSceneFromTopic("赛博悬浮车天际线").sceneId).toBe("scene_15");
+  });
 });
