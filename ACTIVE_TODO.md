@@ -1,12 +1,8 @@
 # 动态 TDL · 工作区置顶
 
-**最后刷新：** 2026-07-17 10:36
+**最后刷新：** 2026-07-17 10:53
 
-## 铁律
-- [x] ~~两次开 PR ≥15–20 分钟~~
-- [x] ~~Deploy success 才能合下一刀~~
-- [x] ~~未喊停不准停写~~
-
-## 此刻
-- [x] ~~#796 bible 503→Flash（Vertex）MERGED~~（等 Deploy success）
-- 本分支 `feat/motion-topic-keywords`：动效题材细匹配 — 满 15 分钟 + #796 Deploy 绿再开 PR
+## 此刻（可在 GitHub 看到刚推的提交）
+- [x] #797 motion MERGED
+- craft / seedance-probe / apply-factory-scene-prefs 三分支持续 push
+- craft 门禁等 #797 Deploy + 15 分钟
