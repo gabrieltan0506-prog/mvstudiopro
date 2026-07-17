@@ -389,10 +389,16 @@ export function getMotionPromptById(id: string): MotionPromptEntry | null {
 }
 
 const TOPIC_MOTION_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
-  { keys: ["Logo", "logo", "品牌", "片头", "落版"], preferIds: ["logo_01_stroke_glow", "logo_02_giant_hammer"] },
-  { keys: ["产品", "种草", "拆解", "开箱"], preferIds: ["product_05_exploded_view", "product_01_app_demo"] },
-  { keys: ["数据", "增长", "报表", "图表"], preferIds: ["data_01_dashboard", "data_06_bar_race"] },
-  { keys: ["字幕", "口播", "大字", "标题"], preferIds: ["caption_09_word_halo", "caption_01_giant_hammer"] },
+  { keys: ["Logo", "logo", "品牌", "片头", "落版", "字标", "开场动画"], preferIds: ["logo_01_stroke_glow", "logo_02_giant_hammer"] },
+  { keys: ["电竞", "故障", "RGB", "赛博"], preferIds: ["logo_03_rgb_flash", "logo_01_stroke_glow"] },
+  { keys: ["美妆", "饮料", "流体", "液体"], preferIds: ["logo_04_liquid_merge", "logo_06_liquid_fill"] },
+  { keys: ["产品", "种草", "拆解", "开箱", "爆炸图", "展示"], preferIds: ["product_05_exploded_view", "product_01_app_demo"] },
+  { keys: ["App", "APP", "界面", "演示", "UI"], preferIds: ["product_01_app_demo", "product_05_exploded_view"] },
+  { keys: ["数据", "增长", "报表", "图表", "看板", "KPI", "指标"], preferIds: ["data_01_dashboard", "data_06_bar_race"] },
+  { keys: ["赛跑", "排名", "柱状"], preferIds: ["data_06_bar_race", "data_01_dashboard"] },
+  { keys: ["字幕", "口播", "大字", "标题", "花字", "弹幕感"], preferIds: ["caption_09_word_halo", "caption_01_giant_hammer"] },
+  { keys: ["揭晓", "反转句", "擦除"], preferIds: ["caption_11_mask_wipe", "caption_07_mystery_giant"] },
+  { keys: ["列举", "三点", "步骤"], preferIds: ["caption_12_stack_rise", "caption_06_interlock_blocks"] },
 ];
 
 export type MotionPromptRecommendResult = {
