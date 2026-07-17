@@ -60,4 +60,8 @@ describe("manhuaSceneAssetLibrary", () => {
     expect(recommendManhuaSceneFromTopic("地下拳场黑拳对决").sceneId).toBe("scene_13");
     expect(recommendManhuaSceneFromTopic("地下赛车夜飙").sceneId).toBe("scene_13");
   });
+
+  it("recommends 练剑广场 from 宗门大比", () => {
+    expect(recommendManhuaSceneFromTopic("宗门大比弟子考核").sceneId).toBe("scene_03");
+  });
 });

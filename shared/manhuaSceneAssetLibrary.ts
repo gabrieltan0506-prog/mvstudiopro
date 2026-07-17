@@ -285,7 +285,7 @@ export function recommendPrimaryManhuaScene(
  */
 const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
   { sceneId: "scene_04", keys: ["秘境", "洞府", "寻宝", "闭关", "奇遇", "法阵", "灵泉", "水晶洞窟", "闯关", "试炼"] },
-  { sceneId: "scene_03", keys: ["练剑", "对决", "剑气", "比武", "演武"] },
+  { sceneId: "scene_03", keys: ["练剑", "对决", "剑气", "比武", "演武", "宗门大比", "弟子考核"] },
   { sceneId: "scene_02", keys: ["云海", "浮空山", "飞瀑", "仙山", "空镜"] },
   { sceneId: "scene_01", keys: ["宗门", "山门", "拜师", "仙门", "弟子入门"] },
   { sceneId: "scene_05", keys: ["魔族", "魔宫", "深渊", "反派宫殿", "黑曜"] },
