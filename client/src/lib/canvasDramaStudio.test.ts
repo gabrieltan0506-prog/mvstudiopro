@@ -140,12 +140,30 @@ describe("canvasDramaStudio factory", () => {
     const { blocks } = spawnManhuaDramaStudio({ topic: "都市恋爱" });
     const next = applyFactoryPrefsToBlocks(blocks, {
       characterIds: ["char_f_01", "char_m_01"],
+      artStyleId: "photoreal",
       craftShotIds: [],
       motionPromptIds: [],
     });
     const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
     expect(bible).toContain("【角色库锚点】");
+    expect(bible).toContain("【画风】");
+    expect(bible).toContain("仿真人");
     expect(bible).toMatch(/char_f_01|女主|短发|长发|角色/);
+    const keyart = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(keyart).toContain("【画风硬锁】");
+    expect(keyart).toContain("仿真人");
+  });
+
+  it("spawn injects art style into bible and keyart", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "仙侠权谋",
+      characterIds: ["char_f_01", "char_m_02"],
+      artStyleId: "cg_drama",
+    });
+    const bible = blocks.find((b) => b.id.startsWith("bible-"))!.prompt;
+    expect(bible).toContain("CG 漫剧");
+    const keyart = blocks.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(keyart).toContain("【画风硬锁】");
   });
 
   it("applyFactoryPrefs keeps craft when only scene changes", () => {

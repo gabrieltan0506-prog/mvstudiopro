@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
-import { normalizeCanvasBlock } from "@/lib/canvasTypes";
+import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
@@ -22,10 +22,15 @@ import {
 } from "@shared/screenwriterGenreTemplates";
 import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
 import {
-  getManhuaCharacterById,
-  listManhuaCharactersByGender,
+  DEFAULT_MANHUA_ART_STYLE_ID,
+  buildManhuaCharacterSheetGenPrompt,
+  getManhuaArtStylePreset,
+  recommendManhuaArtStyleFromTopic,
   recommendManhuaCharactersFromTopic,
+  type ManhuaArtStyleId,
+  type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
+import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
@@ -64,6 +69,17 @@ function extractGeminiScriptText(json: unknown): string {
 }
 
 const LS_KEY = "mv-freeform-canvas-v1";
+const LS_FACTORY_PREFS_KEY = "mv-manhua-factory-character-prefs-v1";
+
+type FactoryCharacterPrefs = {
+  topic?: string;
+  femaleId?: string;
+  maleId?: string;
+  artStyleId?: ManhuaArtStyleId;
+  femaleLeadManual?: boolean;
+  maleLeadManual?: boolean;
+  artStyleManual?: boolean;
+};
 
 function loadCanvasState(): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   try {
@@ -87,21 +103,44 @@ function saveCanvasState(blocks: CanvasBlock[], edges: CanvasEdge[]) {
   }
 }
 
+function loadFactoryCharacterPrefs(): FactoryCharacterPrefs {
+  try {
+    const raw = localStorage.getItem(LS_FACTORY_PREFS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as FactoryCharacterPrefs;
+  } catch {
+    return {};
+  }
+}
+
+function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
+  try {
+    localStorage.setItem(LS_FACTORY_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore quota */
+  }
+}
+
 export default function OmniCanvas() {
   const initial = useMemo(() => loadCanvasState(), []);
+  const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
-  const [factoryTopic, setFactoryTopic] = useState("");
+  const [factoryTopic, setFactoryTopic] = useState(initialFactoryPrefs.topic || "");
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
   /** 手选场景后不再被题材自动覆盖（⑤D） */
   const [sceneManual, setSceneManual] = useState(false);
-  const [factoryFemaleId, setFactoryFemaleId] = useState("");
-  const [factoryMaleId, setFactoryMaleId] = useState("");
+  const [factoryFemaleId, setFactoryFemaleId] = useState(initialFactoryPrefs.femaleId || "");
+  const [factoryMaleId, setFactoryMaleId] = useState(initialFactoryPrefs.maleId || "");
   /** 用户手选后不再被题材自动覆盖（4.B） */
-  const [femaleLeadManual, setFemaleLeadManual] = useState(false);
-  const [maleLeadManual, setMaleLeadManual] = useState(false);
+  const [femaleLeadManual, setFemaleLeadManual] = useState(Boolean(initialFactoryPrefs.femaleLeadManual));
+  const [maleLeadManual, setMaleLeadManual] = useState(Boolean(initialFactoryPrefs.maleLeadManual));
+  const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(
+    initialFactoryPrefs.artStyleId || DEFAULT_MANHUA_ART_STYLE_ID,
+  );
+  const [artStyleManual, setArtStyleManual] = useState(Boolean(initialFactoryPrefs.artStyleManual));
   const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   /** 手选手法后不再被题材自动覆盖 */
@@ -146,24 +185,20 @@ export default function OmniCanvas() {
     }
   }, [recommendedSceneRec.sceneId, sceneManual]);
 
-  const femaleLeadOptions = useMemo(() => listManhuaCharactersByGender("female"), []);
-  const maleLeadOptions = useMemo(() => listManhuaCharactersByGender("male"), []);
   const recommendedLeads = useMemo(
     () => recommendManhuaCharactersFromTopic(factoryTopic),
     [factoryTopic],
-  );
-  const selectedFemale = useMemo(
-    () => (factoryFemaleId ? getManhuaCharacterById(factoryFemaleId) : null),
-    [factoryFemaleId],
-  );
-  const selectedMale = useMemo(
-    () => (factoryMaleId ? getManhuaCharacterById(factoryMaleId) : null),
-    [factoryMaleId],
   );
   const femaleAutoApplied =
     !femaleLeadManual && Boolean(factoryFemaleId) && factoryFemaleId === recommendedLeads.femaleId;
   const maleAutoApplied =
     !maleLeadManual && Boolean(factoryMaleId) && factoryMaleId === recommendedLeads.maleId;
+  const recommendedArtStyle = useMemo(
+    () => recommendManhuaArtStyleFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const artStyleAutoApplied =
+    !artStyleManual && factoryArtStyleId === recommendedArtStyle.artStyleId;
 
   useEffect(() => {
     if (!femaleLeadManual && recommendedLeads.femaleId) {
@@ -173,6 +208,64 @@ export default function OmniCanvas() {
       setFactoryMaleId(recommendedLeads.maleId);
     }
   }, [recommendedLeads.femaleId, recommendedLeads.maleId, femaleLeadManual, maleLeadManual]);
+
+  useEffect(() => {
+    if (!artStyleManual) {
+      setFactoryArtStyleId(recommendedArtStyle.artStyleId);
+    }
+  }, [recommendedArtStyle.artStyleId, artStyleManual]);
+
+  useEffect(() => {
+    saveFactoryCharacterPrefs({
+      topic: factoryTopic,
+      femaleId: factoryFemaleId,
+      maleId: factoryMaleId,
+      artStyleId: factoryArtStyleId,
+      femaleLeadManual,
+      maleLeadManual,
+      artStyleManual,
+    });
+  }, [
+    factoryTopic,
+    factoryFemaleId,
+    factoryMaleId,
+    factoryArtStyleId,
+    femaleLeadManual,
+    maleLeadManual,
+    artStyleManual,
+  ]);
+
+  const spawnSameLayoutSheet = useCallback(
+    (gender: ManhuaCharacterGender) => {
+      const seedId = gender === "female" ? factoryFemaleId : factoryMaleId;
+      const style = getManhuaArtStylePreset(factoryArtStyleId);
+      const prompt = buildManhuaCharacterSheetGenPrompt({
+        characterId: seedId || undefined,
+        gender,
+        artStyleId: factoryArtStyleId,
+      });
+      const originX = blocks.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
+      const originY = 120;
+      const sheet = defaultCanvasBlock("image", originX, originY);
+      sheet.id = makeCanvasBlockId("charsheet");
+      sheet.prompt = prompt;
+      sheet.aspectRatio = "9:16";
+      sheet.imageModel = "nano-banana-2";
+      // 仅预填 prompt；不挂本地 /manhua-characters 相对路径（云端生图拉不到）
+      sheet.imageMode = "generate";
+      sheet.refImageUrl = undefined;
+      sheet.width = 380;
+      sheet.height = 420;
+      const nextBlocks = [...blocks, sheet];
+      setBlocks(nextBlocks);
+      saveCanvasState(nextBlocks, edges);
+      toast.success(
+        `已铺「同版式设定卡·${gender === "female" ? "女主" : "男主"}」节点（${style.labelZh}）`,
+        { description: "节点已预填，打开即可核对 prompt。点运行才会扣费——验收阶段请勿点运行。" },
+      );
+    },
+    [blocks, edges, factoryFemaleId, factoryMaleId, factoryArtStyleId],
+  );
 
   const recommendedCraft = useMemo(
     () => recommendCraftShotFromTopic(factoryTopic),
@@ -229,6 +322,7 @@ export default function OmniCanvas() {
           sceneId: factorySceneId || undefined,
           genreId: factoryGenreId || undefined,
           characterIds: selectedCharacterIds,
+          artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
         });
         const changed = next.some((b, i) => {
@@ -253,6 +347,7 @@ export default function OmniCanvas() {
     factoryGenreId,
     factoryFemaleId,
     factoryMaleId,
+    factoryArtStyleId,
     factoryReverseMode,
     selectedCraftShotIds,
     selectedMotionIds,
@@ -344,6 +439,7 @@ export default function OmniCanvas() {
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
         characterIds: selectedCharacterIds,
+        artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
         videoReverseOutputMode: factoryReverseMode,
@@ -369,6 +465,7 @@ export default function OmniCanvas() {
       edges,
       factoryGenreId,
       factorySceneId,
+      factoryArtStyleId,
       selectedCharacterIds,
       selectedMotionIds,
       selectedCraftShotIds,
@@ -432,6 +529,7 @@ export default function OmniCanvas() {
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
       characterIds: selectedCharacterIds,
+      artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
       videoReverseOutputMode: factoryReverseMode,
@@ -451,6 +549,7 @@ export default function OmniCanvas() {
     selectedCharacterIds,
     selectedMotionIds,
     selectedCraftShotIds,
+    factoryArtStyleId,
     factoryReverseMode,
     factoryGenreId,
     factorySceneId,
@@ -697,7 +796,43 @@ export default function OmniCanvas() {
               ) : null}
             </div>
 
-            {/* ② 编导工厂：确认或跳过后解锁 */}
+            {/* ② 角色卡：始终可预览/换人/选画风（不烧 token；不依赖编剧解锁） */}
+            <div className="mt-4 max-w-4xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5">
+              <ManhuaCharacterGallery
+                femaleId={factoryFemaleId}
+                maleId={factoryMaleId}
+                femaleAutoApplied={femaleAutoApplied}
+                maleAutoApplied={maleAutoApplied}
+                artStyleId={factoryArtStyleId}
+                artStyleAutoApplied={artStyleAutoApplied}
+                disabled={factoryBusy}
+                reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
+                  selectedCharacterIds.length
+                    ? "；已选将在「铺编导节点」时注入角色卡。预览/换人/画风/铺同版式节点均不烧 token。"
+                    : "；预览与换人不烧 token。"
+                }`}
+                onSelectFemale={(id) => {
+                  setFemaleLeadManual(true);
+                  setFactoryFemaleId(id);
+                }}
+                onSelectMale={(id) => {
+                  setMaleLeadManual(true);
+                  setFactoryMaleId(id);
+                }}
+                onSelectArtStyle={(id) => {
+                  setArtStyleManual(true);
+                  setFactoryArtStyleId(id);
+                }}
+                onGenerateSameLayout={spawnSameLayoutSheet}
+                onClearManual={() => {
+                  setFemaleLeadManual(false);
+                  setMaleLeadManual(false);
+                  setArtStyleManual(false);
+                }}
+              />
+            </div>
+
+            {/* ③ 编导工厂：确认或跳过后解锁 */}
             <div
               className={`mt-4 max-w-3xl rounded-2xl border p-4 md:p-5 ${
                 directorUnlocked || writerConfirmed
@@ -706,7 +841,7 @@ export default function OmniCanvas() {
               }`}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div className="text-sm font-semibold text-white/90">② 编导分镜</div>
+                <div className="text-sm font-semibold text-white/90">③ 编导分镜</div>
                 <span className="text-[11px] text-white/40">
                   {directorUnlocked || writerConfirmed
                     ? "节拍 · 灯光运镜 · 静帧 · 成片"
@@ -788,100 +923,6 @@ export default function OmniCanvas() {
                   填写题材或选手动剧种后，将按关键词自动推荐一条主场景（如「秘境」→ 洞府）。
                 </p>
               )}
-
-              <div className="mt-3 space-y-2 sm:max-w-md">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] text-white/55">男女主（角色库）</span>
-                  {(femaleAutoApplied || maleAutoApplied) && (
-                    <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
-                      已按题材自动套用 · 可更换
-                    </span>
-                  )}
-                  {(femaleLeadManual || maleLeadManual) && (
-                    <button
-                      type="button"
-                      disabled={factoryBusy}
-                      onClick={() => {
-                        setFemaleLeadManual(false);
-                        setMaleLeadManual(false);
-                      }}
-                      className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
-                    >
-                      恢复自动推荐
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div
-                    className={`rounded-lg border px-2.5 py-2 ${
-                      femaleAutoApplied
-                        ? "border-cyan-400/40 bg-cyan-500/8"
-                        : "border-cyan-400/20 bg-black/40"
-                    }`}
-                  >
-                    <label className="block text-[11px] text-cyan-200/70">女主（已铺可同步）</label>
-                    <select
-                      value={factoryFemaleId}
-                      onChange={(e) => {
-                        setFemaleLeadManual(true);
-                        setFactoryFemaleId(e.target.value);
-                      }}
-                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                      className="mt-1 w-full rounded-md border border-white/10 bg-black/50 px-2 py-1.5 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
-                    >
-                      <option value="">不指定</option>
-                      {femaleLeadOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nameZh} · {c.jobZh}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedFemale ? (
-                      <p className="mt-1.5 text-[10px] leading-snug text-cyan-100/70">
-                        {selectedFemale.temperamentTags.join(" · ")}
-                        {femaleAutoApplied ? " · 自动" : femaleLeadManual ? " · 手选" : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div
-                    className={`rounded-lg border px-2.5 py-2 ${
-                      maleAutoApplied
-                        ? "border-amber-400/40 bg-amber-500/8"
-                        : "border-amber-400/20 bg-black/40"
-                    }`}
-                  >
-                    <label className="block text-[11px] text-amber-200/70">男主（已铺可同步）</label>
-                    <select
-                      value={factoryMaleId}
-                      onChange={(e) => {
-                        setMaleLeadManual(true);
-                        setFactoryMaleId(e.target.value);
-                      }}
-                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                      className="mt-1 w-full rounded-md border border-white/10 bg-black/50 px-2 py-1.5 text-xs text-white/90 outline-none focus:border-amber-300/40 disabled:opacity-50"
-                    >
-                      <option value="">不指定</option>
-                      {maleLeadOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nameZh} · {c.jobZh}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedMale ? (
-                      <p className="mt-1.5 text-[10px] leading-snug text-amber-100/70">
-                        {selectedMale.temperamentTags.join(" · ")}
-                        {maleAutoApplied ? " · 自动" : maleLeadManual ? " · 手选" : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-                <p className="text-[10px] leading-snug text-emerald-200/75">
-                  {recommendedLeads.reasonZh}
-                  {selectedCharacterIds.length
-                    ? "；已选将注入「角色卡」节点（外形锚点 + 提示词）。"
-                    : ""}
-                </p>
-              </div>
 
               <div className="mt-3 max-w-md space-y-3">
                 <div>
@@ -1010,6 +1051,7 @@ export default function OmniCanvas() {
                       genreId: factoryGenreId || undefined,
                       sceneId: factorySceneId || undefined,
                       characterIds: selectedCharacterIds,
+                      artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
                       videoReverseOutputMode: factoryReverseMode,

@@ -19,6 +19,93 @@ export type ManhuaCharacterTemplate = {
   sourceFile: string;
 };
 
+/** 浏览器可访问的设定卡预览（含底部正/侧/背三视图），见 client/public/manhua-characters/ */
+export function getManhuaCharacterPreviewUrl(id: string): string {
+  const key = String(id || "").trim();
+  if (!/^char_[fm]_\d+$/.test(key)) return "";
+  return `/manhua-characters/${key}.jpg`;
+}
+
+/** 角色/场景须统一的画风（示意 A/B/C） */
+export type ManhuaArtStyleId = "photoreal" | "cg_drama" | "manga_2d";
+
+export type ManhuaArtStylePreset = {
+  id: ManhuaArtStyleId;
+  labelZh: string;
+  shortZh: string;
+  /** 注入角色卡 / 静帧 / 成片的硬约束 */
+  promptZh: string;
+};
+
+export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
+  {
+    id: "photoreal",
+    labelZh: "A · 仿真人",
+    shortZh: "都市情感 / 校园更贴",
+    promptZh:
+      "画风硬锁：半写实仿真人电影剧照，真实皮肤纹理与发丝，自然光影，非卡通非塑料 CGI；角色与场景同一画风。",
+  },
+  {
+    id: "cg_drama",
+    labelZh: "B · CG 漫剧质感",
+    shortZh: "仙侠 / 权谋默认",
+    promptZh:
+      "画风硬锁：半写实二次元国乙立绘质感，韩系厚涂，电影柔光，漫剧成片级 CG；角色与场景同一画风。",
+  },
+  {
+    id: "manga_2d",
+    labelZh: "C · 二维漫画",
+    shortZh: "轻喜 / 夸张表情",
+    promptZh:
+      "画风硬锁：清晰二维漫画线稿上色，赛璐璐或轻厚涂，禁止写真摄影质感；角色与场景同一画风。",
+  },
+];
+
+export const DEFAULT_MANHUA_ART_STYLE_ID: ManhuaArtStyleId = "cg_drama";
+
+export function getManhuaArtStylePreset(id?: string | null): ManhuaArtStylePreset {
+  const hit = MANHUA_ART_STYLE_PRESETS.find((p) => p.id === id);
+  return hit || MANHUA_ART_STYLE_PRESETS.find((p) => p.id === DEFAULT_MANHUA_ART_STYLE_ID)!;
+}
+
+/** 题材 → 画风软推荐（可手改） */
+export function recommendManhuaArtStyleFromTopic(topic: string): {
+  artStyleId: ManhuaArtStyleId;
+  reasonZh: string;
+} {
+  const t = String(topic || "").trim();
+  if (!t) {
+    return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "未填题材时默认 CG 漫剧质感（可更换）" };
+  }
+  if (/漫画|条漫|表情包|轻松|搞笑|日常番|二次元纯/.test(t)) {
+    return { artStyleId: "manga_2d", reasonZh: "题材偏轻松漫画向 → 推荐二维" };
+  }
+  if (/都市|职场|霸总|校园|现实|情感连载|总裁/.test(t) && !/仙侠|玄幻|古风|宫斗|修仙/.test(t)) {
+    return { artStyleId: "photoreal", reasonZh: "题材偏都市/校园情感 → 推荐仿真人" };
+  }
+  if (/仙侠|玄幻|古风|宫斗|修仙|权谋|末日|科幻/.test(t)) {
+    return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "题材偏仙侠/权谋/奇幻 → 推荐 CG 漫剧" };
+  }
+  return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "默认 CG 漫剧质感（可更换）" };
+}
+
+/** 选中卡妆造摘要（库无细拆字段时用职业+气质+提示词短句） */
+export function formatManhuaCharacterLookSummary(c: ManhuaCharacterTemplate): string {
+  const tags = c.temperamentTags.slice(0, 3).join("、");
+  const hint = c.promptZh
+    .replace(/^半写实二次元[，,。]?/, "")
+    .replace(/国乙立绘[^，,]*/g, "")
+    .replace(/韩系厚涂[，,]?/g, "")
+    .replace(/纯白背景[，,]?/g, "")
+    .replace(/电影柔光[，,]?/g, "")
+    .replace(/超写实8K[。.]?/g, "")
+    .trim();
+  const shortHint = hint.length > 42 ? `${hint.slice(0, 42)}…` : hint;
+  return [tags ? `${tags}气质` : "", c.jobZh ? `${c.jobZh}造型` : "", shortHint]
+    .filter(Boolean)
+    .join("；");
+}
+
 export const MANHUA_CHARACTER_FORMULA_ZH = "脸型（定轮廓）+ 发型（定气质）+ 穿搭（定身份）+ 姿态（定性格）+ 道具（定职业）";
 
 /** 本机素材根目录提示（不入仓；运行时可选拼接） */
@@ -436,15 +523,57 @@ export function recommendManhuaCharactersFromTopic(topic?: string): ManhuaCharac
   };
 }
 
-/** 注入角色圣经 / 生图：选中卡的外形+气质+提示词 */
-export function buildManhuaCharacterPromptBlock(ids: string[]): string {
+/**
+ * 「同版式生成新人」：竖版设定卡生图提示（上半人像文案区 + 下半 FRONT/SIDE/BACK）。
+ * 供画布 image 节点预填；不自动跑 API。
+ */
+export function buildManhuaCharacterSheetGenPrompt(opts?: {
+  characterId?: string | null;
+  gender?: ManhuaCharacterGender | null;
+  artStyleId?: string | null;
+  userHint?: string | null;
+}): string {
+  const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const base = opts?.characterId ? getManhuaCharacterById(opts.characterId) : null;
+  const gender: ManhuaCharacterGender =
+    base?.gender || (opts?.gender === "male" ? "male" : "female");
+  const roleZh = gender === "female" ? "女主" : "男主";
+  const seed = base
+    ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，禁止复刻同一张脸。\n外形锚点：${base.promptZh}`
+    : `生成一名都市现代向${roleZh}新人设定卡，气质鲜明、可连载锁脸。`;
+  const hint = String(opts?.userHint || "").trim();
+  return [
+    "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景，印刷清晰）：",
+    "版式硬约束：",
+    "1) 上半：半身/胸像人像 + 姓名占位 + 气质标签条 + 妆造短句；",
+    "2) 下半：同一人物全身 **FRONT / SIDE / BACK** 三视图并排，比例一致、服装一致、锁脸；",
+    "3) 三视图下方可有极简英文标注 FRONT SIDE BACK；禁止水印、禁止真实名人脸。",
+    "",
+    `【画风】${style.labelZh}`,
+    style.promptZh,
+    "",
+    seed,
+    hint ? `\n【用户补充】${hint.slice(0, 400)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** 注入角色圣经 / 生图：选中卡的外形+气质+提示词（可选画风硬锁） */
+export function buildManhuaCharacterPromptBlock(
+  ids: string[],
+  opts?: { artStyleId?: string | null },
+): string {
   const picked = ids.map(getManhuaCharacterById).filter(Boolean) as ManhuaCharacterTemplate[];
   if (!picked.length) return "";
+  const style = getManhuaArtStylePreset(opts?.artStyleId);
   const linesOut = picked.map((c, i) => {
     const tags = c.temperamentTags.join("·");
     const age = c.age ? `${c.age}岁` : "";
-    return `${i + 1}. ${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}`;
+    const preview = getManhuaCharacterPreviewUrl(c.id);
+    const previewLine = preview ? `\n预览图：${preview}` : "";
+    return `${i + 1}. ${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${previewLine}`;
   });
-  return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n${linesOut.join("\n")}`;
+  return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n【画风】${style.labelZh}\n${style.promptZh}\n${linesOut.join("\n")}`;
 }
 

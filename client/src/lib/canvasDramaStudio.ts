@@ -26,7 +26,11 @@ import {
   getManhuaSceneTemplate,
 } from "@shared/manhuaSceneAssetLibrary";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
-import { buildManhuaCharacterPromptBlock } from "@shared/manhuaCharacterAssetLibrary";
+import {
+  buildManhuaCharacterPromptBlock,
+  getManhuaArtStylePreset,
+  type ManhuaArtStyleId,
+} from "@shared/manhuaCharacterAssetLibrary";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
 import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
 
@@ -76,6 +80,8 @@ export type SpawnManhuaDramaStudioOpts = {
   sceneId?: string;
   /** 角色库 id：char_f_* / char_m_*（可多选，注入角色卡） */
   characterIds?: string[];
+  /** 角色/场景统一画风 A/B/C */
+  artStyleId?: ManhuaArtStyleId | string;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
   motionPromptIds?: string[];
   /** 拍摄手法条目 id：注入节拍 / 反推 / 静帧 */
@@ -106,7 +112,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     undefined;
   const writerContext = String(opts.writerContext || "").trim();
   const characterIds = (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
-  const characterBlock = buildManhuaCharacterPromptBlock(characterIds);
+  const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
+    artStyleId: opts.artStyleId,
+  });
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const motionBlock = buildMotionPromptInjectBlock(motionPromptIds);
   let craftShotIds = (opts.craftShotIds || []).map((id) => String(id || "").trim()).filter(Boolean);
@@ -171,7 +179,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const keyArtBase = usePack
     ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
-  keyArt.prompt = craftShotBlock ? `${keyArtBase}\n\n${craftShotBlock}` : keyArtBase;
+  const artStyle = getManhuaArtStylePreset(opts.artStyleId);
+  const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
+  keyArt.prompt = [keyArtBase, craftShotBlock, artStyleBlock].filter(Boolean).join("\n\n");
   keyArt.parentId = reverse.id;
   keyArt.imageModel = "nano-banana-2";
   keyArt.aspectRatio = "9:16";
@@ -261,12 +271,17 @@ export function applyFactoryPrefsToBlocks(
     sceneId?: string;
     genreId?: string;
     characterIds?: string[];
+    artStyleId?: ManhuaArtStyleId | string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
   const motionBlock = buildMotionPromptInjectBlock(opts.motionPromptIds || []);
-  const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || []);
+  const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || [], {
+    artStyleId: opts.artStyleId,
+  });
+  const artStyle = getManhuaArtStylePreset(opts.artStyleId);
+  const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const scene = getManhuaSceneTemplate(opts.sceneId);
   const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
   const genreBlock = composeGenreTemplatePromptBlock(getScreenwriterGenreTemplate(opts.genreId));
@@ -291,6 +306,7 @@ export function applyFactoryPrefsToBlocks(
         base = stripMarkedSection(base, "【漫剧场景资产库");
         if (b.id.startsWith("keyart-")) {
           base = stripMarkedSection(base, "【本集主场景优先】");
+          base = stripMarkedSection(base, "【画风硬锁】");
         }
       }
       const parts = [
@@ -301,6 +317,7 @@ export function applyFactoryPrefsToBlocks(
           ? `【本集主场景优先】${scene.nameZh}\n直接吸收其生图提示词与核心元素，角色必须融入场景：\n${scene.promptZh}`
           : "",
         craftBlock,
+        b.id.startsWith("keyart-") ? artStyleBlock : "",
       ].filter(Boolean);
       return {
         ...b,

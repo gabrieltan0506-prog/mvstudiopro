@@ -3,8 +3,11 @@ import {
   MANHUA_CHARACTER_ASSET_LIBRARY,
   MANHUA_CHARACTER_FORMULA_ZH,
   buildManhuaCharacterPromptBlock,
+  buildManhuaCharacterSheetGenPrompt,
   getManhuaCharacterById,
+  getManhuaCharacterPreviewUrl,
   listManhuaCharactersByGender,
+  recommendManhuaArtStyleFromTopic,
   recommendManhuaCharactersFromTopic,
 } from "./manhuaCharacterAssetLibrary";
 
@@ -21,10 +24,22 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(m?.nameZh).toBe("傅临渊");
     const f = getManhuaCharacterById("char_f_07");
     expect(f?.nameZh).toBe("唐若曦");
-    const block = buildManhuaCharacterPromptBlock(["char_f_07", "char_m_02"]);
+    const block = buildManhuaCharacterPromptBlock(["char_f_07", "char_m_02"], {
+      artStyleId: "cg_drama",
+    });
     expect(block).toContain("唐若曦");
     expect(block).toContain("傅临渊");
     expect(block).toContain("【角色库锚点】");
+    expect(block).toContain("【画风】");
+    expect(block).toContain("CG 漫剧");
+    expect(block).toContain("预览图：/manhua-characters/char_f_07.jpg");
+    expect(getManhuaCharacterPreviewUrl("char_f_07")).toBe("/manhua-characters/char_f_07.jpg");
+  });
+
+  it("recommends art style from topic", () => {
+    expect(recommendManhuaArtStyleFromTopic("都市霸总职场情感").artStyleId).toBe("photoreal");
+    expect(recommendManhuaArtStyleFromTopic("仙侠修仙权谋翻盘").artStyleId).toBe("cg_drama");
+    expect(recommendManhuaArtStyleFromTopic("轻松日常漫画搞笑").artStyleId).toBe("manga_2d");
   });
 
   it("4.B recommends cool female + elite male for 权谋题材", () => {
@@ -40,5 +55,16 @@ describe("manhuaCharacterAssetLibrary", () => {
     const rec = recommendManhuaCharactersFromTopic("");
     expect(rec.femaleId).toBe("char_f_01");
     expect(rec.maleId).toBe("char_m_02");
+  });
+
+  it("builds same-layout character sheet prompt", () => {
+    const prompt = buildManhuaCharacterSheetGenPrompt({
+      characterId: "char_f_01",
+      artStyleId: "cg_drama",
+    });
+    expect(prompt).toContain("FRONT / SIDE / BACK");
+    expect(prompt).toContain("沈清辞");
+    expect(prompt).toContain("新面孔新人");
+    expect(prompt).toContain("CG 漫剧");
   });
 });
