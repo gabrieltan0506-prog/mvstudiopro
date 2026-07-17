@@ -422,8 +422,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const {
         VIDEO_REVERSE_SYSTEM_PROMPT,
         buildVideoReverseUserPrompt,
+        parseVideoReverseOutputMode,
       } = await import("../shared/videoReversePrompt");
       const userHint = s(b.userHint || b.prompt || q.prompt || "");
+      const outputMode = parseVideoReverseOutputMode(b.outputMode || q.outputMode || b.locale || q.locale);
       const legacyUrls = Array.isArray(b.imageUrls)
         ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
         : [];
@@ -454,6 +456,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
             "",
             buildVideoReverseUserPrompt({
               userHint,
+              outputMode,
               targetEngine: s(b.targetEngine || "seedance-2.0") === "generic" ? "generic" : "seedance-2.0",
             }),
             "",
