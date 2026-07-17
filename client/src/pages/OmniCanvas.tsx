@@ -217,7 +217,7 @@ export default function OmniCanvas() {
     [factoryCraftShotId],
   );
 
-  /** 已铺工厂板时：手法/动效/反推档变更同步进节点，不必整板重铺（短防抖） */
+  /** 已铺工厂板时：手法/动效/场景/反推档（已铺可同步）变更同步进节点，不必整板重铺（短防抖） */
   useEffect(() => {
     const hasFactory = blocks.some((b) => MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)));
     if (!hasFactory || factoryBusy) return;
@@ -226,6 +226,9 @@ export default function OmniCanvas() {
         const next = applyFactoryPrefsToBlocks(prev, {
           craftShotIds: selectedCraftShotIds,
           motionPromptIds: selectedMotionIds,
+          sceneId: factorySceneId || undefined,
+          genreId: factoryGenreId || undefined,
+          characterIds: selectedCharacterIds,
           videoReverseOutputMode: factoryReverseMode,
         });
         const changed = next.some((b, i) => {
@@ -243,7 +246,18 @@ export default function OmniCanvas() {
     }, 180);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅跟工厂选择器
-  }, [factoryCraftShotId, factoryMotionId, factoryReverseMode, selectedCraftShotIds, selectedMotionIds]);
+  }, [
+    factoryCraftShotId,
+    factoryMotionId,
+    factorySceneId,
+    factoryGenreId,
+    factoryFemaleId,
+    factoryMaleId,
+    factoryReverseMode,
+    selectedCraftShotIds,
+    selectedMotionIds,
+    selectedCharacterIds,
+  ]);
   const motionGrouped = useMemo(() => {
     const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
     return cats.map((category) => ({
@@ -702,7 +716,7 @@ export default function OmniCanvas() {
 
               <div className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
                 <div>
-                  <label className="block text-[11px] text-white/45">剧种</label>
+                  <label className="block text-[11px] text-white/45">剧种（已铺板可同步）</label>
                   <select
                     value={factoryGenreId}
                     onChange={(e) => {
@@ -767,7 +781,7 @@ export default function OmniCanvas() {
                   当前推荐主场景：{String(recommendedScene.no).padStart(2, "0")} {recommendedScene.nameZh}
                   {sceneAutoApplied ? " ·自动" : sceneManual ? " ·手选" : ""}
                   {recommendedSceneRec.reasonZh ? ` · ${recommendedSceneRec.reasonZh}` : ""}
-                  （未手选时工厂只套这一条，可下拉更换）
+                  （未手选时自动套；已铺板更换会同步进节点，可下拉手选）
                 </p>
               ) : (
                 <p className="mt-1.5 text-[10px] text-white/35">
@@ -805,7 +819,7 @@ export default function OmniCanvas() {
                         : "border-cyan-400/20 bg-black/40"
                     }`}
                   >
-                    <label className="block text-[11px] text-cyan-200/70">女主</label>
+                    <label className="block text-[11px] text-cyan-200/70">女主（已铺可同步）</label>
                     <select
                       value={factoryFemaleId}
                       onChange={(e) => {
@@ -836,7 +850,7 @@ export default function OmniCanvas() {
                         : "border-amber-400/20 bg-black/40"
                     }`}
                   >
-                    <label className="block text-[11px] text-amber-200/70">男主</label>
+                    <label className="block text-[11px] text-amber-200/70">男主（已铺可同步）</label>
                     <select
                       value={factoryMaleId}
                       onChange={(e) => {
@@ -872,7 +886,7 @@ export default function OmniCanvas() {
               <div className="mt-3 max-w-md space-y-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
+                    <label className="block text-[11px] text-white/45">拍摄手法（已铺可同步）（可选 · 1 条）</label>
                     {craftAutoApplied ? (
                       <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
                         已按题材自动套用
@@ -932,7 +946,7 @@ export default function OmniCanvas() {
                   <p className="mt-1 text-[10px] text-white/30">写入编导反推节点输出结构。</p>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
+                  <label className="block text-[11px] text-white/45">包装动效（已铺可同步）（可选 · 1 条）</label>
                   <select
                     value={factoryMotionId}
                     onChange={(e) => {

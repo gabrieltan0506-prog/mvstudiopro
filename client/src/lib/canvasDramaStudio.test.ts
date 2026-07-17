@@ -98,6 +98,73 @@ describe("canvasDramaStudio factory", () => {
     expect(reverse.prompt).toContain("贴身近景");
   });
 
+  it("applyFactoryPrefsToBlocks syncs scene into story/keyart", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      genreId: "xianxia",
+      sceneId: "scene_01",
+      topic: "外门弟子",
+    });
+    expect(blocks.find((b) => b.id.startsWith("story-"))!.prompt).toContain("仙侠宗门");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      sceneId: "scene_04",
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const story = next.find((b) => b.id.startsWith("story-"))!.prompt;
+    const key = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(story).toContain("秘境洞府");
+    expect(story).not.toContain("仙侠宗门场景");
+    expect(key).toContain("秘境洞府");
+    expect(key).toContain("本集主场景优先");
+  });
+
+  it("applyFactoryPrefsToBlocks syncs genre template on story/bible", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      genreId: "xianxia",
+      topic: "外门弟子",
+    });
+    expect(blocks.find((b) => b.id.startsWith("story-"))!.prompt).toContain("仙侠");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      genreId: "urban",
+      sceneId: "scene_12",
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const story = next.find((b) => b.id.startsWith("story-"))!.prompt;
+    expect(story).toContain("都市");
+    expect(story).toContain("都市办公室");
+    expect(story).not.toMatch(/编剧剧种模板·仙侠/);
+  });
+
+  it("applyFactoryPrefsToBlocks syncs character anchors on bible", () => {
+    const { blocks } = spawnManhuaDramaStudio({ topic: "都市恋爱" });
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      characterIds: ["char_f_01", "char_m_01"],
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
+    expect(bible).toContain("【角色库锚点】");
+    expect(bible).toMatch(/char_f_01|女主|短发|长发|角色/);
+  });
+
+  it("applyFactoryPrefs keeps craft when only scene changes", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      genreId: "xianxia",
+      sceneId: "scene_01",
+      topic: "外门弟子",
+      craftShotIds: ["light_03_high_contrast"],
+    });
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      sceneId: "scene_04",
+      craftShotIds: ["light_03_high_contrast"],
+      motionPromptIds: [],
+    });
+    const beats = next.find((b) => b.id.startsWith("beats-"))!.prompt;
+    expect(beats).toContain("秘境洞府");
+    expect(beats).toContain("高反差");
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",
