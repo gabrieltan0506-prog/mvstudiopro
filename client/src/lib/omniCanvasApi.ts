@@ -88,29 +88,53 @@ export async function pollOmniInteractionUntilDone(
   throw new Error("Omni 任务超时，请稍后再试");
 }
 
+function isTransientGeminiHttp(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * Canvas 文案（故事/角色卡/节拍等）。
+ * 对 429/5xx 在客户端再退避 1–2 次（角色卡历史上易 503；勿泄漏供应商/模型名）。
+ */
 export async function runGeminiScript(prompt: string, model?: string) {
-  const resp = await fetch("/api/google?op=geminiScript", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      model: model || "gemini-3.1-pro-preview",
-    }),
-  });
-  const json = await parseJson(resp);
-  if (!resp.ok || !json.ok) {
+  const maxAttempts = 3;
+  let lastError = "文字生成失败，请稍后重试";
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const resp = await fetch("/api/google?op=geminiScript", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        model: model || "gemini-3.1-pro-preview",
+      }),
+    });
+    const json = await parseJson(resp);
+    if (resp.ok && json.ok) {
+      const text = String(
+        (json.raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || json.text || "",
+      ).trim();
+      if (text) return text;
+      lastError = "文字生成返回为空，请稍后重试";
+      // 空正文也偶发，短暂退避再试一次
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      break;
+    }
     const upstream = Number(json?.status || resp.status || 0) || resp.status;
-    // 带状态码，供工厂 isTransientFactoryError 识别并退避（勿泄漏供应商/模型名）
-    throw new Error(
+    lastError =
       String(json.error || "").trim() ||
-        (upstream >= 500 || upstream === 429
-          ? `算力紧张，请稍后重试（${upstream}）`
-          : "文字生成失败，请稍后重试"),
-    );
+      (upstream >= 500 || upstream === 429
+        ? `算力紧张，请稍后重试（${upstream}）`
+        : "文字生成失败，请稍后重试");
+    if (attempt < maxAttempts - 1 && isTransientGeminiHttp(upstream)) {
+      await new Promise((r) => setTimeout(r, 1600 * (attempt + 1)));
+      continue;
+    }
+    break;
   }
-  const text = String((json.raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || json.text || "").trim();
-  if (!text) throw new Error("文字生成返回为空，请稍后重试");
-  return text;
+  throw new Error(lastError);
 }
 
 export async function runNanoImage(body: {
