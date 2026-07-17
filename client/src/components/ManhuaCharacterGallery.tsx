@@ -774,25 +774,6 @@ export default function ManhuaCharacterGallery({
     }
   };
 
-  const resetLocalWorkspace = () => {
-    if (typeof window !== "undefined" && !window.confirm("清空本机角色卡收藏/套组/最近/筛选偏好？不可撤销。")) {
-      return;
-    }
-    resetManhuaGalleryLocalState();
-    setFavoriteIds([]);
-    setCustomCouples([]);
-    setRecentIds([]);
-    setRecentCouplePackIds([]);
-    setPackFilterId("");
-    setSortMode("default");
-    setDenseGrid(false);
-    setLockArtStyle(false);
-    setCompactUi(false);
-    clearLibraryFilters();
-    setCopyFlash("已重置本机角色卡工作区");
-    window.setTimeout(() => setCopyFlash(""), 1600);
-  };
-
   const importCoupleSelection = async () => {
     try {
       const raw = await navigator.clipboard.readText();
