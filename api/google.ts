@@ -356,7 +356,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     const token = await getVertexAccessToken();
 
-    // ---------------- Gemini (text) ----------------
+    // ---------------- Gemini (text) · Vertex IAM only（Bearer；禁止 GEMINI_API_KEY） ----------------
     if(op === "geminiScript"){
       const prompt = s(b.prompt || q.prompt || "");
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
