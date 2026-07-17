@@ -368,6 +368,7 @@ const TOPIC_CRAFT_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
   { keys: ["科幻", "飞船", "赛博", "全息"], preferIds: ["cam_07_wide_scale", "light_04_volumetric", "emo_08_solemn_quiet"] },
   { keys: ["密室", "黑客入侵", "信息战"], preferIds: ["light_07_top_cut", "cam_04_whip_insert", "emo_07_obsessive_calm"] },
   { keys: ["声先画后", "硬切卡点", "匹配切"], preferIds: ["tr_05_audio_lead", "tr_02_hard_cut_beat", "tr_01_match_cut"] },
+  { keys: ["武侠", "江湖", "刀光", "比武"], preferIds: ["cam_03_track_follow", "tr_04_whip_bridge", "light_03_high_contrast"] },
   { keys: ["边塞", "烽火", "关隘", "出征"], preferIds: ["cam_07_wide_scale", "light_03_high_contrast", "emo_08_solemn_quiet"] },
   { keys: ["古风", "皇宫", "长安", "府邸"], preferIds: ["light_03_high_contrast", "cam_02_locked_long", "emo_05_family_tension"] },
   { keys: ["边塞", "烽火", "出征", "关隘"], preferIds: ["cam_07_wide_scale", "light_06_magic_hour", "emo_08_solemn_quiet"] },

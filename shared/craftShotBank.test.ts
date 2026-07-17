@@ -70,4 +70,8 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft from 古风 keyword", () => {
     expect(recommendCraftShotFromTopic("古风皇宫长安府邸").craftShotId).toBe("light_03_high_contrast");
   });
+
+  it("recommends craft from 武侠 keyword", () => {
+    expect(recommendCraftShotFromTopic("江湖刀光比武").craftShotId).toBe("cam_03_track_follow");
+  });
 });
