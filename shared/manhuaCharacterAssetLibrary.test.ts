@@ -10,7 +10,9 @@ import {
   buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
   getManhuaCharacterById,
+  getManhuaCharacterDisplayName,
   getManhuaCharacterPreviewUrl,
+  MANHUA_PHOTOREAL_NAME_ZH,
   listManhuaCharactersByGender,
   parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
@@ -46,6 +48,18 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(block).toContain("CG 漫剧");
     expect(block).toContain("预览图：/manhua-characters/char_f_07.jpg");
     expect(getManhuaCharacterPreviewUrl("char_f_07")).toBe("/manhua-characters/char_f_07.jpg");
+  });
+
+  it("photoreal uses independent names and sheet preview path", () => {
+    expect(MANHUA_PHOTOREAL_NAME_ZH.char_f_01).toBe("岑停云");
+    expect(getManhuaCharacterDisplayName("char_f_01", { artStyleId: "photoreal" })).toBe("岑停云");
+    expect(getManhuaCharacterDisplayName("char_f_01", { artStyleId: "cg_drama" })).toBe("沈清辞");
+    expect(getManhuaCharacterPreviewUrl("char_f_01", { artStyleId: "photoreal" })).toBe(
+      "/manhua-characters/photoreal/char_f_01_sheet.jpg",
+    );
+    const block = buildManhuaCharacterPromptBlock(["char_f_01"], { artStyleId: "photoreal" });
+    expect(block).toContain("岑停云");
+    expect(block).not.toContain("沈清辞");
   });
 
   it("recommends art style from topic", () => {

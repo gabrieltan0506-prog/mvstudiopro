@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-07-17T20:24:09.856204Z",
+  "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
+  "items": [
+    {
+      "id": "char_f_01",
+      "photorealNameZh": "岑停云",
+      "cgNameZh": "沈清辞",
+      "ok": true,
+      "hero": "char_f_01_hero.jpg",
+      "sheet": "char_f_01_sheet.jpg"
+    }
+  ]
+}

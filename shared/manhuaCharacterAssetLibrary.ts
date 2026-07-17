@@ -21,10 +21,63 @@ export type ManhuaCharacterTemplate = {
   sourceFile: string;
 };
 
+/**
+ * 仿真人库独立姓名（与 CG 设定卡 nameZh 脱钩；好记优先）。
+ * CG 仍用模板内 nameZh；photoreal 画风读此表。
+ */
+export const MANHUA_PHOTOREAL_NAME_ZH: Record<string, string> = {
+  char_f_01: "岑停云",
+  char_f_02: "江晚星",
+  char_f_03: "夏知遥",
+  char_f_04: "白昭昭",
+  char_f_05: "林暮雪",
+  char_f_06: "苏小禾",
+  char_f_07: "唐听澜",
+  char_f_08: "温澄",
+  char_f_09: "谢南枝",
+  char_f_10: "顾以宁",
+  char_f_11: "沈见鹿",
+  char_f_12: "陆青青",
+  char_f_13: "姜如初",
+  char_f_14: "阮听雨",
+  char_f_15: "叶清欢",
+  char_m_01: "周临川",
+  char_m_02: "傅北辰",
+  char_m_03: "沈渡",
+  char_m_04: "江执白",
+  char_m_05: "陆深",
+  char_m_06: "陈予安",
+  char_m_07: "韩止水",
+  char_m_08: "裴野",
+  char_m_09: "谢闻舟",
+  char_m_10: "许朝闻",
+  char_m_11: "霍砚",
+  char_m_12: "程远",
+  char_m_13: "顾行舟",
+  char_m_14: "梁知夏",
+};
+
+/** 按画风取展示名：仿真人用独立名，其余用 CG 名 */
+export function getManhuaCharacterDisplayName(
+  id: string,
+  opts?: { artStyleId?: string | null },
+): string {
+  const c = getManhuaCharacterById(id);
+  if (!c) return "";
+  if (String(opts?.artStyleId || "").trim() === "photoreal") {
+    return MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
+  }
+  return c.nameZh;
+}
+
 /** 浏览器可访问的设定卡预览（含底部正/侧/背三视图），见 client/public/manhua-characters/ */
-export function getManhuaCharacterPreviewUrl(id: string): string {
+export function getManhuaCharacterPreviewUrl(id: string, opts?: { artStyleId?: string | null }): string {
   const key = String(id || "").trim();
   if (!/^char_[fm]_\d+$/.test(key)) return "";
+  // 方案 C：仿真人优先读 photoreal 三视图；未生成时回退旧 CG 设定卡
+  if (String(opts?.artStyleId || "").trim() === "photoreal") {
+    return `/manhua-characters/photoreal/${key}_sheet.jpg`;
+  }
   return `/manhua-characters/${key}.jpg`;
 }
 
@@ -901,8 +954,11 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
   const gender: ManhuaCharacterGender =
     base?.gender || (opts?.gender === "male" ? "male" : "female");
   const roleZh = gender === "female" ? "女主" : "男主";
+  const displayName = base
+    ? getManhuaCharacterDisplayName(base.id, { artStyleId: opts?.artStyleId })
+    : "";
   const seed = base
-    ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，禁止复刻同一张脸。\n外形锚点：${base.promptZh}`
+    ? `以「${displayName}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，禁止复刻同一张脸。\n外形锚点：${base.promptZh}`
     : `生成一名都市现代向${roleZh}新人设定卡，气质鲜明、可连载锁脸。`;
   const hint = String(opts?.userHint || "").trim();
   const antiAi =
@@ -935,9 +991,10 @@ export function buildManhuaCharacterClipboardText(
   const c = getManhuaCharacterById(id);
   if (!c) return "";
   const style = getManhuaArtStylePreset(opts?.artStyleId);
-  const preview = getManhuaCharacterPreviewUrl(c.id);
+  const displayName = getManhuaCharacterDisplayName(c.id, opts);
+  const preview = getManhuaCharacterPreviewUrl(c.id, opts);
   return [
-    `${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${c.age ? `·${c.age}岁` : ""}）`,
+    `${displayName}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${c.age ? `·${c.age}岁` : ""}）`,
     `气质：${c.temperamentTags.join("·")}`,
     `画风：${style.labelZh}`,
     style.promptZh,
@@ -959,9 +1016,10 @@ export function buildManhuaCharacterPromptBlock(
   const linesOut = picked.map((c, i) => {
     const tags = c.temperamentTags.join("·");
     const age = c.age ? `${c.age}岁` : "";
-    const preview = getManhuaCharacterPreviewUrl(c.id);
+    const displayName = getManhuaCharacterDisplayName(c.id, opts);
+    const preview = getManhuaCharacterPreviewUrl(c.id, opts);
     const previewLine = preview ? `\n预览图：${preview}` : "";
-    return `${i + 1}. ${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${previewLine}`;
+    return `${i + 1}. ${displayName}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${previewLine}`;
   });
   return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n【画风】${style.labelZh}\n${style.promptZh}\n${linesOut.join("\n")}`;
 }
