@@ -2,7 +2,7 @@
  * 漫剧工厂 · 角色库卡片墙 + 设定卡三视图预览 + 画风 A/B/C
  * 设定卡图底部为 FRONT/SIDE/BACK；上方为人像与文案。
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
   formatManhuaCharacterLookSummary,
@@ -13,6 +13,13 @@ import {
   type ManhuaCharacterGender,
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
+
+function matchesCharacterQuery(c: ManhuaCharacterTemplate, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  const hay = [c.nameZh, c.jobZh, c.id, ...c.temperamentTags, c.promptZh].join(" ").toLowerCase();
+  return hay.includes(needle);
+}
 
 type Props = {
   femaleId: string;
@@ -183,6 +190,7 @@ function LibraryCard({
           e.preventDefault();
           setPinned((v) => !v);
         }}
+        data-character-id={character.id}
         className={`w-full overflow-hidden rounded-xl border bg-black/35 text-left transition disabled:opacity-45 ${border}`}
       >
         <div className="relative h-28 overflow-hidden bg-black/50">
@@ -252,15 +260,45 @@ export default function ManhuaCharacterGallery({
   reasonZh,
 }: Props) {
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
   const libraryRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const females = useMemo(() => listManhuaCharactersByGender("female"), []);
   const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
   const pool = libraryTab === "female" ? females : males;
+  const tagOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of pool) {
+      for (const t of c.temperamentTags) counts.set(t, (counts.get(t) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh"))
+      .map(([t]) => t)
+      .slice(0, 10);
+  }, [pool]);
+  const filteredPool = useMemo(
+    () =>
+      pool.filter((c) => {
+        if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
+        return matchesCharacterQuery(c, libraryQuery);
+      }),
+    [pool, libraryQuery, tagFilter],
+  );
+  const selectedInTab = libraryTab === "female" ? femaleId : maleId;
+
+  useEffect(() => {
+    if (!selectedInTab || !gridRef.current) return;
+    const el = gridRef.current.querySelector<HTMLElement>(`[data-character-id="${selectedInTab}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedInTab, libraryTab, filteredPool.length]);
 
   const focusLibrary = (gender: ManhuaCharacterGender) => {
     setLibraryTab(gender);
+    setLibraryQuery("");
+    setTagFilter("");
     requestAnimationFrame(() => {
       libraryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
@@ -369,7 +407,11 @@ export default function ManhuaCharacterGallery({
           <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
             <button
               type="button"
-              onClick={() => setLibraryTab("female")}
+              onClick={() => {
+                setLibraryTab("female");
+                setLibraryQuery("");
+                setTagFilter("");
+              }}
               className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
                 libraryTab === "female" ? "bg-cyan-500/25 text-cyan-100" : "text-white/55"
               }`}
@@ -378,7 +420,11 @@ export default function ManhuaCharacterGallery({
             </button>
             <button
               type="button"
-              onClick={() => setLibraryTab("male")}
+              onClick={() => {
+                setLibraryTab("male");
+                setLibraryQuery("");
+                setTagFilter("");
+              }}
               className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
                 libraryTab === "male" ? "bg-amber-500/25 text-amber-100" : "text-white/55"
               }`}
@@ -387,15 +433,59 @@ export default function ManhuaCharacterGallery({
             </button>
           </div>
         </div>
-        <div className="mb-2 text-[10px] text-white/40">
-          桌面悬停预览三视图 · 手机长按钉住预览 · 右键也可钉住/取消
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <input
+            value={libraryQuery}
+            onChange={(e) => setLibraryQuery(e.target.value)}
+            disabled={disabled}
+            placeholder="搜索名字 / 职业 / 气质…"
+            className="min-w-[180px] flex-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 text-[11px] text-white/90 outline-none focus:border-white/25 disabled:opacity-45"
+          />
+          <span className="text-[10px] text-white/35">
+            {filteredPool.length}/{pool.length}
+          </span>
         </div>
-        <div className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4">
-          {pool.map((c) => (
+        {tagOptions.length ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setTagFilter("")}
+              className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                !tagFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+              }`}
+            >
+              全部气质
+            </button>
+            {tagOptions.map((t) => (
+              <button
+                key={t}
+                type="button"
+                disabled={disabled}
+                onClick={() => setTagFilter((prev) => (prev === t ? "" : t))}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                  tagFilter === t
+                    ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
+                    : "border-white/10 text-white/50 hover:border-white/25"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div className="mb-2 text-[10px] text-white/40">
+          悬停预览三视图 · 右键钉住/取消预览
+        </div>
+        <div
+          ref={gridRef}
+          className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4"
+        >
+          {filteredPool.map((c) => (
             <LibraryCard
               key={c.id}
               character={c}
-              selected={(libraryTab === "female" ? femaleId : maleId) === c.id}
+              selected={selectedInTab === c.id}
               accent={libraryTab === "female" ? "cyan" : "amber"}
               disabled={disabled}
               onSelect={() => {
@@ -404,6 +494,11 @@ export default function ManhuaCharacterGallery({
               }}
             />
           ))}
+          {!filteredPool.length ? (
+            <div className="col-span-full rounded-lg border border-dashed border-white/15 px-3 py-8 text-center text-[11px] text-white/40">
+              无匹配角色，试试清空搜索或气质筛选
+            </div>
+          ) : null}
         </div>
       </div>
 
