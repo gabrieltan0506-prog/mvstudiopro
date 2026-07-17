@@ -62,6 +62,20 @@ describe("canvasDramaStudio factory", () => {
     expect(omni.prompt).toContain("【包装动效手法】");
   });
 
+  it("injects craft shot bank into beats / reverse / keyart", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "权谋对峙",
+      craftShotIds: ["light_03_high_contrast", "cam_01_slow_push"],
+    });
+    const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const keyart = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(beats.prompt).toContain("【手法条目库·原子镜头】");
+    expect(reverse.prompt).toContain("高反差");
+    expect(keyart.prompt).toContain("缓慢推进");
+    expect(beats.prompt).not.toMatch(/Nolan|王家卫/i);
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",

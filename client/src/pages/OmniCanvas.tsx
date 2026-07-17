@@ -31,6 +31,11 @@ import {
   type MotionPromptCategory,
 } from "@shared/motionPromptBank";
 import {
+  CRAFT_SHOT_BANK,
+  CRAFT_SHOT_CATEGORY_LABEL_ZH,
+  type CraftShotCategory,
+} from "@shared/craftShotBank";
+import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
   MANHUA_WRITER_EPISODE_MIN,
@@ -91,6 +96,7 @@ export default function OmniCanvas() {
   const [femaleLeadManual, setFemaleLeadManual] = useState(false);
   const [maleLeadManual, setMaleLeadManual] = useState(false);
   const [factoryMotionId, setFactoryMotionId] = useState("");
+  const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
@@ -149,12 +155,24 @@ export default function OmniCanvas() {
     () => (factoryMotionId.trim() ? [factoryMotionId.trim()] : []),
     [factoryMotionId],
   );
+  const selectedCraftShotIds = useMemo(
+    () => (factoryCraftShotId.trim() ? [factoryCraftShotId.trim()] : []),
+    [factoryCraftShotId],
+  );
   const motionGrouped = useMemo(() => {
     const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
     return cats.map((category) => ({
       category,
       label: MOTION_PROMPT_CATEGORY_LABEL_ZH[category],
       items: MOTION_PROMPT_BANK.filter((e) => e.category === category),
+    }));
+  }, []);
+  const craftShotGrouped = useMemo(() => {
+    const cats: CraftShotCategory[] = ["lighting", "camera", "emotion", "transition"];
+    return cats.map((category) => ({
+      category,
+      label: CRAFT_SHOT_CATEGORY_LABEL_ZH[category],
+      items: CRAFT_SHOT_BANK.filter((e) => e.category === category),
     }));
   }, []);
   const writerContext = useMemo(() => {
@@ -228,6 +246,7 @@ export default function OmniCanvas() {
         sceneId: factorySceneId || undefined,
         characterIds: selectedCharacterIds,
         motionPromptIds: selectedMotionIds,
+        craftShotIds: selectedCraftShotIds,
         writerContext,
         includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
       });
@@ -252,6 +271,7 @@ export default function OmniCanvas() {
       factorySceneId,
       selectedCharacterIds,
       selectedMotionIds,
+      selectedCraftShotIds,
       writerContext,
       directorUnlocked,
     ],
@@ -312,6 +332,7 @@ export default function OmniCanvas() {
       sceneId: factorySceneId || undefined,
       characterIds: selectedCharacterIds,
       motionPromptIds: selectedMotionIds,
+      craftShotIds: selectedCraftShotIds,
       writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
       includeDirectorCraft: true,
     });
@@ -327,6 +348,7 @@ export default function OmniCanvas() {
     factoryTopic,
     selectedCharacterIds,
     selectedMotionIds,
+    selectedCraftShotIds,
     factoryGenreId,
     factorySceneId,
     writerFocusEpisode,
@@ -740,28 +762,53 @@ export default function OmniCanvas() {
                 </p>
               </div>
 
-              <div className="mt-3 max-w-md">
-                <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
-                <select
-                  value={factoryMotionId}
-                  onChange={(e) => setFactoryMotionId(e.target.value)}
-                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                >
-                  <option value="">不指定</option>
-                  {motionGrouped.map((g) => (
-                    <optgroup key={g.category} label={g.label}>
-                      {g.items.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {String(e.no).padStart(2, "0")} {e.nameZh}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <p className="mt-1 text-[10px] text-white/30">
-                  注入微动成片 / 视频改写节点；与拍摄手法库分表。
-                </p>
+              <div className="mt-3 max-w-md space-y-3">
+                <div>
+                  <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
+                  <select
+                    value={factoryCraftShotId}
+                    onChange={(e) => setFactoryCraftShotId(e.target.value)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-violet-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-violet-300/40 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {craftShotGrouped.map((g) => (
+                      <optgroup key={g.category} label={g.label}>
+                        {g.items.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {String(e.no).padStart(2, "0")} {e.nameZh}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-white/30">
+                    注入节拍 / 反推 / 静帧；成稿只写手法词。
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
+                  <select
+                    value={factoryMotionId}
+                    onChange={(e) => setFactoryMotionId(e.target.value)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {motionGrouped.map((g) => (
+                      <optgroup key={g.category} label={g.label}>
+                        {g.items.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {String(e.no).padStart(2, "0")} {e.nameZh}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-white/30">
+                    注入微动成片 / 视频改写；与拍摄手法分表。
+                  </p>
+                </div>
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/8 pt-3">
@@ -800,6 +847,7 @@ export default function OmniCanvas() {
                       sceneId: factorySceneId || undefined,
                       characterIds: selectedCharacterIds,
                       motionPromptIds: selectedMotionIds,
+                      craftShotIds: selectedCraftShotIds,
                       writerContext,
                       includeDirectorCraft: true,
                     });

@@ -22,6 +22,7 @@ import {
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import { buildManhuaCharacterPromptBlock } from "@shared/manhuaCharacterAssetLibrary";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
+import { buildCraftShotInjectBlock } from "@shared/craftShotBank";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -71,6 +72,8 @@ export type SpawnManhuaDramaStudioOpts = {
   characterIds?: string[];
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
   motionPromptIds?: string[];
+  /** 拍摄手法条目 id：注入节拍 / 反推 / 静帧 */
+  craftShotIds?: string[];
   /** 编剧室已确认上下文（人物/道具/场景/本集+钩子） */
   writerContext?: string;
   /** 进入编导后为节拍/反推/静帧注入手法约束 */
@@ -98,6 +101,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const motionBlock = buildMotionPromptInjectBlock(motionPromptIds);
+  const craftShotIds = (opts.craftShotIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const craftShotBlock = buildCraftShotInjectBlock(craftShotIds);
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
   const stageOpts = {
     genreId,
@@ -107,7 +112,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     includeDirectorCraft,
     directorCraftBlock: includeDirectorCraft ? CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK : undefined,
   };
-  const usePack = Boolean(genreId || sceneId || writerContext || characterBlock);
+  const usePack = Boolean(genreId || sceneId || writerContext || characterBlock || craftShotBlock);
 
   const story = defaultCanvasBlock("text", originX, originY);
   story.id = makeCanvasBlockId("story");
@@ -129,25 +134,28 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const beats = defaultCanvasBlock("text", originX + gapX * 2, originY);
   beats.id = makeCanvasBlockId("beats");
-  beats.prompt = usePack
+  const beatsBase = usePack
     ? buildManhuaStagePromptWithGenre("episode_beats", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
+  beats.prompt = craftShotBlock ? `${beatsBase}\n\n${craftShotBlock}` : beatsBase;
   beats.parentId = bible.id;
   beats.textModel = "gemini-3.1-pro";
 
   const reverse = defaultCanvasBlock("video_reverse", originX + gapX * 3, originY);
   reverse.id = makeCanvasBlockId("reverse");
-  reverse.prompt = usePack
+  const reverseBase = usePack
     ? buildManhuaStagePromptWithGenre("video_reverse", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse;
+  reverse.prompt = craftShotBlock ? `${reverseBase}\n\n${craftShotBlock}` : reverseBase;
   reverse.parentId = beats.id;
   reverse.height = 380;
 
   const keyArt = defaultCanvasBlock("image", originX + gapX * 4, originY);
   keyArt.id = makeCanvasBlockId("keyart");
-  keyArt.prompt = usePack
+  const keyArtBase = usePack
     ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
+  keyArt.prompt = craftShotBlock ? `${keyArtBase}\n\n${craftShotBlock}` : keyArtBase;
   keyArt.parentId = reverse.id;
   keyArt.imageModel = "nano-banana-2";
   keyArt.aspectRatio = "9:16";
