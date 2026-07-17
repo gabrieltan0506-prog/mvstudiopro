@@ -28,6 +28,7 @@ const INDUSTRY_RULES: LabelRule[] = [
   { label: "宠物养护", keywords: ["宠物", "猫", "狗", "训犬", "猫粮", "狗粮", "喂养", "兽医"] },
   { label: "法律财税", keywords: ["法律", "律师", "合同", "税务", "财税", "合规", "发票", "仲裁"] },
   { label: "摄影设计", keywords: ["摄影", "拍照", "修图", "设计", "海报", "视觉", "构图", "布光"] },
+  { label: "文娱剧情", keywords: ["漫剧", "短剧", "动态漫", "红果", "剧情", "连载", "影视", "动漫"] },
 ];
 
 const AGE_RULES: LabelRule[] = [
@@ -60,6 +61,8 @@ const CONTENT_RULES: LabelRule[] = [
   { label: "开箱试用", keywords: ["开箱", "试用", "上手", "体验", "首发"] },
   { label: "场景演示", keywords: ["场景", "实拍", "演示", "通勤", "到店", "上脸"] },
   { label: "价格决策", keywords: ["价格", "预算", "值不值", "性价比", "客单价"] },
+  { label: "AI漫剧", keywords: ["ai漫剧", "ai漫", "动态漫", "漫剧", "条漫剧", "ai短剧"] },
+  { label: "短剧合集", keywords: ["短剧", "红果", "竖屏剧", "微短剧", "连载剧"] },
 ];
 
 function collectText(item: TrendItem) {
@@ -67,6 +70,8 @@ function collectText(item: TrendItem) {
     item.title,
     item.author,
     item.bucket,
+    item.dramaInfo?.mixName,
+    item.dramaKind,
     ...normalizeStringList(item.tags),
     ...(item.commentSamples || []).map((sample) => sample.text),
   ].filter(Boolean).join(" ").toLowerCase();
@@ -126,10 +131,28 @@ export function classifyTrendItem(item: TrendItem) {
   const text = collectText(item);
   const bucket = String(item.bucket || "");
   const isBilibili = bucket.startsWith("bilibili");
+  let industryLabels = isBilibili
+    ? enrichIndustryLabelsForPlatform(item)
+    : matchLabels(text, INDUSTRY_RULES, "待判定行业");
+  let contentLabels = matchLabels(text, CONTENT_RULES, item.contentType === "topic" ? "热点话题" : "泛内容");
+
+  // 结构化短剧字段优先：避免仅靠文案关键词漏标
+  if (item.dramaKind === "ai_manhua" || (item.isDrama && /ai\s*漫|动态漫|漫剧/.test(text))) {
+    contentLabels = Array.from(new Set(["AI漫剧", ...contentLabels.filter((l) => l !== "泛内容")]));
+    if (!industryLabels.includes("文娱剧情")) {
+      industryLabels = ["文娱剧情", ...industryLabels.filter((l) => l !== "待判定行业")];
+    }
+  } else if (item.isDrama || item.dramaKind === "short_drama") {
+    contentLabels = Array.from(new Set(["短剧合集", ...contentLabels.filter((l) => l !== "泛内容")]));
+    if (!industryLabels.includes("文娱剧情")) {
+      industryLabels = ["文娱剧情", ...industryLabels.filter((l) => l !== "待判定行业")];
+    }
+  }
+
   return {
-    industryLabels: isBilibili ? enrichIndustryLabelsForPlatform(item) : matchLabels(text, INDUSTRY_RULES, "待判定行业"),
+    industryLabels,
     ageLabels: matchLabels(text, AGE_RULES, "泛年龄"),
-    contentLabels: matchLabels(text, CONTENT_RULES, item.contentType === "topic" ? "热点话题" : "泛内容"),
+    contentLabels,
   };
 }
 

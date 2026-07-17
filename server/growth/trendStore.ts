@@ -2591,6 +2591,13 @@ async function exportTrendCollectionsCsvFromCollections(
     "hot_value",
     "content_type",
     "tags",
+    "is_drama",
+    "drama_kind",
+    "mix_id",
+    "mix_name",
+    "episode_num",
+    "total_episodes",
+    "mix_play_count",
   ].join(",");
 
   const createdAt = nowShanghaiIso().replace(/[:.]/g, "-");
@@ -2625,6 +2632,13 @@ async function exportTrendCollectionsCsvFromCollections(
           String(item.hotValue || ""),
           item.contentType || "",
           normalizeStringList(item.tags).join("|"),
+          item.isDrama ? "1" : "",
+          item.dramaKind || "",
+          item.dramaInfo?.mixId || "",
+          item.dramaInfo?.mixName || "",
+          item.dramaInfo?.currentEpisode != null ? String(item.dramaInfo.currentEpisode) : "",
+          item.dramaInfo?.totalEpisodes != null ? String(item.dramaInfo.totalEpisodes) : "",
+          item.dramaInfo?.mixPlayCount != null ? String(item.dramaInfo.mixPlayCount) : "",
         ]
           .map((cell) => `"${String(cell).replace(/"/g, "\"\"")}"`)
           .join(",");
