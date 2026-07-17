@@ -777,7 +777,8 @@ export default function ManhuaCharacterGallery({
       }
       if (e.key === "r" || e.key === "R") {
         e.preventDefault();
-        pickRandomInTab();
+        if (e.shiftKey) pickRandomBothLeads();
+        else pickRandomInTab();
         return;
       }
       if ((e.key === "f" || e.key === "F") && selectedInTab) {
@@ -1511,7 +1512,7 @@ export default function ManhuaCharacterGallery({
         {showShortcuts ? (
           <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
             <li>悬停看三视图 · 右键钉住预览</li>
-            <li>★ 收藏 · R 随机换人 · F 收藏当前 · C 钉对比基准 · ? 开关本说明</li>
+            <li>★ 收藏 · R 随机换人 · Shift+R 随机双人 · F 收藏 · C 钉对比 · ? 说明</li>
             <li>Esc 清空筛选/对比 · ←/→ 在筛选结果换人</li>
             <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
           </ul>
