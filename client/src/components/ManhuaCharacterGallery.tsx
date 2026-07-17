@@ -400,6 +400,7 @@ export default function ManhuaCharacterGallery({
   const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [unselectedOnly, setUnselectedOnly] = useState(false);
+  const [ageGapMax, setAgeGapMax] = useState<0 | 3 | 5>(0);
   const [lockArtStyle, setLockArtStyle] = useState(() => Boolean(initialPrefs.lockArtStyle));
   const [compareId, setCompareId] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -494,6 +495,10 @@ export default function ManhuaCharacterGallery({
   }, [pool]);
   const filteredPool = useMemo(() => {
     const selectedIds = new Set([femaleId, maleId].filter(Boolean));
+    const anchorAge =
+      libraryTab === "female"
+        ? getManhuaCharacterById(maleId)?.age
+        : getManhuaCharacterById(femaleId)?.age;
     const list = pool.filter((c) => {
       if (favoritesOnly && !favoriteSet.has(c.id)) return false;
       if (unselectedOnly && selectedIds.has(c.id)) return false;
@@ -501,6 +506,7 @@ export default function ManhuaCharacterGallery({
       if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
       if (jobFilter && c.jobZh !== jobFilter) return false;
       if (!matchesAgeBand(c, ageBand)) return false;
+      if (ageGapMax && anchorAge && c.age && Math.abs(c.age - anchorAge) > ageGapMax) return false;
       return matchesCharacterQuery(c, libraryQuery);
     });
     if (sortMode === "name") {
@@ -516,11 +522,13 @@ export default function ManhuaCharacterGallery({
     tagFilter,
     jobFilter,
     ageBand,
+    ageGapMax,
     favoritesOnly,
     unselectedOnly,
     favoriteSet,
     packFilter,
     sortMode,
+    libraryTab,
     femaleId,
     maleId,
   ]);
@@ -775,6 +783,7 @@ export default function ManhuaCharacterGallery({
     setPackFilterId("");
     setFavoritesOnly(false);
     setUnselectedOnly(false);
+    setAgeGapMax(0);
     setSortMode("default");
   };
 
@@ -783,6 +792,7 @@ export default function ManhuaCharacterGallery({
       tagFilter ||
       jobFilter ||
       ageBand ||
+      ageGapMax ||
       packFilterId ||
       favoritesOnly ||
       unselectedOnly ||
@@ -1423,6 +1433,28 @@ export default function ManhuaCharacterGallery({
               onClick={() => setAgeBand(id)}
               className={`rounded-full border px-2 py-0.5 text-[10px] ${
                 ageBand === id
+                  ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
+                  : "border-white/10 text-white/50 hover:border-white/25"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {(
+            [
+              [0, "不限年龄差"],
+              [3, "年龄差≤3"],
+              [5, "年龄差≤5"],
+            ] as const
+          ).map(([n, label]) => (
+            <button
+              key={`gap-${n}`}
+              type="button"
+              disabled={disabled}
+              title="相对另一侧已选角色的年龄差"
+              onClick={() => setAgeGapMax(n)}
+              className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                ageGapMax === n
                   ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
                   : "border-white/10 text-white/50 hover:border-white/25"
               }`}
