@@ -40,6 +40,8 @@ describe("manhuaSceneAssetLibrary", () => {
 
   it("recommends concrete scene from topic keywords (⑤D)", () => {
     expect(recommendManhuaSceneFromTopic("外门弟子雨夜闯秘境").sceneId).toBe("scene_04");
+    // 身份词「仙门/外门」不得压过情节落点「闯秘境」
+    expect(recommendManhuaSceneFromTopic("仙门外门弟子闯秘境").sceneId).toBe("scene_04");
     expect(recommendManhuaSceneFromTopic("霸总办公室夜景对峙").sceneId).toBe("scene_12");
     expect(recommendManhuaSceneFromTopic("校园教室青春告白").sceneId).toBe("scene_14");
     expect(recommendManhuaSceneFromTopic("黑客入侵信息战").sceneId).toBe("scene_20");

@@ -281,13 +281,33 @@ export function recommendPrimaryManhuaScene(
 /**
  * 题材关键词 → 具体场景（⑤D）。
  * 比「剧种池首条」更细：如「秘境」→ scene_04，而非仙侠默认 scene_01。
- * 多命中时按匹配词数 + 最长词优先；可按剧种收窄候选。
+ * 多命中时：**最长命中词优先**，再比总字数、命中条数（避免「仙门+外门」压过「闯秘境」）。
+ * 可按剧种收窄候选。
  */
 const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
-  { sceneId: "scene_04", keys: ["秘境", "洞府", "寻宝", "闭关", "奇遇", "法阵", "灵泉", "水晶洞窟", "闯关", "试炼"] },
+  {
+    sceneId: "scene_04",
+    keys: [
+      "闯秘境",
+      "秘境洞府",
+      "秘境",
+      "洞府",
+      "寻宝",
+      "闭关",
+      "奇遇",
+      "法阵",
+      "灵泉",
+      "水晶洞窟",
+      "闯关",
+      "试炼",
+    ],
+  },
   { sceneId: "scene_03", keys: ["练剑", "对决", "剑气", "比武", "演武", "宗门大比", "弟子考核"] },
   { sceneId: "scene_02", keys: ["云海", "浮空山", "飞瀑", "仙山", "空镜", "仙鹤", "悬崖仙亭"] },
-  { sceneId: "scene_01", keys: ["宗门", "山门", "拜师", "仙门", "弟子入门", "外门", "内门考核"] },
+  {
+    sceneId: "scene_01",
+    keys: ["剑宗", "宗门", "山门", "拜师", "仙门", "弟子入门", "外门", "内门考核", "小师妹", "团宠"],
+  },
   { sceneId: "scene_05", keys: ["魔族", "魔宫", "深渊", "反派宫殿", "黑曜", "炼狱", "魔域"] },
   { sceneId: "scene_06", keys: ["皇宫", "大殿", "朝堂", "龙椅", "登基", "百官", "御书房", "金銮殿"] },
   { sceneId: "scene_07", keys: ["长安", "街市", "市井", "灯笼商铺", "烟火气", "夜市", "花灯"] },
@@ -333,9 +353,18 @@ export function recommendManhuaSceneFromTopic(
   let best: {
     sceneId: string;
     matched: string[];
-    score: number;
     longest: number;
+    sumLen: number;
+    count: number;
   } | null = null;
+
+  const beats = (
+    next: { longest: number; sumLen: number; count: number },
+    cur: { longest: number; sumLen: number; count: number },
+  ) =>
+    next.longest > cur.longest ||
+    (next.longest === cur.longest && next.sumLen > cur.sumLen) ||
+    (next.longest === cur.longest && next.sumLen === cur.sumLen && next.count > cur.count);
 
   for (const row of SCENE_TOPIC_KEYWORDS) {
     const entry = getManhuaSceneTemplate(row.sceneId);
@@ -344,14 +373,9 @@ export function recommendManhuaSceneFromTopic(
     const matched = row.keys.filter((k) => text.includes(k));
     if (!matched.length) continue;
     const longest = Math.max(...matched.map((m) => m.length));
-    const score = matched.length * 10 + longest;
-    if (
-      !best ||
-      score > best.score ||
-      (score === best.score && matched.length > best.matched.length)
-    ) {
-      best = { sceneId: row.sceneId, matched, score, longest };
-    }
+    const sumLen = matched.reduce((n, m) => n + m.length, 0);
+    const cand = { sceneId: row.sceneId, matched, longest, sumLen, count: matched.length };
+    if (!best || beats(cand, best)) best = cand;
   }
 
   // 弱匹配：场景名出现在题材里
@@ -362,8 +386,9 @@ export function recommendManhuaSceneFromTopic(
       best = {
         sceneId: entry.id,
         matched: [entry.nameZh],
-        score: entry.nameZh.length,
         longest: entry.nameZh.length,
+        sumLen: entry.nameZh.length,
+        count: 1,
       };
       break;
     }

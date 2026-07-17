@@ -37,4 +37,5 @@
 
 1. [x] 题材关键词 → 推荐单一场景（如「秘境」→ scene_04）→ 分支 `feat/scene-keyword-recommend`  
 2. [x] 工厂角色卡 503 退避/换模型 → 分支 `feat/bible-503-model-fallback`  
-3. [ ] Seedance 成片探针（贵，默认关）。  
+3. [x] Seedance 成片探针 CLI（默认关）→ 分支 `feat/seedance-probe-cli`（等 #807 后再开合）  
+4. [x] 修「仙门外门弟子闯秘境」误推 scene_01 → `fix/manhua-scene-mijing-priority`（最长词优先 +「闯秘境」）
