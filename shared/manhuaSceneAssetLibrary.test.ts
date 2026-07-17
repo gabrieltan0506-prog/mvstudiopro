@@ -51,4 +51,8 @@ describe("manhuaSceneAssetLibrary", () => {
       "scene_01",
     );
   });
+
+  it("recommends 秘境洞府 from 闯关试炼", () => {
+    expect(recommendManhuaSceneFromTopic("外门弟子闯关试炼").sceneId).toBe("scene_04");
+  });
 });

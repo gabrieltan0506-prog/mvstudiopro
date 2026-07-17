@@ -284,7 +284,7 @@ export function recommendPrimaryManhuaScene(
  * 多命中时按匹配词数 + 最长词优先；可按剧种收窄候选。
  */
 const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
-  { sceneId: "scene_04", keys: ["秘境", "洞府", "寻宝", "闭关", "奇遇", "法阵", "灵泉", "水晶洞窟"] },
+  { sceneId: "scene_04", keys: ["秘境", "洞府", "寻宝", "闭关", "奇遇", "法阵", "灵泉", "水晶洞窟", "闯关", "试炼"] },
   { sceneId: "scene_03", keys: ["练剑", "对决", "剑气", "比武", "演武"] },
   { sceneId: "scene_02", keys: ["云海", "浮空山", "飞瀑", "仙山", "空镜"] },
   { sceneId: "scene_01", keys: ["宗门", "山门", "拜师", "仙门", "弟子入门"] },
@@ -294,7 +294,7 @@ const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
   { sceneId: "scene_08", keys: ["府邸", "宅斗", "庭院", "世家", "回廊"] },
   { sceneId: "scene_09", keys: ["战场", "废墟", "残垣", "战旗", "大战"] },
   { sceneId: "scene_10", keys: ["边塞", "城墙", "烽火", "关隘", "黄沙"] },
-  { sceneId: "scene_12", keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙"] },
+  { sceneId: "scene_12", keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙", "谈判桌", "年会"] },
   { sceneId: "scene_11", keys: ["豪宅", "豪门", "泳池", "落地窗", "别墅"] },
   { sceneId: "scene_13", keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台"] },
   { sceneId: "scene_14", keys: ["校园", "教室", "校服", "课桌", "青春", "同学"] },
