@@ -61,4 +61,9 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft from 密室/黑客 keyword", () => {
     expect(recommendCraftShotFromTopic("密室黑客入侵信息战").craftShotId).toBe("light_07_top_cut");
   });
+
+  it("recommends craft from 边塞/卡点 keywords", () => {
+    expect(recommendCraftShotFromTopic("边塞烽火出征").craftShotId).toBe("cam_07_wide_scale");
+    expect(recommendCraftShotFromTopic("声先画后硬切卡点").craftShotId).toBe("tr_05_audio_lead");
+  });
 });
