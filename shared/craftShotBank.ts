@@ -363,6 +363,7 @@ const TOPIC_CRAFT_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
   { keys: ["和解", "亲情", "温暖", "发现", "重逢", "释然"], preferIds: ["light_06_magic_hour", "cam_05_low_wonder", "emo_02_warm_wonder"] },
   { keys: ["谈判", "商战", "霸总", "会议室", "并购"], preferIds: ["emo_04_cold_control", "cam_08_shot_reverse", "light_07_top_cut"] },
   { keys: ["雨夜", "霓虹", "都市夜", "湿街"], preferIds: ["light_05_neon_spill", "cam_06_intimate_cu", "tr_05_audio_lead"] },
+  { keys: ["校园", "教室", "校服", "青春"], preferIds: ["light_01_window_motivated", "cam_08_shot_reverse", "emo_02_warm_wonder"] },
 ];
 
 export type CraftShotRecommendResult = {

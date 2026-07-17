@@ -45,4 +45,8 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft from 群戏 keyword", () => {
     expect(recommendCraftShotFromTopic("派对群戏围观翻盘").craftShotId).toBe("emo_06_ensemble_pulse");
   });
+
+  it("recommends craft from 校园 keyword", () => {
+    expect(recommendCraftShotFromTopic("校园教室校服青春").craftShotId).toBe("light_01_window_motivated");
+  });
 });
