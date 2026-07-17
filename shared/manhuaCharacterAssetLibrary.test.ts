@@ -7,6 +7,7 @@ import {
   buildManhuaCharacterPromptBlock,
   buildManhuaCharacterClipboardText,
   buildManhuaCharacterSheetGenPrompt,
+  buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
@@ -126,5 +127,12 @@ describe("manhuaCharacterAssetLibrary", () => {
     // 钢琴演奏家 → 钢琴家
     const peers = suggestManhuaSameFieldPartner("char_f_03", { limit: 5 });
     expect(peers.some((c) => c.id === "char_m_04")).toBe(true);
+  });
+
+  it("builds dual lead brief", () => {
+    const brief = buildManhuaDualLeadBrief("char_f_01", "char_m_02", { artStyleId: "photoreal" });
+    expect(brief).toContain("女主：沈清辞");
+    expect(brief).toContain("男主：傅临渊");
+    expect(brief).toContain("仿真人");
   });
 });
