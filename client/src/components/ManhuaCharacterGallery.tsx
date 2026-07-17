@@ -393,6 +393,7 @@ export default function ManhuaCharacterGallery({
   const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [unselectedOnly, setUnselectedOnly] = useState(false);
+  const [lockArtStyle, setLockArtStyle] = useState(false);
   const [compareId, setCompareId] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
@@ -526,8 +527,12 @@ export default function ManhuaCharacterGallery({
   ) => {
     rememberSelect(female, "female");
     rememberSelect(male, "male");
-    if (opts?.artStyleId) onSelectArtStyle(opts.artStyleId);
-    setCopyFlash(opts?.labelZh ? `已套用套组：${opts.labelZh}` : "已套用双人");
+    if (opts?.artStyleId && !lockArtStyle) onSelectArtStyle(opts.artStyleId);
+    setCopyFlash(
+      opts?.labelZh
+        ? `已套用套组：${opts.labelZh}${lockArtStyle && opts.artStyleId ? "（画风已锁定）" : ""}`
+        : "已套用双人",
+    );
     window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
@@ -1605,6 +1610,20 @@ export default function ManhuaCharacterGallery({
           ) : (
             <span className="text-[10px] text-white/40">手选优先</span>
           )}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setLockArtStyle((v) => !v)}
+            className={`rounded-md border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
+              lockArtStyle
+                ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
+                : "border-white/10 text-white/45 hover:border-white/25"
+            }`}
+          >
+            {lockArtStyle ? "画风已锁定（套组不改）" : "锁定画风"}
+          </button>
         </div>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           {MANHUA_ART_STYLE_PRESETS.map((p) => {
