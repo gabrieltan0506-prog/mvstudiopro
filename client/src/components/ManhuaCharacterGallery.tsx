@@ -390,6 +390,7 @@ export default function ManhuaCharacterGallery({
   );
   const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [unselectedOnly, setUnselectedOnly] = useState(false);
   const [compareId, setCompareId] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
@@ -474,8 +475,10 @@ export default function ManhuaCharacterGallery({
       .slice(0, 8);
   }, [pool]);
   const filteredPool = useMemo(() => {
+    const selectedIds = new Set([femaleId, maleId].filter(Boolean));
     const list = pool.filter((c) => {
       if (favoritesOnly && !favoriteSet.has(c.id)) return false;
+      if (unselectedOnly && selectedIds.has(c.id)) return false;
       if (!characterMatchesTemperamentPack(c, packFilter)) return false;
       if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
       if (jobFilter && c.jobZh !== jobFilter) return false;
@@ -489,7 +492,20 @@ export default function ManhuaCharacterGallery({
       return [...list].sort((a, b) => (a.age || 99) - (b.age || 99) || a.nameZh.localeCompare(b.nameZh, "zh"));
     }
     return list;
-  }, [pool, libraryQuery, tagFilter, jobFilter, ageBand, favoritesOnly, favoriteSet, packFilter, sortMode]);
+  }, [
+    pool,
+    libraryQuery,
+    tagFilter,
+    jobFilter,
+    ageBand,
+    favoritesOnly,
+    unselectedOnly,
+    favoriteSet,
+    packFilter,
+    sortMode,
+    femaleId,
+    maleId,
+  ]);
   const selectedInTab = libraryTab === "female" ? femaleId : maleId;
 
   const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
@@ -602,6 +618,17 @@ export default function ManhuaCharacterGallery({
     if (pick) applyCouplePack(pick.id);
   };
 
+  const pickRandomBothLeads = () => {
+    const fPool = females.filter((c) => characterMatchesTemperamentPack(c, packFilter));
+    const mPool = males.filter((c) => characterMatchesTemperamentPack(c, packFilter));
+    if (!fPool.length || !mPool.length) return;
+    const fBag = fPool.filter((c) => c.id !== femaleId);
+    const mBag = mPool.filter((c) => c.id !== maleId);
+    const f = (fBag.length ? fBag : fPool)[Math.floor(Math.random() * (fBag.length ? fBag.length : fPool.length))];
+    const m = (mBag.length ? mBag : mPool)[Math.floor(Math.random() * (mBag.length ? mBag.length : mPool.length))];
+    if (f && m) applyCouplePair(f.id, m.id, { artStyleId, labelZh: `${f.nameZh}×${m.nameZh}` });
+  };
+
   const favoriteBothLeads = () => {
     const ids = [femaleId, maleId].filter(Boolean);
     if (!ids.length) return;
@@ -710,6 +737,7 @@ export default function ManhuaCharacterGallery({
     setAgeBand("");
     setPackFilterId("");
     setFavoritesOnly(false);
+    setUnselectedOnly(false);
     setSortMode("default");
   };
 
@@ -720,6 +748,7 @@ export default function ManhuaCharacterGallery({
       ageBand ||
       packFilterId ||
       favoritesOnly ||
+      unselectedOnly ||
       sortMode !== "default",
   );
 
@@ -873,6 +902,14 @@ export default function ManhuaCharacterGallery({
               className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
             >
               随机套组
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !females.length || !males.length}
+              onClick={pickRandomBothLeads}
+              className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              随机双人
             </button>
             <button
               type="button"
@@ -1163,6 +1200,18 @@ export default function ManhuaCharacterGallery({
             }`}
           >
             只看收藏{favoritesInTab.length ? ` (${favoritesInTab.length})` : ""}
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setUnselectedOnly((v) => !v)}
+            className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
+              unselectedOnly
+                ? "border-sky-300/45 bg-sky-500/15 text-sky-100"
+                : "border-white/15 bg-white/5 text-white/70"
+            }`}
+          >
+            仅未选中
           </button>
           <button
             type="button"
