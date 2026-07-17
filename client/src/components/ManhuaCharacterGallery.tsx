@@ -531,6 +531,7 @@ export default function ManhuaCharacterGallery({
   const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [compareId, setCompareId] = useState("");
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [customCouples, setCustomCouples] = useState<CustomCouple[]>(() => loadCustomCouples());
@@ -972,7 +973,19 @@ export default function ManhuaCharacterGallery({
           </div>
         </div>
         {topicCoupleRec.reasonZh ? (
-          <p className="mb-2 text-[10px] text-violet-100/70">{topicCoupleRec.reasonZh}（仅高亮，不自动套用）</p>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <p className="text-[10px] text-violet-100/70">{topicCoupleRec.reasonZh}（仅高亮，不自动套用）</p>
+            {topicCoupleRec.packIds[0] ? (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => applyCouplePack(topicCoupleRec.packIds[0]!)}
+                className="rounded-md border border-violet-400/40 bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-50 disabled:opacity-40"
+              >
+                一键套用首推
+              </button>
+            ) : null}
+          </div>
         ) : null}
         <div className="flex flex-wrap gap-1.5">
           {MANHUA_COUPLE_PACKS.map((p) => {
@@ -1459,7 +1472,13 @@ export default function ManhuaCharacterGallery({
           </div>
         ) : null}
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-white/40">
-          <span>悬停三视图 · 右键钉住 · ★收藏 · R 随机 · F 收藏 · C 钉对比 · Esc 清筛选 · ←/→ 换人</span>
+          <button
+            type="button"
+            onClick={() => setShowShortcuts((v) => !v)}
+            className="text-left text-white/50 underline-offset-2 hover:underline"
+          >
+            {showShortcuts ? "收起快捷键" : "快捷键 / 操作说明"}
+          </button>
           <button
             type="button"
             disabled={disabled || !selectedInTab}
@@ -1471,6 +1490,14 @@ export default function ManhuaCharacterGallery({
             {compareId === selectedInTab ? "取消对比钉" : "钉住当前对比"}
           </button>
         </div>
+        {showShortcuts ? (
+          <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
+            <li>悬停看三视图 · 右键钉住预览</li>
+            <li>★ 收藏 · R 随机换人 · F 收藏当前 · C 钉对比基准</li>
+            <li>Esc 清空筛选/对比 · ←/→ 在筛选结果换人</li>
+            <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
+          </ul>
+        ) : null}
         {compareCharacter && selectedForCompare ? (
           <div className="mb-3 grid gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 p-2 sm:grid-cols-2">
             <div>
