@@ -559,6 +559,27 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
     .join("\n");
 }
 
+/** 单卡剪贴板文本（方便粘到外部工具，不烧 token） */
+export function buildManhuaCharacterClipboardText(
+  id: string,
+  opts?: { artStyleId?: string | null },
+): string {
+  const c = getManhuaCharacterById(id);
+  if (!c) return "";
+  const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const preview = getManhuaCharacterPreviewUrl(c.id);
+  return [
+    `${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${c.age ? `·${c.age}岁` : ""}）`,
+    `气质：${c.temperamentTags.join("·")}`,
+    `画风：${style.labelZh}`,
+    style.promptZh,
+    `提示词：${c.promptZh}`,
+    preview ? `预览图：${preview}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** 注入角色圣经 / 生图：选中卡的外形+气质+提示词（可选画风硬锁） */
 export function buildManhuaCharacterPromptBlock(
   ids: string[],

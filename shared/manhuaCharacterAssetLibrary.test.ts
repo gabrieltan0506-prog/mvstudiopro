@@ -3,6 +3,7 @@ import {
   MANHUA_CHARACTER_ASSET_LIBRARY,
   MANHUA_CHARACTER_FORMULA_ZH,
   buildManhuaCharacterPromptBlock,
+  buildManhuaCharacterClipboardText,
   buildManhuaCharacterSheetGenPrompt,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
@@ -66,5 +67,12 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(prompt).toContain("沈清辞");
     expect(prompt).toContain("新面孔新人");
     expect(prompt).toContain("CG 漫剧");
+  });
+
+  it("builds clipboard text for a single character", () => {
+    const text = buildManhuaCharacterClipboardText("char_f_01", { artStyleId: "manga_2d" });
+    expect(text).toContain("沈清辞");
+    expect(text).toContain("二维漫画");
+    expect(text).toContain("提示词：");
   });
 });

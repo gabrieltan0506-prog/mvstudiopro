@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
+  buildManhuaCharacterClipboardText,
   formatManhuaCharacterLookSummary,
   getManhuaArtStylePreset,
   getManhuaCharacterById,
@@ -15,11 +16,58 @@ import {
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
 
+const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
+
 function matchesCharacterQuery(c: ManhuaCharacterTemplate, q: string): boolean {
   const needle = q.trim().toLowerCase();
   if (!needle) return true;
   const hay = [c.nameZh, c.jobZh, c.id, ...c.temperamentTags, c.promptZh].join(" ").toLowerCase();
   return hay.includes(needle);
+}
+
+function loadRecentIds(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean).slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushRecentId(id: string) {
+  const key = String(id || "").trim();
+  if (!key) return;
+  const next = [key, ...loadRecentIds().filter((x) => x !== key)].slice(0, 8);
+  try {
+    localStorage.setItem(RECENT_LS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+async function copyText(text: string): Promise<boolean> {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  try {
+    await navigator.clipboard.writeText(t);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = t;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 type Props = {
@@ -269,6 +317,8 @@ export default function ManhuaCharacterGallery({
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
+  const [copyFlash, setCopyFlash] = useState("");
   const libraryRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const females = useMemo(() => listManhuaCharactersByGender("female"), []);
@@ -276,6 +326,31 @@ export default function ManhuaCharacterGallery({
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
   const pool = libraryTab === "female" ? females : males;
+  const recentInTab = useMemo(
+    () =>
+      recentIds
+        .map(getManhuaCharacterById)
+        .filter((c): c is ManhuaCharacterTemplate => Boolean(c) && c.gender === libraryTab)
+        .slice(0, 6),
+    [recentIds, libraryTab],
+  );
+
+  const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
+    if (gender === "female") onSelectFemale(id);
+    else onSelectMale(id);
+    if (id) {
+      pushRecentId(id);
+      setRecentIds(loadRecentIds());
+    }
+  };
+
+  const copySelected = async (gender: ManhuaCharacterGender) => {
+    const id = gender === "female" ? femaleId : maleId;
+    const text = buildManhuaCharacterClipboardText(id, { artStyleId });
+    const ok = await copyText(text);
+    setCopyFlash(ok ? (gender === "female" ? "女主锚点已复制" : "男主锚点已复制") : "复制失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const c of pool) {
@@ -334,6 +409,7 @@ export default function ManhuaCharacterGallery({
         ) : null}
       </div>
       {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
+      {copyFlash ? <p className="mt-1 text-[10px] text-emerald-200/85">{copyFlash}</p> : null}
 
       {/* 双人同显 */}
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
@@ -366,6 +442,14 @@ export default function ManhuaCharacterGallery({
               className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
             >
               同版式生成新人
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !selectedFemale}
+              onClick={() => void copySelected("female")}
+              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
+            >
+              复制锚点
             </button>
             <button
               type="button"
@@ -407,6 +491,14 @@ export default function ManhuaCharacterGallery({
               className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
             >
               同版式生成新人
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !selectedMale}
+              onClick={() => void copySelected("male")}
+              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
+            >
+              复制锚点
             </button>
             <button
               type="button"
@@ -493,6 +585,30 @@ export default function ManhuaCharacterGallery({
             ))}
           </div>
         ) : null}
+        {recentInTab.length ? (
+          <div className="mb-2">
+            <div className="mb-1 text-[10px] text-white/40">最近选用</div>
+            <div className="flex flex-wrap gap-1.5">
+              {recentInTab.map((c) => (
+                <button
+                  key={`recent-${c.id}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => rememberSelect(c.id, libraryTab)}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
+                    selectedInTab === c.id
+                      ? libraryTab === "female"
+                        ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
+                        : "border-amber-400/45 bg-amber-500/15 text-amber-100"
+                      : "border-white/10 text-white/55 hover:border-white/25"
+                  }`}
+                >
+                  {c.nameZh}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="mb-2 text-[10px] text-white/40">
           悬停预览三视图 · 右键钉住/取消预览
         </div>
@@ -507,10 +623,7 @@ export default function ManhuaCharacterGallery({
               selected={selectedInTab === c.id}
               accent={libraryTab === "female" ? "cyan" : "amber"}
               disabled={disabled}
-              onSelect={() => {
-                if (libraryTab === "female") onSelectFemale(c.id);
-                else onSelectMale(c.id);
-              }}
+              onSelect={() => rememberSelect(c.id, libraryTab)}
             />
           ))}
           {!filteredPool.length ? (
