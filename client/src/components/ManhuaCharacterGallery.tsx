@@ -10,6 +10,7 @@ import {
   buildManhuaCharacterClipboardText,
   buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
+  formatManhuaCharacterLookSummary,
   getManhuaArtStylePreset,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
