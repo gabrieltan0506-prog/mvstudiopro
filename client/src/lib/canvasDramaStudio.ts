@@ -21,6 +21,7 @@ import {
 } from "@shared/screenwriterGenreTemplates";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import { buildManhuaCharacterPromptBlock } from "@shared/manhuaCharacterAssetLibrary";
+import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -68,6 +69,8 @@ export type SpawnManhuaDramaStudioOpts = {
   sceneId?: string;
   /** 角色库 id：char_f_* / char_m_*（可多选，注入角色卡） */
   characterIds?: string[];
+  /** 包装动效库 id：注入微动成片 / 视频改写节点 */
+  motionPromptIds?: string[];
   /** 编剧室已确认上下文（人物/道具/场景/本集+钩子） */
   writerContext?: string;
   /** 进入编导后为节拍/反推/静帧注入手法约束 */
@@ -93,6 +96,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const writerContext = String(opts.writerContext || "").trim();
   const characterIds = (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds);
+  const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const motionBlock = buildMotionPromptInjectBlock(motionPromptIds);
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
   const stageOpts = {
     genreId,
@@ -149,7 +154,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const clip = defaultCanvasBlock("video", originX + gapX * 5, originY);
   clip.id = makeCanvasBlockId("clip");
-  clip.prompt = MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip;
+  clip.prompt = motionBlock
+    ? `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n\n${motionBlock}`
+    : MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip;
   clip.parentId = keyArt.id;
   clip.videoModel = "seedance-2.0";
   clip.aspectRatio = "9:16";
@@ -157,8 +164,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   /** Gemini Omni · 自然语言视频改写（GEMINI_API_KEY；可续 previous_interaction_id） */
   const omniEdit = defaultCanvasBlock("video", originX + gapX * 6, originY);
   omniEdit.id = makeCanvasBlockId("omni_edit");
-  omniEdit.prompt =
+  const omniBase =
     "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。";
+  omniEdit.prompt = motionBlock ? `${omniBase}\n\n${motionBlock}` : omniBase;
   omniEdit.parentId = clip.id;
   omniEdit.videoModel = "gemini-omni-flash";
   omniEdit.aspectRatio = "9:16";
