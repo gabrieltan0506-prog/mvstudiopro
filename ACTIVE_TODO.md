@@ -15,3 +15,4 @@
 - TrendItem + mix_info + 网页搜索 + 飙升榜 UI
 - CSV / taxonomy / growth 打分 / report evidence
 - 同 mixId 去重、按日 drama-mix-snapshots 环比基线
+- 方案 B：`/platform` 趋势区子 Tab「总览 / AI 漫剧」

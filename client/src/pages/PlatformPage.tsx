@@ -1882,6 +1882,8 @@ export default function PlatformPage() {
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
+  /** 平台趋势区子 Tab：总览（多平台报表）/ AI 漫剧专区 */
+  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
   const visualReportRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
@@ -7532,7 +7534,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  一次启动即可得到四格战略摘要、Stage 1 看板，以及含蓝海词的可下载 PNG 图文报表（不含决策智库全景）；素材分析或专属文案在后台跑时不必干等。
+                  一次启动即可得到四格战略摘要、Stage 1 看板与 PNG 图文报表。「总览」看多平台；「AI 漫剧」专看抖音合集飙升（同源数据，不另开抓取）。不含决策智库全景。
                 </p>
               </div>
               {platformDashboard ? (
@@ -7666,83 +7668,205 @@ export default function PlatformPage() {
                   : visualReportData?.aiManhuaRising?.entries?.length
                     ? visualReportData.aiManhuaRising
                     : null;
-              if (!rising?.entries?.length) return null;
-              const fmt = (n: number) =>
+              const fmtPlay = (n: number) =>
                 n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n || 0);
+              const statusLabel = (s: string) =>
+                s === "surging" ? "飙升" : s === "hot" ? "高热" : s === "new" ? "新爆" : "稳态";
+              const kindCounts = (rising?.entries || []).reduce<Record<string, number>>((acc, row) => {
+                const k = row.dramaKind === "ai_manhua" ? "AI漫剧" : row.dramaKind === "short_drama" ? "短剧合集" : "待判定";
+                acc[k] = (acc[k] || 0) + 1;
+                return acc;
+              }, {});
+
               return (
-                <div className="mt-4 rounded-2xl border border-[#ff4fb8]/25 bg-[rgba(255,79,184,0.06)] p-4">
-                  <div className="text-sm font-semibold text-[#ff9fe0]">
-                    AI 漫剧 · {rising.windowDays} 天飙升榜
+                <>
+                  <div className="mt-4 inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setTrendInsightTab("overview")}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[12px] font-semibold transition ${
+                        trendInsightTab === "overview"
+                          ? "bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] text-white shadow-sm"
+                          : "text-[#c9c0e6]/70 hover:text-white"
+                      }`}
+                    >
+                      <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+                      总览 · 多平台报表
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTrendInsightTab("ai_manhua")}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[12px] font-semibold transition ${
+                        trendInsightTab === "ai_manhua"
+                          ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
+                          : "text-[#c9c0e6]/70 hover:text-white"
+                      }`}
+                    >
+                      <Film className="h-3.5 w-3.5 shrink-0" />
+                      AI 漫剧
+                      {rising?.entries?.length ? (
+                        <span className="rounded-full bg-white/15 px-1.5 py-0.5 text-[10px] tabular-nums">
+                          {rising.entries.length}
+                        </span>
+                      ) : null}
+                    </button>
                   </div>
-                  <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/60">{rising.note}</p>
-                  <div className="mt-3 space-y-2">
-                    {rising.entries.slice(0, 8).map((row, idx) => {
-                      const titleNode = (
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-white">{row.mixName}</div>
-                          <div className="truncate text-[10px] text-[#c9c0e6]/50">
-                            {row.author ? `${row.author} · ` : ""}
-                            {row.sampleTitle || row.dramaKind}
+
+                  {trendInsightTab === "overview" ? (
+                    <>
+                      {rising?.entries?.length ? (
+                        <div className="mt-3 rounded-2xl border border-[#ff4fb8]/20 bg-[rgba(255,79,184,0.05)] px-4 py-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-[12px] font-semibold text-[#ff9fe0]">
+                              AI 漫剧摘要 · Top {Math.min(3, rising.entries.length)}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setTrendInsightTab("ai_manhua")}
+                              className="text-[11px] font-semibold text-[#8cefff] underline-offset-2 hover:underline"
+                            >
+                              打开 AI 漫剧专区 →
+                            </button>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {rising.entries.slice(0, 3).map((row, idx) => (
+                              <span
+                                key={row.mixId || idx}
+                                className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[11px] text-[#eeeaf8]"
+                              >
+                                <span className="text-[#c9c0e6]/45">#{idx + 1}</span>
+                                <span className="truncate font-medium">{row.mixName}</span>
+                                <span className="tabular-nums text-[#3eedff]">{fmtPlay(row.mixPlayCount)}</span>
+                              </span>
+                            ))}
                           </div>
                         </div>
-                      );
-                      return (
-                        <div
-                          key={row.mixId || idx}
-                          className="grid grid-cols-[28px_1fr_auto_auto] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
-                        >
-                          <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
-                          {row.url ? (
-                            <a
-                              href={row.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="min-w-0 hover:opacity-90"
-                              title="在抖音打开"
+                      ) : null}
+
+                      {visualReportData ? (
+                        <div className="mt-4 rounded-2xl border border-[#6fffb0]/20 bg-[rgba(111,255,176,0.06)] p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold text-[#6fffb0]">PNG 图文报表已就绪</div>
+                              <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
+                                多平台洞察 + 蓝海词；含漫剧摘要条（完整榜单见「AI 漫剧」Tab）。
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleDownloadVisualReport()}
+                              disabled={isVisualReportDownloading}
+                              className="inline-flex items-center gap-2 rounded-full border border-[#6fffb0]/25 bg-[rgba(111,255,176,0.10)] px-4 py-2 text-sm font-semibold text-[#6fffb0] transition hover:bg-[rgba(111,255,176,0.18)] disabled:opacity-60"
                             >
-                              {titleNode}
-                            </a>
-                          ) : titleNode}
-                          <span className="font-semibold text-[#3eedff]">{fmt(row.mixPlayCount)}</span>
-                          <span className="font-semibold text-[#ff4fb8]">
-                            {row.delta7d == null ? "—" : `+${fmt(row.delta7d)}`}
-                          </span>
+                              {isVisualReportDownloading ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
+                              下载 PNG 图文报表
+                            </button>
+                          </div>
+                          <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
+                            <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="mt-3 rounded-2xl border border-[#ff4fb8]/25 bg-[rgba(255,79,184,0.06)] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-[#ff9fe0]">
+                            抖音 AI 漫剧专区 · {rising?.windowDays || selectedWindowDays} 天飙升
+                          </div>
+                          <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-[#c9c0e6]/60">
+                            {rising?.note
+                              || "与总览报表数据同源：抖音采集中的合集/漫剧字段单独聚合。其它种草、口播样本仍在「总览」里。"}
+                          </p>
+                        </div>
+                        <a
+                          href="/canvas"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.18)]"
+                        >
+                          <Film className="h-3.5 w-3.5" />
+                          去漫剧工厂
+                        </a>
+                      </div>
+
+                      {Object.keys(kindCounts).length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {Object.entries(kindCounts).map(([label, count]) => (
+                            <span
+                              key={label}
+                              className="rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[11px] text-[#c9c0e6]"
+                            >
+                              {label} · {count}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {rising?.entries?.length ? (
+                        <div className="mt-3 space-y-2">
+                          <div className="grid grid-cols-[28px_1fr_72px_72px_40px] gap-2 px-1 text-[10px] text-[#c9c0e6]/45">
+                            <span />
+                            <span>剧名</span>
+                            <span className="text-right">合集播放</span>
+                            <span className="text-right">环比</span>
+                            <span className="text-right">状态</span>
+                          </div>
+                          {rising.entries.slice(0, 12).map((row, idx) => {
+                            const titleNode = (
+                              <div className="min-w-0">
+                                <div className="truncate font-semibold text-white">{row.mixName}</div>
+                                <div className="truncate text-[10px] text-[#c9c0e6]/50">
+                                  {row.author ? `${row.author} · ` : ""}
+                                  {row.sampleTitle || row.dramaKind}
+                                </div>
+                              </div>
+                            );
+                            return (
+                              <div
+                                key={row.mixId || idx}
+                                className="grid grid-cols-[28px_1fr_72px_72px_40px] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
+                              >
+                                <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
+                                {row.url ? (
+                                  <a
+                                    href={row.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="min-w-0 hover:opacity-90"
+                                    title="在抖音打开"
+                                  >
+                                    {titleNode}
+                                  </a>
+                                ) : titleNode}
+                                <span className="text-right font-semibold tabular-nums text-[#3eedff]">
+                                  {fmtPlay(row.mixPlayCount)}
+                                </span>
+                                <span className="text-right font-semibold tabular-nums text-[#ff4fb8]">
+                                  {row.delta7d == null ? "—" : `+${fmtPlay(row.delta7d)}`}
+                                </span>
+                                <span className="text-right text-[10px] font-semibold text-[#ff9fe0]">
+                                  {statusLabel(row.status)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-xl border border-dashed border-white/15 bg-black/20 px-4 py-6 text-center text-[12px] leading-relaxed text-[#c9c0e6]/55">
+                          暂无漫剧合集样本。请确认已选「抖音」、完成趋势分析，且采集侧已跑出带 mix_info 的条目。
+                          <br />
+                          总览里的多平台口播/种草数据不受影响。
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               );
             })()}
-
-            {visualReportData ? (
-              <div className="mt-4 rounded-2xl border border-[#6fffb0]/20 bg-[rgba(111,255,176,0.06)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-[#6fffb0]">PNG 图文报表已就绪</div>
-                    <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
-                      含全局与各平台蓝海词区块；点击下载保存长图。
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleDownloadVisualReport()}
-                    disabled={isVisualReportDownloading}
-                    className="inline-flex items-center gap-2 rounded-full border border-[#6fffb0]/25 bg-[rgba(111,255,176,0.10)] px-4 py-2 text-sm font-semibold text-[#6fffb0] transition hover:bg-[rgba(111,255,176,0.18)] disabled:opacity-60"
-                  >
-                    {isVisualReportDownloading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                    下载 PNG 图文报表
-                  </button>
-                </div>
-                <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
-                  <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
-                </div>
-              </div>
-            ) : null}
           </div>
 
           {/* 一级 Tab */}
