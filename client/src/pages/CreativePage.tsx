@@ -14,6 +14,8 @@ import {
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
+import Image2TemplatePicker from "@/components/Image2TemplatePicker";
+import { toast } from "sonner";
 
 /** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
 const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
@@ -318,6 +320,17 @@ export default function CreativePage() {
                 <label className="text-sm font-semibold text-white/80 flex items-center gap-2">
                   <Sparkles className="w-4 h-4" /> 提示词
                 </label>
+                <Image2TemplatePicker
+                  disabled={loading}
+                  onApply={(next, meta) => {
+                    setPrompt(next);
+                    toast.success(
+                      meta.needsReference
+                        ? `已套用「${meta.labelZh}」（请配合参考图）`
+                        : `已套用「${meta.labelZh}」`,
+                    );
+                  }}
+                />
                 <textarea 
                   value={prompt} 
                   onChange={e => setPrompt(e.target.value)}

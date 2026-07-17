@@ -120,6 +120,13 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "authority-cite-endorsement",
   "fmcg-popsci-monetize",
   "forensic-life-lens",
+  "encyclopedic-infographic",
+  "image2-quick-templates",
+  "website-html-ppt",
+  "jimeng-cover",
+  "jimeng-product-ad",
+  "jimeng-short-drama",
+  "ai-feed-ad",
 ] as const;
 
 export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number];

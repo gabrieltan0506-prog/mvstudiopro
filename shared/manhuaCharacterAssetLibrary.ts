@@ -4,6 +4,8 @@
  * 五维公式：脸型 + 发型 + 穿搭 + 姿态 + 道具。
  */
 
+import { PHOTOREAL_ANTI_AI_LOCK_ZH } from "./photorealCharacterPrompt.js";
+
 export type ManhuaCharacterGender = "female" | "male";
 
 export type ManhuaCharacterTemplate = {
@@ -43,7 +45,8 @@ export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
     labelZh: "A · 仿真人",
     shortZh: "都市情感 / 校园更贴",
     promptZh:
-      "画风硬锁：半写实仿真人电影剧照，真实皮肤纹理与发丝，自然光影，非卡通非塑料 CGI；角色与场景同一画风。",
+      "画风硬锁：半写实仿真人电影剧照，真实皮肤纹理与发丝，自然光影，非卡通非塑料 CGI；角色与场景同一画风。\n" +
+      PHOTOREAL_ANTI_AI_LOCK_ZH,
   },
   {
     id: "cg_drama",
@@ -902,6 +905,10 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
     ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，禁止复刻同一张脸。\n外形锚点：${base.promptZh}`
     : `生成一名都市现代向${roleZh}新人设定卡，气质鲜明、可连载锁脸。`;
   const hint = String(opts?.userHint || "").trim();
+  const antiAi =
+    style.id === "photoreal"
+      ? `\n${PHOTOREAL_ANTI_AI_LOCK_ZH}`
+      : "";
   return [
     "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景，印刷清晰）：",
     "版式硬约束：",
@@ -911,6 +918,7 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
     "",
     `【画风】${style.labelZh}`,
     style.promptZh,
+    antiAi,
     "",
     seed,
     hint ? `\n【用户补充】${hint.slice(0, 400)}` : "",

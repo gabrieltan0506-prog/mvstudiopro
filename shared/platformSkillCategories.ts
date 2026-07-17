@@ -26,9 +26,19 @@ const GRAPHIC_IDS = new Set([
   "xhs-collectible-note",
   "blue-ocean-natural",
   "batch-arc-engagement",
+  "encyclopedic-infographic",
+  "image2-quick-templates",
+  "website-html-ppt",
+  "jimeng-cover",
 ]);
 
-const VIDEO_IDS = new Set(["director-craft", "json-director-middleware"]);
+const VIDEO_IDS = new Set([
+  "director-craft",
+  "json-director-middleware",
+  "jimeng-product-ad",
+  "jimeng-short-drama",
+  "ai-feed-ad",
+]);
 
 const CORE_IDS = new Set<string>(PLATFORM_SKILL_ROUTER_CORE_IDS);
 

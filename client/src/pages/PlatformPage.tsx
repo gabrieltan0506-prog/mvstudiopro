@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
+import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
+import InfographicTemplatePicker from "@/components/InfographicTemplatePicker";
 import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import {
@@ -1985,12 +1987,14 @@ export default function PlatformPage() {
   /** 素材分析完成后的拍摄手法摘要，注入分镜 scriptContext */
   const lastShootingTechniqueBriefRef = useRef<string>("");
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
-  const [customWorkspaceTab, setCustomWorkspaceTab] = useState<"copy" | "topic" | "matting" | "assets">("copy");
+  const [customWorkspaceTab, setCustomWorkspaceTab] = useState<
+    "copy" | "topic" | "matting" | "assets" | "htmlPpt"
+  >("copy");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
-    if (tab === "assets" || tab === "copy" || tab === "topic" || tab === "matting") {
+    if (tab === "assets" || tab === "copy" || tab === "topic" || tab === "matting" || tab === "htmlPpt") {
       setCustomWorkspaceTab(tab);
     }
   }, []);
@@ -7950,6 +7954,19 @@ export default function PlatformPage() {
               <Scissors className="h-3.5 w-3.5 shrink-0" />
               自定义抠像
             </button>
+            <button
+              type="button"
+              onClick={() => setCustomWorkspaceTab("htmlPpt")}
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                customWorkspaceTab === "htmlPpt"
+                  ? "bg-[linear-gradient(135deg,#818cf8,#6366f1)] text-white shadow-sm"
+                  : "text-[#c9c0e6]/70 hover:text-white"
+              }`}
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              HTML PPT
+            </button>
           </div>
 
           <div className="mb-5">{platformSkillsMountPanel}</div>
@@ -8016,6 +8033,16 @@ export default function PlatformPage() {
                     优化自定义文案
                   </button>
                 </div>
+              </div>
+
+              <div className="mb-3">
+                <InfographicTemplatePicker
+                  disabled={customNoteBusy}
+                  onApply={(prompt, labelZh) => {
+                    setCustomNoteText(prompt);
+                    toast.success(`已套用可视化模板「${labelZh}」`);
+                  }}
+                />
               </div>
 
               <textarea
@@ -8623,6 +8650,10 @@ export default function PlatformPage() {
                 </div>
               ) : null}
             </>
+          ) : customWorkspaceTab === "htmlPpt" ? (
+            <PlatformHtmlPptPanel
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+            />
           ) : (
             <>
               <div className="mb-5 grid gap-2 sm:grid-cols-2">
