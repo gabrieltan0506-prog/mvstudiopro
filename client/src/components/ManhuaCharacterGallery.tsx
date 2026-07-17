@@ -1042,6 +1042,14 @@ export default function ManhuaCharacterGallery({
                 {p.labelZh}
               </button>
             ))}
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setRecentCouplePackIds(clearRecentCouplePackIds())}
+              className="text-[10px] text-white/35 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              清空
+            </button>
           </div>
         ) : null}
         <div className="flex flex-wrap gap-1.5">
@@ -1743,7 +1751,10 @@ export default function ManhuaCharacterGallery({
             <div className="col-span-full rounded-lg border border-dashed border-white/15 px-3 py-8 text-center text-[11px] text-white/40">
               {favoritesOnly
                 ? "当前没有收藏角色，点卡片左上角 ★ 收藏后再筛"
-                : "无匹配角色，试试清空搜索或气质筛选"}
+                : ageGapMax &&
+                    !(libraryTab === "female" ? maleId : femaleId)
+                  ? "年龄差筛选需先选定另一侧角色"
+                  : "无匹配角色，试试清空搜索或气质筛选"}
             </div>
           ) : null}
         </div>
