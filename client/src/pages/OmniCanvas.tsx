@@ -21,11 +21,8 @@ import {
   recommendManhuaSceneIdFromTopic,
 } from "@shared/screenwriterGenreTemplates";
 import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
-import {
-  getManhuaCharacterById,
-  listManhuaCharactersByGender,
-  recommendManhuaCharactersFromTopic,
-} from "@shared/manhuaCharacterAssetLibrary";
+import { recommendManhuaCharactersFromTopic } from "@shared/manhuaCharacterAssetLibrary";
+import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
@@ -146,19 +143,9 @@ export default function OmniCanvas() {
     }
   }, [recommendedSceneRec.sceneId, sceneManual]);
 
-  const femaleLeadOptions = useMemo(() => listManhuaCharactersByGender("female"), []);
-  const maleLeadOptions = useMemo(() => listManhuaCharactersByGender("male"), []);
   const recommendedLeads = useMemo(
     () => recommendManhuaCharactersFromTopic(factoryTopic),
     [factoryTopic],
-  );
-  const selectedFemale = useMemo(
-    () => (factoryFemaleId ? getManhuaCharacterById(factoryFemaleId) : null),
-    [factoryFemaleId],
-  );
-  const selectedMale = useMemo(
-    () => (factoryMaleId ? getManhuaCharacterById(factoryMaleId) : null),
-    [factoryMaleId],
   );
   const femaleAutoApplied =
     !femaleLeadManual && Boolean(factoryFemaleId) && factoryFemaleId === recommendedLeads.femaleId;
@@ -789,98 +776,29 @@ export default function OmniCanvas() {
                 </p>
               )}
 
-              <div className="mt-3 space-y-2 sm:max-w-md">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] text-white/55">男女主（角色库）</span>
-                  {(femaleAutoApplied || maleAutoApplied) && (
-                    <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
-                      已按题材自动套用 · 可更换
-                    </span>
-                  )}
-                  {(femaleLeadManual || maleLeadManual) && (
-                    <button
-                      type="button"
-                      disabled={factoryBusy}
-                      onClick={() => {
-                        setFemaleLeadManual(false);
-                        setMaleLeadManual(false);
-                      }}
-                      className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
-                    >
-                      恢复自动推荐
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div
-                    className={`rounded-lg border px-2.5 py-2 ${
-                      femaleAutoApplied
-                        ? "border-cyan-400/40 bg-cyan-500/8"
-                        : "border-cyan-400/20 bg-black/40"
-                    }`}
-                  >
-                    <label className="block text-[11px] text-cyan-200/70">女主（已铺可同步）</label>
-                    <select
-                      value={factoryFemaleId}
-                      onChange={(e) => {
-                        setFemaleLeadManual(true);
-                        setFactoryFemaleId(e.target.value);
-                      }}
-                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                      className="mt-1 w-full rounded-md border border-white/10 bg-black/50 px-2 py-1.5 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
-                    >
-                      <option value="">不指定</option>
-                      {femaleLeadOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nameZh} · {c.jobZh}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedFemale ? (
-                      <p className="mt-1.5 text-[10px] leading-snug text-cyan-100/70">
-                        {selectedFemale.temperamentTags.join(" · ")}
-                        {femaleAutoApplied ? " · 自动" : femaleLeadManual ? " · 手选" : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div
-                    className={`rounded-lg border px-2.5 py-2 ${
-                      maleAutoApplied
-                        ? "border-amber-400/40 bg-amber-500/8"
-                        : "border-amber-400/20 bg-black/40"
-                    }`}
-                  >
-                    <label className="block text-[11px] text-amber-200/70">男主（已铺可同步）</label>
-                    <select
-                      value={factoryMaleId}
-                      onChange={(e) => {
-                        setMaleLeadManual(true);
-                        setFactoryMaleId(e.target.value);
-                      }}
-                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                      className="mt-1 w-full rounded-md border border-white/10 bg-black/50 px-2 py-1.5 text-xs text-white/90 outline-none focus:border-amber-300/40 disabled:opacity-50"
-                    >
-                      <option value="">不指定</option>
-                      {maleLeadOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nameZh} · {c.jobZh}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedMale ? (
-                      <p className="mt-1.5 text-[10px] leading-snug text-amber-100/70">
-                        {selectedMale.temperamentTags.join(" · ")}
-                        {maleAutoApplied ? " · 自动" : maleLeadManual ? " · 手选" : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-                <p className="text-[10px] leading-snug text-emerald-200/75">
-                  {recommendedLeads.reasonZh}
-                  {selectedCharacterIds.length
-                    ? "；已选将注入「角色卡」节点（外形锚点 + 提示词）。"
-                    : ""}
-                </p>
+              <div className="mt-3 max-w-4xl">
+                <ManhuaCharacterGallery
+                  femaleId={factoryFemaleId}
+                  maleId={factoryMaleId}
+                  femaleAutoApplied={femaleAutoApplied}
+                  maleAutoApplied={maleAutoApplied}
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  reasonZh={`${recommendedLeads.reasonZh}${
+                    selectedCharacterIds.length ? "；已选将注入「角色卡」节点（外形锚点 + 提示词）。" : ""
+                  }`}
+                  onSelectFemale={(id) => {
+                    setFemaleLeadManual(true);
+                    setFactoryFemaleId(id);
+                  }}
+                  onSelectMale={(id) => {
+                    setMaleLeadManual(true);
+                    setFactoryMaleId(id);
+                  }}
+                  onClearManual={() => {
+                    setFemaleLeadManual(false);
+                    setMaleLeadManual(false);
+                  }}
+                />
               </div>
 
               <div className="mt-3 max-w-md space-y-3">
