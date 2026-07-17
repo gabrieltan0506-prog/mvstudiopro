@@ -88,4 +88,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 豪宅 from 顶层公寓", () => {
     expect(recommendManhuaSceneFromTopic("顶层公寓天台酒会").sceneId).toBe("scene_11");
   });
+
+  it("recommends 星舰 from 轨道站", () => {
+    expect(recommendManhuaSceneFromTopic("轨道站登陆舱").sceneId).toBe("scene_16");
+  });
 });
