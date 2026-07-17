@@ -37,3 +37,7 @@ defaultEnabled: false
 - 整段照搬 AI-CanvasPro 文案/UI 商标  
 - 把闭源二进制当可嵌入 workflow library  
 - 前台泄漏后台技术口径（模型 / 供应商 / 仿写话术）
+
+## Seedance 探针
+- `pnpm run manhua:seedance-probe` **默认 SKIP**
+- 真打：`CANVAS_PROBE_SEEDANCE=1` + `CANVAS_PROBE_IMAGE_URL`（密钥在 Fly）
