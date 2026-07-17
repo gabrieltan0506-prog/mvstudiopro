@@ -1,4 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": false
+  },
+  "github": {
+    "enabled": false
+  },
   "buildCommand": "pnpm exec vite build",
   "outputDirectory": "client/dist",
   "headers": [

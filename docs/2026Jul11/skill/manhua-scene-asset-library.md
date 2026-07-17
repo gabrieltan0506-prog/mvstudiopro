@@ -31,6 +31,7 @@ defaultEnabled: false
   - 例：「办公室」→ `scene_12`；「黑客」→ `scene_20`  
 - `recommendManhuaSceneIdFromTopic`：先推断/手选剧种，再关键词细匹配；无命中回退剧种池首条  
 - Canvas：未手选时自动写入场景下拉；手选后锁定，可「恢复自动推荐」
+- 已铺板：`applyFactoryPrefsToBlocks({ sceneId, genreId })` 同步场景/剧种块（防抖），不必整板重铺
 
 ## 每条模板四段
 1. 场景定位 / 解析  
