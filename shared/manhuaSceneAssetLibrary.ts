@@ -289,7 +289,7 @@ const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
   { sceneId: "scene_02", keys: ["云海", "浮空山", "飞瀑", "仙山", "空镜"] },
   { sceneId: "scene_01", keys: ["宗门", "山门", "拜师", "仙门", "弟子入门"] },
   { sceneId: "scene_05", keys: ["魔族", "魔宫", "深渊", "反派宫殿", "黑曜", "炼狱", "魔域"] },
-  { sceneId: "scene_06", keys: ["皇宫", "大殿", "朝堂", "龙椅", "登基", "百官"] },
+  { sceneId: "scene_06", keys: ["皇宫", "大殿", "朝堂", "龙椅", "登基", "百官", "御书房", "金銮殿"] },
   { sceneId: "scene_07", keys: ["长安", "街市", "市井", "灯笼商铺", "烟火气", "夜市", "花灯"] },
   { sceneId: "scene_08", keys: ["府邸", "宅斗", "庭院", "世家", "回廊", "内宅", "闺阁"] },
   { sceneId: "scene_09", keys: ["战场", "废墟", "残垣", "战旗", "大战", "攻城", "尸横"] },

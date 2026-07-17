@@ -114,4 +114,8 @@ describe("manhuaSceneAssetLibrary", () => {
     expect(recommendManhuaSceneFromTopic("暗网入侵终端").sceneId).toBe("scene_20");
   });
 
+
+  it("recommends 皇宫 from 御书房", () => {
+    expect(recommendManhuaSceneFromTopic("御书房金銮殿").sceneId).toBe("scene_06");
+  });
 });
