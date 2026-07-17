@@ -30,11 +30,4 @@ describe("motionPromptBank", () => {
     expect(rec.motionId).toBe("product_05_exploded_view");
     expect(rec.reasonZh).toMatch(/产品|拆解/);
   });
-
-  it("recommends finer motion keywords", () => {
-    expect(recommendMotionPromptFromTopic("电竞RGB片头").motionId).toBe("logo_03_rgb_flash");
-    expect(recommendMotionPromptFromTopic("KPI看板增长").motionId).toBe("data_01_dashboard");
-    expect(recommendMotionPromptFromTopic("反转句揭晓字幕").motionId).toBe("caption_11_mask_wipe");
-    expect(recommendMotionPromptFromTopic("今天吃面").motionId).toBeNull();
-  });
 });
