@@ -862,12 +862,10 @@ export default function ManhuaCharacterGallery({
       }
       if (e.key === "l" || e.key === "L") {
         e.preventDefault();
-        setLockArtStyle((v) => {
-          const next = !v;
-          setCopyFlash(next ? "画风已锁定" : "画风已解锁");
-          window.setTimeout(() => setCopyFlash(""), 1200);
-          return next;
-        });
+        const next = !lockArtStyle;
+        setLockArtStyle(next);
+        setCopyFlash(next ? "画风已锁定" : "画风已解锁");
+        window.setTimeout(() => setCopyFlash(""), 1200);
         return;
       }
       if (/^[1-8]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
