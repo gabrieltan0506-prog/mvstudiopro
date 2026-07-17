@@ -19,6 +19,13 @@ export type ManhuaCharacterTemplate = {
   sourceFile: string;
 };
 
+/** 浏览器可访问的设定卡预览（含底部正/侧/背三视图），见 client/public/manhua-characters/ */
+export function getManhuaCharacterPreviewUrl(id: string): string {
+  const key = String(id || "").trim();
+  if (!/^char_[fm]_\d+$/.test(key)) return "";
+  return `/manhua-characters/${key}.jpg`;
+}
+
 export const MANHUA_CHARACTER_FORMULA_ZH = "脸型（定轮廓）+ 发型（定气质）+ 穿搭（定身份）+ 姿态（定性格）+ 道具（定职业）";
 
 /** 本机素材根目录提示（不入仓；运行时可选拼接） */
