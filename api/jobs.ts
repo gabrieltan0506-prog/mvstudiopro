@@ -2793,9 +2793,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         ? b.audioUrls.map((u: unknown) => s(u)).filter(Boolean)
         : undefined;
 
-      const resolution = s(b.resolution || q.resolution || "720p") === "1080p" ? "1080p" : "720p";
+      const { parseSeedanceVersion, normalizeSeedanceQuality } = await import(
+        "../shared/seedanceEvolinkModels.js"
+      );
+      const seedanceVersion = parseSeedanceVersion(b.version || q.version || "2.0");
+      const resolution = normalizeSeedanceQuality(
+        seedanceVersion,
+        b.resolution || q.resolution || (seedanceVersion === "2.0-mini" ? "480p" : "720p"),
+      );
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
-      const duration = parseSeedanceDurationInput(b.duration ?? q.duration ?? b.durationSec ?? 15);
+      const duration = parseSeedanceDurationInput(
+        b.duration ?? q.duration ?? b.durationSec ?? (seedanceVersion === "2.0-mini" ? 5 : 15),
+      );
       const generateAudio = !(String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false);
       const preferEvolink = b.preferEvolink !== false && q.preferEvolink !== "0";
 
@@ -2813,9 +2822,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               audioUrls,
               quality: resolution,
               aspectRatio,
-              duration: typeof duration === "number" ? duration : 15,
+              duration: typeof duration === "number" ? duration : seedanceVersion === "2.0-mini" ? 5 : 15,
               generateAudio,
-              version: "2.0",
+              version: seedanceVersion,
             });
             return res.status(200).json({
               ok: true,

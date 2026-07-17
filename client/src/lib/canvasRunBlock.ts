@@ -266,17 +266,25 @@ async function runSeedance20(
   return String(json.videoUrl);
 }
 
-async function runOmniFlash(prompt: string, imageUrl: string | undefined, aspectRatio: "9:16" | "16:9"): Promise<string> {
+async function runOmniFlash(
+  prompt: string,
+  imageUrl: string | undefined,
+  aspectRatio: "9:16" | "16:9",
+  opts?: { videoUrl?: string; previousInteractionId?: string; edit?: boolean },
+): Promise<string> {
+  const edit = Boolean(opts?.edit || opts?.videoUrl || opts?.previousInteractionId);
   const created = await createOmniInteraction({
     prompt,
-    task: imageUrl ? "image_to_video" : "text_to_video",
+    task: edit ? "edit_video" : imageUrl ? "image_to_video" : "text_to_video",
     aspectRatio,
-    durationSeconds: 10,
-    imageUrl,
+    durationSeconds: edit ? 5 : 10,
+    imageUrl: edit ? undefined : imageUrl,
+    videoUrl: opts?.videoUrl,
+    previousInteractionId: opts?.previousInteractionId,
   });
   const result = await pollOmniInteractionUntilDone(created.id);
   const outUrl = String(result.videoUrl || "");
-  if (!outUrl) throw new Error("Omni Flash 未返回视频 URL");
+  if (!outUrl) throw new Error("视频改写未返回成片，请稍后重试");
   return outUrl;
 }
 
@@ -419,7 +427,18 @@ export async function runCanvasBlock(
     if (block.videoModel === "seedance-2.0") {
       url = await runSeedance20(motionPrompt, refUrl, ar);
     } else {
-      url = await runOmniFlash(motionPrompt, refUrl, ar);
+      // 工厂 omni_edit-*：上游成片 URL（常经 refImageUrl/refVideoUrl 传入）→ Gemini Omni edit_video
+      const isOmniEdit = block.id.startsWith("omni_edit-");
+      const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
+      const editVideoUrl =
+        block.refVideoUrl ||
+        uploadedVideoUrl ||
+        (looksLikeVideo(refUrl) ? refUrl : undefined) ||
+        upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
+      url = await runOmniFlash(motionPrompt, isOmniEdit ? undefined : refUrl, ar, {
+        edit: isOmniEdit || Boolean(editVideoUrl && block.videoModel === "gemini-omni-flash" && looksLikeVideo(editVideoUrl)),
+        videoUrl: isOmniEdit ? editVideoUrl : undefined,
+      });
     }
     return { outputUrl: url };
   }

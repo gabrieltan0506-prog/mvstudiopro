@@ -20,6 +20,7 @@ import {
   recommendManhuaSceneIdFromTopic,
 } from "@shared/screenwriterGenreTemplates";
 import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
+import { listManhuaCharactersByGender } from "@shared/manhuaCharacterAssetLibrary";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
@@ -75,6 +76,8 @@ export default function OmniCanvas() {
   const [factoryTopic, setFactoryTopic] = useState("");
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
+  const [factoryFemaleId, setFactoryFemaleId] = useState("");
+  const [factoryMaleId, setFactoryMaleId] = useState("");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
@@ -97,6 +100,12 @@ export default function OmniCanvas() {
     });
     return rec.sceneId ? getManhuaSceneTemplate(rec.sceneId) : null;
   }, [factoryGenreId, factoryTopic]);
+  const femaleLeadOptions = useMemo(() => listManhuaCharactersByGender("female"), []);
+  const maleLeadOptions = useMemo(() => listManhuaCharactersByGender("male"), []);
+  const selectedCharacterIds = useMemo(
+    () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
+    [factoryFemaleId, factoryMaleId],
+  );
   const writerContext = useMemo(() => {
     if (!writerConfirmed || !writerPack) return undefined;
     return composeWriterPackFactoryContext(writerPack, writerFocusEpisode);
@@ -166,6 +175,7 @@ export default function OmniCanvas() {
         topic,
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
+        characterIds: selectedCharacterIds,
         writerContext,
         includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
       });
@@ -183,7 +193,7 @@ export default function OmniCanvas() {
       saveCanvasState(spawned.blocks, spawned.edges);
       return spawned;
     },
-    [blocks, edges, factoryGenreId, factorySceneId, writerContext, directorUnlocked],
+    [blocks, edges, factoryGenreId, factorySceneId, selectedCharacterIds, writerContext, directorUnlocked],
   );
 
   const expandWriterRoom = useCallback(async () => {
@@ -239,6 +249,7 @@ export default function OmniCanvas() {
       topic: factoryTopic.trim() || writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
+      characterIds: selectedCharacterIds,
       writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
       includeDirectorCraft: true,
     });
@@ -252,6 +263,7 @@ export default function OmniCanvas() {
   }, [
     writerPack,
     factoryTopic,
+    selectedCharacterIds,
     factoryGenreId,
     factorySceneId,
     writerFocusEpisode,
@@ -571,6 +583,50 @@ export default function OmniCanvas() {
                 </p>
               )}
 
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:max-w-md">
+                <div>
+                  <label className="block text-[11px] text-cyan-200/70">女主（角色库）</label>
+                  <select
+                    value={factoryFemaleId}
+                    onChange={(e) => setFactoryFemaleId(e.target.value)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-cyan-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {femaleLeadOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nameZh} · {c.jobZh}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-amber-200/70">男主（角色库）</label>
+                  <select
+                    value={factoryMaleId}
+                    onChange={(e) => setFactoryMaleId(e.target.value)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-amber-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-amber-300/40 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {maleLeadOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nameZh} · {c.jobZh}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {selectedCharacterIds.length ? (
+                <p className="mt-1.5 text-[10px] text-white/45">
+                  已选角色将注入「角色卡」节点（外形锚点 + 提示词）。
+                </p>
+              ) : (
+                <p className="mt-1.5 text-[10px] text-white/30">
+                  可选都市设定卡；男主/女主库来自本地 CH 素材结构化入库。
+                </p>
+              )}
+
               <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/8 pt-3">
                 {stageChipStatus.map((s) => (
                   <span
@@ -605,6 +661,7 @@ export default function OmniCanvas() {
                       topic: factoryTopic,
                       genreId: factoryGenreId || undefined,
                       sceneId: factorySceneId || undefined,
+                      characterIds: selectedCharacterIds,
                       writerContext,
                       includeDirectorCraft: true,
                     });
@@ -617,7 +674,7 @@ export default function OmniCanvas() {
                     setBlocks(spawned.blocks);
                     setEdges(spawned.edges);
                     saveCanvasState(spawned.blocks, spawned.edges);
-                    toast.success("已铺好编导六段节点");
+                    toast.success("已铺好编导节点（含视频改写）");
                   }}
                 >
                   <Sparkles className="h-3.5 w-3.5" />

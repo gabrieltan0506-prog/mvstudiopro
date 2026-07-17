@@ -32,6 +32,11 @@ export type OmniInteractionCreateInput = {
   referenceImageUrls?: string[];
   systemInstruction?: string;
   responseModalities?: Array<"text" | "video" | "image">;
+  /**
+   * 多轮视频改写：传入上一轮 interaction id，模型在保留未提及元素的前提下按 prompt 编辑。
+   * @see https://ai.google.dev/gemini-api/docs/omni
+   */
+  previousInteractionId?: string;
 };
 
 export type OmniInteractionOutputs = {
@@ -149,6 +154,15 @@ export async function createOmniFlashInteraction(input: OmniInteractionCreateInp
 
   if (input.systemInstruction?.trim()) {
     body.system_instruction = { parts: [{ text: input.systemInstruction.trim() }] };
+  }
+
+  const previousInteractionId = String(input.previousInteractionId || "").trim();
+  if (previousInteractionId) {
+    body.previous_interaction_id = previousInteractionId;
+    // 续编默认按 edit_video；若调用方未指定且未附带源视频，仍走 edit
+    if (!input.task) {
+      (body.generation_config as { video_config: { task: OmniVideoTask } }).video_config.task = "edit_video";
+    }
   }
 
   const res = await fetch(INTERACTIONS_REST_CREATE, {

@@ -20,6 +20,7 @@ import {
   resolveManhuaGenreId,
 } from "@shared/screenwriterGenreTemplates";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
+import { buildManhuaCharacterPromptBlock } from "@shared/manhuaCharacterAssetLibrary";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -29,6 +30,8 @@ export type DramaStudioSpawn = {
   genreInferred?: boolean;
   /** 实际套用的单一推荐场景（手选优先） */
   resolvedSceneId?: string;
+  /** 手选角色库 id（女主/男主） */
+  characterIds?: string[];
 };
 
 /** 漫剧工厂固定阶段顺序（与 spawn id 前缀对齐） */
@@ -39,6 +42,7 @@ export const MANHUA_FACTORY_STAGE_ORDER = [
   "reverse",
   "keyart",
   "clip",
+  "omni_edit",
 ] as const;
 
 export type ManhuaFactoryStageKey = (typeof MANHUA_FACTORY_STAGE_ORDER)[number];
@@ -49,7 +53,8 @@ export const MANHUA_FACTORY_STAGE_LABEL_ZH: Record<ManhuaFactoryStageKey, string
   beats: "镜头节拍",
   reverse: "编导分镜/反推",
   keyart: "关键静帧",
-  clip: "Seedance 成片",
+  clip: "微动成片",
+  omni_edit: "视频改写",
 };
 
 export type SpawnManhuaDramaStudioOpts = {
@@ -61,6 +66,8 @@ export type SpawnManhuaDramaStudioOpts = {
   genreId?: string;
   /** 单选场景资产 id：scene_01…scene_20（可选，优先于剧种默认场景包） */
   sceneId?: string;
+  /** 角色库 id：char_f_* / char_m_*（可多选，注入角色卡） */
+  characterIds?: string[];
   /** 编剧室已确认上下文（人物/道具/场景/本集+钩子） */
   writerContext?: string;
   /** 进入编导后为节拍/反推/静帧注入手法约束 */
@@ -84,6 +91,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     recommendManhuaSceneIdFromTopic({ genreId, topic: opts.topic }).sceneId ||
     undefined;
   const writerContext = String(opts.writerContext || "").trim();
+  const characterIds = (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const characterBlock = buildManhuaCharacterPromptBlock(characterIds);
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
   const stageOpts = {
     genreId,
@@ -93,7 +102,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     includeDirectorCraft,
     directorCraftBlock: includeDirectorCraft ? CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK : undefined,
   };
-  const usePack = Boolean(genreId || sceneId || writerContext);
+  const usePack = Boolean(genreId || sceneId || writerContext || characterBlock);
 
   const story = defaultCanvasBlock("text", originX, originY);
   story.id = makeCanvasBlockId("story");
@@ -106,9 +115,10 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const bible = defaultCanvasBlock("text", originX + gapX, originY);
   bible.id = makeCanvasBlockId("bible");
-  bible.prompt = usePack
+  const bibleBase = usePack
     ? buildManhuaStagePromptWithGenre("character_bible", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
+  bible.prompt = characterBlock ? `${bibleBase}\n\n${characterBlock}` : bibleBase;
   bible.parentId = story.id;
   bible.textModel = "gemini-3.1-pro";
 
@@ -144,13 +154,23 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   clip.videoModel = "seedance-2.0";
   clip.aspectRatio = "9:16";
 
-  const blocks = [story, bible, beats, reverse, keyArt, clip];
+  /** Gemini Omni · 自然语言视频改写（GEMINI_API_KEY；可续 previous_interaction_id） */
+  const omniEdit = defaultCanvasBlock("video", originX + gapX * 6, originY);
+  omniEdit.id = makeCanvasBlockId("omni_edit");
+  omniEdit.prompt =
+    "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。";
+  omniEdit.parentId = clip.id;
+  omniEdit.videoModel = "gemini-omni-flash";
+  omniEdit.aspectRatio = "9:16";
+
+  const blocks = [story, bible, beats, reverse, keyArt, clip, omniEdit];
   const edges: CanvasEdge[] = [
     { fromId: story.id, toId: bible.id },
     { fromId: bible.id, toId: beats.id },
     { fromId: beats.id, toId: reverse.id },
     { fromId: reverse.id, toId: keyArt.id },
     { fromId: keyArt.id, toId: clip.id },
+    { fromId: clip.id, toId: omniEdit.id },
   ];
 
   return {
@@ -159,6 +179,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     resolvedGenreId: genreId,
     genreInferred: resolved.inferred,
     resolvedSceneId: sceneId,
+    characterIds,
   };
 }
 

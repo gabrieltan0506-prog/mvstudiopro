@@ -3,6 +3,8 @@ import {
   SEEDANCE_25_PUBLICLY_ENABLED,
   clampSeedanceDuration,
   inferSeedanceMode,
+  normalizeSeedanceQuality,
+  parseSeedanceVersion,
   resolveSeedanceModelId,
   type SeedanceEvolinkMode,
   type SeedanceEvolinkVersion,
@@ -24,17 +26,6 @@ export function isEvolinkSeedanceConfigured(): boolean {
 export function isSeedance25Enabled(): boolean {
   if (SEEDANCE_25_PUBLICLY_ENABLED) return true;
   return /^(1|true|yes)$/i.test(String(process.env.SEEDANCE_25_ENABLED || ""));
-}
-
-function normalizeQuality20(raw: unknown): "480p" | "720p" | "1080p" {
-  const q = String(raw || "720p").trim().toLowerCase();
-  if (q === "480p" || q === "1080p") return q;
-  return "720p";
-}
-
-function normalizeQuality25(raw: unknown): "480p" | "720p" {
-  const q = String(raw || "720p").trim().toLowerCase();
-  return q === "480p" ? "480p" : "720p";
 }
 
 type EvolinkVideoTask = {
@@ -116,9 +107,9 @@ export type EvolinkSeedanceRunInput = {
 export async function runEvolinkSeedanceVideo(
   input: EvolinkSeedanceRunInput,
 ): Promise<{ videoUrl: string; model: string; provider: "evolink"; version: SeedanceEvolinkVersion; mode: SeedanceEvolinkMode }> {
-  const version: SeedanceEvolinkVersion = input.version === "2.5" ? "2.5" : "2.0";
+  const version: SeedanceEvolinkVersion = parseSeedanceVersion(input.version);
   if (version === "2.5" && !isSeedance25Enabled()) {
-    throw new Error(`${SEEDANCE_25_COMING_SOON_LABEL_EN}（EvoLink 尚未开放，请先用 Seedance 2.0）`);
+    throw new Error(`${SEEDANCE_25_COMING_SOON_LABEL_EN}（EvoLink 尚未开放，请先用 Seedance 2.0 / Mini）`);
   }
 
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
@@ -154,15 +145,11 @@ export async function runEvolinkSeedanceVideo(
     aspect_ratio: aspectRatio,
     generate_audio: input.generateAudio !== false,
     content_filter: input.contentFilter !== false,
+    quality: normalizeSeedanceQuality(version, input.quality),
   };
 
-  if (version === "2.5") {
-    body.quality = normalizeQuality25(input.quality);
-    if (input.webSearch === true) {
-      body.model_params = { web_search: true };
-    }
-  } else {
-    body.quality = normalizeQuality20(input.quality);
+  if (version === "2.5" && input.webSearch === true) {
+    body.model_params = { web_search: true };
   }
 
   if (mode === "image_to_video") {

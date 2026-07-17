@@ -32,6 +32,11 @@ describe("evidence soft heuristics", () => {
     expect(shouldFetchWebEvidence(marketQ)).toBe(true);
   });
 
+  it("database / 趋势库 wording also enables trend fetch", () => {
+    expect(shouldFetchTrendEvidence("根据数据库帮我看看虚拟资料赛道")).toBe(true);
+    expect(shouldFetchTrendEvidence("趋势库里小红书最近在卖什么")).toBe(true);
+  });
+
   it("pure creative rewrite does not force web research", () => {
     expect(shouldFetchWebEvidence("帮我改写这条小红书钩子文案")).toBe(false);
   });

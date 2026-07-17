@@ -35,6 +35,7 @@ export async function createOmniInteraction(body: {
   imageUrl?: string;
   videoUrl?: string;
   gcsUri?: string;
+  previousInteractionId?: string;
   systemInstruction?: string;
 }) {
   const resp = await fetch("/api/google?op=omniInteractionCreate", {

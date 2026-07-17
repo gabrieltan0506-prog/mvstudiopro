@@ -124,9 +124,10 @@ const ASK_SYSTEM = `你是 mvstudiopro「创作顾问」——行为对标「可
 1. 【用户提问】是唯一主任务。回答结构必须对齐用户问法（例如「类型 / 持续量大 / 利润高 / 时间节点 / 定价」就按块答）。缺证据就写清「库内不足 / 联网未证实 / 需再验证」，禁止装懂。
 2. 禁止被 Skill 带跑成全案看板：禁止「平台优先级与切入方式」「个性化分析」「现在就能执行的动作」「第1步发帖排期」等格式，除非用户明确要排期计划。
 3. 证据用法（都可用，按需组合，勿写死只用一种）：
-   - 【趋势库样本】：平台真实抓取痕迹，适合看「什么内容在冒头」。
+   - 【趋势库样本】：平台真实抓取痕迹，适合看「什么内容在冒头」。若材料里已出现该块，**必须引用若干条标题/标签作论据**，禁止再说「材料里没有趋势库样本」。
    - 【联网检索摘要】：公开网页/资讯归纳，适合政策、品类、定价口径、行业常识；注明「来自公开信息归纳」。
    - 两者都可引用；冲突时说明差异；都没有就给可执行验证步骤。
+   - 趋势库不是「数据库成交榜」：可谈内容冒头与品类线索，勿把赞数说成成交额/搜索量排名。
 4. 禁止伪造精确成交额、精确搜索量、伪造「官方数据」链接。可给价格带区间并标明假设。
 5. Skill 摘要仅在文案/封面/钩子写法时软参考；与本问无关则忽略。冲突以用户提问为准。
 6. 简体中文；禁止写出模型名、API、供应商、内部引擎代号。
@@ -190,9 +191,9 @@ function parseAskJson(raw: string): {
   };
 }
 
-/** 是否值得拉趋势库（软启发，非硬门禁） */
+/** 是否值得拉趋势库（软启发；市场调研类在 ask 内会强制拉取） */
 export function shouldFetchTrendEvidence(question: string): boolean {
-  return /小红书|小紅書|抖音|快手|B站|bilibili|赛道|选题|爆款|虚拟资料|电子资料|销量|笔记|带货|趋势|热搜|平台/.test(
+  return /小红书|小紅書|抖音|快手|B站|bilibili|赛道|选题|爆款|虚拟资料|电子资料|销量|笔记|带货|趋势|热搜|平台|数据库|趋势库|成交|搜索量|定价|知识付费|小报童|资料包/.test(
     String(question || ""),
   );
 }
@@ -206,49 +207,84 @@ export function shouldFetchWebEvidence(question: string): boolean {
   return /定价|利润|虚拟资料|电子资料|知识付费|小报童|资料包|赛道|能不能卖|哪些类型|时间节点/.test(q);
 }
 
-async function buildTrendEvidenceForQuestion(question: string): Promise<string> {
-  if (!shouldFetchTrendEvidence(question)) return "";
+async function buildTrendEvidenceForQuestion(
+  question: string,
+  opts?: { force?: boolean },
+): Promise<string> {
+  if (!opts?.force && !shouldFetchTrendEvidence(question)) return "";
   const q = String(question || "");
   const wantsXhs = /小红书|小紅書|xhs|rednote/i.test(q);
-  const platforms = (wantsXhs
-    ? (["xiaohongshu"] as const)
-    : (["xiaohongshu", "douyin", "bilibili", "kuaishou"] as const)
-  ).slice(0, wantsXhs ? 1 : 2);
+  const wantsDy = /抖音|douyin/i.test(q);
+  const platforms = (
+    wantsXhs && !wantsDy
+      ? (["xiaohongshu"] as const)
+      : wantsDy && !wantsXhs
+        ? (["douyin", "xiaohongshu"] as const)
+        : (["xiaohongshu", "douyin", "bilibili", "kuaishou"] as const)
+  ).slice(0, wantsXhs && !wantsDy ? 1 : 2);
 
   try {
     const { readTrendStoreForPlatforms } = await import("../growth/trendStore.js");
+    // 与 /platform 全案一致：优先 Fly live；Vercel 本地 derived 常为空会导致「没读到库」
+    const preferFlyLive =
+      process.env.PLATFORM_TREND_PREFER_FLY_LIVE !== "false" &&
+      process.env.PLATFORM_SKILL_QA_TREND_PREFER_FLY_LIVE !== "0";
     const store = await Promise.race([
-      readTrendStoreForPlatforms([...platforms], { preferDerivedFiles: true }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+      readTrendStoreForPlatforms([...platforms], {
+        preferDerivedFiles: true,
+        preferFlyLive,
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 22_000)),
     ]);
-    if (!store) return "";
+    if (!store) {
+      console.warn("[askPlatformSkillQa] trend evidence timeout/empty store", {
+        platforms: [...platforms],
+        preferFlyLive,
+      });
+      return "";
+    }
 
     const lines: string[] = [];
     for (const platform of platforms) {
       const col = (store.collections as Record<string, { items?: unknown[] }> | undefined)?.[platform];
       const items = Array.isArray(col?.items) ? col!.items! : [];
-      const picked = items
-        .slice(0, 18)
+      const scored = items
         .map((raw) => {
           const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-          const title = String(o.title || o.keyword || o.desc || "").trim().slice(0, 80);
+          const title = String(o.title || o.keyword || o.desc || o.name || "").trim().slice(0, 80);
           const tags = Array.isArray(o.tags)
             ? o.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 4).join("/")
             : "";
-          const likes = Number(o.likes || o.likeCount || o.diggCount || 0);
-          if (!title) return "";
-          return `- ${title}${tags ? ` · 标签:${tags}` : ""}${likes > 0 ? ` · 赞≈${likes}` : ""}`;
+          const likes = Number(o.likes || o.likeCount || o.diggCount || 0) || 0;
+          const hot = Number(o.hotValue || o.views || o.playCount || 0) || 0;
+          const score = Math.max(likes, hot);
+          if (!title) return null;
+          return {
+            score,
+            line: `- ${title}${tags ? ` · 标签:${tags}` : ""}${likes > 0 ? ` · 赞≈${likes}` : ""}${
+              hot > 0 && hot !== likes ? ` · 热度≈${hot}` : ""
+            }`,
+          };
         })
-        .filter(Boolean);
+        .filter(Boolean) as Array<{ score: number; line: string }>;
+      scored.sort((a, b) => b.score - a.score);
+      const picked = scored.slice(0, 18).map((x) => x.line);
       if (picked.length) {
-        lines.push(`平台=${platform} · 近窗样本 ${picked.length} 条：`);
+        lines.push(`平台=${platform} · 近窗高互动样本 ${picked.length} 条（抓取痕迹，非成交榜）：`);
         lines.push(...picked);
       }
     }
-    if (!lines.length) return "";
+    if (!lines.length) {
+      console.warn("[askPlatformSkillQa] trend store loaded but no titled items", {
+        platforms: [...platforms],
+        keys: Object.keys((store.collections as object) || {}),
+      });
+      return "";
+    }
     return [
       "【趋势库样本（内部抓取痕迹；只作论据，勿编造成交额/精确搜索量）】",
-      ...lines.slice(0, 40),
+      `truthSource=${String((store as { truthSource?: string }).truthSource || "local-or-derived")}`,
+      ...lines.slice(0, 48),
     ].join("\n");
   } catch (e) {
     console.warn("[askPlatformSkillQa] trend evidence failed:", e instanceof Error ? e.message : e);
@@ -334,18 +370,28 @@ export async function askPlatformSkillQa(params: {
     skillsPrompt = full.slice(0, 1800);
   }
 
-  // 证据：库 + 网 可并行，按问题软启发取用；不是「只能查库」
+  // 证据：库 + 网 可并行。市场调研类强制读趋势库（Fly live），避免只剩联网摘要装「没库」
   const [trendEvidence, webEvidence] = await Promise.all([
-    buildTrendEvidenceForQuestion(question),
+    buildTrendEvidenceForQuestion(question, { force: qaKind === "market_research" }),
     buildWebEvidenceForQuestion(question),
   ]);
+
+  console.info("[askPlatformSkillQa] evidence", {
+    qaKind,
+    trendChars: trendEvidence.length,
+    webChars: webEvidence.length,
+    hasTrend: Boolean(trendEvidence),
+    hasWeb: Boolean(webEvidence),
+  });
 
   const evidenceBlocks = [
     trendEvidence || null,
     webEvidence || null,
     !trendEvidence && !webEvidence
       ? "【证据】本问未取到趋势库样本且联网摘要为空；请给可执行框架与验证方法，勿伪造数据。"
-      : null,
+      : !trendEvidence && webEvidence
+        ? "【证据缺口】趋势库本问未取到可用样本（可能超时/空窗）；下列仅有联网摘要，回答时须标明，勿假装引用了内部库。"
+        : null,
   ].filter(Boolean);
 
   const userText = [
