@@ -41,4 +41,8 @@ describe("craftShotBank ⑧A", () => {
     expect(recommendCraftShotFromTopic("修仙洞府奇遇").craftShotId).toBe("cam_07_wide_scale");
     expect(recommendCraftShotFromTopic("审讯室精算对峙").craftShotId).toBe("light_07_top_cut");
   });
+
+  it("recommends craft from 群戏 keyword", () => {
+    expect(recommendCraftShotFromTopic("派对群戏围观翻盘").craftShotId).toBe("emo_06_ensemble_pulse");
+  });
 });
