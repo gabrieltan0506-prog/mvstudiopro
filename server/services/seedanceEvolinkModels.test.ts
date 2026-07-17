@@ -8,18 +8,25 @@ import {
 import { isSeedance25Enabled } from "./evolinkSeedanceVideo";
 
 describe("seedance evolink models", () => {
-  it("resolves 2.0 / 2.5 three modes", () => {
+  it("resolves 2.0 / 2.0-mini / 2.5 three modes", () => {
     expect(resolveSeedanceModelId("2.0", "text_to_video")).toBe("seedance-2.0-text-to-video");
     expect(resolveSeedanceModelId("2.0", "image_to_video")).toBe("seedance-2.0-image-to-video");
     expect(resolveSeedanceModelId("2.0", "reference_to_video")).toBe("seedance-2.0-reference-to-video");
+    expect(resolveSeedanceModelId("2.0-mini", "text_to_video")).toBe("seedance-2.0-mini-text-to-video");
+    expect(resolveSeedanceModelId("2.0-mini", "image_to_video")).toBe("seedance-2.0-mini-image-to-video");
+    expect(resolveSeedanceModelId("2.0-mini", "reference_to_video")).toBe(
+      "seedance-2.0-mini-reference-to-video",
+    );
     expect(resolveSeedanceModelId("2.5", "text_to_video")).toBe("seedance-2.5-text-to-video");
     expect(resolveSeedanceModelId("2.5", "image_to_video")).toBe("seedance-2.5-image-to-video");
     expect(resolveSeedanceModelId("2.5", "reference_to_video")).toBe("seedance-2.5-reference-to-video");
   });
 
-  it("clamps duration per version (product default 15)", () => {
+  it("clamps duration per version (2.0 default 15; mini default 5)", () => {
     expect(clampSeedanceDuration("2.0", undefined)).toBe(15);
     expect(clampSeedanceDuration("2.0", 99)).toBe(15);
+    expect(clampSeedanceDuration("2.0-mini", undefined)).toBe(5);
+    expect(clampSeedanceDuration("2.0-mini", 99)).toBe(15);
     expect(clampSeedanceDuration("2.5", 99)).toBe(30);
     expect(clampSeedanceDuration("2.5", 8)).toBe(8);
   });

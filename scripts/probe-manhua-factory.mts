@@ -186,8 +186,10 @@ async function main() {
   }
   if (!keyArtOk) process.exit(1);
 
-  // 第六段（可选、贵且久）：Seedance 2.0 ≈15s
+  // 第六段（可选）：Seedance 2.0 Mini · 默认 5s·480p（廉价探针）
   //   CANVAS_PROBE_SEEDANCE=1 pnpm run manhua:probe
+  //   全价档：CANVAS_PROBE_SEEDANCE_VERSION=2.0 CANVAS_PROBE_SEEDANCE_QUALITY=720p CANVAS_PROBE_SEEDANCE_DURATION=15
+  let seedanceVideoUrl = "";
   if (String(process.env.CANVAS_PROBE_SEEDANCE || "").trim() === "1") {
     const seedanceBase = String(
       process.env.CANVAS_PROBE_SEEDANCE_BASE || process.env.LONG_JOBS_API_ORIGIN || BASE,
@@ -201,6 +203,9 @@ async function main() {
         .slice(0, 400) || reverseText.slice(0, 400);
     const seedancePrompt = `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n${motionHint}`;
     const imageUrl = keyArtDetail;
+    const version = String(process.env.CANVAS_PROBE_SEEDANCE_VERSION || "2.0-mini").trim() || "2.0-mini";
+    const resolution = String(process.env.CANVAS_PROBE_SEEDANCE_QUALITY || "480p").trim() || "480p";
+    const duration = Number(process.env.CANVAS_PROBE_SEEDANCE_DURATION || 5) || 5;
     const SEEDANCE_TIMEOUT_MS = Math.max(
       IMAGE_TIMEOUT_MS,
       Number(process.env.CANVAS_PROBE_SEEDANCE_TIMEOUT_MS || 600_000) || 600_000,
@@ -211,32 +216,107 @@ async function main() {
         {
           prompt: seedancePrompt,
           imageUrl,
-          resolution: "720p",
+          version,
+          resolution,
           aspectRatio: "9:16",
-          duration: 15,
+          duration,
           generateAudio: true,
           preferEvolink: true,
         },
         SEEDANCE_TIMEOUT_MS,
       );
       const videoUrl = String(clip.json?.videoUrl || "").trim();
+      seedanceVideoUrl = videoUrl;
       const clipOk = clip.ok && Boolean(videoUrl);
       console.log(
-        `[${clipOk ? "PASS" : "FAIL"}] 工厂·Seedance15s (${clip.ms}ms http=${clip.status}) ${
+        `[${clipOk ? "PASS" : "FAIL"}] 工厂·SeedanceMini (${version} ${duration}s ${resolution}, ${clip.ms}ms http=${clip.status}) ${
           clipOk ? videoUrl.slice(0, 120) : String(clip.json?.error || clip.text).slice(0, 200)
         }`,
       );
       if (!clipOk) process.exit(1);
-      console.log("[manhua-factory-probe] 六段可用（含 Seedance）");
+      console.log("[manhua-factory-probe] 六段可用（含 Seedance Mini）");
     } catch (e: unknown) {
       console.log(
-        `[FAIL] 工厂·Seedance15s (exception) ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
+        `[FAIL] 工厂·SeedanceMini (exception) ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
       );
       process.exit(1);
     }
   } else {
     console.log(
-      "[manhua-factory-probe] 五段可用（故事→角色→节拍→反推→静帧）；Seedance 设 CANVAS_PROBE_SEEDANCE=1 再测",
+      "[manhua-factory-probe] 五段可用；Seedance Mini 设 CANVAS_PROBE_SEEDANCE=1（默认 5s/480p/2.0-mini）",
+    );
+  }
+
+  // 第七段（可选）：Gemini Omni video edit · 只用 GEMINI_API_KEY
+  //   CANVAS_PROBE_OMNI_EDIT=1 pnpm run manhua:probe
+  //   可附带 CANVAS_PROBE_OMNI_VIDEO_URL=... 或接上一段 Seedance 成片
+  if (String(process.env.CANVAS_PROBE_OMNI_EDIT || "").trim() === "1") {
+    const omniBase = String(process.env.CANVAS_PROBE_OMNI_BASE || BASE).trim().replace(/\/$/, "");
+    const editPrompt =
+      String(process.env.CANVAS_PROBE_OMNI_EDIT_PROMPT || "").trim() ||
+      "Keep the same character identity. Slightly intensify eye emotion and add a gentle push-in camera move. Do not change costume.";
+    const videoUrl =
+      String(process.env.CANVAS_PROBE_OMNI_VIDEO_URL || "").trim() || seedanceVideoUrl;
+    const OMNI_TIMEOUT_MS = Math.max(
+      IMAGE_TIMEOUT_MS,
+      Number(process.env.CANVAS_PROBE_OMNI_TIMEOUT_MS || 600_000) || 600_000,
+    );
+    try {
+      const created = await fetchJson(
+        `${omniBase}/api/google?op=omniInteractionCreate`,
+        {
+          prompt: editPrompt,
+          task: "edit_video",
+          videoUrl: videoUrl || undefined,
+          aspectRatio: "9:16",
+          durationSeconds: 5,
+        },
+        120_000,
+      );
+      const interactionId = String(created.json?.id || "").trim();
+      if (!created.ok || !interactionId) {
+        console.log(
+          `[FAIL] 工厂·OmniEdit create (${created.ms}ms http=${created.status}) ${String(created.json?.message || created.json?.error || created.text).slice(0, 200)}`,
+        );
+        process.exit(1);
+      }
+      console.log(`[PASS] 工厂·OmniEdit create id=${interactionId.slice(0, 48)}`);
+
+      // poll get
+      const started = Date.now();
+      let finalUrl = "";
+      while (Date.now() - started < OMNI_TIMEOUT_MS) {
+        const polled = await fetchJson(
+          `${omniBase}/api/google?op=omniInteractionGet`,
+          { interactionId },
+          60_000,
+        );
+        const status = String(polled.json?.status || "").toLowerCase();
+        finalUrl = String(polled.json?.videoUrl || "").trim();
+        if (finalUrl || status === "completed" || status === "failed" || status === "cancelled") {
+          const ok = Boolean(finalUrl) && status !== "failed";
+          console.log(
+            `[${ok ? "PASS" : "FAIL"}] 工厂·OmniEdit poll (${polled.ms}ms status=${status}) ${finalUrl.slice(0, 120) || String(polled.json?.error || polled.text).slice(0, 160)}`,
+          );
+          if (!ok) process.exit(1);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+      if (!finalUrl) {
+        console.log("[FAIL] 工厂·OmniEdit timeout");
+        process.exit(1);
+      }
+      console.log("[manhua-factory-probe] 七段可用（含 Omni video edit · GEMINI_API_KEY）");
+    } catch (e: unknown) {
+      console.log(
+        `[FAIL] 工厂·OmniEdit (exception) ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
+      );
+      process.exit(1);
+    }
+  } else {
+    console.log(
+      "[manhua-factory-probe] Omni edit 设 CANVAS_PROBE_OMNI_EDIT=1（GEMINI_API_KEY；可配 CANVAS_PROBE_OMNI_VIDEO_URL）",
     );
   }
 }

@@ -12,16 +12,19 @@ import {
 import type { CanvasRunDeps } from "./canvasRunBlock";
 
 describe("canvasDramaStudio factory", () => {
-  it("spawns six linked stages with topic", () => {
+  it("spawns seven linked stages with topic (含 Omni 视频改写)", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "星际车站离别",
     });
-    expect(blocks).toHaveLength(6);
-    expect(edges).toHaveLength(5);
+    expect(blocks).toHaveLength(7);
+    expect(edges).toHaveLength(6);
     for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
       expect(blocks.some((b) => b.id.startsWith(`${stage}-`))).toBe(true);
     }
     expect(blocks[0]!.prompt).toContain("星际车站离别");
+    const omni = blocks.find((b) => b.id.startsWith("omni_edit-"))!;
+    expect(omni.videoModel).toBe("gemini-omni-flash");
+    expect(omni.parentId).toMatch(/^clip-/);
   });
 
   it("spawns with genre+scene injects scene asset into key art", () => {
@@ -34,6 +37,18 @@ describe("canvasDramaStudio factory", () => {
     expect(key.prompt).toContain("秘境洞府");
     expect(key.prompt).toContain("发光晶石");
     expect(blocks[0]!.prompt).toContain("仙侠");
+  });
+
+  it("injects character library anchors into bible", () => {
+    const { blocks, characterIds } = spawnManhuaDramaStudio({
+      topic: "都市律师对峙",
+      characterIds: ["char_f_07", "char_m_02"],
+    });
+    expect(characterIds).toEqual(["char_f_07", "char_m_02"]);
+    const bible = blocks.find((b) => b.id.startsWith("bible-"))!;
+    expect(bible.prompt).toContain("唐若曦");
+    expect(bible.prompt).toContain("傅临渊");
+    expect(bible.prompt).toContain("【角色库锚点】");
   });
 
   it("infers genre from topic when genreId omitted", () => {
