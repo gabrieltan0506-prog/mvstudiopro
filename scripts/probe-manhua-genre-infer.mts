@@ -52,6 +52,18 @@ const mijingOk = mijing.sceneId === "scene_04";
 console.log(`[${mijingOk ? "PASS" : "FAIL"}] 秘境关键词 → scene_04`);
 if (!mijingOk) failed += 1;
 
+const viralCases: Array<{ topic: string; expectScene: string }> = [
+  { topic: "发配边关罪妻开荒养出战神", expectScene: "scene_10" },
+  { topic: "从赖皮蛇开始吞噬进化", expectScene: "scene_04" },
+  { topic: "气运三角洲操作吊打全球", expectScene: "scene_15" },
+  { topic: "末世废柴开超市", expectScene: "scene_17" },
+];
+for (const c of viralCases) {
+  const hit = recommendManhuaSceneFromTopic(c.topic).sceneId === c.expectScene;
+  console.log(`[${hit ? "PASS" : "FAIL"}] viral ${c.topic} → ${c.expectScene}`);
+  if (!hit) failed += 1;
+}
+
 if (failed) {
   console.error(`[manhua-genre-probe] FAILED ${failed}`);
   process.exit(1);

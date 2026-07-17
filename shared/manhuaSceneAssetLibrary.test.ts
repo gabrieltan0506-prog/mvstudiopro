@@ -133,4 +133,15 @@ describe("manhuaSceneAssetLibrary", () => {
     expect(recommendManhuaSceneFromTopic("天台告白操场").sceneId).toBe("scene_14");
   });
 
+  it("maps 2026H1 viral topic keywords into existing scenes", () => {
+    expect(recommendManhuaSceneFromTopic("发配边关罪妻开荒养出战神").sceneId).toBe("scene_10");
+    expect(recommendManhuaSceneFromTopic("从赖皮蛇开始吞噬进化").sceneId).toBe("scene_04");
+    expect(recommendManhuaSceneFromTopic("气运三角洲操作吊打全球").sceneId).toBe("scene_15");
+    expect(recommendManhuaSceneFromTopic("杂灵根才是真BOSS").sceneId).toBe("scene_04");
+    expect(recommendManhuaSceneFromTopic("渔乡守真心种田").sceneId).toBe("scene_07");
+    expect(recommendManhuaSceneFromTopic("万妖图录传").sceneId).toBe("scene_05");
+    expect(recommendManhuaSceneFromTopic("末世废柴开超市").sceneId).toBe("scene_17");
+    expect(recommendManhuaSceneFromTopic("财神天降送我上青云").sceneId).toBe("scene_11");
+    expect(recommendManhuaSceneFromTopic("狼人觉醒系统").sceneId).toBe("scene_18");
+  });
 });
