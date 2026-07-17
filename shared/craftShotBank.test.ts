@@ -66,4 +66,8 @@ describe("craftShotBank ⑧A", () => {
     expect(recommendCraftShotFromTopic("边塞烽火出征").craftShotId).toBe("cam_07_wide_scale");
     expect(recommendCraftShotFromTopic("声先画后硬切卡点").craftShotId).toBe("tr_05_audio_lead");
   });
+
+  it("recommends craft from 古风 keyword", () => {
+    expect(recommendCraftShotFromTopic("古风皇宫长安府邸").craftShotId).toBe("light_03_high_contrast");
+  });
 });
