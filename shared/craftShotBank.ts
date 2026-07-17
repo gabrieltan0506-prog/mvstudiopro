@@ -366,6 +366,7 @@ const TOPIC_CRAFT_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
   { keys: ["校园", "教室", "校服", "青春"], preferIds: ["light_01_window_motivated", "cam_08_shot_reverse", "emo_02_warm_wonder"] },
   { keys: ["末日", "废土", "避难所", "丧尸"], preferIds: ["cam_07_wide_scale", "light_03_high_contrast", "emo_01_restrained_dread"] },
   { keys: ["科幻", "飞船", "赛博", "全息"], preferIds: ["cam_07_wide_scale", "light_04_volumetric", "emo_08_solemn_quiet"] },
+  { keys: ["密室", "黑客入侵", "信息战"], preferIds: ["light_07_top_cut", "cam_04_whip_insert", "emo_07_obsessive_calm"] },
 ];
 
 export type CraftShotRecommendResult = {

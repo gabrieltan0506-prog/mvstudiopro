@@ -57,4 +57,8 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft from 科幻 keyword", () => {
     expect(recommendCraftShotFromTopic("星际飞船赛博全息").craftShotId).toBe("cam_07_wide_scale");
   });
+
+  it("recommends craft from 密室/黑客 keyword", () => {
+    expect(recommendCraftShotFromTopic("密室黑客入侵信息战").craftShotId).toBe("light_07_top_cut");
+  });
 });
