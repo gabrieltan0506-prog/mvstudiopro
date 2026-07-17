@@ -21,6 +21,7 @@ import {
   serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
   suggestManhuaContrastPartner,
+  suggestManhuaSameFieldPartner,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
   type ManhuaCharacterTemplate,
@@ -451,6 +452,14 @@ export default function ManhuaCharacterGallery({
     const anchorId = libraryTab === "female" ? femaleId : maleId;
     if (!anchorId) return [] as ManhuaCharacterTemplate[];
     return suggestManhuaContrastPartner(anchorId, {
+      excludeIds: [femaleId, maleId],
+      limit: 5,
+    });
+  }, [libraryTab, femaleId, maleId]);
+  const sameFieldPartners = useMemo(() => {
+    const anchorId = libraryTab === "female" ? femaleId : maleId;
+    if (!anchorId) return [] as ManhuaCharacterTemplate[];
+    return suggestManhuaSameFieldPartner(anchorId, {
       excludeIds: [femaleId, maleId],
       limit: 5,
     });
@@ -1452,6 +1461,28 @@ export default function ManhuaCharacterGallery({
                   className="rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] text-fuchsia-100/85 hover:border-fuchsia-300/50 disabled:opacity-40"
                 >
                   {c.nameZh}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {sameFieldPartners.length ? (
+          <div className="mb-2">
+            <div className="mb-1 text-[10px] text-white/40">
+              同行异性（职业关键词相近）→ 点选即换{libraryTab === "female" ? "男主" : "女主"}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {sameFieldPartners.map((c) => (
+                <button
+                  key={`field-${c.id}`}
+                  type="button"
+                  disabled={disabled}
+                  title={c.jobZh}
+                  onClick={() => rememberSelect(c.id, c.gender)}
+                  className="rounded-full border border-teal-400/30 bg-teal-500/10 px-2 py-0.5 text-[10px] text-teal-100/85 hover:border-teal-300/50 disabled:opacity-40"
+                >
+                  {c.nameZh}
+                  <span className="ml-1 text-teal-100/45">{c.jobZh}</span>
                 </button>
               ))}
             </div>

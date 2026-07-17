@@ -644,6 +644,40 @@ export function suggestManhuaContrastPartner(
     .map((x) => x.c);
 }
 
+/** 同行/相近职业异性（职位关键词粗匹配） */
+export function suggestManhuaSameFieldPartner(
+  characterId: string,
+  opts?: { excludeIds?: string[]; limit?: number },
+): ManhuaCharacterTemplate[] {
+  const base = getManhuaCharacterById(characterId);
+  if (!base) return [];
+  const targetGender: ManhuaCharacterGender = base.gender === "female" ? "male" : "female";
+  const exclude = new Set((opts?.excludeIds || []).map(String));
+  const limit = Math.max(1, Math.min(opts?.limit || 5, 8));
+  const tokens = String(base.jobZh || "")
+    .replace(/[的与和及]/g, "")
+    .split(/[/·、，,\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2);
+  if (!tokens.length) return [];
+  return listManhuaCharactersByGender(targetGender)
+    .filter((c) => !exclude.has(c.id))
+    .map((c) => {
+      const job = c.jobZh || "";
+      const score = tokens.reduce((n, t) => n + (job.includes(t) ? 2 : 0), 0);
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Math.abs((a.c.age || 27) - (base.age || 27)) - Math.abs((b.c.age || 27) - (base.age || 27)) ||
+        a.c.nameZh.localeCompare(b.c.nameZh, "zh"),
+    )
+    .slice(0, limit)
+    .map((x) => x.c);
+}
+
 /** 题材关键词 → 气质标签种子（4.B 自动套用） */
 const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["清冷", "克制", "冷感", "疏离", "高冷"], tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },

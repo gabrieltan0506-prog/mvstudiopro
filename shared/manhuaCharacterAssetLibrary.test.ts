@@ -19,6 +19,7 @@ import {
   serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
   suggestManhuaContrastPartner,
+  suggestManhuaSameFieldPartner,
 } from "./manhuaCharacterAssetLibrary";
 
 describe("manhuaCharacterAssetLibrary", () => {
@@ -119,5 +120,11 @@ describe("manhuaCharacterAssetLibrary", () => {
     const contrast = suggestManhuaContrastPartner("char_f_01", { limit: 3 });
     expect(contrast.length).toBeGreaterThan(0);
     expect(contrast.every((c) => c.gender === "male")).toBe(true);
+  });
+
+  it("suggests same-field partners by job tokens", () => {
+    // 钢琴演奏家 → 钢琴家
+    const peers = suggestManhuaSameFieldPartner("char_f_03", { limit: 5 });
+    expect(peers.some((c) => c.id === "char_m_04")).toBe(true);
   });
 });
