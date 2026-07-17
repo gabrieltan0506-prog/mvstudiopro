@@ -877,6 +877,14 @@ export default function ManhuaCharacterGallery({
         window.setTimeout(() => setCopyFlash(""), 1200);
         return;
       }
+      if (e.key === "u" || e.key === "U") {
+        e.preventDefault();
+        const next = !compactUi;
+        setCompactUi(next);
+        setCopyFlash(next ? "已切精简模式" : "已开完整筛选");
+        window.setTimeout(() => setCopyFlash(""), 1200);
+        return;
+      }
       if (/^[1-8]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const pack = MANHUA_COUPLE_PACKS[Number(e.key) - 1];
         if (pack) {
