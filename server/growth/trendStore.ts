@@ -130,6 +130,12 @@ export type TrendHistoryLedgerEntry = {
   contentLabels: string[];
   firstSeenAt: string;
   lastSeenAt: string;
+  /** 抖音合集 ID（短剧/漫剧） */
+  mixId?: string;
+  mixName?: string;
+  dramaKind?: string;
+  /** 最近一次观测到的合集总播放 */
+  mixPlayCount?: number;
 };
 
 export type TrendHistoryPlatformSummary = {
@@ -550,6 +556,21 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
       bucket.set(item.id, item);
       continue;
     }
+    const mergedDramaInfo = item.dramaInfo || current.dramaInfo
+      ? {
+          mixId: String(item.dramaInfo?.mixId || current.dramaInfo?.mixId || "").trim(),
+          mixName: String(item.dramaInfo?.mixName || current.dramaInfo?.mixName || "").trim(),
+          currentEpisode: item.dramaInfo?.currentEpisode ?? current.dramaInfo?.currentEpisode,
+          totalEpisodes: Math.max(
+            item.dramaInfo?.totalEpisodes || 0,
+            current.dramaInfo?.totalEpisodes || 0,
+          ) || undefined,
+          mixPlayCount: Math.max(
+            item.dramaInfo?.mixPlayCount || 0,
+            current.dramaInfo?.mixPlayCount || 0,
+          ) || undefined,
+        }
+      : undefined;
     bucket.set(item.id, {
       ...current,
       ...item,
@@ -566,6 +587,11 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
       publishedAt: item.publishedAt || current.publishedAt,
       url: item.url || current.url,
       author: item.author || current.author,
+      isDrama: Boolean(item.isDrama || current.isDrama) || undefined,
+      dramaKind: item.dramaKind && item.dramaKind !== "unknown"
+        ? item.dramaKind
+        : (current.dramaKind || item.dramaKind),
+      dramaInfo: mergedDramaInfo?.mixId || mergedDramaInfo?.mixName ? mergedDramaInfo : undefined,
     });
   }
   return sortItems(Array.from(bucket.values()));
@@ -600,6 +626,10 @@ function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHist
   const normalized = normalizeItem(item);
   const key = getItemKey(normalized);
   if (!key) return null;
+  const mixId = String(normalized.dramaInfo?.mixId || "").trim() || undefined;
+  const mixName = String(normalized.dramaInfo?.mixName || "").trim() || undefined;
+  const dramaKind = normalized.dramaKind || undefined;
+  const mixPlayCount = Number(normalized.dramaInfo?.mixPlayCount || 0) || undefined;
   return {
     key,
     bucket: String(normalized.bucket || normalized.contentType || "default").trim() || "default",
@@ -608,6 +638,31 @@ function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHist
     contentLabels: normalizeLabels(normalized.contentLabels),
     firstSeenAt: observedAt,
     lastSeenAt: observedAt,
+    mixId,
+    mixName,
+    dramaKind,
+    mixPlayCount,
+  };
+}
+
+function mergeHistoryLedgerEntry(
+  current: TrendHistoryLedgerEntry,
+  entry: TrendHistoryLedgerEntry,
+): TrendHistoryLedgerEntry {
+  return {
+    ...current,
+    bucket: entry.bucket || current.bucket,
+    industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
+    ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
+    contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
+    firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
+    lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+    mixId: entry.mixId || current.mixId,
+    mixName: entry.mixName || current.mixName,
+    dramaKind: entry.dramaKind && entry.dramaKind !== "unknown"
+      ? entry.dramaKind
+      : (current.dramaKind || entry.dramaKind),
+    mixPlayCount: Math.max(current.mixPlayCount || 0, entry.mixPlayCount || 0) || undefined,
   };
 }
 
@@ -855,24 +910,69 @@ async function updateHistoryFromCollections(
         ledger[entry.key] = entry;
         continue;
       }
-      ledger[entry.key] = {
-        ...current,
-        bucket: entry.bucket || current.bucket,
-        industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
-        ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
-        contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
-        firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
-        lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
-      };
+      ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
     }
     await writeHistoryLedger(platform, ledger);
     touched.add(platform);
+    if (platform === "douyin") {
+      await appendDramaMixDailySnapshot(collection);
+    }
   }
   if (touched.size) {
     await refreshHistorySummary(store, Array.from(touched));
   } else if (!store.history) {
     store.history = createEmptyHistoryState();
   }
+}
+
+const DRAMA_MIX_SNAPSHOT_DIR = path.join(STORE_DIR, "drama-mix-snapshots");
+
+async function appendDramaMixDailySnapshot(collection: PlatformTrendCollection) {
+  const byMix = new Map<string, {
+    mixId: string;
+    mixName: string;
+    dramaKind?: string;
+    mixPlayCount: number;
+    observedAt: string;
+  }>();
+  for (const item of collection.items || []) {
+    if (!item.isDrama && !item.dramaInfo?.mixId) continue;
+    const mixId = String(item.dramaInfo?.mixId || "").trim();
+    if (!mixId) continue;
+    const mixPlayCount = Number(item.dramaInfo?.mixPlayCount || 0);
+    const prev = byMix.get(mixId);
+    if (!prev || mixPlayCount >= prev.mixPlayCount) {
+      byMix.set(mixId, {
+        mixId,
+        mixName: String(item.dramaInfo?.mixName || item.title || mixId).trim(),
+        dramaKind: item.dramaKind,
+        mixPlayCount,
+        observedAt: collection.collectedAt || nowShanghaiIso(),
+      });
+    }
+  }
+  if (!byMix.size) return;
+  await fs.mkdir(DRAMA_MIX_SNAPSHOT_DIR, { recursive: true });
+  const day = String(collection.collectedAt || nowShanghaiIso()).slice(0, 10);
+  const filePath = path.join(DRAMA_MIX_SNAPSHOT_DIR, `${day}.json`);
+  let existing: Array<Record<string, unknown>> = [];
+  try {
+    existing = JSON.parse(await fs.readFile(filePath, "utf8")) as Array<Record<string, unknown>>;
+    if (!Array.isArray(existing)) existing = [];
+  } catch {
+    existing = [];
+  }
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const row of existing) {
+    const id = String(row.mixId || "").trim();
+    if (id) merged.set(id, row);
+  }
+  for (const row of byMix.values()) {
+    const prev = merged.get(row.mixId);
+    const prevPlay = Number(prev?.mixPlayCount || 0);
+    if (!prev || row.mixPlayCount >= prevPlay) merged.set(row.mixId, row);
+  }
+  await fs.writeFile(filePath, `${JSON.stringify(Array.from(merged.values()), null, 2)}\n`, "utf8");
 }
 
 function resolveArchiveJsonPlainPath(filePath: string) {
@@ -1622,15 +1722,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
           ledger[entry.key] = entry;
           continue;
         }
-        ledger[entry.key] = {
-          ...current,
-          bucket: entry.bucket || current.bucket,
-          industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
-          ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
-          contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
-          firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
-          lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
-        };
+        ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
       }
       ledgers.set(platform, ledger);
     }
@@ -1650,15 +1742,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
           ledger[historyEntry.key] = historyEntry;
           continue;
         }
-        ledger[historyEntry.key] = {
-          ...current,
-          bucket: historyEntry.bucket || current.bucket,
-          industryLabels: normalizeLabels([...(current.industryLabels || []), ...historyEntry.industryLabels]),
-          ageLabels: normalizeLabels([...(current.ageLabels || []), ...historyEntry.ageLabels]),
-          contentLabels: normalizeLabels([...(current.contentLabels || []), ...historyEntry.contentLabels]),
-          firstSeenAt: current.firstSeenAt < historyEntry.firstSeenAt ? current.firstSeenAt : historyEntry.firstSeenAt,
-          lastSeenAt: current.lastSeenAt > historyEntry.lastSeenAt ? current.lastSeenAt : historyEntry.lastSeenAt,
-        };
+        ledger[historyEntry.key] = mergeHistoryLedgerEntry(current, historyEntry);
       }
       ledgers.set(entry.platform, ledger);
     }
@@ -2571,6 +2655,13 @@ async function exportTrendCollectionsCsvFromCollections(
     "hot_value",
     "content_type",
     "tags",
+    "is_drama",
+    "drama_kind",
+    "mix_id",
+    "mix_name",
+    "episode_num",
+    "total_episodes",
+    "mix_play_count",
   ].join(",");
 
   const createdAt = nowShanghaiIso().replace(/[:.]/g, "-");
@@ -2605,6 +2696,13 @@ async function exportTrendCollectionsCsvFromCollections(
           String(item.hotValue || ""),
           item.contentType || "",
           normalizeStringList(item.tags).join("|"),
+          item.isDrama ? "1" : "",
+          item.dramaKind || "",
+          item.dramaInfo?.mixId || "",
+          item.dramaInfo?.mixName || "",
+          item.dramaInfo?.currentEpisode != null ? String(item.dramaInfo.currentEpisode) : "",
+          item.dramaInfo?.totalEpisodes != null ? String(item.dramaInfo.totalEpisodes) : "",
+          item.dramaInfo?.mixPlayCount != null ? String(item.dramaInfo.mixPlayCount) : "",
         ]
           .map((cell) => `"${String(cell).replace(/"/g, "\"\"")}"`)
           .join(",");
@@ -2650,4 +2748,95 @@ export function isTrendCollectionStale(collectedAt?: string, maxAgeHours = 6) {
   const timestamp = new Date(collectedAt).getTime();
   if (!Number.isFinite(timestamp)) return true;
   return Date.now() - timestamp > maxAgeHours * 60 * 60 * 1000;
+}
+
+/** 读取最接近 N 天前的平台 archive 条目样本（用于合集播放环比） */
+export async function loadArchiveItemsNearDaysAgo(
+  platform: GrowthPlatform,
+  daysAgo = 7,
+  toleranceDays = 2,
+): Promise<{ archivedAt?: string; items: TrendItem[] }> {
+  const archiveIndex = await readArchiveIndexFile();
+  const targetMs = Date.now() - Math.max(1, daysAgo) * 24 * 60 * 60 * 1000;
+  const toleranceMs = Math.max(1, toleranceDays) * 24 * 60 * 60 * 1000;
+  const candidates = archiveIndex
+    .filter((entry) => entry.platform === platform && entry.itemCount > 0)
+    .map((entry) => ({
+      entry,
+      dist: Math.abs(new Date(entry.archivedAt).getTime() - targetMs),
+    }))
+    .filter((row) => Number.isFinite(row.dist) && row.dist <= toleranceMs)
+    .sort((a, b) => a.dist - b.dist);
+
+  const best = candidates[0]?.entry;
+  if (!best) return { items: [] };
+  const items = await readArchiveCollectionItems(best);
+  return { archivedAt: best.archivedAt, items };
+}
+
+/** 从按日合集快照读取约 N 天前的 mixPlayCount 基线（比完整 archive 轻） */
+export async function loadDramaMixSnapshotBaseline(
+  daysAgo = 7,
+  toleranceDays = 2,
+): Promise<{ observedAt?: string; items: TrendItem[] }> {
+  try {
+    await fs.mkdir(DRAMA_MIX_SNAPSHOT_DIR, { recursive: true });
+    const files = (await fs.readdir(DRAMA_MIX_SNAPSHOT_DIR))
+      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+      .sort();
+    if (!files.length) return { items: [] };
+    const targetMs = Date.now() - Math.max(1, daysAgo) * 24 * 60 * 60 * 1000;
+    const toleranceMs = Math.max(1, toleranceDays) * 24 * 60 * 60 * 1000;
+    let bestName = "";
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const name of files) {
+      const day = name.replace(/\.json$/, "");
+      const dist = Math.abs(new Date(`${day}T12:00:00+08:00`).getTime() - targetMs);
+      if (dist <= toleranceMs && dist < bestDist) {
+        bestDist = dist;
+        bestName = name;
+      }
+    }
+    if (!bestName) return { items: [] };
+    const rows = JSON.parse(await fs.readFile(path.join(DRAMA_MIX_SNAPSHOT_DIR, bestName), "utf8")) as Array<Record<string, any>>;
+    if (!Array.isArray(rows)) return { items: [] };
+    const items: TrendItem[] = rows
+      .map((row) => {
+        const mixId = String(row.mixId || "").trim();
+        const mixName = String(row.mixName || mixId).trim();
+        if (!mixId) return null;
+        return {
+          id: `mix-baseline:${mixId}`,
+          title: mixName,
+          isDrama: true,
+          dramaKind: (row.dramaKind as TrendItem["dramaKind"]) || "unknown",
+          dramaInfo: {
+            mixId,
+            mixName,
+            mixPlayCount: Number(row.mixPlayCount || 0) || undefined,
+          },
+        } satisfies TrendItem;
+      })
+      .filter(Boolean) as TrendItem[];
+    return { observedAt: bestName.replace(/\.json$/, ""), items };
+  } catch {
+    return { items: [] };
+  }
+}
+
+/** archive 优先，缺失时回退按日合集快照 */
+export async function loadDouyinDramaBaselineItems(daysAgo = 7): Promise<{
+  source: "archive" | "daily_snapshot" | "none";
+  observedAt?: string;
+  items: TrendItem[];
+}> {
+  const archive = await loadArchiveItemsNearDaysAgo("douyin", daysAgo, 2);
+  if (archive.items.some((item) => item.isDrama || item.dramaInfo?.mixId)) {
+    return { source: "archive", observedAt: archive.archivedAt, items: archive.items };
+  }
+  const snapshot = await loadDramaMixSnapshotBaseline(daysAgo, 2);
+  if (snapshot.items.length) {
+    return { source: "daily_snapshot", observedAt: snapshot.observedAt, items: snapshot.items };
+  }
+  return { source: "none", items: [] };
 }

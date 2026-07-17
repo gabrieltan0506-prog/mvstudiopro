@@ -1342,7 +1342,14 @@ function buildPlatformActivities(
     const items = (collection?.items || []).filter((item) => item.contentType !== "topic" && item.bucket !== "douyin_topics");
     // 跟随用户所选 3/7/15/30/45 窗口选 hotTopics，避免短窗仍用 30 天老样本
     const { selected: hotScored } = selectByGrowthPotential(items, { topN: 4, windowDays: hotWindowDays });
-    const hotTopics = hotScored.map((s) => s.item.title).filter(Boolean);
+    const hotTopics = hotScored.map((s) => {
+      const mixName = String(s.item.dramaInfo?.mixName || "").trim();
+      if (s.item.isDrama && mixName) {
+        const kind = s.item.dramaKind === "ai_manhua" ? "AI漫剧" : "短剧";
+        return `《${mixName}》${kind}`;
+      }
+      return s.item.title;
+    }).filter(Boolean);
     const activityLevel = items.length >= 40 ? "高" : items.length >= 15 ? "中" : "低";
     const suggestedTopics = recommendation?.topicIdeas?.slice(0, 3).map((item) => item.title)
       || snapshot?.sampleTopics?.slice(0, 3)
@@ -1354,7 +1361,9 @@ function buildPlatformActivities(
     const potentialTrack = platform === "xiaohongshu"
       ? `有潜力赛道：细分痛点解决、结果对比、方法清单、女性健康/生活方式转化。`
       : platform === "douyin"
-        ? `有潜力赛道：强开场结果流、口播解决方案流、前后对比和场景演示流。`
+        ? (items.some((item) => item.dramaKind === "ai_manhua" || item.isDrama)
+          ? `有潜力赛道：AI漫剧/短剧合集连载、强开场结果流、口播解决方案流、前后对比和场景演示流。`
+          : `有潜力赛道：强开场结果流、口播解决方案流、前后对比和场景演示流。`)
         : platform === "bilibili"
           ? `有潜力赛道：案例拆解、方法复盘、系列教程、专业信任创建。`
           : platform === "kuaishou"
