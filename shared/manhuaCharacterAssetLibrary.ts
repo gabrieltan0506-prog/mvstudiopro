@@ -515,6 +515,22 @@ export const MANHUA_COUPLE_PACKS: ManhuaCouplePack[] = [
     maleId: "char_m_09",
     artStyleId: "manga_2d",
   },
+  {
+    id: "diplomacy_edge",
+    labelZh: "外交锋线",
+    blurbZh: "顾清晏 × 陆淮安 · 翻译与外交官",
+    femaleId: "char_f_12",
+    maleId: "char_m_10",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "jewel_collect",
+    labelZh: "珠宝与收藏",
+    blurbZh: "沈听雪 × 陆沉 · 精致对深沉",
+    femaleId: "char_f_11",
+    maleId: "char_m_05",
+    artStyleId: "cg_drama",
+  },
 ];
 
 export function getManhuaCouplePackById(id: string): ManhuaCouplePack | null {
@@ -757,6 +773,8 @@ export function recommendManhuaCouplePacksFromTopic(topic: string): {
     if (/霸总|职场|都市|商战/.test(t) && p.id === "urban_cold") score += 3;
     if (/治愈|温和|甜|恋爱/.test(t) && p.id === "heal_soft") score += 4;
     if (/赛车|速度|张扬|轻松|漫画/.test(t) && p.id === "speed_edge") score += 3;
+    if (/外交|翻译|国际/.test(t) && p.id === "diplomacy_edge") score += 4;
+    if (/珠宝|收藏|精致/.test(t) && p.id === "jewel_collect") score += 3;
     return { id: p.id, score };
   })
     .filter((x) => x.score > 0)

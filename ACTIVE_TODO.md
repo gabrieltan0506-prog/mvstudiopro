@@ -1,6 +1,6 @@
 # 动态 TDL · 工作区置顶
 
-**最后刷新：** 2026-07-17 16:35
+**最后刷新：** 2026-07-17 16:45
 
 ## 铁律
 - 开 PR ≥15 分钟 · Deploy success 才能合下一刀
@@ -9,8 +9,8 @@
 
 ## 此刻
 - [x] #805 角色卡主路径 MERGED · Fly 绿
-- [ ] `feat/manhua-character-card-gallery` 跟进批（**39 commits / 未开 PR**）
-  - 选人/套组/筛选/快捷键/收藏协作/精简模式
-  - 已拆 `ManhuaDualCompareStrip` + `manhuaCharacterGalleryStorage`
-  - 静态 verify + vitest 绿；本地可验，线上仍以 #805 Fly 为准
+- [ ] `feat/manhua-character-card-gallery` 跟进批（**48+ commits / 未开 PR**）
+  - 10 套组 · 工作区导入导出 · 精简模式 · 全套快捷键
+  - 已拆：DualCompare / TriView / LibraryCard / SheetPreview / storage
+  - 线上仍以 #805 Fly 验收；本批只在分支
 - 排队：`feat/seedance-probe-cli`

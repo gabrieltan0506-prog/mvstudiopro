@@ -88,7 +88,7 @@ describe("manhuaCharacterAssetLibrary", () => {
   });
 
   it("couple packs and temperament packs stay consistent", () => {
-    expect(MANHUA_COUPLE_PACKS.length).toBeGreaterThanOrEqual(6);
+    expect(MANHUA_COUPLE_PACKS.length).toBeGreaterThanOrEqual(10);
     for (const p of MANHUA_COUPLE_PACKS) {
       expect(getManhuaCharacterById(p.femaleId)?.gender).toBe("female");
       expect(getManhuaCharacterById(p.maleId)?.gender).toBe("male");
