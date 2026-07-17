@@ -64,7 +64,7 @@ import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolve
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
 import { buildAiManhuaRisingBoard } from "./growth/aiManhuaRising";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadArchiveItemsNearDaysAgo, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
@@ -4873,7 +4873,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 try {
                   const douyinItems = ((store.collections as any)?.douyin?.items || []) as TrendItem[];
                   if (!douyinItems.length || !input.platforms.includes("douyin")) return null;
-                  const baseline = await loadArchiveItemsNearDaysAgo("douyin", Number(input.windowDays) || 7, 2);
+                  const baseline = await loadDouyinDramaBaselineItems(Number(input.windowDays) || 7);
                   return buildAiManhuaRisingBoard({
                     items: douyinItems,
                     baselineItems: baseline.items,
@@ -6955,7 +6955,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           try {
             const douyinItems = ((store.collections as any)?.douyin?.items || []) as TrendItem[];
             if (douyinItems.length) {
-              const baseline = await loadArchiveItemsNearDaysAgo("douyin", selectedWindowDays >= 7 ? 7 : selectedWindowDays, 2);
+              const baseline = await loadDouyinDramaBaselineItems(selectedWindowDays >= 7 ? 7 : selectedWindowDays);
               const aiManhuaRising = buildAiManhuaRisingBoard({
                 items: douyinItems,
                 baselineItems: baseline.items,

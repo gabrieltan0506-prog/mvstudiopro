@@ -16,3 +16,5 @@
 - [x] CSV 导出 drama 字段
 - [x] taxonomy / growth 打分识别 AI 漫剧
 - [x] visual report evidence 注入 dramaMixNames / dramaRising
+- [x] 同 mixId 去重 + 搜索词 tag
+- [x] 按日 drama-mix-snapshots 基线（环比回退）

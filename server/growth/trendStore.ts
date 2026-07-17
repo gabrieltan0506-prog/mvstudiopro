@@ -130,6 +130,12 @@ export type TrendHistoryLedgerEntry = {
   contentLabels: string[];
   firstSeenAt: string;
   lastSeenAt: string;
+  /** 抖音合集 ID（短剧/漫剧） */
+  mixId?: string;
+  mixName?: string;
+  dramaKind?: string;
+  /** 最近一次观测到的合集总播放 */
+  mixPlayCount?: number;
 };
 
 export type TrendHistoryPlatformSummary = {
@@ -620,6 +626,10 @@ function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHist
   const normalized = normalizeItem(item);
   const key = getItemKey(normalized);
   if (!key) return null;
+  const mixId = String(normalized.dramaInfo?.mixId || "").trim() || undefined;
+  const mixName = String(normalized.dramaInfo?.mixName || "").trim() || undefined;
+  const dramaKind = normalized.dramaKind || undefined;
+  const mixPlayCount = Number(normalized.dramaInfo?.mixPlayCount || 0) || undefined;
   return {
     key,
     bucket: String(normalized.bucket || normalized.contentType || "default").trim() || "default",
@@ -628,6 +638,10 @@ function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHist
     contentLabels: normalizeLabels(normalized.contentLabels),
     firstSeenAt: observedAt,
     lastSeenAt: observedAt,
+    mixId,
+    mixName,
+    dramaKind,
+    mixPlayCount,
   };
 }
 
@@ -883,16 +897,75 @@ async function updateHistoryFromCollections(
         contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
         firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
         lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+        mixId: entry.mixId || current.mixId,
+        mixName: entry.mixName || current.mixName,
+        dramaKind: entry.dramaKind && entry.dramaKind !== "unknown"
+          ? entry.dramaKind
+          : (current.dramaKind || entry.dramaKind),
+        mixPlayCount: Math.max(current.mixPlayCount || 0, entry.mixPlayCount || 0) || undefined,
       };
     }
     await writeHistoryLedger(platform, ledger);
     touched.add(platform);
+    if (platform === "douyin") {
+      await appendDramaMixDailySnapshot(collection);
+    }
   }
   if (touched.size) {
     await refreshHistorySummary(store, Array.from(touched));
   } else if (!store.history) {
     store.history = createEmptyHistoryState();
   }
+}
+
+const DRAMA_MIX_SNAPSHOT_DIR = path.join(STORE_DIR, "drama-mix-snapshots");
+
+async function appendDramaMixDailySnapshot(collection: PlatformTrendCollection) {
+  const byMix = new Map<string, {
+    mixId: string;
+    mixName: string;
+    dramaKind?: string;
+    mixPlayCount: number;
+    observedAt: string;
+  }>();
+  for (const item of collection.items || []) {
+    if (!item.isDrama && !item.dramaInfo?.mixId) continue;
+    const mixId = String(item.dramaInfo?.mixId || "").trim();
+    if (!mixId) continue;
+    const mixPlayCount = Number(item.dramaInfo?.mixPlayCount || 0);
+    const prev = byMix.get(mixId);
+    if (!prev || mixPlayCount >= prev.mixPlayCount) {
+      byMix.set(mixId, {
+        mixId,
+        mixName: String(item.dramaInfo?.mixName || item.title || mixId).trim(),
+        dramaKind: item.dramaKind,
+        mixPlayCount,
+        observedAt: collection.collectedAt || nowShanghaiIso(),
+      });
+    }
+  }
+  if (!byMix.size) return;
+  await fs.mkdir(DRAMA_MIX_SNAPSHOT_DIR, { recursive: true });
+  const day = String(collection.collectedAt || nowShanghaiIso()).slice(0, 10);
+  const filePath = path.join(DRAMA_MIX_SNAPSHOT_DIR, `${day}.json`);
+  let existing: Array<Record<string, unknown>> = [];
+  try {
+    existing = JSON.parse(await fs.readFile(filePath, "utf8")) as Array<Record<string, unknown>>;
+    if (!Array.isArray(existing)) existing = [];
+  } catch {
+    existing = [];
+  }
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const row of existing) {
+    const id = String(row.mixId || "").trim();
+    if (id) merged.set(id, row);
+  }
+  for (const row of byMix.values()) {
+    const prev = merged.get(row.mixId);
+    const prevPlay = Number(prev?.mixPlayCount || 0);
+    if (!prev || row.mixPlayCount >= prevPlay) merged.set(row.mixId, row);
+  }
+  await fs.writeFile(filePath, `${JSON.stringify(Array.from(merged.values()), null, 2)}\n`, "utf8");
 }
 
 function resolveArchiveJsonPlainPath(filePath: string) {
@@ -1650,6 +1723,12 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
           contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
           firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
           lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+          mixId: entry.mixId || current.mixId,
+          mixName: entry.mixName || current.mixName,
+          dramaKind: entry.dramaKind && entry.dramaKind !== "unknown"
+            ? entry.dramaKind
+            : (current.dramaKind || entry.dramaKind),
+          mixPlayCount: Math.max(current.mixPlayCount || 0, entry.mixPlayCount || 0) || undefined,
         };
       }
       ledgers.set(platform, ledger);
@@ -2708,4 +2787,71 @@ export async function loadArchiveItemsNearDaysAgo(
   if (!best) return { items: [] };
   const items = await readArchiveCollectionItems(best);
   return { archivedAt: best.archivedAt, items };
+}
+
+/** 从按日合集快照读取约 N 天前的 mixPlayCount 基线（比完整 archive 轻） */
+export async function loadDramaMixSnapshotBaseline(
+  daysAgo = 7,
+  toleranceDays = 2,
+): Promise<{ observedAt?: string; items: TrendItem[] }> {
+  try {
+    await fs.mkdir(DRAMA_MIX_SNAPSHOT_DIR, { recursive: true });
+    const files = (await fs.readdir(DRAMA_MIX_SNAPSHOT_DIR))
+      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+      .sort();
+    if (!files.length) return { items: [] };
+    const targetMs = Date.now() - Math.max(1, daysAgo) * 24 * 60 * 60 * 1000;
+    const toleranceMs = Math.max(1, toleranceDays) * 24 * 60 * 60 * 1000;
+    let bestName = "";
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const name of files) {
+      const day = name.replace(/\.json$/, "");
+      const dist = Math.abs(new Date(`${day}T12:00:00+08:00`).getTime() - targetMs);
+      if (dist <= toleranceMs && dist < bestDist) {
+        bestDist = dist;
+        bestName = name;
+      }
+    }
+    if (!bestName) return { items: [] };
+    const rows = JSON.parse(await fs.readFile(path.join(DRAMA_MIX_SNAPSHOT_DIR, bestName), "utf8")) as Array<Record<string, any>>;
+    if (!Array.isArray(rows)) return { items: [] };
+    const items: TrendItem[] = rows
+      .map((row) => {
+        const mixId = String(row.mixId || "").trim();
+        const mixName = String(row.mixName || mixId).trim();
+        if (!mixId) return null;
+        return {
+          id: `mix-baseline:${mixId}`,
+          title: mixName,
+          isDrama: true,
+          dramaKind: (row.dramaKind as TrendItem["dramaKind"]) || "unknown",
+          dramaInfo: {
+            mixId,
+            mixName,
+            mixPlayCount: Number(row.mixPlayCount || 0) || undefined,
+          },
+        } satisfies TrendItem;
+      })
+      .filter(Boolean) as TrendItem[];
+    return { observedAt: bestName.replace(/\.json$/, ""), items };
+  } catch {
+    return { items: [] };
+  }
+}
+
+/** archive 优先，缺失时回退按日合集快照 */
+export async function loadDouyinDramaBaselineItems(daysAgo = 7): Promise<{
+  source: "archive" | "daily_snapshot" | "none";
+  observedAt?: string;
+  items: TrendItem[];
+}> {
+  const archive = await loadArchiveItemsNearDaysAgo("douyin", daysAgo, 2);
+  if (archive.items.some((item) => item.isDrama || item.dramaInfo?.mixId)) {
+    return { source: "archive", observedAt: archive.archivedAt, items: archive.items };
+  }
+  const snapshot = await loadDramaMixSnapshotBaseline(daysAgo, 2);
+  if (snapshot.items.length) {
+    return { source: "daily_snapshot", observedAt: snapshot.observedAt, items: snapshot.items };
+  }
+  return { source: "none", items: [] };
 }
