@@ -15,7 +15,9 @@ import {
   getManhuaCharacterPreviewUrl,
   getManhuaTemperamentPackById,
   listManhuaCharactersByGender,
+  parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
+  serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
@@ -512,6 +514,7 @@ export default function ManhuaCharacterGallery({
   );
   const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [compareId, setCompareId] = useState("");
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [customCouples, setCustomCouples] = useState<CustomCouple[]>(() => loadCustomCouples());
@@ -734,11 +737,67 @@ export default function ManhuaCharacterGallery({
     window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
+  const exportCoupleSelection = async () => {
+    const payload = serializeManhuaCoupleSelection({ femaleId, maleId, artStyleId });
+    const ok = await copyText(payload);
+    setCopyFlash(ok ? "已导出双人选型 JSON" : "导出失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  const importCoupleSelection = async () => {
+    try {
+      const raw = await navigator.clipboard.readText();
+      const parsed = parseManhuaCoupleSelection(raw);
+      if (!parsed || (!parsed.femaleId && !parsed.maleId)) {
+        setCopyFlash("剪贴板无有效双人选型");
+        window.setTimeout(() => setCopyFlash(""), 1800);
+        return;
+      }
+      if (parsed.femaleId) rememberSelect(parsed.femaleId, "female");
+      if (parsed.maleId) rememberSelect(parsed.maleId, "male");
+      if (parsed.artStyleId) onSelectArtStyle(parsed.artStyleId);
+      setCopyFlash("已导入双人选型");
+      window.setTimeout(() => setCopyFlash(""), 1600);
+    } catch {
+      setCopyFlash("无法读取剪贴板（需权限）");
+      window.setTimeout(() => setCopyFlash(""), 1800);
+    }
+  };
+
+  const clearLibraryFilters = () => {
+    setLibraryQuery("");
+    setTagFilter("");
+    setJobFilter("");
+    setPackFilterId("");
+    setFavoritesOnly(false);
+    setSortMode("default");
+  };
+
+  const hasActiveFilters = Boolean(
+    libraryQuery || tagFilter || jobFilter || packFilterId || favoritesOnly || sortMode !== "default",
+  );
+
+  const compareCharacter =
+    compareId && compareId !== selectedInTab ? getManhuaCharacterById(compareId) : null;
+  const selectedForCompare = selectedInTab ? getManhuaCharacterById(selectedInTab) : null;
+
+  useEffect(() => {
+    setCompareId("");
+  }, [libraryTab]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (disabled) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (e.key === "Escape") {
+        if (hasActiveFilters || compareId) {
+          e.preventDefault();
+          clearLibraryFilters();
+          setCompareId("");
+        }
         return;
       }
       if (e.key === "r" || e.key === "R") {
@@ -749,6 +808,11 @@ export default function ManhuaCharacterGallery({
       if ((e.key === "f" || e.key === "F") && selectedInTab) {
         e.preventDefault();
         toggleFavorite(selectedInTab);
+        return;
+      }
+      if ((e.key === "c" || e.key === "C") && selectedInTab) {
+        e.preventDefault();
+        setCompareId((prev) => (prev === selectedInTab ? "" : selectedInTab));
         return;
       }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -767,7 +831,7 @@ export default function ManhuaCharacterGallery({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [disabled, filteredPool, selectedInTab, libraryTab]);
+  }, [disabled, filteredPool, selectedInTab, libraryTab, hasActiveFilters, compareId]);
 
   useEffect(() => {
     if (!selectedInTab || !gridRef.current) return;
@@ -783,19 +847,6 @@ export default function ManhuaCharacterGallery({
       dense: denseGrid,
     });
   }, [libraryTab, packFilterId, sortMode, denseGrid]);
-
-  const clearLibraryFilters = () => {
-    setLibraryQuery("");
-    setTagFilter("");
-    setJobFilter("");
-    setPackFilterId("");
-    setFavoritesOnly(false);
-    setSortMode("default");
-  };
-
-  const hasActiveFilters = Boolean(
-    libraryQuery || tagFilter || jobFilter || packFilterId || favoritesOnly || sortMode !== "default",
-  );
 
   const focusLibrary = (gender: ManhuaCharacterGender) => {
     setLibraryTab(gender);
@@ -827,6 +878,22 @@ export default function ManhuaCharacterGallery({
             className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
           >
             复制双人锚点
+          </button>
+          <button
+            type="button"
+            disabled={disabled || (!femaleId && !maleId)}
+            onClick={() => void exportCoupleSelection()}
+            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            导出双人选型
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => void importCoupleSelection()}
+            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            导入双人选型
           </button>
           {onClearManual ? (
             <button
@@ -1327,9 +1394,47 @@ export default function ManhuaCharacterGallery({
             </div>
           </div>
         ) : null}
-        <div className="mb-2 text-[10px] text-white/40">
-          悬停预览三视图 · 右键钉住 · ★收藏 · 随机换人 / R · F 收藏当前 · ←/→ 换人
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-white/40">
+          <span>悬停三视图 · 右键钉住 · ★收藏 · R 随机 · F 收藏 · C 钉对比 · Esc 清筛选 · ←/→ 换人</span>
+          <button
+            type="button"
+            disabled={disabled || !selectedInTab}
+            onClick={() =>
+              setCompareId((prev) => (prev && prev === selectedInTab ? "" : selectedInTab || ""))
+            }
+            className="text-white/60 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            {compareId === selectedInTab ? "取消对比钉" : "钉住当前对比"}
+          </button>
         </div>
+        {compareCharacter && selectedForCompare ? (
+          <div className="mb-3 grid gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 p-2 sm:grid-cols-2">
+            <div>
+              <div className="mb-1 text-[10px] font-semibold text-violet-100/80">
+                对比钉 · {compareCharacter.nameZh}
+              </div>
+              <CharacterSheetPreview
+                character={compareCharacter}
+                accent={libraryTab === "female" ? "cyan" : "amber"}
+                artStyleId={artStyleId}
+                compact
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[10px] font-semibold text-white/70">
+                当前选 · {selectedForCompare.nameZh}
+              </div>
+              <CharacterSheetPreview
+                character={selectedForCompare}
+                accent={libraryTab === "female" ? "cyan" : "amber"}
+                artStyleId={artStyleId}
+                compact
+              />
+            </div>
+          </div>
+        ) : compareId && compareId === selectedInTab ? (
+          <p className="mb-2 text-[10px] text-violet-100/70">已钉住对比基准，用 ←/→ 换到另一人即可左右对照</p>
+        ) : null}
         <div
           ref={gridRef}
           className={`grid max-h-[420px] overflow-y-auto pr-1 ${

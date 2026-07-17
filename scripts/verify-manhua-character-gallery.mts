@@ -13,9 +13,11 @@ import {
   characterMatchesTemperamentPack,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
+  parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
   recommendManhuaArtStyleFromTopic,
   recommendManhuaCharactersFromTopic,
+  serializeManhuaCoupleSelection,
   serializeManhuaFavoriteIds,
 } from "../shared/manhuaCharacterAssetLibrary";
 
@@ -87,6 +89,21 @@ const favJson = serializeManhuaFavoriteIds(["char_f_01", "char_m_02", "nope"]);
 const favParsed = parseManhuaFavoriteIds(favJson);
 if (favParsed.length !== 2 || !favParsed.includes("char_f_01")) bad("收藏序列化往返");
 else ok("收藏序列化往返");
+
+const coupleJson = serializeManhuaCoupleSelection({
+  femaleId: "char_f_01",
+  maleId: "char_m_02",
+  artStyleId: "photoreal",
+});
+const coupleParsed = parseManhuaCoupleSelection(coupleJson);
+if (
+  !coupleParsed ||
+  coupleParsed.femaleId !== "char_f_01" ||
+  coupleParsed.maleId !== "char_m_02" ||
+  coupleParsed.artStyleId !== "photoreal"
+) {
+  bad("双人选型序列化往返");
+} else ok("双人选型序列化往返");
 
 if (failed) {
   console.error(`\n验收失败：${failed} 项`);

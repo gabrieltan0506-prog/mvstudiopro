@@ -539,6 +539,62 @@ export function parseManhuaFavoriteIds(raw: string): string[] {
     .filter((id) => Boolean(getManhuaCharacterById(id)));
 }
 
+/** 当前双人选型导出（可粘贴给协作 / 以后导入） */
+export function serializeManhuaCoupleSelection(opts: {
+  femaleId?: string | null;
+  maleId?: string | null;
+  artStyleId?: string | null;
+}): string {
+  const femaleId = String(opts.femaleId || "").trim();
+  const maleId = String(opts.maleId || "").trim();
+  const artStyleId = String(opts.artStyleId || "").trim() || undefined;
+  return JSON.stringify(
+    {
+      v: 1,
+      kind: "manhua-character-couple",
+      femaleId: femaleId && getManhuaCharacterById(femaleId) ? femaleId : "",
+      maleId: maleId && getManhuaCharacterById(maleId) ? maleId : "",
+      artStyleId,
+    },
+    null,
+    0,
+  );
+}
+
+export function parseManhuaCoupleSelection(raw: string): {
+  femaleId: string;
+  maleId: string;
+  artStyleId?: ManhuaArtStyleId;
+} | null {
+  try {
+    const parsed = JSON.parse(String(raw || "").trim()) as {
+      kind?: string;
+      femaleId?: unknown;
+      maleId?: unknown;
+      artStyleId?: unknown;
+    };
+    if (!parsed || parsed.kind !== "manhua-character-couple") return null;
+    const femaleId = String(parsed.femaleId || "");
+    const maleId = String(parsed.maleId || "");
+    const f = getManhuaCharacterById(femaleId);
+    const m = getManhuaCharacterById(maleId);
+    if ((!femaleId || !f || f.gender !== "female") && (!maleId || !m || m.gender !== "male")) {
+      return null;
+    }
+    const styleRaw = String(parsed.artStyleId || "");
+    const artStyleId = MANHUA_ART_STYLE_PRESETS.some((p) => p.id === styleRaw)
+      ? (styleRaw as ManhuaArtStyleId)
+      : undefined;
+    return {
+      femaleId: f?.gender === "female" ? femaleId : "",
+      maleId: m?.gender === "male" ? maleId : "",
+      artStyleId,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 题材关键词 → 气质标签种子（4.B 自动套用） */
 const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["清冷", "克制", "冷感", "疏离", "高冷"], tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },
