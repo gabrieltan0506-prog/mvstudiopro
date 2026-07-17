@@ -819,7 +819,7 @@ export default function OmniCanvas() {
                         : "border-cyan-400/20 bg-black/40"
                     }`}
                   >
-                    <label className="block text-[11px] text-cyan-200/70">女主</label>
+                    <label className="block text-[11px] text-cyan-200/70">女主（已铺可同步）</label>
                     <select
                       value={factoryFemaleId}
                       onChange={(e) => {
@@ -850,7 +850,7 @@ export default function OmniCanvas() {
                         : "border-amber-400/20 bg-black/40"
                     }`}
                   >
-                    <label className="block text-[11px] text-amber-200/70">男主</label>
+                    <label className="block text-[11px] text-amber-200/70">男主（已铺可同步）</label>
                     <select
                       value={factoryMaleId}
                       onChange={(e) => {
