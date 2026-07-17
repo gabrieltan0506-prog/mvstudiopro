@@ -25,6 +25,33 @@ import {
 const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
 const FAV_LS_KEY = "mv-manhua-character-fav-v1";
 const CUSTOM_COUPLE_LS_KEY = "mv-manhua-character-custom-couples-v1";
+const LIBRARY_PREFS_LS_KEY = "mv-manhua-character-library-prefs-v1";
+
+type LibraryPrefs = {
+  tab?: ManhuaCharacterGender;
+  packFilterId?: string;
+  sortMode?: "default" | "name" | "age";
+  dense?: boolean;
+};
+
+function loadLibraryPrefs(): LibraryPrefs {
+  try {
+    const raw = localStorage.getItem(LIBRARY_PREFS_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as LibraryPrefs;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLibraryPrefs(prefs: LibraryPrefs) {
+  try {
+    localStorage.setItem(LIBRARY_PREFS_LS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore */
+  }
+}
 
 type CustomCouple = {
   id: string;
@@ -363,8 +390,14 @@ function LibraryCard({
           ) : null}
         </div>
         <div className="px-2 py-1.5">
-          <div className="truncate text-[12px] font-semibold text-white">{character.nameZh}</div>
-          <div className="truncate text-[10px] text-white/45">{character.temperamentTags.slice(0, 3).join(" · ")}</div>
+          <div className="flex items-baseline justify-between gap-1">
+            <div className="truncate text-[12px] font-semibold text-white">{character.nameZh}</div>
+            {character.age ? <span className="shrink-0 text-[10px] text-white/35">{character.age}</span> : null}
+          </div>
+          <div className="truncate text-[10px] text-white/45">
+            {character.jobZh}
+            {character.temperamentTags.length ? ` · ${character.temperamentTags.slice(0, 2).join(" · ")}` : ""}
+          </div>
         </div>
       </button>
       <button
@@ -466,12 +499,18 @@ export default function ManhuaCharacterGallery({
   onGenerateSameLayout,
   reasonZh,
 }: Props) {
-  const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
+  const initialPrefs = useMemo(() => loadLibraryPrefs(), []);
+  const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>(
+    () => initialPrefs.tab || "female",
+  );
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [jobFilter, setJobFilter] = useState("");
-  const [packFilterId, setPackFilterId] = useState("");
-  const [sortMode, setSortMode] = useState<"default" | "name" | "age">("default");
+  const [packFilterId, setPackFilterId] = useState(() => initialPrefs.packFilterId || "");
+  const [sortMode, setSortMode] = useState<"default" | "name" | "age">(
+    () => initialPrefs.sortMode || "default",
+  );
+  const [denseGrid, setDenseGrid] = useState(() => Boolean(initialPrefs.dense));
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
@@ -735,6 +774,28 @@ export default function ManhuaCharacterGallery({
     const el = gridRef.current.querySelector<HTMLElement>(`[data-character-id="${selectedInTab}"]`);
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [selectedInTab, libraryTab, filteredPool.length]);
+
+  useEffect(() => {
+    saveLibraryPrefs({
+      tab: libraryTab,
+      packFilterId: packFilterId || undefined,
+      sortMode,
+      dense: denseGrid,
+    });
+  }, [libraryTab, packFilterId, sortMode, denseGrid]);
+
+  const clearLibraryFilters = () => {
+    setLibraryQuery("");
+    setTagFilter("");
+    setJobFilter("");
+    setPackFilterId("");
+    setFavoritesOnly(false);
+    setSortMode("default");
+  };
+
+  const hasActiveFilters = Boolean(
+    libraryQuery || tagFilter || jobFilter || packFilterId || favoritesOnly || sortMode !== "default",
+  );
 
   const focusLibrary = (gender: ManhuaCharacterGender) => {
     setLibraryTab(gender);
@@ -1089,6 +1150,26 @@ export default function ManhuaCharacterGallery({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setDenseGrid((v) => !v)}
+            className={`rounded-lg border px-2.5 py-1.5 text-[11px] disabled:opacity-40 ${
+              denseGrid
+                ? "border-white/30 bg-white/10 text-white"
+                : "border-white/15 bg-white/5 text-white/70"
+            }`}
+          >
+            {denseGrid ? "紧凑" : "宽松"}
+          </button>
+          <button
+            type="button"
+            disabled={disabled || !hasActiveFilters}
+            onClick={clearLibraryFilters}
+            className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
+          >
+            清空筛选
+          </button>
           <span className="text-[10px] text-white/35">
             {filteredPool.length}/{pool.length}
           </span>
@@ -1251,7 +1332,11 @@ export default function ManhuaCharacterGallery({
         </div>
         <div
           ref={gridRef}
-          className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4"
+          className={`grid max-h-[420px] overflow-y-auto pr-1 ${
+            denseGrid
+              ? "grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5"
+              : "grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4"
+          }`}
           role="listbox"
           aria-label={`${libraryTab === "female" ? "女主" : "男主"}角色库`}
         >
