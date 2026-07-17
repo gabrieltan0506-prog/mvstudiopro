@@ -105,4 +105,13 @@ describe("manhuaSceneAssetLibrary", () => {
     expect(recommendManhuaSceneFromTopic("克隆舱禁区实验").sceneId).toBe("scene_18");
   });
 
+
+  it("recommends 密室 from 证物袋", () => {
+    expect(recommendManhuaSceneFromTopic("证物袋案发现场").sceneId).toBe("scene_19");
+  });
+
+  it("recommends 黑客 from 暗网", () => {
+    expect(recommendManhuaSceneFromTopic("暗网入侵终端").sceneId).toBe("scene_20");
+  });
+
 });
