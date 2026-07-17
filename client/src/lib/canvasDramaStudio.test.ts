@@ -51,6 +51,17 @@ describe("canvasDramaStudio factory", () => {
     expect(bible.prompt).toContain("【角色库锚点】");
   });
 
+  it("injects motion prompt craft into clip and omni_edit", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "产品拆解种草",
+      motionPromptIds: ["product_05_exploded_view"],
+    });
+    const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
+    const omni = blocks.find((b) => b.id.startsWith("omni_edit-"))!;
+    expect(clip.prompt).toContain("爆炸拆解");
+    expect(omni.prompt).toContain("【包装动效手法】");
+  });
+
   it("infers genre from topic when genreId omitted", () => {
     const spawned = spawnManhuaDramaStudio({
       topic: "星际飞船舷窗离别",

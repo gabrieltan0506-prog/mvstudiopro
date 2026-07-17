@@ -22,6 +22,11 @@ import {
 import { getManhuaSceneTemplate, listManhuaScenes } from "@shared/manhuaSceneAssetLibrary";
 import { listManhuaCharactersByGender } from "@shared/manhuaCharacterAssetLibrary";
 import {
+  MOTION_PROMPT_BANK,
+  MOTION_PROMPT_CATEGORY_LABEL_ZH,
+  type MotionPromptCategory,
+} from "@shared/motionPromptBank";
+import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
   MANHUA_WRITER_EPISODE_MIN,
@@ -78,6 +83,7 @@ export default function OmniCanvas() {
   const [factorySceneId, setFactorySceneId] = useState("");
   const [factoryFemaleId, setFactoryFemaleId] = useState("");
   const [factoryMaleId, setFactoryMaleId] = useState("");
+  const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
@@ -106,6 +112,18 @@ export default function OmniCanvas() {
     () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
     [factoryFemaleId, factoryMaleId],
   );
+  const selectedMotionIds = useMemo(
+    () => (factoryMotionId.trim() ? [factoryMotionId.trim()] : []),
+    [factoryMotionId],
+  );
+  const motionGrouped = useMemo(() => {
+    const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
+    return cats.map((category) => ({
+      category,
+      label: MOTION_PROMPT_CATEGORY_LABEL_ZH[category],
+      items: MOTION_PROMPT_BANK.filter((e) => e.category === category),
+    }));
+  }, []);
   const writerContext = useMemo(() => {
     if (!writerConfirmed || !writerPack) return undefined;
     return composeWriterPackFactoryContext(writerPack, writerFocusEpisode);
@@ -176,6 +194,7 @@ export default function OmniCanvas() {
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
         characterIds: selectedCharacterIds,
+        motionPromptIds: selectedMotionIds,
         writerContext,
         includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
       });
@@ -193,7 +212,16 @@ export default function OmniCanvas() {
       saveCanvasState(spawned.blocks, spawned.edges);
       return spawned;
     },
-    [blocks, edges, factoryGenreId, factorySceneId, selectedCharacterIds, writerContext, directorUnlocked],
+    [
+      blocks,
+      edges,
+      factoryGenreId,
+      factorySceneId,
+      selectedCharacterIds,
+      selectedMotionIds,
+      writerContext,
+      directorUnlocked,
+    ],
   );
 
   const expandWriterRoom = useCallback(async () => {
@@ -250,6 +278,7 @@ export default function OmniCanvas() {
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
       characterIds: selectedCharacterIds,
+      motionPromptIds: selectedMotionIds,
       writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
       includeDirectorCraft: true,
     });
@@ -264,6 +293,7 @@ export default function OmniCanvas() {
     writerPack,
     factoryTopic,
     selectedCharacterIds,
+    selectedMotionIds,
     factoryGenreId,
     factorySceneId,
     writerFocusEpisode,
@@ -627,6 +657,30 @@ export default function OmniCanvas() {
                 </p>
               )}
 
+              <div className="mt-3 max-w-md">
+                <label className="block text-[11px] text-white/45">包装动效（可选 · 1 条）</label>
+                <select
+                  value={factoryMotionId}
+                  onChange={(e) => setFactoryMotionId(e.target.value)}
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                >
+                  <option value="">不指定</option>
+                  {motionGrouped.map((g) => (
+                    <optgroup key={g.category} label={g.label}>
+                      {g.items.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {String(e.no).padStart(2, "0")} {e.nameZh}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-white/30">
+                  注入微动成片 / 视频改写节点；与拍摄手法库分表。
+                </p>
+              </div>
+
               <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/8 pt-3">
                 {stageChipStatus.map((s) => (
                   <span
@@ -662,6 +716,7 @@ export default function OmniCanvas() {
                       genreId: factoryGenreId || undefined,
                       sceneId: factorySceneId || undefined,
                       characterIds: selectedCharacterIds,
+                      motionPromptIds: selectedMotionIds,
                       writerContext,
                       includeDirectorCraft: true,
                     });
