@@ -1,5 +1,7 @@
 /**
  * Canvas geminiScript：Pro 瞬时 503/429 时回退 Flash（角色卡历史上易挂）。
+ * 主路径与回退都走 **Vertex IAM**（`aiplatform` + Bearer），禁止改成 `GEMINI_API_KEY` /
+ * `generativelanguage`。密钥在 Fly，不在本机。
  * 对外错误文案仍只说「算力紧张」，不泄漏模型名。
  */
 
