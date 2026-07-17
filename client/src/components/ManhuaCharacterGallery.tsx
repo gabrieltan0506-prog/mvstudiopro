@@ -31,6 +31,39 @@ type Props = {
   reasonZh?: string;
 };
 
+/** 设定卡下半 FRONT/SIDE/BACK：三栏各自裁切，而不是整条糊一层标签 */
+function TriViewStrip({ url, compact }: { url: string; compact?: boolean }) {
+  const h = compact ? "h-24" : "h-28";
+  const panels: Array<{ label: string; bgPos: string }> = [
+    { label: "正面", bgPos: "0% 100%" },
+    { label: "侧面", bgPos: "50% 100%" },
+    { label: "背面", bgPos: "100% 100%" },
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-1.5">
+      {panels.map((p) => (
+        <div key={p.label} className={`relative overflow-hidden rounded-md border border-white/10 bg-black/50 ${h}`}>
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url(${url})`,
+              backgroundRepeat: "no-repeat",
+              // 宽×3 取下半三视图之一；高放大以锁底部全身条
+              backgroundSize: "300% 255%",
+              backgroundPosition: p.bgPos,
+            }}
+            role="img"
+            aria-label={p.label}
+          />
+          <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[9px] font-semibold tracking-wide text-white/85">
+            {p.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CharacterSheetPreview({
   character,
   accent,
@@ -103,22 +136,7 @@ function CharacterSheetPreview({
                 已锁定妆造
               </span>
             </div>
-            {/* 设定卡下半为 FRONT/SIDE/BACK 横排 */}
-            <div
-              className={`relative overflow-hidden rounded-lg border border-white/10 bg-black/60 ${compact ? "h-24" : "h-28"}`}
-            >
-              <img
-                src={url}
-                alt={`${character.nameZh} 三视图`}
-                className="absolute inset-0 h-[255%] w-full object-cover object-bottom"
-                loading="lazy"
-              />
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 grid grid-cols-3 bg-gradient-to-t from-black/70 to-transparent px-1 pb-1 pt-4 text-center text-[9px] font-semibold tracking-wide text-white/80">
-                <span>正面</span>
-                <span>侧面</span>
-                <span>背面</span>
-              </div>
-            </div>
+            <TriViewStrip url={url} compact={compact} />
           </div>
         </>
       ) : (
@@ -195,19 +213,12 @@ function LibraryCard({
       </button>
 
       {showPreview && url ? (
-        <div className="pointer-events-none absolute left-1/2 top-0 z-30 w-56 -translate-x-1/2 -translate-y-[92%] rounded-xl border border-white/20 bg-[#0c081c]/95 p-2 shadow-2xl backdrop-blur">
+        <div className="pointer-events-none absolute left-1/2 top-0 z-30 w-64 -translate-x-1/2 -translate-y-[92%] rounded-xl border border-white/20 bg-[#0c081c]/95 p-2 shadow-2xl backdrop-blur">
           <div className="mb-1 flex items-center justify-between text-[10px] font-semibold text-white/70">
             <span>预览妆造 · 三视图</span>
             {pinned ? <span className="text-cyan-200/80">已钉住</span> : null}
           </div>
-          <div className="relative h-24 overflow-hidden rounded-lg border border-white/10">
-            <img src={url} alt="" className="absolute inset-0 h-[255%] w-full object-cover object-bottom" />
-            <div className="absolute inset-x-0 bottom-0 grid grid-cols-3 bg-black/55 py-0.5 text-center text-[8px] text-white/85">
-              <span>正</span>
-              <span>侧</span>
-              <span>背</span>
-            </div>
-          </div>
+          <TriViewStrip url={url} compact />
           <div className="mt-1 truncate text-[10px] text-white/55">
             {character.nameZh} · {character.jobZh}
           </div>
