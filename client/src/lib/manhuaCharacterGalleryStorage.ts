@@ -11,6 +11,7 @@ export const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
 export const FAV_LS_KEY = "mv-manhua-character-fav-v1";
 export const CUSTOM_COUPLE_LS_KEY = "mv-manhua-character-custom-couples-v1";
 export const LIBRARY_PREFS_LS_KEY = "mv-manhua-character-library-prefs-v1";
+export const RECENT_COUPLE_PACK_LS_KEY = "mv-manhua-character-recent-couple-packs-v1";
 
 export type LibraryPrefs = {
   tab?: ManhuaCharacterGender;
@@ -145,6 +146,22 @@ export function saveFavoriteIds(ids: string[]): string[] {
   const next = ids.map(String).filter((id) => Boolean(getManhuaCharacterById(id))).slice(0, 24);
   try {
     localStorage.setItem(FAV_LS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next;
+}
+
+export function loadRecentCouplePackIds(): string[] {
+  return loadIdList(RECENT_COUPLE_PACK_LS_KEY, 6);
+}
+
+export function pushRecentCouplePackId(id: string): string[] {
+  const key = String(id || "").trim();
+  if (!key) return loadRecentCouplePackIds();
+  const next = [key, ...loadRecentCouplePackIds().filter((x) => x !== key)].slice(0, 6);
+  try {
+    localStorage.setItem(RECENT_COUPLE_PACK_LS_KEY, JSON.stringify(next));
   } catch {
     /* ignore */
   }

@@ -14,6 +14,7 @@ import {
   getManhuaArtStylePreset,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
+  getManhuaCouplePackById,
   getManhuaTemperamentPackById,
   listManhuaCharactersByGender,
   parseManhuaCoupleSelection,
@@ -33,7 +34,9 @@ import {
   loadCustomCouples,
   loadFavoriteIds,
   loadLibraryPrefs,
+  loadRecentCouplePackIds,
   loadRecentIds,
+  pushRecentCouplePackId,
   pushRecentId,
   saveCustomCouples,
   saveFavoriteIds,
@@ -406,6 +409,7 @@ export default function ManhuaCharacterGallery({
   const [compareId, setCompareId] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
+  const [recentCouplePackIds, setRecentCouplePackIds] = useState<string[]>(() => loadRecentCouplePackIds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [customCouples, setCustomCouples] = useState<CustomCouple[]>(() => loadCustomCouples());
   const [copyFlash, setCopyFlash] = useState("");
@@ -567,7 +571,18 @@ export default function ManhuaCharacterGallery({
       artStyleId: pack.artStyleId,
       labelZh: pack.labelZh,
     });
+    setRecentCouplePackIds(pushRecentCouplePackId(pack.id));
   };
+
+  const recentCouplePacks = useMemo(() => {
+    const out = [];
+    for (const id of recentCouplePackIds) {
+      const p = getManhuaCouplePackById(id);
+      if (p) out.push(p);
+      if (out.length >= 4) break;
+    }
+    return out;
+  }, [recentCouplePackIds]);
 
   const saveCurrentAsCustomCouple = () => {
     if (!femaleId || !maleId) return;
