@@ -120,6 +120,7 @@ export function mapGenerateVisualReportResult(
             status: String(row?.status || "steady"),
             author: row?.author ? String(row.author) : undefined,
             sampleTitle: row?.sampleTitle ? String(row.sampleTitle) : undefined,
+            url: row?.url ? String(row.url) : undefined,
           })),
         }
       : null;

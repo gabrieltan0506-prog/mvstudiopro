@@ -32,6 +32,7 @@ export type VisualReportData = {
       status: string;
       author?: string;
       sampleTitle?: string;
+      url?: string;
     }>;
   } | null;
   platformDetails: Array<{
@@ -233,7 +234,11 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     <div key={row.mixId || idx} style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", alignItems: "center", padding: "8px 10px", background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)", borderRadius: "8px" }}>
                       <span style={{ fontSize: "12px", fontWeight: 800, color: muted }}>#{idx + 1}</span>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: "13px", fontWeight: 700, color: txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.mixName}</div>
+                        <div style={{ fontSize: "13px", fontWeight: 700, color: txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {row.url ? (
+                            <a href={row.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>{row.mixName}</a>
+                          ) : row.mixName}
+                        </div>
                         <div style={{ fontSize: "10px", color: muted, marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {row.author ? `${row.author} · ` : ""}{row.sampleTitle || row.dramaKind}
                         </div>

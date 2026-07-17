@@ -427,6 +427,7 @@ type PlatformDashboard = {
       status: string;
       author?: string;
       sampleTitle?: string;
+      url?: string;
     }>;
   } | null;
 };
@@ -7675,12 +7676,8 @@ export default function PlatformPage() {
                   </div>
                   <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/60">{rising.note}</p>
                   <div className="mt-3 space-y-2">
-                    {rising.entries.slice(0, 8).map((row, idx) => (
-                      <div
-                        key={row.mixId || idx}
-                        className="grid grid-cols-[28px_1fr_auto_auto] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
-                      >
-                        <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
+                    {rising.entries.slice(0, 8).map((row, idx) => {
+                      const titleNode = (
                         <div className="min-w-0">
                           <div className="truncate font-semibold text-white">{row.mixName}</div>
                           <div className="truncate text-[10px] text-[#c9c0e6]/50">
@@ -7688,12 +7685,31 @@ export default function PlatformPage() {
                             {row.sampleTitle || row.dramaKind}
                           </div>
                         </div>
-                        <span className="font-semibold text-[#3eedff]">{fmt(row.mixPlayCount)}</span>
-                        <span className="font-semibold text-[#ff4fb8]">
-                          {row.delta7d == null ? "—" : `+${fmt(row.delta7d)}`}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                      return (
+                        <div
+                          key={row.mixId || idx}
+                          className="grid grid-cols-[28px_1fr_auto_auto] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
+                        >
+                          <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
+                          {row.url ? (
+                            <a
+                              href={row.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="min-w-0 hover:opacity-90"
+                              title="在抖音打开"
+                            >
+                              {titleNode}
+                            </a>
+                          ) : titleNode}
+                          <span className="font-semibold text-[#3eedff]">{fmt(row.mixPlayCount)}</span>
+                          <span className="font-semibold text-[#ff4fb8]">
+                            {row.delta7d == null ? "—" : `+${fmt(row.delta7d)}`}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
