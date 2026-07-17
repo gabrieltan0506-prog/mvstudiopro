@@ -14,6 +14,12 @@ import { SCENE_STEAL_PROMPT_BANK, buildSceneStealInjectBlock } from "./sceneStea
 import { getMotionPromptById } from "./motionPromptBank";
 import { PHOTOREAL_ANTI_AI_LOCK_ZH } from "./photorealCharacterPrompt";
 import { getManhuaArtStylePreset } from "./manhuaCharacterAssetLibrary";
+import {
+  groupPlatformSkillsByCategory,
+  resolvePlatformSkillCategory,
+} from "./platformSkillCategories";
+import { listImage2TemplatesByGroup } from "./image2PromptTemplates";
+import { listInfographicTemplatesByMode } from "./infographicNoteTemplates";
 
 describe("HB prompt assets", () => {
   it("infographic templates fill subject", () => {
@@ -52,5 +58,24 @@ describe("HB prompt assets", () => {
     const style = getManhuaArtStylePreset("photoreal");
     expect(style.promptZh).toContain("去 AI 味");
     expect(PHOTOREAL_ANTI_AI_LOCK_ZH).toContain("毛孔");
+  });
+
+  it("skills and templates stay categorized", () => {
+    expect(resolvePlatformSkillCategory({ id: "encyclopedic-infographic" })).toBe("templates");
+    expect(resolvePlatformSkillCategory({ id: "graphic-note-rhythm" })).toBe("graphic");
+    expect(resolvePlatformSkillCategory({ id: "ai-feed-ad" })).toBe("video");
+    const groups = groupPlatformSkillsByCategory([
+      { id: "ai-feed-ad", source: "builtin" },
+      { id: "encyclopedic-infographic", source: "builtin" },
+      { id: "graphic-note-rhythm", source: "builtin" },
+    ]);
+    expect(groups.map((g) => g.category.id)).toEqual(["graphic", "templates", "video"]);
+    expect(listImage2TemplatesByGroup().map((g) => g.group.id)).toEqual([
+      "portrait",
+      "lifestyle",
+      "scene",
+      "stylize",
+    ]);
+    expect(listInfographicTemplatesByMode().length).toBeGreaterThanOrEqual(3);
   });
 });

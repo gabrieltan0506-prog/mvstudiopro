@@ -5,6 +5,16 @@
 
 export type InfographicHeroMode = "exploded" | "split" | "hub" | "timeline";
 
+export const INFOGRAPHIC_HERO_MODE_ORDER: readonly {
+  id: InfographicHeroMode;
+  labelZh: string;
+}[] = [
+  { id: "exploded", labelZh: "单品拆解" },
+  { id: "timeline", labelZh: "发展史" },
+  { id: "hub", labelZh: "生态枢纽" },
+  { id: "split", labelZh: "对决对比" },
+] as const;
+
 export type InfographicNoteTemplate = {
   id: string;
   labelZh: string;
@@ -99,6 +109,16 @@ export const INFOGRAPHIC_NOTE_TEMPLATES: readonly InfographicNoteTemplate[] = [
     promptEn: `Role & Subject: A massive, encyclopedic 3:4 3D infographic poster on Chinese ancient artifact "{{SUBJECT}}". Hero: hyper-detailed archaeological reconstruction with exploded ritual vessel structure. Brand Atmosphere: museum dark canvas with rubbing-pattern watermarks. Hyper-Dense layer: inscription annotations, motif magnifiers, dynasty timeline strip, material analysis specs. Technical Specs: documentary museum quality, 4K. --ar 3:4`,
   },
 ];
+
+export function listInfographicTemplatesByMode(): Array<{
+  mode: (typeof INFOGRAPHIC_HERO_MODE_ORDER)[number];
+  items: InfographicNoteTemplate[];
+}> {
+  return INFOGRAPHIC_HERO_MODE_ORDER.map((mode) => ({
+    mode,
+    items: INFOGRAPHIC_NOTE_TEMPLATES.filter((t) => t.heroMode === mode.id),
+  })).filter((g) => g.items.length > 0);
+}
 
 export function getInfographicNoteTemplate(id: string): InfographicNoteTemplate | null {
   return INFOGRAPHIC_NOTE_TEMPLATES.find((t) => t.id === id) || null;

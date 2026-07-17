@@ -7873,100 +7873,109 @@ export default function PlatformPage() {
             })()}
           </div>
 
-          {/* 一级 Tab */}
-          <div className="mb-5 inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("copy")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "copy"
-                  ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <PenLine className="h-3.5 w-3.5 shrink-0" />
-              自定义文案
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (customWorkspaceTab !== "copy") setCustomWorkspaceTab("copy");
-                void handleExportCustomCopyPdf();
-              }}
-              disabled={
-                customNoteBusy ||
-                customTopicBusy ||
-                customMattingBusy ||
-                isDownloadingCustomCopyPdf ||
-                !canExportCustomCopyPdf
-              }
-              title={
-                canExportCustomCopyPdf
-                  ? "导出当前自定义文案、优化结果与生成图片为 PDF"
-                  : "请先输入文案或完成生成"
-              }
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.08)] px-3 py-2 text-[12px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.16)] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {isDownloadingCustomCopyPdf ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              ) : (
+          {/* 一级 Tab：按「文案 / 模板 / 素材」三段排布，勿打散 */}
+          <div className="mb-5 flex flex-col gap-2">
+            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
+              <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">文案</span>
+              <button
+                type="button"
+                onClick={() => setCustomWorkspaceTab("copy")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customWorkspaceTab === "copy"
+                    ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <PenLine className="h-3.5 w-3.5 shrink-0" />
+                自定义文案
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (customWorkspaceTab !== "copy") setCustomWorkspaceTab("copy");
+                  void handleExportCustomCopyPdf();
+                }}
+                disabled={
+                  customNoteBusy ||
+                  customTopicBusy ||
+                  customMattingBusy ||
+                  isDownloadingCustomCopyPdf ||
+                  !canExportCustomCopyPdf
+                }
+                title={
+                  canExportCustomCopyPdf
+                    ? "导出当前自定义文案、优化结果与生成图片为 PDF"
+                    : "请先输入文案或完成生成"
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.08)] px-3 py-2 text-[12px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.16)] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {isDownloadingCustomCopyPdf ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                )}
+                导出 PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomWorkspaceTab("topic")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customWorkspaceTab === "topic"
+                    ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <UserRound className="h-3.5 w-3.5 shrink-0" />
+                自定义选题
+              </button>
+            </div>
+            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
+              <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">模板</span>
+              <button
+                type="button"
+                onClick={() => setCustomWorkspaceTab("htmlPpt")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customWorkspaceTab === "htmlPpt"
+                    ? "bg-[linear-gradient(135deg,#818cf8,#6366f1)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
                 <FileText className="h-3.5 w-3.5 shrink-0" />
-              )}
-              导出 PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("topic")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "topic"
-                  ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <UserRound className="h-3.5 w-3.5 shrink-0" />
-              自定义选题
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("assets")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "assets"
-                  ? "bg-[linear-gradient(135deg,#a3e635,#16a34a)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <Layers className="h-3.5 w-3.5 shrink-0" />
-              素材分析
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("matting")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "matting"
-                  ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <Scissors className="h-3.5 w-3.5 shrink-0" />
-              自定义抠像
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomWorkspaceTab("htmlPpt")}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                customWorkspaceTab === "htmlPpt"
-                  ? "bg-[linear-gradient(135deg,#818cf8,#6366f1)] text-white shadow-sm"
-                  : "text-[#c9c0e6]/70 hover:text-white"
-              }`}
-            >
-              <FileText className="h-3.5 w-3.5 shrink-0" />
-              HTML PPT
-            </button>
+                HTML PPT
+              </button>
+            </div>
+            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
+              <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">素材</span>
+              <button
+                type="button"
+                onClick={() => setCustomWorkspaceTab("assets")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customWorkspaceTab === "assets"
+                    ? "bg-[linear-gradient(135deg,#a3e635,#16a34a)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5 shrink-0" />
+                素材分析
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomWorkspaceTab("matting")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                  customWorkspaceTab === "matting"
+                    ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <Scissors className="h-3.5 w-3.5 shrink-0" />
+                自定义抠像
+              </button>
+            </div>
           </div>
 
           <div className="mb-5">{platformSkillsMountPanel}</div>
