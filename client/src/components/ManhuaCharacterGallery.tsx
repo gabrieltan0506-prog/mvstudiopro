@@ -434,6 +434,21 @@ export default function ManhuaCharacterGallery({
     }
     return out;
   }, [favoriteIds, libraryTab]);
+  const similarInTab = useMemo(() => {
+    const current = pool.find((c) => c.id === (libraryTab === "female" ? femaleId : maleId));
+    if (!current) return [] as ManhuaCharacterTemplate[];
+    const tags = new Set(current.temperamentTags);
+    return pool
+      .filter((c) => c.id !== current.id)
+      .map((c) => ({
+        c,
+        score: c.temperamentTags.reduce((n, t) => n + (tags.has(t) ? 1 : 0), 0),
+      }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || a.c.nameZh.localeCompare(b.c.nameZh, "zh"))
+      .slice(0, 5)
+      .map((x) => x.c);
+  }, [pool, libraryTab, femaleId, maleId]);
 
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -773,6 +788,24 @@ export default function ManhuaCharacterGallery({
                 {t}
               </button>
             ))}
+          </div>
+        ) : null}
+        {similarInTab.length ? (
+          <div className="mb-2">
+            <div className="mb-1 text-[10px] text-white/40">同类气质（相对当前人选）</div>
+            <div className="flex flex-wrap gap-1.5">
+              {similarInTab.map((c) => (
+                <button
+                  key={`sim-${c.id}`}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => rememberSelect(c.id, libraryTab)}
+                  className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/55 hover:border-white/25 disabled:opacity-40"
+                >
+                  {c.nameZh}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
         {favoritesInTab.length ? (
