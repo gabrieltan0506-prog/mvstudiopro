@@ -724,6 +724,7 @@ export default function ManhuaCharacterGallery({
     compactUi,
     femaleId,
     maleId,
+    topicCoupleRec.packIds,
   ]);
 
   useEffect(() => {
