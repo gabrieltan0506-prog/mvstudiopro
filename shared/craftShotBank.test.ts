@@ -29,6 +29,11 @@ describe("craftShotBank ⑧A", () => {
   it("recommends craft shot from 权谋 topic", () => {
     const rec = recommendCraftShotFromTopic("女主权谋翻盘，宫墙对峙");
     expect(rec.craftShotId).toBe("light_03_high_contrast");
-    expect(rec.reasonZh).toMatch(/权谋|宫斗|对峙/);
+    expect(rec.reasonZh).toMatch(/权谋|宫斗|对峙|宫墙/);
+  });
+
+  it("recommends craft shot from 雨夜霓虹 topic", () => {
+    const rec = recommendCraftShotFromTopic("雨夜霓虹街头错过");
+    expect(rec.craftShotId).toBe("light_05_neon_spill");
   });
 });
