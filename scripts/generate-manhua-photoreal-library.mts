@@ -21,7 +21,9 @@ import {
 } from "../shared/manhuaCharacterAssetLibrary.js";
 import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+  formatPhotorealFaceShapeBlock,
 } from "../shared/photorealCharacterPrompt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -110,6 +112,8 @@ function buildHeroPrompt(c: ManhuaCharacterTemplate): string {
     `竖屏9:16半身胸像写真，东亚成年${role}「${name}」${c.age ? `${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
     "",
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    formatPhotorealFaceShapeBlock(c.id, c.gender),
+    PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
     "",
     `外形锚点（转写实，去除二次元/厚涂表述）：${c.promptZh}`,
     modest,
@@ -138,8 +142,10 @@ function buildSheetPrompt(c: ManhuaCharacterTemplate): string {
     "",
     `角色：${role}「${name}」·${c.jobZh}·气质 ${c.temperamentTags.join("·")}`,
     `外形锚点：${c.promptZh}`,
+    formatPhotorealFaceShapeBlock(c.id, c.gender),
     modest,
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
     "若有参考图：上半与三视图必须是同一张脸，锁五官与发型轮廓。",
     "",
     `【画风】${style.labelZh}`,

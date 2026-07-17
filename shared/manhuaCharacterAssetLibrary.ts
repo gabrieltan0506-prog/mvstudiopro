@@ -4,7 +4,11 @@
  * 五维公式：脸型 + 发型 + 穿搭 + 姿态 + 道具。
  */
 
-import { PHOTOREAL_ANTI_AI_LOCK_ZH } from "./photorealCharacterPrompt.js";
+import {
+  PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
+  formatPhotorealFaceShapeBlock,
+} from "./photorealCharacterPrompt.js";
 
 export type ManhuaCharacterGender = "female" | "male";
 
@@ -96,7 +100,9 @@ export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
     shortZh: "都市情感 / 校园更贴",
     promptZh:
       "画风硬锁：半写实仿真人电影剧照，真实皮肤纹理与发丝，自然光影，非卡通非塑料 CGI；角色与场景同一画风。\n" +
-      PHOTOREAL_ANTI_AI_LOCK_ZH,
+      PHOTOREAL_ANTI_AI_LOCK_ZH +
+      "\n" +
+      PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   },
   {
     id: "cg_drama",
@@ -1008,12 +1014,15 @@ export function buildManhuaCharacterPromptBlock(
   const picked = ids.map(getManhuaCharacterById).filter(Boolean) as ManhuaCharacterTemplate[];
   if (!picked.length) return "";
   const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const isPhotoreal = style.id === "photoreal";
   const linesOut = picked.map((c, i) => {
     const tags = c.temperamentTags.join("·");
     const age = c.age ? `${c.age}岁` : "";
-    const preview = getManhuaCharacterPreviewUrl(c.id);
+    const display = getManhuaCharacterDisplayName(c.id, { artStyleId: style.id });
+    const preview = getManhuaCharacterPreviewUrl(c.id, { artStyleId: style.id });
     const previewLine = preview ? `\n预览图：${preview}` : "";
-    return `${i + 1}. ${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${previewLine}`;
+    const bone = isPhotoreal ? `\n${formatPhotorealFaceShapeBlock(c.id, c.gender)}` : "";
+    return `${i + 1}. ${display}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${previewLine}`;
   });
   return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n【画风】${style.labelZh}\n${style.promptZh}\n${linesOut.join("\n")}`;
 }

@@ -3,6 +3,199 @@
  * 共用：漫剧 photoreal / 平台封面写实 / 真人情绪视频首帧。
  */
 
+/** 库图=现代定妆底；分镜换装时只锁五官骨相，服装跟场景走 */
+export const PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH = `【锁脸不锁服·跨场景】
+- 锁：五官比例、下颌/颧骨骨相、发际线与瞳色气质；跨镜头须同一人。
+- 不锁：服装、配饰、发型长短可按场景改（古装/职场/校园/仙侠等），禁止因换装换脸。
+- 库内现代定妆图仅作身份底；出古装/奇幻戏时换衣不换骨相。`.trim();
+
+/** 禁止网感锥子脸塌缩（生成 + edit 共用） */
+export const PHOTOREAL_ANTI_HOMOGENEOUS_JAW_ZH = `【反同质下巴】
+禁止全员尖下巴/小V脸/锥子脸；禁止过窄下颌与幼态过小下巴；下颌宽度与颧骨须有个体差异。`.trim();
+
+export type PhotorealFaceShapePreset = {
+  id: string;
+  labelZh: string;
+  /** 写入生图/edit 的骨相指令 */
+  promptZh: string;
+};
+
+/** 女主骨相轮盘（按角色 id 稳定取模，拉开下颌差异） */
+export const PHOTOREAL_FACE_SHAPE_FEMALE: PhotorealFaceShapePreset[] = [
+  {
+    id: "f_oval_mod",
+    labelZh: "鹅蛋·中等下颌",
+    promptZh: "鹅蛋脸，中等宽度下颌，下巴圆钝有肉，颧骨自然，禁止尖锥下巴。",
+  },
+  {
+    id: "f_round_full",
+    labelZh: "圆脸·丰润下庭",
+    promptZh: "圆脸，面颊丰润，下庭饱满，下巴短圆，下颌线柔和偏宽。",
+  },
+  {
+    id: "f_soft_square",
+    labelZh: "软方脸",
+    promptZh: "软方脸，下颌角清晰但不锋利，下巴宽度接近颧骨，面部偏短。",
+  },
+  {
+    id: "f_long_oval",
+    labelZh: "长鹅蛋·实质下巴",
+    promptZh: "略长鹅蛋脸，中庭偏长，下巴有实质长度与宽度，禁止小尖下巴。",
+  },
+  {
+    id: "f_diamond",
+    labelZh: "菱形·颧高颌收有度",
+    promptZh: "菱形脸，颧骨略高，下颌收窄但保留可见下颌角，下巴圆钝非针尖。",
+  },
+  {
+    id: "f_heart_soft",
+    labelZh: "柔心形·下庭不削",
+    promptZh: "柔心形脸，额略宽，下庭收但不削成锥子；下巴圆、有厚度。",
+  },
+  {
+    id: "f_wide_jaw",
+    labelZh: "宽下颌·国字柔化",
+    promptZh: "偏宽下颌的柔国字脸，下颌角明显，下巴方圆，气场沉稳。",
+  },
+  {
+    id: "f_oblong",
+    labelZh: "长脸·平直颌线",
+    promptZh: "长脸，两侧轮廓较直，下巴偏方圆、略长，禁止心形小V。",
+  },
+  {
+    id: "f_pear",
+    labelZh: "梨形·下庭更宽",
+    promptZh: "梨形倾向：下庭与下颌宽于颧骨，下巴宽圆，面相踏实。",
+  },
+  {
+    id: "f_oval_soft_chin",
+    labelZh: "椭圆·圆润下庭",
+    promptZh: "椭圆脸，下颌线流畅，下巴圆润中等，面颊有轻微肉感。",
+  },
+  {
+    id: "f_square_strong",
+    labelZh: "方脸·有力下颌",
+    promptZh: "方脸，下颌角有力，下巴宽平略圆，禁止幼态尖下巴。",
+  },
+  {
+    id: "f_round_short",
+    labelZh: "短圆脸",
+    promptZh: "短圆脸，中庭偏短，下巴短而圆，下颌宽柔。",
+  },
+  {
+    id: "f_sculpted",
+    labelZh: "立体·中宽下颌",
+    promptZh: "立体骨相，颧骨适中，下颌中宽，下巴圆钝带轻微棱角。",
+  },
+  {
+    id: "f_soft_long",
+    labelZh: "柔长脸",
+    promptZh: "柔和长脸，下颌线长而润，下巴圆、宽度中等偏宽。",
+  },
+  {
+    id: "f_balanced",
+    labelZh: "均衡三庭",
+    promptZh: "三庭均衡的椭圆脸，下颌与颧骨宽度接近，下巴自然圆钝。",
+  },
+];
+
+/** 男主骨相轮盘 */
+export const PHOTOREAL_FACE_SHAPE_MALE: PhotorealFaceShapePreset[] = [
+  {
+    id: "m_square_lantern",
+    labelZh: "方脸·灯笼颌",
+    promptZh: "方脸，下颌角宽厚，下巴方正有力，男性骨相清晰。",
+  },
+  {
+    id: "m_oval_mod",
+    labelZh: "鹅蛋·中宽下颌",
+    promptZh: "鹅蛋偏方，中等偏宽下颌，下巴圆钝有重量，禁止小尖下巴。",
+  },
+  {
+    id: "m_long_rect",
+    labelZh: "长方脸",
+    promptZh: "长方脸，两侧较直，下颌结实，下巴略长而宽。",
+  },
+  {
+    id: "m_round_soft",
+    labelZh: "圆润男脸",
+    promptZh: "偏圆男脸，面颊有肉，下颌柔和偏宽，下巴短圆。",
+  },
+  {
+    id: "m_diamond",
+    labelZh: "菱形·锐但不尖",
+    promptZh: "菱形脸，颧骨略高，下颌收但保留角感，下巴圆钝非锥。",
+  },
+  {
+    id: "m_wide_jaw",
+    labelZh: "宽下颌",
+    promptZh: "明显宽下颌，下颌角突出，下巴宽平，气场强。",
+  },
+  {
+    id: "m_soft_square",
+    labelZh: "软方脸",
+    promptZh: "软方脸，下颌角圆钝有轮廓，下巴中宽。",
+  },
+  {
+    id: "m_oblong",
+    labelZh: "长脸·实质下巴",
+    promptZh: "长脸，下巴有实质长度与宽度，禁止幼态小下巴。",
+  },
+  {
+    id: "m_heart_soft",
+    labelZh: "柔心形男",
+    promptZh: "额略宽的柔心形，下庭收但不尖，下巴圆有厚度。",
+  },
+  {
+    id: "m_rugged",
+    labelZh: "粗粝骨相",
+    promptZh: "颧骨与下颌都偏强，下巴方厚，皮肤纹理可见。",
+  },
+  {
+    id: "m_balanced",
+    labelZh: "均衡三庭",
+    promptZh: "三庭均衡，下颌中宽，下巴方圆自然。",
+  },
+  {
+    id: "m_narrow_long",
+    labelZh: "偏窄长脸·颌仍有力",
+    promptZh: "脸略窄而长，但下颌线有力、下巴不尖不小。",
+  },
+  {
+    id: "m_short_square",
+    labelZh: "短方面孔",
+    promptZh: "面短偏方，下颌宽，下巴短而有力。",
+  },
+  {
+    id: "m_sculpted",
+    labelZh: "立体中颌",
+    promptZh: "立体骨相，下颌中宽清晰，下巴圆钝带棱。",
+  },
+];
+
+function hashId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+/** 按角色 id 稳定取骨相（同 id 永远同一档） */
+export function getPhotorealFaceShapeForId(
+  id: string,
+  gender: "female" | "male",
+): PhotorealFaceShapePreset {
+  const table = gender === "female" ? PHOTOREAL_FACE_SHAPE_FEMALE : PHOTOREAL_FACE_SHAPE_MALE;
+  const idx = hashId(String(id || "").trim() || "x") % table.length;
+  return table[idx]!;
+}
+
+export function formatPhotorealFaceShapeBlock(id: string, gender: "female" | "male"): string {
+  const shape = getPhotorealFaceShapeForId(id, gender);
+  return [`【骨相轮盘·${shape.labelZh}】`, shape.promptZh, PHOTOREAL_ANTI_HOMOGENEOUS_JAW_ZH].join(
+    "\n",
+  );
+}
+
 /** 面部皮肤实拍级硬锁（方案 C：必须像单反真人，而非美颜/CG） */
 export const PHOTOREAL_SKIN_TEXTURE_LOCK_ZH = `【皮肤质感·必须像真人摄影】
 - 面部皮肤必须像单反实拍：清晰可见毛孔、细小皮脂纹理、脸颊与鼻翼轻微自然泛红差、极淡雀斑或细微瑕疵；可见细小绒毛（面部汗毛）在侧光下。
