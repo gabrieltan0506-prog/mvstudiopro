@@ -34,10 +34,12 @@ describe("HB prompt assets", () => {
     expect(buildImage2TemplatePrompt("i2_upscale_clarity")).toContain("4K");
   });
 
-  it("html ppt builds horizontal deck", () => {
+  it("html ppt builds horizontal deck from confirmed outline", () => {
     expect(recommendHtmlPptStyle("创业路演")).toBe("pitch_orange");
     expect(recommendHtmlPptStyle("季度复盘")).toBe("figma_timeline");
-    const pages = buildDefaultHtmlPptPages("AI 趋势", 6, "数据洞察");
+    const pitchPages = buildDefaultHtmlPptPages("融资路演", 7, "创业路演", "pitch_orange");
+    expect(pitchPages.some((p) => /解决方案|商业模式/.test(p.title))).toBe(true);
+    const pages = buildDefaultHtmlPptPages("AI 趋势", 6, "数据洞察", "dark_research");
     const html = buildHtmlPptDocument({
       title: "AI 趋势",
       styleId: "dark_research",

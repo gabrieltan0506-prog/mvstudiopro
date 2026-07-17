@@ -95,23 +95,54 @@ export function recommendHtmlPptStyle(purposeZh: string): HtmlPptStyleId {
   return "dark_research";
 }
 
-/** 无 AI 时的默认页面骨架 */
-export function buildDefaultHtmlPptPages(title: string, pageCount: number, purposeZh?: string): HtmlPptPage[] {
-  const n = Math.max(3, Math.min(16, Math.floor(pageCount || 6)));
-  const topic = String(title || "主题").trim().slice(0, 80);
-  const purpose = String(purposeZh || "汇报").trim().slice(0, 40);
-  const pages: HtmlPptPage[] = [
-    { title: topic, subtitle: `${purpose} · 网站式 PPT`, kpi: "01", note: "封面：一句话主判断" },
-    { title: "目录与叙事线", bullets: ["问题与机会", "关键洞察", "方案与路径", "数据与证明", "下一步"] },
-  ];
-  const mids = [
+/** 按风格给中段页骨架（清单确认前可编辑） */
+function midPagesForStyle(styleId: HtmlPptStyleId): HtmlPptPage[] {
+  if (styleId === "pitch_orange") {
+    return [
+      { title: "问题与机会", kpi: "WHY", bullets: ["痛点够疼", "时机窗口", "为什么是现在"] },
+      { title: "解决方案", kpi: "HOW", bullets: ["产品一句话", "核心功能", "差异化抓手"] },
+      { title: "市场与增长", kpi: "TAM", bullets: ["目标客群", "获客路径", "北极星指标"] },
+      { title: "商业模式", bullets: ["收费方式", "单位经济", "扩张杠杆"] },
+      { title: "竞争壁垒", bullets: ["护城河", "不可复制点", "风险与应对"] },
+      { title: "里程碑", bullets: ["90 天目标", "关键招聘", "融资用途"] },
+    ];
+  }
+  if (styleId === "figma_timeline") {
+    return [
+      { title: "目标与成功标准", kpi: "OKR", bullets: ["本季目标", "可验收指标", "非目标边界"] },
+      { title: "现状与缺口", bullets: ["已完成", "阻塞点", "依赖方"] },
+      { title: "路线图总览", bullets: ["Now", "Next", "Later"] },
+      { title: "里程碑时间线", bullets: ["W1–W2 对齐", "W3–W4 试点", "W5+ 扩张"] },
+      { title: "分工与节奏", bullets: ["Owner", "协作接口", "评审节点"] },
+      { title: "风险与复盘点", bullets: ["执行风险", "范围蔓延", "复盘清单"] },
+    ];
+  }
+  return [
     { title: "核心洞察", kpi: "3×", bullets: ["现状断层", "用户真需求", "可验证信号"] },
     { title: "关键数据", kpi: "72%", bullets: ["样本口径清晰", "趋势方向明确", "风险可解释"] },
+    { title: "结构拆解", bullets: ["驱动因素", "对比基准", "异常点"] },
     { title: "方案路径", bullets: ["阶段 A：验证", "阶段 B：放大", "阶段 C：系统化"] },
-    { title: "时间线", bullets: ["W1–W2 对齐", "W3–W4 试点", "W5+ 扩张"] },
     { title: "竞争与壁垒", bullets: ["差异化抓手", "护城河", "不可复制点"] },
     { title: "风险与对策", bullets: ["执行风险", "数据风险", "组织风险"] },
   ];
+}
+
+/** 默认页面清单（先出清单，确认后再生成 HTML） */
+export function buildDefaultHtmlPptPages(
+  title: string,
+  pageCount: number,
+  purposeZh?: string,
+  styleId: HtmlPptStyleId = "dark_research",
+): HtmlPptPage[] {
+  const n = Math.max(3, Math.min(16, Math.floor(pageCount || 6)));
+  const topic = String(title || "主题").trim().slice(0, 80);
+  const purpose = String(purposeZh || "汇报").trim().slice(0, 40);
+  const styleLabel = HTML_PPT_STYLES[styleId]?.labelZh || "网站式 PPT";
+  const pages: HtmlPptPage[] = [
+    { title: topic, subtitle: `${purpose} · ${styleLabel}`, kpi: "01", note: "封面：一句话主判断" },
+    { title: "目录与叙事线", bullets: ["问题与机会", "关键洞察", "方案与路径", "数据与证明", "下一步"] },
+  ];
+  const mids = midPagesForStyle(styleId);
   for (let i = 0; pages.length < n - 1 && i < mids.length; i++) pages.push(mids[i]!);
   while (pages.length < n - 1) {
     pages.push({
@@ -128,11 +159,29 @@ export function buildDefaultHtmlPptPages(title: string, pageCount: number, purpo
   return pages.slice(0, n);
 }
 
+/** 规范化用户编辑后的清单 */
+export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
+  return (pages || [])
+    .map((p) => ({
+      title: String(p?.title || "").trim().slice(0, 80),
+      subtitle: p?.subtitle ? String(p.subtitle).trim().slice(0, 120) : undefined,
+      kpi: p?.kpi ? String(p.kpi).trim().slice(0, 16) : undefined,
+      note: p?.note ? String(p.note).trim().slice(0, 160) : undefined,
+      bullets: Array.isArray(p?.bullets)
+        ? p.bullets.map((b) => String(b || "").trim()).filter(Boolean).slice(0, 8)
+        : undefined,
+    }))
+    .filter((p) => p.title)
+    .slice(0, 16);
+}
+
 export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
   const styleId = input.styleId in HTML_PPT_STYLES ? input.styleId : "dark_research";
   const styleMeta = HTML_PPT_STYLES[styleId];
   const pages = (input.pages || []).filter((p) => p && p.title);
-  const safePages = pages.length ? pages : buildDefaultHtmlPptPages(input.title, 6, input.purposeZh);
+  const safePages = pages.length
+    ? pages
+    : buildDefaultHtmlPptPages(input.title, 6, input.purposeZh, styleId);
   const title = escapeHtml(input.title || "Website PPT");
   const slidesHtml = safePages
     .map((p, i) => {
