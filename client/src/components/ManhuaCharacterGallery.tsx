@@ -429,8 +429,9 @@ export default function ManhuaCharacterGallery({
       if (!f) break;
       let mBag = mPool.filter((c) => c.id !== maleId && c.id !== f.id);
       if (!mBag.length) mBag = mPool.filter((c) => c.id !== f.id);
-      if (ageGapMax && f.age) {
-        const gapOk = mBag.filter((m) => m.age && Math.abs(m.age - f.age) <= ageGapMax);
+      if (ageGapMax && typeof f.age === "number") {
+        const fAge = f.age;
+        const gapOk = mBag.filter((m) => typeof m.age === "number" && Math.abs(m.age - fAge) <= ageGapMax);
         if (gapOk.length) mBag = gapOk;
         else if (tries < 15) continue;
       }
