@@ -30,3 +30,4 @@ defaultEnabled: false
 - `recommendCraftShotFromTopic(topic)`：题材关键词 → 1 条推荐
 - Canvas 工厂手选后锁定；可「恢复自动推荐」
 - 铺节点未选手法时，spawn 也会按题材自动注入一条
+- 已铺板：`applyFactoryPrefsToBlocks` 同步手法/动效/反推档（防抖），不必整板重铺
