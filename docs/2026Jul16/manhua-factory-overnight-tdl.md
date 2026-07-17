@@ -33,8 +33,8 @@
 3. 手动选「都市」应覆盖推断。  
 4. `pnpm run manhua:genre-probe` 应全 PASS。
 
-## 下一刀候选（未开干 · 等你接管后再说是否做）
+## 下一刀候选（续作进度）
 
-1. 题材关键词 → 推荐单一场景（如「秘境」→ scene_04）。  
-2. 工厂角色卡 503 退避/换模型。  
-3. Seedance 成片探针（贵，默认关）。  
+1. [x] 题材关键词 → 推荐单一场景（如「秘境」→ scene_04）→ 分支 `feat/scene-keyword-recommend`  
+2. [x] 工厂角色卡 503 退避/换模型 → 分支 `feat/bible-503-model-fallback`  
+3. [ ] Seedance 成片探针（贵，默认关）。  
