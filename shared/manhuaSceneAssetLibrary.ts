@@ -293,7 +293,7 @@ const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
   { sceneId: "scene_07", keys: ["长安", "街市", "市井", "灯笼商铺", "烟火气", "夜市", "花灯"] },
   { sceneId: "scene_08", keys: ["府邸", "宅斗", "庭院", "世家", "回廊", "内宅", "闺阁"] },
   { sceneId: "scene_09", keys: ["战场", "废墟", "残垣", "战旗", "大战", "攻城", "尸横"] },
-  { sceneId: "scene_10", keys: ["边塞", "城墙", "烽火", "关隘", "黄沙"] },
+  { sceneId: "scene_10", keys: ["边塞", "城墙", "烽火", "关隘", "黄沙", "戍边", "狼烟"] },
   { sceneId: "scene_12", keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙", "谈判桌", "年会"] },
   { sceneId: "scene_11", keys: ["豪宅", "豪门", "泳池", "落地窗", "别墅"] },
   { sceneId: "scene_13", keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台", "地下拳场", "黑拳", "地下赛车"] },

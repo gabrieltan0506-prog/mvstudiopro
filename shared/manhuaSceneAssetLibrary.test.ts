@@ -80,4 +80,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 战场 from 攻城", () => {
     expect(recommendManhuaSceneFromTopic("攻城大战战旗").sceneId).toBe("scene_09");
   });
+
+  it("recommends 边塞 from 狼烟", () => {
+    expect(recommendManhuaSceneFromTopic("戍边狼烟关隘").sceneId).toBe("scene_10");
+  });
 });
