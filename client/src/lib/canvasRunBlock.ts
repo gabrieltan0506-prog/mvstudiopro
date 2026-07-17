@@ -21,6 +21,8 @@ import {
   VIDEO_REVERSE_MAX_FRAMES,
   VIDEO_REVERSE_SYSTEM_PROMPT,
   buildVideoReverseUserPrompt,
+  parseVideoReverseOutputMode,
+  type VideoReverseOutputMode,
 } from "@shared/videoReversePrompt";
 
 const GEMINI_MODEL_MAP = {
@@ -170,8 +172,10 @@ async function runVideoReversePrompt(
   userHint: string,
   videoUrl: string | undefined,
   fallbackImages: CanvasVisionImage[],
+  outputMode: VideoReverseOutputMode = "zh",
 ): Promise<string> {
   let images: Array<{ url: string; mimeType?: string }> = [];
+  const mode = parseVideoReverseOutputMode(outputMode);
 
   if (videoUrl) {
     const { frames } = await extractVideoFramesFromUrl(videoUrl, {
@@ -196,7 +200,7 @@ async function runVideoReversePrompt(
         "",
         buildVideoReverseUserPrompt({
           userHint: userHint || "根据上游节拍补全八维编导分镜表与 Seedance 微动句",
-          outputMode: "zh",
+          outputMode: mode,
           targetEngine: "seedance-2.0",
         }),
       ].join("\n"),
@@ -214,6 +218,7 @@ async function runVideoReversePrompt(
       images,
       model: "gemini-3.1-pro-preview",
       targetEngine: "seedance-2.0",
+      outputMode: mode,
     }),
   });
   const json = (await resp.json()) as { ok?: boolean; markdown?: string; error?: string; message?: string };
@@ -325,7 +330,12 @@ export async function runCanvasBlock(
       prompt || "反推分镜表与 Seedance 微动句",
       refTexts,
     );
-    const text = await runVideoReversePrompt(hint, uploadedVideoUrl, visionImages);
+    const text = await runVideoReversePrompt(
+      hint,
+      uploadedVideoUrl,
+      visionImages,
+      parseVideoReverseOutputMode(block.videoReverseOutputMode),
+    );
     return { outputText: text };
   }
 

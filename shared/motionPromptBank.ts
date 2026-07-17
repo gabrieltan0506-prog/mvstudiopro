@@ -388,6 +388,41 @@ export function getMotionPromptById(id: string): MotionPromptEntry | null {
   return MOTION_PROMPT_BANK.find((e) => e.id === key) || null;
 }
 
+const TOPIC_MOTION_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
+  { keys: ["Logo", "logo", "品牌", "片头", "落版"], preferIds: ["logo_01_stroke_glow", "logo_02_giant_hammer"] },
+  { keys: ["产品", "种草", "拆解", "开箱"], preferIds: ["product_05_exploded_view", "product_01_app_demo"] },
+  { keys: ["数据", "增长", "报表", "图表"], preferIds: ["data_01_dashboard", "data_06_bar_race"] },
+  { keys: ["字幕", "口播", "大字", "标题"], preferIds: ["caption_09_word_halo", "caption_01_giant_hammer"] },
+];
+
+export type MotionPromptRecommendResult = {
+  motionId: string | null;
+  entry?: MotionPromptEntry | null;
+  reasonZh: string;
+};
+
+/** 题材 → 可选包装动效 1 条（默认不强制；UI 可自动建议） */
+export function recommendMotionPromptFromTopic(topic?: string): MotionPromptRecommendResult {
+  const t = String(topic || "").trim();
+  if (!t) {
+    return { motionId: null, entry: null, reasonZh: "未填题材时不强制包装动效（可选手选）" };
+  }
+  for (const hint of TOPIC_MOTION_HINTS) {
+    if (!hint.keys.some((k) => t.includes(k))) continue;
+    for (const id of hint.preferIds) {
+      const entry = getMotionPromptById(id);
+      if (!entry) continue;
+      const hit = hint.keys.find((k) => t.includes(k)) || hint.keys[0];
+      return {
+        motionId: entry.id,
+        entry,
+        reasonZh: `题材含「${hit}」→ 建议「${entry.nameZh}」`,
+      };
+    }
+  }
+  return { motionId: null, entry: null, reasonZh: "题材未命中包装类关键词（可选手选）" };
+}
+
 /** 注入成片/包装节点的手法块 */
 export function buildMotionPromptInjectBlock(ids: string[]): string {
   const picked = ids.map(getMotionPromptById).filter(Boolean) as MotionPromptEntry[];

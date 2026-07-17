@@ -22,7 +22,7 @@ import {
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import { buildManhuaCharacterPromptBlock } from "@shared/manhuaCharacterAssetLibrary";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
-import { buildCraftShotInjectBlock } from "@shared/craftShotBank";
+import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -74,6 +74,8 @@ export type SpawnManhuaDramaStudioOpts = {
   motionPromptIds?: string[];
   /** 拍摄手法条目 id：注入节拍 / 反推 / 静帧 */
   craftShotIds?: string[];
+  /** 编导反推输出档 */
+  videoReverseOutputMode?: "zh" | "en" | "compact";
   /** 编剧室已确认上下文（人物/道具/场景/本集+钩子） */
   writerContext?: string;
   /** 进入编导后为节拍/反推/静帧注入手法约束 */
@@ -101,7 +103,11 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const motionBlock = buildMotionPromptInjectBlock(motionPromptIds);
-  const craftShotIds = (opts.craftShotIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  let craftShotIds = (opts.craftShotIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  if (!craftShotIds.length) {
+    const autoCraft = recommendCraftShotFromTopic(opts.topic).craftShotId;
+    if (autoCraft) craftShotIds = [autoCraft];
+  }
   const craftShotBlock = buildCraftShotInjectBlock(craftShotIds);
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
   const stageOpts = {
@@ -149,6 +155,10 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   reverse.prompt = craftShotBlock ? `${reverseBase}\n\n${craftShotBlock}` : reverseBase;
   reverse.parentId = beats.id;
   reverse.height = 380;
+  reverse.videoReverseOutputMode =
+    opts.videoReverseOutputMode === "en" || opts.videoReverseOutputMode === "compact"
+      ? opts.videoReverseOutputMode
+      : "zh";
 
   const keyArt = defaultCanvasBlock("image", originX + gapX * 4, originY);
   keyArt.id = makeCanvasBlockId("keyart");

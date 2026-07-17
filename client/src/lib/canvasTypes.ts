@@ -90,6 +90,8 @@ export type CanvasBlock = {
   outputUrls: string[];
   status: CanvasBlockStatus;
   error?: string;
+  /** 编导反推输出档：zh | en | compact */
+  videoReverseOutputMode?: "zh" | "en" | "compact";
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -222,6 +224,12 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
       : block.outputUrl
         ? [block.outputUrl]
         : [],
+    videoReverseOutputMode:
+      block.videoReverseOutputMode === "en" || block.videoReverseOutputMode === "compact"
+        ? block.videoReverseOutputMode
+        : block.videoReverseOutputMode === "zh"
+          ? "zh"
+          : undefined,
   };
 }
 

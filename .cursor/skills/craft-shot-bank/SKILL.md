@@ -25,3 +25,8 @@ defaultEnabled: false
 1. 成稿只写手法词；禁止导演名、片名、「某某风」、外仓名。
 2. 一集主用 1–2 条；可微调变奏，勿混炖。
 3. 与包装动效库 `motionPromptBank` 分表：动效管片头包装，本库管叙事镜头。
+
+## 自动套用
+- `recommendCraftShotFromTopic(topic)`：题材关键词 → 1 条推荐
+- Canvas 工厂手选后锁定；可「恢复自动推荐」
+- 铺节点未选手法时，spawn 也会按题材自动注入一条
