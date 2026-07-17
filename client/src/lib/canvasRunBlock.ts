@@ -319,7 +319,15 @@ export async function runCanvasBlock(
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
   const refUrl = block.refImageUrl || upstream.visionImages[0]?.url;
-  const visionImages = upstream.visionImages.filter((i) => i.url || i.gcsUri);
+  // 防御：文档/视频 URL 绝不能进 vision（旧数据或上游误传时仍走文本链路）
+  const visionImages = upstream.visionImages.filter((i) => {
+    if (!i.url && !i.gcsUri) return false;
+    const probe = `${i.url || ""} ${i.gcsUri || ""}`;
+    if (/\.(pdf|txt|md|markdown)(\?|$)/i.test(probe)) return false;
+    if (/\.(mp4|mov|webm|m4v)(\?|$)/i.test(probe)) return false;
+    if (i.mimeType && !i.mimeType.startsWith("image/")) return false;
+    return true;
+  });
   const uploadedVideoUrl =
     block.refVideoUrl ||
     block.uploadedAssets?.find((a) => a.kind === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(a.fileName || a.url))
@@ -339,13 +347,28 @@ export async function runCanvasBlock(
     return { outputText: text };
   }
 
-  if (!prompt && !refTexts.length) {
-    throw new Error("请先填写提示词，或连接上游方块传递内容");
+  // 文本块：本块上传的 TXT/MD 若调用方未预读，这里兜底读入（与「整理文案」「文本生成」共用）
+  let docFallbackTexts: string[] = [];
+  if (block.kind === "text" || block.kind === "copy_organize") {
+    const docs = (block.uploadedAssets || []).filter(
+      (a) =>
+        a.kind === "document" ||
+        /\.(txt|md|markdown|pdf)(\?|$)/i.test(a.fileName || a.url || ""),
+    );
+    if (docs.length && !refTexts.some((t) => t.includes("【文档 "))) {
+      const { loadCanvasDocumentTexts } = await import("./canvasDocumentText");
+      docFallbackTexts = await loadCanvasDocumentTexts(docs);
+    }
+  }
+  const effectiveTexts = [...refTexts, ...docFallbackTexts];
+
+  if (!prompt && !effectiveTexts.length) {
+    throw new Error("请先填写提示词，或连接上游方块传递内容 / 上传 TXT·MD 文档");
   }
 
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    refTexts,
+    effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {

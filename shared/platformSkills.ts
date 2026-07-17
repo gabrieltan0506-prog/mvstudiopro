@@ -96,25 +96,37 @@ ${parts.join("\n\n---\n\n")}`;
   return block;
 }
 
-/** /platform 内置池（不含 Canvas-only：Seedance/漫剧/反推/场景资产） */
+/** /platform 内置池（不含 Canvas-only）。顺序对齐分类：core → graphic → templates → video → lane */
 export const PLATFORM_BUILTIN_SKILL_IDS = [
-  "director-craft",
-  "json-director-middleware",
-  "xhs-virtual-goods",
-  "cultural-diversity",
-  "lifestyle-diversity",
+  // core
   "hook-solution-cta",
   "platform-native",
   "review-safe-voice",
   "cover-stop-scroll",
-  "blue-ocean-natural",
-  "batch-arc-engagement",
+  "vivid-anti-boring",
+  // graphic
   "graphic-note-rhythm",
   "xhs-collectible-note",
+  "blue-ocean-natural",
+  "batch-arc-engagement",
+  // templates
+  "encyclopedic-infographic",
+  "image2-quick-templates",
+  "website-html-ppt",
+  "jimeng-cover",
+  // video / ads
+  "director-craft",
+  "json-director-middleware",
+  "jimeng-product-ad",
+  "jimeng-short-drama",
+  "ai-feed-ad",
+  // lane
+  "xhs-virtual-goods",
+  "cultural-diversity",
+  "lifestyle-diversity",
   "contrast-reversal-climax",
   "crossover-popsci",
   "medical-resource-library",
-  "vivid-anti-boring",
   "4season-fmcg-popsci",
   "label-debunk-copy",
   "authority-cite-endorsement",

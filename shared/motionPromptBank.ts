@@ -5,13 +5,14 @@
  * 来源抽帧参考：Downloads/2026Jul17/pr.mp4
  */
 
-export type MotionPromptCategory = "logo" | "product_ad" | "data" | "caption";
+export type MotionPromptCategory = "logo" | "product_ad" | "data" | "caption" | "scene_steal";
 
 export const MOTION_PROMPT_CATEGORY_LABEL_ZH: Record<MotionPromptCategory, string> = {
   logo: "Logo 动画",
   product_ad: "产品广告",
   data: "数据动画",
   caption: "字幕动效",
+  scene_steal: "电影抢镜",
 };
 
 export type MotionPromptEntry = {
@@ -377,6 +378,40 @@ export const MOTION_PROMPT_BANK: readonly MotionPromptEntry[] = [
     craftSummaryZh: "最多 3 层；层间距固定；收束对齐。",
     aspectHint: "9:16",
   },
+  // —— 电影抢镜 ×3（HB V5）——
+  {
+    id: "steal_01_titanic_bow",
+    category: "scene_steal",
+    no: 1,
+    nameZh: "泰坦尼克船头抢镜",
+    effectZh: "浪漫张臂名场面被真人突然闯入搅局，再霸气占位重摆姿势。",
+    whenToUseZh: "穿越漫剧、黑色幽默短视频、真人融入经典场面。",
+    craftSummaryZh:
+      "广角船头金色黄昏；@人物照片从右侧突兀闯入，夸张黑色幽默推开女主（勿血腥），再自信重摆张臂姿势；原男主背景惊慌。闯入微晃、落姿稳定。",
+    aspectHint: "either",
+  },
+  {
+    id: "steal_02_rain_kiss_interrupt",
+    category: "scene_steal",
+    no: 2,
+    nameZh: "雨中倒挂亲吻抢镜",
+    effectZh: "雨夜名场面即将亲吻时，真人推开女主并上前完成夸张电影吻。",
+    whenToUseZh: "超级英雄梗、雨夜情绪片、穿越抢戏。",
+    craftSummaryZh:
+      "锁雨夜倒挂英雄首帧；@人物照片锁脸从右侧入画轻推女主，扶面罩完成雨中吻；保留真实五官勿过度美颜。",
+    aspectHint: "either",
+  },
+  {
+    id: "steal_03_portal_cross",
+    category: "scene_steal",
+    no: 3,
+    nameZh: "时空门丝滑穿越",
+    effectZh: "真人从裂隙一侧丝滑踏入异世界，前后光影连续。",
+    whenToUseZh: "穿越漫剧开场、异世界落地、特效转场。",
+    craftSummaryZh:
+      "@人物照片从时空裂隙踏出，步伐与粒子连贯；落地轻推镜锁脸；禁止脸崩与瞬移闪现。",
+    aspectHint: "9:16",
+  },
 ] as const;
 
 export function listMotionPromptsByCategory(category: MotionPromptCategory): MotionPromptEntry[] {
@@ -399,6 +434,7 @@ const TOPIC_MOTION_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
   { keys: ["揭晓", "反转句", "擦除", "逆袭", "翻盘"], preferIds: ["caption_11_mask_wipe", "caption_07_mystery_giant"] },
   { keys: ["列举", "三点", "步骤"], preferIds: ["caption_12_stack_rise", "caption_06_interlock_blocks"] },
   { keys: ["字幕", "口播", "大字", "标题", "花字", "弹幕感", "团宠"], preferIds: ["caption_09_word_halo", "caption_01_giant_hammer"] },
+  { keys: ["抢镜", "穿越", "名场面", "泰坦尼克", "闯入"], preferIds: ["steal_01_titanic_bow", "steal_03_portal_cross"] },
 ];
 
 export type MotionPromptRecommendResult = {

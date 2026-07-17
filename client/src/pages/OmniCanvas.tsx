@@ -358,7 +358,7 @@ export default function OmniCanvas() {
     selectedCharacterIds,
   ]);
   const motionGrouped = useMemo(() => {
-    const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
+    const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption", "scene_steal"];
     return cats.map((category) => ({
       category,
       label: MOTION_PROMPT_CATEGORY_LABEL_ZH[category],

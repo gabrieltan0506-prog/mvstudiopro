@@ -1,6 +1,8 @@
 import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
+import HomeCursorReveal from "../components/HomeCursorReveal";
+import HomeScrollVideo from "../components/HomeScrollVideo";
 import HomePricing from "../components/HomePricing";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
@@ -8,7 +10,7 @@ import HomeInviteApply from "../components/HomeInviteApply";
 import SampleReportDownload from "../components/SampleReportDownload";
 
 /**
- * 营销首页（方案 A）：导航 + Hero + 定价占位 + 试读 + 我的作品；
+ * 营销首页（方案 A）：导航 + Hero + V3 动效段 + 定价占位 + 试读 + 我的作品；
  * 兑换/邀请收在页底次要区。
  */
 export default function HomePage() {
@@ -23,6 +25,8 @@ export default function HomePage() {
       >
         <HomeNavbar />
         <HomeHero />
+        <HomeCursorReveal />
+        <HomeScrollVideo />
 
         <HomePricing />
 

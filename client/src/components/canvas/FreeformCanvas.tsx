@@ -9,6 +9,7 @@ import {
   CANVAS_KIND_META,
   CANVAS_UPLOAD_ACCEPT,
   CANVAS_UPLOAD_FORMAT_HINT,
+  collectDocumentAssets,
   collectUpstreamHandoff,
   collectUpstreamTexts,
   collectVisionImages,
@@ -30,6 +31,7 @@ import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
+import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
@@ -422,7 +424,6 @@ export default function FreeformCanvas({
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
       const visionImages = collectVisionImages(blockId, blocks, edges);
-      const texts = collectUpstreamTexts(blockId, blocks, edges);
       const nearestRef =
         block.kind === "image" || block.kind === "video"
           ? block.refImageUrl || resolveNearestUpstreamImageUrl(blockId, blocks, edges)
@@ -433,6 +434,11 @@ export default function FreeformCanvas({
           : block;
       patchOne(blockId, { status: "running", error: undefined });
       try {
+        const docTexts =
+          block.kind === "text" || block.kind === "copy_organize"
+            ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, blocks, edges))
+            : [];
+        const texts = [...collectUpstreamTexts(blockId, blocks, edges), ...docTexts];
         const out = await runCanvasBlock(runDeps, runBlockPayload, { visionImages, texts });
         patchOne(blockId, {
           status: "done",
@@ -697,6 +703,7 @@ export default function FreeformCanvas({
             const Icon = meta.icon;
             const selected = selectedId === block.id;
             const visionCount = collectVisionImages(block.id, blocks, edges).length;
+            const documentCount = collectDocumentAssets(block.id, blocks, edges).length;
             const upstreamHandoff = collectUpstreamHandoff(block.id, blocks, edges);
             const upstreamPreview = upstreamHandoff.map((item) => item.text).join(" · ").slice(0, 120);
             const displayOutputs =
@@ -1008,8 +1015,15 @@ export default function FreeformCanvas({
                       {(block.kind === "text" ||
                         block.kind === "copy_organize" ||
                         block.kind === "video_reverse") &&
-                      visionCount > 0 ? (
-                        <div className="text-[10px] text-white/50">已接入 {visionCount} 张图片</div>
+                      (visionCount > 0 || documentCount > 0) ? (
+                        <div className="text-[10px] text-white/50">
+                          {[
+                            visionCount > 0 ? `已接入 ${visionCount} 张图片` : "",
+                            documentCount > 0 ? `已接入 ${documentCount} 份文档` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
                       ) : null}
                     </div>
 
@@ -1071,9 +1085,11 @@ export default function FreeformCanvas({
                       rows={4}
                       className="min-h-[72px] w-full shrink-0 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
-                        visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
-                          ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
-                          : meta.hint
+                        documentCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
+                          ? "例：请把文档中 part1 与 part2 去重，整理成语意通顺、条理分明的详尽正文…"
+                          : visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
+                            ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
+                            : meta.hint
                       }
                     />
                     {upstreamHandoff.length ? (
