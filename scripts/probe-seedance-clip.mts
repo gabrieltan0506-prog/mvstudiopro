@@ -62,6 +62,7 @@ if (!ENABLED) {
     `  默认档：2.0-mini · ${SEEDANCE_PROBE_DEFAULT_DURATION_SEC}s · ${SEEDANCE_PROBE_DEFAULT_QUALITY}`,
   );
   console.log("  需公网图：CANVAS_PROBE_IMAGE_URL=https://...");
+  console.log("  也可：CANVAS_PROBE_SEEDANCE=1 pnpm run manhua:probe（六段）");
   process.exit(0);
 }
 
