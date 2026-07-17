@@ -336,22 +336,6 @@ export default function ManhuaCharacterGallery({
     return out;
   }, [recentIds, libraryTab]);
 
-  const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
-    if (gender === "female") onSelectFemale(id);
-    else onSelectMale(id);
-    if (id) {
-      pushRecentId(id);
-      setRecentIds(loadRecentIds());
-    }
-  };
-
-  const copySelected = async (gender: ManhuaCharacterGender) => {
-    const id = gender === "female" ? femaleId : maleId;
-    const text = buildManhuaCharacterClipboardText(id, { artStyleId });
-    const ok = await copyText(text);
-    setCopyFlash(ok ? (gender === "female" ? "女主锚点已复制" : "男主锚点已复制") : "复制失败");
-    window.setTimeout(() => setCopyFlash(""), 1600);
-  };
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const c of pool) {
@@ -371,6 +355,57 @@ export default function ManhuaCharacterGallery({
     [pool, libraryQuery, tagFilter],
   );
   const selectedInTab = libraryTab === "female" ? femaleId : maleId;
+
+  const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
+    if (gender === "female") onSelectFemale(id);
+    else onSelectMale(id);
+    if (id) {
+      pushRecentId(id);
+      setRecentIds(loadRecentIds());
+    }
+  };
+
+  const copySelected = async (gender: ManhuaCharacterGender) => {
+    const id = gender === "female" ? femaleId : maleId;
+    const text = buildManhuaCharacterClipboardText(id, { artStyleId });
+    const ok = await copyText(text);
+    setCopyFlash(ok ? (gender === "female" ? "女主锚点已复制" : "男主锚点已复制") : "复制失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  const copyBoth = async () => {
+    const parts = [femaleId, maleId]
+      .map((id) => buildManhuaCharacterClipboardText(id, { artStyleId }))
+      .filter(Boolean);
+    const ok = await copyText(parts.join("\n\n——\n\n"));
+    setCopyFlash(ok ? "男女主锚点已复制" : "复制失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (disabled) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (!filteredPool.length) return;
+      e.preventDefault();
+      const idx = Math.max(
+        0,
+        filteredPool.findIndex((c) => c.id === selectedInTab),
+      );
+      const nextIdx =
+        e.key === "ArrowRight"
+          ? (idx + 1) % filteredPool.length
+          : (idx - 1 + filteredPool.length) % filteredPool.length;
+      const next = filteredPool[nextIdx];
+      if (next) rememberSelect(next.id, libraryTab);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [disabled, filteredPool, selectedInTab, libraryTab]);
 
   useEffect(() => {
     if (!selectedInTab || !gridRef.current) return;
@@ -398,16 +433,26 @@ export default function ManhuaCharacterGallery({
             「同版式」铺生图节点（需你点运行）
           </div>
         </div>
-        {onClearManual ? (
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={disabled}
-            onClick={onClearManual}
-            className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+            disabled={disabled || (!femaleId && !maleId)}
+            onClick={() => void copyBoth()}
+            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
           >
-            恢复自动推荐
+            复制双人锚点
           </button>
-        ) : null}
+          {onClearManual ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={onClearManual}
+              className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              恢复自动推荐
+            </button>
+          ) : null}
+        </div>
       </div>
       {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
       {copyFlash ? <p className="mt-1 text-[10px] text-emerald-200/85">{copyFlash}</p> : null}
@@ -611,7 +656,7 @@ export default function ManhuaCharacterGallery({
           </div>
         ) : null}
         <div className="mb-2 text-[10px] text-white/40">
-          悬停预览三视图 · 右键钉住/取消预览
+          悬停预览三视图 · 右键钉住/取消 · ←/→ 在筛选结果里换人
         </div>
         <div
           ref={gridRef}
