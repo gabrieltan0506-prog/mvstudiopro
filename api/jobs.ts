@@ -2063,18 +2063,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (videoEngine === "seedance") {
         let sceneVideoUrl = "";
         let videoDurationForUi = 8;
+        let videoModel = "seedance-2.0";
         try {
-          const { runSeedanceImageToVideo } = await import("../server/services/seedanceVideo.js");
+          const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
+            "../server/services/evolinkSeedanceVideo.js"
+          );
+          if (!isEvolinkSeedanceConfigured()) {
+            return res.status(503).json(fail("evolink_not_configured", "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink"));
+          }
           const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
-          const seedanceOut = await runSeedanceImageToVideo({
+          const seedanceOut = await runEvolinkSeedanceVideo({
             prompt,
             imageUrl: preparedReferenceImages[0] || "",
-            resolution: videoResolution,
-            duration: durationInput,
+            quality: videoResolution,
+            duration: durationInput === "auto" ? 8 : durationInput,
             aspectRatio: aspectRatioInput,
             generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
+            version: "2.0",
           });
           sceneVideoUrl = seedanceOut.videoUrl;
+          videoModel = seedanceOut.model;
           videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
         } catch (err: any) {
           return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));
@@ -2098,8 +2106,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
             ),
             storyboardImages: nextStoryboardImages,
-            videoProvider: "fal",
-            videoModel: "bytedance/seedance-2.0/image-to-video",
+            videoProvider: "evolink",
+            videoModel,
             sceneVideoAspectRatio: aspectRatioInput,
             sceneVideoResolution: videoResolution,
           },
@@ -2775,7 +2783,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw: rawOut });
     }
 
-    /** ByteDance Seedance 2.0（EvoLink 优先：文生/图生/参考生；无 EvoLink 时 fal 图生） */
+    /** ByteDance Seedance（仅 EvoLink：文生/图生/参考生；不再回退 fal） */
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -2806,59 +2814,37 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         b.duration ?? q.duration ?? b.durationSec ?? (seedanceVersion === "2.0-mini" ? 5 : 15),
       );
       const generateAudio = !(String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false);
-      const preferEvolink = b.preferEvolink !== false && q.preferEvolink !== "0";
 
       try {
-        if (preferEvolink) {
-          const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
-            "../server/services/evolinkSeedanceVideo.js"
-          );
-          if (isEvolinkSeedanceConfigured()) {
-            const out = await runEvolinkSeedanceVideo({
-              prompt,
-              imageUrl,
-              imageUrls,
-              videoUrls,
-              audioUrls,
-              quality: resolution,
-              aspectRatio,
-              duration: typeof duration === "number" ? duration : seedanceVersion === "2.0-mini" ? 5 : 15,
-              generateAudio,
-              version: seedanceVersion,
-            });
-            return res.status(200).json({
-              ok: true,
-              videoUrl: out.videoUrl,
-              provider: out.provider,
-              model: out.model,
-              mode: out.mode,
-              version: out.version,
-            });
-          }
-        }
-
-        if (!imageUrl) {
-          return res.status(400).json({
+        const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
+          "../server/services/evolinkSeedanceVideo.js"
+        );
+        if (!isEvolinkSeedanceConfigured()) {
+          return res.status(503).json({
             ok: false,
-            error: "Seedance 文生视频需配置 EVOLINK_API_KEY，或请连接上游图片/上传参考图后使用图生视频",
+            error: "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink（已停用 fal 回退）",
           });
         }
-
-        const { runSeedanceImageToVideo } = await import("../server/services/seedanceVideo.js");
-        const out = await runSeedanceImageToVideo({
+        const out = await runEvolinkSeedanceVideo({
           prompt,
           imageUrl,
-          resolution,
-          duration,
+          imageUrls,
+          videoUrls,
+          audioUrls,
+          quality: resolution,
           aspectRatio,
+          duration: typeof duration === "number" ? duration : seedanceVersion === "2.0-mini" ? 5 : 15,
           generateAudio,
+          version: seedanceVersion,
         });
         return res.status(200).json({
           ok: true,
           videoUrl: out.videoUrl,
-          seed: out.seed,
-          provider: "seedance",
-          model: "bytedance/seedance-2.0/image-to-video",
+          provider: out.provider,
+          model: out.model,
+          mode: out.mode,
+          version: out.version,
+          resolution,
         });
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "seedance_failed" });
