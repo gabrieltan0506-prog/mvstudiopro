@@ -260,11 +260,13 @@ export function applyFactoryPrefsToBlocks(
     motionPromptIds?: string[];
     sceneId?: string;
     genreId?: string;
+    characterIds?: string[];
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
   const motionBlock = buildMotionPromptInjectBlock(opts.motionPromptIds || []);
+  const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || []);
   const scene = getManhuaSceneTemplate(opts.sceneId);
   const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
   const genreBlock = composeGenreTemplatePromptBlock(getScreenwriterGenreTemplate(opts.genreId));
@@ -310,10 +312,12 @@ export function applyFactoryPrefsToBlocks(
       let base = b.prompt;
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (b.id.startsWith("story-")) base = stripMarkedSection(base, "【漫剧场景资产库");
+      if (b.id.startsWith("bible-")) base = stripMarkedSection(base, "【角色库锚点】");
       const parts = [
         base,
         genreBlock && syncGenre ? genreBlock : "",
         b.id.startsWith("story-") && sceneBlock ? sceneBlock : "",
+        b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
     }

@@ -228,6 +228,7 @@ export default function OmniCanvas() {
           motionPromptIds: selectedMotionIds,
           sceneId: factorySceneId || undefined,
           genreId: factoryGenreId || undefined,
+          characterIds: selectedCharacterIds,
           videoReverseOutputMode: factoryReverseMode,
         });
         const changed = next.some((b, i) => {
@@ -250,9 +251,12 @@ export default function OmniCanvas() {
     factoryMotionId,
     factorySceneId,
     factoryGenreId,
+    factoryFemaleId,
+    factoryMaleId,
     factoryReverseMode,
     selectedCraftShotIds,
     selectedMotionIds,
+    selectedCharacterIds,
   ]);
   const motionGrouped = useMemo(() => {
     const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption"];
