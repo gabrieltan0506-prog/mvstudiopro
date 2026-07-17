@@ -36,4 +36,9 @@ describe("craftShotBank ⑧A", () => {
     const rec = recommendCraftShotFromTopic("雨夜霓虹街头错过");
     expect(rec.craftShotId).toBe("light_05_neon_spill");
   });
+
+  it("recommends craft from 修仙/审讯 keywords", () => {
+    expect(recommendCraftShotFromTopic("修仙洞府奇遇").craftShotId).toBe("cam_07_wide_scale");
+    expect(recommendCraftShotFromTopic("审讯室精算对峙").craftShotId).toBe("light_07_top_cut");
+  });
 });
