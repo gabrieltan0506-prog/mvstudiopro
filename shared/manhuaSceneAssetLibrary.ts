@@ -296,7 +296,7 @@ const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
   { sceneId: "scene_10", keys: ["边塞", "城墙", "烽火", "关隘", "黄沙"] },
   { sceneId: "scene_12", keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙", "谈判桌", "年会"] },
   { sceneId: "scene_11", keys: ["豪宅", "豪门", "泳池", "落地窗", "别墅"] },
-  { sceneId: "scene_13", keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台"] },
+  { sceneId: "scene_13", keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台", "地下拳场", "黑拳", "地下赛车"] },
   { sceneId: "scene_14", keys: ["校园", "教室", "校服", "课桌", "青春", "同学"] },
   { sceneId: "scene_16", keys: ["太空", "星舰", "飞船", "基地", "舷窗", "星际"] },
   { sceneId: "scene_15", keys: ["未来城市", "全息", "飞行器", "赛博", "天际线"] },

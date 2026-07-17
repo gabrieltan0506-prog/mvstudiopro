@@ -55,4 +55,9 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 秘境洞府 from 闯关试炼", () => {
     expect(recommendManhuaSceneFromTopic("外门弟子闯关试炼").sceneId).toBe("scene_04");
   });
+
+  it("recommends 酒吧夜店 from 地下拳场/赛车", () => {
+    expect(recommendManhuaSceneFromTopic("地下拳场黑拳对决").sceneId).toBe("scene_13");
+    expect(recommendManhuaSceneFromTopic("地下赛车夜飙").sceneId).toBe("scene_13");
+  });
 });
