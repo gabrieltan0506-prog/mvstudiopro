@@ -225,7 +225,9 @@ function LibraryCard({
     ? accent === "cyan"
       ? "border-cyan-400 shadow-[0_0_0_1px_rgba(34,211,238,0.45)]"
       : "border-amber-400 shadow-[0_0_0_1px_rgba(251,191,36,0.45)]"
-    : "border-white/10 hover:border-white/25";
+    : favorited
+      ? "border-rose-300/35 hover:border-rose-300/55"
+      : "border-white/10 hover:border-white/25";
 
   return (
     <div className="relative">
@@ -684,6 +686,14 @@ export default function ManhuaCharacterGallery({
     const bag = others.length ? others : filteredPool;
     const pick = bag[Math.floor(Math.random() * bag.length)];
     if (pick) rememberSelect(pick.id, libraryTab);
+  };
+
+  const copyFilteredIds = async () => {
+    const ids = filteredPool.map((c) => c.id);
+    if (!ids.length) return;
+    const ok = await copyText(ids.join("\n"));
+    setCopyFlash(ok ? `已复制筛选 id ${ids.length} 个` : "复制失败");
+    window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
   const copySelected = async (gender: ManhuaCharacterGender) => {
@@ -1278,6 +1288,14 @@ export default function ManhuaCharacterGallery({
             className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
           >
             清空筛选
+          </button>
+          <button
+            type="button"
+            disabled={disabled || !filteredPool.length}
+            onClick={() => void copyFilteredIds()}
+            className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
+          >
+            复制筛选 id
           </button>
           <span className="text-[10px] text-white/35">
             {filteredPool.length}/{pool.length}
