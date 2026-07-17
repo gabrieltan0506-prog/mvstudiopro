@@ -72,6 +72,7 @@ const LS_KEY = "mv-freeform-canvas-v1";
 const LS_FACTORY_PREFS_KEY = "mv-manhua-factory-character-prefs-v1";
 
 type FactoryCharacterPrefs = {
+  topic?: string;
   femaleId?: string;
   maleId?: string;
   artStyleId?: ManhuaArtStyleId;
@@ -126,7 +127,7 @@ export default function OmniCanvas() {
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
-  const [factoryTopic, setFactoryTopic] = useState("");
+  const [factoryTopic, setFactoryTopic] = useState(initialFactoryPrefs.topic || "");
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
   /** 手选场景后不再被题材自动覆盖（⑤D） */
@@ -216,6 +217,7 @@ export default function OmniCanvas() {
 
   useEffect(() => {
     saveFactoryCharacterPrefs({
+      topic: factoryTopic,
       femaleId: factoryFemaleId,
       maleId: factoryMaleId,
       artStyleId: factoryArtStyleId,
@@ -224,6 +226,7 @@ export default function OmniCanvas() {
       artStyleManual,
     });
   }, [
+    factoryTopic,
     factoryFemaleId,
     factoryMaleId,
     factoryArtStyleId,
