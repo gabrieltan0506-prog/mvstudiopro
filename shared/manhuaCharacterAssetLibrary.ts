@@ -414,6 +414,324 @@ export function getManhuaCharacterById(id: string) {
   return MANHUA_CHARACTER_ASSET_LIBRARY.find((c) => c.id === key) || null;
 }
 
+/** 气质组合预设：任一标签命中即入选 */
+export type ManhuaTemperamentPack = {
+  id: string;
+  labelZh: string;
+  tags: string[];
+};
+
+export const MANHUA_TEMPERAMENT_PACKS: ManhuaTemperamentPack[] = [
+  { id: "cold_elite", labelZh: "清冷精英", tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },
+  { id: "soft_art", labelZh: "文艺沉静", tags: ["沉静", "悠远", "细腻", "专注", "文艺", "独立", "文艺冷静", "沉静克制"] },
+  { id: "power_aura", labelZh: "强势气场", tags: ["气场强大", "冷静睿智", "优雅干练", "冷静霸气", "掌控力强", "锋利", "掌控", "都市精英"] },
+  { id: "sharp_pro", labelZh: "锋利专业", tags: ["锐利", "沉着", "利落", "精英", "专业", "理性", "从容"] },
+  { id: "warm_observe", labelZh: "温和观察", tags: ["温和", "洞察", "松弛", "观察", "深沉", "鉴赏"] },
+];
+
+export function characterMatchesTemperamentPack(
+  c: ManhuaCharacterTemplate,
+  pack: ManhuaTemperamentPack | null | undefined,
+): boolean {
+  if (!pack) return true;
+  const tags = c.temperamentTags;
+  return pack.tags.some(
+    (t) => tags.includes(t) || tags.some((x) => x.includes(t) || t.includes(x)),
+  );
+}
+
+/** 男女套组：一键选用双人（可带推荐画风） */
+export type ManhuaCouplePack = {
+  id: string;
+  labelZh: string;
+  blurbZh: string;
+  femaleId: string;
+  maleId: string;
+  artStyleId?: ManhuaArtStyleId;
+};
+
+export const MANHUA_COUPLE_PACKS: ManhuaCouplePack[] = [
+  {
+    id: "urban_cold",
+    labelZh: "都市清冷对峙",
+    blurbZh: "沈清辞 × 傅临渊 · 职场强强",
+    femaleId: "char_f_01",
+    maleId: "char_m_02",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "law_duel",
+    labelZh: "律政锋芒",
+    blurbZh: "顾夜笙 × 沈倦 · 法庭对峙",
+    femaleId: "char_f_02",
+    maleId: "char_m_03",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "piano_echo",
+    labelZh: "琴声回响",
+    blurbZh: "江晚吟 × 江执 · 古典双人",
+    femaleId: "char_f_03",
+    maleId: "char_m_04",
+    artStyleId: "cg_drama",
+  },
+  {
+    id: "museum_night",
+    labelZh: "馆夜低语",
+    blurbZh: "林知遥 × 顾延 · 文物与时间",
+    femaleId: "char_f_05",
+    maleId: "char_m_08",
+    artStyleId: "cg_drama",
+  },
+  {
+    id: "fashion_power",
+    labelZh: "时尚权柄",
+    blurbZh: "唐若曦 × 程屿 · 主编与创始人",
+    femaleId: "char_f_07",
+    maleId: "char_m_12",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "antique_mystery",
+    labelZh: "古董迷雾",
+    blurbZh: "谢知意 × 顾西洲 · 策展与古董",
+    femaleId: "char_f_09",
+    maleId: "char_m_13",
+    artStyleId: "cg_drama",
+  },
+  {
+    id: "heal_soft",
+    labelZh: "温和对照",
+    blurbZh: "陆听澜 × 江寒 · 洞察与松弛",
+    femaleId: "char_f_08",
+    maleId: "char_m_11",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "speed_edge",
+    labelZh: "锋芒速度",
+    blurbZh: "温以宁 × 秦屿 · 利落对张扬",
+    femaleId: "char_f_10",
+    maleId: "char_m_09",
+    artStyleId: "manga_2d",
+  },
+  {
+    id: "diplomacy_edge",
+    labelZh: "外交锋线",
+    blurbZh: "顾清晏 × 陆淮安 · 翻译与外交官",
+    femaleId: "char_f_12",
+    maleId: "char_m_10",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "jewel_collect",
+    labelZh: "珠宝与收藏",
+    blurbZh: "沈听雪 × 陆沉 · 精致对深沉",
+    femaleId: "char_f_11",
+    maleId: "char_m_05",
+    artStyleId: "cg_drama",
+  },
+];
+
+export function getManhuaCouplePackById(id: string): ManhuaCouplePack | null {
+  const key = String(id || "").trim();
+  return MANHUA_COUPLE_PACKS.find((p) => p.id === key) || null;
+}
+
+export function getManhuaTemperamentPackById(id: string): ManhuaTemperamentPack | null {
+  const key = String(id || "").trim();
+  return MANHUA_TEMPERAMENT_PACKS.find((p) => p.id === key) || null;
+}
+
+/** 收藏导出 JSON（可粘贴回导入） */
+export function serializeManhuaFavoriteIds(ids: string[]): string {
+  const clean = ids.map(String).filter((id) => Boolean(getManhuaCharacterById(id)));
+  return JSON.stringify({ v: 1, kind: "manhua-character-fav", ids: clean }, null, 0);
+}
+
+export function parseManhuaFavoriteIds(raw: string): string[] {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text) as { ids?: unknown; kind?: string } | unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map(String).filter((id) => Boolean(getManhuaCharacterById(id)));
+    }
+    if (parsed && typeof parsed === "object" && Array.isArray((parsed as { ids?: unknown }).ids)) {
+      return ((parsed as { ids: unknown[] }).ids || [])
+        .map(String)
+        .filter((id) => Boolean(getManhuaCharacterById(id)));
+    }
+  } catch {
+    /* fall through: comma / newline list */
+  }
+  return text
+    .split(/[\s,，;；\n]+/)
+    .map((s) => s.trim())
+    .filter((id) => Boolean(getManhuaCharacterById(id)));
+}
+
+/** 双人短名片（适合贴进剧本备注） */
+export function buildManhuaDualLeadBrief(
+  femaleId?: string | null,
+  maleId?: string | null,
+  opts?: { artStyleId?: string | null },
+): string {
+  const f = femaleId ? getManhuaCharacterById(femaleId) : null;
+  const m = maleId ? getManhuaCharacterById(maleId) : null;
+  if (!f && !m) return "";
+  const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const line = (c: ManhuaCharacterTemplate, role: string) =>
+    `${role}：${c.nameZh}（${c.jobZh}${c.age ? `·${c.age}岁` : ""}）· ${c.temperamentTags.slice(0, 3).join("、")}`;
+  return [
+    f ? line(f, "女主") : "女主：未选",
+    m ? line(m, "男主") : "男主：未选",
+    `画风：${style.labelZh}`,
+  ].join("\n");
+}
+
+/** 当前双人选型导出（可粘贴给协作 / 以后导入） */
+export function serializeManhuaCoupleSelection(opts: {
+  femaleId?: string | null;
+  maleId?: string | null;
+  artStyleId?: string | null;
+}): string {
+  const femaleId = String(opts.femaleId || "").trim();
+  const maleId = String(opts.maleId || "").trim();
+  const artStyleId = String(opts.artStyleId || "").trim() || undefined;
+  return JSON.stringify(
+    {
+      v: 1,
+      kind: "manhua-character-couple",
+      femaleId: femaleId && getManhuaCharacterById(femaleId) ? femaleId : "",
+      maleId: maleId && getManhuaCharacterById(maleId) ? maleId : "",
+      artStyleId,
+    },
+    null,
+    0,
+  );
+}
+
+export function parseManhuaCoupleSelection(raw: string): {
+  femaleId: string;
+  maleId: string;
+  artStyleId?: ManhuaArtStyleId;
+} | null {
+  try {
+    const parsed = JSON.parse(String(raw || "").trim()) as {
+      kind?: string;
+      femaleId?: unknown;
+      maleId?: unknown;
+      artStyleId?: unknown;
+    };
+    if (!parsed || parsed.kind !== "manhua-character-couple") return null;
+    const femaleId = String(parsed.femaleId || "");
+    const maleId = String(parsed.maleId || "");
+    const f = getManhuaCharacterById(femaleId);
+    const m = getManhuaCharacterById(maleId);
+    if ((!femaleId || !f || f.gender !== "female") && (!maleId || !m || m.gender !== "male")) {
+      return null;
+    }
+    const styleRaw = String(parsed.artStyleId || "");
+    const artStyleId = MANHUA_ART_STYLE_PRESETS.some((p) => p.id === styleRaw)
+      ? (styleRaw as ManhuaArtStyleId)
+      : undefined;
+    return {
+      femaleId: f?.gender === "female" ? femaleId : "",
+      maleId: m?.gender === "male" ? maleId : "",
+      artStyleId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 反差配对：相对当前人选，找气质重叠尽量少、但同题材池仍合理的异性。
+ * 重叠越低分越高；完全无交集优先。
+ */
+export function suggestManhuaContrastPartner(
+  characterId: string,
+  opts?: { excludeIds?: string[]; limit?: number },
+): ManhuaCharacterTemplate[] {
+  const base = getManhuaCharacterById(characterId);
+  if (!base) return [];
+  const targetGender: ManhuaCharacterGender = base.gender === "female" ? "male" : "female";
+  const exclude = new Set((opts?.excludeIds || []).map(String));
+  const baseTags = base.temperamentTags;
+  const limit = Math.max(1, Math.min(opts?.limit || 5, 8));
+  return listManhuaCharactersByGender(targetGender)
+    .filter((c) => !exclude.has(c.id))
+    .map((c) => {
+      const overlap = c.temperamentTags.reduce(
+        (n, t) => n + (baseTags.includes(t) || baseTags.some((b) => b.includes(t) || t.includes(b)) ? 1 : 0),
+        0,
+      );
+      return { c, overlap };
+    })
+    .sort(
+      (a, b) =>
+        a.overlap - b.overlap ||
+        Math.abs((a.c.age || 27) - (base.age || 27)) - Math.abs((b.c.age || 27) - (base.age || 27)) ||
+        a.c.nameZh.localeCompare(b.c.nameZh, "zh"),
+    )
+    .slice(0, limit)
+    .map((x) => x.c);
+}
+
+function jobFieldTokens(jobZh: string): string[] {
+  const raw = String(jobZh || "").replace(/[的与和及]/g, "").trim();
+  if (!raw) return [];
+  const out = new Set<string>();
+  for (const part of raw.split(/[/·、，,\s]+/)) {
+    const p = part.trim();
+    if (p.length >= 2) out.add(p);
+  }
+  // 滑动二字：古典钢琴演奏家 → 钢琴 / 演奏 …
+  for (let i = 0; i < raw.length - 1; i += 1) {
+    const bi = raw.slice(i, i + 2);
+    if (/^[\u4e00-\u9fff]{2}$/.test(bi)) out.add(bi);
+  }
+  // 领域种子（短词优先命中）
+  for (const seed of ["钢琴", "律师", "医生", "建筑", "博物馆", "策展", "古董", "外交", "投行", "时尚", "赛车", "指挥", "摄影", "科技", "收藏"]) {
+    if (raw.includes(seed)) out.add(seed);
+  }
+  return Array.from(out);
+}
+
+/** 同行/相近职业异性（职位关键词 + 二字滑窗粗匹配） */
+export function suggestManhuaSameFieldPartner(
+  characterId: string,
+  opts?: { excludeIds?: string[]; limit?: number },
+): ManhuaCharacterTemplate[] {
+  const base = getManhuaCharacterById(characterId);
+  if (!base) return [];
+  const targetGender: ManhuaCharacterGender = base.gender === "female" ? "male" : "female";
+  const exclude = new Set((opts?.excludeIds || []).map(String));
+  const limit = Math.max(1, Math.min(opts?.limit || 5, 8));
+  const tokens = jobFieldTokens(base.jobZh);
+  if (!tokens.length) return [];
+  return listManhuaCharactersByGender(targetGender)
+    .filter((c) => !exclude.has(c.id))
+    .map((c) => {
+      const job = c.jobZh || "";
+      const score = tokens.reduce((n, t) => {
+        if (!job.includes(t)) return n;
+        return n + (t.length >= 3 ? 3 : 2);
+      }, 0);
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Math.abs((a.c.age || 27) - (base.age || 27)) - Math.abs((b.c.age || 27) - (base.age || 27)) ||
+        a.c.nameZh.localeCompare(b.c.nameZh, "zh"),
+    )
+    .slice(0, limit)
+    .map((x) => x.c);
+}
+
 /** 题材关键词 → 气质标签种子（4.B 自动套用） */
 const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["清冷", "克制", "冷感", "疏离", "高冷"], tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },
@@ -427,6 +745,48 @@ const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["赛车", "速度", "张扬"], tags: ["张扬", "速度感"] },
   { keys: ["外交", "律师", "投行"], tags: ["冷静从容", "锐利", "沉着", "锋利", "从容", "利落", "精英"] },
 ];
+
+/** 题材 → 套组软推荐（只高亮，不自动覆盖手选） */
+export function recommendManhuaCouplePacksFromTopic(topic: string): {
+  packIds: string[];
+  reasonZh: string;
+} {
+  const t = String(topic || "").trim();
+  if (!t) return { packIds: [], reasonZh: "" };
+  const scored = MANHUA_COUPLE_PACKS.map((p) => {
+    const f = getManhuaCharacterById(p.femaleId);
+    const m = getManhuaCharacterById(p.maleId);
+    const hay = [p.labelZh, p.blurbZh, f?.jobZh, m?.jobZh, ...(f?.temperamentTags || []), ...(m?.temperamentTags || [])]
+      .filter(Boolean)
+      .join(" ");
+    let score = 0;
+    for (const hint of TOPIC_TEMPERAMENT_HINTS) {
+      if (!hint.keys.some((k) => t.includes(k))) continue;
+      const hit = hint.tags.some((tag) => hay.includes(tag));
+      if (hit) score += 2;
+    }
+    if (/律政|律师|法庭/.test(t) && p.id === "law_duel") score += 4;
+    if (/钢琴|音乐|古典/.test(t) && p.id === "piano_echo") score += 4;
+    if (/博物馆|文物|策展/.test(t) && (p.id === "museum_night" || p.id === "antique_mystery")) score += 3;
+    if (/时尚|杂志|主编|创始/.test(t) && p.id === "fashion_power") score += 4;
+    if (/古董|悬疑|神秘/.test(t) && p.id === "antique_mystery") score += 4;
+    if (/霸总|职场|都市|商战/.test(t) && p.id === "urban_cold") score += 3;
+    if (/治愈|温和|甜|恋爱/.test(t) && p.id === "heal_soft") score += 4;
+    if (/赛车|速度|张扬|轻松|漫画/.test(t) && p.id === "speed_edge") score += 3;
+    if (/外交|翻译|国际/.test(t) && p.id === "diplomacy_edge") score += 4;
+    if (/珠宝|收藏|精致/.test(t) && p.id === "jewel_collect") score += 3;
+    return { id: p.id, score };
+  })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const packIds = scored.slice(0, 3).map((x) => x.id);
+  if (!packIds.length) return { packIds: [], reasonZh: "" };
+  const labels = packIds
+    .map((id) => MANHUA_COUPLE_PACKS.find((p) => p.id === id)?.labelZh)
+    .filter(Boolean)
+    .join(" / ");
+  return { packIds, reasonZh: `题材软推套组：${labels}` };
+}
 
 function scoreCharacterAgainstTopic(c: ManhuaCharacterTemplate, topic: string, seedTags: string[]): number {
   const hay = topic.toLowerCase();
@@ -554,6 +914,27 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
     "",
     seed,
     hint ? `\n【用户补充】${hint.slice(0, 400)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** 单卡剪贴板文本（方便粘到外部工具，不烧 token） */
+export function buildManhuaCharacterClipboardText(
+  id: string,
+  opts?: { artStyleId?: string | null },
+): string {
+  const c = getManhuaCharacterById(id);
+  if (!c) return "";
+  const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const preview = getManhuaCharacterPreviewUrl(c.id);
+  return [
+    `${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${c.age ? `·${c.age}岁` : ""}）`,
+    `气质：${c.temperamentTags.join("·")}`,
+    `画风：${style.labelZh}`,
+    style.promptZh,
+    `提示词：${c.promptZh}`,
+    preview ? `预览图：${preview}` : "",
   ]
     .filter(Boolean)
     .join("\n");
