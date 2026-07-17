@@ -266,9 +266,6 @@ export function applyFactoryPrefsToBlocks(
         prompt: motionBlock ? `${base}\n\n${motionBlock}` : base,
       };
     }
-    if (b.id.startsWith("reverse-")) {
-      return { ...b, videoReverseOutputMode: reverseMode };
-    }
     return b;
   });
 }
