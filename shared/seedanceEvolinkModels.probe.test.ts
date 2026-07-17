@@ -29,4 +29,9 @@ describe("resolveSeedanceProbeDefaults", () => {
     const d = resolveSeedanceProbeDefaults({ duration: "nope" });
     expect(d.duration).toBe(SEEDANCE_PROBE_DEFAULT_DURATION_SEC);
   });
+
+  it("falls back empty quality to default", () => {
+    const d = resolveSeedanceProbeDefaults({ quality: "   " });
+    expect(d.quality).toBe(SEEDANCE_PROBE_DEFAULT_QUALITY);
+  });
 });
