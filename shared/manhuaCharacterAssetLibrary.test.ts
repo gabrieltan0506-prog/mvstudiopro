@@ -5,6 +5,7 @@ import {
   buildManhuaCharacterPromptBlock,
   getManhuaCharacterById,
   listManhuaCharactersByGender,
+  recommendManhuaCharactersFromTopic,
 } from "./manhuaCharacterAssetLibrary";
 
 describe("manhuaCharacterAssetLibrary", () => {
@@ -24,5 +25,20 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(block).toContain("唐若曦");
     expect(block).toContain("傅临渊");
     expect(block).toContain("【角色库锚点】");
+  });
+
+  it("4.B recommends cool female + elite male for 权谋题材", () => {
+    const rec = recommendManhuaCharactersFromTopic("女主权谋翻盘的情感连载，宫墙内外步步为营");
+    expect(rec.femaleId).toBeTruthy();
+    expect(rec.maleId).toBeTruthy();
+    expect(rec.reasonZh).toMatch(/题材|气质/);
+    const female = getManhuaCharacterById(rec.femaleId!);
+    expect(female?.temperamentTags.join("")).toMatch(/清冷|克制|冷静|冷感|疏离|气场/);
+  });
+
+  it("4.B falls back to stable defaults when topic empty", () => {
+    const rec = recommendManhuaCharactersFromTopic("");
+    expect(rec.femaleId).toBe("char_f_01");
+    expect(rec.maleId).toBe("char_m_02");
   });
 });

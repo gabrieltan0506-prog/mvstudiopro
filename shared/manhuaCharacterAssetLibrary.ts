@@ -327,6 +327,115 @@ export function getManhuaCharacterById(id: string) {
   return MANHUA_CHARACTER_ASSET_LIBRARY.find((c) => c.id === key) || null;
 }
 
+/** 题材关键词 → 气质标签种子（4.B 自动套用） */
+const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
+  { keys: ["清冷", "克制", "冷感", "疏离", "高冷"], tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },
+  { keys: ["权谋", "宫斗", "翻盘", "宫墙", "步步为营"], tags: ["清冷", "克制", "冷静", "气场强大", "冷静睿智", "掌控"] },
+  { keys: ["霸总", "商战", "CEO", "精英", "集团"], tags: ["冷静霸气", "掌控力强", "都市精英", "锋利", "掌控", "利落", "精英"] },
+  { keys: ["甜", "治愈", "软萌", "恋爱", "温馨"], tags: ["温和", "洞察", "松弛"] },
+  { keys: ["神秘", "古董", "秘境", "悬疑"], tags: ["沉静神秘", "深沉", "沉静", "悠远"] },
+  { keys: ["艺术", "钢琴", "指挥", "作曲", "音乐"], tags: ["优雅", "专注", "文艺冷静", "冷静沉稳", "艺术权威", "沉静克制"] },
+  { keys: ["医生", "医院", "外科"], tags: ["沉稳", "利落", "温和", "洞察"] },
+  { keys: ["时尚", "杂志", "香氛", "珠宝"], tags: ["气场强大", "优雅干练", "冷感", "精致", "优雅", "品牌感"] },
+  { keys: ["赛车", "速度", "张扬"], tags: ["张扬", "速度感"] },
+  { keys: ["外交", "律师", "投行"], tags: ["冷静从容", "锐利", "沉着", "锋利", "从容", "利落", "精英"] },
+];
+
+function scoreCharacterAgainstTopic(c: ManhuaCharacterTemplate, topic: string, seedTags: string[]): number {
+  const hay = topic.toLowerCase();
+  let score = 0;
+  const matched: string[] = [];
+  for (const tag of c.temperamentTags) {
+    if (hay.includes(tag.toLowerCase())) {
+      score += 4;
+      matched.push(tag);
+    }
+    for (const seed of seedTags) {
+      if (tag.includes(seed) || seed.includes(tag)) {
+        score += 2;
+        if (!matched.includes(tag)) matched.push(tag);
+      }
+    }
+  }
+  if (hay.includes(c.jobZh.toLowerCase())) score += 3;
+  if (hay.includes(c.nameZh)) score += 5;
+  return score;
+}
+
+export type ManhuaCharacterRecommendResult = {
+  femaleId: string | null;
+  maleId: string | null;
+  female?: ManhuaCharacterTemplate | null;
+  male?: ManhuaCharacterTemplate | null;
+  reasonZh: string;
+  matchedTags: string[];
+};
+
+/**
+ * 4.B：按题材气质推荐男女主各一名（可更换；无信号时给库内稳定默认）。
+ */
+export function recommendManhuaCharactersFromTopic(topic?: string): ManhuaCharacterRecommendResult {
+  const t = String(topic || "").trim();
+  const seedTags: string[] = [];
+  for (const hint of TOPIC_TEMPERAMENT_HINTS) {
+    if (hint.keys.some((k) => t.includes(k))) {
+      for (const tag of hint.tags) {
+        if (!seedTags.includes(tag)) seedTags.push(tag);
+      }
+    }
+  }
+
+  const pickBest = (gender: ManhuaCharacterGender): { id: string; score: number; tags: string[] } => {
+    const pool = listManhuaCharactersByGender(gender);
+    let best = pool[0];
+    let bestScore = -1;
+    let bestTags: string[] = [];
+    for (const c of pool) {
+      const s = scoreCharacterAgainstTopic(c, t, seedTags);
+      if (s > bestScore) {
+        best = c;
+        bestScore = s;
+        bestTags = c.temperamentTags.filter(
+          (tag) =>
+            seedTags.some((seed) => tag.includes(seed) || seed.includes(tag)) ||
+            t.includes(tag),
+        );
+      }
+    }
+    // 无题材命中时：女主偏清冷、男主偏霸总（稳定默认，便于流水线）
+    if (bestScore <= 0) {
+      if (gender === "female") {
+        best = getManhuaCharacterById("char_f_01") || best;
+        bestTags = best.temperamentTags.slice(0, 2);
+      } else {
+        best = getManhuaCharacterById("char_m_02") || best;
+        bestTags = best.temperamentTags.slice(0, 2);
+      }
+    }
+    return { id: best.id, score: bestScore, tags: bestTags };
+  };
+
+  const f = pickBest("female");
+  const m = pickBest("male");
+  const female = getManhuaCharacterById(f.id);
+  const male = getManhuaCharacterById(m.id);
+  const matchedTags = Array.from(new Set([...f.tags, ...m.tags])).slice(0, 6);
+  const reasonZh = t
+    ? matchedTags.length
+      ? `题材偏「${matchedTags.slice(0, 3).join("·")}」线`
+      : "按题材气质匹配最接近的一套（可更换）"
+    : "未填题材时默认清冷女主 + 都市男主（可更换）";
+
+  return {
+    femaleId: f.id,
+    maleId: m.id,
+    female,
+    male,
+    reasonZh,
+    matchedTags,
+  };
+}
+
 /** 注入角色圣经 / 生图：选中卡的外形+气质+提示词 */
 export function buildManhuaCharacterPromptBlock(ids: string[]): string {
   const picked = ids.map(getManhuaCharacterById).filter(Boolean) as ManhuaCharacterTemplate[];
