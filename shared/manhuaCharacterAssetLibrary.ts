@@ -414,6 +414,131 @@ export function getManhuaCharacterById(id: string) {
   return MANHUA_CHARACTER_ASSET_LIBRARY.find((c) => c.id === key) || null;
 }
 
+/** 气质组合预设：任一标签命中即入选 */
+export type ManhuaTemperamentPack = {
+  id: string;
+  labelZh: string;
+  tags: string[];
+};
+
+export const MANHUA_TEMPERAMENT_PACKS: ManhuaTemperamentPack[] = [
+  { id: "cold_elite", labelZh: "清冷精英", tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },
+  { id: "soft_art", labelZh: "文艺沉静", tags: ["沉静", "悠远", "细腻", "专注", "文艺", "独立", "文艺冷静", "沉静克制"] },
+  { id: "power_aura", labelZh: "强势气场", tags: ["气场强大", "冷静睿智", "优雅干练", "冷静霸气", "掌控力强", "锋利", "掌控", "都市精英"] },
+  { id: "sharp_pro", labelZh: "锋利专业", tags: ["锐利", "沉着", "利落", "精英", "专业", "理性", "从容"] },
+  { id: "warm_observe", labelZh: "温和观察", tags: ["温和", "洞察", "松弛", "观察", "深沉", "鉴赏"] },
+];
+
+export function characterMatchesTemperamentPack(
+  c: ManhuaCharacterTemplate,
+  pack: ManhuaTemperamentPack | null | undefined,
+): boolean {
+  if (!pack) return true;
+  const tags = c.temperamentTags;
+  return pack.tags.some(
+    (t) => tags.includes(t) || tags.some((x) => x.includes(t) || t.includes(x)),
+  );
+}
+
+/** 男女套组：一键选用双人（可带推荐画风） */
+export type ManhuaCouplePack = {
+  id: string;
+  labelZh: string;
+  blurbZh: string;
+  femaleId: string;
+  maleId: string;
+  artStyleId?: ManhuaArtStyleId;
+};
+
+export const MANHUA_COUPLE_PACKS: ManhuaCouplePack[] = [
+  {
+    id: "urban_cold",
+    labelZh: "都市清冷对峙",
+    blurbZh: "沈清辞 × 傅临渊 · 职场强强",
+    femaleId: "char_f_01",
+    maleId: "char_m_02",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "law_duel",
+    labelZh: "律政锋芒",
+    blurbZh: "顾夜笙 × 沈倦 · 法庭对峙",
+    femaleId: "char_f_02",
+    maleId: "char_m_03",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "piano_echo",
+    labelZh: "琴声回响",
+    blurbZh: "江晚吟 × 江执 · 古典双人",
+    femaleId: "char_f_03",
+    maleId: "char_m_04",
+    artStyleId: "cg_drama",
+  },
+  {
+    id: "museum_night",
+    labelZh: "馆夜低语",
+    blurbZh: "林知遥 × 顾延 · 文物与时间",
+    femaleId: "char_f_05",
+    maleId: "char_m_08",
+    artStyleId: "cg_drama",
+  },
+  {
+    id: "fashion_power",
+    labelZh: "时尚权柄",
+    blurbZh: "唐若曦 × 程屿 · 主编与创始人",
+    femaleId: "char_f_07",
+    maleId: "char_m_12",
+    artStyleId: "photoreal",
+  },
+  {
+    id: "antique_mystery",
+    labelZh: "古董迷雾",
+    blurbZh: "谢知意 × 顾西洲 · 策展与古董",
+    femaleId: "char_f_09",
+    maleId: "char_m_13",
+    artStyleId: "cg_drama",
+  },
+];
+
+export function getManhuaCouplePackById(id: string): ManhuaCouplePack | null {
+  const key = String(id || "").trim();
+  return MANHUA_COUPLE_PACKS.find((p) => p.id === key) || null;
+}
+
+export function getManhuaTemperamentPackById(id: string): ManhuaTemperamentPack | null {
+  const key = String(id || "").trim();
+  return MANHUA_TEMPERAMENT_PACKS.find((p) => p.id === key) || null;
+}
+
+/** 收藏导出 JSON（可粘贴回导入） */
+export function serializeManhuaFavoriteIds(ids: string[]): string {
+  const clean = ids.map(String).filter((id) => Boolean(getManhuaCharacterById(id)));
+  return JSON.stringify({ v: 1, kind: "manhua-character-fav", ids: clean }, null, 0);
+}
+
+export function parseManhuaFavoriteIds(raw: string): string[] {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text) as { ids?: unknown; kind?: string } | unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map(String).filter((id) => Boolean(getManhuaCharacterById(id)));
+    }
+    if (parsed && typeof parsed === "object" && Array.isArray((parsed as { ids?: unknown }).ids)) {
+      return ((parsed as { ids: unknown[] }).ids || [])
+        .map(String)
+        .filter((id) => Boolean(getManhuaCharacterById(id)));
+    }
+  } catch {
+    /* fall through: comma / newline list */
+  }
+  return text
+    .split(/[\s,，;；\n]+/)
+    .map((s) => s.trim())
+    .filter((id) => Boolean(getManhuaCharacterById(id)));
+}
+
 /** 题材关键词 → 气质标签种子（4.B 自动套用） */
 const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["清冷", "克制", "冷感", "疏离", "高冷"], tags: ["清冷", "克制", "冷感", "疏离", "冷静", "冷静克制", "优雅清冷"] },

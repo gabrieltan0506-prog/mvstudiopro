@@ -5,12 +5,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MANHUA_ART_STYLE_PRESETS,
+  MANHUA_COUPLE_PACKS,
+  MANHUA_TEMPERAMENT_PACKS,
   buildManhuaCharacterClipboardText,
+  characterMatchesTemperamentPack,
   formatManhuaCharacterLookSummary,
   getManhuaArtStylePreset,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
+  getManhuaTemperamentPackById,
   listManhuaCharactersByGender,
+  parseManhuaFavoriteIds,
+  serializeManhuaFavoriteIds,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
   type ManhuaCharacterTemplate,
@@ -18,6 +24,55 @@ import {
 
 const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
 const FAV_LS_KEY = "mv-manhua-character-fav-v1";
+const CUSTOM_COUPLE_LS_KEY = "mv-manhua-character-custom-couples-v1";
+
+type CustomCouple = {
+  id: string;
+  labelZh: string;
+  femaleId: string;
+  maleId: string;
+  artStyleId?: ManhuaArtStyleId;
+};
+
+function loadCustomCouples(): CustomCouple[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_COUPLE_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((x) => x as Partial<CustomCouple>)
+      .filter(
+        (x) =>
+          x &&
+          typeof x.id === "string" &&
+          typeof x.femaleId === "string" &&
+          typeof x.maleId === "string" &&
+          Boolean(getManhuaCharacterById(x.femaleId)) &&
+          Boolean(getManhuaCharacterById(x.maleId)),
+      )
+      .map((x) => ({
+        id: String(x.id),
+        labelZh: String(x.labelZh || "我的套组").slice(0, 24),
+        femaleId: String(x.femaleId),
+        maleId: String(x.maleId),
+        artStyleId: x.artStyleId,
+      }))
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomCouples(list: CustomCouple[]): CustomCouple[] {
+  const next = list.slice(0, 8);
+  try {
+    localStorage.setItem(CUSTOM_COUPLE_LS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next;
+}
 
 function matchesCharacterQuery(c: ManhuaCharacterTemplate, q: string): boolean {
   const needle = q.trim().toLowerCase();
@@ -61,6 +116,16 @@ function toggleFavoriteId(id: string): string[] {
   if (!key) return loadFavoriteIds();
   const cur = loadFavoriteIds();
   const next = cur.includes(key) ? cur.filter((x) => x !== key) : [key, ...cur].slice(0, 24);
+  try {
+    localStorage.setItem(FAV_LS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next;
+}
+
+function saveFavoriteIds(ids: string[]): string[] {
+  const next = ids.map(String).filter((id) => Boolean(getManhuaCharacterById(id))).slice(0, 24);
   try {
     localStorage.setItem(FAV_LS_KEY, JSON.stringify(next));
   } catch {
@@ -404,12 +469,15 @@ export default function ManhuaCharacterGallery({
   const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>("female");
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [packFilterId, setPackFilterId] = useState("");
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [recentIds, setRecentIds] = useState<string[]>(() => loadRecentIds());
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
+  const [customCouples, setCustomCouples] = useState<CustomCouple[]>(() => loadCustomCouples());
   const [copyFlash, setCopyFlash] = useState("");
   const libraryRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const packFilter = useMemo(() => getManhuaTemperamentPackById(packFilterId), [packFilterId]);
   const females = useMemo(() => listManhuaCharactersByGender("female"), []);
   const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
@@ -464,10 +532,11 @@ export default function ManhuaCharacterGallery({
     () =>
       pool.filter((c) => {
         if (favoritesOnly && !favoriteSet.has(c.id)) return false;
+        if (!characterMatchesTemperamentPack(c, packFilter)) return false;
         if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
         return matchesCharacterQuery(c, libraryQuery);
       }),
-    [pool, libraryQuery, tagFilter, favoritesOnly, favoriteSet],
+    [pool, libraryQuery, tagFilter, favoritesOnly, favoriteSet, packFilter],
   );
   const selectedInTab = libraryTab === "female" ? femaleId : maleId;
 
@@ -480,8 +549,86 @@ export default function ManhuaCharacterGallery({
     }
   };
 
+  const applyCouplePair = (
+    female: string,
+    male: string,
+    opts?: { artStyleId?: ManhuaArtStyleId; labelZh?: string },
+  ) => {
+    rememberSelect(female, "female");
+    rememberSelect(male, "male");
+    if (opts?.artStyleId) onSelectArtStyle(opts.artStyleId);
+    setCopyFlash(opts?.labelZh ? `已套用套组：${opts.labelZh}` : "已套用双人");
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  const applyCouplePack = (packId: string) => {
+    const pack = MANHUA_COUPLE_PACKS.find((p) => p.id === packId);
+    if (!pack) return;
+    applyCouplePair(pack.femaleId, pack.maleId, {
+      artStyleId: pack.artStyleId,
+      labelZh: pack.labelZh,
+    });
+  };
+
+  const saveCurrentAsCustomCouple = () => {
+    if (!femaleId || !maleId) return;
+    const f = getManhuaCharacterById(femaleId);
+    const m = getManhuaCharacterById(maleId);
+    if (!f || !m) return;
+    const labelZh = `${f.nameZh}×${m.nameZh}`;
+    const id = `custom_${femaleId}_${maleId}`;
+    const entry: CustomCouple = {
+      id,
+      labelZh,
+      femaleId,
+      maleId,
+      artStyleId,
+    };
+    const next = [entry, ...customCouples.filter((x) => x.id !== id)].slice(0, 8);
+    setCustomCouples(saveCustomCouples(next));
+    setCopyFlash(`已保存套组：${labelZh}`);
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
+  const removeCustomCouple = (id: string) => {
+    setCustomCouples(saveCustomCouples(customCouples.filter((x) => x.id !== id)));
+  };
+
   const toggleFavorite = (id: string) => {
     setFavoriteIds(toggleFavoriteId(id));
+  };
+
+  const exportFavorites = async () => {
+    const payload = serializeManhuaFavoriteIds(favoriteIds);
+    const ok = await copyText(payload);
+    setCopyFlash(ok ? `已导出收藏 JSON（${favoriteIds.length}）` : "导出失败");
+    window.setTimeout(() => setCopyFlash(""), 1800);
+  };
+
+  const importFavorites = async () => {
+    try {
+      const raw = await navigator.clipboard.readText();
+      const ids = parseManhuaFavoriteIds(raw);
+      if (!ids.length) {
+        setCopyFlash("剪贴板无有效收藏 id");
+        window.setTimeout(() => setCopyFlash(""), 1800);
+        return;
+      }
+      const merged = [...ids, ...favoriteIds.filter((x) => !ids.includes(x))].slice(0, 24);
+      setFavoriteIds(saveFavoriteIds(merged));
+      setCopyFlash(`已导入收藏 ${ids.length} 个`);
+      window.setTimeout(() => setCopyFlash(""), 1800);
+    } catch {
+      setCopyFlash("无法读取剪贴板（需权限）");
+      window.setTimeout(() => setCopyFlash(""), 1800);
+    }
+  };
+
+  const clearFavorites = () => {
+    setFavoriteIds(saveFavoriteIds([]));
+    setFavoritesOnly(false);
+    setCopyFlash("已清空收藏");
+    window.setTimeout(() => setCopyFlash(""), 1400);
   };
 
   const pickRandomInTab = () => {
@@ -554,6 +701,7 @@ export default function ManhuaCharacterGallery({
     setLibraryTab(gender);
     setLibraryQuery("");
     setTagFilter("");
+    setPackFilterId("");
     requestAnimationFrame(() => {
       libraryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
@@ -594,6 +742,85 @@ export default function ManhuaCharacterGallery({
       {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
       {copyFlash ? <p className="mt-1 text-[10px] text-emerald-200/85">{copyFlash}</p> : null}
       <DualCompareStrip female={selectedFemale} male={selectedMale} artStyleId={artStyleId} />
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] font-semibold text-white/75">男女套组（一键选用）</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={disabled || !femaleId || !maleId}
+              onClick={saveCurrentAsCustomCouple}
+              className="text-[10px] text-emerald-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              保存当前双人为套组
+            </button>
+            <span className="text-[10px] text-white/35">会同步画风 · 不烧 token</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {MANHUA_COUPLE_PACKS.map((p) => {
+            const active = femaleId === p.femaleId && maleId === p.maleId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                disabled={disabled}
+                title={p.blurbZh}
+                onClick={() => applyCouplePack(p.id)}
+                className={`rounded-lg border px-2.5 py-1.5 text-left text-[10px] disabled:opacity-40 ${
+                  active
+                    ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100"
+                    : "border-white/10 bg-black/30 text-white/70 hover:border-white/25"
+                }`}
+              >
+                <div className="font-semibold">{p.labelZh}</div>
+                <div className="mt-0.5 text-white/40">{p.blurbZh}</div>
+              </button>
+            );
+          })}
+        </div>
+        {customCouples.length ? (
+          <div className="mt-2">
+            <div className="mb-1 text-[10px] text-white/40">我的套组</div>
+            <div className="flex flex-wrap gap-1.5">
+              {customCouples.map((p) => {
+                const active = femaleId === p.femaleId && maleId === p.maleId;
+                return (
+                  <div key={p.id} className="inline-flex items-stretch gap-0.5">
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() =>
+                        applyCouplePair(p.femaleId, p.maleId, {
+                          artStyleId: p.artStyleId,
+                          labelZh: p.labelZh,
+                        })
+                      }
+                      className={`rounded-l-lg border px-2.5 py-1.5 text-[10px] disabled:opacity-40 ${
+                        active
+                          ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100"
+                          : "border-white/10 bg-black/30 text-white/70 hover:border-white/25"
+                      }`}
+                    >
+                      {p.labelZh}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      title="删除此套组"
+                      onClick={() => removeCustomCouple(p.id)}
+                      className="rounded-r-lg border border-l-0 border-white/10 bg-black/40 px-1.5 text-[10px] text-white/40 hover:text-white/70 disabled:opacity-40"
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       {/* 双人同显 */}
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
@@ -706,6 +933,7 @@ export default function ManhuaCharacterGallery({
                 setLibraryTab("female");
                 setLibraryQuery("");
                 setTagFilter("");
+                setPackFilterId("");
               }}
               className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
                 libraryTab === "female" ? "bg-cyan-500/25 text-cyan-100" : "text-white/55"
@@ -719,6 +947,7 @@ export default function ManhuaCharacterGallery({
                 setLibraryTab("male");
                 setLibraryQuery("");
                 setTagFilter("");
+                setPackFilterId("");
               }}
               className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
                 libraryTab === "male" ? "bg-amber-500/25 text-amber-100" : "text-white/55"
@@ -757,9 +986,64 @@ export default function ManhuaCharacterGallery({
           >
             只看收藏{favoritesInTab.length ? ` (${favoritesInTab.length})` : ""}
           </button>
+          <button
+            type="button"
+            disabled={disabled || !favoriteIds.length}
+            onClick={() => void exportFavorites()}
+            className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 disabled:opacity-40"
+          >
+            导出收藏
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => void importFavorites()}
+            className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/70 disabled:opacity-40"
+          >
+            导入收藏
+          </button>
+          <button
+            type="button"
+            disabled={disabled || !favoriteIds.length}
+            onClick={clearFavorites}
+            className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
+          >
+            清空收藏
+          </button>
           <span className="text-[10px] text-white/35">
             {filteredPool.length}/{pool.length}
           </span>
+        </div>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setPackFilterId("")}
+            className={`rounded-full border px-2 py-0.5 text-[10px] ${
+              !packFilterId ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
+            }`}
+          >
+            全部组合
+          </button>
+          {MANHUA_TEMPERAMENT_PACKS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              disabled={disabled}
+              title={p.tags.join(" · ")}
+              onClick={() => {
+                setPackFilterId((prev) => (prev === p.id ? "" : p.id));
+                setTagFilter("");
+              }}
+              className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                packFilterId === p.id
+                  ? "border-violet-400/45 bg-violet-500/15 text-violet-100"
+                  : "border-white/10 text-white/50 hover:border-white/25"
+              }`}
+            >
+              {p.labelZh}
+            </button>
+          ))}
         </div>
         {tagOptions.length ? (
           <div className="mb-2 flex flex-wrap gap-1.5">

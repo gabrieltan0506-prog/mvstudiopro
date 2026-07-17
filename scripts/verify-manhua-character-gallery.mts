@@ -6,11 +6,17 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   MANHUA_CHARACTER_ASSET_LIBRARY,
+  MANHUA_COUPLE_PACKS,
+  MANHUA_TEMPERAMENT_PACKS,
   buildManhuaCharacterPromptBlock,
   buildManhuaCharacterSheetGenPrompt,
+  characterMatchesTemperamentPack,
+  getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
+  parseManhuaFavoriteIds,
   recommendManhuaArtStyleFromTopic,
   recommendManhuaCharactersFromTopic,
+  serializeManhuaFavoriteIds,
 } from "../shared/manhuaCharacterAssetLibrary";
 
 const root = process.cwd();
@@ -60,6 +66,27 @@ if (urban.artStyleId !== "photoreal" || xian.artStyleId !== "cg_drama") {
 const leads = recommendManhuaCharactersFromTopic("女主权谋翻盘");
 if (!leads.femaleId || !leads.maleId) bad("题材→男女主推荐");
 else ok(`题材→男女主推荐 ${leads.femaleId}/${leads.maleId}`);
+
+let coupleOk = true;
+for (const pack of MANHUA_COUPLE_PACKS) {
+  const f = getManhuaCharacterById(pack.femaleId);
+  const m = getManhuaCharacterById(pack.maleId);
+  if (!f || f.gender !== "female" || !m || m.gender !== "male") {
+    coupleOk = false;
+    bad(`套组 id 合法 ${pack.id}`);
+  }
+}
+if (coupleOk) ok(`男女套组 ${MANHUA_COUPLE_PACKS.length} 组 id 均合法`);
+
+const coldPack = MANHUA_TEMPERAMENT_PACKS.find((p) => p.id === "cold_elite");
+const coldHits = MANHUA_CHARACTER_ASSET_LIBRARY.filter((c) => characterMatchesTemperamentPack(c, coldPack));
+if (!coldPack || coldHits.length < 3) bad("气质组合清冷精英有命中");
+else ok(`气质组合清冷精英命中 ${coldHits.length}`);
+
+const favJson = serializeManhuaFavoriteIds(["char_f_01", "char_m_02", "nope"]);
+const favParsed = parseManhuaFavoriteIds(favJson);
+if (favParsed.length !== 2 || !favParsed.includes("char_f_01")) bad("收藏序列化往返");
+else ok("收藏序列化往返");
 
 if (failed) {
   console.error(`\n验收失败：${failed} 项`);
