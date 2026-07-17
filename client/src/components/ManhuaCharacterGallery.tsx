@@ -741,6 +741,15 @@ export default function ManhuaCharacterGallery({
     window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
+  const favoriteFilteredPool = () => {
+    if (!filteredPool.length) return;
+    const ids = filteredPool.map((c) => c.id);
+    const merged = [...ids, ...favoriteIds.filter((x) => !ids.includes(x))].slice(0, 24);
+    setFavoriteIds(saveFavoriteIds(merged));
+    setCopyFlash(`已收藏筛选结果 ${Math.min(ids.length, 24)} 个`);
+    window.setTimeout(() => setCopyFlash(""), 1600);
+  };
+
   const copySelected = async (gender: ManhuaCharacterGender) => {
     const id = gender === "female" ? femaleId : maleId;
     const text = buildManhuaCharacterClipboardText(id, { artStyleId });
@@ -892,7 +901,7 @@ export default function ManhuaCharacterGallery({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [disabled, filteredPool, selectedInTab, libraryTab, hasActiveFilters, compareId]);
+  }, [disabled, filteredPool, selectedInTab, libraryTab, hasActiveFilters, compareId, lockArtStyle]);
 
   useEffect(() => {
     if (!selectedInTab || !gridRef.current) return;
@@ -1423,6 +1432,14 @@ export default function ManhuaCharacterGallery({
                 className="rounded-lg border border-white/10 bg-transparent px-2.5 py-1.5 text-[11px] text-white/45 disabled:opacity-40"
               >
                 复制筛选 id
+              </button>
+              <button
+                type="button"
+                disabled={disabled || !filteredPool.length}
+                onClick={favoriteFilteredPool}
+                className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-100/85 disabled:opacity-40"
+              >
+                收藏筛选结果
               </button>
             </div>
             <div className="mb-2 flex flex-wrap gap-1.5">
