@@ -1,11 +1,19 @@
 /**
  * /platform Skill 勾选 UI 分组（按用途，便于开/关一整组）。
  * Canvas 专用 Skill 不进此表（见 CANVAS_ONLY_SKILL_IDS）。
+ *
+ * 分类原则：一类一个篮子，勿把「笔记节奏 / 一键模板 / 视频广告」揉进同一组。
  */
 
 import { PLATFORM_SKILL_ROUTER_CORE_IDS } from "./platformSkillRouter.js";
 
-export type PlatformSkillCategoryId = "core" | "graphic" | "video" | "lane" | "custom";
+export type PlatformSkillCategoryId =
+  | "core"
+  | "graphic"
+  | "templates"
+  | "video"
+  | "lane"
+  | "custom";
 
 export type PlatformSkillCategoryMeta = {
   id: PlatformSkillCategoryId;
@@ -13,13 +21,53 @@ export type PlatformSkillCategoryMeta = {
   hint: string;
 };
 
+/** UI 展示顺序（固定，勿随意打乱） */
 export const PLATFORM_SKILL_CATEGORY_ORDER: readonly PlatformSkillCategoryMeta[] = [
   { id: "core", label: "核心通用", hint: "钩子结构、平台母语、审核表达、封面停滑等底座" },
-  { id: "graphic", label: "图文笔记", hint: "图文节奏、高收藏笔记、蓝海自然、连载弧" },
-  { id: "video", label: "视频导演", hint: "导演手法、JSON 导演中台（运镜/分镜向）" },
+  { id: "graphic", label: "图文笔记", hint: "笔记节奏、高收藏、蓝海自然、连载弧" },
+  { id: "templates", label: "一键模板", hint: "百科可视化、Image-2 复刻、HTML PPT、即梦封面" },
+  { id: "video", label: "视频与广告", hint: "导演中台、产品广告、短剧钩子、带货广告" },
   { id: "lane", label: "赛道专项", hint: "虚拟资料店、畅销品科普、法医、跨界医学、身份反差等" },
   { id: "custom", label: "我上传的", hint: "你自己上传的 Skill.md" },
 ] as const;
+
+/** 组内展示顺序（未列出的排在该组末尾，按 id） */
+export const PLATFORM_SKILL_ID_ORDER: readonly string[] = [
+  // core（路由核心会自然落这里；再补常见底座）
+  "hook-solution-cta",
+  "platform-native",
+  "review-safe-voice",
+  "cover-stop-scroll",
+  "vivid-anti-boring",
+  // graphic
+  "graphic-note-rhythm",
+  "xhs-collectible-note",
+  "blue-ocean-natural",
+  "batch-arc-engagement",
+  // templates（HB 一键能力）
+  "encyclopedic-infographic",
+  "image2-quick-templates",
+  "website-html-ppt",
+  "jimeng-cover",
+  // video / ads
+  "director-craft",
+  "json-director-middleware",
+  "jimeng-product-ad",
+  "jimeng-short-drama",
+  "ai-feed-ad",
+  // lane
+  "xhs-virtual-goods",
+  "cultural-diversity",
+  "lifestyle-diversity",
+  "contrast-reversal-climax",
+  "crossover-popsci",
+  "medical-resource-library",
+  "4season-fmcg-popsci",
+  "label-debunk-copy",
+  "authority-cite-endorsement",
+  "fmcg-popsci-monetize",
+  "forensic-life-lens",
+];
 
 const GRAPHIC_IDS = new Set([
   "graphic-note-rhythm",
@@ -28,7 +76,20 @@ const GRAPHIC_IDS = new Set([
   "batch-arc-engagement",
 ]);
 
-const VIDEO_IDS = new Set(["director-craft", "json-director-middleware"]);
+const TEMPLATE_IDS = new Set([
+  "encyclopedic-infographic",
+  "image2-quick-templates",
+  "website-html-ppt",
+  "jimeng-cover",
+]);
+
+const VIDEO_IDS = new Set([
+  "director-craft",
+  "json-director-middleware",
+  "jimeng-product-ad",
+  "jimeng-short-drama",
+  "ai-feed-ad",
+]);
 
 const CORE_IDS = new Set<string>(PLATFORM_SKILL_ROUTER_CORE_IDS);
 
@@ -53,10 +114,23 @@ export function resolvePlatformSkillCategory(skill: {
 }): PlatformSkillCategoryId {
   if (skill.source === "user") return "custom";
   const id = String(skill.id || "").trim();
-  if (CORE_IDS.has(id)) return "core";
+  if (TEMPLATE_IDS.has(id)) return "templates";
   if (GRAPHIC_IDS.has(id)) return "graphic";
   if (VIDEO_IDS.has(id)) return "video";
+  if (CORE_IDS.has(id)) return "core";
   return "lane";
+}
+
+function skillSortKey(id: string): number {
+  const idx = PLATFORM_SKILL_ID_ORDER.indexOf(id);
+  return idx >= 0 ? idx : 10_000;
+}
+
+export function sortPlatformSkillsInCategory<T extends { id: string }>(skills: T[]): T[] {
+  return [...skills].sort((a, b) => {
+    const d = skillSortKey(a.id) - skillSortKey(b.id);
+    return d !== 0 ? d : a.id.localeCompare(b.id);
+  });
 }
 
 export function groupPlatformSkillsByCategory<T extends { id: string; source?: string }>(
@@ -71,6 +145,6 @@ export function groupPlatformSkillsByCategory<T extends { id: string; source?: s
   }
   return PLATFORM_SKILL_CATEGORY_ORDER.map((category) => ({
     category,
-    skills: buckets.get(category.id) || [],
+    skills: sortPlatformSkillsInCategory(buckets.get(category.id) || []),
   })).filter((g) => g.skills.length > 0);
 }

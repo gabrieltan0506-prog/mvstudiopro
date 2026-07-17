@@ -340,24 +340,57 @@ export function collectUpstreamTexts(
   return collectUpstreamHandoff(blockId, blocks, edges).map((item) => item.text);
 }
 
+/** 仅图片可进多模态 vision；文档/视频绝不能误标为 image/* */
+export function isCanvasVisionImageAsset(asset: CanvasUploadedAsset): boolean {
+  if (asset.kind === "document" || asset.kind === "video") return false;
+  if (asset.kind === "image") return true;
+  const name = `${asset.fileName || ""} ${asset.url || ""}`;
+  if (/\.(pdf|txt|md|markdown)(\?|$)/i.test(name)) return false;
+  if (/\.(mp4|mov|webm|m4v)(\?|$)/i.test(name)) return false;
+  if (/\.(png|jpe?g|webp|gif|heic|heif)(\?|$)/i.test(name)) return true;
+  if (asset.mimeType?.startsWith("image/")) return true;
+  return false;
+}
+
+export function isCanvasDocumentAsset(asset: CanvasUploadedAsset): boolean {
+  if (asset.kind === "document") return true;
+  if (asset.kind === "image" || asset.kind === "video") return false;
+  const name = `${asset.fileName || ""} ${asset.url || ""}`;
+  if (/\.(pdf|txt|md|markdown)(\?|$)/i.test(name)) return true;
+  if (asset.mimeType === "application/pdf" || asset.mimeType?.startsWith("text/")) return true;
+  return false;
+}
+
+function visionMimeForAsset(asset: CanvasUploadedAsset): string {
+  if (asset.mimeType?.startsWith("image/")) return asset.mimeType;
+  const name = asset.fileName || "";
+  if (/\.png$/i.test(name)) return "image/png";
+  if (/\.webp$/i.test(name)) return "image/webp";
+  if (/\.gif$/i.test(name)) return "image/gif";
+  return "image/jpeg";
+}
+
 function appendVisionFromBlock(
   block: CanvasBlock,
   seen: Set<string>,
   items: Array<{ url: string; gcsUri?: string; mimeType?: string }>,
 ) {
   const addAsset = (asset: CanvasUploadedAsset) => {
+    if (!isCanvasVisionImageAsset(asset)) return;
     const key = asset.gcsUri || asset.url;
     if (!key || seen.has(key)) return;
     seen.add(key);
     items.push({
       url: asset.url,
       gcsUri: asset.gcsUri,
-      mimeType: asset.fileName.match(/\.png$/i) ? "image/png" : "image/jpeg",
+      mimeType: visionMimeForAsset(asset),
     });
   };
 
   const addUrl = (url: string) => {
     if (!url || seen.has(url)) return;
+    // 生成结果若是视频 URL，勿当 vision 图
+    if (/\.(mp4|mov|webm|m4v)(\?|$)/i.test(url)) return;
     seen.add(url);
     items.push({ url });
   };
@@ -369,6 +402,41 @@ function appendVisionFromBlock(
     addUrl(block.outputUrl);
   }
   if (block.refImageUrl) addUrl(block.refImageUrl);
+}
+
+function appendDocumentsFromBlock(
+  block: CanvasBlock,
+  seen: Set<string>,
+  items: CanvasUploadedAsset[],
+) {
+  for (const asset of block.uploadedAssets ?? []) {
+    if (!isCanvasDocumentAsset(asset)) continue;
+    const key = asset.gcsUri || asset.url;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    items.push(asset);
+  }
+}
+
+/** 本块 + 上游链上的文档素材（TXT/MD/PDF），供文本·整理文案读取正文 */
+export function collectDocumentAssets(
+  blockId: string,
+  blocks: CanvasBlock[],
+  edges: Array<{ fromId: string; toId: string }>,
+): CanvasUploadedAsset[] {
+  const blockMap = new Map(blocks.map((b) => [b.id, b]));
+  const seen = new Set<string>();
+  const items: CanvasUploadedAsset[] = [];
+
+  const self = blockMap.get(blockId);
+  if (self) appendDocumentsFromBlock(self, seen, items);
+
+  for (const upstreamId of collectUpstreamBlockIds(blockId, blocks, edges)) {
+    const upstream = blockMap.get(upstreamId);
+    if (upstream) appendDocumentsFromBlock(upstream, seen, items);
+  }
+
+  return items;
 }
 
 export function collectVisionImages(
