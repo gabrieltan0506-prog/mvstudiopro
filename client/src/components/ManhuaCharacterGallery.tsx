@@ -671,6 +671,11 @@ export default function ManhuaCharacterGallery({
         void copyDualBrief();
         return;
       }
+      if (e.key === "h" || e.key === "H") {
+        e.preventDefault();
+        libraryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return;
+      }
       if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const pack = MANHUA_COUPLE_PACKS[Number(e.key) - 1];
         if (pack) {
@@ -1561,7 +1566,7 @@ export default function ManhuaCharacterGallery({
         {showShortcuts ? (
           <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
             <li>悬停看三视图 · 右键钉住预览</li>
-            <li>★ 收藏 · R/Shift+R 随机 · F 收藏 · C 对比 · L 锁画风 · U 精简 · B 短名片 · ? 说明</li>
+            <li>★ 收藏 · R/Shift+R 随机 · F 收藏 · C 对比 · L 锁画风 · U 精简 · B 短名片 · H 滚到库 · ? 说明</li>
             <li>[ 女主库 · ] 男主库 · 1–9/0 套组 · Esc 清筛选 · ←/→ 换人</li>
             <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
           </ul>

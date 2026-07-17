@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   formatManhuaCharacterLookSummary,
   getManhuaArtStylePreset,
@@ -5,6 +6,7 @@ import {
   type ManhuaArtStyleId,
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
+import { copyText } from "@/lib/manhuaCharacterGalleryStorage";
 import ManhuaTriViewStrip from "@/components/ManhuaTriViewStrip";
 
 export default function ManhuaCharacterSheetPreview({
@@ -20,8 +22,16 @@ export default function ManhuaCharacterSheetPreview({
   compact?: boolean;
   artStyleId?: ManhuaArtStyleId;
 }) {
+  const [idFlash, setIdFlash] = useState(false);
   const url = getManhuaCharacterPreviewUrl(character.id);
   const style = getManhuaArtStylePreset(artStyleId);
+
+  const copyId = async () => {
+    const ok = await copyText(character.id);
+    if (!ok) return;
+    setIdFlash(true);
+    window.setTimeout(() => setIdFlash(false), 1200);
+  };
   const ring =
     accent === "cyan"
       ? "border-cyan-400/55 shadow-[0_0_24px_rgba(34,211,238,0.12)]"
@@ -48,9 +58,14 @@ export default function ManhuaCharacterSheetPreview({
             <span className="rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/55">
               {style.labelZh}
             </span>
-            <span className="rounded-md border border-white/10 bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-white/35">
-              {character.id}
-            </span>
+            <button
+              type="button"
+              title="点击复制角色 id"
+              onClick={() => void copyId()}
+              className="rounded-md border border-white/10 bg-black/30 px-1.5 py-0.5 font-mono text-[10px] text-white/35 hover:border-white/25 hover:text-white/70"
+            >
+              {idFlash ? "已复制" : character.id}
+            </button>
           </div>
           <p className="mt-1 text-[11px] text-white/55">
             {character.jobZh}
