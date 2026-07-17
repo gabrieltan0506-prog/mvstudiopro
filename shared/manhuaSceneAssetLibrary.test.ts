@@ -84,4 +84,8 @@ describe("manhuaSceneAssetLibrary", () => {
   it("recommends 边塞 from 狼烟", () => {
     expect(recommendManhuaSceneFromTopic("戍边狼烟关隘").sceneId).toBe("scene_10");
   });
+
+  it("recommends 豪宅 from 顶层公寓", () => {
+    expect(recommendManhuaSceneFromTopic("顶层公寓天台酒会").sceneId).toBe("scene_11");
+  });
 });
