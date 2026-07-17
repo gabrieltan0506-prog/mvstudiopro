@@ -504,8 +504,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       ),
     );
 
-    // 角色卡阶段历史上易 503：多给一次退避机会
-    const maxRetries = stage === "bible" ? Math.min(4, defaultMaxRetries + 1) : defaultMaxRetries;
+    // 角色卡阶段历史上易 503：多给两次退避；下游 runGeminiScript / 网关会再换 Flash
+    const maxRetries = stage === "bible" ? Math.min(5, defaultMaxRetries + 2) : defaultMaxRetries;
     let lastMessage = "生成失败";
     let succeeded = false;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
