@@ -94,6 +94,8 @@ export default function OmniCanvas() {
   const [factoryTopic, setFactoryTopic] = useState("");
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
+  /** 手选场景后不再被题材自动覆盖（⑤D） */
+  const [sceneManual, setSceneManual] = useState(false);
   const [factoryFemaleId, setFactoryFemaleId] = useState("");
   const [factoryMaleId, setFactoryMaleId] = useState("");
   /** 用户手选后不再被题材自动覆盖（4.B） */
@@ -120,13 +122,29 @@ export default function OmniCanvas() {
     if (g?.sceneGenre) return listManhuaScenes({ genre: g.sceneGenre });
     return listManhuaScenes();
   }, [factoryGenreId, genreOptions]);
-  const recommendedScene = useMemo(() => {
-    const rec = recommendManhuaSceneIdFromTopic({
-      genreId: factoryGenreId || undefined,
-      topic: factoryTopic,
-    });
-    return rec.sceneId ? getManhuaSceneTemplate(rec.sceneId) : null;
-  }, [factoryGenreId, factoryTopic]);
+  const recommendedSceneRec = useMemo(
+    () =>
+      recommendManhuaSceneIdFromTopic({
+        genreId: factoryGenreId || undefined,
+        topic: factoryTopic,
+      }),
+    [factoryGenreId, factoryTopic],
+  );
+  const recommendedScene = useMemo(
+    () => (recommendedSceneRec.sceneId ? getManhuaSceneTemplate(recommendedSceneRec.sceneId) : null),
+    [recommendedSceneRec.sceneId],
+  );
+  const sceneAutoApplied =
+    !sceneManual &&
+    Boolean(factorySceneId) &&
+    factorySceneId === recommendedSceneRec.sceneId;
+
+  useEffect(() => {
+    if (!sceneManual && recommendedSceneRec.sceneId) {
+      setFactorySceneId(recommendedSceneRec.sceneId);
+    }
+  }, [recommendedSceneRec.sceneId, sceneManual]);
+
   const femaleLeadOptions = useMemo(() => listManhuaCharactersByGender("female"), []);
   const maleLeadOptions = useMemo(() => listManhuaCharactersByGender("male"), []);
   const recommendedLeads = useMemo(
@@ -661,11 +679,13 @@ export default function OmniCanvas() {
                     onChange={(e) => {
                       const next = e.target.value;
                       setFactoryGenreId(next);
-                      const rec = recommendManhuaSceneIdFromTopic({
-                        genreId: next || undefined,
-                        topic: factoryTopic,
-                      });
-                      setFactorySceneId(rec.sceneId || "");
+                      if (!sceneManual) {
+                        const rec = recommendManhuaSceneIdFromTopic({
+                          genreId: next || undefined,
+                          topic: factoryTopic,
+                        });
+                        setFactorySceneId(rec.sceneId || "");
+                      }
                     }}
                     disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
@@ -679,10 +699,24 @@ export default function OmniCanvas() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-white/45">场景（推荐单一）</label>
+                  <label className="block text-[11px] text-white/45">
+                    场景（推荐单一）
+                    {sceneManual ? (
+                      <button
+                        type="button"
+                        className="ml-2 text-emerald-300/90 underline-offset-2 hover:underline"
+                        onClick={() => setSceneManual(false)}
+                      >
+                        恢复自动推荐
+                      </button>
+                    ) : null}
+                  </label>
                   <select
                     value={factorySceneId}
-                    onChange={(e) => setFactorySceneId(e.target.value)}
+                    onChange={(e) => {
+                      setSceneManual(true);
+                      setFactorySceneId(e.target.value);
+                    }}
                     disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
                   >
@@ -702,11 +736,13 @@ export default function OmniCanvas() {
               {recommendedScene ? (
                 <p className="mt-1.5 text-[10px] leading-snug text-emerald-200/80">
                   当前推荐主场景：{String(recommendedScene.no).padStart(2, "0")} {recommendedScene.nameZh}
+                  {sceneAutoApplied ? " ·自动" : sceneManual ? " ·手选" : ""}
+                  {recommendedSceneRec.reasonZh ? ` · ${recommendedSceneRec.reasonZh}` : ""}
                   （未手选时工厂只套这一条，可下拉更换）
                 </p>
               ) : (
                 <p className="mt-1.5 text-[10px] text-white/35">
-                  填写题材或选手动剧种后，将自动推荐一条主场景。
+                  填写题材或选手动剧种后，将按关键词自动推荐一条主场景（如「秘境」→ 洞府）。
                 </p>
               )}
 

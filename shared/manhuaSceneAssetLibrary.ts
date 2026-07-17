@@ -278,6 +278,122 @@ export function recommendPrimaryManhuaScene(
   return getManhuaSceneTemplate(recommendPrimaryManhuaSceneId(genre));
 }
 
+/**
+ * 题材关键词 → 具体场景（⑤D）。
+ * 比「剧种池首条」更细：如「秘境」→ scene_04，而非仙侠默认 scene_01。
+ * 多命中时按匹配词数 + 最长词优先；可按剧种收窄候选。
+ */
+const SCENE_TOPIC_KEYWORDS: Array<{ sceneId: string; keys: string[] }> = [
+  { sceneId: "scene_04", keys: ["秘境", "洞府", "寻宝", "闭关", "奇遇", "法阵", "灵泉", "水晶洞窟"] },
+  { sceneId: "scene_03", keys: ["练剑", "对决", "剑气", "比武", "演武"] },
+  { sceneId: "scene_02", keys: ["云海", "浮空山", "飞瀑", "仙山", "空镜"] },
+  { sceneId: "scene_01", keys: ["宗门", "山门", "拜师", "仙门", "弟子入门"] },
+  { sceneId: "scene_05", keys: ["魔族", "魔宫", "深渊", "反派宫殿", "黑曜"] },
+  { sceneId: "scene_06", keys: ["皇宫", "大殿", "朝堂", "龙椅", "登基", "百官"] },
+  { sceneId: "scene_07", keys: ["长安", "街市", "市井", "灯笼商铺", "烟火气"] },
+  { sceneId: "scene_08", keys: ["府邸", "宅斗", "庭院", "世家", "回廊"] },
+  { sceneId: "scene_09", keys: ["战场", "废墟", "残垣", "战旗", "大战"] },
+  { sceneId: "scene_10", keys: ["边塞", "城墙", "烽火", "关隘", "黄沙"] },
+  { sceneId: "scene_12", keys: ["办公室", "会议室", "职场", "霸总", "商务", "玻璃幕墙"] },
+  { sceneId: "scene_11", keys: ["豪宅", "豪门", "泳池", "落地窗", "别墅"] },
+  { sceneId: "scene_13", keys: ["酒吧", "夜店", "霓虹", "舞池", "吧台"] },
+  { sceneId: "scene_14", keys: ["校园", "教室", "校服", "课桌", "青春", "同学"] },
+  { sceneId: "scene_16", keys: ["太空", "星舰", "飞船", "基地", "舷窗", "星际"] },
+  { sceneId: "scene_15", keys: ["未来城市", "全息", "飞行器", "赛博", "天际线"] },
+  { sceneId: "scene_17", keys: ["避难所", "废土", "末日", "幸存者", "营地"] },
+  { sceneId: "scene_18", keys: ["实验室", "实验舱", "科研", "AI觉醒", "玻璃舱"] },
+  { sceneId: "scene_19", keys: ["密室", "探案", "搜证", "线索", "推理现场"] },
+  { sceneId: "scene_20", keys: ["黑客", "代码", "多屏", "信息战", "服务器"] },
+];
+
+export type ManhuaSceneTopicRecommend = {
+  sceneId: string | null;
+  entry: ManhuaSceneTemplate | null;
+  reasonZh: string;
+  matched: string[];
+};
+
+export function recommendManhuaSceneFromTopic(
+  topic: string | undefined | null,
+  opts?: { genre?: ManhuaSceneGenre | null },
+): ManhuaSceneTopicRecommend {
+  const text = String(topic || "").trim();
+  if (!text) {
+    const fallbackId = recommendPrimaryManhuaSceneId(opts?.genre);
+    const entry = getManhuaSceneTemplate(fallbackId);
+    return {
+      sceneId: entry?.id || null,
+      entry,
+      reasonZh: entry ? `未填题材，按剧种默认「${entry.nameZh}」` : "未填题材且无剧种，暂无推荐",
+      matched: [],
+    };
+  }
+
+  const genreFilter = opts?.genre || null;
+  let best: {
+    sceneId: string;
+    matched: string[];
+    score: number;
+    longest: number;
+  } | null = null;
+
+  for (const row of SCENE_TOPIC_KEYWORDS) {
+    const entry = getManhuaSceneTemplate(row.sceneId);
+    if (!entry) continue;
+    if (genreFilter && !entry.genres.includes(genreFilter)) continue;
+    const matched = row.keys.filter((k) => text.includes(k));
+    if (!matched.length) continue;
+    const longest = Math.max(...matched.map((m) => m.length));
+    const score = matched.length * 10 + longest;
+    if (
+      !best ||
+      score > best.score ||
+      (score === best.score && matched.length > best.matched.length)
+    ) {
+      best = { sceneId: row.sceneId, matched, score, longest };
+    }
+  }
+
+  // 弱匹配：场景名出现在题材里
+  if (!best) {
+    for (const entry of MANHUA_SCENE_ASSET_LIBRARY) {
+      if (genreFilter && !entry.genres.includes(genreFilter)) continue;
+      if (!text.includes(entry.nameZh)) continue;
+      best = {
+        sceneId: entry.id,
+        matched: [entry.nameZh],
+        score: entry.nameZh.length,
+        longest: entry.nameZh.length,
+      };
+      break;
+    }
+  }
+
+  if (best) {
+    const entry = getManhuaSceneTemplate(best.sceneId);
+    const hit = best.matched[0] || "";
+    return {
+      sceneId: entry?.id || null,
+      entry,
+      reasonZh: entry
+        ? `题材命中「${hit}」→ 推荐「${entry.nameZh}」`
+        : "命中关键词但场景缺失",
+      matched: best.matched,
+    };
+  }
+
+  const fallbackId = recommendPrimaryManhuaSceneId(genreFilter);
+  const entry = getManhuaSceneTemplate(fallbackId);
+  return {
+    sceneId: entry?.id || null,
+    entry,
+    reasonZh: entry
+      ? `题材未强命中具体场，按剧种默认「${entry.nameZh}」（可更换）`
+      : "无可用场景推荐",
+    matched: [],
+  };
+}
+
 export function resolveManhuaScenes(opts?: {
   genre?: ManhuaSceneGenre;
   sceneId?: string;

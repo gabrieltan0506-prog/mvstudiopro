@@ -5,6 +5,7 @@ import {
   composeManhuaScenePromptBlock,
   getManhuaSceneTemplate,
   listManhuaScenes,
+  recommendManhuaSceneFromTopic,
   recommendPrimaryManhuaSceneId,
   resolveManhuaScenes,
 } from "./manhuaSceneAssetLibrary";
@@ -35,5 +36,19 @@ describe("manhuaSceneAssetLibrary", () => {
     expect(recommendPrimaryManhuaSceneId("campus")).toBe("scene_14");
     expect(resolveManhuaScenes({ genre: "xianxia", primaryOnly: true })).toHaveLength(1);
     expect(resolveManhuaScenes({ genre: "xianxia", primaryOnly: true })[0]?.id).toBe("scene_01");
+  });
+
+  it("recommends concrete scene from topic keywords (⑤D)", () => {
+    expect(recommendManhuaSceneFromTopic("外门弟子雨夜闯秘境").sceneId).toBe("scene_04");
+    expect(recommendManhuaSceneFromTopic("霸总办公室夜景对峙").sceneId).toBe("scene_12");
+    expect(recommendManhuaSceneFromTopic("校园教室青春告白").sceneId).toBe("scene_14");
+    expect(recommendManhuaSceneFromTopic("黑客入侵信息战").sceneId).toBe("scene_20");
+    // 有剧种时不跨池：都市题材里的「霓虹」仍落酒吧，不落到仙侠
+    expect(recommendManhuaSceneFromTopic("霓虹酒吧邂逅", { genre: "urban" }).sceneId).toBe(
+      "scene_13",
+    );
+    expect(recommendManhuaSceneFromTopic("修仙日常", { genre: "xianxia" }).sceneId).toBe(
+      "scene_01",
+    );
   });
 });
