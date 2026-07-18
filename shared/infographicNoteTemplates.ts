@@ -1,6 +1,7 @@
 /**
  * HB V1 · 百科级信息可视化图文模板（3:4）
- * 元结构：SECTION1–5 + P.A.M.S. 高密度信息层；主体可替换。
+ * 模板只锁定版式/构图/信息密度风格；禁止内置品牌、历史案例或样例主体。
+ * 实际主题一律来自用户粘贴正文。
  */
 
 export type InfographicHeroMode = "exploded" | "split" | "hub" | "timeline";
@@ -9,10 +10,10 @@ export const INFOGRAPHIC_HERO_MODE_ORDER: readonly {
   id: InfographicHeroMode;
   labelZh: string;
 }[] = [
-  { id: "exploded", labelZh: "单品拆解" },
-  { id: "timeline", labelZh: "发展史" },
-  { id: "hub", labelZh: "生态枢纽" },
-  { id: "split", labelZh: "对决对比" },
+  { id: "exploded", labelZh: "拆解标注" },
+  { id: "timeline", labelZh: "流程时间轴" },
+  { id: "hub", labelZh: "枢纽辐射" },
+  { id: "split", labelZh: "左右对比" },
 ] as const;
 
 export type InfographicNoteTemplate = {
@@ -20,95 +21,79 @@ export type InfographicNoteTemplate = {
   labelZh: string;
   blurbZh: string;
   heroMode: InfographicHeroMode;
-  /** 主体占位说明 */
-  subjectHintZh: string;
-  /** 可直接套用的英文主提示（含 SUBJECT 占位） */
-  promptEn: string;
+  /** 纯版式/风格英文指令（无品牌、无历史案例、无固定样例主体） */
+  layoutPromptEn: string;
   aspect: "3:4";
 };
 
-/** 五段元结构（改主体即可） */
-export const INFOGRAPHIC_META_SECTIONS_ZH = `【信息可视化·五段元结构】
-SECTION 1 角色与主题：Massive, encyclopedic 3:4 infographic poster——百科全书式海报，不是随手照片。
-SECTION 2 核心视觉主体：单品用 Exploded view；对比用 Split-screen fusion；生态用 Central Hub/Nexus；发展史用线性时间轴。
-SECTION 3 环境与画布：Texture background + Low-opacity watermarks + Schematics（图纸/网格/半透明文档层）消除廉价感。
-SECTION 4 高密度信息层 P.A.M.S.：Pathways 标注线网 · Annotations 微文字块 · Magnifiers 放大镜特写 · Specs 底部数据条。
-SECTION 5 技术规格：Octane/Unreal 级材质光影、volumetric lighting、4K、锐利对焦、专业调色；竖版 3:4。` as const;
+/** 后台版式元结构（不对用户展示） */
+export const INFOGRAPHIC_LAYOUT_META_ZH = `【信息可视化·版式元结构·仅后台】
+SECTION 1：百科全书式 3:4 信息海报（不是随手照片、不是人物宣传照）。
+SECTION 2：按所选版式构图（拆解 / 时间轴 / 枢纽 / 左右对比），视觉主体必须来自用户正文主题。
+SECTION 3：纹理底 + 半透明示意图层 + 网格/线稿氛围，消除廉价感。
+SECTION 4：P.A.M.S. 高密度信息层——Pathways 标注线 · Annotations 微文字块 · Magnifiers 放大镜特写 · Specs 底部数据条。
+SECTION 5：竖版 3:4；锐利对焦；专业信息设计光影；禁止无关品牌 logo 与模板样例主体。` as const;
 
-export function buildInfographicPromptFromMeta(subjectZh: string, heroMode: InfographicHeroMode): string {
-  const subject = String(subjectZh || "主题主体").trim().slice(0, 120);
-  const hero =
-    heroMode === "exploded"
-      ? "Hero: hyper-realistic exploded-view centerpiece of the subject"
-      : heroMode === "split"
-        ? "Hero: split-screen fusion comparing two rivals of the subject side by side"
-        : heroMode === "timeline"
-          ? "Hero: vertical chronological timeline of the subject's evolution"
-          : "Hero: central hub/nexus of the subject's ecosystem";
-  return [
-    INFOGRAPHIC_META_SECTIONS_ZH,
-    "",
-    `主题主体：${subject}`,
-    `Prompt: Role & Subject: A massive, encyclopedic 3:4 3D infographic poster about "${subject}". ${hero}. Brand Atmosphere: deep textured background layered with low-opacity schematics and watermark diagrams. Hyper-Dense Information Layer: hundreds of fine annotation hairlines, microscopic text blocks, circular magnifying inserts, bottom tech-specs strip. Technical Specs: Octane render aesthetic, Unreal Engine 5 quality, volumetric lighting, sharp focus, professional color grading, 4K. --ar 3:4`,
-  ].join("\n");
-}
+const CONTENT_LOCK_ZH = `【内容锁定·强制】
+1. 只可视化「用户正文」里的主题、概念、流程与结论；禁止换成其他公司/品牌/文物/历史案例。
+2. 海报主标题优先取用户正文首个标题或核心命题；图中文字概括用户要点，不得编造无关实体名。
+3. 模板只提供构图与信息密度风格，不提供题材。`;
 
 export const INFOGRAPHIC_NOTE_TEMPLATES: readonly InfographicNoteTemplate[] = [
   {
     id: "infographic_material_lab",
-    labelZh: "材质工艺实验室",
-    blurbZh: "单品微观拆解 + 材料科学放大镜",
+    labelZh: "微观拆解放大镜",
+    blurbZh: "中心主体爆炸拆解 + 局部放大镜 + 材料/模块标注（版式）",
     heroMode: "exploded",
-    subjectHintZh: "产品名（如 Leica M11 Titanium）",
     aspect: "3:4",
-    promptEn: `Role & Subject: A massive, encyclopedic 3:4 3D infographic poster titled "{{SUBJECT}}: THE ART OF CRAFTSMANSHIP". High-end fusion of electron microscope imagery and luxury product presentation. Hero Centerpiece: hyper-realistic 3D model centrally placed with Microscope Portals revealing materials at atomic level. Brand Atmosphere: deep charcoal textured background layered with material science diagrams and CNC path schematics. Hyper-Dense layer: dense silver annotation network, Material Science Modules, circular magnifying inserts, bottom tech specs strip. Technical Specs: Octane render, Unreal Engine 5 aesthetic, volumetric lighting, 4K. --ar 3:4`,
+    layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 infographic poster. Hero: hyper-realistic exploded-view centerpiece of the USER TOPIC with microscope-portal callouts on key modules. Atmosphere: deep charcoal textured canvas + low-opacity schematic overlays. Hyper-dense P.A.M.S. annotation network, circular magnifiers, bottom specs strip. No brand names, no sample products. Octane/Unreal editorial quality, volumetric lighting, 4K. --ar 3:4`,
   },
   {
     id: "infographic_evolution_timeline",
-    labelZh: "发展史时间轴",
-    blurbZh: "纵向年表 + 代际产品排列",
+    labelZh: "纵向流程时间轴",
+    blurbZh: "竖向时间/阶段刻度 + 节点模块排列（版式）",
     heroMode: "timeline",
-    subjectHintZh: "品牌/品类发展史（如 Tesla Evolution）",
     aspect: "3:4",
-    promptEn: `Role & Subject: A massive, encyclopedic 3:4 vertical 3D infographic poster titled "THE EVOLUTION OF {{SUBJECT}}". Hero: complete linear chronological arrangement of key historical milestones/products on a precise measurement scale running vertically. Brand Atmosphere: deep black textured background with low-opacity vintage engineering documents. Hyper-Dense layer: fine white hairlines to compact text blocks, Era Modules, magnifying insert lenses, bottom structured data bar. Technical Specs: Octane/Unreal quality, volumetric lighting, museum-grade product photography fusion with blueprints, 4K. --ar 3:4`,
+    layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 vertical infographic. Hero: precise vertical chronological / staged timeline of the USER TOPIC milestones on a measurement scale. Atmosphere: deep textured dark canvas + low-opacity blueprint watermarks. Fine hairline annotations, era/stage modules, magnifying inserts, bottom structured data bar. No brand history samples. Museum-editorial lighting, 4K. --ar 3:4`,
   },
   {
     id: "infographic_business_ecosystem",
-    labelZh: "业务生态枢纽图",
-    blurbZh: "中心枢纽 + 业务板块辐射",
+    labelZh: "中心枢纽辐射图",
+    blurbZh: "中央枢纽 + 板块向外辐射连线（版式）",
     heroMode: "hub",
-    subjectHintZh: "公司/平台生态（如阿里巴巴业务生态）",
     aspect: "3:4",
-    promptEn: `Role & Subject: A massive, encyclopedic 3:4 3D infographic poster titled "{{SUBJECT}} 业务生态系统". Hero Centerpiece: central business architecture hub with major divisions radiating outward, modern tech aesthetic, dramatic volumetric lighting. Brand Atmosphere: richly layered schematic background. Hyper-Dense layer: annotation network, division modules with icons, magnifiers on key products, bottom specs strip. Technical Specs: editorial information design masterpiece, 4K. --ar 3:4`,
+    layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 infographic. Hero: central architecture hub/nexus of the USER TOPIC with major modules radiating outward, modern tech editorial aesthetic, dramatic volumetric lighting. Rich schematic background. Annotation network, iconized division modules, magnifiers on key nodes, bottom specs strip. Do NOT invent corporate brands or unrelated ecosystems. 4K. --ar 3:4`,
   },
   {
     id: "infographic_rival_showdown",
-    labelZh: "终极对决对比",
-    blurbZh: "左右对半拼接 + 参数对决",
+    labelZh: "左右对半对比",
+    blurbZh: "左右分屏镜像对比 + 参数对照条（版式）",
     heroMode: "split",
-    subjectHintZh: "A vs B（如 Tesla vs Porsche）",
     aspect: "3:4",
-    promptEn: `Role & Subject: A massive, encyclopedic 3:4 3D infographic poster titled "{{SUBJECT}} SHOWDOWN". Hero: Split-screen fusion of two rival products/brands with mirrored exploded details. Brand Atmosphere: high-contrast dark canvas with technical overlays. Hyper-Dense layer: comparison callouts, parameter tables, magnifiers, bottom dual-column specs strip. Technical Specs: Octane/Unreal aesthetic, volumetric lighting, 4K. --ar 3:4`,
+    layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 infographic. Hero: split-screen fusion comparing two sides / options / stages from the USER TOPIC with mirrored detail callouts. High-contrast dark technical canvas. Comparison callouts, parameter tables, magnifiers, dual-column bottom specs. No sample rival brands. Octane/Unreal aesthetic, 4K. --ar 3:4`,
   },
   {
     id: "infographic_heritage_craft",
-    labelZh: "工艺与传承",
-    blurbZh: "奢侈品/器物工艺叙事海报",
+    labelZh: "工艺细节标注",
+    blurbZh: "工艺质感中心件 + 工具/细节引出线（版式）",
     heroMode: "exploded",
-    subjectHintZh: "品牌工艺主题（如 Hermès 工艺与传承）",
     aspect: "3:4",
-    promptEn: `Role & Subject: A massive, encyclopedic 3:4 3D infographic poster titled "{{SUBJECT}}: CRAFT & HERITAGE". Hero: luxury craftsmanship centerpiece with artisan tool callouts and material close-ups. Brand Atmosphere: warm deep textured canvas with archival sketches watermarks. Hyper-Dense layer: P.A.M.S. annotation network, heritage timeline chips, magnifiers on stitching/materials, bottom craft specs strip. Technical Specs: museum editorial lighting, 4K. --ar 3:4`,
+    layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 infographic. Hero: craftsmanship-detail centerpiece for the USER TOPIC with tool/process callouts and material close-ups (metaphorical if topic is abstract). Warm deep textured canvas + archival sketch watermarks. P.A.M.S. annotation network, process chips, magnifiers on critical details, bottom craft-specs strip. No luxury-brand case studies. Museum editorial lighting, 4K. --ar 3:4`,
   },
   {
-    id: "infographic_ancient_artifact",
-    labelZh: "古代器物解构",
-    blurbZh: "青铜器等文物结构与纹样",
+    id: "infographic_structure_deconstruct",
+    labelZh: "结构层解构",
+    blurbZh: "层级/结构爆炸视图 + 纹样或模块分析（版式）",
     heroMode: "exploded",
-    subjectHintZh: "器物名（如青铜器）",
     aspect: "3:4",
-    promptEn: `Role & Subject: A massive, encyclopedic 3:4 3D infographic poster on Chinese ancient artifact "{{SUBJECT}}". Hero: hyper-detailed archaeological reconstruction with exploded ritual vessel structure. Brand Atmosphere: museum dark canvas with rubbing-pattern watermarks. Hyper-Dense layer: inscription annotations, motif magnifiers, dynasty timeline strip, material analysis specs. Technical Specs: documentary museum quality, 4K. --ar 3:4`,
+    layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 infographic. Hero: hyper-detailed structural deconstruction / exploded layered architecture of the USER TOPIC. Dark museum-editorial canvas with rubbing-like pattern watermarks. Inscription-style annotations, motif/module magnifiers, stage strip, material-or-metric analysis specs. No ancient-artifact or dynasty samples unless user text explicitly requires them. Documentary quality, 4K. --ar 3:4`,
   },
 ];
+
+/** 旧 id 兼容：古代器物 → 结构层解构 */
+const TEMPLATE_ID_ALIASES: Record<string, string> = {
+  infographic_ancient_artifact: "infographic_structure_deconstruct",
+};
 
 export function listInfographicTemplatesByMode(): Array<{
   mode: (typeof INFOGRAPHIC_HERO_MODE_ORDER)[number];
@@ -121,19 +106,93 @@ export function listInfographicTemplatesByMode(): Array<{
 }
 
 export function getInfographicNoteTemplate(id: string): InfographicNoteTemplate | null {
-  return INFOGRAPHIC_NOTE_TEMPLATES.find((t) => t.id === id) || null;
+  const resolved = TEMPLATE_ID_ALIASES[id] || id;
+  return INFOGRAPHIC_NOTE_TEMPLATES.find((t) => t.id === resolved) || null;
 }
 
+/** 从用户正文提取短标题（用于海报主标题，不回落到样例品牌） */
+export function extractInfographicSubjectFromUserCopy(userCopy: string, overrideTitle?: string): string {
+  const override = String(overrideTitle || "").trim();
+  if (override) return override.slice(0, 80);
+  const text = String(userCopy || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return "用户主题";
+  const heading = text.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
+  if (heading) return heading.slice(0, 80);
+  const firstLine = text.split("\n").map((l) => l.trim()).find(Boolean) || "";
+  return firstLine.replace(/^[#>*\-\d.\s]+/, "").slice(0, 80) || "用户主题";
+}
+
+/**
+ * 纯版式填充（测试/调试用）。正式生图请用 composeInfographicScriptContext。
+ */
 export function fillInfographicTemplatePrompt(templateId: string, subject: string): string {
   const t = getInfographicNoteTemplate(templateId);
-  const sub = String(subject || "").trim() || "SUBJECT";
-  if (!t) return buildInfographicPromptFromMeta(sub, "hub");
-  return `${INFOGRAPHIC_META_SECTIONS_ZH}\n\n主题：${sub}\n\n${t.promptEn.replace(/\{\{SUBJECT\}\}/g, sub)}`;
+  const sub = String(subject || "").trim() || "用户主题";
+  if (!t) {
+    return [
+      INFOGRAPHIC_LAYOUT_META_ZH,
+      CONTENT_LOCK_ZH,
+      "",
+      `主题：${sub}`,
+      `Prompt: LAYOUT ONLY — encyclopedic 3:4 hub infographic about "${sub}". No sample brands. --ar 3:4`,
+    ].join("\n");
+  }
+  return [
+    INFOGRAPHIC_LAYOUT_META_ZH,
+    CONTENT_LOCK_ZH,
+    "",
+    `主题：${sub}`,
+    `Prompt: ${t.layoutPromptEn}`,
+    `User topic title: ${sub}`,
+  ].join("\n");
 }
 
+/**
+ * 后台注入块：版式 + 用户正文。前端 textarea 只应保留用户正文。
+ */
+export function composeInfographicScriptContext(opts: {
+  templateId: string;
+  userCopy: string;
+  titleOverride?: string;
+  maxLen?: number;
+}): string {
+  const t = getInfographicNoteTemplate(opts.templateId);
+  const userCopy = String(opts.userCopy || "").trim();
+  const subject = extractInfographicSubjectFromUserCopy(userCopy, opts.titleOverride);
+  const maxLen = Math.max(2000, Math.min(12000, opts.maxLen ?? 12000));
+  if (!t) return userCopy.slice(0, maxLen);
+
+  const block = [
+    `【图文可视化模板·${t.labelZh}·仅版式】`,
+    t.blurbZh,
+    `画幅：${t.aspect}`,
+    INFOGRAPHIC_LAYOUT_META_ZH,
+    CONTENT_LOCK_ZH,
+    `海报主标题应贴近：${subject}`,
+    `Layout prompt (style only):\n${t.layoutPromptEn}`,
+    "",
+    "【用户正文·唯一内容来源】",
+    userCopy,
+  ].join("\n");
+
+  return block.slice(0, maxLen);
+}
+
+/** @deprecated 使用 composeInfographicScriptContext；保留以免旧调用断裂 */
 export function buildInfographicTemplateInjectBlock(templateId: string, subject?: string): string {
   const t = getInfographicNoteTemplate(templateId);
   if (!t) return "";
-  const prompt = fillInfographicTemplatePrompt(templateId, subject || t.subjectHintZh);
-  return `【图文可视化模板·${t.labelZh}】\n${t.blurbZh}\n画幅：${t.aspect}\n${prompt}`;
+  return composeInfographicScriptContext({
+    templateId,
+    userCopy: subject?.trim() || "（用户未提供正文）",
+    titleOverride: subject,
+  });
+}
+
+/** 兼容旧名 */
+export const INFOGRAPHIC_META_SECTIONS_ZH = INFOGRAPHIC_LAYOUT_META_ZH;
+export function buildInfographicPromptFromMeta(subjectZh: string, heroMode: InfographicHeroMode): string {
+  const subject = String(subjectZh || "用户主题").trim().slice(0, 120);
+  const byMode = INFOGRAPHIC_NOTE_TEMPLATES.find((t) => t.heroMode === heroMode);
+  return fillInfographicTemplatePrompt(byMode?.id || "infographic_business_ecosystem", subject);
 }
