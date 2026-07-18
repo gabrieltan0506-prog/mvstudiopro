@@ -3,6 +3,7 @@ import {
   PHOTOREAL_FACE_SHAPE_FEMALE,
   PHOTOREAL_FACE_SHAPE_MALE,
   PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
+  PHOTOREAL_FACE_LOCK_BLEND_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
   PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH,
   formatPhotorealFaceShapeBlock,
@@ -37,9 +38,11 @@ describe("photoreal face shape wheel", () => {
     expect(PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH).toMatch(/锁脸不锁服/);
   });
 
-  it("skin locks demand pores and ban soft-ref face clone", () => {
+  it("skin locks and face-lock blend policy", () => {
     expect(PHOTOREAL_SKIN_TEXTURE_LOCK_ZH).toMatch(/毛孔/);
     expect(PHOTOREAL_SKIN_TEXTURE_LOCK_ZH).toMatch(/禁止.*瓷器|蜡像/);
     expect(PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH).toMatch(/禁止复制参考图五官/);
+    expect(PHOTOREAL_FACE_LOCK_BLEND_ZH).toMatch(/允许同脸复制/);
+    expect(PHOTOREAL_FACE_LOCK_BLEND_ZH).toMatch(/融/);
   });
 });

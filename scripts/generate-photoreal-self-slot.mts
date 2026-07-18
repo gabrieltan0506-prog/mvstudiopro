@@ -1,10 +1,10 @@
 /**
  * 用本人实拍 refs（me / t1–t3）作「软参考」重做指定男主槽。
  *
- * 口径（硬）：
- * - 过审槽不动；只补失败/未完成槽
- * - 本人脸是族裔/年龄段/皮肤质感先验，NOT 1:1 同一张脸
- * - 每个角色名必须长出可区分的五官差异（眉眼宽窄、下颌、发型、年龄微调）
+ * 口径（用户已拍板）：
+ * - 过审槽默认不动；FORCE=1 可重做
+ * - 本人脸允许同脸复制 / 融图 / 微调（服装发型可改）
+ * - 不同槽位用 me + 轮转 t1–t3，并做发型/下颌微调以免十四张完全同一帧
  *
  *   FLY_ORIGIN=https://mvstudiopro.fly.dev IDS=char_m_14 pnpm run manhua:photoreal-self
  */
@@ -19,8 +19,8 @@ import {
 } from "../shared/manhuaCharacterAssetLibrary.js";
 import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_FACE_LOCK_BLEND_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-  PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH,
 } from "../shared/photorealCharacterPrompt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -200,11 +200,9 @@ function faceDiversityBlock(id: string, name: string): string {
   ];
   const v = variants[n % variants.length]!;
   return [
-    PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH,
-    "【软参考·禁止同脸复制】参考图只提供：东亚中年男性、皮肤质感、成熟气场；禁止复制同一五官比例与发际线。",
-    `【本角色分异·${name}】必须长成可辨认的另一张脸：${v}。`,
-    "与参考图可以像「同一族裔年龄段」，但并排放一起必须一眼能分出不是同一个人。",
-    "禁止名人脸；禁止所有男主槽共用一张脸。",
+    PHOTOREAL_FACE_LOCK_BLEND_ZH,
+    `【本槽微调·${name}】在实拍同脸基础上做可辨差异：${v}。`,
+    "仍须一眼能认出是参考图同一个人；禁止换成别人或名人脸。",
   ].join("\n");
 }
 

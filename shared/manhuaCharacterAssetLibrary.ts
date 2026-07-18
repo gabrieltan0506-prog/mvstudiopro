@@ -55,7 +55,7 @@ export const MANHUA_PHOTOREAL_NAME_ZH: Record<string, string> = {
   char_m_11: "霍砚",
   char_m_12: "程远",
   char_m_13: "顾行舟",
-  /** 软参考补槽名（本人 refs 只作族裔/质感先验，须按角色分异脸） */
+  /** 实拍同脸锚补槽（允许同脸融图/微调；服装发型可改） */
   char_m_14: "唐知衡",
 };
 

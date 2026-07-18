@@ -5,7 +5,8 @@
  *   FLY_ORIGIN=https://mvstudiopro.fly.dev pnpm run manhua:photoreal-diversify-jaws
  *   IDS=char_f_02,char_m_01 LIMIT=4
  *   FORCE=1 RESTORE_BACKUP=1          # 从备份重跑已成功槽（方案 A 加大骨相）
- *   SOFT_REF=0                         # 关闭 me/t1–t3 / jul18 女像软参考
+ *   SOFT_REF=0                         # 关闭 me/t1–t3 / jul18 女像参考
+ *   FACE_LOCK=1                        # 男主：实拍同脸融图（默认开）；女主仍只借皮肤
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -19,6 +20,7 @@ import {
 } from "../shared/manhuaCharacterAssetLibrary.js";
 import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_FACE_LOCK_BLEND_ZH,
   PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
   PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH,
@@ -37,8 +39,10 @@ const BACKUP = path.join(OUT_DL, "jaw-diversify-backup");
 const MANIFEST = path.join(OUT_DL, "jaw-diversify-manifest.json");
 const LOG = "/tmp/diversify-photoreal-jaws.log";
 const TIMEOUT_MS = Math.min(Math.max(Number(process.env.GEN_TIMEOUT_MS) || 540_000, 120_000), 900_000);
-/** 默认开软参考；SOFT_REF=0 可关 */
+/** 默认开参考图；SOFT_REF=0 可关 */
 const USE_SOFT_REF = !/^(0|false|no)$/i.test(String(process.env.SOFT_REF || "1"));
+/** 男主同脸融图（用户拍板）；FACE_LOCK=0 则退回只借皮肤 */
+const USE_FACE_LOCK = !/^(0|false|no)$/i.test(String(process.env.FACE_LOCK || "1"));
 
 type Row = {
   id: string;
@@ -307,7 +311,10 @@ function firstExisting(...candidates: string[]): string | undefined {
   return undefined;
 }
 
-/** 男：me + t1–t3 轮转；女：jul18 ready 女像轮转。只借皮肤/光感，禁止粘脸。 */
+/**
+ * 男：me 为主锚 + t1–t3 轮转辅锚（同脸融图）。
+ * 女：jul18 ready 女像（只借皮肤；不用男脸硬贴女主）。
+ */
 function pickSoftRefLocalPaths(c: ManhuaCharacterTemplate): string[] {
   if (!USE_SOFT_REF) return [];
   const n = Number((c.id.match(/(\d+)$/) || [])[1] || 0);
@@ -316,6 +323,7 @@ function pickSoftRefLocalPaths(c: ManhuaCharacterTemplate): string[] {
     const tPool = ["t1.jpg", "t2.jpg", "t3.jpg"]
       .map((f) => firstExisting(path.join(REFS_DL, f), path.join(REFS_PUBLIC, f)))
       .filter((x): x is string => Boolean(x));
+    // 同脸模式：me 必挂；再挂一张 t* 作表情/光线辅锚
     const t = tPool.length ? tPool[n % tPool.length]! : undefined;
     return [me, t].filter((x): x is string => Boolean(x));
   }
@@ -334,17 +342,28 @@ function pickSoftRefLocalPaths(c: ManhuaCharacterTemplate): string[] {
   return [females[n % females.length]!];
 }
 
+function refPolicyBlock(c: ManhuaCharacterTemplate, hasSoftRef: boolean): string {
+  if (!hasSoftRef) return "";
+  if (c.gender === "male" && USE_FACE_LOCK) return PHOTOREAL_FACE_LOCK_BLEND_ZH;
+  return PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH;
+}
+
 function buildHeroEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const shape = getPhotorealFaceShapeForId(c.id, c.gender);
+  const faceLock = c.gender === "male" && USE_FACE_LOCK && hasSoftRef;
   return [
-    "竖屏 9:16 安全向肖像编辑：保持同一人身份与发型大轮廓，但下颌骨相必须明显拉开（并排放一眼可辨），不是磨皮级微调。",
-    `角色「${name}」目标骨相：${shape.labelZh}——下颌宽度、下巴形状、下颌角按该目标明显偏移。`,
+    faceLock
+      ? "竖屏 9:16 安全向肖像融图编辑：第一张为库图构图/服装底，其后为实拍人脸锚——把实拍脸融进库图，允许同脸复制后再微调。"
+      : "竖屏 9:16 安全向肖像编辑：保持同一人身份与发型大轮廓，但下颌骨相必须明显拉开（并排放一眼可辨），不是磨皮级微调。",
+    `角色「${name}」目标骨相：${shape.labelZh}${faceLock ? "（在实拍同脸上微调下颌，勿换人）" : "——下颌宽度、下巴形状、下颌角按该目标明显偏移"}。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
-    "眉眼鼻唇可保留可识别连续性；下庭轮廓必须改到与原图有清晰差异；禁止仍是统一小尖下巴/小V脸。",
-    "禁止换人、禁止名人脸、禁止暴露服装、禁止性暗示、禁止未成年人形象。",
+    faceLock
+      ? "五官以实拍为准；服装/背景/构图跟库图；下颌可按骨相轮盘轻微拉开，仍须是同一张脸。"
+      : "眉眼鼻唇可保留可识别连续性；下庭轮廓必须改到与原图有清晰差异；禁止仍是统一小尖下巴/小V脸。",
+    "禁止名人脸、禁止暴露服装、禁止性暗示、禁止未成年人形象。",
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    hasSoftRef ? PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH : "",
+    refPolicyBlock(c, hasSoftRef),
     PHOTOREAL_ANTI_AI_LOCK_ZH,
     PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
     "得体日常服装、干净背景；无文字无水印。全家宜内容。",
@@ -355,13 +374,16 @@ function buildHeroEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): s
 
 function buildSheetEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
+  const faceLock = c.gender === "male" && USE_FACE_LOCK && hasSoftRef;
   return [
     "竖屏设定卡安全向编辑：上半胸像与下半 FRONT/SIDE/BACK 三视图同一张脸、同一骨相。",
-    `角色「${name}」。第二张参考为已改骨相胸像——三视图对齐该骨相（下颌差异必须保留到三视图）。`,
+    faceLock
+      ? `角色「${name}」。第二张为已融脸胸像、其后可含实拍锚——三视图必须是同一张实拍脸，禁止另长一张脸。`
+      : `角色「${name}」。第二张参考为已改骨相胸像——三视图对齐该骨相（下颌差异必须保留到三视图）。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
-    "下颌/下巴须与胸像目标骨相一致且一眼可辨；服装保持得体日常覆盖；禁止暴露、禁止换人。",
+    "下颌/下巴须与胸像一致；服装保持得体日常覆盖；禁止暴露、禁止换成别人。",
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    hasSoftRef ? PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH : "",
+    refPolicyBlock(c, hasSoftRef),
     "无文字水印。全家宜内容。",
   ]
     .filter(Boolean)
@@ -388,24 +410,26 @@ async function processOne(
     .filter((u): u is string => Boolean(u));
   const hasSoftRef = softUrls.length > 0;
 
-  log(`\n━━ ${c.id} ${MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh} · ${shape.labelZh}${hasSoftRef ? " · soft-ref" : ""} ━━`);
+  const faceLock = c.gender === "male" && USE_FACE_LOCK && hasSoftRef;
+  const modeTag = faceLock ? "face-lock" : hasSoftRef ? "soft-ref" : "no-ref";
+  log(`\n━━ ${c.id} ${MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh} · ${shape.labelZh} · ${modeTag} ━━`);
   log("  upload hero…");
   const heroUrl = await uploadLocalJpg(heroPath, `${c.id}-hero`);
-  log("  edit hero jaw…");
-  // 第一张=本槽库图；其后=实拍软参考（皮肤/光感）
-  const newHeroUrl = await flyGenerate(buildHeroEditPrompt(c, hasSoftRef), [heroUrl, ...softUrls.slice(0, 1)]);
+  log(faceLock ? "  edit hero face-lock blend…" : "  edit hero jaw…");
+  // 第一张=库图底；其后=实拍（男主同脸锚可挂 me+t*）
+  const heroRefs = faceLock ? [heroUrl, ...softUrls.slice(0, 2)] : [heroUrl, ...softUrls.slice(0, 1)];
+  const newHeroUrl = await flyGenerate(buildHeroEditPrompt(c, hasSoftRef), heroRefs);
   await downloadToJpg(newHeroUrl, path.join(OUT_DL, `${c.id}_hero`));
   fs.copyFileSync(path.join(OUT_DL, `${c.id}_hero.jpg`), path.join(OUT_PUBLIC, `${c.id}_hero.jpg`));
 
   log("  upload sheet + new hero…");
   const sheetUrl = await uploadLocalJpg(sheetPath, `${c.id}-sheet`);
   const newHeroRead = await uploadLocalJpg(path.join(OUT_DL, `${c.id}_hero.jpg`), `${c.id}-hero2`);
-  log("  edit sheet lock jaw…");
-  const newSheetUrl = await flyGenerate(buildSheetEditPrompt(c, hasSoftRef), [
-    sheetUrl,
-    newHeroRead,
-    ...softUrls.slice(0, 1),
-  ]);
+  log(faceLock ? "  edit sheet face-lock…" : "  edit sheet lock jaw…");
+  const sheetRefs = faceLock
+    ? [sheetUrl, newHeroRead, ...softUrls.slice(0, 1)]
+    : [sheetUrl, newHeroRead, ...softUrls.slice(0, 1)];
+  const newSheetUrl = await flyGenerate(buildSheetEditPrompt(c, hasSoftRef), sheetRefs);
   await downloadToJpg(newSheetUrl, path.join(OUT_DL, `${c.id}_sheet`));
   fs.copyFileSync(path.join(OUT_DL, `${c.id}_sheet.jpg`), path.join(OUT_PUBLIC, `${c.id}_sheet.jpg`));
 
@@ -425,7 +449,7 @@ async function main() {
   const force = String(process.env.FORCE || "").trim() === "1";
   const targets = pickTargets().filter((c) => force || !done.has(c.id));
   log(
-    `🚀 jaw diversify · ${FLY_ORIGIN} · ${targets.length} to run (done=${done.size}) · softRef=${USE_SOFT_REF ? "on" : "off"} · strength=A`,
+    `🚀 jaw diversify · ${FLY_ORIGIN} · ${targets.length} to run (done=${done.size}) · softRef=${USE_SOFT_REF ? "on" : "off"} · faceLock=${USE_FACE_LOCK ? "on" : "off"} · strength=A`,
   );
 
   const softRefUrlByPath = new Map<string, string>();
