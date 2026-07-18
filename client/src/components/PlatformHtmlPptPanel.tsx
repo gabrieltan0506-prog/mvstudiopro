@@ -179,25 +179,72 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             />
           </label>
           <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">风格</div>
-            <div className="flex flex-wrap gap-1.5">
-              {styleList.map(([id, meta]) => (
-                <button
-                  key={id}
-                  type="button"
-                  disabled={disabled}
-                  title={meta.whenZh}
-                  onClick={() => setStyleId(id)}
-                  className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-40 ${
-                    styleId === id
-                      ? "border-violet-400/45 bg-violet-500/15 text-violet-50"
-                      : "border-white/10 bg-white/5 text-white/65 hover:border-white/25"
-                  }`}
-                >
-                  <div className="font-semibold">{meta.labelZh}</div>
-                  <div className="text-[10px] text-white/40">{meta.blurbZh}</div>
-                </button>
-              ))}
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">
+              风格（选用前可预览）
+            </div>
+            <div className="grid gap-3 lg:grid-cols-[1fr_minmax(220px,320px)]">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {styleList.map(([id, meta]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={disabled}
+                    title={meta.whenZh}
+                    onClick={() => setStyleId(id)}
+                    className={`overflow-hidden rounded-xl border text-left disabled:opacity-40 ${
+                      styleId === id
+                        ? "border-emerald-400/55 ring-1 ring-emerald-400/30"
+                        : "border-white/10 hover:border-white/25"
+                    }`}
+                  >
+                    <div className="aspect-video w-full bg-black/40">
+                      <img
+                        src={meta.previewUrl}
+                        alt={meta.labelZh}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    </div>
+                    <div className="space-y-0.5 px-2 py-1.5">
+                      <div className="text-[11px] font-semibold text-white/90">{meta.labelZh}</div>
+                      <div className="line-clamp-2 text-[10px] text-white/40">{meta.blurbZh}</div>
+                      <div className="flex gap-1 pt-0.5">
+                        {[meta.palette.bg, meta.palette.accent, meta.palette.text].map((c) => (
+                          <span
+                            key={c}
+                            className="h-2.5 w-2.5 rounded-full border border-white/20"
+                            style={{ background: c }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="space-y-2">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">
+                  当前选中预览
+                </div>
+                {(() => {
+                  const meta = HTML_PPT_STYLES[styleId];
+                  return (
+                    <div
+                      className="aspect-video overflow-hidden rounded-xl border border-white/15 shadow-lg"
+                      style={{ background: meta.palette.bg, color: meta.palette.text }}
+                    >
+                      <img
+                        src={meta.previewUrl}
+                        alt={`${meta.labelZh} 预览`}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  );
+                })()}
+                <p className="text-[10px] leading-relaxed text-white/45">
+                  {HTML_PPT_STYLES[styleId].labelZh} · {HTML_PPT_STYLES[styleId].whenZh}
+                  。本地包：Downloads/2026Jul18/template/{styleId}/
+                </p>
+              </div>
             </div>
           </div>
           <button
@@ -206,7 +253,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             onClick={rebuildOutline}
             className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
           >
-            生成页面清单
+            用此风格生成页面清单
           </button>
         </div>
       ) : null}

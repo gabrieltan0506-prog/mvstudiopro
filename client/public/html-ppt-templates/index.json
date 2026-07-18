@@ -1,0 +1,61 @@
+{
+  "format": "mv-html-ppt-template-index-v1",
+  "count": 9,
+  "templates": [
+    {
+      "id": "dark_research",
+      "labelZh": "暗黑数据研究报告",
+      "dir": "dark_research",
+      "preview": "dark_research/preview.jpg"
+    },
+    {
+      "id": "pitch_orange",
+      "labelZh": "黑橙路演官网",
+      "dir": "pitch_orange",
+      "preview": "pitch_orange/preview.jpg"
+    },
+    {
+      "id": "figma_timeline",
+      "labelZh": "蓝白 Figma 信息图时间线",
+      "dir": "figma_timeline",
+      "preview": "figma_timeline/preview.jpg"
+    },
+    {
+      "id": "emerald_boardroom",
+      "labelZh": "青绿董事会",
+      "dir": "emerald_boardroom",
+      "preview": "emerald_boardroom/preview.jpg"
+    },
+    {
+      "id": "noir_gold",
+      "labelZh": "黑金晚宴",
+      "dir": "noir_gold",
+      "preview": "noir_gold/preview.jpg"
+    },
+    {
+      "id": "rose_editorial",
+      "labelZh": "玫瑰杂志",
+      "dir": "rose_editorial",
+      "preview": "rose_editorial/preview.jpg"
+    },
+    {
+      "id": "slate_consulting",
+      "labelZh": "石板咨询",
+      "dir": "slate_consulting",
+      "preview": "slate_consulting/preview.jpg"
+    },
+    {
+      "id": "ivory_academic",
+      "labelZh": "象牙学术",
+      "dir": "ivory_academic",
+      "preview": "ivory_academic/preview.jpg"
+    },
+    {
+      "id": "ocean_brief",
+      "labelZh": "海风简报",
+      "dir": "ocean_brief",
+      "preview": "ocean_brief/preview.jpg"
+    }
+  ],
+  "usageZh": "选用前看各目录 preview.jpg；style.json 含色板与字阶；bg.png 为可选底图。"
+}

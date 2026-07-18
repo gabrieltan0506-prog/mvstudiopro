@@ -31,54 +31,79 @@ export type HtmlPptDeckInput = {
   pages: HtmlPptPage[];
 };
 
-export const HTML_PPT_STYLES: Record<
-  HtmlPptStyleId,
-  { labelZh: string; blurbZh: string; whenZh: string }
-> = {
+export type HtmlPptStyleMeta = {
+  labelZh: string;
+  blurbZh: string;
+  whenZh: string;
+  /** 选用前预览用色板（与 Downloads/template/*/style.json 对齐） */
+  palette: { bg: string; text: string; muted: string; accent: string; card: string };
+  /** 站内预览图（client/public） */
+  previewUrl: string;
+};
+
+export const HTML_PPT_STYLES: Record<HtmlPptStyleId, HtmlPptStyleMeta> = {
   dark_research: {
     labelZh: "暗黑数据研究报告",
     blurbZh: "深色底 + 高对比数字 + 图表感信息层",
     whenZh: "AI/资本/行业趋势/数据洞察",
+    palette: { bg: "#0b0f14", text: "#e8eef7", muted: "#8b9bb0", accent: "#5eead4", card: "#121821" },
+    previewUrl: "/html-ppt-templates/dark_research/preview.jpg",
   },
   pitch_orange: {
     labelZh: "黑橙路演官网",
     blurbZh: "黑底橙强调 + 路演叙事节奏",
     whenZh: "创业路演/产品介绍/商业计划",
+    palette: { bg: "#0a0a0a", text: "#fff7ed", muted: "#c4b5a5", accent: "#f97316", card: "#141414" },
+    previewUrl: "/html-ppt-templates/pitch_orange/preview.jpg",
   },
   figma_timeline: {
     labelZh: "蓝白 Figma 信息图时间线",
     blurbZh: "浅底蓝强调 + 时间线/计划板",
     whenZh: "产品计划/项目管理/路线图/复盘",
+    palette: { bg: "#f4f7fb", text: "#0f172a", muted: "#64748b", accent: "#2563eb", card: "#ffffff" },
+    previewUrl: "/html-ppt-templates/figma_timeline/preview.jpg",
   },
   emerald_boardroom: {
     labelZh: "青绿董事会",
     blurbZh: "深青底 + 薄荷绿强调，稳重汇报",
     whenZh: "董事会/经营复盘/战略对齐",
+    palette: { bg: "#06241f", text: "#ecfdf5", muted: "#99b8ae", accent: "#34d399", card: "#0c332c" },
+    previewUrl: "/html-ppt-templates/emerald_boardroom/preview.jpg",
   },
   noir_gold: {
     labelZh: "黑金晚宴",
     blurbZh: "纯黑 + 金属金点缀，高端发布",
     whenZh: "品牌发布/高端峰会/年会致辞",
+    palette: { bg: "#050505", text: "#faf6eb", muted: "#a89b7c", accent: "#d4af37", card: "#121212" },
+    previewUrl: "/html-ppt-templates/noir_gold/preview.jpg",
   },
   rose_editorial: {
     labelZh: "玫瑰杂志",
     blurbZh: "浅粉灰底 + 玫红标题，编辑感",
     whenZh: "内容品牌/女性向/生活方式提案",
+    palette: { bg: "#faf5f6", text: "#3f1d2e", muted: "#8b6b7a", accent: "#be123c", card: "#ffffff" },
+    previewUrl: "/html-ppt-templates/rose_editorial/preview.jpg",
   },
   slate_consulting: {
     labelZh: "石板咨询",
     blurbZh: "冷灰蓝咨询风，条理清晰",
     whenZh: "咨询方案/客户提案/诊断报告",
+    palette: { bg: "#e8eef4", text: "#0f172a", muted: "#64748b", accent: "#0e7490", card: "#ffffff" },
+    previewUrl: "/html-ppt-templates/slate_consulting/preview.jpg",
   },
   ivory_academic: {
     labelZh: "象牙学术",
     blurbZh: "暖象牙纸感 + 墨绿强调",
     whenZh: "学术汇报/培训课件/知识分享",
+    palette: { bg: "#f7f1e6", text: "#1c1917", muted: "#78716c", accent: "#14532d", card: "#fffdf8" },
+    previewUrl: "/html-ppt-templates/ivory_academic/preview.jpg",
   },
   ocean_brief: {
     labelZh: "海风简报",
     blurbZh: "浅蓝渐变 + 海军蓝标题，清爽短会",
     whenZh: "周报/站会/进度简报",
+    palette: { bg: "#e0f2fe", text: "#0c4a6e", muted: "#0369a1", accent: "#0284c7", card: "#ffffff" },
+    previewUrl: "/html-ppt-templates/ocean_brief/preview.jpg",
   },
 };
 

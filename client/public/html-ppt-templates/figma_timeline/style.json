@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "figma_timeline",
+  "labelZh": "蓝白 Figma 信息图时间线",
+  "whenZh": "产品计划/项目管理/路线图/复盘",
+  "palette": {
+    "bg": "#f4f7fb",
+    "card": "#ffffff",
+    "text": "#0f172a",
+    "muted": "#64748b",
+    "accent": "#2563eb",
+    "line": "#dbe3ef"
+  },
+  "type": {
+    "titlePx": 44,
+    "bodyPx": 18,
+    "kpiPx": 64,
+    "weightTitle": 800,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 550
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

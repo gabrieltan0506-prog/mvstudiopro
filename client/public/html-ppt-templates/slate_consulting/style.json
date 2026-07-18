@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "slate_consulting",
+  "labelZh": "石板咨询",
+  "whenZh": "咨询方案/客户提案/诊断报告",
+  "palette": {
+    "bg": "#e8eef4",
+    "card": "#ffffff",
+    "text": "#0f172a",
+    "muted": "#64748b",
+    "accent": "#0e7490",
+    "line": "#cbd5e1"
+  },
+  "type": {
+    "titlePx": 42,
+    "bodyPx": 18,
+    "kpiPx": 58,
+    "weightTitle": 800,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 500
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

@@ -15,7 +15,9 @@ defaultEnabled: false
 
 ## 模板怎么扩？
 - **默认：代码自生成**——在 `HTML_PPT_STYLES` / `STYLE_CSS` 加风格即可，**不需要**上传 `.pptx`。
-- **以后若要外来模板**：优先风格 JSON（色板+字阶）+ 可选底图 JPG/PNG；暂不解析任意 Office PPTX。
+- **本地风格包**：`~/Downloads/2026Jul18/template/{styleId}/style.json` + `preview.jpg` + 可选 `bg.png`；站内副本 `client/public/html-ppt-templates/`。
+- **选用前预览**：平台设定页展示缩略图 + 当前选中大图预览，再点「用此风格生成页面清单」。
+- 暂不解析任意 Office PPTX。
 
 ## 风格预设（可继续加）
 暗黑数据 / 黑橙路演 / 蓝白时间线 / 青绿董事会 / 黑金晚宴 / 玫瑰杂志 / 石板咨询 / 象牙学术 / 海风简报

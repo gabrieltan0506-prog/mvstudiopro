@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "pitch_orange",
+  "labelZh": "黑橙路演官网",
+  "whenZh": "创业路演/产品介绍/商业计划",
+  "palette": {
+    "bg": "#0a0a0a",
+    "card": "#141414",
+    "text": "#fff7ed",
+    "muted": "#c4b5a5",
+    "accent": "#f97316",
+    "line": "#2a2118"
+  },
+  "type": {
+    "titlePx": 48,
+    "bodyPx": 20,
+    "kpiPx": 72,
+    "weightTitle": 900,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 550
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "noir_gold",
+  "labelZh": "黑金晚宴",
+  "whenZh": "品牌发布/高端峰会/年会致辞",
+  "palette": {
+    "bg": "#050505",
+    "card": "#121212",
+    "text": "#faf6eb",
+    "muted": "#a89b7c",
+    "accent": "#d4af37",
+    "line": "#2a2416"
+  },
+  "type": {
+    "titlePx": 46,
+    "bodyPx": 18,
+    "kpiPx": 64,
+    "weightTitle": 700,
+    "family": "ui-serif, Noto Serif SC, Georgia, serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 600
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

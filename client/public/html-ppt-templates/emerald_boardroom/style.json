@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "emerald_boardroom",
+  "labelZh": "青绿董事会",
+  "whenZh": "董事会/经营复盘/战略对齐",
+  "palette": {
+    "bg": "#06241f",
+    "card": "#0c332c",
+    "text": "#ecfdf5",
+    "muted": "#99b8ae",
+    "accent": "#34d399",
+    "line": "#14532d"
+  },
+  "type": {
+    "titlePx": 46,
+    "bodyPx": 19,
+    "kpiPx": 68,
+    "weightTitle": 800,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 550
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}
