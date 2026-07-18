@@ -27,7 +27,10 @@ export function isAllowedHtmlPptPptxImageUrl(raw: string): boolean {
 export async function fetchHtmlPptPptxImageDataUrls(
   urls: string[],
 ): Promise<Record<string, string>> {
-  const unique = [...new Set(urls.map((u) => String(u || "").trim()).filter(Boolean))].slice(0, 16);
+  const unique = Array.from(new Set(urls.map((u) => String(u || "").trim()).filter(Boolean))).slice(
+    0,
+    16,
+  );
   const out: Record<string, string> = {};
 
   await Promise.all(
