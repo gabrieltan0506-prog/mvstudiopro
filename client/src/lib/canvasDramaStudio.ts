@@ -27,7 +27,10 @@ import {
   composeManhuaScenePromptBlock,
   getManhuaSceneTemplate,
 } from "@shared/manhuaSceneAssetLibrary";
-import { composeManhuaSceneDemoAnchorBlock } from "@shared/manhuaScenePropDemoCatalog";
+import {
+  composeManhuaSceneDemoAnchorBlock,
+  composeManhuaSelectedPropAnchorBlock,
+} from "@shared/manhuaScenePropDemoCatalog";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import {
   buildManhuaCharacterPromptBlock,
@@ -88,6 +91,8 @@ export type SpawnManhuaDramaStudioOpts = {
   genreId?: string;
   /** 单选场景资产 id：scene_01…scene_20（可选，优先于剧种默认场景包） */
   sceneId?: string;
+  /** 资产墙点选的道具示范 id（注入圣经/节拍/静帧） */
+  propIds?: string[];
   /** 角色库 id：char_f_* / char_m_*（可多选，注入角色卡） */
   characterIds?: string[];
   /** 角色/场景统一画风 A/B/C */
@@ -290,6 +295,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
     artStyleId: opts.artStyleId,
   });
+  const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
+  const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const motionBlock = buildMotionPromptInjectBlock(motionPromptIds);
   let craftShotIds = (opts.craftShotIds || []).map((id) => String(id || "").trim()).filter(Boolean);
@@ -368,7 +375,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const bibleBase = usePack
     ? buildManhuaStagePromptWithGenre("character_bible", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
-  bible.prompt = characterBlock ? `${bibleBase}\n\n${characterBlock}` : bibleBase;
+  bible.prompt = [bibleBase, characterBlock, propAnchorBlock].filter(Boolean).join("\n\n");
   bible.parentId = story.id;
   bible.textModel = "gemini-3.1-pro";
 
@@ -377,7 +384,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const beatsBase = usePack
     ? buildManhuaStagePromptWithGenre("episode_beats", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
-  beats.prompt = craftShotBlock ? `${beatsBase}\n\n${craftShotBlock}` : beatsBase;
+  beats.prompt = [beatsBase, craftShotBlock, propAnchorBlock].filter(Boolean).join("\n\n");
   beats.parentId = bible.id;
   beats.textModel = "gemini-3.1-pro";
 
@@ -399,7 +406,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const keyArtBase = usePack
     ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
-  keyArt.prompt = [keyArtBase, craftShotBlock, artStyleBlock].filter(Boolean).join("\n\n");
+  keyArt.prompt = [keyArtBase, craftShotBlock, artStyleBlock, propAnchorBlock]
+    .filter(Boolean)
+    .join("\n\n");
   keyArt.parentId = reverse.id;
   keyArt.imageModel = "nano-banana-2";
   keyArt.aspectRatio = "9:16";
@@ -556,6 +565,7 @@ export function applyFactoryPrefsToBlocks(
     craftShotIds?: string[];
     motionPromptIds?: string[];
     sceneId?: string;
+    propIds?: string[];
     genreId?: string;
     characterIds?: string[];
     artStyleId?: ManhuaArtStyleId | string;
@@ -572,6 +582,7 @@ export function applyFactoryPrefsToBlocks(
   const scene = getManhuaSceneTemplate(opts.sceneId);
   const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
   const sceneDemoBlock = composeManhuaSceneDemoAnchorBlock(opts.sceneId);
+  const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(opts.propIds);
   const genreBlock = composeGenreTemplatePromptBlock(getScreenwriterGenreTemplate(opts.genreId));
   const reverseMode =
     opts.videoReverseOutputMode === "en" || opts.videoReverseOutputMode === "compact"
@@ -598,6 +609,7 @@ export function applyFactoryPrefsToBlocks(
           base = stripMarkedSection(base, "【画风硬锁】");
         }
       }
+      base = stripMarkedSection(base, "【点选道具锚点】");
       const parts = [
         base,
         genreBlock && syncGenre ? genreBlock : "",
@@ -608,6 +620,9 @@ export function applyFactoryPrefsToBlocks(
           : "",
         craftBlock,
         b.id.startsWith("keyart-") ? artStyleBlock : "",
+        (b.id.startsWith("beats-") || b.id.startsWith("keyart-")) && propAnchorBlock
+          ? propAnchorBlock
+          : "",
       ].filter(Boolean);
       return {
         ...b,
@@ -622,13 +637,17 @@ export function applyFactoryPrefsToBlocks(
         base = stripMarkedSection(base, "【漫剧场景资产库");
         base = stripMarkedSection(base, "【场景示范图锚点】");
       }
-      if (b.id.startsWith("bible-")) base = stripMarkedSection(base, "【角色库锚点】");
+      if (b.id.startsWith("bible-")) {
+        base = stripMarkedSection(base, "【角色库锚点】");
+        base = stripMarkedSection(base, "【点选道具锚点】");
+      }
       const parts = [
         base,
         genreBlock && syncGenre ? genreBlock : "",
         b.id.startsWith("story-") && sceneBlock ? sceneBlock : "",
         b.id.startsWith("story-") && sceneDemoBlock ? sceneDemoBlock : "",
         b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
+        b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
     }

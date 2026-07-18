@@ -145,6 +145,8 @@ export default function OmniCanvas() {
   const [factoryTopic, setFactoryTopic] = useState(initialFactoryPrefs.topic || "");
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
+  /** 资产墙点选的道具示范（最多 4） */
+  const [factoryPropIds, setFactoryPropIds] = useState<string[]>([]);
   /** 手选场景后不再被题材自动覆盖（⑤D） */
   const [sceneManual, setSceneManual] = useState(false);
   const [factoryFemaleId, setFactoryFemaleId] = useState(initialFactoryPrefs.femaleId || "");
@@ -343,6 +345,7 @@ export default function OmniCanvas() {
           craftShotIds: selectedCraftShotIds,
           motionPromptIds: selectedMotionIds,
           sceneId: factorySceneId || undefined,
+          propIds: factoryPropIds,
           genreId: factoryGenreId || undefined,
           characterIds: selectedCharacterIds,
           artStyleId: factoryArtStyleId,
@@ -367,6 +370,7 @@ export default function OmniCanvas() {
     factoryCraftShotId,
     factoryMotionId,
     factorySceneId,
+    factoryPropIds,
     factoryGenreId,
     factoryFemaleId,
     factoryMaleId,
@@ -531,6 +535,7 @@ export default function OmniCanvas() {
         seriesTitle: writerPack?.seriesTitle,
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
+        propIds: factoryPropIds,
         characterIds: selectedCharacterIds,
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
@@ -575,6 +580,7 @@ export default function OmniCanvas() {
       edges,
       factoryGenreId,
       factorySceneId,
+      factoryPropIds,
       factoryArtStyleId,
       selectedCharacterIds,
       selectedMotionIds,
@@ -644,6 +650,7 @@ export default function OmniCanvas() {
       seriesTitle: writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
+      propIds: factoryPropIds,
       characterIds: selectedCharacterIds,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
@@ -693,6 +700,7 @@ export default function OmniCanvas() {
     factoryReverseMode,
     factoryGenreId,
     factorySceneId,
+    factoryPropIds,
     writerFocusEpisode,
     blocks,
     edges,
@@ -731,6 +739,7 @@ export default function OmniCanvas() {
       seriesTitle: writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
+      propIds: factoryPropIds,
       characterIds: selectedCharacterIds,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
@@ -773,6 +782,7 @@ export default function OmniCanvas() {
     factoryReverseMode,
     factoryGenreId,
     factorySceneId,
+    factoryPropIds,
   ]);
 
   const stopFactory = useCallback(() => {
@@ -1129,6 +1139,7 @@ export default function OmniCanvas() {
                   femaleId={factoryFemaleId}
                   maleId={factoryMaleId}
                   sceneId={factorySceneId || recommendedScene?.id}
+                  propIds={factoryPropIds}
                   topic={factoryTopic}
                   genreId={factoryGenreId}
                   artStyleId={factoryArtStyleId}
@@ -1144,6 +1155,12 @@ export default function OmniCanvas() {
                   onSelectScene={(id) => {
                     setSceneManual(true);
                     setFactorySceneId(id);
+                  }}
+                  onToggleProp={(id) => {
+                    setFactoryPropIds((prev) => {
+                      if (prev.includes(id)) return prev.filter((x) => x !== id);
+                      return [...prev, id].slice(-4);
+                    });
                   }}
                 />
               </div>
@@ -1405,6 +1422,7 @@ export default function OmniCanvas() {
                       seriesTitle: writerPack?.seriesTitle,
                       genreId: factoryGenreId || undefined,
                       sceneId: factorySceneId || undefined,
+                      propIds: factoryPropIds,
                       characterIds: selectedCharacterIds,
                       artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
