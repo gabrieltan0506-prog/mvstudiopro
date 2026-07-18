@@ -86,7 +86,10 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       setAiCost(typeof res.cost === "number" ? res.cost : outlineCost);
       setStep("outline");
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "AI 清单生成失败";
+      const raw = e instanceof Error ? e.message : "AI 清单生成失败";
+      const msg = /Unexpected end of JSON|JSON\.parse|截断/i.test(raw)
+        ? "清单输出不完整（可能被截断）。请将页数调到 10 以内后重试，或稍后再试。"
+        : raw;
       setAiError(msg);
     }
   };

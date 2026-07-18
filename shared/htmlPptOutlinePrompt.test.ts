@@ -52,6 +52,20 @@ describe("htmlPptOutlinePrompt", () => {
     expect(out.pages[2]?.viz).toBe("bars");
   });
 
+  it("salvages truncated json when enough pages exist", () => {
+    const raw = `{
+  "deckTitle": "半截稿",
+  "summary": "测试",
+  "pages": [
+    {"title": "封面", "viz": "cover", "kpi": "01"},
+    {"title": "占比", "viz": "bars", "series": [{"label": "A", "value": 40}]},
+    {"title": "路径", "viz": "steps", "bullets": ["一步", "二步"]},
+    {"title": "未完成截断", "viz": "line", "series": [{"label": "x", "value": `;
+    const out = parseHtmlPptOutlineJson(raw, { pageCount: 3 });
+    expect(out.pages.length).toBeGreaterThanOrEqual(3);
+    expect(out.deckTitle).toBe("半截稿");
+  });
+
   it("keeps absolute series magnitudes for market charts", () => {
     const raw = JSON.stringify({
       deckTitle: "市场规模",
