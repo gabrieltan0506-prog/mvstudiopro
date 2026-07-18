@@ -37,6 +37,11 @@ function newThemeId(prefix: string, i: number) {
   return `${prefix}_${i + 1}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function formatWaitLabel(prefix: string, elapsedMs: number) {
+  const sec = Math.max(0, Math.floor(elapsedMs / 1000));
+  return `${prefix} · 已等待 ${sec}s`;
+}
+
 export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean }) {
   const [step, setStep] = useState<StepId>("setup");
   const [title, setTitle] = useState("AI漫剧的市场现状与前景");
@@ -152,7 +157,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     }
     setAiError(null);
     setAiBusy(true);
-    setAiBusyLabel("正在入队…");
+    const waitStartedAt = Date.now();
+    setAiBusyLabel(formatWaitLabel("正在入队", 0));
     try {
       const enqueued = await generateOutlineMutation.mutateAsync({
         title: title.trim(),
@@ -163,14 +169,16 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         confirmedThemes: themes,
       });
       setAiCost(typeof enqueued.cost === "number" ? enqueued.cost : outlineCost);
-      setAiBusyLabel("后台生成页面清单…");
+      setAiBusyLabel(formatWaitLabel("后台生成页面清单", Date.now() - waitStartedAt));
       const j = await pollJobUntilTerminal(enqueued.jobId, {
         intervalMs: 2500,
         maxWaitMs: 24 * 60_000,
         adaptiveBackoffAfterAttempts: 36,
         maxIntervalMs: 8000,
-        onPoll: ({ status, attempt }) => {
-          setAiBusyLabel(status === "queued" ? `排队中（${attempt}）…` : `生成中（${attempt}）…`);
+        onPoll: ({ status, elapsedMs }) => {
+          setAiBusyLabel(
+            formatWaitLabel(status === "queued" ? "排队中" : "生成中", elapsedMs),
+          );
         },
       });
       if (j.status === "failed") throw new Error(j.error || "清单生成失败");
@@ -187,13 +195,15 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       if (typeof out.cost === "number") setAiCost(out.cost);
 
       if (enableSlideImages) {
-        setAiBusyLabel("正在按版式模板生成插图…");
+        const imgStartedAt = Date.now();
+        setAiBusyLabel(formatWaitLabel("正在生成插图", 0));
         const indices = [0, Math.min(2, nextPages.length - 1), Math.min(4, nextPages.length - 1)].filter(
           (v, i, a) => a.indexOf(v) === i,
         );
         for (const idx of indices) {
           const page = nextPages[idx];
           if (!page) continue;
+          setAiBusyLabel(formatWaitLabel("正在生成插图", Date.now() - imgStartedAt));
           try {
             const img = await slideImageMutation.mutateAsync({
               deckTitle: title.trim(),
@@ -366,7 +376,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
           先填主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
-          SVG/表格动效保留；插图默认开，且必须套版式模板（可选或自动判断），禁止短句抽卡。
+          SVG/表格动效保留；插图默认开，且必须套版式模板（可选或自动判断）。
           改数字请直接改清单再刷新预览（免费）。
         </p>
       </div>
@@ -410,6 +420,54 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                 }}
                 className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
               />
+            </label>
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">风格</div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {styleList.map(([id, meta]) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setStyleId(id)}
+                  className={`overflow-hidden rounded-xl border text-left disabled:opacity-40 ${
+                    styleId === id ? "border-emerald-400/55 ring-1 ring-emerald-400/30" : "border-white/10"
+                  }`}
+                >
+                  <img src={meta.previewUrl} alt={meta.labelZh} className="aspect-video w-full object-cover" />
+                  <div className="px-2 py-1.5 text-[11px] font-semibold text-white/90">{meta.labelZh}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-black/25 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-[11px] text-white/70">
+              <input
+                type="checkbox"
+                checked={enableSlideImages}
+                disabled={busy}
+                onChange={(e) => setEnableSlideImages(e.target.checked)}
+              />
+              默认生成关键页插图（版式模板 + 页内容锁定；SVG/表格仍保留）
+            </label>
+            <label className="block text-[11px] text-white/60">
+              插图版式模板
+              <select
+                disabled={busy || !enableSlideImages}
+                value={imageTemplateId}
+                onChange={(e) => setImageTemplateId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-[12px] text-white"
+              >
+                <option value="auto">自动判断（按页内容选版式）</option>
+                {INFOGRAPHIC_NOTE_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.labelZh}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 
@@ -493,54 +551,6 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
             />
           </label>
-
-          <div className="rounded-xl border border-white/10 bg-black/25 p-3 space-y-2">
-            <label className="flex items-center gap-2 text-[11px] text-white/70">
-              <input
-                type="checkbox"
-                checked={enableSlideImages}
-                disabled={busy}
-                onChange={(e) => setEnableSlideImages(e.target.checked)}
-              />
-              默认生成关键页插图（版式模板 + 页内容锁定；SVG/表格仍保留）
-            </label>
-            <label className="block text-[11px] text-white/60">
-              插图版式模板
-              <select
-                disabled={busy || !enableSlideImages}
-                value={imageTemplateId}
-                onChange={(e) => setImageTemplateId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-[12px] text-white"
-              >
-                <option value="auto">自动判断（按页内容选版式）</option>
-                {INFOGRAPHIC_NOTE_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.labelZh}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">风格</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {styleList.map(([id, meta]) => (
-                <button
-                  key={id}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setStyleId(id)}
-                  className={`overflow-hidden rounded-xl border text-left disabled:opacity-40 ${
-                    styleId === id ? "border-emerald-400/55 ring-1 ring-emerald-400/30" : "border-white/10"
-                  }`}
-                >
-                  <img src={meta.previewUrl} alt={meta.labelZh} className="aspect-video w-full object-cover" />
-                  <div className="px-2 py-1.5 text-[11px] font-semibold text-white/90">{meta.labelZh}</div>
-                </button>
-              ))}
-            </div>
-          </div>
 
           <div className="flex flex-wrap gap-2">
             <button
