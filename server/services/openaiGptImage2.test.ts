@@ -41,4 +41,10 @@ describe("openaiGptImage2 config", () => {
     expect(getOpenAiImageApiKey()).toBe("");
     expect(isOpenAiGptImage2Configured()).toBe(false);
   });
+
+  it("skips invalid IMAGE key and uses OPENAI_API_KEY", () => {
+    process.env.OPENAI_IMAGE_API_KEY = "[placeholder]";
+    process.env.OPENAI_API_KEY = "sk-proj-realkey";
+    expect(getOpenAiImageApiKey()).toBe("sk-proj-realkey");
+  });
 });
