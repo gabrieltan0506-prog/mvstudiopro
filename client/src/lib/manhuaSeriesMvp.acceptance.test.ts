@@ -115,7 +115,7 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
         topic: "石门冷光",
         seriesTitle: "石门冷光",
       });
-      expect(filename).toBe("mv-manhua-series.zip");
+      expect(filename).toBe("mv-manhua-series-石门冷光.zip");
       expect(okCount).toBe(2);
       expect(manifest.note).toContain("不含自动拼接");
       expect(manifest.selected.some((s) => s.path?.startsWith("ep01/"))).toBe(true);

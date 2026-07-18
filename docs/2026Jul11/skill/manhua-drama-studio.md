@@ -2,7 +2,7 @@
 id: manhua-drama-studio
 name: 漫剧工作室链路
 description: 故事→角色→节拍→反推→静帧→Seedance；借鉴 AI-CanvasPro 阶段感但不抄闭源桌面
-version: 2026-07-17a
+version: 2026-07-19a
 defaultEnabled: false
 ---
 
@@ -12,6 +12,11 @@ defaultEnabled: false
 **仅 /canvas**（不进 `/platform` Skill 池与路由）。「一键漫剧工作室」与短剧/漫剧选题。样本：`~/Downloads/2026Jul16/c1.mp4`（阿硕 AI-CanvasPro Story Studio 演示）、`c2.mp4`（成片/片段选择）。
 
 开源对照：https://github.com/ashuoAI/AI-CanvasPro —— **Electron 桌面二进制**，非可调用 API/Skill 库；许可证禁止商业抄袭。我们只学阶段感，用 Web + 自有导演中台做得更好。
+
+## 资产墙 + 多集导出（Web 侧）
+- **资产墙**：复用人物 photoreal 设定卡 + 20 场景文案库 + 已落盘场景/道具示范图（`ManhuaAssetWall`）
+- **成片坞**：勾选集 → 运行范围；「一键导出全部有产物」打 zip（`epXX/` + `README.md` + `playlist.json` + 可选 `library/` 角色/示范参考）
+- 不含长片自动拼接
 
 ## 编剧室闸门（先剧情，后编导）
 1. 用户给题材 + 三到五句条件，选 **2–6 集**（默认 3），点「扩写剧情」

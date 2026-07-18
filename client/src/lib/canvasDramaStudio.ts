@@ -27,6 +27,7 @@ import {
   composeManhuaScenePromptBlock,
   getManhuaSceneTemplate,
 } from "@shared/manhuaSceneAssetLibrary";
+import { composeManhuaSceneDemoAnchorBlock } from "@shared/manhuaScenePropDemoCatalog";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import {
   buildManhuaCharacterPromptBlock,
@@ -570,6 +571,7 @@ export function applyFactoryPrefsToBlocks(
   const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const scene = getManhuaSceneTemplate(opts.sceneId);
   const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
+  const sceneDemoBlock = composeManhuaSceneDemoAnchorBlock(opts.sceneId);
   const genreBlock = composeGenreTemplatePromptBlock(getScreenwriterGenreTemplate(opts.genreId));
   const reverseMode =
     opts.videoReverseOutputMode === "en" || opts.videoReverseOutputMode === "compact"
@@ -590,6 +592,7 @@ export function applyFactoryPrefsToBlocks(
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
       if (syncScene) {
         base = stripMarkedSection(base, "【漫剧场景资产库");
+        base = stripMarkedSection(base, "【场景示范图锚点】");
         if (b.id.startsWith("keyart-")) {
           base = stripMarkedSection(base, "【本集主场景优先】");
           base = stripMarkedSection(base, "【画风硬锁】");
@@ -599,6 +602,7 @@ export function applyFactoryPrefsToBlocks(
         base,
         genreBlock && syncGenre ? genreBlock : "",
         sceneBlock && syncScene ? sceneBlock : "",
+        sceneDemoBlock && syncScene ? sceneDemoBlock : "",
         b.id.startsWith("keyart-") && scene
           ? `【本集主场景优先】${scene.nameZh}\n直接吸收其生图提示词与核心元素，角色必须融入场景：\n${scene.promptZh}`
           : "",
@@ -614,12 +618,16 @@ export function applyFactoryPrefsToBlocks(
     if (b.id.startsWith("story-") || b.id.startsWith("bible-")) {
       let base = b.prompt;
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
-      if (b.id.startsWith("story-")) base = stripMarkedSection(base, "【漫剧场景资产库");
+      if (b.id.startsWith("story-")) {
+        base = stripMarkedSection(base, "【漫剧场景资产库");
+        base = stripMarkedSection(base, "【场景示范图锚点】");
+      }
       if (b.id.startsWith("bible-")) base = stripMarkedSection(base, "【角色库锚点】");
       const parts = [
         base,
         genreBlock && syncGenre ? genreBlock : "",
         b.id.startsWith("story-") && sceneBlock ? sceneBlock : "",
+        b.id.startsWith("story-") && sceneDemoBlock ? sceneDemoBlock : "",
         b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
