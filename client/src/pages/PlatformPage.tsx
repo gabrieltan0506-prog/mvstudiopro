@@ -7944,7 +7944,7 @@ export default function PlatformPage() {
                 }`}
               >
                 <FileText className="h-3.5 w-3.5 shrink-0" />
-                HTML PPT
+                动效PPT生成演示
               </button>
             </div>
             <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">

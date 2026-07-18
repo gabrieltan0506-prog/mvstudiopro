@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "dark_research",
+  "labelZh": "暗黑数据研究报告",
+  "whenZh": "AI/资本/行业趋势/数据洞察",
+  "palette": {
+    "bg": "#0b0f14",
+    "card": "#121821",
+    "text": "#e8eef7",
+    "muted": "#8b9bb0",
+    "accent": "#5eead4",
+    "line": "#243041"
+  },
+  "type": {
+    "titlePx": 48,
+    "bodyPx": 20,
+    "kpiPx": 72,
+    "weightTitle": 800,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 550
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

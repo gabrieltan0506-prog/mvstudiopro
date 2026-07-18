@@ -1,0 +1,266 @@
+{
+  "generatedAt": "2026-07-17T23:10:15.586Z",
+  "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
+  "items": [
+    {
+      "id": "char_f_01",
+      "photorealNameZh": "岑停云",
+      "cgNameZh": "沈清辞",
+      "ok": true,
+      "hero": "char_f_01_hero.jpg",
+      "sheet": "char_f_01_sheet.jpg"
+    },
+    {
+      "id": "char_f_02",
+      "photorealNameZh": "江晚星",
+      "cgNameZh": "顾夜笙",
+      "ok": true,
+      "hero": "char_f_02_hero.jpg",
+      "sheet": "char_f_02_sheet.jpg",
+      "at": "2026-07-17T20:35:37.117Z"
+    },
+    {
+      "id": "char_f_03",
+      "photorealNameZh": "夏知遥",
+      "cgNameZh": "江晚吟",
+      "ok": true,
+      "hero": "char_f_03_hero.jpg",
+      "sheet": "char_f_03_sheet.jpg",
+      "at": "2026-07-17T20:41:38.023Z"
+    },
+    {
+      "id": "char_f_04",
+      "photorealNameZh": "白昭昭",
+      "cgNameZh": "苏陌",
+      "ok": true,
+      "hero": "char_f_04_hero.jpg",
+      "sheet": "char_f_04_sheet.jpg",
+      "at": "2026-07-17T20:46:29.755Z"
+    },
+    {
+      "id": "char_f_05",
+      "photorealNameZh": "林暮雪",
+      "cgNameZh": "林知遥",
+      "ok": true,
+      "hero": "char_f_05_hero.jpg",
+      "sheet": "char_f_05_sheet.jpg",
+      "at": "2026-07-17T20:50:36.777Z"
+    },
+    {
+      "id": "char_f_06",
+      "photorealNameZh": "苏小禾",
+      "cgNameZh": "阮清禾",
+      "ok": true,
+      "hero": "char_f_06_hero.jpg",
+      "sheet": "char_f_06_sheet.jpg",
+      "at": "2026-07-17T20:55:35.298Z"
+    },
+    {
+      "id": "char_f_07",
+      "photorealNameZh": "唐听澜",
+      "cgNameZh": "唐若曦",
+      "ok": true,
+      "hero": "char_f_07_hero.jpg",
+      "sheet": "char_f_07_sheet.jpg",
+      "at": "2026-07-17T20:59:53.509Z"
+    },
+    {
+      "id": "char_f_08",
+      "photorealNameZh": "温澄",
+      "cgNameZh": "陆听澜",
+      "ok": true,
+      "hero": "char_f_08_hero.jpg",
+      "sheet": "char_f_08_sheet.jpg",
+      "at": "2026-07-17T21:04:18.247Z"
+    },
+    {
+      "id": "char_f_09",
+      "photorealNameZh": "谢南枝",
+      "cgNameZh": "谢知意",
+      "ok": true,
+      "hero": "char_f_09_hero.jpg",
+      "sheet": "char_f_09_sheet.jpg",
+      "at": "2026-07-17T21:09:42.888Z"
+    },
+    {
+      "id": "char_f_10",
+      "photorealNameZh": "顾以宁",
+      "cgNameZh": "温以宁",
+      "ok": true,
+      "hero": "char_f_10_hero.jpg",
+      "sheet": "char_f_10_sheet.jpg",
+      "at": "2026-07-17T21:13:48.532Z"
+    },
+    {
+      "id": "char_f_12",
+      "photorealNameZh": "陆青青",
+      "cgNameZh": "顾清晏",
+      "ok": true,
+      "hero": "char_f_12_hero.jpg",
+      "sheet": "char_f_12_sheet.jpg",
+      "at": "2026-07-17T21:33:40.494Z"
+    },
+    {
+      "id": "char_f_13",
+      "photorealNameZh": "姜如初",
+      "cgNameZh": "姜雪芙",
+      "ok": true,
+      "hero": "char_f_13_hero.jpg",
+      "sheet": "char_f_13_sheet.jpg",
+      "at": "2026-07-17T21:38:33.600Z"
+    },
+    {
+      "id": "char_f_14",
+      "photorealNameZh": "阮听雨",
+      "cgNameZh": "沈听澜",
+      "ok": true,
+      "hero": "char_f_14_hero.jpg",
+      "sheet": "char_f_14_sheet.jpg",
+      "at": "2026-07-17T21:44:31.670Z"
+    },
+    {
+      "id": "char_f_15",
+      "photorealNameZh": "叶清欢",
+      "cgNameZh": "谢清辞",
+      "ok": true,
+      "hero": "char_f_15_hero.jpg",
+      "sheet": "char_f_15_sheet.jpg",
+      "at": "2026-07-17T21:51:09.887Z"
+    },
+    {
+      "id": "char_m_01",
+      "photorealNameZh": "周临川",
+      "cgNameZh": "叶秋声",
+      "ok": true,
+      "hero": "char_m_01_hero.jpg",
+      "sheet": "char_m_01_sheet.jpg",
+      "at": "2026-07-17T21:58:33.242Z"
+    },
+    {
+      "id": "char_m_02",
+      "photorealNameZh": "傅北辰",
+      "cgNameZh": "傅临渊",
+      "ok": true,
+      "hero": "char_m_02_hero.jpg",
+      "sheet": "char_m_02_sheet.jpg",
+      "at": "2026-07-17T22:02:55.681Z"
+    },
+    {
+      "id": "char_m_03",
+      "photorealNameZh": "沈渡",
+      "cgNameZh": "沈倦",
+      "ok": true,
+      "hero": "char_m_03_hero.jpg",
+      "sheet": "char_m_03_sheet.jpg",
+      "at": "2026-07-17T22:07:52.247Z"
+    },
+    {
+      "id": "char_m_04",
+      "photorealNameZh": "江执白",
+      "cgNameZh": "江执",
+      "ok": true,
+      "hero": "char_m_04_hero.jpg",
+      "sheet": "char_m_04_sheet.jpg",
+      "at": "2026-07-17T22:14:29.179Z"
+    },
+    {
+      "id": "char_m_05",
+      "photorealNameZh": "陆深",
+      "cgNameZh": "陆沉",
+      "ok": true,
+      "hero": "char_m_05_hero.jpg",
+      "sheet": "char_m_05_sheet.jpg",
+      "at": "2026-07-17T22:18:57.436Z"
+    },
+    {
+      "id": "char_m_06",
+      "photorealNameZh": "陈予安",
+      "cgNameZh": "谢衍",
+      "ok": true,
+      "hero": "char_m_06_hero.jpg",
+      "sheet": "char_m_06_sheet.jpg",
+      "at": "2026-07-17T22:25:30.780Z"
+    },
+    {
+      "id": "char_m_07",
+      "photorealNameZh": "韩止水",
+      "cgNameZh": "裴砚",
+      "ok": true,
+      "hero": "char_m_07_hero.jpg",
+      "sheet": "char_m_07_sheet.jpg",
+      "at": "2026-07-17T22:29:32.128Z"
+    },
+    {
+      "id": "char_m_08",
+      "photorealNameZh": "裴野",
+      "cgNameZh": "顾延",
+      "ok": true,
+      "hero": "char_m_08_hero.jpg",
+      "sheet": "char_m_08_sheet.jpg",
+      "at": "2026-07-17T22:32:59.873Z"
+    },
+    {
+      "id": "char_m_09",
+      "photorealNameZh": "谢闻舟",
+      "cgNameZh": "秦屿",
+      "ok": true,
+      "hero": "char_m_09_hero.jpg",
+      "sheet": "char_m_09_sheet.jpg",
+      "at": "2026-07-17T22:40:24.524Z"
+    },
+    {
+      "id": "char_m_10",
+      "photorealNameZh": "许朝闻",
+      "cgNameZh": "陆淮安",
+      "ok": true,
+      "hero": "char_m_10_hero.jpg",
+      "sheet": "char_m_10_sheet.jpg",
+      "at": "2026-07-17T22:44:37.182Z"
+    },
+    {
+      "id": "char_m_11",
+      "photorealNameZh": "霍砚",
+      "cgNameZh": "江寒",
+      "ok": true,
+      "hero": "char_m_11_hero.jpg",
+      "sheet": "char_m_11_sheet.jpg",
+      "at": "2026-07-17T22:48:19.063Z"
+    },
+    {
+      "id": "char_m_12",
+      "photorealNameZh": "程远",
+      "cgNameZh": "程屿",
+      "ok": true,
+      "hero": "char_m_12_hero.jpg",
+      "sheet": "char_m_12_sheet.jpg",
+      "at": "2026-07-17T22:51:34.614Z"
+    },
+    {
+      "id": "char_m_13",
+      "photorealNameZh": "顾行舟",
+      "cgNameZh": "顾西洲",
+      "ok": true,
+      "hero": "char_m_13_hero.jpg",
+      "sheet": "char_m_13_sheet.jpg",
+      "at": "2026-07-17T22:57:15.303Z"
+    },
+    {
+      "id": "char_m_14",
+      "photorealNameZh": "梁知夏",
+      "cgNameZh": "沈默",
+      "ok": true,
+      "hero": "char_m_14_hero.jpg",
+      "sheet": "char_m_14_sheet.jpg",
+      "at": "2026-07-17T23:04:47.635Z"
+    },
+    {
+      "id": "char_f_11",
+      "photorealNameZh": "沈见鹿",
+      "cgNameZh": "沈听雪",
+      "ok": true,
+      "hero": "char_f_11_hero.jpg",
+      "sheet": "char_f_11_sheet.jpg",
+      "at": "2026-07-17T23:10:15.586Z"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "rose_editorial",
+  "labelZh": "玫瑰杂志",
+  "whenZh": "内容品牌/女性向/生活方式提案",
+  "palette": {
+    "bg": "#faf5f6",
+    "card": "#ffffff",
+    "text": "#3f1d2e",
+    "muted": "#8b6b7a",
+    "accent": "#be123c",
+    "line": "#f0d5de"
+  },
+  "type": {
+    "titlePx": 44,
+    "bodyPx": 18,
+    "kpiPx": 60,
+    "weightTitle": 800,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 550
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

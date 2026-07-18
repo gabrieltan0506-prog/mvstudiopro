@@ -35,6 +35,11 @@ import {
 } from "@shared/manhuaCharacterAssetLibrary";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
 import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
+import {
+  buildManhuaPreviouslyOnRecap,
+  buildManhuaRecapCardImagePrompt,
+  shouldAttachManhuaPreviouslyOn,
+} from "@shared/manhuaEpisodeRecap";
 
 export type DramaStudioSpawn = {
   blocks: CanvasBlock[];
@@ -48,8 +53,9 @@ export type DramaStudioSpawn = {
   characterIds?: string[];
 };
 
-/** 漫剧工厂固定阶段顺序（与 spawn id 前缀对齐） */
+/** 漫剧工厂固定阶段顺序（与 spawn id 前缀对齐；recap_card 仅第3集起存在） */
 export const MANHUA_FACTORY_STAGE_ORDER = [
+  "recap_card",
   "story",
   "bible",
   "beats",
@@ -62,6 +68,7 @@ export const MANHUA_FACTORY_STAGE_ORDER = [
 export type ManhuaFactoryStageKey = (typeof MANHUA_FACTORY_STAGE_ORDER)[number];
 
 export const MANHUA_FACTORY_STAGE_LABEL_ZH: Record<ManhuaFactoryStageKey, string> = {
+  recap_card: "前情提要片头",
   story: "故事大纲",
   bible: "角色卡",
   beats: "镜头节拍",
@@ -102,6 +109,13 @@ export type SpawnManhuaDramaStudioOpts = {
   previousEndingHook?: string;
   /** 本集片尾钩子（写入 story 顶部注释） */
   endingHook?: string;
+  /**
+   * 前情提要全文（方案 B：第3集起）。
+   * 写入 story 片头，并额外铺 `recap_card` 静帧节点。
+   */
+  previouslyOnRecap?: string;
+  /** 系列标题（前情提要静帧卡用） */
+  seriesTitle?: string;
 };
 
 /** 同屏最多铺几条六段链（避积分爆） */
@@ -116,7 +130,12 @@ export type ManhuaSeriesEpisodeInput = {
 
 export type SpawnManhuaDramaStudioSeriesOpts = Omit<
   SpawnManhuaDramaStudioOpts,
-  "episodeIndex" | "episodeTitle" | "previousEndingHook" | "endingHook" | "writerContext"
+  | "episodeIndex"
+  | "episodeTitle"
+  | "previousEndingHook"
+  | "endingHook"
+  | "writerContext"
+  | "previouslyOnRecap"
 > & {
   episodes: ManhuaSeriesEpisodeInput[];
   /** 默认 MANHUA_SERIES_SPAWN_MAX */
@@ -208,6 +227,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const episodeTitle = String(opts.episodeTitle || "").trim().slice(0, 120) || undefined;
   const previousEndingHook = String(opts.previousEndingHook || "").trim();
   const endingHook = String(opts.endingHook || "").trim();
+  const previouslyOnRecap = String(opts.previouslyOnRecap || "").trim();
+  const seriesTitle = String(opts.seriesTitle || "").trim().slice(0, 80);
   const stageOpts = {
     genreId,
     sceneId,
@@ -217,8 +238,28 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     directorCraftBlock: includeDirectorCraft ? CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK : undefined,
   };
   const usePack = Boolean(genreId || sceneId || writerContext || characterBlock || craftShotBlock);
+  const artStyle = getManhuaArtStylePreset(opts.artStyleId);
+  const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
+  const hasRecapCard = Boolean(previouslyOnRecap);
+  const col0 = hasRecapCard ? 1 : 0;
 
-  const story = defaultCanvasBlock("text", originX, originY);
+  let recapCard: CanvasBlock | null = null;
+  if (hasRecapCard && episodeIndex != null) {
+    recapCard = defaultCanvasBlock("image", originX, originY);
+    recapCard.id = makeFactoryStageId("recap_card", episodeIndex);
+    recapCard.prompt = buildManhuaRecapCardImagePrompt({
+      episodeIndex,
+      seriesTitle: seriesTitle || opts.topic,
+      recapText: previouslyOnRecap,
+      artStyleBlock,
+    });
+    recapCard.width = 360;
+    recapCard.height = 320;
+    recapCard.imageModel = "nano-banana-2";
+    recapCard.aspectRatio = "9:16";
+  }
+
+  const story = defaultCanvasBlock("text", originX + gapX * col0, originY);
   story.id = makeFactoryStageId("story", episodeIndex);
   let storyPrompt = usePack
     ? buildManhuaStagePromptWithGenre("story_brief", stageOpts)
@@ -227,6 +268,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     episodeIndex != null
       ? `【第${episodeIndex}集${episodeTitle ? `·${episodeTitle}` : ""}】`
       : "",
+    previouslyOnRecap || "",
     endingHook ? `片尾钩子（本集）：${endingHook}` : "",
     previousEndingHook ? `【上集钩子】${previousEndingHook}` : "",
   ]
@@ -239,8 +281,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   story.width = 400;
   story.height = 320;
   story.textModel = "gemini-3.1-pro";
+  if (recapCard) story.parentId = recapCard.id;
 
-  const bible = defaultCanvasBlock("text", originX + gapX, originY);
+  const bible = defaultCanvasBlock("text", originX + gapX * (col0 + 1), originY);
   bible.id = makeFactoryStageId("bible", episodeIndex);
   const bibleBase = usePack
     ? buildManhuaStagePromptWithGenre("character_bible", stageOpts)
@@ -249,7 +292,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   bible.parentId = story.id;
   bible.textModel = "gemini-3.1-pro";
 
-  const beats = defaultCanvasBlock("text", originX + gapX * 2, originY);
+  const beats = defaultCanvasBlock("text", originX + gapX * (col0 + 2), originY);
   beats.id = makeFactoryStageId("beats", episodeIndex);
   const beatsBase = usePack
     ? buildManhuaStagePromptWithGenre("episode_beats", stageOpts)
@@ -258,7 +301,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   beats.parentId = bible.id;
   beats.textModel = "gemini-3.1-pro";
 
-  const reverse = defaultCanvasBlock("video_reverse", originX + gapX * 3, originY);
+  const reverse = defaultCanvasBlock("video_reverse", originX + gapX * (col0 + 3), originY);
   reverse.id = makeFactoryStageId("reverse", episodeIndex);
   const reverseBase = usePack
     ? buildManhuaStagePromptWithGenre("video_reverse", stageOpts)
@@ -271,19 +314,17 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       ? opts.videoReverseOutputMode
       : "zh";
 
-  const keyArt = defaultCanvasBlock("image", originX + gapX * 4, originY);
+  const keyArt = defaultCanvasBlock("image", originX + gapX * (col0 + 4), originY);
   keyArt.id = makeFactoryStageId("keyart", episodeIndex);
   const keyArtBase = usePack
     ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
-  const artStyle = getManhuaArtStylePreset(opts.artStyleId);
-  const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   keyArt.prompt = [keyArtBase, craftShotBlock, artStyleBlock].filter(Boolean).join("\n\n");
   keyArt.parentId = reverse.id;
   keyArt.imageModel = "nano-banana-2";
   keyArt.aspectRatio = "9:16";
 
-  const clip = defaultCanvasBlock("video", originX + gapX * 5, originY);
+  const clip = defaultCanvasBlock("video", originX + gapX * (col0 + 5), originY);
   clip.id = makeFactoryStageId("clip", episodeIndex);
   clip.prompt = motionBlock
     ? `${MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip}\n\n${motionBlock}`
@@ -293,7 +334,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   clip.aspectRatio = "9:16";
 
   /** Gemini Omni · 自然语言视频改写（GEMINI_API_KEY；可续 previous_interaction_id） */
-  const omniEdit = defaultCanvasBlock("video", originX + gapX * 6, originY);
+  const omniEdit = defaultCanvasBlock("video", originX + gapX * (col0 + 6), originY);
   omniEdit.id = makeFactoryStageId("omni_edit", episodeIndex);
   const omniBase =
     "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。";
@@ -302,17 +343,20 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   omniEdit.videoModel = "gemini-omni-flash";
   omniEdit.aspectRatio = "9:16";
 
-  const blocks = [story, bible, beats, reverse, keyArt, clip, omniEdit].map((b) =>
-    stampEpisodeMeta(b, episodeIndex, episodeTitle),
-  );
-  const edges: CanvasEdge[] = [
+  const rawBlocks = [recapCard, story, bible, beats, reverse, keyArt, clip, omniEdit].filter(
+    Boolean,
+  ) as CanvasBlock[];
+  const blocks = rawBlocks.map((b) => stampEpisodeMeta(b, episodeIndex, episodeTitle));
+  const edges: CanvasEdge[] = [];
+  if (recapCard) edges.push({ fromId: recapCard.id, toId: story.id });
+  edges.push(
     { fromId: story.id, toId: bible.id },
     { fromId: bible.id, toId: beats.id },
     { fromId: beats.id, toId: reverse.id },
     { fromId: reverse.id, toId: keyArt.id },
     { fromId: keyArt.id, toId: clip.id },
     { fromId: clip.id, toId: omniEdit.id },
-  ];
+  );
 
   return {
     blocks,
@@ -325,7 +369,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 }
 
 /**
- * 按集铺多条六段链（纵向错开）。默认最多 4 集；第 2+ 集 story 注入上集钩子。
+ * 按集铺多条链（纵向错开）。默认最多 4 集；
+ * 第 2+ 集 story 注入上集钩子；第 3+ 集附加前情提要片头（文案 + recap_card 静帧）。
  */
 export function spawnManhuaDramaStudioSeries(opts: SpawnManhuaDramaStudioSeriesOpts): DramaStudioSpawn & {
   episodeCount: number;
@@ -355,6 +400,16 @@ export function spawnManhuaDramaStudioSeries(opts: SpawnManhuaDramaStudioSeriesO
     const ep = episodes[i]!;
     const prev = i > 0 ? episodes[i - 1] : undefined;
     const writerContext = String(opts.writerContextForEpisode?.(ep) || "").trim();
+    const priorForRecap = episodes.slice(0, i).map((e) => ({
+      index: e.index,
+      title: e.title,
+      body: String(e.body || "").trim(),
+      endHook: String(e.endHook || "").trim(),
+    }));
+    const previouslyOnRecap =
+      shouldAttachManhuaPreviouslyOn(ep.index) && priorForRecap.length
+        ? buildManhuaPreviouslyOnRecap(priorForRecap)
+        : "";
     const spawned = spawnManhuaDramaStudio({
       ...opts,
       originX,
@@ -363,6 +418,8 @@ export function spawnManhuaDramaStudioSeries(opts: SpawnManhuaDramaStudioSeriesO
       episodeTitle: ep.title,
       endingHook: ep.endHook,
       previousEndingHook: prev?.endHook,
+      previouslyOnRecap: previouslyOnRecap || undefined,
+      seriesTitle: opts.seriesTitle || opts.topic,
       writerContext: writerContext || undefined,
       includeDirectorCraft: opts.includeDirectorCraft ?? Boolean(writerContext),
     });
@@ -630,7 +687,8 @@ export function resolveFactoryResumeStage(
   }
   for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
     const b = scoped.find((x) => x.id.startsWith(`${stage}-`));
-    if (!b) return stage;
+    // 可选阶段（如第1–2集无 recap_card）：跳过而非当成「未完成」
+    if (!b) continue;
     if (b.status === "error") return stage;
     if (!blockLooksDone(b)) return stage;
   }
@@ -797,10 +855,21 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           current.kind === "image" || current.kind === "video"
             ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
             : current.refImageUrl;
-        const runBlockPayload =
+        let runBlockPayload =
           nearestRef && nearestRef !== current.refImageUrl
             ? { ...current, refImageUrl: nearestRef }
             : current;
+        // 多集连续：clip 阶段把上一集成片 URL 注入 refVideoUrl，供 Seedance 末帧/视频参考
+        if (stage === "clip" && !runBlockPayload.refVideoUrl) {
+          const ep = getBlockEpisodeIndex(runBlockPayload);
+          if (ep != null && ep >= 2) {
+            const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
+            const prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
+            if (prevClipUrl) {
+              runBlockPayload = { ...runBlockPayload, refVideoUrl: prevClipUrl };
+            }
+          }
+        }
 
         const docTexts =
           current.kind === "text" || current.kind === "copy_organize"

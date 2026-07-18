@@ -4,7 +4,11 @@
  * 五维公式：脸型 + 发型 + 穿搭 + 姿态 + 道具。
  */
 
-import { PHOTOREAL_ANTI_AI_LOCK_ZH } from "./photorealCharacterPrompt.js";
+import {
+  PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
+  formatPhotorealFaceShapeBlock,
+} from "./photorealCharacterPrompt.js";
 
 export type ManhuaCharacterGender = "female" | "male";
 
@@ -21,10 +25,60 @@ export type ManhuaCharacterTemplate = {
   sourceFile: string;
 };
 
+/** 仿真人独立取名（与 CG nameZh 脱钩） */
+export const MANHUA_PHOTOREAL_NAME_ZH: Record<string, string> = {
+  char_f_01: "岑停云",
+  char_f_02: "江晚星",
+  char_f_03: "夏知遥",
+  char_f_04: "白昭昭",
+  char_f_05: "林暮雪",
+  char_f_06: "苏小禾",
+  char_f_07: "唐听澜",
+  char_f_08: "温澄",
+  char_f_09: "谢南枝",
+  char_f_10: "顾以宁",
+  char_f_11: "沈见鹿",
+  char_f_12: "陆青青",
+  char_f_13: "姜如初",
+  char_f_14: "阮听雨",
+  char_f_15: "叶清欢",
+  char_m_01: "周临川",
+  char_m_02: "傅北辰",
+  char_m_03: "沈渡",
+  char_m_04: "江执白",
+  char_m_05: "陆深",
+  char_m_06: "陈予安",
+  char_m_07: "韩止水",
+  char_m_08: "裴野",
+  char_m_09: "谢闻舟",
+  char_m_10: "许朝闻",
+  char_m_11: "霍砚",
+  char_m_12: "程远",
+  char_m_13: "顾行舟",
+  /** 软参考补槽名（本人 refs 只作族裔/质感先验，须按角色分异脸） */
+  char_m_14: "唐知衡",
+};
+
+/** 按画风取展示名：仿真人用独立名，其余用 CG 名 */
+export function getManhuaCharacterDisplayName(
+  id: string,
+  opts?: { artStyleId?: string | null },
+): string {
+  const c = getManhuaCharacterById(id);
+  if (!c) return "";
+  if (String(opts?.artStyleId || "").trim() === "photoreal") {
+    return MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
+  }
+  return c.nameZh;
+}
+
 /** 浏览器可访问的设定卡预览（含底部正/侧/背三视图），见 client/public/manhua-characters/ */
-export function getManhuaCharacterPreviewUrl(id: string): string {
+export function getManhuaCharacterPreviewUrl(id: string, opts?: { artStyleId?: string | null }): string {
   const key = String(id || "").trim();
   if (!/^char_[fm]_\d+$/.test(key)) return "";
+  if (String(opts?.artStyleId || "").trim() === "photoreal") {
+    return `/manhua-characters/photoreal/${key}_sheet.jpg`;
+  }
   return `/manhua-characters/${key}.jpg`;
 }
 
@@ -46,7 +100,9 @@ export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
     shortZh: "都市情感 / 校园更贴",
     promptZh:
       "画风硬锁：半写实仿真人电影剧照，真实皮肤纹理与发丝，自然光影，非卡通非塑料 CGI；角色与场景同一画风。\n" +
-      PHOTOREAL_ANTI_AI_LOCK_ZH,
+      PHOTOREAL_ANTI_AI_LOCK_ZH +
+      "\n" +
+      PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   },
   {
     id: "cg_drama",
@@ -223,7 +279,9 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     age: 25,
     jobZh: "珠宝设计师",
     temperamentTags: ["冷感", "精致"],
-    promptZh: "半写实二次元，国乙立绘，韩系厚涂，纯白背景，菱形脸长卷发，黑色丝绒吊带开叉长裙，珠宝设计师冷感精致，超写实8K。",
+    // 服装软化：原「吊带开叉」易触发 Evolink inappropriate；仿真人 sheet 过审用高领丝绒
+    promptZh:
+      "半写实二次元，国乙立绘，韩系厚涂，纯白背景，菱形脸长卷发，黑色高领丝绒长裙（肩臂覆盖、无吊带无开叉），珠宝设计师冷感精致，超写实8K。",
     sourceFile: "微信圖片_20260717074428_2329_558.jpg",
   },
   {
@@ -956,12 +1014,15 @@ export function buildManhuaCharacterPromptBlock(
   const picked = ids.map(getManhuaCharacterById).filter(Boolean) as ManhuaCharacterTemplate[];
   if (!picked.length) return "";
   const style = getManhuaArtStylePreset(opts?.artStyleId);
+  const isPhotoreal = style.id === "photoreal";
   const linesOut = picked.map((c, i) => {
     const tags = c.temperamentTags.join("·");
     const age = c.age ? `${c.age}岁` : "";
-    const preview = getManhuaCharacterPreviewUrl(c.id);
+    const display = getManhuaCharacterDisplayName(c.id, { artStyleId: style.id });
+    const preview = getManhuaCharacterPreviewUrl(c.id, { artStyleId: style.id });
     const previewLine = preview ? `\n预览图：${preview}` : "";
-    return `${i + 1}. ${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${previewLine}`;
+    const bone = isPhotoreal ? `\n${formatPhotorealFaceShapeBlock(c.id, c.gender)}` : "";
+    return `${i + 1}. ${display}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${previewLine}`;
   });
   return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n【画风】${style.labelZh}\n${style.promptZh}\n${linesOut.join("\n")}`;
 }

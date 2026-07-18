@@ -35,8 +35,10 @@ describe("HB prompt assets", () => {
   });
 
   it("html ppt builds horizontal deck from confirmed outline", () => {
+    expect(Object.keys(HTML_PPT_STYLES).length).toBeGreaterThanOrEqual(9);
     expect(recommendHtmlPptStyle("创业路演")).toBe("pitch_orange");
     expect(recommendHtmlPptStyle("季度复盘")).toBe("figma_timeline");
+    expect(recommendHtmlPptStyle("周报简报")).toBe("ocean_brief");
     const pitchPages = buildDefaultHtmlPptPages("融资路演", 7, "创业路演", "pitch_orange");
     expect(pitchPages.some((p) => /解决方案|商业模式/.test(p.title))).toBe(true);
     const pages = buildDefaultHtmlPptPages("AI 趋势", 6, "数据洞察", "dark_research");
@@ -48,6 +50,19 @@ describe("HB prompt assets", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain(HTML_PPT_STYLES.dark_research.labelZh);
     expect(html).toContain("translateX");
+    expect(html).toContain("动效PPT");
+    expect(html).toContain("is-active");
+    expect(html).toContain("playEnter");
+    expect(html).toContain("/html-ppt-templates/dark_research/bg.png");
+    expect(html).toContain("@keyframes rise");
+    expect(html).toMatch(/viz-(ring|bars|columns|steps|cards|cover)/);
+    expect(html).toContain("ring-svg");
+    expect(html).toContain("hbar-fill");
+    expect(html).toContain("#22d3ee");
+    expect(html).toContain("#a78bfa");
+    expect(html).toContain("#a3e635");
+    expect(html).toContain("#fb923c");
+    expect(html).toContain("class=\"rank\"");
   });
 
   it("scene steal bank + motion ids align", () => {

@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "ivory_academic",
+  "labelZh": "象牙学术",
+  "whenZh": "学术汇报/培训课件/知识分享",
+  "palette": {
+    "bg": "#f7f1e6",
+    "card": "#fffdf8",
+    "text": "#1c1917",
+    "muted": "#78716c",
+    "accent": "#14532d",
+    "line": "#e7e0d2"
+  },
+  "type": {
+    "titlePx": 42,
+    "bodyPx": 18,
+    "kpiPx": 56,
+    "weightTitle": 700,
+    "family": "ui-serif, Noto Serif SC, Georgia, serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 550
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}

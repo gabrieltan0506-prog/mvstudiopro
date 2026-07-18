@@ -21,7 +21,7 @@
 ## 3. Git / PR（與本倉庫 `.cursor/rules` 對齊）
 
 - 改動落在 **功能分支**，**push 分支** 並以 **PR 合併 `main`** 為常規路徑（除非對方聲明緊急直推）。
-- **開 PR 日上限**：同一自然日 **`gh pr create` ≤ 20**；另須遵守兩次 create ≥15 分鐘、串行合併、上一 Fly Deploy success 才可合下一刀。詳見 [`.cursor/rules/git-pr-workflow-always.mdc`](../.cursor/rules/git-pr-workflow-always.mdc)。
+- **開 PR**：① **上一張未 MERGED 禁止開新 PR**（只許 push 叠進既有分支）；② 兩次 create **≥20 分鐘**；③ 同日 **≤20**；④ 上一 Fly Deploy success 才可合下一刀。詳見 [`.cursor/rules/git-pr-workflow-always.mdc`](../.cursor/rules/git-pr-workflow-always.mdc)。
 
 ## 3b. 視頻生成測試探針
 

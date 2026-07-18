@@ -1,0 +1,31 @@
+{
+  "format": "mv-html-ppt-style-v1",
+  "id": "ocean_brief",
+  "labelZh": "海风简报",
+  "whenZh": "周报/站会/进度简报",
+  "palette": {
+    "bg": "#e0f2fe",
+    "card": "#ffffff",
+    "text": "#0c4a6e",
+    "muted": "#0369a1",
+    "accent": "#0284c7",
+    "line": "#bae6fd"
+  },
+  "type": {
+    "titlePx": 42,
+    "bodyPx": 18,
+    "kpiPx": 60,
+    "weightTitle": 800,
+    "family": "ui-sans-serif, PingFang SC, sans-serif"
+  },
+  "motion": {
+    "enter": "rise",
+    "durationMs": 500
+  },
+  "assets": {
+    "previewJpg": "preview.jpg",
+    "bgOptionalPng": "bg.png"
+  },
+  "aspectRatio": "16:9",
+  "notesZh": "站内动效PPT风格包：色板+字阶+可选底图；选用前可预览 preview.jpg"
+}
