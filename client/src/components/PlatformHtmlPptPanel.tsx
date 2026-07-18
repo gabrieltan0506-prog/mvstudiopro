@@ -114,9 +114,10 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   return (
     <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
       <div>
-        <div className="text-sm font-semibold text-white/90">网站式 HTML PPT</div>
+        <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          流程：设定 → 确认页面清单 → 预览导出。三风格 16:9 横向翻页单文件 HTML。
+          流程：设定 → 确认页面清单 → 预览导出。多风格 16:9 横向翻页单文件 HTML（站内预设，无需上传
+          PPTX）。
         </p>
       </div>
 
