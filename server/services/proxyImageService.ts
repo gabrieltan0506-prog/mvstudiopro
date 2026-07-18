@@ -1234,10 +1234,10 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     appendImageFlowLog(L, `[单帧·OpenAI] 失败 · ${String(err.message || "empty").slice(0, 160)}`);
   }
 
-  if (openrouterReady) {
+  if (tryOpenRouter) {
     appendImageFlowLog(
       L,
-      `[单帧·OpenRouter] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${openaiReady ? " · OpenAI失败后回落" : ""}`,
+      `[单帧·OpenRouter] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${tryOpenAi ? " · OpenAI失败后回落" : " · 强制/仅OpenRouter"}`,
     );
     const orErr: { message?: string } = {};
     const url = await postOpenRouterGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
