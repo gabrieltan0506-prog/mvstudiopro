@@ -16,7 +16,45 @@ export type HtmlPptStyleId =
   | "ocean_brief";
 
 /** 页面可视化类型：导出 HTML 内嵌 SVG/CSS 真图表（非纯文字入场） */
-export type HtmlPptVizKind = "cover" | "ring" | "bars" | "columns" | "steps" | "cards" | "line";
+export type HtmlPptVizKind =
+  | "cover"
+  | "ring"
+  | "bars"
+  | "columns"
+  | "steps"
+  | "cards"
+  | "line"
+  /** 左右对照：series 前半 vs 后半，适合年份/区域/模式对比 */
+  | "compare";
+
+const HTML_PPT_VIZ_OK = new Set<HtmlPptVizKind>([
+  "cover",
+  "ring",
+  "bars",
+  "columns",
+  "steps",
+  "cards",
+  "line",
+  "compare",
+]);
+
+/** series 允许绝对量级（亿元、万部、倍速）；条形宽度按页内 max 归一 */
+function clampSeriesValue(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(1_000_000, n);
+}
+
+function seriesBarPct(value: number, max: number): number {
+  return Math.max(2, Math.round((value / Math.max(1, max)) * 100));
+}
+
+function formatSeriesDisplay(value: number): string {
+  if (value >= 1000) return String(Math.round(value));
+  if (value >= 100) return String(Math.round(value));
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(1);
+}
 
 export type HtmlPptPage = {
   title: string;
@@ -126,8 +164,8 @@ export const HTML_PPT_STYLES: Record<HtmlPptStyleId, HtmlPptStyleMeta> = {
 export const HTML_PPT_QUALITY_CHECKLIST_ZH = `【动效 PPT·质量检查】
 1. 每页固定 16:9，横向翻页，不是长页面滚动博客。
 2. 符合选定风格预设，勿退化成普通白卡片网页。
-3. 每页一个主判断 + 至少一种可视化（环形/条形/柱状/步骤轨/指标卡），翻页时图表动效重播。
-4. 有页码；键盘 ←→ / 空格 / 点击可翻页。
+3. 每页一个主判断 + 至少一种可视化（环形/条形/柱状/步骤轨/指标卡），动效按「构建步」分批揭示，禁止进页一次播完全部。
+4. 有页码；空格/点击/↓ = 下一步动效；←→ = 翻页（与动效分离）。
 5. 导出为单文件 HTML（图表 SVG 内嵌）即可投屏。` as const;
 
 /** 说明：模板扩容方式（给产品/协作用） */
@@ -506,22 +544,21 @@ export function buildDefaultHtmlPptPages(
 
 /** 规范化用户编辑后的清单 */
 export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
-  const vizOk = new Set<HtmlPptVizKind>(["cover", "ring", "bars", "columns", "steps", "cards", "line"]);
   return (pages || [])
     .map((p) => ({
       title: String(p?.title || "").trim().slice(0, 80),
-      subtitle: p?.subtitle ? String(p.subtitle).trim().slice(0, 120) : undefined,
-      kpi: p?.kpi ? String(p.kpi).trim().slice(0, 16) : undefined,
-      note: p?.note ? String(p.note).trim().slice(0, 160) : undefined,
+      subtitle: p?.subtitle ? String(p.subtitle).trim().slice(0, 160) : undefined,
+      kpi: p?.kpi ? String(p.kpi).trim().slice(0, 24) : undefined,
+      note: p?.note ? String(p.note).trim().slice(0, 220) : undefined,
       bullets: Array.isArray(p?.bullets)
         ? p.bullets.map((b) => String(b || "").trim()).filter(Boolean).slice(0, 8)
         : undefined,
-      viz: p?.viz && vizOk.has(p.viz) ? p.viz : undefined,
+      viz: p?.viz && HTML_PPT_VIZ_OK.has(p.viz) ? p.viz : undefined,
       series: Array.isArray(p?.series)
         ? p.series
             .map((s) => ({
-              label: String(s?.label || "").trim().slice(0, 24),
-              value: Math.max(0, Math.min(100, Number(s?.value) || 0)),
+              label: String(s?.label || "").trim().slice(0, 28),
+              value: clampSeriesValue(s?.value),
             }))
             .filter((s) => s.label)
             .slice(0, 8)
@@ -546,8 +583,8 @@ function parseKpiPercent(kpi?: string): number | null {
 function seriesFromPage(page: HtmlPptPage, index: number): Array<{ label: string; value: number }> {
   if (page.series?.length) {
     return page.series.map((s) => ({
-      label: String(s.label || "").slice(0, 24),
-      value: Math.max(0, Math.min(100, Number(s.value) || 0)),
+      label: String(s.label || "").slice(0, 28),
+      value: clampSeriesValue(s.value),
     }));
   }
   const bullets = (page.bullets || []).filter(Boolean).slice(0, 6);
@@ -555,11 +592,14 @@ function seriesFromPage(page: HtmlPptPage, index: number): Array<{ label: string
   if (bullets.length) {
     const seed = hashSeed(page.title + String(index));
     return bullets.map((b, i) => {
-      const num = b.match(/(\d+(?:\.\d+)?)\s*%/);
-      const value = num
-        ? Math.max(0, Math.min(100, Number(num[1])))
-        : 35 + ((seed >> (i * 3)) % 55);
-      return { label: b.replace(/\s*\d+(?:\.\d+)?\s*%/g, "").trim().slice(0, 16) || `项${i + 1}`, value };
+      const pctMatch = b.match(/(\d+(?:\.\d+)?)\s*%/);
+      const absMatch = b.match(/(\d+(?:\.\d+)?)\s*(亿|万|倍)?/);
+      const value = pctMatch
+        ? Math.max(0, Math.min(100, Number(pctMatch[1])))
+        : absMatch
+          ? clampSeriesValue(Number(absMatch[1]) * (absMatch[2] === "亿" ? 1 : absMatch[2] === "万" ? 1 : 1))
+          : 35 + ((seed >> (i * 3)) % 55);
+      return { label: b.replace(/\s*\d+(?:\.\d+)?\s*%?/g, "").trim().slice(0, 18) || `项${i + 1}`, value };
     });
   }
   if (pct != null) {
@@ -585,8 +625,9 @@ export function inferHtmlPptViz(page: HtmlPptPage, index: number, total: number)
     return "ring";
   }
   if (/路径|阶段|里程碑|路线|时间线|步骤|Now|Next/.test(page.title)) return "steps";
-  if (/结构|拆解|市场|TAM|对比/.test(page.title)) return "columns";
-  if (/趋势|走势|波动|增长曲线|热度/.test(page.title)) return "line";
+  if (/对照|对比|VS|vs|前后|国内外|付费.*免费/.test(page.title)) return "compare";
+  if (/结构|拆解|市场|TAM|占比/.test(page.title)) return "columns";
+  if (/趋势|走势|波动|增长曲线|热度|预测/.test(page.title)) return "line";
   if ((page.bullets || []).length >= 3 && (page.series?.length || /风险|竞争|壁垒|缺口/.test(page.title))) {
     return "bars";
   }
@@ -626,7 +667,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
   const t3 = chartTone(3);
 
   if (kind === "cover") {
-    return `<div class="viz viz-cover anim d2" style="--c:${t0.c};--g:${t0.g}">
+    return `<div class="viz viz-cover chart-in" data-build="1" style="--c:${t0.c};--g:${t0.g}">
   <svg class="ring-svg" viewBox="0 0 140 140" aria-hidden="true">
     <circle class="ring-track" cx="70" cy="70" r="${r}"/>
     <circle class="ring-value" cx="70" cy="70" r="${r}" stroke-dasharray="${dash} ${circ.toFixed(1)}"/>
@@ -636,17 +677,18 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
   }
 
   if (kind === "ring") {
+    const sideMax = Math.max(1, ...series.slice(0, 5).map((s) => s.value));
     const side = series
       .slice(0, 5)
       .map(
         (s, i) =>
-          `<div class="metric-row chart-in" style="${toneStyle(i, `--v:${s.value}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b><i></i></div>`,
+          `<div class="metric-row chart-in" data-build="${i + 2}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, sideMax)}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b><i></i></div>`,
       )
       .join("");
     const kpiText = page.kpi || `${Math.round(pct)}%`;
     const kpiNum = parseKpiPercent(page.kpi) ?? Math.round(pct);
     return `<div class="viz viz-split">
-  <div class="viz-ring" style="--c:${t0.c};--g:${t0.g}">
+  <div class="viz-ring chart-in" data-build="1" style="--c:${t0.c};--g:${t0.g}">
     <svg class="ring-svg" viewBox="0 0 140 140" aria-hidden="true">
       <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${t0.c}"/><stop offset="55%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
       <circle class="ring-track" cx="70" cy="70" r="${r}"/>
@@ -664,7 +706,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 6)
       .map(
         (s, i) =>
-          `<div class="col chart-in" style="${toneStyle(i, `--h:${Math.round((s.value / max) * 100)}`)}"><div class="col-bar"></div><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b></div>`,
+          `<div class="col chart-in" data-build="${i + 1}" style="${toneStyle(i, `--h:${Math.round((s.value / max) * 100)}`)}"><div class="col-bar"></div><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b></div>`,
       )
       .join("");
     return `<div class="viz viz-cols">${cols}</div>`;
@@ -675,18 +717,19 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const steps = items
       .map(
         (lab, i) =>
-          `<div class="step chart-in" style="${toneStyle(i)}"><div class="step-dot">${i + 1}</div><div class="step-body">${escapeHtml(lab)}</div></div>`,
+          `<div class="step chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><div class="step-dot">${i + 1}</div><div class="step-body">${escapeHtml(lab)}</div></div>`,
       )
       .join("");
     return `<div class="viz viz-steps">${steps}</div>`;
   }
 
   if (kind === "cards") {
+    const cardMax = Math.max(1, ...series.slice(0, 4).map((s) => s.value));
     const cards = series
       .slice(0, 4)
       .map(
         (s, i) =>
-          `<div class="card chart-in" style="${toneStyle(i, `--v:${s.value}`)}"><div class="card-top"></div><b class="countup" data-to="${Math.round(s.value)}">0</b><span>${escapeHtml(s.label)}</span><i></i></div>`,
+          `<div class="card chart-in" data-build="${i + 1}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, cardMax)}`)}"><div class="card-top"></div><b class="countup" data-to="${Math.round(s.value)}">0</b><span>${escapeHtml(s.label)}</span><i></i></div>`,
       )
       .join("");
     return `<div class="viz viz-cards">${cards}</div>`;
@@ -707,28 +750,49 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const dots = coords
       .map(
         (p, i) =>
-          `<circle class="line-dot" style="${toneStyle(i)}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="line-val" x="${p.x.toFixed(1)}" y="${(p.y - 10).toFixed(1)}" style="${toneStyle(i)}">${Math.round(p.s.value)}</text>`,
+          `<g class="line-pt chart-in" data-build="${i + 2}" style="${toneStyle(i)}"><circle class="line-dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="line-val" x="${p.x.toFixed(1)}" y="${(p.y - 10).toFixed(1)}">${Math.round(p.s.value)}</text></g>`,
       )
       .join("");
     const labs = pts
-      .map((s, i) => `<span class="line-lab" style="${toneStyle(i)}">${escapeHtml(s.label)}</span>`)
+      .map((s, i) => `<span class="line-lab chart-in" data-build="${i + 2}" style="${toneStyle(i)}">${escapeHtml(s.label)}</span>`)
       .join("");
     return `<div class="viz viz-line">
   <svg class="line-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
     <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="${t0.c}"/><stop offset="50%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
-    <polyline class="line-path" points="${poly}" fill="none" stroke="url(#lg)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline class="line-path chart-in" data-build="1" points="${poly}" fill="none" stroke="url(#lg)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
     ${dots}
   </svg>
   <div class="line-labs">${labs}</div>
 </div>`;
   }
 
-  // bars：每条不同高亮色 + 排名圆点 + 扫光（对标热搜条）
+  if (kind === "compare") {
+    const items = series.slice(0, 8);
+    const mid = Math.max(1, Math.ceil(items.length / 2));
+    const left = items.slice(0, mid);
+    const right = items.slice(mid);
+    const max = Math.max(1, ...items.map((s) => s.value));
+    const renderSide = (rows: typeof items, offset: number, head: string) => {
+      const body = rows
+        .map(
+          (s, i) =>
+            `<div class="hbar chart-in" data-build="${offset + i + 1}" style="${toneStyle(offset + i, `--v:${seriesBarPct(s.value, max)}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${Math.round(s.value)}">0</div></div>`,
+        )
+        .join("");
+      return `<div class="compare-side"><div class="compare-h chart-in" data-build="${offset}">${escapeHtml(head)}</div>${body}</div>`;
+    };
+    const leftHead = page.bullets?.[0]?.slice(0, 16) || "对照 A";
+    const rightHead = page.bullets?.[1]?.slice(0, 16) || "对照 B";
+    return `<div class="viz viz-compare">${renderSide(left, 1, leftHead)}${renderSide(right, 2 + left.length, rightHead)}</div>`;
+  }
+
+  // bars：按页内 max 归一宽度，数字显示绝对量级（亿/万/占比皆可）
+  const barMax = Math.max(1, ...series.slice(0, 8).map((s) => s.value));
   const bars = series
     .slice(0, 8)
     .map(
       (s, i) =>
-        `<div class="hbar chart-in" style="${toneStyle(i, `--v:${s.value}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${Math.round(s.value)}">0</div></div>`,
+        `<div class="hbar chart-in" data-build="${i + 1}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, barMax)}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${Math.round(s.value)}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
     )
     .join("");
   return `<div class="viz viz-bars">${bars}</div>`;
@@ -747,26 +811,39 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
     .map((p, i) => {
       const kind = inferHtmlPptViz(p, i, safePages.length);
       const viz = renderVizHtml(kind, p, i);
-      const chartKinds = new Set(["steps", "cards", "bars", "columns", "ring", "line", "cover"]);
-      const bulletList =
-        chartKinds.has(kind)
-          ? ""
-          : (p.bullets || []).length
-            ? `<ul class="anim d3">${(p.bullets || []).map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`
-            : "";
+      const chartKinds = new Set(["steps", "cards", "bars", "columns", "ring", "line", "cover", "compare"]);
+      const bulletItems = chartKinds.has(kind)
+        ? ""
+        : (p.bullets || [])
+            .map((b, bi) => `<li class="anim" data-build="${bi + 1}">${escapeHtml(b)}</li>`)
+            .join("");
+      const bulletList = bulletItems ? `<ul>${bulletItems}</ul>` : "";
+      const noteBuild =
+        kind === "cover"
+          ? 2
+          : kind === "ring"
+            ? 2 + Math.min(5, (p.series || p.bullets || []).length)
+            : kind === "line"
+              ? 1 + Math.min(8, (p.series || p.bullets || []).length)
+              : 1 +
+                Math.max(
+                  Math.min(8, (p.series || []).length),
+                  Math.min(6, (p.bullets || []).length),
+                  chartKinds.has(kind) ? 0 : (p.bullets || []).length,
+                );
       return `<section class="slide${i === 0 ? " is-active" : ""}" data-i="${i}" data-viz="${kind}">
   <div class="slide-bg" aria-hidden="true"></div>
   <div class="fx-orb o1" aria-hidden="true"></div>
   <div class="fx-orb o2" aria-hidden="true"></div>
   <div class="slide-inner">
-  <div class="accent-line"></div>
-  <div class="meta anim d0"><span class="accent">${escapeHtml(styleMeta.labelZh)}</span><span>${i + 1} / ${safePages.length}</span></div>
-  ${kind === "cover" && p.kpi ? "" : p.kpi && kind !== "ring" ? `<div class="kpi anim d1">${escapeHtml(p.kpi)}</div>` : ""}
-  <h1 class="anim d1">${escapeHtml(p.title)}</h1>
-  ${p.subtitle ? `<p class="sub anim d2">${escapeHtml(p.subtitle)}</p>` : ""}
+  <div class="accent-line anim" data-build="0"></div>
+  <div class="meta anim" data-build="0"><span class="accent">${escapeHtml(styleMeta.labelZh)}</span><span>${i + 1} / ${safePages.length}</span></div>
+  ${kind === "cover" && p.kpi ? "" : p.kpi && kind !== "ring" ? `<div class="kpi anim" data-build="0">${escapeHtml(p.kpi)}</div>` : ""}
+  <h1 class="anim" data-build="0">${escapeHtml(p.title)}</h1>
+  ${p.subtitle ? `<p class="sub anim" data-build="0">${escapeHtml(p.subtitle)}</p>` : ""}
   ${viz}
   ${bulletList}
-  ${p.note ? `<p class="note anim d4">${escapeHtml(p.note)}</p>` : ""}
+  ${p.note ? `<p class="note anim" data-build="${Math.max(1, noteBuild)}">${escapeHtml(p.note)}</p>` : ""}
   </div>
 </section>`;
     })
@@ -780,39 +857,49 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
 <title>${title}</title>
 <style>
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;overflow:hidden;cursor:pointer}
+html,body{margin:0;height:100%;overflow:hidden;cursor:default;background:var(--bg,#0b0f14);color:var(--text,#e8eef7)}
 ${STYLE_CSS[styleId]}
-.deck{height:100%;width:100%;display:flex;transition:transform .62s cubic-bezier(.22,1,.36,1)}
-.slide{min-width:100vw;height:100vh;padding:clamp(24px,4.5vw,56px);display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden}
+.deck{height:100%;width:100%;display:flex;transition:transform .72s cubic-bezier(.22,1,.36,1)}
+.slide{min-width:100vw;height:100vh;padding:clamp(24px,4.5vw,56px) clamp(24px,4.5vw,56px) 88px;display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden}
 .slide-bg{position:absolute;inset:0;z-index:0;pointer-events:none;background-image:url('${bgUrl}');background-size:cover;background-position:center;opacity:.38;mix-blend-mode:soft-light}
 .fx-orb{position:absolute;z-index:0;pointer-events:none;border-radius:50%;filter:blur(40px);opacity:0}
 .fx-orb.o1{width:280px;height:280px;left:-40px;top:10%;background:rgba(34,211,238,.22)}
 .fx-orb.o2{width:240px;height:240px;right:-30px;bottom:8%;background:rgba(251,146,60,.18)}
-.slide.is-active .fx-orb{animation:orbPulse 2.4s ease-in-out both}
-.slide.is-active .fx-orb.o2{animation-delay:.25s}
+.slide.is-active .fx-orb{animation:orbPulse 2.8s ease-in-out both}
+.slide.is-active .fx-orb.o2{animation-delay:.35s}
 .slide-inner{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;min-height:72%;max-width:1100px;width:100%}
-.accent-line{height:3px;width:120px;background:linear-gradient(90deg,#22d3ee,#a78bfa,#a3e635,#fb923c);margin-bottom:10px;box-shadow:0 0 12px rgba(34,211,238,.35)}
+.accent-line{height:3px;width:120px;background:linear-gradient(90deg,#22d3ee,#a78bfa,#a3e635,#fb923c);margin-bottom:10px;box-shadow:0 0 12px rgba(34,211,238,.35);transform-origin:left center}
 .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:14px}
-h1{font-size:clamp(1.7rem,4.2vw,3rem);line-height:1.15;margin:6px 0 10px;letter-spacing:-.02em;max-width:20ch}
-.sub{color:var(--muted);font-size:clamp(.95rem,1.8vw,1.2rem);margin:0 0 14px;max-width:46ch}
+h1{font-size:clamp(1.7rem,4.2vw,3rem);line-height:1.15;margin:6px 0 10px;letter-spacing:-.02em;max-width:22ch}
+.sub{color:var(--muted);font-size:clamp(.95rem,1.8vw,1.2rem);margin:0 0 14px;max-width:48ch}
 ul{margin:10px 0 0;padding-left:1.1em;font-size:clamp(1rem,1.8vw,1.2rem);line-height:1.55}
 li{margin:7px 0}
 .note{margin-top:16px;color:var(--muted);font-size:13px}
 .kpi{color:#facc15;font-weight:800;font-size:clamp(2rem,5vw,3.6rem);letter-spacing:-.03em;text-shadow:0 0 18px rgba(250,204,21,.35)}
-.hint{position:fixed;right:16px;bottom:14px;z-index:5;font-size:12px;color:var(--muted);background:rgba(0,0,0,.28);padding:6px 10px;border-radius:999px;backdrop-filter:blur(8px)}
+.controls{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:14px;background:rgba(0,0,0,.42);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.08);box-shadow:0 8px 28px rgba(0,0,0,.35)}
+.controls button{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e8eef7;font-size:12px;padding:8px 12px;border-radius:10px;cursor:pointer;white-space:nowrap}
+.controls button:hover{background:rgba(255,255,255,.12)}
+.controls button.primary{background:linear-gradient(90deg,rgba(34,211,238,.35),rgba(167,139,250,.35));border-color:rgba(34,211,238,.45)}
+.controls .hud{font-size:11px;color:var(--muted,#8b9bb0);min-width:118px;text-align:center;padding:0 4px}
+.controls .done-flash{color:#facc15}
 .viz{margin-top:18px}
-.rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:800;font-style:normal;color:#0b1020;background:var(--c);box-shadow:0 0 10px var(--g)}
-.slide.is-active .rank{animation:rankPop .45s cubic-bezier(.34,1.56,.64,1) both;animation-delay:calc(.08s + var(--i)*.06s)}
-.chart-in{opacity:0;transform:translateX(-18px)}
-.slide.is-active .chart-in{animation:chartIn .55s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.1s + var(--i)*.07s)}
+.rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:800;font-style:normal;color:#0b1020;background:var(--c);box-shadow:0 0 10px var(--g);opacity:0;transform:scale(.4)}
+.chart-in.fx-show .rank,.hbar.fx-show .rank,.metric-row.fx-show .rank{animation:rankPop .7s cubic-bezier(.34,1.56,.64,1) both}
+.chart-in,.anim{opacity:0}
+.line-path.chart-in{opacity:1;transform:none}
+.anim:not(.accent-line){transform:translateY(14px)}
+.chart-in:not(.line-path){transform:translateX(-18px)}
+.anim.fx-show:not(.accent-line){animation:rise .75s cubic-bezier(.22,1,.36,1) both}
+.accent-line.fx-show{animation:barGrow 1s cubic-bezier(.22,1,.36,1) both}
+.chart-in.fx-show:not(.line-path){animation:chartIn .8s cubic-bezier(.22,1,.36,1) both}
 .viz-split{display:grid;grid-template-columns:minmax(140px,220px) 1fr;gap:28px;align-items:center}
 .viz-ring{position:relative;width:min(220px,42vw);aspect-ratio:1;filter:drop-shadow(0 0 16px var(--g))}
 .ring-svg{width:100%;height:100%;transform:rotate(-90deg)}
 .ring-track{fill:none;stroke:rgba(148,163,184,.22);stroke-width:12}
 .ring-value{fill:none;stroke:var(--c,#22d3ee);stroke-width:12;stroke-linecap:round}
 .ring-value.ring-grad{stroke:url(#rg)}
-.slide:not(.is-active) .ring-value{stroke-dasharray:0 999 !important}
-.slide.is-active .ring-value{animation:ringDraw 1.05s cubic-bezier(.22,1,.36,1) both}
+.viz-ring:not(.fx-show) .ring-value,.viz-cover:not(.fx-show) .ring-value{stroke-dasharray:0 999 !important}
+.viz-ring.fx-show .ring-value,.viz-cover.fx-show .ring-value{animation:ringDraw 1.45s cubic-bezier(.22,1,.36,1) both}
 .ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .ring-label strong{font-size:clamp(1.6rem,3.5vw,2.4rem);color:#f8fafc;line-height:1;text-shadow:0 0 20px var(--g,#22d3ee)}
 .ring-label span{font-size:12px;color:var(--muted);margin-top:4px}
@@ -821,20 +908,23 @@ li{margin:7px 0}
 .metric-row b{color:var(--c);font-size:14px;text-shadow:0 0 10px var(--g)}
 .metric-row i{grid-column:1/-1;display:block;height:8px;border-radius:99px;background:rgba(148,163,184,.18);position:relative;overflow:hidden}
 .metric-row i::after{content:"";position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,var(--c),#fff);border-radius:99px;box-shadow:0 0 12px var(--g)}
-.slide.is-active .metric-row i::after{animation:fillX .85s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.12s + var(--i)*.08s)}
+.metric-row.fx-show i::after{animation:fillX 1.15s cubic-bezier(.22,1,.36,1) both}
+.viz-compare{display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:920px;align-items:start}
+.compare-side{display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:16px;background:rgba(15,23,42,.4);border:1px solid rgba(148,163,184,.16)}
+.compare-h{font-size:12px;font-weight:800;letter-spacing:.04em;color:var(--c,#22d3ee);text-transform:none;margin-bottom:2px}
 .viz-bars{display:flex;flex-direction:column;gap:11px;max-width:720px}
 .hbar{display:grid;grid-template-columns:28px minmax(72px,130px) 1fr 44px;gap:10px;align-items:center}
 .hbar-lab{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hbar-track{height:14px;border-radius:99px;background:rgba(148,163,184,.16);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
 .hbar-fill{position:relative;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--c),color-mix(in srgb,var(--c) 55%,#fff));box-shadow:0 0 14px var(--g);overflow:hidden}
 .hbar-fill .shimmer{position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);transform:translateX(-120%)}
-.slide.is-active .hbar-fill{animation:fillBar .95s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.1s + var(--i)*.07s);width:calc(var(--v)*1%)}
-.slide.is-active .hbar-fill .shimmer{animation:shimmer 1.1s ease-in-out both;animation-delay:calc(.35s + var(--i)*.07s)}
+.hbar.fx-show .hbar-fill{animation:fillBar 1.25s cubic-bezier(.22,1,.36,1) both;width:calc(var(--v)*1%)}
+.hbar.fx-show .hbar-fill .shimmer{animation:shimmer 1.4s ease-in-out both;animation-delay:.2s}
 .hbar-val{font-size:13px;color:var(--c);font-weight:800;text-align:right;text-shadow:0 0 10px var(--g)}
 .viz-cols{display:flex;align-items:flex-end;gap:14px;height:200px;max-width:720px;padding-top:8px}
 .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
 .col-bar{width:100%;max-width:56px;height:0;border-radius:10px 10px 4px 4px;background:linear-gradient(180deg,var(--c),color-mix(in srgb,var(--c) 35%,#0b1020));box-shadow:0 0 16px var(--g)}
-.slide.is-active .col-bar{animation:colBounce .95s cubic-bezier(.34,1.4,.64,1) both;animation-delay:calc(.1s + var(--i)*.08s);height:calc(var(--h)*1%)}
+.col.fx-show .col-bar{animation:colBounce 1.25s cubic-bezier(.34,1.4,.64,1) both;height:calc(var(--h)*1%)}
 .col span{font-size:12px;color:var(--muted)}
 .col b{font-size:13px;color:var(--c);font-weight:800;text-shadow:0 0 8px var(--g)}
 .viz-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;margin-top:8px}
@@ -848,30 +938,22 @@ li{margin:7px 0}
 .card span{display:block;margin-top:6px;font-size:13px;color:var(--muted)}
 .card i{display:block;margin-top:12px;height:6px;border-radius:99px;background:rgba(148,163,184,.2);position:relative;overflow:hidden}
 .card i::after{content:"";position:absolute;inset:0 auto 0 0;width:0;background:var(--c);box-shadow:0 0 10px var(--g)}
-.slide.is-active .card i::after{animation:fillX .8s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.12s + var(--i)*.08s);width:calc(var(--v)*1%)}
+.card.fx-show i::after{animation:fillX 1.15s cubic-bezier(.22,1,.36,1) both;width:calc(var(--v)*1%)}
 .viz-line{max-width:720px}
 .line-svg{width:100%;height:190px;display:block;overflow:visible}
-.line-path{fill:none;stroke-dasharray:1200;stroke-dashoffset:1200;filter:drop-shadow(0 0 8px rgba(34,211,238,.45))}
-.slide.is-active .line-path{animation:lineDraw 1.15s cubic-bezier(.22,1,.36,1) forwards}
+.line-path{fill:none;stroke-dasharray:1200;stroke-dashoffset:1200;filter:drop-shadow(0 0 8px rgba(34,211,238,.45));opacity:1}
+.line-path.fx-show{animation:lineDraw 1.5s cubic-bezier(.22,1,.36,1) forwards}
 .line-dot{fill:var(--c);opacity:0;filter:drop-shadow(0 0 6px var(--g))}
-.slide.is-active .line-dot{animation:dotPop .4s cubic-bezier(.34,1.56,.64,1) both;animation-delay:calc(.55s + var(--i)*.08s)}
+.line-pt.fx-show .line-dot{animation:dotPop .55s cubic-bezier(.34,1.56,.64,1) both}
 .line-val{fill:var(--c);font-size:11px;font-weight:700;text-anchor:middle;opacity:0}
-.slide.is-active .line-val{animation:fadeIn .35s ease both;animation-delay:calc(.65s + var(--i)*.08s)}
+.line-pt.fx-show .line-val{animation:fadeIn .55s ease both}
 .line-labs{display:flex;justify-content:space-between;gap:6px;margin-top:8px}
 .line-lab{font-size:11px;color:var(--c);text-shadow:0 0 8px var(--g)}
 .viz-cover{position:relative;width:min(180px,36vw);margin-top:8px;filter:drop-shadow(0 0 16px var(--g))}
 .cover-kpi{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(1.4rem,3vw,2rem);font-weight:800;color:#f8fafc;text-shadow:0 0 16px var(--g)}
-.slide .anim{opacity:0;transform:translateY(12px)}
-.slide.is-active .anim{animation:rise .45s cubic-bezier(.22,1,.36,1) both}
-.slide.is-active .anim.d0{animation-delay:.02s}
-.slide.is-active .anim.d1{animation-delay:.06s}
-.slide.is-active .anim.d2{animation-delay:.1s}
-.slide.is-active .anim.d3{animation-delay:calc(.14s + var(--i,0)*.06s)}
-.slide.is-active .anim.d4{animation-delay:.3s}
-.slide.is-active .accent-line{animation:barGrow .7s cubic-bezier(.22,1,.36,1) both}
-@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes chartIn{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
-@keyframes barGrow{from{transform:scaleX(.2);transform-origin:left center;opacity:.4}to{transform:none;opacity:1}}
+@keyframes barGrow{from{transform:scaleX(.2);opacity:.4}to{transform:none;opacity:1}}
 @keyframes fillX{from{width:0}to{width:calc(var(--v)*1%)}}
 @keyframes fillBar{from{width:0}to{width:calc(var(--v)*1%)}}
 @keyframes colBounce{0%{height:0}70%{height:calc(var(--h)*1.06%)}100%{height:calc(var(--h)*1%)}}
@@ -882,26 +964,37 @@ li{margin:7px 0}
 @keyframes dotPop{from{opacity:0;r:0}to{opacity:1}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes orbPulse{0%{opacity:0;transform:scale(.85)}40%{opacity:.9}100%{opacity:.55;transform:scale(1.05)}}
-@media (max-width:720px){.viz-split{grid-template-columns:1fr}.hbar{grid-template-columns:24px 64px 1fr 36px}.viz-cols{height:160px}}
+@media (max-width:720px){.viz-split,.viz-compare{grid-template-columns:1fr}.hbar{grid-template-columns:24px 64px 1fr 36px}.viz-cols{height:160px}.controls{left:8px;right:8px;transform:none;flex-wrap:wrap;justify-content:center}}
 </style>
 </head>
 <body>
 <div class="deck" id="deck">
 ${slidesHtml}
 </div>
-<div class="hint">← → / 空格 / 点击翻页 · ${escapeHtml(styleMeta.labelZh)} · 动效PPT（图表）</div>
+<div class="controls" id="controls">
+  <button type="button" id="btnPrevPage" title="上一页 (←)">上一页 ←</button>
+  <button type="button" class="primary" id="btnNextBuild" title="下一步动效 (空格 / 点击 / ↓)">下一步动效</button>
+  <button type="button" id="btnNextPage" title="下一页 (→)">下一页 →</button>
+  <div class="hud" id="hud">页 1/${safePages.length} · 动效 0/0</div>
+</div>
 <script>
 (function(){
   var deck=document.getElementById('deck');
-  var slides=deck ? deck.children : [];
-  var n=slides.length; var i=0;
-  function countUp(root){
-    var nodes=root.querySelectorAll('.countup[data-to]');
-    nodes.forEach(function(node){
+  var slides=deck ? Array.prototype.slice.call(deck.children) : [];
+  var n=slides.length; var i=0; var step=0; var maxStep=0;
+  var hud=document.getElementById('hud');
+  function countUpIn(root){
+    var nodes=root.querySelectorAll ? root.querySelectorAll('.countup[data-to]') : [];
+    if(root.classList && root.classList.contains('countup') && root.getAttribute('data-to')){
+      nodes= [root];
+    }
+    Array.prototype.forEach.call(nodes,function(node){
+      if(node.getAttribute('data-counted')==='1') return;
+      node.setAttribute('data-counted','1');
       var to=Number(node.getAttribute('data-to')||0);
       var suffix=node.getAttribute('data-suffix')||'';
       var start=performance.now();
-      var dur=900;
+      var dur=1200;
       function tick(now){
         var t=Math.min(1,(now-start)/dur);
         var eased=1-Math.pow(1-t,3);
@@ -912,12 +1005,57 @@ ${slidesHtml}
       requestAnimationFrame(tick);
     });
   }
+  function maxBuildOf(slide){
+    var m=0;
+    Array.prototype.forEach.call(slide.querySelectorAll('[data-build]'),function(node){
+      var b=Number(node.getAttribute('data-build')||0);
+      if(b>m) m=b;
+    });
+    return m;
+  }
+  function applyBuild(slide, upTo){
+    Array.prototype.forEach.call(slide.querySelectorAll('[data-build]'),function(node){
+      var b=Number(node.getAttribute('data-build')||0);
+      if(b<=upTo){
+        if(!node.classList.contains('fx-show')){
+          node.classList.add('fx-show');
+          countUpIn(node);
+        }
+      } else {
+        node.classList.remove('fx-show');
+        Array.prototype.forEach.call(node.querySelectorAll('.countup[data-to]'),function(c){
+          c.removeAttribute('data-counted');
+          var suffix=c.getAttribute('data-suffix')||'';
+          c.textContent='0'+suffix;
+        });
+        if(node.classList.contains('countup')){
+          node.removeAttribute('data-counted');
+          node.textContent='0'+(node.getAttribute('data-suffix')||'');
+        }
+      }
+    });
+  }
+  function updateHud(flashDone){
+    if(!hud) return;
+    hud.textContent='页 '+(i+1)+'/'+n+' · 动效 '+step+'/'+maxStep+(flashDone?' · 本页动效已完，按 → 翻页':'');
+    hud.className='hud'+(flashDone?' done-flash':'');
+  }
   function playEnter(idx){
-    for(var k=0;k<n;k++){ slides[k].classList.remove('is-active'); }
+    for(var k=0;k<n;k++){
+      slides[k].classList.remove('is-active');
+      Array.prototype.forEach.call(slides[k].querySelectorAll('.fx-show'),function(node){node.classList.remove('fx-show')});
+      Array.prototype.forEach.call(slides[k].querySelectorAll('.countup[data-to]'),function(c){
+        c.removeAttribute('data-counted');
+        c.textContent='0'+(c.getAttribute('data-suffix')||'');
+      });
+    }
     var el=slides[idx]; if(!el) return;
     void el.offsetWidth;
     el.classList.add('is-active');
-    countUp(el);
+    maxStep=maxBuildOf(el);
+    step=0;
+    applyBuild(el, 0);
+    updateHud(false);
   }
   function go(x){
     var next=Math.max(0,Math.min(n-1,x));
@@ -925,21 +1063,47 @@ ${slidesHtml}
     deck.style.transform='translateX('+(-i*100)+'vw)';
     playEnter(i);
   }
+  function nextBuild(){
+    if(step>=maxStep){ updateHud(true); return false; }
+    step+=1;
+    applyBuild(slides[i], step);
+    updateHud(step>=maxStep);
+    return true;
+  }
+  function prevBuild(){
+    if(step<=0) return false;
+    step-=1;
+    applyBuild(slides[i], step);
+    updateHud(false);
+    return true;
+  }
   playEnter(0);
-  window.addEventListener('keydown',function(e){
-    if(e.key==='ArrowRight'||e.key===' ' ||e.key==='PageDown'){e.preventDefault();go(i+1)}
-    if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1)}
+  function onKey(e){
+    if(e.key==='ArrowRight'||e.key==='PageDown'){e.preventDefault();go(i+1);return}
+    if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1);return}
+    if(e.key===' ' ||e.key==='Enter'||e.key==='ArrowDown'){e.preventDefault();nextBuild();return}
+    if(e.key==='ArrowUp'){e.preventDefault();prevBuild();return}
     if(e.key==='Home'){e.preventDefault();go(0)}
     if(e.key==='End'){e.preventDefault();go(n-1)}
-  });
+  }
+  window.addEventListener('keydown',onKey);
   window.addEventListener('click',function(e){
-    if(e.target && e.target.closest && e.target.closest('.hint')) return;
-    var mid=window.innerWidth/2;
-    go(e.clientX>=mid ? i+1 : i-1);
+    if(e.target && e.target.closest && e.target.closest('#controls')) return;
+    nextBuild();
   });
+  var btnPrev=document.getElementById('btnPrevPage');
+  var btnNext=document.getElementById('btnNextPage');
+  var btnBuild=document.getElementById('btnNextBuild');
+  if(btnPrev) btnPrev.addEventListener('click',function(e){e.stopPropagation();go(i-1)});
+  if(btnNext) btnNext.addEventListener('click',function(e){e.stopPropagation();go(i+1)});
+  if(btnBuild) btnBuild.addEventListener('click',function(e){e.stopPropagation();nextBuild()});
   var sx=0;
   window.addEventListener('touchstart',function(e){sx=e.changedTouches[0].clientX},{passive:true});
-  window.addEventListener('touchend',function(e){var dx=e.changedTouches[0].clientX-sx; if(Math.abs(dx)>40) go(i+(dx<0?1:-1));},{passive:true});
+  window.addEventListener('touchend',function(e){
+    var dx=e.changedTouches[0].clientX-sx;
+    if(Math.abs(dx)>56){ go(i+(dx<0?1:-1)); }
+    else { nextBuild(); }
+  },{passive:true});
 })();
 </script>
 </body>

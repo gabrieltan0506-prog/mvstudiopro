@@ -51,4 +51,30 @@ describe("htmlPptOutlinePrompt", () => {
     expect(out.pages[1]?.series?.[0]?.label).toBe("覆盖");
     expect(out.pages[2]?.viz).toBe("bars");
   });
+
+  it("keeps absolute series magnitudes for market charts", () => {
+    const raw = JSON.stringify({
+      deckTitle: "市场规模",
+      summary: "168→244",
+      pages: [
+        { title: "封面", viz: "cover", kpi: "168亿" },
+        {
+          title: "规模对照",
+          viz: "compare",
+          bullets: ["2025", "2026E"],
+          series: [
+            { label: "市场规模亿元", value: 168 },
+            { label: "用户亿人", value: 1.2 },
+            { label: "预测亿元", value: 243.6 },
+            { label: "用户预测", value: 2.8 },
+          ],
+        },
+        { title: "收束", viz: "steps", bullets: ["备案", "放量"] },
+      ],
+    });
+    const out = parseHtmlPptOutlineJson(raw, { pageCount: 3 });
+    expect(out.pages[1]?.viz).toBe("compare");
+    expect(out.pages[1]?.series?.[0]?.value).toBe(168);
+    expect(out.pages[1]?.series?.[2]?.value).toBe(243.6);
+  });
 });
