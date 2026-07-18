@@ -4,6 +4,9 @@ import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   collectManhuaClipDockItems,
   downloadManhuaProjectZip,
+  manhuaClipDockItemHasExportableOutput,
+  selectExportableDockIds,
+  summarizeManhuaDockExport,
   type ManhuaClipDockItem,
 } from "@/lib/manhuaProjectExport";
 
@@ -13,6 +16,9 @@ type Props = {
   seriesTitle?: string;
   characterIds?: string[];
   artStyleId?: string;
+  sceneId?: string;
+  demoAssetIds?: string[];
+  writerPackMarkdown?: string;
   selectedIds: Set<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
   onFocusBlock?: (blockId: string) => void;
@@ -24,12 +30,16 @@ export default function ManhuaClipDock({
   seriesTitle,
   characterIds,
   artStyleId,
+  sceneId,
+  demoAssetIds,
+  writerPackMarkdown,
   selectedIds,
   onSelectedIdsChange,
   onFocusBlock,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
+  const summary = useMemo(() => summarizeManhuaDockExport(items), [items]);
 
   const byEpisode = useMemo(() => {
     const map = new Map<number, ManhuaClipDockItem[]>();
@@ -49,11 +59,19 @@ export default function ManhuaClipDock({
   };
 
   const selectAll = () => onSelectedIdsChange(new Set(items.map((i) => i.blockId)));
+  const selectExportable = () => onSelectedIdsChange(new Set(selectExportableDockIds(items)));
   const clearAll = () => onSelectedIdsChange(new Set());
   const selectEpisode = (ep: number) => {
     const next = new Set(selectedIds);
     for (const it of items) {
       if (it.episodeIndex === ep) next.add(it.blockId);
+    }
+    onSelectedIdsChange(next);
+  };
+  const selectEpisodeExportable = (ep: number) => {
+    const next = new Set(selectedIds);
+    for (const it of items) {
+      if (it.episodeIndex === ep && manhuaClipDockItemHasExportableOutput(it)) next.add(it.blockId);
     }
     onSelectedIdsChange(next);
   };
@@ -81,12 +99,47 @@ export default function ManhuaClipDock({
         seriesTitle,
         characterIds,
         artStyleId,
+        sceneId,
+        demoAssetIds,
+        writerPackMarkdown,
       });
       if (result.failCount > 0) {
         window.alert(
-          `已导出 ${result.filename}：成功 ${result.okCount}，失败 ${result.failCount}（见 manifest.failed）`,
+          `已导出 ${result.filename}：成功 ${result.okCount}，失败 ${result.failCount}（见 manifest.failed / README.md）`,
         );
       }
+    } catch (e: unknown) {
+      window.alert(e instanceof Error ? e.message : "导出失败");
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const handleExportAllReady = async () => {
+    const ids = selectExportableDockIds(items);
+    if (!ids.length) {
+      window.alert("尚无可导出产物（需至少一集有故事/节拍/静帧/成片等）");
+      return;
+    }
+    onSelectedIdsChange(new Set(ids));
+    setExportBusy(true);
+    try {
+      const result = await downloadManhuaProjectZip({
+        items,
+        selectedIds: ids,
+        topic,
+        seriesTitle,
+        characterIds,
+        artStyleId,
+        sceneId,
+        demoAssetIds,
+        writerPackMarkdown,
+      });
+      window.alert(
+        `已导出多集工程包 ${result.filename}（${result.okCount} 项${
+          result.failCount ? `，失败 ${result.failCount}` : ""
+        }）`,
+      );
     } catch (e: unknown) {
       window.alert(e instanceof Error ? e.message : "导出失败");
     } finally {
@@ -98,9 +151,16 @@ export default function ManhuaClipDock({
     <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-3 md:p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
-          <div className="text-sm font-semibold text-white/90">成片坞</div>
+          <div className="text-sm font-semibold text-white/90">成片坞 · 多集导出</div>
           <p className="mt-0.5 text-[11px] leading-5 text-white/45">
-            勾选本集可作工厂「运行范围」；有静帧/成片时可导出工程包（不含长片拼接）。
+            勾选可作工厂运行范围；导出含故事/角色卡/节拍/反推/静帧/成片 + README/playlist（不含长片拼接）。
+            {summary.episodeCount ? (
+              <span className="text-white/55">
+                {" "}
+                · {summary.episodeCount} 集 · 可导出 {summary.exportableCount} · 待跑{" "}
+                {summary.pendingCount}
+              </span>
+            ) : null}
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -114,6 +174,14 @@ export default function ManhuaClipDock({
           </button>
           <button
             type="button"
+            disabled={!summary.exportableCount}
+            onClick={selectExportable}
+            className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
+          >
+            仅选有产物
+          </button>
+          <button
+            type="button"
             disabled={!selectedIds.size}
             onClick={clearAll}
             className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
@@ -122,12 +190,21 @@ export default function ManhuaClipDock({
           </button>
           <button
             type="button"
+            disabled={exportBusy || !summary.exportableCount}
+            onClick={() => void handleExportAllReady()}
+            className="inline-flex items-center gap-1 rounded-md border border-sky-400/35 bg-sky-500/15 px-2.5 py-1 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/25 disabled:opacity-40"
+          >
+            {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+            一键导出全部有产物
+          </button>
+          <button
+            type="button"
             disabled={exportBusy || !selectedIds.size}
             onClick={() => void handleExport()}
             className="inline-flex items-center gap-1 rounded-md border border-amber-400/35 bg-amber-500/15 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-40"
           >
             {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-            导出工程包
+            导出勾选
           </button>
         </div>
       </div>
@@ -137,11 +214,12 @@ export default function ManhuaClipDock({
           画布尚无工厂链。请先「按集铺板」或「铺节点」；铺好后即可勾选集号跑工厂。
         </p>
       ) : (
-        <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
+        <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
           {byEpisode.map(([ep, list]) => {
             const title = list.find((x) => x.episodeTitle)?.episodeTitle;
             const epAllOn = list.every((it) => selectedIds.has(it.blockId));
             const epSomeOn = !epAllOn && list.some((it) => selectedIds.has(it.blockId));
+            const ready = list.filter(manhuaClipDockItemHasExportableOutput).length;
             return (
               <div key={ep} className="rounded-xl border border-white/8 bg-black/25 p-2.5">
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
@@ -158,20 +236,33 @@ export default function ManhuaClipDock({
                     />
                     <span className="truncate">
                       第{ep}集{title ? ` · ${title}` : ""}
-                      <span className="ml-1.5 text-white/35">{list.length} 项</span>
+                      <span className="ml-1.5 text-white/35">
+                        {list.length} 项 · 可导出 {ready}
+                      </span>
                     </span>
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => selectEpisode(ep)}
-                    className="rounded border border-white/12 px-1.5 py-0.5 text-[10px] text-white/55 hover:bg-white/8"
-                  >
-                    全选本集
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => selectEpisodeExportable(ep)}
+                      disabled={!ready}
+                      className="rounded border border-white/12 px-1.5 py-0.5 text-[10px] text-white/55 hover:bg-white/8 disabled:opacity-35"
+                    >
+                      本集有产物
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectEpisode(ep)}
+                      className="rounded border border-white/12 px-1.5 py-0.5 text-[10px] text-white/55 hover:bg-white/8"
+                    >
+                      全选本集
+                    </button>
+                  </div>
                 </div>
                 <ul className="space-y-1">
                   {list.map((it) => {
                     const checked = selectedIds.has(it.blockId);
+                    const readyItem = manhuaClipDockItemHasExportableOutput(it);
                     return (
                       <li
                         key={it.blockId}
@@ -183,12 +274,22 @@ export default function ManhuaClipDock({
                           onChange={() => toggle(it.blockId)}
                           className="h-3.5 w-3.5 accent-amber-400"
                         />
+                        {it.outputUrl && (it.stage === "keyart" || it.stage === "recap_card") ? (
+                          <img
+                            src={it.outputUrl}
+                            alt=""
+                            className="h-8 w-8 shrink-0 rounded object-cover"
+                            loading="lazy"
+                          />
+                        ) : null}
                         <span className="min-w-0 flex-1 truncate text-[11px] text-white/75">
                           {it.label}
-                          {it.outputUrl || it.outputText?.trim()
+                          {readyItem
                             ? it.kind === "text"
                               ? " · md"
-                              : ""
+                              : it.stage === "clip" || it.stage === "omni_edit"
+                                ? " · mp4"
+                                : " · 图"
                             : " · 待跑"}
                         </span>
                         {onFocusBlock ? (

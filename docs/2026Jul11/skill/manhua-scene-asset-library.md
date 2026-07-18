@@ -2,7 +2,7 @@
 id: manhua-scene-asset-library
 name: 漫剧场景资产库
 description: 20 个爆款场景模板（解析/元素/生图提示），按剧种套用告别廉价拼贴感
-version: 2026-07-17b
+version: 2026-07-18a
 defaultEnabled: false
 ---
 
@@ -12,7 +12,15 @@ defaultEnabled: false
 **仅 /canvas 漫剧工厂**。选剧种或单场景 → 故事/节拍/反推/静帧注入场景定位、核心元素与生图提示词。
 
 代码：`shared/manhuaSceneAssetLibrary.ts`  
-剧种接线：`shared/screenwriterGenreTemplates.ts`
+剧种接线：`shared/screenwriterGenreTemplates.ts`  
+示范图分批：`shared/manhuaScenePropDemoCatalog.ts` · `pnpm run manhua:scene-prop-daily`
+
+## 示范图每日批次（场景 + 道具）
+- **多生**：古风 · 仙侠 · 玄幻 · 逆袭爽感 · 情感甜宠 · 权谋 · 商战（后两者偏海外）
+- **适量**：小说改编壳 · 悬疑 · 科幻
+- **不生**：沙雕搞笑（平台已下架）
+- 落盘：`client/public/manhua-scenes|manhua-props/` 与 `~/Downloads/2026Jul18/scene-prop-review/`
+- Canvas 静帧会附加 `【场景示范图锚点】`；编剧室注入 `【道具示范库】`
 
 ## 剧种 → 默认场景包
 | 剧种 | 场景 |

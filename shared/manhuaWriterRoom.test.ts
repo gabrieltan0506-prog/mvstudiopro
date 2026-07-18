@@ -62,6 +62,8 @@ describe("manhuaWriterRoom", () => {
     });
     expect(p).toContain("正好输出 3 集");
     expect(p).toContain("片尾钩子");
+    expect(p).toContain("【道具示范库】");
+    expect(p).toMatch(/权谋|商战|甜宠|古风/);
     expect(p).not.toMatch(/GPT-Image|OpenAI|EvoLink|藏海传/i);
   });
 

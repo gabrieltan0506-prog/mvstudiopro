@@ -3,6 +3,11 @@
  * 前台文案禁止出现模型名 / 供应商 / 「仿写某某」等后台话术。
  */
 
+import {
+  composeManhuaPropDemoPromptBlock,
+  recommendManhuaContentLanesFromTopic,
+} from "./manhuaScenePropDemoCatalog.js";
+
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
 export const MANHUA_WRITER_EPISODE_DEFAULT = 3;
@@ -53,6 +58,10 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
   const n = clampWriterEpisodeCount(opts.episodeCount);
+  const propDemo = composeManhuaPropDemoPromptBlock({
+    lanes: recommendManhuaContentLanesFromTopic(`${topic}\n${brief}`),
+    limit: 4,
+  });
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
@@ -61,9 +70,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "3. 默认竖屏短剧单集约 15 秒可拍密度；本阶段先写剧情与设定，不写镜头表。",
     `4. 必须正好输出 ${n} 集；每一集结尾必须有「片尾钩子」（未揭答案、逼观众追下一集）。`,
     "5. 人物 / 道具 / 场景表要具体、可锁定外形与空间，禁止空泛。",
+    "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
     "",
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
+    propDemo,
     "",
     "请严格按下列结构输出：",
     "",

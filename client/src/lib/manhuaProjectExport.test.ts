@@ -4,6 +4,9 @@ import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
   exportManhuaProjectZip,
+  listManhuaExportLibraryRefPaths,
+  selectExportableDockIds,
+  summarizeManhuaDockExport,
 } from "./manhuaProjectExport";
 
 describe("manhuaProjectExport", () => {
@@ -84,11 +87,92 @@ describe("manhuaProjectExport", () => {
         topic: "测试题材",
         seriesTitle: "测试系列",
       });
-      expect(filename).toBe("mv-manhua-ep01.zip");
+      expect(filename).toBe("mv-manhua-ep01-测试系列.zip");
       expect(okCount).toBe(2);
       expect(manifest.failed).toHaveLength(0);
       expect(manifest.note).toContain("不含自动拼接");
       expect(blob.size).toBeGreaterThan(40);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
+  it("exports bible/beats text and selectExportable helpers", async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([9, 9]), { status: 200 })) as typeof fetch;
+    try {
+      const bible = defaultCanvasBlock("text", 0, 0);
+      bible.id = "bible-e01-a";
+      bible.episodeIndex = 1;
+      bible.outputText = "## 角色\n沈清";
+      bible.status = "done";
+      const beats = defaultCanvasBlock("text", 0, 0);
+      beats.id = "beats-e02-b";
+      beats.episodeIndex = 2;
+      beats.episodeTitle = "反转";
+      beats.outputText = "镜1…";
+      beats.status = "done";
+      const pending = defaultCanvasBlock("text", 0, 0);
+      pending.id = "story-e03-c";
+      pending.episodeIndex = 3;
+
+      const items = collectManhuaClipDockItems([bible, beats, pending]);
+      expect(items.map((i) => i.stage).sort()).toEqual(["beats", "bible", "story"]);
+      expect(selectExportableDockIds(items)).toEqual(["bible-e01-a", "beats-e02-b"]);
+      const sum = summarizeManhuaDockExport(items);
+      expect(sum.episodeCount).toBe(3);
+      expect(sum.exportableCount).toBe(2);
+
+      const { filename, okCount, manifest } = await exportManhuaProjectZip({
+        items,
+        selectedIds: selectExportableDockIds(items),
+        seriesTitle: "深宫棋子",
+      });
+      expect(okCount).toBe(2);
+      expect(filename).toContain("series");
+      expect(filename).toContain("深宫棋子");
+      expect(manifest.selected.some((s) => s.path === "ep01/bible.md")).toBe(true);
+      expect(manifest.selected.some((s) => s.path === "ep02/beats.md")).toBe(true);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
+  it("lists reusable library ref paths for characters and scene demos", () => {
+    const refs = listManhuaExportLibraryRefPaths({
+      characterIds: ["char_f_01", "char_m_01"],
+      artStyleId: "photoreal",
+      sceneId: "scene_06",
+      demoAssetIds: ["demo_prop_ancient_jade"],
+    });
+    expect(refs.some((r) => r.kind === "character" && r.id === "char_f_01")).toBe(true);
+    expect(refs.some((r) => r.publicPath.includes("char_m_01_sheet"))).toBe(true);
+    expect(refs.some((r) => r.id === "demo_prop_ancient_jade")).toBe(true);
+  });
+
+  it("embeds writer-pack.md when provided", async () => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([1]), { status: 200 })) as typeof fetch;
+    try {
+      const key = defaultCanvasBlock("image", 0, 0);
+      key.id = "keyart-e01-w";
+      key.episodeIndex = 1;
+      key.outputUrl = "https://cdn.example/k.jpg";
+      key.status = "done";
+      const items = collectManhuaClipDockItems([key]);
+      const { blob } = await exportManhuaProjectZip({
+        items,
+        selectedIds: [key.id],
+        writerPackMarkdown: "## 系列标题\n测试\n",
+        includeLibraryRefs: false,
+      });
+      const JSZip = (await import("jszip")).default;
+      const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+      expect(zip.file("writer-pack.md")).toBeTruthy();
+      const md = await zip.file("writer-pack.md")!.async("string");
+      expect(md).toContain("系列标题");
     } finally {
       globalThis.fetch = prevFetch;
     }

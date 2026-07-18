@@ -45,6 +45,7 @@ import {
   type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
+import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
@@ -1122,6 +1123,30 @@ export default function OmniCanvas() {
                   setArtStyleManual(false);
                 }}
               />
+
+              <div className="mt-4">
+                <ManhuaAssetWall
+                  femaleId={factoryFemaleId}
+                  maleId={factoryMaleId}
+                  sceneId={factorySceneId || recommendedScene?.id}
+                  topic={factoryTopic}
+                  genreId={factoryGenreId}
+                  artStyleId={factoryArtStyleId}
+                  disabled={factoryBusy}
+                  onSelectFemale={(id) => {
+                    setFemaleLeadManual(true);
+                    setFactoryFemaleId(id);
+                  }}
+                  onSelectMale={(id) => {
+                    setMaleLeadManual(true);
+                    setFactoryMaleId(id);
+                  }}
+                  onSelectScene={(id) => {
+                    setSceneManual(true);
+                    setFactorySceneId(id);
+                  }}
+                />
+              </div>
             </div>
 
             {/* ③ 编导工厂：确认或跳过后解锁 */}
@@ -1501,6 +1526,8 @@ export default function OmniCanvas() {
                 seriesTitle={writerPack?.seriesTitle}
                 characterIds={selectedCharacterIds}
                 artStyleId={factoryArtStyleId}
+                sceneId={factorySceneId || recommendedScene?.id}
+                writerPackMarkdown={writerConfirmed ? writerPack?.rawMarkdown : undefined}
                 selectedIds={dockSelectedIds}
                 onSelectedIdsChange={setDockSelectedIds}
                 onFocusBlock={(id) => {

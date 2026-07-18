@@ -36,6 +36,8 @@
     "manhua:photoreal-library": "tsx scripts/generate-manhua-photoreal-library.mts",
     "manhua:photoreal-age-slots": "tsx scripts/generate-photoreal-age-slots.mts",
     "manhua:photoreal-male-ab": "tsx scripts/compare-photoreal-male-ab.mts",
+    "manhua:scene-prop-daily": "tsx scripts/generate-manhua-scene-prop-daily.mts",
+    "manhua:scene-prop-verify": "tsx scripts/verify-manhua-scene-prop-demo.mts",
     "manhua:photoreal-diversify-jaws": "tsx scripts/diversify-photoreal-face-shapes.mts",
     "yt:local-fetch": "tsx scripts/yt-local-fetch.mts",
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",

@@ -3,10 +3,24 @@
  */
 
 import JSZip from "jszip";
+import {
+  getManhuaDemoAssetPublicUrl,
+  listManhuaDemoAssetsForSceneTemplate,
+} from "@shared/manhuaScenePropDemoCatalog";
+import { getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
 import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, stageKeyFromBlockId, type ManhuaFactoryStageKey } from "./canvasDramaStudio";
 
-export const MANHUA_CLIP_DOCK_STAGES = ["recap_card", "keyart", "clip", "omni_edit", "story"] as const;
+export const MANHUA_CLIP_DOCK_STAGES = [
+  "recap_card",
+  "story",
+  "bible",
+  "beats",
+  "reverse",
+  "keyart",
+  "clip",
+  "omni_edit",
+] as const;
 export type ManhuaClipDockStage = (typeof MANHUA_CLIP_DOCK_STAGES)[number];
 
 export type ManhuaClipDockItem = {
@@ -26,6 +40,22 @@ const STAGE_FILE: Partial<Record<ManhuaFactoryStageKey, { base: string; extHint:
   clip: { base: "clip", extHint: "mp4" },
   omni_edit: { base: "omni_edit", extHint: "mp4" },
   story: { base: "story", extHint: "md" },
+  bible: { base: "bible", extHint: "md" },
+  beats: { base: "beats", extHint: "md" },
+  reverse: { base: "reverse", extHint: "md" },
+};
+
+const TEXT_EXPORT_STAGES = new Set<ManhuaFactoryStageKey>(["story", "bible", "beats", "reverse"]);
+
+const STAGE_LABEL_DOCK: Partial<Record<ManhuaFactoryStageKey, string>> = {
+  recap_card: "前情提要片头",
+  story: "故事大纲",
+  bible: "角色卡",
+  beats: "镜头节拍",
+  reverse: "编导分镜/反推",
+  keyart: "关键静帧",
+  clip: "微动成片",
+  omni_edit: "视频改写",
 };
 
 export type CollectManhuaClipDockItemsOpts = {
@@ -46,27 +76,18 @@ export function collectManhuaClipDockItems(
     const stage = stageKeyFromBlockId(b.id);
     if (!stage || !MANHUA_CLIP_DOCK_STAGES.includes(stage as ManhuaClipDockStage)) continue;
     const hasMedia = Boolean(b.outputUrl || (b.outputUrls && b.outputUrls[0]));
-    const hasText = Boolean(b.outputText?.trim()) && stage === "story";
+    const isTextStage = TEXT_EXPORT_STAGES.has(stage);
+    const hasText = Boolean(b.outputText?.trim()) && isTextStage;
     const pendingStory = stage === "story" && includePendingStory && !hasText;
     if (!hasMedia && !hasText && !pendingStory) continue;
     const episodeIndex = getBlockEpisodeIndex(b) ?? 1;
+    const baseLabel = STAGE_LABEL_DOCK[stage] || stage;
     items.push({
       blockId: b.id,
       stage,
       episodeIndex,
       episodeTitle: b.episodeTitle,
-      label:
-        stage === "recap_card"
-          ? "前情提要片头"
-          : stage === "keyart"
-            ? "关键静帧"
-            : stage === "clip"
-              ? "微动成片"
-              : stage === "omni_edit"
-                ? "视频改写"
-                : pendingStory
-                  ? "故事链（待跑·可勾选运行）"
-                  : "故事大纲",
+      label: pendingStory ? "故事链（待跑·可勾选运行）" : baseLabel,
       outputUrl: b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,
@@ -77,8 +98,46 @@ export function collectManhuaClipDockItems(
 
 /** 是否有可写入 zip 的产出 */
 export function manhuaClipDockItemHasExportableOutput(item: ManhuaClipDockItem): boolean {
-  if (item.stage === "story") return Boolean(item.outputText?.trim());
+  if (TEXT_EXPORT_STAGES.has(item.stage)) return Boolean(item.outputText?.trim());
   return Boolean(item.outputUrl);
+}
+
+/** 仅勾选已有可导出产物的项（跳过待跑） */
+export function selectExportableDockIds(items: ManhuaClipDockItem[]): string[] {
+  return items.filter(manhuaClipDockItemHasExportableOutput).map((i) => i.blockId);
+}
+
+export function summarizeManhuaDockExport(items: ManhuaClipDockItem[]): {
+  episodeCount: number;
+  exportableCount: number;
+  pendingCount: number;
+  byEpisode: Array<{ episodeIndex: number; exportable: number; pending: number }>;
+} {
+  const epMap = new Map<number, { exportable: number; pending: number }>();
+  for (const it of items) {
+    const cur = epMap.get(it.episodeIndex) || { exportable: 0, pending: 0 };
+    if (manhuaClipDockItemHasExportableOutput(it)) cur.exportable += 1;
+    else cur.pending += 1;
+    epMap.set(it.episodeIndex, cur);
+  }
+  const byEpisode = Array.from(epMap.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([episodeIndex, v]) => ({ episodeIndex, ...v }));
+  return {
+    episodeCount: byEpisode.length,
+    exportableCount: byEpisode.reduce((n, e) => n + e.exportable, 0),
+    pendingCount: byEpisode.reduce((n, e) => n + e.pending, 0),
+    byEpisode,
+  };
+}
+
+function slugFilenamePart(raw: string | undefined | null): string {
+  const s = String(raw || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 24);
+  return s || "";
 }
 
 export function episodeIndexesFromDockSelection(
@@ -108,6 +167,9 @@ export type ManhuaProjectExportManifest = {
   note: string;
   characters?: string[];
   artStyleId?: string;
+  sceneId?: string;
+  /** 库内可复用参考（人物设定卡 / 场景示范图路径） */
+  libraryRefs?: Array<{ kind: "character" | "scene_demo" | "prop_demo"; id: string; path: string }>;
   selected: Array<{
     blockId: string;
     episodeIndex: number;
@@ -125,6 +187,16 @@ export type ExportManhuaProjectZipOpts = {
   seriesTitle?: string;
   characterIds?: string[];
   artStyleId?: string;
+  /** 工厂主场景 scene_01…；导出时附带已落盘示范图（若可拉取） */
+  sceneId?: string;
+  /** 额外示范资产 id（道具等） */
+  demoAssetIds?: string[];
+  /** 默认 true：尝试把人物 sheet / 场景示范打进 library/ */
+  includeLibraryRefs?: boolean;
+  /** 浏览器同源拉取库图时用；测试可注入 */
+  assetBaseUrl?: string;
+  /** 编剧室已确认剧情包 Markdown（整包进 zip 根目录） */
+  writerPackMarkdown?: string;
 };
 
 export type ExportManhuaProjectZipResult = {
@@ -139,6 +211,55 @@ async function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.arrayBuffer();
+}
+
+function resolveAssetUrl(pathOrUrl: string, base?: string): string {
+  const raw = String(pathOrUrl || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const origin =
+    String(base || "").replace(/\/$/, "") ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  if (!origin) return raw;
+  return `${origin}${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
+/** 组装可打进 zip 的库参考清单（路径相对站点根） */
+export function listManhuaExportLibraryRefPaths(opts: {
+  characterIds?: string[];
+  artStyleId?: string;
+  sceneId?: string;
+  demoAssetIds?: string[];
+}): Array<{ kind: "character" | "scene_demo" | "prop_demo"; id: string; publicPath: string }> {
+  const out: Array<{ kind: "character" | "scene_demo" | "prop_demo"; id: string; publicPath: string }> =
+    [];
+  const seen = new Set<string>();
+  const push = (
+    kind: "character" | "scene_demo" | "prop_demo",
+    id: string,
+    publicPath: string,
+  ) => {
+    if (!id || !publicPath || seen.has(publicPath)) return;
+    seen.add(publicPath);
+    out.push({ kind, id, publicPath });
+  };
+
+  for (const id of opts.characterIds || []) {
+    const key = String(id || "").trim();
+    const publicPath = getManhuaCharacterPreviewUrl(key, { artStyleId: opts.artStyleId });
+    if (publicPath) push("character", key, publicPath);
+  }
+  for (const demo of listManhuaDemoAssetsForSceneTemplate(opts.sceneId)) {
+    const publicPath = getManhuaDemoAssetPublicUrl(demo.id);
+    if (publicPath) push("scene_demo", demo.id, publicPath);
+  }
+  for (const id of opts.demoAssetIds || []) {
+    const key = String(id || "").trim();
+    const publicPath = getManhuaDemoAssetPublicUrl(key);
+    if (!publicPath) continue;
+    push(key.startsWith("demo_prop_") ? "prop_demo" : "scene_demo", key, publicPath);
+  }
+  return out;
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -162,7 +283,7 @@ export async function exportManhuaProjectZip(
     (it) => selectedSet.has(it.blockId) && manhuaClipDockItemHasExportableOutput(it),
   );
   if (!selected.length) {
-    throw new Error("请先勾选至少一个已有产物的静帧或成片（仅勾选待跑集不能导出）");
+    throw new Error("请先勾选至少一个已有产物（故事/角色卡/节拍/反推/静帧/成片）；仅勾选待跑集不能导出");
   }
 
   const zip = new JSZip();
@@ -175,8 +296,8 @@ export async function exportManhuaProjectZip(
     const fileMeta = STAGE_FILE[it.stage];
     if (!fileMeta) continue;
 
-    if (it.stage === "story" && it.outputText?.trim()) {
-      const path = `${epFolder}/story.md`;
+    if (TEXT_EXPORT_STAGES.has(it.stage) && it.outputText?.trim()) {
+      const path = `${epFolder}/${fileMeta.base}.md`;
       zip.file(path, it.outputText.trim());
       selectedMeta.push({
         blockId: it.blockId,
@@ -229,25 +350,108 @@ export async function exportManhuaProjectZip(
     }
   }
 
+  const libraryRefs: NonNullable<ManhuaProjectExportManifest["libraryRefs"]> = [];
+  if (opts.includeLibraryRefs !== false) {
+    const refs = listManhuaExportLibraryRefPaths({
+      characterIds: opts.characterIds,
+      artStyleId: opts.artStyleId,
+      sceneId: opts.sceneId,
+      demoAssetIds: opts.demoAssetIds,
+    });
+    for (const ref of refs) {
+      const zipPath = `library/${ref.kind}/${ref.id}${ref.publicPath.match(/\.[a-z0-9]+$/i)?.[0] || ".jpg"}`;
+      try {
+        const buf = await fetchAsArrayBuffer(resolveAssetUrl(ref.publicPath, opts.assetBaseUrl));
+        zip.file(zipPath, buf);
+        libraryRefs.push({ kind: ref.kind, id: ref.id, path: zipPath });
+      } catch {
+        // 库图未部署或本地缺失时跳过，不阻断工程包
+        libraryRefs.push({ kind: ref.kind, id: ref.id, path: ref.publicPath });
+      }
+    }
+  }
+
   const manifest: ManhuaProjectExportManifest = {
     format: "mv-manhua-project-v1",
     topic: String(opts.topic || "").trim(),
     seriesTitle: opts.seriesTitle,
     exportedAt: new Date().toISOString(),
-    note: "本包为素材工程包，不含自动拼接长片。可本地/桌面工具自行拼接。",
+    note: "本包为素材工程包，不含自动拼接长片。可本地/桌面工具自行拼接。library/ 为站点复用资产（人物设定卡/场景道具示范）。",
     characters: opts.characterIds,
     artStyleId: opts.artStyleId,
+    sceneId: opts.sceneId,
+    libraryRefs,
     selected: selectedMeta,
     failed,
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+  const writerMd = String(opts.writerPackMarkdown || "").trim();
+  if (writerMd) {
+    zip.file("writer-pack.md", writerMd);
+  }
+
+  const summary = summarizeManhuaDockExport(selected);
+  const playlistLines = [
+    `# ${opts.seriesTitle || opts.topic || "漫剧工程包"}`,
+    "",
+    `导出时间：${manifest.exportedAt}`,
+    `题材：${manifest.topic || "（未填）"}`,
+    `角色：${(opts.characterIds || []).join(", ") || "（未选）"}`,
+    `画风：${opts.artStyleId || "（默认）"}`,
+    `主场景：${opts.sceneId || "（未选）"}`,
+    writerMd ? "编剧包：`writer-pack.md`" : "编剧包：（未附）",
+    "",
+    "## 分集清单",
+    ...summary.byEpisode.map((ep) => {
+      const title =
+        selected.find((s) => s.episodeIndex === ep.episodeIndex)?.episodeTitle || "";
+      const files = selectedMeta
+        .filter((s) => s.episodeIndex === ep.episodeIndex && s.path)
+        .map((s) => `- \`${s.path}\`（${s.stage}）`)
+        .join("\n");
+      return [
+        `### 第${ep.episodeIndex}集${title ? ` · ${title}` : ""}`,
+        files || "- （无文件）",
+        "",
+      ].join("\n");
+    }),
+    "",
+    "## 库参考 library/",
+    libraryRefs.length
+      ? libraryRefs.map((r) => `- \`${r.path}\`（${r.kind} · ${r.id}）`).join("\n")
+      : "- （无）",
+    "",
+    "> 本包为素材工程包，不含自动拼接长片。可按 epXX/clip.* 顺序本地拼接。",
+  ];
+  zip.file("README.md", playlistLines.join("\n"));
+  zip.file(
+    "playlist.json",
+    JSON.stringify(
+      {
+        seriesTitle: opts.seriesTitle,
+        topic: opts.topic,
+        sceneId: opts.sceneId,
+        libraryRefs,
+        episodes: summary.byEpisode.map((ep) => ({
+          episodeIndex: ep.episodeIndex,
+          title: selected.find((s) => s.episodeIndex === ep.episodeIndex)?.episodeTitle,
+          files: selectedMeta
+            .filter((s) => s.episodeIndex === ep.episodeIndex && s.path)
+            .map((s) => ({ stage: s.stage, path: s.path })),
+        })),
+      },
+      null,
+      2,
+    ),
+  );
 
   const blob = await zip.generateAsync({ type: "blob" });
   const firstEp = selected[0]!.episodeIndex;
   const multi = new Set(selected.map((s) => s.episodeIndex)).size > 1;
+  const seriesSlug = slugFilenamePart(opts.seriesTitle || opts.topic);
   const filename = multi
-    ? `mv-manhua-series.zip`
-    : `mv-manhua-ep${String(firstEp).padStart(2, "0")}.zip`;
+    ? `mv-manhua-series${seriesSlug ? `-${seriesSlug}` : ""}.zip`
+    : `mv-manhua-ep${String(firstEp).padStart(2, "0")}${seriesSlug ? `-${seriesSlug}` : ""}.zip`;
 
   return { blob, filename, manifest, okCount, failCount: failed.length };
 }
