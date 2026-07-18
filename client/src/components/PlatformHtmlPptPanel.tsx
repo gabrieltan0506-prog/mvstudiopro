@@ -50,7 +50,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const [aiModel, setAiModel] = useState<string | null>(null);
   const [aiCost, setAiCost] = useState<number | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiBusyLabel, setAiBusyLabel] = useState("GPT-5.6 Sol 生成中…");
+  const [aiBusyLabel, setAiBusyLabel] = useState("AI 清单生成中…");
 
   const perPageCost = CREDIT_COSTS.platformHtmlPptOutlinePerPage;
   const outlineCost = pageCount != null ? platformHtmlPptOutlineCredits(pageCount) : null;
@@ -104,7 +104,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           setAiBusyLabel(
             status === "queued"
               ? `排队中（第 ${attempt} 次）…`
-              : `Sol 生成中（第 ${attempt} 次）…`,
+              : `生成中（第 ${attempt} 次）…`,
           );
         },
       });
@@ -117,7 +117,6 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               pages?: unknown;
               deckTitle?: string;
               summary?: string;
-              model?: string;
               cost?: number;
             })
           : {};
@@ -129,18 +128,18 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       if (out.deckTitle?.trim()) setTitle(out.deckTitle.trim());
       setPages(nextPages);
       setAiSummary(out.summary || null);
-      setAiModel(out.model || "gpt-5.6-sol");
+      setAiModel("AI");
       if (typeof out.cost === "number") setAiCost(out.cost);
       setStep("outline");
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : "AI 清单生成失败";
-      const msg = /Unexpected end of JSON|JSON\.parse|截断/i.test(raw)
-        ? "清单输出不完整（可能被截断）。请将页数调到 10 以内后重试，或稍后再试。"
+      const msg = /Unexpected end of JSON|JSON\.parse|截断|页数不足|不完整/i.test(raw)
+        ? "清单输出不完整。请减少页数后重试，或稍后再试。"
         : raw;
       setAiError(msg);
     } finally {
       setAiBusy(false);
-      setAiBusyLabel("GPT-5.6 Sol 生成中…");
+      setAiBusyLabel("AI 清单生成中…");
     }
   };
 
@@ -224,8 +223,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       <div>
         <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          方案 A：<span className="text-emerald-200/90">GPT-5.6 Sol</span> 写详尽清单与图表数据（
-          {perPageCost} 积分/页，用户自选页数），前端多色 SVG 分步动效。空格=下一步动效，←→=翻页。
+          AI 写详尽清单与图表数据（{perPageCost} 积分/页，用户自选页数），前端多色 SVG 分步动效。空格=下一步动效，←→=翻页。
         </p>
       </div>
 
@@ -380,7 +378,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               {aiBusy || generateOutlineMutation.isPending
                 ? aiBusyLabel
                 : pageReady
-                  ? `用 GPT-5.6 Sol 生成页面清单（${outlineCost} 积分）`
+                  ? `用 AI 生成页面清单（${outlineCost} 积分）`
                   : "请先选择页数"}
             </button>
             <button

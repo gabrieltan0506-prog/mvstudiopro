@@ -1,6 +1,7 @@
 /**
  * 动效 PPT 页面清单：GPT-5.6 Sol 生成文案与图表数据（方案 A）。
- * 长页数分两段生成，避免网关/模型截断导致 Unexpected end of JSON。
+ * 长页数分片生成，避免网关/模型截断导致 Unexpected end of JSON。
+ * 对外失败文案勿暴露模型名；调用方用异步 job，勿同步硬等。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm";
 import {
@@ -21,6 +22,10 @@ export { HTML_PPT_OUTLINE_CAPACITY_MESSAGE };
 
 /** PPT 大纲专用上限：给足绝对量级 series，同时避免无谓超大 */
 const HTML_PPT_OUTLINE_MAX_TOKENS = 16000;
+
+/** 单段页数软上限：超过则分片，降低截断；≤8 仍单次以控成本 */
+const CHUNK_SOFT_MAX = 6;
+const SINGLE_SHOT_MAX = 8;
 
 async function invokeOutlineViaGpt56(
   userBlock: string,
@@ -67,7 +72,6 @@ async function generateOutlineOnce(
     .filter(Boolean)
     .join("\n");
 
-  // 先 minimal：把预算留给 JSON，降低截断概率
   const efforts: Array<"minimal" | "low"> = ["minimal", "low"];
   const configured = resolvePlatformStage2OpenAiReasoningEffort();
   if (configured === "low" || configured === "minimal") {
@@ -90,12 +94,44 @@ async function generateOutlineOnce(
     } catch (err) {
       lastError = err;
       console.warn(
-        `[generateHtmlPptOutline] GPT-5.6 失败 (reasoning=${reasoningEffort}, pages=${pageCount}):`,
+        `[generateHtmlPptOutline] LLM 失败 (reasoning=${reasoningEffort}, pages=${pageCount}):`,
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }
   }
   throw lastError instanceof Error ? lastError : new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
+}
+
+/** 把总页数拆成每段 ≤CHUNK_SOFT_MAX 的块，降低长稿截断概率 */
+export function splitHtmlPptOutlinePageChunks(pageCount: number): number[] {
+  const n = Math.max(5, Math.min(16, Math.floor(pageCount || 5)));
+  if (n <= SINGLE_SHOT_MAX) return [n];
+  const chunks: number[] = [];
+  let remain = n;
+  while (remain > 0) {
+    const left = chunks.length + 1;
+    const partsLeft = Math.ceil(remain / CHUNK_SOFT_MAX);
+    const size = Math.min(CHUNK_SOFT_MAX, Math.ceil(remain / partsLeft));
+    chunks.push(size);
+    remain -= size;
+    if (left > 8) break; // 安全阀
+  }
+  const sum = chunks.reduce((a, b) => a + b, 0);
+  if (sum !== n && chunks.length) {
+    chunks[chunks.length - 1]! += n - sum;
+  }
+  return chunks.filter((c) => c > 0);
+}
+
+function chunkRoleNote(index: number, totalChunks: number, chunkPages: number, totalPages: number): string {
+  if (totalChunks === 1) return "";
+  if (index === 0) {
+    return `本段是全稿第 1 段（共 ${totalChunks} 段，本段 ${chunkPages} 页，总目标 ${totalPages} 页）：须含封面 cover + 目录/议程 steps + 至少 bars/line/ring 之一。不要写收束 CTA。`;
+  }
+  if (index === totalChunks - 1) {
+    return `本段是全稿最后一段（本段 ${chunkPages} 页，总目标 ${totalPages} 页）。最后一页必须是收束/下一步（viz=steps）。须含 compare 或 columns 对照页。`;
+  }
+  return `本段是全稿中间段（第 ${index + 1}/${totalChunks} 段，本段 ${chunkPages} 页）。继续展开尚未覆盖的对比/数据/路径，勿重复前段标题，勿提前写收束 CTA。`;
 }
 
 export async function generateHtmlPptOutline(
@@ -107,36 +143,43 @@ export async function generateHtmlPptOutline(
   const model = getPlatformStage2OpenAiModel();
 
   try {
-    // ≤10 页单次；更长拆两段再拼接，规避截断
-    if (pageCount <= 10) {
+    const chunks = splitHtmlPptOutlinePageChunks(pageCount);
+    if (chunks.length === 1) {
       const parsed = await generateOutlineOnce(input, pageCount);
       return { ...parsed, model };
     }
 
-    const firstN = Math.ceil(pageCount / 2);
-    const secondN = pageCount - firstN;
-    const part1 = await generateOutlineOnce(
-      input,
-      firstN,
-      `本段是全稿前 ${firstN} 页：须含封面 cover + 目录/议程 steps + 至少 bars/line/ring 之一。不要写收束 CTA。`,
-    );
-    const titlesSoFar = part1.pages.map((p, i) => `${i + 1}.${p.title}`).join("；");
-    const part2 = await generateOutlineOnce(
-      {
-        ...input,
-        briefZh: [
-          String(input.briefZh || "").trim(),
-          `【已生成前半标题，勿重复】${titlesSoFar}`,
-          "本段接续后半：须覆盖尚未讲清的对比/平台/政策/入局/坑，并以 steps 收束页结束。",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      },
-      secondN,
-      `本段是全稿后 ${secondN} 页（总目标 ${pageCount} 页）。最后一页必须是收束/下一步（viz=steps）。须含 compare 或 columns 对照页。`,
-    );
+    const allPages: HtmlPptOutlineLlmResult["pages"] = [];
+    let deckTitle = "";
+    let summary = "";
+    const titlesSoFar: string[] = [];
 
-    const pages = [...part1.pages, ...part2.pages].slice(0, pageCount);
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkN = chunks[i]!;
+      const part = await generateOutlineOnce(
+        {
+          ...input,
+          briefZh: [
+            String(input.briefZh || "").trim(),
+            titlesSoFar.length
+              ? `【已生成标题，勿重复】${titlesSoFar.map((t, idx) => `${idx + 1}.${t}`).join("；")}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+        chunkN,
+        chunkRoleNote(i, chunks.length, chunkN, pageCount),
+      );
+      if (!deckTitle && part.deckTitle) deckTitle = part.deckTitle;
+      if (!summary && part.summary) summary = part.summary;
+      for (const p of part.pages) {
+        allPages.push(p);
+        titlesSoFar.push(p.title);
+      }
+    }
+
+    const pages = allPages.slice(0, pageCount);
     if (pages.length < pageCount) {
       throw new Error(`模型返回页数不足（${pages.length}/${pageCount}），请重试`);
     }
@@ -145,8 +188,8 @@ export async function generateHtmlPptOutline(
     if (last && !last.viz) pages[pages.length - 1] = { ...last, viz: "steps" };
 
     return {
-      deckTitle: part1.deckTitle || part2.deckTitle,
-      summary: part1.summary || part2.summary,
+      deckTitle: deckTitle || pages[0]?.title || title,
+      summary,
       pages,
       model,
     };
@@ -157,7 +200,7 @@ export async function generateHtmlPptOutline(
     );
     const msg = err instanceof Error ? err.message : String(err);
     if (/Unexpected end of JSON|JSON|parse|截断|页数不足/i.test(msg)) {
-      throw new Error(`${HTML_PPT_OUTLINE_CAPACITY_MESSAGE}（输出被截断，请将页数调到 10 以内后重试）`);
+      throw new Error(`${HTML_PPT_OUTLINE_CAPACITY_MESSAGE}（输出不完整，请减少页数后重试）`);
     }
     throw err instanceof Error ? err : new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
   }
