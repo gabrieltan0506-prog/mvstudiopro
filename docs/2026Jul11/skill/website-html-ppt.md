@@ -12,7 +12,9 @@ defaultEnabled: true
 在 `/platform` 一级栏位「动效PPT」：主题 → 选风格 → 确认大纲主题 → **按页计费生成页面清单+图表数据** → 可选关键页插图 → 前端 SVG 分步动效渲染 → 导出单文件 HTML / 可编辑 PPTX。  
 也可用免费「模板骨架」预览版式（无 LLM）。
 
-实现：`shared/htmlPptMaker.ts`（HTML 渲染）+ `shared/htmlPptPptx.ts`（PPTX）+ `shared/htmlPptOutlinePrompt.ts` / `server/services/platformHtmlPptOutline.ts`（大纲）+ 插图服务（可选）。计费见 `platformHtmlPptOutlineCredits` / `platformHtmlPptPagePatchCredits`。
+实现：`shared/htmlPptMaker.ts`（HTML 渲染）+ `shared/htmlPptPptx.ts`（PPTX）+ `shared/htmlPptOutlinePrompt.ts` / `server/services/platformHtmlPptOutline.ts`（大纲）+ 插图服务（可选）。  
+文案 / 主题补全：官方 OpenAI（失败回落 OpenRouter）；插图：官方 OpenAI gpt-image-2（失败回落 OpenRouter）。**不走 EvoLink。**  
+计费见 `platformHtmlPptOutlineCredits` / `platformHtmlPptPagePatchCredits`。
 
 Skill 分类：`deck`（独立于「一键模板」）。
 

@@ -22,10 +22,15 @@ import {
 import {
   EVOLINK_CHAT_COMPLETIONS_URL,
   getEvolinkApiKey,
+  getOpenRouterChatHeaders,
   isEvolinkChatEndpoint,
   isOfficialOpenAiChatEndpoint,
+  isOpenRouterChatEndpoint,
+  OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
+  toOpenRouterGpt56Model,
 } from "../services/gpt56CopywritingGateway";
+import { getOpenRouterApiKey } from "../services/openrouterGptImage2";
 
 export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
@@ -464,7 +469,7 @@ function getOpenAiModelName(modelTier: ModelTier | undefined) {
       EVOLINK_CHAT_MODEL_GPT54,
     );
   }
-  // 未指定 modelName：平台全案默认 gpt-5.6-sol（官方 OpenAI → Evolink）
+  // 未指定 modelName：平台全案默认 gpt-5.6-sol（官方 OpenAI → OpenRouter）
   return getEvolinkGpt56SolModel();
 }
 
@@ -543,12 +548,12 @@ const resolveTarget = (
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
 
     /**
-     * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol（主）→ EvoLink（fallback）**。
+     * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol（主）→ OpenRouter（fallback）**。
      * 调用形态：OpenAI-compatible `/v1/chat/completions`。
      * Refs:
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
-     *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.6/gpt-5.6-reference
-     * 图片生成另见 proxyImageService（OhMyGPT gpt-image-2 → EvoLink）。
+     *   https://openrouter.ai/openai/gpt-5.6-sol
+     * 图片生成另见 proxyImageService（官方 gpt-image-2 → OpenRouter）。
      */
     if (
       isEvolinkGpt56FamilyModel(candidate) ||
@@ -1177,14 +1182,18 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     apiUrl: string,
     apiKey: string,
     body: Record<string, unknown>,
-    label: "OhMyGPT" | "Evolink" | "OpenAI",
+    label: "OhMyGPT" | "Evolink" | "OpenAI" | "OpenRouter",
   ): Promise<InvokeResult> => {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    };
+    if (label === "OpenRouter" || isOpenRouterChatEndpoint(apiUrl)) {
+      Object.assign(headers, getOpenRouterChatHeaders());
+    }
     const response = await fetch(apiUrl, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       signal: mergeWithLlmTimeout(params.abortSignal),
       body: JSON.stringify(body),
     });
@@ -1194,7 +1203,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       console.warn(`[${label}] ${formatEvolinkChatApiError(response.status, response.statusText, errorText)}`);
       const err = new Error(toOpenAiCompatibleChatUserMessage(response.status, errorText, label)) as Error & {
         status?: number;
-        providerLabel?: "OhMyGPT" | "Evolink" | "OpenAI";
+        providerLabel?: "OhMyGPT" | "Evolink" | "OpenAI" | "OpenRouter";
         rawErrorText?: string;
       };
       err.status = response.status;
@@ -1231,12 +1240,15 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
   const isOhMyGptEndpoint = isOhMyGptChatEndpoint(String(target.apiUrl || ""));
   const isEvolinkEndpoint = isEvolinkChatEndpoint(String(target.apiUrl || ""));
+  const isOpenRouterEndpoint = isOpenRouterChatEndpoint(String(target.apiUrl || ""));
   const isOfficialEndpoint = isOfficialOpenAiChatEndpoint(String(target.apiUrl || ""));
-  const label: "OhMyGPT" | "Evolink" | "OpenAI" = isOhMyGptEndpoint
+  const label: "OhMyGPT" | "Evolink" | "OpenAI" | "OpenRouter" = isOhMyGptEndpoint
     ? "OhMyGPT"
     : isEvolinkEndpoint
       ? "Evolink"
-      : "OpenAI";
+      : isOpenRouterEndpoint
+        ? "OpenRouter"
+        : "OpenAI";
   const isGpt56Family =
     isEvolinkGpt56FamilyModel(String(target.modelName || "")) ||
     isOhMyGptGpt56FamilyModel(String(target.modelName || ""));
@@ -1249,17 +1261,21 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       label,
     );
   } catch (primaryErr) {
-    // GPT-5.6 文案：官方 OpenAI 失败 → Evolink fallback
+    // GPT-5.6 文案：官方 OpenAI 失败 → OpenRouter fallback
     if (isOfficialEndpoint && isGpt56Family) {
-      const evolinkKey = getEvolinkApiKey();
-      if (evolinkKey) {
+      const openrouterKey = getOpenRouterApiKey();
+      if (openrouterKey) {
         const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-        console.warn(`[OpenAI→Evolink] GPT-5.6 copywriting fallback after official OpenAI failure: ${msg.slice(0, 240)}`);
+        console.warn(`[OpenAI→OpenRouter] GPT-5.6 copywriting fallback after official OpenAI failure: ${msg.slice(0, 240)}`);
+        const orPayload = {
+          ...payload,
+          model: toOpenRouterGpt56Model(String(payload.model || target.modelName || "gpt-5.6-sol")),
+        };
         return await postChatCompletions(
-          EVOLINK_CHAT_COMPLETIONS_URL,
-          evolinkKey,
-          payload,
-          "Evolink",
+          OPENROUTER_CHAT_COMPLETIONS_URL,
+          openrouterKey,
+          orPayload,
+          "OpenRouter",
         );
       }
     }
