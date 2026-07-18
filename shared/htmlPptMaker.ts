@@ -68,6 +68,28 @@ function formatSeriesDisplay(value: number): string {
   return value.toFixed(1);
 }
 
+/** 插图布局姿态：英雄居中 / 右停靠 / 左停靠 / 下方缩略 */
+export type HtmlPptImagePose = "hero" | "dock_right" | "dock_left" | "dock_bottom";
+
+export type HtmlPptImageKeyframe = {
+  /** 动效拍号（与 data-build 对齐） */
+  at: number;
+  pose: HtmlPptImagePose;
+};
+
+export const HTML_PPT_IMAGE_POSES = new Set<HtmlPptImagePose>([
+  "hero",
+  "dock_right",
+  "dock_left",
+  "dock_bottom",
+]);
+
+/** 有插图且未自定义时的默认两拍 */
+export const DEFAULT_HTML_PPT_IMAGE_MOTION: HtmlPptImageKeyframe[] = [
+  { at: 0, pose: "hero" },
+  { at: 1, pose: "dock_right" },
+];
+
 export type HtmlPptPage = {
   title: string;
   subtitle?: string;
@@ -86,7 +108,52 @@ export type HtmlPptPage = {
   highlight?: string[];
   /** 可选插图 HTTPS URL（封面/关键页） */
   imageUrl?: string;
+  /**
+   * 插图分步关键帧（可选）。有图缺省时用 DEFAULT_HTML_PPT_IMAGE_MOTION；
+   * 大纲阶段可先写关键帧，生图挂上 imageUrl 后生效。
+   */
+  imageMotion?: HtmlPptImageKeyframe[];
 };
+
+/**
+ * 规范化插图关键帧：白名单 pose、at∈[0,24]、按 at 升序去重（同拍留后者）、
+ * 确保 at:0、长度 2–5；全非法则返回 undefined（调用方回退默认）。
+ */
+export function normalizeHtmlPptImageMotion(raw: unknown): HtmlPptImageKeyframe[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const byAt = new Map<number, HtmlPptImagePose>();
+  for (const row of raw) {
+    const r = (row || {}) as Record<string, unknown>;
+    const pose = String(r.pose || "").trim() as HtmlPptImagePose;
+    if (!HTML_PPT_IMAGE_POSES.has(pose)) continue;
+    const at = Math.floor(Number(r.at));
+    if (!Number.isFinite(at) || at < 0 || at > 24) continue;
+    byAt.set(at, pose);
+  }
+  if (byAt.size === 0) return undefined;
+  let frames = [...byAt.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([at, pose]) => ({ at, pose }));
+  if (frames[0]?.at !== 0) {
+    frames = [{ at: 0, pose: "hero" }, ...frames];
+  }
+  frames = frames.slice(0, 5);
+  if (frames.length < 2) {
+    const lastAt = frames[frames.length - 1]?.at ?? 0;
+    frames.push({ at: Math.min(24, Math.max(1, lastAt + 1)), pose: "dock_right" });
+  }
+  return frames;
+}
+
+/** 有插图时解析最终关键帧（缺省/非法 → 默认两拍） */
+export function resolveHtmlPptImageMotion(
+  page: Pick<HtmlPptPage, "imageUrl" | "imageMotion">,
+): HtmlPptImageKeyframe[] | undefined {
+  const hasImage =
+    typeof page.imageUrl === "string" && /^https?:\/\//i.test(page.imageUrl.trim());
+  if (!hasImage) return undefined;
+  return normalizeHtmlPptImageMotion(page.imageMotion) ?? DEFAULT_HTML_PPT_IMAGE_MOTION;
+}
 
 export type HtmlPptDeckInput = {
   title: string;
@@ -622,6 +689,14 @@ export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
           typeof p?.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl.trim())
             ? p.imageUrl.trim().slice(0, 2048)
             : undefined,
+        imageMotion: (() => {
+          const hasImage =
+            typeof p?.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl.trim());
+          const normalized = normalizeHtmlPptImageMotion(p?.imageMotion);
+          if (normalized) return normalized;
+          if (hasImage) return [...DEFAULT_HTML_PPT_IMAGE_MOTION];
+          return undefined;
+        })(),
       };
     })
     .filter((p) => p.title)
@@ -1001,15 +1076,16 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
         kind === "cover"
           ? 2
           : Math.max(1, seriesBuildCount) + talkBullets.length + (highlightOnly ? highlights.length : 0) + 1;
-      const hasImage = Boolean(p.imageUrl);
-      // 插图作为动效组件：build0 居中英雄态 → build1 缩至右侧（竖屏下方），让解说占中央
-      const imgDockAt = hasImage ? 1 : -1;
+      const imageMotion = resolveHtmlPptImageMotion(p);
+      const hasImage = Boolean(imageMotion?.length && p.imageUrl);
       const imagePanel = hasImage
         ? `<aside class="slide-image anim" data-build="0" data-role="slide-image"><img src="${escapeHtml(p.imageUrl!)}" alt="" loading="lazy" decoding="async"/></aside>`
         : "";
       const bodyClass = hasImage ? " slide-has-image" : "";
-      const imgDockAttr = hasImage ? ` data-img-dock="${imgDockAt}"` : "";
-      return `<section class="slide${i === 0 ? " is-active" : ""}${bodyClass}" data-i="${i}" data-viz="${kind}"${imgDockAttr}>
+      const imgMotionAttr = hasImage
+        ? ` data-img-motion="${escapeHtml(JSON.stringify(imageMotion))}"`
+        : "";
+      return `<section class="slide${i === 0 ? " is-active" : ""}${bodyClass}" data-i="${i}" data-viz="${kind}"${imgMotionAttr}>
   <div class="slide-bg" aria-hidden="true"></div>
   <div class="fx-orb o1" aria-hidden="true"></div>
   <div class="fx-orb o2" aria-hidden="true"></div>
@@ -1054,24 +1130,32 @@ ${STYLE_CSS[styleId]}
 .slide-body{flex:1;min-width:0;transition:max-width .65s cubic-bezier(.22,1,.36,1),flex-basis .65s cubic-bezier(.22,1,.36,1),opacity .4s ease}
 .slide-image{border-radius:18px;overflow:hidden;border:1px solid color-mix(in srgb,var(--line,#243041) 80%,transparent);box-shadow:0 16px 48px rgba(0,0,0,.22);background:var(--card,#121821);transition:flex-basis .7s cubic-bezier(.22,1,.36,1),max-width .7s cubic-bezier(.22,1,.36,1),width .7s cubic-bezier(.22,1,.36,1),max-height .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1),opacity .45s ease}
 .slide-image img{display:block;width:100%;height:auto;object-fit:contain;background:var(--card,#121821);transition:max-height .7s cubic-bezier(.22,1,.36,1)}
-/* 英雄态：插图居中放大，标题在上；图表/要点仍按 data-build 稍后揭示 */
-.slide-has-image:not(.img-docked) .slide-inner{flex-direction:column;align-items:center;justify-content:center}
-.slide-has-image:not(.img-docked) .slide-body{flex:0 1 auto;max-width:min(42ch,92%);text-align:center;display:flex;flex-direction:column;align-items:center}
-.slide-has-image:not(.img-docked) .slide-body .accent-line{margin-left:auto;margin-right:auto}
-.slide-has-image:not(.img-docked) .slide-body h1{max-width:18ch}
-.slide-has-image:not(.img-docked) .slide-image{order:-1;flex:0 0 auto;width:min(78vw,760px);max-width:92%;transform:scale(1)}
-.slide-has-image:not(.img-docked) .slide-image img{max-height:min(58vh,560px)}
-/* 停靠态：横屏右侧；窄屏/竖屏下方缩略，中央留给解说 */
-.slide-has-image.img-docked .slide-inner{flex-direction:row;align-items:center}
-.slide-has-image.img-docked .slide-body{flex:1 1 48%;max-width:52%;text-align:left;align-items:stretch}
-.slide-has-image.img-docked .slide-body .accent-line{margin-left:0;margin-right:0}
-.slide-has-image.img-docked .slide-image{order:0;flex:0 0 min(42%,440px);max-width:46%;width:auto}
-.slide-has-image.img-docked .slide-image img{max-height:min(62vh,520px)}
+/* 插图关键帧姿态：hero / dock_right / dock_left / dock_bottom */
+.slide-has-image.img-pose-hero .slide-inner{flex-direction:column;align-items:center;justify-content:center}
+.slide-has-image.img-pose-hero .slide-body{flex:0 1 auto;max-width:min(42ch,92%);text-align:center;display:flex;flex-direction:column;align-items:center}
+.slide-has-image.img-pose-hero .slide-body .accent-line{margin-left:auto;margin-right:auto}
+.slide-has-image.img-pose-hero .slide-body h1{max-width:18ch}
+.slide-has-image.img-pose-hero .slide-image{order:-1;flex:0 0 auto;width:min(78vw,760px);max-width:92%;transform:scale(1)}
+.slide-has-image.img-pose-hero .slide-image img{max-height:min(58vh,560px)}
+.slide-has-image.img-pose-dock_right .slide-inner{flex-direction:row;align-items:center}
+.slide-has-image.img-pose-dock_right .slide-body{flex:1 1 48%;max-width:52%;text-align:left;align-items:stretch}
+.slide-has-image.img-pose-dock_right .slide-body .accent-line{margin-left:0;margin-right:0}
+.slide-has-image.img-pose-dock_right .slide-image{order:2;flex:0 0 min(42%,440px);max-width:46%;width:auto}
+.slide-has-image.img-pose-dock_right .slide-image img{max-height:min(62vh,520px)}
+.slide-has-image.img-pose-dock_left .slide-inner{flex-direction:row;align-items:center}
+.slide-has-image.img-pose-dock_left .slide-body{flex:1 1 48%;max-width:52%;text-align:left;align-items:stretch;order:2}
+.slide-has-image.img-pose-dock_left .slide-body .accent-line{margin-left:0;margin-right:0}
+.slide-has-image.img-pose-dock_left .slide-image{order:0;flex:0 0 min(42%,440px);max-width:46%;width:auto}
+.slide-has-image.img-pose-dock_left .slide-image img{max-height:min(62vh,520px)}
+.slide-has-image.img-pose-dock_bottom .slide-inner{flex-direction:column;align-items:stretch}
+.slide-has-image.img-pose-dock_bottom .slide-body{max-width:100%;flex:1 1 auto;text-align:left;align-items:stretch}
+.slide-has-image.img-pose-dock_bottom .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
+.slide-has-image.img-pose-dock_bottom .slide-image img{max-height:min(32vh,280px)}
 @media (max-width:900px){
-  .slide-has-image.img-docked .slide-inner{flex-direction:column;align-items:stretch}
-  .slide-has-image.img-docked .slide-body{max-width:100%;flex:1 1 auto}
-  .slide-has-image.img-docked .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
-  .slide-has-image.img-docked .slide-image img{max-height:min(32vh,280px)}
+  .slide-has-image.img-pose-dock_right .slide-inner,.slide-has-image.img-pose-dock_left .slide-inner{flex-direction:column;align-items:stretch}
+  .slide-has-image.img-pose-dock_right .slide-body,.slide-has-image.img-pose-dock_left .slide-body{max-width:100%;flex:1 1 auto;order:0}
+  .slide-has-image.img-pose-dock_right .slide-image,.slide-has-image.img-pose-dock_left .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
+  .slide-has-image.img-pose-dock_right .slide-image img,.slide-has-image.img-pose-dock_left .slide-image img{max-height:min(32vh,280px)}
 }
 .hl-flash,.highlight-flash{display:inline;padding:0 4px;border-radius:6px;background:linear-gradient(90deg,rgba(250,204,21,.25),rgba(251,146,60,.22));box-shadow:0 0 0 1px rgba(250,204,21,.35);animation:hlFlash 2.4s ease-in-out infinite}
 .fx-show .hl-flash,.fx-show .highlight-flash{animation:hlFlash 2.4s ease-in-out infinite}
@@ -1216,11 +1300,11 @@ li{margin:7px 0}
   .deck{flex-direction:column;height:auto;transform:none !important;transition:none}
   .slide{min-width:100%;width:100%;height:auto;min-height:0;padding:72px 18px 28px;justify-content:flex-start;overflow:visible;border-bottom:1px solid color-mix(in srgb,var(--line,#e7e0d2) 80%,transparent)}
   .slide-inner{min-height:0;max-width:100%}
-  /* 竖屏阅读：停靠态（图在下方缩略），正文居中可读 */
-  .slide-has-image .slide-inner,.slide-has-image.img-docked .slide-inner{flex-direction:column;align-items:stretch;gap:14px}
-  .slide-has-image .slide-body,.slide-has-image.img-docked .slide-body{max-width:100%;flex:1 1 auto;text-align:left}
-  .slide-has-image .slide-image,.slide-has-image.img-docked .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
-  .slide-has-image .slide-image img,.slide-has-image.img-docked .slide-image img{max-height:28vh;object-fit:contain}
+  /* 竖屏阅读：图在下方缩略，正文可读（覆盖横屏左右停靠） */
+  .slide-has-image .slide-inner,.slide-has-image[class*="img-pose-"] .slide-inner{flex-direction:column;align-items:stretch;gap:14px}
+  .slide-has-image .slide-body,.slide-has-image[class*="img-pose-"] .slide-body{max-width:100%;flex:1 1 auto;text-align:left;order:0}
+  .slide-has-image .slide-image,.slide-has-image[class*="img-pose-"] .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
+  .slide-has-image .slide-image img,.slide-has-image[class*="img-pose-"] .slide-image img{max-height:28vh;object-fit:contain}
   .fx-orb{display:none}
   .anim,.chart-in{opacity:1 !important;transform:none !important;animation:none !important}
   .hbar-fill,.col-bar,.metric-row i::after,.card i::after{width:calc(var(--v,var(--h))*1%) !important;height:calc(var(--h)*1%) !important;animation:none !important}
@@ -1282,21 +1366,50 @@ ${slidesHtml}
       requestAnimationFrame(tick);
     });
   }
+  var IMG_POSE_CLASSES=['img-pose-hero','img-pose-dock_right','img-pose-dock_left','img-pose-dock_bottom'];
+  function parseImageMotion(slide){
+    var raw=slide.getAttribute('data-img-motion');
+    if(!raw) return null;
+    try{
+      var arr=JSON.parse(raw);
+      if(!Array.isArray(arr)||!arr.length) return null;
+      return arr;
+    }catch(e){ return null; }
+  }
   function maxBuildOf(slide){
     var m=0;
     Array.prototype.forEach.call(slide.querySelectorAll('[data-build]'),function(node){
       var b=Number(node.getAttribute('data-build')||0);
       if(b>m) m=b;
     });
-    var dock=Number(slide.getAttribute('data-img-dock')||-1);
-    if(dock>m) m=dock;
+    var motion=parseImageMotion(slide);
+    if(motion){
+      for(var mi=0;mi<motion.length;mi++){
+        var at=Number(motion[mi]&&motion[mi].at);
+        if(Number.isFinite(at)&&at>m) m=at;
+      }
+    }
     return m;
   }
-  function syncImageDock(slide, upTo){
-    var dock=Number(slide.getAttribute('data-img-dock')||-1);
-    if(dock<0) return;
-    if(upTo>=dock || isPortraitRead()) slide.classList.add('img-docked');
-    else slide.classList.remove('img-docked');
+  function clearImagePose(slide){
+    for(var ci=0;ci<IMG_POSE_CLASSES.length;ci++) slide.classList.remove(IMG_POSE_CLASSES[ci]);
+  }
+  function syncImagePose(slide, upTo){
+    var motion=parseImageMotion(slide);
+    if(!motion) return;
+    var pose='hero';
+    for(var mi=0;mi<motion.length;mi++){
+      var kf=motion[mi];
+      var at=Number(kf&&kf.at);
+      if(Number.isFinite(at)&&at<=upTo&&kf.pose) pose=String(kf.pose);
+    }
+    if(isPortraitRead()){
+      var last=motion[motion.length-1];
+      pose=last&&last.pose?String(last.pose):'dock_bottom';
+      if(pose==='hero') pose='dock_bottom';
+    }
+    clearImagePose(slide);
+    slide.classList.add('img-pose-'+pose);
   }
   function applyBuild(slide, upTo){
     Array.prototype.forEach.call(slide.querySelectorAll('[data-build]'),function(node){
@@ -1319,7 +1432,7 @@ ${slidesHtml}
         }
       }
     });
-    syncImageDock(slide, upTo);
+    syncImagePose(slide, upTo);
   }
   function updateHud(flashDone){
     if(!hud) return;
@@ -1330,7 +1443,7 @@ ${slidesHtml}
     for(var k=0;k<n;k++){
       slides[k].classList.remove('is-active');
       if(!isPortraitRead()){
-        slides[k].classList.remove('img-docked');
+        clearImagePose(slides[k]);
         Array.prototype.forEach.call(slides[k].querySelectorAll('.fx-show'),function(node){node.classList.remove('fx-show')});
         Array.prototype.forEach.call(slides[k].querySelectorAll('.countup[data-to]'),function(c){
           c.removeAttribute('data-counted');
@@ -1343,7 +1456,7 @@ ${slidesHtml}
     el.classList.add('is-active');
     maxStep=maxBuildOf(el);
     if(isPortraitRead()){
-      // 竖屏阅读：一次展开全部要点 + 插图停靠下方，弱化分步动效
+      // 竖屏阅读：一次展开全部要点；插图用末拍姿态（hero 改写为下方）
       step=maxStep;
       applyBuild(el, maxStep);
       for(var p=0;p<n;p++){ applyBuild(slides[p], maxBuildOf(slides[p])); }

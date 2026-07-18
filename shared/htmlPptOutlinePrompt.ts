@@ -3,6 +3,7 @@
  */
 import {
   HTML_PPT_STYLES,
+  normalizeHtmlPptImageMotion,
   normalizeHtmlPptPages,
   type HtmlPptPage,
   type HtmlPptStyleId,
@@ -166,7 +167,8 @@ export function buildHtmlPptOutlineSystemPrompt(): string {
 9. highlight[]：每页 0–3 条需前端高亮闪烁的关键短语（≤20 字，可与 bullets 重叠）。
 10. note 写数据来源或「推演量级/公开研报口径」；kpi 用真人能念的大数字。
 11. 语气像买方尽调看板：对比、拐点、可执行下一步。
-12. 只输出 JSON（json_object），不要 Markdown 围栏。
+12. **imageMotion（可选）**：仅封面/数据高潮等「值得插图讲解」的关键页可写 3–5 拍；pose 只能是 hero | dock_right | dock_left | dock_bottom。须从 hero@0 起，中间可穿插 dock_* 与再次 hero（强调图细节），收束到 dock_right 或 dock_bottom。多数页不要写（缺省由代码用两拍：hero→dock_right）。
+13. 只输出 JSON（json_object），不要 Markdown 围栏。
 
 JSON schema:
 {
@@ -183,7 +185,13 @@ JSON schema:
       "bullets": ["要点1（含数字）","要点2","要点3"],
       "highlight": ["关键短语"],
       "viz": "bars",
-      "series": [{"label":"沙雕漫","value":44},{"label":"小说漫","value":26}]
+      "series": [{"label":"沙雕漫","value":44},{"label":"小说漫","value":26}],
+      "imageMotion": [
+        {"at":0,"pose":"hero"},
+        {"at":1,"pose":"dock_right"},
+        {"at":3,"pose":"hero"},
+        {"at":4,"pose":"dock_left"}
+      ]
     }
   ]
 }`;
@@ -262,10 +270,11 @@ export function buildHtmlPptPagePatchSystemPrompt(): string {
 保持与全稿主题/风格一致；只输出 JSON（json_object），不要 Markdown 围栏。
 
 要求：
-1. 输出单个 page 对象，字段同大纲页：title/subtitle/kpi/note/bullets/viz/series/themeId/themeTitle/highlight。
+1. 输出单个 page 对象，字段同大纲页：title/subtitle/kpi/note/bullets/viz/series/themeId/themeTitle/highlight，以及可选 imageMotion。
 2. viz 只能是：cover | ring | bars | columns | steps | cards | line | compare | table | scene_cards | sentiment | hub。
 3. 图表页须 series（3–8 项）+ bullets≥3；highlight 0–3 条。
-4. 若 patchNote 要求改数字/口径，须落实进 series/kpi/note。`;
+4. 若 patchNote 要求改数字/口径，须落实进 series/kpi/note。
+5. imageMotion：仅当本页值得插图讲解时可写/改写 3–5 拍（pose=hero|dock_right|dock_left|dock_bottom，须含 hero@0）；否则省略，沿用默认两拍。`;
 }
 
 export function buildHtmlPptPagePatchUserPrompt(input: HtmlPptPagePatchInput): string {
@@ -323,6 +332,7 @@ function mapRawPage(r: Record<string, unknown>): HtmlPptPage {
         .filter((s) => s.label)
         .slice(0, 8)
     : undefined;
+  const imageMotion = normalizeHtmlPptImageMotion(r.imageMotion);
   return {
     title: String(r.title || "").trim(),
     subtitle: r.subtitle ? String(r.subtitle).trim() : undefined,
@@ -338,6 +348,7 @@ function mapRawPage(r: Record<string, unknown>): HtmlPptPage {
     highlight: Array.isArray(r.highlight)
       ? r.highlight.map((h) => String(h || "").trim()).filter(Boolean).slice(0, 6)
       : undefined,
+    imageMotion,
   };
 }
 
