@@ -1274,6 +1274,133 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    /**
+     * 密钥探针（不回传密钥本身）：
+     * - OpenRouter：`POST /api/v1/images` · model=openai/gpt-image-2
+     * - OpenAI 官方：`POST /v1/chat/completions` · model=gpt-5.6-sol（验 Fly OPENAI_API_KEY）
+     * - OpenAI 生图：`POST /v1/images/generations` · model=gpt-image-2（验 IMAGE/API 钥）
+     */
+    if (opNormalized === "probegptkeys") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const want = String(b.which || q.which || "all")
+        .trim()
+        .toLowerCase();
+      const runOr = want === "all" || want === "openrouter" || want === "or";
+      const runChat = want === "all" || want === "openai_chat" || want === "sol" || want === "gpt56";
+      const runImg = want === "all" || want === "openai_image" || want === "image";
+
+      const out: Record<string, unknown> = { ok: true, at: new Date().toISOString() };
+
+      if (runOr) {
+        const t0 = Date.now();
+        try {
+          const { isOpenRouterGptImage2Configured, postOpenRouterGptImage2AndUpload } = await import(
+            "../server/services/openrouterGptImage2.js"
+          );
+          const configured = isOpenRouterGptImage2Configured();
+          if (!configured) {
+            out.openrouter_image = { ok: false, configured: false, error: "OPENROUTER_API_KEY missing/invalid", ms: Date.now() - t0 };
+          } else {
+            const err: { message?: string } = {};
+            const url = await postOpenRouterGptImage2AndUpload(
+              "A simple red ceramic mug on a white table, soft studio light, no text.",
+              "probe-openrouter",
+              { aspectRatio: "9:16", quality: "low", captureError: err },
+            );
+            out.openrouter_image = {
+              ok: Boolean(url),
+              configured: true,
+              ms: Date.now() - t0,
+              imageUrlPrefix: url ? String(url).slice(0, 120) : null,
+              error: err.message || null,
+            };
+          }
+        } catch (e: any) {
+          out.openrouter_image = { ok: false, error: e?.message || String(e), ms: Date.now() - t0 };
+        }
+      }
+
+      if (runChat) {
+        const t0 = Date.now();
+        const apiKey = String(process.env.OPENAI_API_KEY || process.env.OPENAI_CHAT_API_KEY || "").trim();
+        const keyShape = !apiKey
+          ? "missing"
+          : /^sk-[A-Za-z0-9]/.test(apiKey)
+            ? `sk…len=${apiKey.length}`
+            : `invalid_shape len=${apiKey.length}`;
+        if (!apiKey || !/^sk-[A-Za-z0-9]/.test(apiKey)) {
+          out.openai_gpt56_sol = { ok: false, configured: false, keyShape, error: "OPENAI_API_KEY missing/invalid", ms: Date.now() - t0 };
+        } else {
+          try {
+            const r = await fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.6-sol",
+                messages: [{ role: "user", content: "Reply with exactly: pong" }],
+                max_completion_tokens: 16,
+              }),
+              signal: AbortSignal.timeout(60_000),
+            });
+            const json: any = await r.json().catch(() => ({}));
+            const text = String(json?.choices?.[0]?.message?.content || "").trim();
+            out.openai_gpt56_sol = {
+              ok: r.ok && Boolean(text),
+              configured: true,
+              keyShape,
+              status: r.status,
+              ms: Date.now() - t0,
+              reply: text.slice(0, 80) || null,
+              error: r.ok ? null : json?.error?.message || JSON.stringify(json).slice(0, 240),
+            };
+          } catch (e: any) {
+            out.openai_gpt56_sol = { ok: false, configured: true, keyShape, error: e?.message || String(e), ms: Date.now() - t0 };
+          }
+        }
+      }
+
+      if (runImg) {
+        const t0 = Date.now();
+        try {
+          const { isOpenAiGptImage2Configured, postOpenAiGptImage2AndUpload } = await import(
+            "../server/services/openaiGptImage2.js"
+          );
+          const configured = isOpenAiGptImage2Configured();
+          if (!configured) {
+            out.openai_gpt_image2 = { ok: false, configured: false, error: "OPENAI_IMAGE/API_KEY missing/invalid", ms: Date.now() - t0 };
+          } else {
+            const err: { message?: string } = {};
+            const url = await postOpenAiGptImage2AndUpload(
+              "A simple red ceramic mug on a white table, soft studio light, no text.",
+              "probe-openai-image",
+              { aspectRatio: "9:16", quality: "low", captureError: err },
+            );
+            out.openai_gpt_image2 = {
+              ok: Boolean(url),
+              configured: true,
+              ms: Date.now() - t0,
+              imageUrlPrefix: url ? String(url).slice(0, 120) : null,
+              error: err.message || null,
+            };
+          }
+        } catch (e: any) {
+          out.openai_gpt_image2 = { ok: false, error: e?.message || String(e), ms: Date.now() - t0 };
+        }
+      }
+
+      const fails = ["openrouter_image", "openai_gpt56_sol", "openai_gpt_image2"].filter(
+        (k) => out[k] && (out[k] as { ok?: boolean }).ok === false,
+      );
+      out.ok = fails.length === 0;
+      out.failed = fails;
+      return res.status(fails.length ? 502 : 200).json(out);
+    }
+
     if (opNormalized === "blobmedia") {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -2644,6 +2771,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         Boolean(b.generalImageEdit) ||
         s(b.imageMode || "").toLowerCase() === "edit" ||
         referenceImageUrls.length > 0;
+      const providerRaw = s(b.provider || b.gptImage2Provider || "").trim().toLowerCase();
+      const providerOverride =
+        providerRaw === "openai" || providerRaw === "openrouter" || providerRaw === "auto"
+          ? (providerRaw as "openai" | "openrouter" | "auto")
+          : undefined;
       try {
         const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
         const captureError: {
@@ -2662,6 +2794,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           maskUrl: maskUrl || undefined,
           // Canvas：有参考图即按通用改图，勿注入平台封面换脸指令
           generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
+          providerOverride,
           captureError,
         });
         if (!imageUrl) {

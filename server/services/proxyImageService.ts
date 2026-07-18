@@ -1144,6 +1144,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    */
   generalImageEdit?: boolean;
   /**
+   * 单次请求覆盖供应商：`openai` | `openrouter` | `auto`。
+   * 不设则读 env `GPT_IMAGE2_PROVIDER`（默认 auto）。
+   */
+  providerOverride?: "openai" | "openrouter" | "auto";
+  /**
    * 出参：失败时回填供上层做「快速失败 / 用户提示」。
    * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
    */
@@ -1181,7 +1186,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const prompt =
     hasRef && !generalEdit ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
 
-  const providerMode = String(process.env.GPT_IMAGE2_PROVIDER || "auto")
+  const providerMode = String(options.providerOverride || process.env.GPT_IMAGE2_PROVIDER || "auto")
     .trim()
     .toLowerCase();
   const openaiReady = isOpenAiGptImage2Configured();
