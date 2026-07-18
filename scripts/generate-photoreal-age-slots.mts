@@ -264,7 +264,9 @@ async function processOne(c: ManhuaCharacterTemplate): Promise<ManifestItem> {
   await downloadToJpg(heroUrl, heroBasePub);
   fs.copyFileSync(`${heroBasePub}.jpg`, `${heroBaseDl}.jpg`);
 
-  const sheetUrl = await flyGenerate(buildSheetPrompt(c), [heroUrl]);
+  // 儿童：sheet 也纯文生（挂 hero 易被当成「真人脸参考」误杀）
+  const sheetRefs = getManhuaCharacterLifeStage(c) === "child" ? [] : [heroUrl];
+  const sheetUrl = await flyGenerate(buildSheetPrompt(c), sheetRefs);
   console.log("  sheet ok");
   const sheetBasePub = path.join(OUT_PUBLIC, `${c.id}_sheet`);
   const sheetBaseDl = path.join(OUT_DOWNLOADS, `${c.id}_sheet`);
