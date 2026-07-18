@@ -1002,11 +1002,14 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
           ? 2
           : Math.max(1, seriesBuildCount) + talkBullets.length + (highlightOnly ? highlights.length : 0) + 1;
       const hasImage = Boolean(p.imageUrl);
+      // 插图作为动效组件：build0 居中英雄态 → build1 缩至右侧（竖屏下方），让解说占中央
+      const imgDockAt = hasImage ? 1 : -1;
       const imagePanel = hasImage
-        ? `<aside class="slide-image anim" data-build="0"><img src="${escapeHtml(p.imageUrl!)}" alt="" loading="lazy" decoding="async"/></aside>`
+        ? `<aside class="slide-image anim" data-build="0" data-role="slide-image"><img src="${escapeHtml(p.imageUrl!)}" alt="" loading="lazy" decoding="async"/></aside>`
         : "";
       const bodyClass = hasImage ? " slide-has-image" : "";
-      return `<section class="slide${i === 0 ? " is-active" : ""}${bodyClass}" data-i="${i}" data-viz="${kind}">
+      const imgDockAttr = hasImage ? ` data-img-dock="${imgDockAt}"` : "";
+      return `<section class="slide${i === 0 ? " is-active" : ""}${bodyClass}" data-i="${i}" data-viz="${kind}"${imgDockAttr}>
   <div class="slide-bg" aria-hidden="true"></div>
   <div class="fx-orb o1" aria-hidden="true"></div>
   <div class="fx-orb o2" aria-hidden="true"></div>
@@ -1046,14 +1049,30 @@ ${STYLE_CSS[styleId]}
 .fx-orb.o2{width:240px;height:240px;right:-30px;bottom:8%;background:rgba(251,146,60,.18)}
 .slide.is-active .fx-orb{animation:orbPulse 2.8s ease-in-out both}
 .slide.is-active .fx-orb.o2{animation-delay:.35s}
-.slide-inner{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;min-height:72%;max-width:1100px;width:100%}
+.slide-inner{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;min-height:72%;max-width:1100px;width:100%;gap:clamp(12px,2vw,24px);transition:gap .55s cubic-bezier(.22,1,.36,1)}
 .slide-inner:has(.slide-image){max-width:1280px}
-.slide-body{flex:1;min-width:0}
-.slide-has-image .slide-inner{flex-direction:row;align-items:center;gap:clamp(18px,3vw,36px)}
-.slide-has-image .slide-body{flex:1 1 42%;max-width:48%}
-.slide-image{flex:0 0 min(54%,560px);max-width:56%;border-radius:18px;overflow:hidden;border:1px solid color-mix(in srgb,var(--line,#243041) 80%,transparent);box-shadow:0 16px 48px rgba(0,0,0,.22);background:var(--card,#121821)}
-.slide-image img{display:block;width:100%;height:auto;max-height:min(72vh,640px);object-fit:contain;background:var(--card,#121821)}
-@media (max-width:900px){.slide-has-image .slide-inner{flex-direction:column}.slide-has-image .slide-body{max-width:100%}.slide-image{flex:0 0 auto;max-width:100%;width:100%}}
+.slide-body{flex:1;min-width:0;transition:max-width .65s cubic-bezier(.22,1,.36,1),flex-basis .65s cubic-bezier(.22,1,.36,1),opacity .4s ease}
+.slide-image{border-radius:18px;overflow:hidden;border:1px solid color-mix(in srgb,var(--line,#243041) 80%,transparent);box-shadow:0 16px 48px rgba(0,0,0,.22);background:var(--card,#121821);transition:flex-basis .7s cubic-bezier(.22,1,.36,1),max-width .7s cubic-bezier(.22,1,.36,1),width .7s cubic-bezier(.22,1,.36,1),max-height .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1),opacity .45s ease}
+.slide-image img{display:block;width:100%;height:auto;object-fit:contain;background:var(--card,#121821);transition:max-height .7s cubic-bezier(.22,1,.36,1)}
+/* 英雄态：插图居中放大，标题在上；图表/要点仍按 data-build 稍后揭示 */
+.slide-has-image:not(.img-docked) .slide-inner{flex-direction:column;align-items:center;justify-content:center}
+.slide-has-image:not(.img-docked) .slide-body{flex:0 1 auto;max-width:min(42ch,92%);text-align:center;display:flex;flex-direction:column;align-items:center}
+.slide-has-image:not(.img-docked) .slide-body .accent-line{margin-left:auto;margin-right:auto}
+.slide-has-image:not(.img-docked) .slide-body h1{max-width:18ch}
+.slide-has-image:not(.img-docked) .slide-image{order:-1;flex:0 0 auto;width:min(78vw,760px);max-width:92%;transform:scale(1)}
+.slide-has-image:not(.img-docked) .slide-image img{max-height:min(58vh,560px)}
+/* 停靠态：横屏右侧；窄屏/竖屏下方缩略，中央留给解说 */
+.slide-has-image.img-docked .slide-inner{flex-direction:row;align-items:center}
+.slide-has-image.img-docked .slide-body{flex:1 1 48%;max-width:52%;text-align:left;align-items:stretch}
+.slide-has-image.img-docked .slide-body .accent-line{margin-left:0;margin-right:0}
+.slide-has-image.img-docked .slide-image{order:0;flex:0 0 min(42%,440px);max-width:46%;width:auto}
+.slide-has-image.img-docked .slide-image img{max-height:min(62vh,520px)}
+@media (max-width:900px){
+  .slide-has-image.img-docked .slide-inner{flex-direction:column;align-items:stretch}
+  .slide-has-image.img-docked .slide-body{max-width:100%;flex:1 1 auto}
+  .slide-has-image.img-docked .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
+  .slide-has-image.img-docked .slide-image img{max-height:min(32vh,280px)}
+}
 .hl-flash,.highlight-flash{display:inline;padding:0 4px;border-radius:6px;background:linear-gradient(90deg,rgba(250,204,21,.25),rgba(251,146,60,.22));box-shadow:0 0 0 1px rgba(250,204,21,.35);animation:hlFlash 2.4s ease-in-out infinite}
 .fx-show .hl-flash,.fx-show .highlight-flash{animation:hlFlash 2.4s ease-in-out infinite}
 @keyframes hlFlash{0%,100%{opacity:1;box-shadow:0 0 0 1px rgba(250,204,21,.35),0 0 8px rgba(250,204,21,.15)}50%{opacity:1;box-shadow:0 0 0 1px rgba(251,146,60,.55),0 0 18px rgba(250,204,21,.45)}}
@@ -1197,10 +1216,11 @@ li{margin:7px 0}
   .deck{flex-direction:column;height:auto;transform:none !important;transition:none}
   .slide{min-width:100%;width:100%;height:auto;min-height:0;padding:72px 18px 28px;justify-content:flex-start;overflow:visible;border-bottom:1px solid color-mix(in srgb,var(--line,#e7e0d2) 80%,transparent)}
   .slide-inner{min-height:0;max-width:100%}
-  .slide-has-image .slide-inner{flex-direction:column;align-items:stretch;gap:14px}
-  .slide-has-image .slide-body{max-width:100%;flex:1 1 auto}
-  .slide-image{flex:0 0 auto;max-width:100%;width:100%}
-  .slide-image img{max-height:36vh;object-fit:contain}
+  /* 竖屏阅读：停靠态（图在下方缩略），正文居中可读 */
+  .slide-has-image .slide-inner,.slide-has-image.img-docked .slide-inner{flex-direction:column;align-items:stretch;gap:14px}
+  .slide-has-image .slide-body,.slide-has-image.img-docked .slide-body{max-width:100%;flex:1 1 auto;text-align:left}
+  .slide-has-image .slide-image,.slide-has-image.img-docked .slide-image{flex:0 0 auto;max-width:100%;width:100%;order:2}
+  .slide-has-image .slide-image img,.slide-has-image.img-docked .slide-image img{max-height:28vh;object-fit:contain}
   .fx-orb{display:none}
   .anim,.chart-in{opacity:1 !important;transform:none !important;animation:none !important}
   .hbar-fill,.col-bar,.metric-row i::after,.card i::after{width:calc(var(--v,var(--h))*1%) !important;height:calc(var(--h)*1%) !important;animation:none !important}
@@ -1268,7 +1288,15 @@ ${slidesHtml}
       var b=Number(node.getAttribute('data-build')||0);
       if(b>m) m=b;
     });
+    var dock=Number(slide.getAttribute('data-img-dock')||-1);
+    if(dock>m) m=dock;
     return m;
+  }
+  function syncImageDock(slide, upTo){
+    var dock=Number(slide.getAttribute('data-img-dock')||-1);
+    if(dock<0) return;
+    if(upTo>=dock || isPortraitRead()) slide.classList.add('img-docked');
+    else slide.classList.remove('img-docked');
   }
   function applyBuild(slide, upTo){
     Array.prototype.forEach.call(slide.querySelectorAll('[data-build]'),function(node){
@@ -1291,6 +1319,7 @@ ${slidesHtml}
         }
       }
     });
+    syncImageDock(slide, upTo);
   }
   function updateHud(flashDone){
     if(!hud) return;
@@ -1301,6 +1330,7 @@ ${slidesHtml}
     for(var k=0;k<n;k++){
       slides[k].classList.remove('is-active');
       if(!isPortraitRead()){
+        slides[k].classList.remove('img-docked');
         Array.prototype.forEach.call(slides[k].querySelectorAll('.fx-show'),function(node){node.classList.remove('fx-show')});
         Array.prototype.forEach.call(slides[k].querySelectorAll('.countup[data-to]'),function(c){
           c.removeAttribute('data-counted');
@@ -1313,7 +1343,7 @@ ${slidesHtml}
     el.classList.add('is-active');
     maxStep=maxBuildOf(el);
     if(isPortraitRead()){
-      // 竖屏阅读：一次展开全部要点，弱化分步动效
+      // 竖屏阅读：一次展开全部要点 + 插图停靠下方，弱化分步动效
       step=maxStep;
       applyBuild(el, maxStep);
       for(var p=0;p<n;p++){ applyBuild(slides[p], maxBuildOf(slides[p])); }

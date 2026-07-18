@@ -58,4 +58,23 @@ describe("buildHtmlPptDocument quality gates", () => {
     expect(html).toContain("hub-grid");
     expect(html).toContain("color:var(--accent");
   });
+
+  it("treats slide image as a build component: hero then dock", () => {
+    const pages = buildDefaultHtmlPptPages("插图动效", 10, "数据洞察", "rose_editorial").map(
+      (p, i) =>
+        i === 0
+          ? { ...p, imageUrl: "https://cdn.example.com/slide-hero.png" }
+          : p,
+    );
+    const html = buildHtmlPptDocument({
+      title: "插图动效",
+      styleId: "rose_editorial",
+      pages,
+    });
+    expect(html).toContain('data-img-dock="1"');
+    expect(html).toContain('data-role="slide-image"');
+    expect(html).toContain("syncImageDock");
+    expect(html).toContain("img-docked");
+    expect(html).toContain("slide-has-image:not(.img-docked)");
+  });
 });
