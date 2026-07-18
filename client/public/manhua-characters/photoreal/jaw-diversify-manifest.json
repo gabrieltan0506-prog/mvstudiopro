@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-18T01:01:38.745Z",
+  "updatedAt": "2026-07-18T01:12:07.412Z",
   "policy": "1C jaw diversify via image-2-edit",
   "items": [
     {
@@ -127,6 +127,27 @@
       "labelZh": "菱形·锐但不尖",
       "ok": true,
       "at": "2026-07-18T01:01:38.745Z"
+    },
+    {
+      "id": "char_m_04",
+      "shapeId": "m_wide_jaw",
+      "labelZh": "宽下颌",
+      "ok": true,
+      "at": "2026-07-18T01:05:09.180Z"
+    },
+    {
+      "id": "char_m_05",
+      "shapeId": "m_soft_square",
+      "labelZh": "软方脸",
+      "ok": true,
+      "at": "2026-07-18T01:08:43.452Z"
+    },
+    {
+      "id": "char_m_06",
+      "shapeId": "m_oblong",
+      "labelZh": "长脸·实质下巴",
+      "ok": true,
+      "at": "2026-07-18T01:12:07.412Z"
     }
   ]
 }
