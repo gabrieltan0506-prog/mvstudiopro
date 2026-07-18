@@ -485,10 +485,19 @@ export default function OmniCanvas() {
         }
         return { blocks: nextBlocks, edges };
       }
+      const continuity =
+        writerConfirmed && writerPack
+          ? resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode)
+          : null;
+      const focusCtx =
+        writerConfirmed && writerPack && continuity
+          ? composeWriterPackFactoryContext(writerPack, continuity.episodeIndex)
+          : writerContext;
       const spawned = spawnManhuaDramaStudio({
         originX: 60,
-        originY: 80,
+        originY: 80 + Math.max(0, (continuity?.episodeIndex ?? 1) - 1) * 420,
         topic,
+        seriesTitle: writerPack?.seriesTitle,
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
         characterIds: selectedCharacterIds,
@@ -496,8 +505,13 @@ export default function OmniCanvas() {
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
         videoReverseOutputMode: factoryReverseMode,
-        writerContext,
-        includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
+        writerContext: focusCtx,
+        includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
+        episodeIndex: continuity?.episodeIndex,
+        episodeTitle: continuity?.episodeTitle,
+        endingHook: continuity?.endingHook,
+        previousEndingHook: continuity?.previousEndingHook,
+        previouslyOnRecap: continuity?.previouslyOnRecap,
       });
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
@@ -525,6 +539,9 @@ export default function OmniCanvas() {
       factoryReverseMode,
       writerContext,
       directorUnlocked,
+      writerConfirmed,
+      writerPack,
+      writerFocusEpisode,
     ],
   );
 

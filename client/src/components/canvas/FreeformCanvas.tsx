@@ -33,6 +33,11 @@ import {
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import {
+  getBlockEpisodeIndex,
+  sanitizeManhuaRecapUpstreamLinks,
+} from "@/lib/canvasDramaStudio";
+import { resolvePreviousEpisodeClipUrl } from "@shared/manhuaClipContinuity";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
@@ -445,22 +450,34 @@ export default function FreeformCanvas({
     async (blockId: string) => {
       const block = blocks.find((b) => b.id === blockId);
       if (!block) return;
-      const visionImages = collectVisionImages(blockId, blocks, edges);
+      // 与工厂管线对齐：切断 recap→story 误连，避免手点节点吃到前情提要图
+      const { blocks: safeBlocks, edges: safeEdges } = sanitizeManhuaRecapUpstreamLinks(blocks, edges);
+      const visionImages = collectVisionImages(blockId, safeBlocks, safeEdges);
       const nearestRef =
         block.kind === "image" || block.kind === "video"
-          ? block.refImageUrl || resolveNearestUpstreamImageUrl(blockId, blocks, edges)
+          ? block.refImageUrl || resolveNearestUpstreamImageUrl(blockId, safeBlocks, safeEdges)
           : block.refImageUrl;
-      const runBlockPayload =
+      let runBlockPayload =
         nearestRef && nearestRef !== block.refImageUrl
           ? { ...block, refImageUrl: nearestRef }
           : block;
+      // 手点 clip：与工厂管线一样注入上一集成片，供 Seedance 末帧/视频参考
+      if (block.id.startsWith("clip-") && !runBlockPayload.refVideoUrl) {
+        const ep = getBlockEpisodeIndex(runBlockPayload);
+        if (ep != null && ep >= 2) {
+          const prevClipUrl = resolvePreviousEpisodeClipUrl(safeBlocks, ep);
+          if (prevClipUrl) {
+            runBlockPayload = { ...runBlockPayload, refVideoUrl: prevClipUrl };
+          }
+        }
+      }
       patchOne(blockId, { status: "running", error: undefined });
       try {
         const docTexts =
           block.kind === "text" || block.kind === "copy_organize"
-            ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, blocks, edges))
+            ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, safeBlocks, safeEdges))
             : [];
-        const texts = [...collectUpstreamTexts(blockId, blocks, edges), ...docTexts];
+        const texts = [...collectUpstreamTexts(blockId, safeBlocks, safeEdges), ...docTexts];
         const out = await runCanvasBlock(runDeps, runBlockPayload, { visionImages, texts });
         patchOne(blockId, {
           status: "done",
