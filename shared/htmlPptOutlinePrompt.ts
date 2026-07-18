@@ -26,7 +26,7 @@ export type HtmlPptOutlineLlmResult = {
   pages: HtmlPptPage[];
 };
 
-const VIZ_OK = new Set<HtmlPptVizKind>(["cover", "ring", "bars", "columns", "steps", "cards"]);
+const VIZ_OK = new Set<HtmlPptVizKind>(["cover", "ring", "bars", "columns", "steps", "cards", "line"]);
 
 export function buildHtmlPptOutlineSystemPrompt(): string {
   return `你是 mvstudiopro「动效PPT」内容策划，用 **GPT-5.6 Sol** 产出可直接投屏的中文演示大纲。
@@ -36,10 +36,11 @@ export function buildHtmlPptOutlineSystemPrompt(): string {
 1. 紧扣用户主题/用途/补充背景；禁止无关行业模板套话。
 2. 每页一个主判断；标题短而锋利；bullets 写具体结论（可含数字、对比、动作）。
 3. 至少一半页面必须带 series（2–6 项，value 为 0–100 相对强度或占比），便于多色条形/柱状/环形图。
-4. viz 只能是：cover | ring | bars | columns | steps | cards。
-5. 封面用 cover；目录/路径用 steps；含 %/完成度用 ring；对比/结构用 columns 或 bars；3–4 个并列指标用 cards。
-6. 语气像趋势洞察看板：高亮对比、可执行下一步，不是百科简介。
-7. 只输出 JSON（json_object），不要 Markdown 围栏。
+4. viz 只能是：cover | ring | bars | columns | steps | cards | line。
+5. 封面用 cover；目录/路径用 steps；含 %/完成度用 ring；对比/结构用 columns 或 bars；走势/热度用 line；3–4 个并列指标用 cards。
+6. 至少一页 bars（多色排名条）+ 一页 ring 或 line，保证有「图表动效」而不只是文字。
+7. 语气像趋势洞察看板：高亮对比、可执行下一步，不是百科简介。
+8. 只输出 JSON（json_object），不要 Markdown 围栏。
 
 JSON schema:
 {

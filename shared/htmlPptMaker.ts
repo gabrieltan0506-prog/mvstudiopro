@@ -16,7 +16,7 @@ export type HtmlPptStyleId =
   | "ocean_brief";
 
 /** 页面可视化类型：导出 HTML 内嵌 SVG/CSS 真图表（非纯文字入场） */
-export type HtmlPptVizKind = "cover" | "ring" | "bars" | "columns" | "steps" | "cards";
+export type HtmlPptVizKind = "cover" | "ring" | "bars" | "columns" | "steps" | "cards" | "line";
 
 export type HtmlPptPage = {
   title: string;
@@ -415,6 +415,20 @@ function midPagesForStyle(styleId: HtmlPptStyleId): HtmlPptPage[] {
       ],
     },
     {
+      title: "热度走势",
+      viz: "line",
+      bullets: ["周初蓄力", "中段拉升", "周末回落仍高于均值"],
+      series: [
+        { label: "D1", value: 42 },
+        { label: "D2", value: 55 },
+        { label: "D3", value: 68 },
+        { label: "D4", value: 81 },
+        { label: "D5", value: 74 },
+        { label: "D6", value: 88 },
+        { label: "D7", value: 79 },
+      ],
+    },
+    {
       title: "结构拆解",
       viz: "columns",
       bullets: ["驱动因素", "对比基准", "异常点"],
@@ -492,7 +506,7 @@ export function buildDefaultHtmlPptPages(
 
 /** 规范化用户编辑后的清单 */
 export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
-  const vizOk = new Set<HtmlPptVizKind>(["cover", "ring", "bars", "columns", "steps", "cards"]);
+  const vizOk = new Set<HtmlPptVizKind>(["cover", "ring", "bars", "columns", "steps", "cards", "line"]);
   return (pages || [])
     .map((p) => ({
       title: String(p?.title || "").trim().slice(0, 80),
@@ -572,6 +586,7 @@ export function inferHtmlPptViz(page: HtmlPptPage, index: number, total: number)
   }
   if (/路径|阶段|里程碑|路线|时间线|步骤|Now|Next/.test(page.title)) return "steps";
   if (/结构|拆解|市场|TAM|对比/.test(page.title)) return "columns";
+  if (/趋势|走势|波动|增长曲线|热度/.test(page.title)) return "line";
   if ((page.bullets || []).length >= 3 && (page.series?.length || /风险|竞争|壁垒|缺口/.test(page.title))) {
     return "bars";
   }
@@ -625,17 +640,19 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 5)
       .map(
         (s, i) =>
-          `<div class="metric-row anim d3" style="${toneStyle(i, `--v:${s.value}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b>${Math.round(s.value)}</b><i></i></div>`,
+          `<div class="metric-row chart-in" style="${toneStyle(i, `--v:${s.value}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b><i></i></div>`,
       )
       .join("");
+    const kpiText = page.kpi || `${Math.round(pct)}%`;
+    const kpiNum = parseKpiPercent(page.kpi) ?? Math.round(pct);
     return `<div class="viz viz-split">
-  <div class="viz-ring anim d2" style="--c:${t0.c};--g:${t0.g}">
+  <div class="viz-ring" style="--c:${t0.c};--g:${t0.g}">
     <svg class="ring-svg" viewBox="0 0 140 140" aria-hidden="true">
       <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${t0.c}"/><stop offset="55%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
       <circle class="ring-track" cx="70" cy="70" r="${r}"/>
       <circle class="ring-value ring-grad" cx="70" cy="70" r="${r}" stroke-dasharray="${dash} ${circ.toFixed(1)}"/>
     </svg>
-    <div class="ring-label"><strong>${escapeHtml(page.kpi || `${Math.round(pct)}%`)}</strong><span>主指标</span></div>
+    <div class="ring-label"><strong class="countup" data-to="${kpiNum}" data-suffix="%">${escapeHtml(kpiText)}</strong><span>主指标</span></div>
   </div>
   <div class="viz-side">${side}</div>
 </div>`;
@@ -647,7 +664,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 6)
       .map(
         (s, i) =>
-          `<div class="col anim d3" style="${toneStyle(i, `--h:${Math.round((s.value / max) * 100)}`)}"><div class="col-bar"></div><span>${escapeHtml(s.label)}</span><b>${Math.round(s.value)}</b></div>`,
+          `<div class="col chart-in" style="${toneStyle(i, `--h:${Math.round((s.value / max) * 100)}`)}"><div class="col-bar"></div><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b></div>`,
       )
       .join("");
     return `<div class="viz viz-cols">${cols}</div>`;
@@ -658,7 +675,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const steps = items
       .map(
         (lab, i) =>
-          `<div class="step anim d3" style="${toneStyle(i)}"><div class="step-dot">${i + 1}</div><div class="step-body">${escapeHtml(lab)}</div></div>`,
+          `<div class="step chart-in" style="${toneStyle(i)}"><div class="step-dot">${i + 1}</div><div class="step-body">${escapeHtml(lab)}</div></div>`,
       )
       .join("");
     return `<div class="viz viz-steps">${steps}</div>`;
@@ -669,18 +686,49 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 4)
       .map(
         (s, i) =>
-          `<div class="card anim d3" style="${toneStyle(i, `--v:${s.value}`)}"><div class="card-top"></div><b>${Math.round(s.value)}</b><span>${escapeHtml(s.label)}</span><i></i></div>`,
+          `<div class="card chart-in" style="${toneStyle(i, `--v:${s.value}`)}"><div class="card-top"></div><b class="countup" data-to="${Math.round(s.value)}">0</b><span>${escapeHtml(s.label)}</span><i></i></div>`,
       )
       .join("");
     return `<div class="viz viz-cards">${cards}</div>`;
   }
 
-  // bars：每条不同高亮色 + 排名圆点（对标热搜条）
+  if (kind === "line") {
+    const pts = series.slice(0, 8);
+    const w = 560;
+    const h = 180;
+    const pad = 16;
+    const max = Math.max(1, ...pts.map((s) => s.value));
+    const coords = pts.map((s, i) => {
+      const x = pad + (i * (w - pad * 2)) / Math.max(1, pts.length - 1);
+      const y = h - pad - (s.value / max) * (h - pad * 2);
+      return { x, y, s };
+    });
+    const poly = coords.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    const dots = coords
+      .map(
+        (p, i) =>
+          `<circle class="line-dot" style="${toneStyle(i)}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="line-val" x="${p.x.toFixed(1)}" y="${(p.y - 10).toFixed(1)}" style="${toneStyle(i)}">${Math.round(p.s.value)}</text>`,
+      )
+      .join("");
+    const labs = pts
+      .map((s, i) => `<span class="line-lab" style="${toneStyle(i)}">${escapeHtml(s.label)}</span>`)
+      .join("");
+    return `<div class="viz viz-line">
+  <svg class="line-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="${t0.c}"/><stop offset="50%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
+    <polyline class="line-path" points="${poly}" fill="none" stroke="url(#lg)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    ${dots}
+  </svg>
+  <div class="line-labs">${labs}</div>
+</div>`;
+  }
+
+  // bars：每条不同高亮色 + 排名圆点 + 扫光（对标热搜条）
   const bars = series
     .slice(0, 8)
     .map(
       (s, i) =>
-        `<div class="hbar anim d3" style="${toneStyle(i, `--v:${s.value}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"></div></div><div class="hbar-val">${Math.round(s.value)}</div></div>`,
+        `<div class="hbar chart-in" style="${toneStyle(i, `--v:${s.value}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${Math.round(s.value)}">0</div></div>`,
     )
     .join("");
   return `<div class="viz viz-bars">${bars}</div>`;
@@ -699,14 +747,17 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
     .map((p, i) => {
       const kind = inferHtmlPptViz(p, i, safePages.length);
       const viz = renderVizHtml(kind, p, i);
+      const chartKinds = new Set(["steps", "cards", "bars", "columns", "ring", "line", "cover"]);
       const bulletList =
-        kind === "steps" || kind === "cards" || kind === "bars" || kind === "columns" || kind === "ring"
+        chartKinds.has(kind)
           ? ""
           : (p.bullets || []).length
             ? `<ul class="anim d3">${(p.bullets || []).map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`
             : "";
       return `<section class="slide${i === 0 ? " is-active" : ""}" data-i="${i}" data-viz="${kind}">
   <div class="slide-bg" aria-hidden="true"></div>
+  <div class="fx-orb o1" aria-hidden="true"></div>
+  <div class="fx-orb o2" aria-hidden="true"></div>
   <div class="slide-inner">
   <div class="accent-line"></div>
   <div class="meta anim d0"><span class="accent">${escapeHtml(styleMeta.labelZh)}</span><span>${i + 1} / ${safePages.length}</span></div>
@@ -734,6 +785,11 @@ ${STYLE_CSS[styleId]}
 .deck{height:100%;width:100%;display:flex;transition:transform .62s cubic-bezier(.22,1,.36,1)}
 .slide{min-width:100vw;height:100vh;padding:clamp(24px,4.5vw,56px);display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden}
 .slide-bg{position:absolute;inset:0;z-index:0;pointer-events:none;background-image:url('${bgUrl}');background-size:cover;background-position:center;opacity:.38;mix-blend-mode:soft-light}
+.fx-orb{position:absolute;z-index:0;pointer-events:none;border-radius:50%;filter:blur(40px);opacity:0}
+.fx-orb.o1{width:280px;height:280px;left:-40px;top:10%;background:rgba(34,211,238,.22)}
+.fx-orb.o2{width:240px;height:240px;right:-30px;bottom:8%;background:rgba(251,146,60,.18)}
+.slide.is-active .fx-orb{animation:orbPulse 2.4s ease-in-out both}
+.slide.is-active .fx-orb.o2{animation-delay:.25s}
 .slide-inner{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;min-height:72%;max-width:1100px;width:100%}
 .accent-line{height:3px;width:120px;background:linear-gradient(90deg,#22d3ee,#a78bfa,#a3e635,#fb923c);margin-bottom:10px;box-shadow:0 0 12px rgba(34,211,238,.35)}
 .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:14px}
@@ -746,6 +802,9 @@ li{margin:7px 0}
 .hint{position:fixed;right:16px;bottom:14px;z-index:5;font-size:12px;color:var(--muted);background:rgba(0,0,0,.28);padding:6px 10px;border-radius:999px;backdrop-filter:blur(8px)}
 .viz{margin-top:18px}
 .rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:800;font-style:normal;color:#0b1020;background:var(--c);box-shadow:0 0 10px var(--g)}
+.slide.is-active .rank{animation:rankPop .45s cubic-bezier(.34,1.56,.64,1) both;animation-delay:calc(.08s + var(--i)*.06s)}
+.chart-in{opacity:0;transform:translateX(-18px)}
+.slide.is-active .chart-in{animation:chartIn .55s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.1s + var(--i)*.07s)}
 .viz-split{display:grid;grid-template-columns:minmax(140px,220px) 1fr;gap:28px;align-items:center}
 .viz-ring{position:relative;width:min(220px,42vw);aspect-ratio:1;filter:drop-shadow(0 0 16px var(--g))}
 .ring-svg{width:100%;height:100%;transform:rotate(-90deg)}
@@ -753,7 +812,7 @@ li{margin:7px 0}
 .ring-value{fill:none;stroke:var(--c,#22d3ee);stroke-width:12;stroke-linecap:round}
 .ring-value.ring-grad{stroke:url(#rg)}
 .slide:not(.is-active) .ring-value{stroke-dasharray:0 999 !important}
-.slide.is-active .ring-value{animation:ringDraw 1s cubic-bezier(.22,1,.36,1) both}
+.slide.is-active .ring-value{animation:ringDraw 1.05s cubic-bezier(.22,1,.36,1) both}
 .ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .ring-label strong{font-size:clamp(1.6rem,3.5vw,2.4rem);color:#f8fafc;line-height:1;text-shadow:0 0 20px var(--g,#22d3ee)}
 .ring-label span{font-size:12px;color:var(--muted);margin-top:4px}
@@ -767,13 +826,15 @@ li{margin:7px 0}
 .hbar{display:grid;grid-template-columns:28px minmax(72px,130px) 1fr 44px;gap:10px;align-items:center}
 .hbar-lab{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hbar-track{height:14px;border-radius:99px;background:rgba(148,163,184,.16);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
-.hbar-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--c),color-mix(in srgb,var(--c) 55%,#fff));box-shadow:0 0 14px var(--g)}
-.slide.is-active .hbar-fill{animation:fillBar .9s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.1s + var(--i)*.07s);width:calc(var(--v)*1%)}
+.hbar-fill{position:relative;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--c),color-mix(in srgb,var(--c) 55%,#fff));box-shadow:0 0 14px var(--g);overflow:hidden}
+.hbar-fill .shimmer{position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);transform:translateX(-120%)}
+.slide.is-active .hbar-fill{animation:fillBar .95s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.1s + var(--i)*.07s);width:calc(var(--v)*1%)}
+.slide.is-active .hbar-fill .shimmer{animation:shimmer 1.1s ease-in-out both;animation-delay:calc(.35s + var(--i)*.07s)}
 .hbar-val{font-size:13px;color:var(--c);font-weight:800;text-align:right;text-shadow:0 0 10px var(--g)}
 .viz-cols{display:flex;align-items:flex-end;gap:14px;height:200px;max-width:720px;padding-top:8px}
 .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
 .col-bar{width:100%;max-width:56px;height:0;border-radius:10px 10px 4px 4px;background:linear-gradient(180deg,var(--c),color-mix(in srgb,var(--c) 35%,#0b1020));box-shadow:0 0 16px var(--g)}
-.slide.is-active .col-bar{animation:colUp .85s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.1s + var(--i)*.08s);height:calc(var(--h)*1%)}
+.slide.is-active .col-bar{animation:colBounce .95s cubic-bezier(.34,1.4,.64,1) both;animation-delay:calc(.1s + var(--i)*.08s);height:calc(var(--h)*1%)}
 .col span{font-size:12px;color:var(--muted)}
 .col b{font-size:13px;color:var(--c);font-weight:800;text-shadow:0 0 8px var(--g)}
 .viz-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;margin-top:8px}
@@ -788,22 +849,39 @@ li{margin:7px 0}
 .card i{display:block;margin-top:12px;height:6px;border-radius:99px;background:rgba(148,163,184,.2);position:relative;overflow:hidden}
 .card i::after{content:"";position:absolute;inset:0 auto 0 0;width:0;background:var(--c);box-shadow:0 0 10px var(--g)}
 .slide.is-active .card i::after{animation:fillX .8s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(.12s + var(--i)*.08s);width:calc(var(--v)*1%)}
+.viz-line{max-width:720px}
+.line-svg{width:100%;height:190px;display:block;overflow:visible}
+.line-path{fill:none;stroke-dasharray:1200;stroke-dashoffset:1200;filter:drop-shadow(0 0 8px rgba(34,211,238,.45))}
+.slide.is-active .line-path{animation:lineDraw 1.15s cubic-bezier(.22,1,.36,1) forwards}
+.line-dot{fill:var(--c);opacity:0;filter:drop-shadow(0 0 6px var(--g))}
+.slide.is-active .line-dot{animation:dotPop .4s cubic-bezier(.34,1.56,.64,1) both;animation-delay:calc(.55s + var(--i)*.08s)}
+.line-val{fill:var(--c);font-size:11px;font-weight:700;text-anchor:middle;opacity:0}
+.slide.is-active .line-val{animation:fadeIn .35s ease both;animation-delay:calc(.65s + var(--i)*.08s)}
+.line-labs{display:flex;justify-content:space-between;gap:6px;margin-top:8px}
+.line-lab{font-size:11px;color:var(--c);text-shadow:0 0 8px var(--g)}
 .viz-cover{position:relative;width:min(180px,36vw);margin-top:8px;filter:drop-shadow(0 0 16px var(--g))}
 .cover-kpi{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(1.4rem,3vw,2rem);font-weight:800;color:#f8fafc;text-shadow:0 0 16px var(--g)}
-.slide .anim{opacity:0;transform:translateY(18px)}
-.slide.is-active .anim{animation:rise .55s cubic-bezier(.22,1,.36,1) both}
+.slide .anim{opacity:0;transform:translateY(12px)}
+.slide.is-active .anim{animation:rise .45s cubic-bezier(.22,1,.36,1) both}
 .slide.is-active .anim.d0{animation-delay:.02s}
-.slide.is-active .anim.d1{animation-delay:.08s}
-.slide.is-active .anim.d2{animation-delay:.14s}
-.slide.is-active .anim.d3{animation-delay:calc(.18s + var(--i,0)*.07s)}
-.slide.is-active .anim.d4{animation-delay:.36s}
+.slide.is-active .anim.d1{animation-delay:.06s}
+.slide.is-active .anim.d2{animation-delay:.1s}
+.slide.is-active .anim.d3{animation-delay:calc(.14s + var(--i,0)*.06s)}
+.slide.is-active .anim.d4{animation-delay:.3s}
 .slide.is-active .accent-line{animation:barGrow .7s cubic-bezier(.22,1,.36,1) both}
-@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes chartIn{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
 @keyframes barGrow{from{transform:scaleX(.2);transform-origin:left center;opacity:.4}to{transform:none;opacity:1}}
 @keyframes fillX{from{width:0}to{width:calc(var(--v)*1%)}}
 @keyframes fillBar{from{width:0}to{width:calc(var(--v)*1%)}}
-@keyframes colUp{from{height:0}to{height:calc(var(--h)*1%)}}
+@keyframes colBounce{0%{height:0}70%{height:calc(var(--h)*1.06%)}100%{height:calc(var(--h)*1%)}}
 @keyframes ringDraw{from{stroke-dasharray:0 999}}
+@keyframes lineDraw{to{stroke-dashoffset:0}}
+@keyframes shimmer{from{transform:translateX(-120%)}to{transform:translateX(120%)}}
+@keyframes rankPop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes dotPop{from{opacity:0;r:0}to{opacity:1}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes orbPulse{0%{opacity:0;transform:scale(.85)}40%{opacity:.9}100%{opacity:.55;transform:scale(1.05)}}
 @media (max-width:720px){.viz-split{grid-template-columns:1fr}.hbar{grid-template-columns:24px 64px 1fr 36px}.viz-cols{height:160px}}
 </style>
 </head>
@@ -817,11 +895,29 @@ ${slidesHtml}
   var deck=document.getElementById('deck');
   var slides=deck ? deck.children : [];
   var n=slides.length; var i=0;
+  function countUp(root){
+    var nodes=root.querySelectorAll('.countup[data-to]');
+    nodes.forEach(function(node){
+      var to=Number(node.getAttribute('data-to')||0);
+      var suffix=node.getAttribute('data-suffix')||'';
+      var start=performance.now();
+      var dur=900;
+      function tick(now){
+        var t=Math.min(1,(now-start)/dur);
+        var eased=1-Math.pow(1-t,3);
+        node.textContent=Math.round(to*eased)+suffix;
+        if(t<1) requestAnimationFrame(tick);
+      }
+      node.textContent='0'+suffix;
+      requestAnimationFrame(tick);
+    });
+  }
   function playEnter(idx){
     for(var k=0;k<n;k++){ slides[k].classList.remove('is-active'); }
     var el=slides[idx]; if(!el) return;
     void el.offsetWidth;
     el.classList.add('is-active');
+    countUp(el);
   }
   function go(x){
     var next=Math.max(0,Math.min(n-1,x));
