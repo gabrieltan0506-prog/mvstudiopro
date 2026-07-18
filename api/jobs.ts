@@ -1391,6 +1391,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               .trim()
               .replace(/\/+$/, "");
             const title = String(process.env.OPENROUTER_APP_TITLE || "MV Studio Pro").trim() || "MV Studio Pro";
+            // 与 OpenRouter 文档示例一致：reasoning.enabled + openai/gpt-5.6-sol
             const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
               method: "POST",
               headers: {
@@ -1402,20 +1403,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               },
               body: JSON.stringify({
                 model: "openai/gpt-5.6-sol",
-                messages: [{ role: "user", content: "Reply with exactly: pong" }],
-                max_tokens: 16,
+                messages: [
+                  {
+                    role: "user",
+                    content: "How many r`s are in the word `strawberry`?",
+                  },
+                ],
+                reasoning: { enabled: true },
               }),
-              signal: AbortSignal.timeout(90_000),
+              signal: AbortSignal.timeout(180_000),
             });
             const json: any = await r.json().catch(() => ({}));
             const text = String(json?.choices?.[0]?.message?.content || "").trim();
+            const reasoningText = String(
+              json?.choices?.[0]?.message?.reasoning ||
+                json?.choices?.[0]?.reasoning ||
+                json?.reasoning ||
+                "",
+            ).trim();
             out.openrouter_gpt56_sol = {
               ok: r.ok && Boolean(text),
               configured: true,
               model: "openai/gpt-5.6-sol",
+              reasoningEnabled: true,
               status: r.status,
               ms: Date.now() - t0,
-              reply: text.slice(0, 80) || null,
+              reply: text.slice(0, 240) || null,
+              reasoningPrefix: reasoningText ? reasoningText.slice(0, 160) : null,
               error: r.ok ? null : json?.error?.message || JSON.stringify(json).slice(0, 240),
             };
           } catch (e: any) {
