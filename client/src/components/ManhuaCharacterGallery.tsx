@@ -13,6 +13,7 @@ import {
   getManhuaCharacterLifeStage,
   getManhuaCouplePackById,
   getManhuaTemperamentPackById,
+  listManhuaCharactersByGender,
   listManhuaCharactersForLibraryTab,
   parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
@@ -153,6 +154,8 @@ export default function ManhuaCharacterGallery({
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
   const favoriteSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
+  const females = useMemo(() => listManhuaCharactersByGender("female"), []);
+  const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const pool = useMemo(() => listManhuaCharactersForLibraryTab(libraryTab), [libraryTab]);
   const isLeadTab = libraryTab === "female" || libraryTab === "male";
   const characterInTab = (c: ManhuaCharacterTemplate) => {
