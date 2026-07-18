@@ -11,7 +11,7 @@ import {
   type HtmlPptTheme,
   type HtmlPptVizKind,
 } from "@shared/htmlPptMaker";
-import { downloadHtmlPptPptx } from "@shared/htmlPptPptx";
+import { downloadHtmlPptPptx, listHtmlPptPptxImageUrls } from "@shared/htmlPptPptx";
 import { INFOGRAPHIC_NOTE_TEMPLATES } from "@shared/infographicNoteTemplates";
 import {
   CREDIT_COSTS,
@@ -84,6 +84,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const suggestThemesMutation = trpc.mvAnalysis.suggestHtmlPptThemes.useMutation();
   const patchPageMutation = trpc.mvAnalysis.patchHtmlPptPage.useMutation();
   const slideImageMutation = trpc.mvAnalysis.generateHtmlPptSlideImage.useMutation();
+  const resolvePptxImagesMutation = trpc.mvAnalysis.resolveHtmlPptPptxImages.useMutation();
 
   const styleList = useMemo(
     () => Object.entries(HTML_PPT_STYLES) as [HtmlPptStyleId, (typeof HTML_PPT_STYLES)[HtmlPptStyleId]][],
@@ -96,7 +97,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     generateOutlineMutation.isPending ||
     suggestThemesMutation.isPending ||
     patchPageMutation.isPending ||
-    slideImageMutation.isPending;
+    slideImageMutation.isPending ||
+    resolvePptxImagesMutation.isPending;
 
   const confirmedThemes = (): HtmlPptTheme[] =>
     themeRows.filter((t) => t.selected && t.title.trim()).map((t) => ({ id: t.id, title: t.title.trim() }));
@@ -366,16 +368,50 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     const deckPages = normalized.length
       ? normalized
       : buildDefaultHtmlPptPages(title, pageCount ?? PLATFORM_HTML_PPT_PAGE_MIN, purpose, styleId);
+    const deck = {
+      title,
+      styleId,
+      purposeZh: purpose,
+      pages: deckPages,
+    };
     setAiError(null);
     setAiBusy(true);
     setAiBusyLabel("正在导出可编辑 PPTX…");
     try {
-      await downloadHtmlPptPptx({
-        title,
-        styleId,
-        purposeZh: purpose,
-        pages: deckPages,
-      });
+      const imageUrls = listHtmlPptPptxImageUrls(deck);
+      let imageDataByUrl: Record<string, string> = {};
+      if (imageUrls.length) {
+        setAiBusyLabel(`正在载入插图（${imageUrls.length}）…`);
+        const resolved = await resolvePptxImagesMutation.mutateAsync({ urls: imageUrls });
+        imageDataByUrl = resolved.imageDataByUrl || {};
+        const missing = imageUrls.filter((u) => !imageDataByUrl[u]);
+        if (missing.length) {
+          throw new Error("部分插图未能载入，请重试导出");
+        }
+      }
+
+      let styleBgDataUrl: string | undefined;
+      try {
+        const bgPath = HTML_PPT_STYLES[styleId]?.bgUrl;
+        if (bgPath && typeof window !== "undefined") {
+          const abs = new URL(bgPath, window.location.origin).toString();
+          const resp = await fetch(abs);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            styleBgDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ""));
+              reader.onerror = () => reject(new Error("叠底图读取失败"));
+              reader.readAsDataURL(blob);
+            });
+          }
+        }
+      } catch {
+        /* 叠底可选 */
+      }
+
+      setAiBusyLabel("正在写入 PPTX…");
+      await downloadHtmlPptPptx(deck, undefined, { imageDataByUrl, styleBgDataUrl });
     } catch (e: unknown) {
       setAiError(e instanceof Error ? e.message : "PPTX 导出失败");
     } finally {
@@ -785,7 +821,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         <div className="space-y-3">
           <p className="text-[11px] text-white/50">
             数字写错：点「返回改清单」免费改 → 再刷新预览。空格=下一步动效，←→=翻页。HTML
-            适合投屏；PPTX 适合拿回本地改隐私数据与措辞。
+            适合投屏；PPTX 保留同款配色与插图（无分步动效），便于本地改隐私数据与措辞。
           </p>
           <div className="flex flex-wrap gap-2">
             <button
