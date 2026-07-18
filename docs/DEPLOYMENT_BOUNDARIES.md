@@ -11,12 +11,12 @@
 - **禁止**只做本地 `git switch` / `reset` / `merge` 卻宣稱已生效。
 - **`git push` 失敗**（憑證、權限、衝突）時：**當場說明錯誤原文**與已嘗試步驟，不裝作已完成。
 
-## 2. 線上部署通道（Fly only）
+## 2. 線上部署通道（Fly API + Vercel 前台）
 
-- **生產與預覽部署只走 Fly**（`main` → GitHub Actions `Fly Deploy` → `https://mvstudiopro.fly.dev`）。
-- **關閉 Vercel Git 自動部署**：`vercel.json` 已設 `git.deploymentEnabled: false` / `github.enabled: false`。不要再開 Vercel Preview、不要把 Vercel 當門禁。
-- 使用者明文要求線上生效時：以 **Fly Deploy success** 為準，不以 Vercel 狀態為準。
-- Agent **可**在對方要求部署時操作 Fly / `fly.toml` / Fly Deploy workflow；**禁止**為了驗證而去觸發 Vercel 部署。
+- **API / Worker**：`main` → GitHub Actions `Fly Deploy` → `https://mvstudiopro.fly.dev`（及 `api.mvstudiopro.com`）。
+- **正式域名前台（www）**：`main` → **Vercel Git 自動部署**（`vercel.json`：`git.deploymentEnabled: true` / `github.enabled: true`）。合進 `main` 後前台與 API 各自發版。
+- 使用者明文要求線上生效時：前台看 **Vercel production Ready**，長請求/API 看 **Fly Deploy success**；兩者都要對上才算完整。
+- **不要把 Vercel Preview 當 CI 門禁**；驗證正式域名以 production 為準。
 
 ## 3. Git / PR（與本倉庫 `.cursor/rules` 對齊）
 

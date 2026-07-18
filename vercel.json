@@ -1,10 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
-    "deploymentEnabled": false
+    "deploymentEnabled": true
   },
   "github": {
-    "enabled": false
+    "enabled": true
   },
   "buildCommand": "pnpm exec vite build",
   "outputDirectory": "client/dist",
