@@ -1,11 +1,12 @@
 /**
- * 同源架构：探针打当前 Origin 的 `/api/health`（与前端同主机或同反代目标），
- * 避免在后端不健康时对长链路 tRPC 堆请求。
+ * 长请求前的健康探针：短轮询后**软放行**，不再 120s 硬挡导致「清单根本没发出去」。
+ * www 直连 api 子域时，同时试同源 `/api/health`（Vercel rewrite → Fly），降低 CORS/冷启动误判。
  */
 
-const FLY_HEALTH_TIMEOUT_MS = 120_000;
-const FLY_HEALTH_POLL_MS = 1_000;
-const FLY_HEALTH_ASSUME_OK_MS = 1_500;
+const FLY_HEALTH_SOFT_ATTEMPTS = 4;
+const FLY_HEALTH_POLL_MS = 700;
+const FLY_HEALTH_PROBE_TIMEOUT_MS = 4_500;
+const FLY_HEALTH_ASSUME_OK_MS = 2_500;
 
 const inflightWaitByOrigin = new Map<string, Promise<void>>();
 const healthyUntilByOrigin = new Map<string, number>();
@@ -18,62 +19,86 @@ export function trpcBaseUrlToOrigin(): string {
   return typeof window !== "undefined" ? window.location.origin : "";
 }
 
+function probeOrigins(preferred: string): string[] {
+  const out: string[] = [];
+  const push = (o: string) => {
+    const v = String(o || "").trim().replace(/\/+$/, "");
+    if (v && !out.includes(v)) out.push(v);
+  };
+  push(preferred);
+  if (typeof window !== "undefined") push(window.location.origin);
+  return out;
+}
+
 async function probeApiHealth(origin: string): Promise<boolean> {
+  if (!origin) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FLY_HEALTH_PROBE_TIMEOUT_MS);
   try {
     const r = await fetch(`${origin}/api/health`, {
       method: "GET",
       cache: "no-store",
       credentials: "omit",
+      signal: controller.signal,
     });
     if (!r.ok) return false;
     const text = await r.text();
     return text.trim() === "ok";
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-async function waitUntilHealthyLoop(origin: string): Promise<void> {
-  const t0 = Date.now();
-  let loggedWait = false;
-  while (Date.now() - t0 < FLY_HEALTH_TIMEOUT_MS) {
-    if (await probeApiHealth(origin)) {
-      if (loggedWait) {
-        console.info(`[FlyHealth] ${origin}/api/health is healthy again`);
+async function softWaitUntilHealthy(preferredOrigin: string): Promise<void> {
+  const origins = probeOrigins(preferredOrigin);
+  for (let attempt = 0; attempt < FLY_HEALTH_SOFT_ATTEMPTS; attempt++) {
+    for (const origin of origins) {
+      if (await probeApiHealth(origin)) {
+        if (attempt > 0) {
+          console.info(`[FlyHealth] ${origin}/api/health ok (attempt ${attempt + 1})`);
+        }
+        return;
       }
-      return;
     }
-    if (!loggedWait) {
-      console.warn(`[FlyHealth] ${origin}/api/health not ready; blocking tRPC until healthy…`);
-      loggedWait = true;
+    if (attempt === 0) {
+      console.warn(
+        `[FlyHealth] health not ready on ${origins.join(" | ")}; soft-polling then proceed…`,
+      );
     }
     await delay(FLY_HEALTH_POLL_MS);
   }
-  throw new Error(
-    `[FlyHealth] Timed out after ${FLY_HEALTH_TIMEOUT_MS}ms waiting for ${origin}/api/health`,
+  console.warn(
+    `[FlyHealth] soft-pass after ${FLY_HEALTH_SOFT_ATTEMPTS} probes; sending request anyway (${preferredOrigin})`,
   );
 }
 
 export async function ensureFlyAppReady(origin: string): Promise<void> {
-  const until = healthyUntilByOrigin.get(origin) ?? 0;
+  const key = String(origin || "").trim() || trpcBaseUrlToOrigin();
+  if (!key) return;
+
+  const until = healthyUntilByOrigin.get(key) ?? 0;
   if (Date.now() < until) return;
 
-  if (await probeApiHealth(origin)) {
-    healthyUntilByOrigin.set(origin, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
-    return;
+  for (const o of probeOrigins(key)) {
+    if (await probeApiHealth(o)) {
+      healthyUntilByOrigin.set(key, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
+      return;
+    }
   }
 
-  healthyUntilByOrigin.delete(origin);
+  healthyUntilByOrigin.delete(key);
 
-  let wait = inflightWaitByOrigin.get(origin);
+  let wait = inflightWaitByOrigin.get(key);
   if (!wait) {
-    wait = waitUntilHealthyLoop(origin).finally(() => {
-      inflightWaitByOrigin.delete(origin);
+    wait = softWaitUntilHealthy(key).finally(() => {
+      inflightWaitByOrigin.delete(key);
     });
-    inflightWaitByOrigin.set(origin, wait);
+    inflightWaitByOrigin.set(key, wait);
   }
   await wait;
-  healthyUntilByOrigin.set(origin, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
+  healthyUntilByOrigin.set(key, Date.now() + FLY_HEALTH_ASSUME_OK_MS);
 }
 
 export async function withFlyHealthGate<T>(origin: string, run: () => Promise<T>): Promise<T> {

@@ -1,6 +1,24 @@
-api
+# 正式域名只发 Vite 前台；API 反代到 Fly。收紧上传体积，避免 CLI 上传被网关掐断。
+node_modules
+.git
+.github
+server
+scripts
 docs
+drizzle
 drizzle*
-*.log
+api
 tmp
 dist
+*.log
+*.tsbuildinfo
+coverage
+playwright-report
+test-results
+.turbo
+.cache
+Downloads
+*.mp4
+*.mov
+*.zip
+*.tgz

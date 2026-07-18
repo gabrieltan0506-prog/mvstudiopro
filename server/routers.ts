@@ -7059,8 +7059,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 动效 PPT · GPT-5.6 Sol 生成页面清单与图表数据（方案 A，无出图）。
-     * 扣 {@link CREDIT_COSTS.platformHtmlPptOutline} 积分/次。
+     * 动效 PPT · GPT-5.6 Sol 页面清单：入队长任务（避免同步 tRPC/网关超时）。
+     * 扣 {@link CREDIT_COSTS.platformHtmlPptOutline} 积分/次；失败由 worker 在终态退还。
+     * 前端用 pollJobUntilTerminal 取 output.pages / deckTitle / summary / model。
      */
     generateHtmlPptOutline: protectedProcedure
       .input(
@@ -7102,44 +7103,47 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           creditsCharged = true;
         }
 
+        const jobId = nanoid(16);
         try {
-          const { generateHtmlPptOutline } = await import("./services/platformHtmlPptOutline");
-          const result = await generateHtmlPptOutline({
-            title: input.title,
-            purposeZh: input.purposeZh,
-            pageCount: input.pageCount,
-            styleId: input.styleId,
-            briefZh: input.briefZh,
+          await createJobRecord({
+            id: jobId,
+            userId: String(userId),
+            type: "platform",
+            provider: "openai",
+            input: {
+              action: "platform_html_ppt_outline",
+              params: {
+                title: input.title,
+                purposeZh: input.purposeZh,
+                pageCount: input.pageCount,
+                styleId: input.styleId,
+                briefZh: input.briefZh,
+                cost: creditsCharged ? cost : 0,
+                creditsCharged,
+              },
+            },
           });
-          return {
-            success: true as const,
-            cost: isAdminUser ? 0 : cost,
-            model: result.model,
-            deckTitle: result.deckTitle,
-            summary: result.summary,
-            pages: result.pages,
-          };
         } catch (error) {
           if (creditsCharged) {
             const { refundCredits } = await import("./credits.js");
-            await refundCredits(userId, cost, "platformHtmlPptOutline 失败退还").catch(
+            await refundCredits(userId, cost, "platformHtmlPptOutline 入队失败退还").catch(
               (refundErr: unknown) => {
-                console.error("[generateHtmlPptOutline] refund failed:", refundErr);
+                console.error("[generateHtmlPptOutline] enqueue refund failed:", refundErr);
               },
             );
           }
-          const { HTML_PPT_OUTLINE_CAPACITY_MESSAGE } = await import(
-            "./services/platformHtmlPptOutline.js"
-          );
           const rawMessage = error instanceof Error ? error.message : String(error);
-          const isCapacity = rawMessage === HTML_PPT_OUTLINE_CAPACITY_MESSAGE;
           throw new TRPCError({
-            code: isCapacity ? "SERVICE_UNAVAILABLE" : "INTERNAL_SERVER_ERROR",
-            message: isCapacity
-              ? `${HTML_PPT_OUTLINE_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
-              : rawMessage || `动效PPT 清单生成失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
+            code: "INTERNAL_SERVER_ERROR",
+            message: rawMessage || `动效PPT 清单入队失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
           });
         }
+
+        return {
+          jobId,
+          status: "queued" as const,
+          cost: creditsCharged ? cost : 0,
+        };
       }),
 
     /**
