@@ -2622,7 +2622,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       });
     }
 
-    /** /canvas 自由画布 · GPT-Image-2（仅官方 OpenAI）；勿与 workflowGenerateSceneImage 混淆 */
+    /** /canvas 自由画布 · GPT-Image-2（OpenAI → OpenRouter）；勿与 workflowGenerateSceneImage 混淆 */
     if (opNormalized === "canvasgptimage2") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -2646,7 +2646,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         referenceImageUrls.length > 0;
       try {
         const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
-        const captureError: { message?: string; moderationBlocked?: boolean; openaiConfigured?: boolean } = {};
+        const captureError: {
+          message?: string;
+          moderationBlocked?: boolean;
+          openaiConfigured?: boolean;
+          openrouterConfigured?: boolean;
+          openaiError?: string;
+          openrouterError?: string;
+        } = {};
         const imageUrl = await generateGptImage2FromRawEnglishPrompt({
           englishPrompt: prompt,
           aspectRatio,
@@ -2663,6 +2670,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             error: captureError.message || "gpt_image2_empty",
             moderationBlocked: Boolean(captureError.moderationBlocked),
             openaiConfigured: Boolean(captureError.openaiConfigured),
+            openrouterConfigured: Boolean(captureError.openrouterConfigured),
+            openaiError: captureError.openaiError || null,
+            openrouterError: captureError.openrouterError || null,
           });
         }
         return res.status(200).json({ ok: true, imageUrl, imageUrls: [imageUrl] });
