@@ -36,7 +36,10 @@ export default function TrialWatermarkImage({
   return (
     <div
       ref={containerRef}
-      className="relative overflow-hidden select-none"
+      // cover 必须吃满父级宽高，否则外层 aspect-* 盒子里子级高度塌成 0 →「有 URL 但不显示」
+      className={`relative overflow-hidden select-none ${
+        objectFit === "cover" ? "h-full w-full" : "w-full"
+      }`}
       style={style}
       onContextMenu={preventAction}
     >

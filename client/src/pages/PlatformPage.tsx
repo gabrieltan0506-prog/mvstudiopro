@@ -314,8 +314,16 @@ async function waitForSinglePlatformReportImageForPdf(img: HTMLImageElement): Pr
 
 /** 选题封面 URL 若为占位、逾时或失败标记则视为未就绪（与卡片区 isBlackImageOrTimeout 对齐）。 */
 function platformCoverImageUrlLooksInvalid(url: unknown): boolean {
-  const raw = typeof url === "string" ? url.trim().toLowerCase() : "";
-  return !raw || raw.includes("timeout") || raw.includes("error");
+  const raw = typeof url === "string" ? url.trim() : "";
+  if (!raw) return true;
+  const lower = raw.toLowerCase();
+  // 仅识别明确失败哨兵；禁止对任意 URL 子串匹配 timeout/error（签名链、查询参数易误伤导致「有图却当坏链清掉」）。
+  if (lower === "timeout" || lower === "error" || lower === "failed") return true;
+  if (/^(error|timeout|failed)[:/]/i.test(raw)) return true;
+  if (/[?&#](?:error|status|code)=(timeout|error|failed)\b/i.test(raw)) return true;
+  if (/\b(image[_-]?timeout|gen[_-]?error|status[_-]?timeout)\b/i.test(lower)) return true;
+  if (/\/(timeout|error|failed)(?:\/|$|\?)/i.test(raw)) return true;
+  return false;
 }
 
 const WINDOW_OPTIONS = [
@@ -639,6 +647,7 @@ function formatStage2DebugSnippet(debug: Record<string, unknown> | null | undefi
 /**
  * renderHighlightText — parses **bold** markers and [高亮:keyword] patterns
  * from AI-generated text and renders them as highlighted spans.
+ * Long bare URLs get overflow-safe wrapping so PDF/卡片不会横向撑破。
  */
 function renderHighlightText(text: string): React.ReactNode {
   if (!text) return null;
@@ -651,7 +660,26 @@ function renderHighlightText(text: string): React.ReactNode {
       const kw = part.slice(4, -1);
       return <mark key={i} className="rounded px-1 bg-[rgba(73,230,255,0.18)] text-[#49e6ff] font-semibold not-italic">{kw}</mark>;
     }
-    return <span key={i}>{part}</span>;
+    // Split bare http(s) URLs so each can break independently.
+    const urlSplit = part.split(/(https?:\/\/[^\s）】\]>，。；;]+)/g);
+    if (urlSplit.length === 1) return <span key={i}>{part}</span>;
+    return (
+      <span key={i}>
+        {urlSplit.map((seg, j) =>
+          /^https?:\/\//i.test(seg) ? (
+            <span
+              key={`${i}-${j}`}
+              className="break-all [overflow-wrap:anywhere] text-[#8cefff]/90"
+              title={seg}
+            >
+              {seg}
+            </span>
+          ) : (
+            <span key={`${i}-${j}`}>{seg}</span>
+          ),
+        )}
+      </span>
+    );
   });
 }
 
@@ -715,18 +743,52 @@ function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React
 // Universal safe-text extractor — handles string | object | null from LLM outputs
 // Prevents [object Object] from rendering in JSX by extracting the most likely text field
 function renderSafeText(item: any, fallback = ""): string {
-  if (!item && item !== 0) return fallback;
-  if (typeof item === "string") return item;
-  if (typeof item === "number") return String(item);
-  if (typeof item === "object") {
-    return String(
-      item.title || item.text || item.content || item.name || item.desc ||
-      item.laneName || item.label || item.value || item.detail ||
-      Object.values(item).find((v) => typeof v === "string") ||
-      JSON.stringify(item)
-    );
+  if (item === null || item === undefined || item === "") return fallback;
+  if (typeof item === "string") {
+    const t = item.trim();
+    if (!t || t === "[object Object]" || t === "[object object]") return fallback;
+    return item;
   }
-  return String(item);
+  if (typeof item === "number" || typeof item === "boolean") return String(item);
+  if (typeof item === "object") {
+    const pickStringField = (...keys: string[]): string => {
+      for (const key of keys) {
+        const v = (item as Record<string, unknown>)[key];
+        if (typeof v === "string" && v.trim() && v.trim() !== "[object Object]") return v;
+        if (typeof v === "number" || typeof v === "boolean") return String(v);
+      }
+      return "";
+    };
+    const fromKnown = pickStringField(
+      "title",
+      "text",
+      "content",
+      "name",
+      "desc",
+      "description",
+      "detail",
+      "action",
+      "label",
+      "value",
+      "laneName",
+      "account",
+      "reason",
+      "summary",
+    );
+    if (fromKnown) return fromKnown;
+    const nested = Object.values(item as Record<string, unknown>).find(
+      (v) => typeof v === "string" && v.trim() && v.trim() !== "[object Object]",
+    );
+    if (typeof nested === "string") return nested;
+    try {
+      const json = JSON.stringify(item);
+      if (json && json !== "{}" && json !== "[]" && !json.includes("[object Object]")) return json;
+    } catch {
+      /* ignore */
+    }
+    return fallback;
+  }
+  return fallback;
 }
 
 function extractFocusKeywords(value: string) {
@@ -804,24 +866,28 @@ function splitAnswerParagraphs(value: string) {
     .filter(Boolean);
 }
 
-function cleanUserCopy(value: string, fallback = "") {
-  const normalized = String(value || "").trim();
+function cleanUserCopy(value: unknown, fallback = "") {
+  // 先安全抽字串，避免对嵌套对象 String(obj) → "[object Object]"
+  const normalized = renderSafeText(value, "").trim();
   if (!normalized) return fallback;
 
   const softened = normalized
+    .replace(/\[object Object\]/gi, " ")
     .replace(/\bfallback\b/gi, "当前参考")
     .replace(/\blive sample(?:-\d+d)?\b/gi, "近期样本")
     .replace(/\bhistorical\b/gi, "中期沉淀")
     .replace(/\bverify\b/gi, "先验证")
     .replace(/\bcollector\b/gi, "")
     .replace(/\bcurrentTotal\b/gi, "")
-    .replace(/\barchivedTotal\b/gi, "");
+    .replace(/\barchivedTotal\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
   if (/(后台|工程|数据库|主链|样本裂缝|日期覆盖|补位|live sample|historical|fallback|collector|coverage)/i.test(softened)) {
     return fallback;
   }
 
-  return softened.trim() || fallback;
+  return softened || fallback;
 }
 
 /** menu 项常见栏位顺序（先找中文标签；若无汉字再整段扫一次取英文 slug 等）。 */
@@ -3948,8 +4014,7 @@ export default function PlatformPage() {
 
       let retryRecovered = 0;
       for (const r of res.results) {
-        const u = String(r.url ?? "").trim().toLowerCase();
-        const bad = !r.url || !String(r.url).trim() || u.includes("timeout") || u.includes("error");
+        const bad = platformCoverImageUrlLooksInvalid(r.url);
         const cid = (r as { creationId?: number }).creationId;
         if (!bad || cid == null) continue;
         if (!r.id?.trim()) continue;
@@ -4267,11 +4332,14 @@ export default function PlatformPage() {
               }
             : prev,
         );
-        if (j.status === "succeeded" && out?.compositeImageUrl) {
+        const doneUrl =
+          String(out?.compositeImageUrl || "").trim() ||
+          String((out as { imageUrl?: string } | undefined)?.imageUrl || "").trim();
+        if (j.status === "succeeded" && doneUrl) {
           if (ctx.kind === "storyboard_sheet_portrait" || ctx.kind === "storyboard_sheet_landscape") {
-            setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: out.compositeImageUrl! }));
+            setPlatformStoryboardSheetMap((p) => ({ ...p, [ctx.sceneId]: doneUrl }));
           } else {
-            setPlatformXhsNoteMap((p) => ({ ...p, [ctx.sceneId]: out.compositeImageUrl! }));
+            setPlatformXhsNoteMap((p) => ({ ...p, [ctx.sceneId]: doneUrl }));
           }
           if (!compositeBatchSilentUiRef.current) {
             toast.success(
@@ -4393,11 +4461,14 @@ export default function PlatformPage() {
         }),
       );
 
-      if (res.imageUrl) {
+      const syncUrl =
+        String(res.imageUrl || "").trim() ||
+        String((res as { compositeImageUrl?: string }).compositeImageUrl || "").trim();
+      if (syncUrl) {
         if (variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape") {
-          setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
+          setPlatformStoryboardSheetMap((p) => ({ ...p, [variables.sceneId]: syncUrl }));
         } else {
-          setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: res.imageUrl! }));
+          setPlatformXhsNoteMap((p) => ({ ...p, [variables.sceneId]: syncUrl }));
         }
         const label =
           variables.kind === "storyboard_sheet_portrait" || variables.kind === "storyboard_sheet_landscape"
@@ -5237,7 +5308,11 @@ export default function PlatformPage() {
                   });
                 },
               });
-              const jo = j.output as { compositeImageUrl?: string; imageGenFlowLog?: string[] } | undefined;
+              const jo = j.output as {
+                compositeImageUrl?: string;
+                imageUrl?: string;
+                imageGenFlowLog?: string[];
+              } | undefined;
               const flowTail = Array.isArray(jo?.imageGenFlowLog) ? jo!.imageGenFlowLog! : [];
               setCompositeJobPollTrace((prev) =>
                 prev && prev.jobId === pollJobId
@@ -5251,8 +5326,10 @@ export default function PlatformPage() {
               if (flowTail.length > 0) {
                 liveLines.push(`${new Date().toISOString()}  [当前步骤] ${flowTail[flowTail.length - 1]}`);
               }
-              if (j.status === "succeeded" && jo?.compositeImageUrl) {
-                out = String(jo.compositeImageUrl).trim();
+              const polledUrl =
+                String(jo?.compositeImageUrl || "").trim() || String(jo?.imageUrl || "").trim();
+              if (j.status === "succeeded" && polledUrl) {
+                out = polledUrl;
                 if (out) {
                   if (compositeKind === "storyboard_sheet_landscape") {
                     setPlatformStoryboardSheetMap((p) => ({ ...p, [item.id]: out }));
@@ -5752,9 +5829,15 @@ export default function PlatformPage() {
       if (platformDashboard?.actionCards && platformDashboard.actionCards.length > 0) {
         return platformDashboard.actionCards.map((item: any, index: number) => ({
           day: index + 1,
-          title: cleanUserCopy(item.title || item["动作"] || item["标题"] || "", `第 ${index + 1} 步`),
+          title: cleanUserCopy(
+            renderSafeText(item.title || item["动作"] || item["标题"] || ""),
+            `第 ${index + 1} 步`,
+          ),
           // Fix #5: pass "" as fallback — never show generic "先做一个可以快速拿到反馈的动作"
-          action: cleanUserCopy(item.detail || item.action || item["详情"] || item["建议"] || "", ""),
+          action: cleanUserCopy(
+            renderSafeText(item.detail || item.action || item["详情"] || item["建议"] || ""),
+            "",
+          ),
         }));
       }
       if (validationPlan.length) {
@@ -7342,13 +7425,14 @@ export default function PlatformPage() {
   }, []);
 
   const scrollToPaidPlatformTrends = useCallback(() => {
-    if (snapshot) {
+    if (snapshot || platformDashboard) {
       document.getElementById(PLATFORM_SECTION_TREND_SIGNALS_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("平台趋势来自当前窗口快照：请在右侧选择天数、填写人物背景，并点击「开始全案分析」。");
-    document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [snapshot]);
+    // 趋势分析独立于全案：引导到工作台顶部「开始平台趋势分析」，勿误导向「开始全案分析」。
+    toast.message("请先在上方「平台趋势分析报表」选择天数与平台，再点「开始平台趋势分析」（与全案分析分开计费）。");
+    document.getElementById("platform-custom-workspace-trends")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [snapshot, platformDashboard]);
 
   if (loading) {
     return (
@@ -8926,7 +9010,9 @@ export default function PlatformPage() {
                           {CREDIT_COSTS.platformTrend} 积分/次
                         </span>
                       </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">填写背景后生成平台优先级、切入方向、选题文案与分镜脚本</p>
+                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">
+                        四格战略摘要、Stage 1 看板与可下载 PNG 图文报表（不含专属文案 / 决策智库）
+                      </p>
                     </div>
                   </button>
                   <button
@@ -9519,7 +9605,9 @@ export default function PlatformPage() {
                         {CREDIT_COSTS.platformTrend} 积分/次
                       </span>
                     </div>
-                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">填写背景后生成交付：平台优先级、切入方向、选题文案与分镜脚本</p>
+                    <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">
+                      四格战略摘要、Stage 1 看板与可下载 PNG 图文报表（不含专属文案 / 决策智库）
+                    </p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -10438,7 +10526,6 @@ export default function PlatformPage() {
                 {contentExecutionCards.length > 0 ? (
                   <div
                     id={PLATFORM_REFERENCE_GALLERY_ID}
-                    data-pdf-exclude="true"
                     className="mb-10 rounded-3xl border border-white/5 bg-[#0a0a0a]/50 p-6"
                   >
                     <div className="mb-6 flex flex-wrap items-end justify-between gap-3 border-b border-white/10 pb-4">
@@ -10514,50 +10601,23 @@ export default function PlatformPage() {
                           const sourceRow = visibleExecutionCards.find((row) => row.id === ref.sceneId);
                           const queueSilentCompositeRetry = () => {
                             if (!sourceRow || compositeLoadRetriedKeys.has(compositeRetryKey)) return;
-                            const compositeKind = isXhs ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
-                            const supervisorTok = getSupervisorTrpcToken();
-                            const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
-                            const compositeSupervisorExtras = {
-                              ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
-                                ? { enableTopicCoverDeepResearchPro: true as const }
-                                : {}),
-                              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-                              ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
-                            };
-                            setCompositeLoadRetriedKeys((prev) => new Set(prev).add(compositeRetryKey));
-                            if (isXhs) {
-                              setPlatformXhsNoteMap((prev) => {
-                                const next = { ...prev };
-                                delete next[ref.sceneId];
-                                return next;
-                              });
-                            } else {
-                              setPlatformStoryboardSheetMap((prev) => {
-                                const next = { ...prev };
-                                delete next[ref.sceneId];
-                                return next;
-                              });
+                            const rawUrl = String(ref.url || "").trim();
+                            // 加载失败时先 cache-bust，禁止立刻清图并重新扣费生图（否则画廊空白）。
+                            if (rawUrl && !compositeLoadRetriedKeys.has(`${compositeRetryKey}::cb`)) {
+                              setCompositeLoadRetriedKeys((prev) => new Set(prev).add(`${compositeRetryKey}::cb`));
+                              const sep = rawUrl.includes("?") ? "&" : "?";
+                              const busted = `${rawUrl}${sep}mv_img_cb=${Date.now()}`;
+                              if (isXhs) {
+                                setPlatformXhsNoteMap((prev) => ({ ...prev, [ref.sceneId]: busted }));
+                              } else {
+                                setPlatformStoryboardSheetMap((prev) => ({ ...prev, [ref.sceneId]: busted }));
+                              }
+                              return;
                             }
-                            generatePlatformCompositeSheetMutation.mutate({
-                              sceneId: sourceRow.id,
-                              title: sourceRow.title,
-                              scriptContext: buildPlatformSheetScriptContext(sourceRow as any, {
-                                shootingTechniqueBrief: isXhs
-                                  ? undefined
-                                  : lastShootingTechniqueBriefRef.current.trim() || undefined,
-                                gridVariant: compositeGridVariant,
-                                sheetKind: isXhs ? "graphic" : "storyboard",
-                              }),
-                              kind: compositeKind,
-                              gridVariant: compositeGridVariant,
-                              executionDetails: buildPlatformExecutionDetailsPayload(sourceRow as any),
-                              shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
-                              ...optionalBoundCreationRecordId(),
-                              imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
-                              progressJobId: newPlatformCompositeProgressJobId(),
-                              ...compositeSupervisorExtras,
-                              compositeImageEngine: platformComposite2x4Engine,
-                            });
+                            setCompositeLoadRetriedKeys((prev) => new Set(prev).add(compositeRetryKey));
+                            toast.error(
+                              `${isXhs ? "图文笔记" : "编导分镜"}图暂时无法加载。请点下方按钮重新生成，或稍后再试。`,
+                            );
                           };
                           return (
                             <div
@@ -10738,8 +10798,7 @@ export default function PlatformPage() {
                         CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;
                       const isThisBundleLoading = coverCompositeBundleSceneId === item.id;
                       const currentImageUrl = platformImageMap[item.id] || "";
-                      const isBlackImageOrTimeout =
-                        currentImageUrl.includes("timeout") || currentImageUrl.includes("error");
+                      const isBlackImageOrTimeout = platformCoverImageUrlLooksInvalid(currentImageUrl);
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       /** 单张竖版封面统一按「图文封面」定价扣点（与后端 generateTopicImage 一致），与选题是短视频还是图文无关 */
                       const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
@@ -10896,8 +10955,7 @@ export default function PlatformPage() {
                          * 且客户端已清图 → 卡片空白（见 topic-1：Nano 成功但封面不显示）。
                          */
                         const rawUrl = platformImageMap[item.id] || "";
-                        const urlLooksLikeServerRetryPayload =
-                          rawUrl.toLowerCase().includes("timeout") || rawUrl.toLowerCase().includes("error");
+                        const urlLooksLikeServerRetryPayload = platformCoverImageUrlLooksInvalid(rawUrl);
                         const freeRetryJobId =
                           urlLooksLikeServerRetryPayload && sceneJobIds[item.id] ? sceneJobIds[item.id] : undefined;
 
@@ -11081,7 +11139,7 @@ export default function PlatformPage() {
                           </div>
                         </div>
                         {copyFlat ? (
-                          <p className="mt-3 whitespace-normal break-words text-sm leading-relaxed text-gray-400">
+                          <p className="mt-3 whitespace-normal break-words break-all [overflow-wrap:anywhere] text-sm leading-relaxed text-gray-400">
                             {copyFlat}
                           </p>
                         ) : null}
@@ -11105,8 +11163,8 @@ export default function PlatformPage() {
                             <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
                               发布时间 / 发布建议
                             </div>
-                            <div className="mt-1 text-sm leading-6 text-[#ffe9a8] whitespace-pre-wrap">
-                              {item.publishingAdvice}
+                            <div className="mt-1 break-words break-all [overflow-wrap:anywhere] text-sm leading-6 text-[#ffe9a8] whitespace-pre-wrap">
+                              {renderSafeText(item.publishingAdvice)}
                             </div>
                           </div>
                         ) : null}
@@ -11138,9 +11196,11 @@ export default function PlatformPage() {
                               <div>
                                 <strong className="text-[#9ddcff]">编导拍摄顺序（灵感画布）：</strong>
                                 <div className="mt-1 space-y-1">
-                                  {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
-                                    <div key={si}>{step}</div>
-                                  ))}
+                                  {(item as any).executionDetails.stepByStepScript.map((step: unknown, si: number) => {
+                                    const stepText = renderSafeText(step);
+                                    if (!stepText) return null;
+                                    return <div key={si}>{stepText}</div>;
+                                  })}
                                 </div>
                               </div>
                             ) : null}
@@ -11148,27 +11208,37 @@ export default function PlatformPage() {
                               <div>
                                 <strong className="text-[#9ddcff]">落地三步曲：</strong>
                                 <div className="mt-1 space-y-1">
-                                  {(item as any).actionableSteps.map((step: string, si: number) => (
-                                    <div key={si}>
-                                      {si + 1}. {step}
-                                    </div>
-                                  ))}
+                                  {(item as any).actionableSteps.map((step: unknown, si: number) => {
+                                    const stepText = renderSafeText(step);
+                                    if (!stepText) return null;
+                                    return (
+                                      <div key={si}>
+                                        {si + 1}. {stepText}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ) : null}
                             {(item as any).detailedScript ? (
                               <div>
                                 <strong className="text-[#9ddcff]">详细脚本与大纲（导演灵感画布）：</strong>
-                                <div className="mt-1 whitespace-pre-wrap text-sm">{(item as any).detailedScript}</div>
+                                <div className="mt-1 break-words break-all [overflow-wrap:anywhere] whitespace-pre-wrap text-sm">
+                                  {renderHighlightText(renderSafeText((item as any).detailedScript))}
+                                </div>
                               </div>
                             ) : null}
                             {item.hook || item.copywriting ? (
                               <div className="border-t border-white/10 pt-2.5">
                                 <strong className="text-[#9ddcff]">钩子与完整文案</strong>
                                 {item.hook ? (
-                                  <div className="mt-1 text-sm leading-7 text-[#8cefff]">{item.hook}</div>
+                                  <div className="mt-1 break-words [overflow-wrap:anywhere] text-sm leading-7 text-[#8cefff]">
+                                    {renderSafeText(item.hook)}
+                                  </div>
                                 ) : null}
-                                <div className="mt-1 whitespace-pre-wrap text-sm">{renderHighlightText(item.copywriting || "")}</div>
+                                <div className="mt-1 break-words break-all [overflow-wrap:anywhere] whitespace-pre-wrap text-sm">
+                                  {renderHighlightText(renderSafeText(item.copywriting || ""))}
+                                </div>
                               </div>
                             ) : null}
                           </div>
@@ -11280,6 +11350,42 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                         </div>
+
+                        {(() => {
+                          const sheetUrl =
+                            (isGraphicFormat
+                              ? platformXhsNoteMap[item.id]
+                              : platformStoryboardSheetMap[item.id]) || "";
+                          const sheetPending =
+                            !sheetUrl &&
+                            pendingCompositeSheet?.sceneId === item.id &&
+                            pendingCompositeSheet?.kind === compositeKind;
+                          if (!sheetUrl && !sheetPending) return null;
+                          return (
+                            <div className="mt-4 overflow-hidden rounded-xl border border-white/10 shadow-2xl">
+                              <div className="flex items-center justify-between border-b border-white/10 bg-white/5 px-3 py-2">
+                                <span className="text-xs font-bold text-white">{compositeLabel}</span>
+                                <span className="text-[10px] text-gray-500">选题卡内预览 · 与上方画廊同步</span>
+                              </div>
+                              <div className="relative flex min-h-[220px] w-full items-center justify-center bg-black/50 p-2">
+                                {sheetUrl ? (
+                                  <TrialWatermarkImage
+                                    src={sheetUrl}
+                                    isTrial={isTrial}
+                                    objectFit="contain"
+                                    className="h-full w-full max-h-[480px] object-contain"
+                                    alt={`${headlineTitle} · ${compositeLabel}`}
+                                  />
+                                ) : (
+                                  <div className="flex flex-col items-center gap-2 px-4 text-center">
+                                    <Loader2 className="h-6 w-6 animate-spin text-[#49e6ff]/80" />
+                                    <span className="text-xs text-gray-400">{compositePhaseHint}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         <div className="mt-4 space-y-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.55)] p-3">
                           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11px] tracking-[0.08em]">
