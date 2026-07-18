@@ -647,7 +647,8 @@ function padPlatformMenuFromSnapshot(
     const k = keyOf(row as Record<string, unknown>);
     if (k) seen.add(k);
   }
-  for (const snap of snapshot.platformSnapshots.slice(0, PLATFORM_MENU_TARGET_MAX)) {
+  const snapshotPlatforms = Array.isArray(snapshot?.platformSnapshots) ? snapshot.platformSnapshots : [];
+  for (const snap of snapshotPlatforms.slice(0, PLATFORM_MENU_TARGET_MAX)) {
     if (menu.length >= minNeeded) break;
     const p = String(snap.platform || "").trim().toLowerCase();
     if (!p || seen.has(p)) continue;
@@ -886,23 +887,30 @@ async function buildPlatformDashboard(params: {
 输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
 字段为：headline、subheadline、personaSummary、topSignals、platformMenu（每项含 blueOceanWords 字符串数组）、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`;
 
+  const snapPlatforms = Array.isArray(params.snapshot?.platformSnapshots)
+    ? params.snapshot.platformSnapshots
+    : [];
+  const snapRecs = Array.isArray(params.snapshot?.platformRecommendations)
+    ? params.snapshot.platformRecommendations
+    : [];
+  const snapTopics = Array.isArray(params.snapshot?.topicLibrary) ? params.snapshot.topicLibrary : [];
   const dashboardUserPayload = JSON.stringify({
           context: params.context || "",
           windowDays: params.windowDays,
-          platforms: params.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
+          platforms: snapPlatforms.slice(0, 4).map((item) => ({
             platform: item.platform,
             displayName: item.displayName,
             audienceFitScore: item.audienceFitScore,
             momentumScore: item.momentumScore,
             summary: item.summary,
-            sampleTopics: item.sampleTopics.slice(0, 3),
+            sampleTopics: Array.isArray(item.sampleTopics) ? item.sampleTopics.slice(0, 3) : [],
           })),
-          topRecommendations: params.snapshot.platformRecommendations.slice(0, 4).map((item) => ({
+          topRecommendations: snapRecs.slice(0, 4).map((item) => ({
             name: item.name,
             reason: item.reason,
             action: item.action,
           })),
-          topTopics: params.snapshot.topicLibrary.slice(0, 4).map((item) => ({
+          topTopics: snapTopics.slice(0, 4).map((item) => ({
             title: item.title,
             rationale: item.rationale,
             executionHint: item.executionHint,
@@ -2137,19 +2145,21 @@ function buildFallbackPlatformDashboard(params: {
         badge: "承接",
       },
     ].filter((item) => item.detail),
-    platformMenu: params.snapshot.platformSnapshots.slice(0, 4).map((item, index) => ({
+    platformMenu: (Array.isArray(params.snapshot?.platformSnapshots) ? params.snapshot.platformSnapshots : [])
+      .slice(0, 4)
+      .map((item, index) => ({
       platform: item.platform,
       label: item.displayName,
       trend: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore}`,
-      lane: item.sampleTopics[0] || item.summary,
+      lane: (Array.isArray(item.sampleTopics) ? item.sampleTopics[0] : "") || item.summary,
       whyNow: item.summary,
-      recommendedFormat: params.snapshot.platformActivities[index]?.recommendedFormat || params.snapshot.titleExecutions[index]?.presentationMode || "图文 + 短视频双测",
-      titleExample: params.snapshot.titleExecutions[index]?.title || item.sampleTopics[0] || "",
-      contentHook: params.snapshot.titleExecutions[index]?.openingHook || params.snapshot.creationAssist.brief || "",
-      nextMove: params.snapshot.platformRecommendations[index]?.action || params.snapshot.growthPlan[index]?.action || "先用一个轻量主题验证反馈。",
-      monetizationPath: params.snapshot.monetizationStrategies[index]?.primaryTrack || params.snapshot.businessInsights[index]?.title || "",
+      recommendedFormat: params.snapshot.platformActivities?.[index]?.recommendedFormat || params.snapshot.titleExecutions?.[index]?.presentationMode || "图文 + 短视频双测",
+      titleExample: params.snapshot.titleExecutions?.[index]?.title || (Array.isArray(item.sampleTopics) ? item.sampleTopics[0] : "") || "",
+      contentHook: params.snapshot.titleExecutions?.[index]?.openingHook || params.snapshot.creationAssist?.brief || "",
+      nextMove: params.snapshot.platformRecommendations?.[index]?.action || params.snapshot.growthPlan?.[index]?.action || "先用一个轻量主题验证反馈。",
+      monetizationPath: params.snapshot.monetizationStrategies?.[index]?.primaryTrack || params.snapshot.businessInsights?.[index]?.title || "",
     })),
-    hotTopics: params.snapshot.topicLibrary.slice(0, 6).map((item, index) => ({
+    hotTopics: (Array.isArray(params.snapshot?.topicLibrary) ? params.snapshot.topicLibrary : []).slice(0, 6).map((item, index) => ({
       title: item.title,
       whyHot: item.rationale,
       howToUse: params.snapshot.titleExecutions[index]?.copywriting || item.executionHint,

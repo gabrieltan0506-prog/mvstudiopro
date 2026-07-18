@@ -26,6 +26,7 @@
     "growth:migrate-split-gzip": "tsx scripts/migrate-growth-store-split-gzip.ts",
     "ambient:ping-gemini": "tsx scripts/ping-dashboard-gemini-models.mts",
     "gemini:monitor": "tsx scripts/gemini-monitor.ts",
+    "platform:fullcase-smoke": "tsx scripts/smoke-platform-fullcase.mts",
     "canvas:probe": "tsx scripts/probe-canvas-apis.mts",
     "manhua:probe": "tsx scripts/probe-manhua-factory.mts",
     "manhua:genre-probe": "tsx scripts/probe-manhua-genre-infer.mts",
