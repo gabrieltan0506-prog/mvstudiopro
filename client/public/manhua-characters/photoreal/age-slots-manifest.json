@@ -1,0 +1,34 @@
+{
+  "generatedAt": "2026-07-18T09:37:00.825Z",
+  "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
+  "policy": "age slots text-to-image · no male face-lock",
+  "items": [
+    {
+      "id": "char_elder_m_01",
+      "photorealNameZh": "周伯年",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_m_01_hero.jpg",
+      "sheet": "char_elder_m_01_sheet.jpg",
+      "at": "2026-07-18T09:29:28.807Z"
+    },
+    {
+      "id": "char_elder_m_02",
+      "photorealNameZh": "老沈头",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_m_02_hero.jpg",
+      "sheet": "char_elder_m_02_sheet.jpg",
+      "at": "2026-07-18T09:33:03.824Z"
+    },
+    {
+      "id": "char_elder_f_01",
+      "photorealNameZh": "张桂芬",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_f_01_hero.jpg",
+      "sheet": "char_elder_f_01_sheet.jpg",
+      "at": "2026-07-18T09:37:00.825Z"
+    }
+  ]
+}
