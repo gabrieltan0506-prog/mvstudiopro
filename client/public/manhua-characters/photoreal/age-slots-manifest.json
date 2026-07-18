@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-18T09:42:51.199Z",
+  "generatedAt": "2026-07-18T10:05:22.228Z",
   "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
   "policy": "age slots text-to-image · no male face-lock",
   "items": [
@@ -43,9 +43,36 @@
       "id": "char_boy_01",
       "photorealNameZh": "小宇",
       "lifeStage": "child",
+      "ok": true,
+      "hero": "char_boy_01_hero.jpg",
+      "sheet": "char_boy_01_sheet.jpg",
+      "at": "2026-07-18T09:57:22.200Z"
+    },
+    {
+      "id": "char_boy_02",
+      "photorealNameZh": "浩浩",
+      "lifeStage": "child",
+      "ok": true,
+      "hero": "char_boy_02_hero.jpg",
+      "sheet": "char_boy_02_sheet.jpg",
+      "at": "2026-07-18T10:00:55.437Z"
+    },
+    {
+      "id": "char_girl_01",
+      "photorealNameZh": "小夏",
+      "lifeStage": "child",
+      "ok": true,
+      "hero": "char_girl_01_hero.jpg",
+      "sheet": "char_girl_01_sheet.jpg",
+      "at": "2026-07-18T10:04:42.495Z"
+    },
+    {
+      "id": "char_girl_02",
+      "photorealNameZh": "圆圆",
+      "lifeStage": "child",
       "ok": false,
-      "error": "EvoLink task failed: Contains inappropriate content.\nPlease remove suggestive or explicit material.\nTips: Ensure content is appropriate for all ages.",
-      "at": "2026-07-18T09:42:51.199Z"
+      "error": "Insufficient credits",
+      "at": "2026-07-18T10:05:22.226Z"
     }
   ]
 }

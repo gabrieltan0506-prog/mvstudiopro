@@ -601,6 +601,9 @@ export function listManhuaCharactersByLifeStage(lifeStage: ManhuaCharacterLifeSt
   return MANHUA_CHARACTER_ASSET_LIBRARY.filter((c) => getManhuaCharacterLifeStage(c) === lifeStage);
 }
 
+/** 计划口径别名：ageBand ≡ lifeStage（避免与画廊数值年龄筛选 ManhuaAgeBand 撞名） */
+export const listManhuaCharactersByAgeBand = listManhuaCharactersByLifeStage;
+
 /** 画廊 Tab 用的角色池 */
 export function listManhuaCharactersForLibraryTab(tab: ManhuaLibraryCastTab) {
   if (tab === "elder") return listManhuaCharactersByLifeStage("elder");

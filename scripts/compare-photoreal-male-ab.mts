@@ -1,17 +1,16 @@
 /**
- * 仿真人男主双线对照（不覆盖正式库，只写入 Downloads 审阅目录）
+ * 仿真人男女主 A/B 对照（不覆盖正式库，只写入 Downloads 审阅目录）
  *
  *   A = 纯文生（不挂真人样本；接近老人槽那条路）
  *   B = 库图 edit + 实拍只借皮肤（FACE_LOCK 关，SOFT_REF 开）
  *
- *   TRACK=both IDS=char_m_01,char_m_07,char_m_11,char_m_14 pnpm run manhua:photoreal-male-ab
- *   TRACK=A IDS=char_m_07
+ *   TRACK=both IDS=char_m_01,char_m_07 pnpm run manhua:photoreal-male-ab
+ *   TRACK=A IDS=char_f_01,char_f_02,char_f_06,char_f_07
  *   TRACK=B FORCE=1
  *
  * 输出：
- *   ~/Downloads/2026Jul18/photoreal-review/male-A-natural/
- *   ~/Downloads/2026Jul18/photoreal-review/male-B-skin-only/
- *   ~/Downloads/2026Jul18/photoreal-library/male-A|male-B/（同源副本）
+ *   ~/Downloads/2026Jul18/photoreal-review/male-A-natural|female-A-natural/
+ *   ~/Downloads/2026Jul18/photoreal-review/male-B-skin-only|female-B-skin-only/
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -54,9 +53,10 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function trackDirs(track: TrackId) {
-  const reviewName = track === "A" ? "male-A-natural" : "male-B-skin-only";
-  const libName = track === "A" ? "male-A" : "male-B";
+function trackDirs(track: TrackId, gender: "female" | "male" = "male") {
+  const sex = gender === "female" ? "female" : "male";
+  const reviewName = track === "A" ? `${sex}-A-natural` : `${sex}-B-skin-only`;
+  const libName = track === "A" ? `${sex}-A` : `${sex}-B`;
   return {
     review: path.join(REVIEW, reviewName),
     lib: path.join(LIB_DL, libName),
@@ -69,11 +69,9 @@ function pickTargets(): ManhuaCharacterTemplate[] {
     .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+  // 男女主均可：由 IDS 决定；仅限 adult 仿真人槽
   return MANHUA_CHARACTER_ASSET_LIBRARY.filter(
-    (c) =>
-      c.gender === "male" &&
-      getManhuaCharacterLifeStage(c) === "adult" &&
-      idFilter.includes(c.id),
+    (c) => getManhuaCharacterLifeStage(c) === "adult" && idFilter.includes(c.id),
   );
 }
 
@@ -86,6 +84,21 @@ function firstExisting(...candidates: string[]): string | undefined {
 
 function pickSoftRefLocalPaths(c: ManhuaCharacterTemplate): string[] {
   const n = Number((c.id.match(/(\d+)$/) || [])[1] || 0);
+  if (c.gender === "female") {
+    const readyDir = path.join(REFS_PUBLIC, "jul18-ref", "ready");
+    let females: string[] = [];
+    try {
+      females = fs
+        .readdirSync(readyDir)
+        .filter((f) => /female/i.test(f) && /\.jpe?g$/i.test(f))
+        .map((f) => path.join(readyDir, f))
+        .sort();
+    } catch {
+      females = [];
+    }
+    if (!females.length) return [];
+    return [females[n % females.length]!];
+  }
   const me = firstExisting(path.join(REFS_DL, "me.jpg"), path.join(REFS_PUBLIC, "me.jpg"));
   const tPool = ["t1.jpg", "t2.jpg", "t3.jpg"]
     .map((f) => firstExisting(path.join(REFS_DL, f), path.join(REFS_PUBLIC, f)))
@@ -232,32 +245,42 @@ async function downloadToJpg(url: string, destBaseNoExt: string): Promise<void> 
   }
 }
 
-function writeBoth(srcBase: string, track: TrackId, id: string, kind: "hero" | "sheet") {
-  const dirs = trackDirs(track);
+function writeBoth(
+  srcBase: string,
+  track: TrackId,
+  c: ManhuaCharacterTemplate,
+  kind: "hero" | "sheet",
+) {
+  const dirs = trackDirs(track, c.gender);
   const src = `${srcBase}.jpg`;
-  const name = `${id}_${kind}.jpg`;
+  const name = `${c.id}_${kind}.jpg`;
   fs.mkdirSync(dirs.review, { recursive: true });
   fs.mkdirSync(dirs.lib, { recursive: true });
   fs.copyFileSync(src, path.join(dirs.review, name));
   fs.copyFileSync(src, path.join(dirs.lib, name));
 }
 
-function alreadyOk(track: TrackId, id: string): boolean {
+function alreadyOk(track: TrackId, c: ManhuaCharacterTemplate): boolean {
   if (FORCE) return false;
-  const dirs = trackDirs(track);
+  const dirs = trackDirs(track, c.gender);
   return (
-    fs.existsSync(path.join(dirs.review, `${id}_hero.jpg`)) &&
-    fs.existsSync(path.join(dirs.review, `${id}_sheet.jpg`))
+    fs.existsSync(path.join(dirs.review, `${c.id}_hero.jpg`)) &&
+    fs.existsSync(path.join(dirs.review, `${c.id}_sheet.jpg`))
   );
 }
 
 function buildAHeroPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const style = getManhuaArtStylePreset("photoreal");
+  const role = c.gender === "female" ? "女主" : "男主";
+  const life =
+    c.gender === "female"
+      ? "自然生成生活感成年女性，允许普通长相，禁止网红整容脸。"
+      : "自然生成生活感成年男性，允许普通长相，禁止网红美男脸。";
   return [
-    `竖屏9:16半身肖像写真，东亚成年男主「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
+    `竖屏9:16半身肖像写真，东亚成年${role}「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
     "",
-    "【线路 A·纯文生】不使用任何真人照片参考；自然生成生活感成年男性，允许普通长相。",
+    `【线路 A·纯文生】不使用任何真人照片参考；${life}`,
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
     PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
@@ -276,10 +299,11 @@ function buildAHeroPrompt(c: ManhuaCharacterTemplate): string {
 function buildASheetPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const style = getManhuaArtStylePreset("photoreal");
+  const role = c.gender === "female" ? "女主" : "男主";
   return [
     "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景）：",
     "上半半身人像 + 下半 FRONT/SIDE/BACK 三视图同一人同一骨相；禁止水印与名人脸。",
-    `角色：男主「${name}」·${c.jobZh}·气质 ${c.temperamentTags.join("·")}`,
+    `角色：${role}「${name}」·${c.jobZh}·气质 ${c.temperamentTags.join("·")}`,
     `外形锚点：${c.promptZh}`,
     "【线路 A】锁与胸像同一张自然生成的脸；不挂真人样本。",
     formatPhotorealFaceShapeBlock(c.id, c.gender),
@@ -327,11 +351,11 @@ async function runTrackA(c: ManhuaCharacterTemplate): Promise<void> {
   const heroUrl = await flyGenerate(buildAHeroPrompt(c), []);
   console.log("  hero ok");
   await downloadToJpg(heroUrl, path.join(tmp, "hero"));
-  writeBoth(path.join(tmp, "hero"), "A", c.id, "hero");
+  writeBoth(path.join(tmp, "hero"), "A", c, "hero");
   const sheetUrl = await flyGenerate(buildASheetPrompt(c), [heroUrl]);
   console.log("  sheet ok");
   await downloadToJpg(sheetUrl, path.join(tmp, "sheet"));
-  writeBoth(path.join(tmp, "sheet"), "A", c.id, "sheet");
+  writeBoth(path.join(tmp, "sheet"), "A", c, "sheet");
 }
 
 async function runTrackB(
@@ -364,7 +388,7 @@ async function runTrackB(
   ]);
   console.log("  hero ok");
   await downloadToJpg(newHeroUrl, path.join(tmp, "hero"));
-  writeBoth(path.join(tmp, "hero"), "B", c.id, "hero");
+  writeBoth(path.join(tmp, "hero"), "B", c, "hero");
 
   const sheetUrl = await uploadLocalJpg(sheetSrc, `${c.id}-b-sheet`);
   const newHeroRead = await uploadLocalJpg(path.join(tmp, "hero.jpg"), `${c.id}-b-hero2`);
@@ -375,7 +399,7 @@ async function runTrackB(
   ]);
   console.log("  sheet ok");
   await downloadToJpg(newSheetUrl, path.join(tmp, "sheet"));
-  writeBoth(path.join(tmp, "sheet"), "B", c.id, "sheet");
+  writeBoth(path.join(tmp, "sheet"), "B", c, "sheet");
 }
 
 async function main() {
@@ -387,12 +411,14 @@ async function main() {
   console.log(
     `🚀 male A/B compare · ${FLY_ORIGIN} · tracks=${tracks.join("+")} · slots=${targets.map((c) => c.id).join(",") || "(none)"} · force=${FORCE ? "on" : "off"}`,
   );
-  if (!targets.length) throw new Error("无目标男主槽");
+  if (!targets.length) throw new Error("无目标成人槽");
 
   for (const t of tracks) {
-    const d = trackDirs(t);
-    fs.mkdirSync(d.review, { recursive: true });
-    fs.mkdirSync(d.lib, { recursive: true });
+    for (const g of ["male", "female"] as const) {
+      const d = trackDirs(t, g);
+      fs.mkdirSync(d.review, { recursive: true });
+      fs.mkdirSync(d.lib, { recursive: true });
+    }
   }
 
   let softRefUrlByPath = new Map<string, string>();
@@ -413,7 +439,7 @@ async function main() {
   const rows: Array<{ track: TrackId; id: string; ok: boolean; error?: string; at: string }> = [];
   for (const track of tracks) {
     for (const c of targets) {
-      if (alreadyOk(track, c.id)) {
+      if (alreadyOk(track, c)) {
         console.log(`⏭ skip ${track}/${c.id}`);
         rows.push({ track, id: c.id, ok: true, at: new Date().toISOString() });
         continue;
@@ -427,12 +453,13 @@ async function main() {
         console.error(`❌ ${track}/${c.id}: ${msg}`);
         rows.push({ track, id: c.id, ok: false, error: msg, at: new Date().toISOString() });
       }
-      const d = trackDirs(track);
+      const d = trackDirs(track, c.gender);
       fs.writeFileSync(
         d.manifest,
         JSON.stringify(
           {
             track,
+            gender: c.gender,
             policy: track === "A" ? "text-to-image natural" : "edit + soft-ref skin only",
             updatedAt: new Date().toISOString(),
             items: rows.filter((r) => r.track === track),
@@ -447,7 +474,9 @@ async function main() {
 
   const ok = rows.filter((r) => r.ok).length;
   console.log(`\n完成：ok=${ok}/${rows.length}`);
-  console.log(`审阅目录：\n  ${path.join(REVIEW, "male-A-natural")}\n  ${path.join(REVIEW, "male-B-skin-only")}`);
+  console.log(
+    `审阅目录：\n  ${path.join(REVIEW, "male-A-natural")}\n  ${path.join(REVIEW, "female-A-natural")}\n  ${path.join(REVIEW, "male-B-skin-only")}\n  ${path.join(REVIEW, "female-B-skin-only")}`,
+  );
 }
 
 main().catch((e) => {

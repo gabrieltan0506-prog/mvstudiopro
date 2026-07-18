@@ -12,6 +12,7 @@ import {
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
   getManhuaCharacterLifeStage,
+  listManhuaCharactersByAgeBand,
   listManhuaCharactersByGender,
   listManhuaCharactersByLifeStage,
   listManhuaCharactersForLibraryTab,
