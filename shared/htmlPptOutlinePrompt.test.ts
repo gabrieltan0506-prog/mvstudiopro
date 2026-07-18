@@ -68,12 +68,13 @@ describe("htmlPptOutlinePrompt", () => {
             { label: "词B", value: 70 },
           ],
         },
+        { title: "对照", viz: "columns", series: [{ label: "甲", value: 50 }] },
         { title: "下一步", kpi: "GO", viz: "steps", bullets: ["确认", "导出"] },
       ],
     });
-    const out = parseHtmlPptOutlineJson(raw, { pageCount: 4 });
+    const out = parseHtmlPptOutlineJson(raw, { pageCount: 5 });
     expect(out.deckTitle).toBe("趋势汇报");
-    expect(out.pages).toHaveLength(4);
+    expect(out.pages).toHaveLength(5);
     expect(out.pages[1]?.series?.[0]?.label).toBe("覆盖");
     expect(out.pages[2]?.viz).toBe("bars");
   });
@@ -86,9 +87,11 @@ describe("htmlPptOutlinePrompt", () => {
     {"title": "封面", "viz": "cover", "kpi": "01"},
     {"title": "占比", "viz": "bars", "series": [{"label": "A", "value": 40}]},
     {"title": "路径", "viz": "steps", "bullets": ["一步", "二步"]},
+    {"title": "对照", "viz": "columns", "series": [{"label": "B", "value": 20}]},
+    {"title": "收束", "viz": "steps", "bullets": ["下一步"]},
     {"title": "未完成截断", "viz": "line", "series": [{"label": "x", "value": `;
-    const out = parseHtmlPptOutlineJson(raw, { pageCount: 3 });
-    expect(out.pages.length).toBeGreaterThanOrEqual(3);
+    const out = parseHtmlPptOutlineJson(raw, { pageCount: 5 });
+    expect(out.pages.length).toBeGreaterThanOrEqual(5);
     expect(out.deckTitle).toBe("半截稿");
   });
 
@@ -109,10 +112,12 @@ describe("htmlPptOutlinePrompt", () => {
             { label: "用户预测", value: 2.8 },
           ],
         },
+        { title: "供给", viz: "bars", series: [{ label: "A", value: 40 }] },
+        { title: "渗透", viz: "ring", series: [{ label: "B", value: 35 }] },
         { title: "收束", viz: "steps", bullets: ["备案", "放量"] },
       ],
     });
-    const out = parseHtmlPptOutlineJson(raw, { pageCount: 3 });
+    const out = parseHtmlPptOutlineJson(raw, { pageCount: 5 });
     expect(out.pages[1]?.viz).toBe("compare");
     expect(out.pages[1]?.series?.[0]?.value).toBe(168);
     expect(out.pages[1]?.series?.[2]?.value).toBe(243.6);

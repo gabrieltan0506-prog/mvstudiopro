@@ -108,7 +108,7 @@ function manhuaMarketSlotBrief(pageCount: number): string {
 }
 
 export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): string {
-  const n = Math.max(3, Math.min(16, Math.floor(input.pageCount || 8)));
+  const n = Math.max(5, Math.min(16, Math.floor(input.pageCount || 5)));
   const styleId = input.styleId in HTML_PPT_STYLES ? input.styleId : "dark_research";
   const style = HTML_PPT_STYLES[styleId as HtmlPptStyleId];
   const title = String(input.title || "").trim().slice(0, 80);
@@ -239,7 +239,7 @@ export function parseHtmlPptOutlineJson(
   });
 
   let pages = normalizeHtmlPptPages(mapped);
-  const want = Math.max(3, Math.min(16, Math.floor(opts?.pageCount || pages.length || 8)));
+  const want = Math.max(5, Math.min(16, Math.floor(opts?.pageCount || pages.length || 5)));
   if (pages.length > want) pages = pages.slice(0, want);
   if (pages.length < want) {
     throw new Error(`模型返回页数不足（${pages.length}/${want}），请重试`);

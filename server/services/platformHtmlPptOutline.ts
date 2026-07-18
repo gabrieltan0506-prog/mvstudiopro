@@ -103,7 +103,7 @@ export async function generateHtmlPptOutline(
 ): Promise<HtmlPptOutlineLlmResult & { model: string }> {
   const title = String(input.title || "").trim();
   if (title.length < 2) throw new Error("请填写主题");
-  const pageCount = Math.max(3, Math.min(16, Math.floor(input.pageCount || 8)));
+  const pageCount = Math.max(5, Math.min(16, Math.floor(input.pageCount || 5)));
   const model = getPlatformStage2OpenAiModel();
 
   try {

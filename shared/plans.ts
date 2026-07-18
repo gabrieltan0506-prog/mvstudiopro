@@ -267,7 +267,13 @@ export const CREDIT_COSTS = {
   platformSinglePageKnowledgeCard: 25,
   /** 自定义文案 · 深度优化（纯 LLM，无出图；GPT-5.5 结构化改写） */
   platformOptimizeCustomCopy: 25,
-  /** 动效 PPT · GPT-5.6 Sol 生成页面清单+图表数据（方案 A；前端 SVG 渲染，无出图） */
+  /**
+   * 动效 PPT · GPT-5.6 Sol 清单：按页单价（积分/页）。
+   * 总价 = 页数 × 本值；保守 API 成本下毛利约 50–60%（1 积分≈¥0.6 内部口径）。
+   * @see platformHtmlPptOutlineCredits
+   */
+  platformHtmlPptOutlinePerPage: 3,
+  /** @deprecated 改按页计费，见 {@link platformHtmlPptOutlinePerPage} / {@link platformHtmlPptOutlineCredits} */
   platformHtmlPptOutline: 25,
   /** 自定义抠像·单张原价（GPT-IMAGE-2 场景/主体图；去背景为白底主体直出）；2 张九折、4 张八折 */
   platformCustomMattingImage: 32,
@@ -299,6 +305,19 @@ export const CREDIT_COSTS = {
 
 /** 创作顾问问答：每日免费次数上限（登录用户；可问任意问题，不限 Skill） */
 export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 10;
+
+/** 动效 PPT 清单页数范围（用户必选） */
+export const PLATFORM_HTML_PPT_PAGE_MIN = 5;
+export const PLATFORM_HTML_PPT_PAGE_MAX = 16;
+
+/** 动效 PPT · Sol 清单总积分 = 页数 × 每页单价 */
+export function platformHtmlPptOutlineCredits(pageCount: number): number {
+  const n = Math.max(
+    PLATFORM_HTML_PPT_PAGE_MIN,
+    Math.min(PLATFORM_HTML_PPT_PAGE_MAX, Math.floor(Number(pageCount) || 0)),
+  );
+  return n * CREDIT_COSTS.platformHtmlPptOutlinePerPage;
+}
 
 /**
  * Skill 问答栏单页生图积分：账号生涯第 1 张九折，之后封面原价。

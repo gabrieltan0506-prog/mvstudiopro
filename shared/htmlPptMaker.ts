@@ -517,7 +517,7 @@ export function buildDefaultHtmlPptPages(
   purposeZh?: string,
   styleId: HtmlPptStyleId = "dark_research",
 ): HtmlPptPage[] {
-  const n = Math.max(3, Math.min(16, Math.floor(pageCount || 6)));
+  const n = Math.max(5, Math.min(16, Math.floor(pageCount || 5)));
   const topic = String(title || "主题").trim().slice(0, 80);
   const purpose = String(purposeZh || "汇报").trim().slice(0, 40);
   const styleLabel = HTML_PPT_STYLES[styleId]?.labelZh || "动效 PPT";

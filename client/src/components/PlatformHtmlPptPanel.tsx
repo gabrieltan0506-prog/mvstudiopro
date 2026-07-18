@@ -9,7 +9,7 @@ import {
   type HtmlPptPage,
   type HtmlPptStyleId,
 } from "@shared/htmlPptMaker";
-import { CREDIT_COSTS } from "@shared/plans";
+import { CREDIT_COSTS, platformHtmlPptOutlineCredits } from "@shared/plans";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 
@@ -25,7 +25,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const [step, setStep] = useState<StepId>("setup");
   const [title, setTitle] = useState("AI漫剧的市场现状与前景");
   const [purpose, setPurpose] = useState("行业路演 / 数据洞察汇报");
-  const [pageCount, setPageCount] = useState(13);
+  /** 页数由用户指定；未选时不预填 */
+  const [pageCount, setPageCount] = useState<number | null>(null);
   const [styleId, setStyleId] = useState<HtmlPptStyleId>(() => recommendHtmlPptStyle("数据洞察汇报"));
   const [briefZh, setBriefZh] = useState(
     [
@@ -51,8 +52,10 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiBusyLabel, setAiBusyLabel] = useState("GPT-5.6 Sol 生成中…");
 
-  const outlineCost = CREDIT_COSTS.platformHtmlPptOutline;
+  const perPageCost = CREDIT_COSTS.platformHtmlPptOutlinePerPage;
+  const outlineCost = pageCount != null ? platformHtmlPptOutlineCredits(pageCount) : null;
   const generateOutlineMutation = trpc.mvAnalysis.generateHtmlPptOutline.useMutation();
+  const pageReady = pageCount != null && pageCount >= 5;
 
   const styleList = useMemo(
     () => Object.entries(HTML_PPT_STYLES) as [HtmlPptStyleId, (typeof HTML_PPT_STYLES)[HtmlPptStyleId]][],
@@ -62,6 +65,10 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const busy = disabled || aiBusy || generateOutlineMutation.isPending;
 
   const rebuildOutlineLocal = () => {
+    if (pageCount == null || pageCount < 5) {
+      setAiError("请先选择页数（最少 5 页）");
+      return;
+    }
     setAiError(null);
     setAiSummary(null);
     setAiModel(null);
@@ -71,6 +78,10 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   };
 
   const rebuildOutlineWithAi = async () => {
+    if (pageCount == null || pageCount < 5) {
+      setAiError("请先选择页数（最少 5 页）");
+      return;
+    }
     setAiError(null);
     setAiBusy(true);
     setAiBusyLabel("正在入队…");
@@ -196,7 +207,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         title,
         styleId,
         purposeZh: purpose,
-        pages: normalized.length ? normalized : buildDefaultHtmlPptPages(title, pageCount, purpose, styleId),
+        pages: normalized.length
+          ? normalized
+          : buildDefaultHtmlPptPages(title, pageCount ?? 5, purpose, styleId),
       });
     const blob = new Blob([doc], { type: "text/html;charset=utf-8" });
     const a = document.createElement("a");
@@ -211,8 +224,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       <div>
         <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          方案 A：<span className="text-emerald-200/90">GPT-5.6 Sol</span> 写详尽清单与绝对量级图表数据（
-          {outlineCost} 积分/次），前端多色 SVG 分步动效（条/柱/环/折线/对照 compare）。图表不是 Image-2。空格=下一步动效，←→=翻页。
+          方案 A：<span className="text-emerald-200/90">GPT-5.6 Sol</span> 写详尽清单与图表数据（
+          {perPageCost} 积分/页，用户自选页数），前端多色 SVG 分步动效。空格=下一步动效，←→=翻页。
         </p>
       </div>
 
@@ -261,18 +274,35 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               />
             </label>
           </div>
-          <label className="block text-[11px] text-white/60">
-            页数
-            <input
-              type="number"
-              min={3}
-              max={16}
-              disabled={busy}
-              value={pageCount}
-              onChange={(e) => setPageCount(Number(e.target.value) || 8)}
-              className="mt-1 w-24 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
-            />
-          </label>
+          <div>
+            <div className="mb-1.5 text-[11px] text-white/60">
+              页数 <span className="text-white/35">（必选 · 最少 5 · {perPageCost} 积分/页）</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {Array.from({ length: 12 }, (_, i) => i + 5).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setPageCount(n)}
+                  className={`min-w-[2.5rem] rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold disabled:opacity-40 ${
+                    pageCount === n
+                      ? "border-emerald-400/55 bg-emerald-500/20 text-emerald-50"
+                      : "border-white/15 bg-black/40 text-white/70 hover:border-white/30"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            {pageCount == null ? (
+              <p className="mt-1.5 text-[10px] text-amber-200/80">请先点选页数</p>
+            ) : (
+              <p className="mt-1.5 text-[10px] text-emerald-200/70">
+                本次 AI 清单：{outlineCost} 积分（{pageCount}×{perPageCost}）
+              </p>
+            )}
+          </div>
           <label className="block text-[11px] text-white/60">
             补充背景 / 数据口径 / 受众（AI 必读，越具体越好）
             <textarea
@@ -343,17 +373,19 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={busy || !title.trim()}
+              disabled={busy || !title.trim() || !pageReady}
               onClick={() => void rebuildOutlineWithAi()}
               className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
             >
               {aiBusy || generateOutlineMutation.isPending
                 ? aiBusyLabel
-                : `用 GPT-5.6 Sol 生成页面清单（${outlineCost} 积分）`}
+                : pageReady
+                  ? `用 GPT-5.6 Sol 生成页面清单（${outlineCost} 积分）`
+                  : "请先选择页数"}
             </button>
             <button
               type="button"
-              disabled={busy || !title.trim()}
+              disabled={busy || !title.trim() || !pageReady}
               onClick={rebuildOutlineLocal}
               className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] font-semibold text-white/70 disabled:opacity-40"
             >
