@@ -33,7 +33,8 @@ describe("htmlPptOutlinePrompt", () => {
       ],
     });
     expect(p).toContain("themeId=market → 可见标题「市场规模」");
-    expect(p).toContain("P1 必须是目录");
+    expect(p).toContain("pages[0]=封面");
+    expect(p).toContain("pages[1]=目录");
   });
 
   it("builds theme suggest prompt with user themes", () => {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   HTML_PPT_STYLES,
   HTML_PPT_VIZ_KINDS,
@@ -85,6 +85,12 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const patchPageMutation = trpc.mvAnalysis.patchHtmlPptPage.useMutation();
   const slideImageMutation = trpc.mvAnalysis.generateHtmlPptSlideImage.useMutation();
   const resolvePptxImagesMutation = trpc.mvAnalysis.resolveHtmlPptPptxImages.useMutation();
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const styleList = useMemo(
     () => Object.entries(HTML_PPT_STYLES) as [HtmlPptStyleId, (typeof HTML_PPT_STYLES)[HtmlPptStyleId]][],
@@ -203,34 +209,49 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         const indices = [0, Math.min(2, nextPages.length - 1), Math.min(4, nextPages.length - 1)].filter(
           (v, i, a) => a.indexOf(v) === i,
         );
-        for (const idx of indices) {
-          const page = nextPages[idx];
-          if (!page) continue;
+        const pollLabel = window.setInterval(() => {
           setAiBusyLabel(formatWaitLabel("正在生成插图", Date.now() - imgStartedAt));
-          try {
-            const img = await slideImageMutation.mutateAsync({
-              deckTitle: title.trim(),
-              templateId: imageTemplateId === "auto" ? null : imageTemplateId,
-              styleId,
-              page: {
-                title: page.title,
-                subtitle: page.subtitle,
-                bullets: page.bullets,
-                kpi: page.kpi,
-                note: page.note,
-                viz: page.viz,
-                series: page.series,
-                themeId: page.themeId,
-                themeTitle: page.themeTitle,
-                highlight: page.highlight,
-              },
+        }, 1000);
+        try {
+          const settled = await Promise.all(
+            indices.map(async (idx) => {
+              const page = nextPages[idx];
+              if (!page) return null;
+              try {
+                const img = await slideImageMutation.mutateAsync({
+                  deckTitle: title.trim(),
+                  templateId: imageTemplateId === "auto" ? null : imageTemplateId,
+                  styleId,
+                  page: {
+                    title: page.title,
+                    subtitle: page.subtitle,
+                    bullets: page.bullets,
+                    kpi: page.kpi,
+                    note: page.note,
+                    viz: page.viz,
+                    series: page.series,
+                    themeId: page.themeId,
+                    themeTitle: page.themeTitle,
+                    highlight: page.highlight,
+                  },
+                });
+                return { idx, imageUrl: img.imageUrl };
+              } catch {
+                return null;
+              }
+            }),
+          );
+          const byIdx = new Map(
+            settled.filter((x): x is { idx: number; imageUrl: string } => Boolean(x)).map((x) => [x.idx, x.imageUrl]),
+          );
+          if (byIdx.size) {
+            nextPages = nextPages.map((p, i) => {
+              const url = byIdx.get(i);
+              return url ? { ...p, imageUrl: url } : p;
             });
-            nextPages = nextPages.map((p, i) =>
-              i === idx ? { ...p, imageUrl: img.imageUrl } : p,
-            );
-          } catch {
-            /* 插图失败不阻断清单 */
           }
+        } finally {
+          window.clearInterval(pollLabel);
         }
       }
 
@@ -309,6 +330,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           themeTitle: page.themeTitle,
           highlight: page.highlight,
           imageUrl: page.imageUrl,
+          imageMotion: page.imageMotion,
         },
         pageIndex: index,
         totalPages: Math.max(PLATFORM_HTML_PPT_PAGE_MIN, pages.length),

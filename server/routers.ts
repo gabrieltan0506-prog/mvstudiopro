@@ -7236,6 +7236,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             themeTitle: z.string().max(40).optional(),
             highlight: z.array(z.string()).max(6).optional(),
             imageUrl: z.string().url().max(2048).optional(),
+            imageMotion: z
+              .array(
+                z.object({
+                  at: z.number().int().min(0).max(20),
+                  pose: z.enum(["hero", "dock_right", "dock_left", "dock_bottom"]),
+                }),
+              )
+              .max(5)
+              .optional(),
           }),
           pageIndex: z.number().int().min(0).max(15),
           totalPages: z.number().int().min(10).max(16),
