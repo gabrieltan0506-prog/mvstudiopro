@@ -31,7 +31,7 @@ export default function ManhuaCharacterPartnerSuggestStrips({
                 key={`sim-${c.id}`}
                 type="button"
                 disabled={disabled}
-                onClick={() => onSelect(c.id, libraryTab)}
+                onClick={() => onSelect(c.id, c.gender)}
                 className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/55 hover:border-white/25 disabled:opacity-40"
               >
                 {c.nameZh}

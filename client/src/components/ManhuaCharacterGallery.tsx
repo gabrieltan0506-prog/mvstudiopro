@@ -10,9 +10,10 @@ import {
   buildManhuaDualLeadBrief,
   characterMatchesTemperamentPack,
   getManhuaCharacterById,
+  getManhuaCharacterLifeStage,
   getManhuaCouplePackById,
   getManhuaTemperamentPackById,
-  listManhuaCharactersByGender,
+  listManhuaCharactersForLibraryTab,
   parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
   recommendManhuaCouplePacksFromTopic,
@@ -23,6 +24,7 @@ import {
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
   type ManhuaCharacterTemplate,
+  type ManhuaLibraryCastTab,
 } from "@shared/manhuaCharacterAssetLibrary";
 import {
   applyManhuaGalleryWorkspace,
@@ -114,9 +116,11 @@ export default function ManhuaCharacterGallery({
   topicHint,
 }: Props) {
   const initialPrefs = useMemo(() => loadLibraryPrefs(), []);
-  const [libraryTab, setLibraryTab] = useState<ManhuaCharacterGender>(
-    () => initialPrefs.tab || "female",
-  );
+  const [libraryTab, setLibraryTab] = useState<ManhuaLibraryCastTab>(() => {
+    const t = initialPrefs.tab;
+    if (t === "male" || t === "elder" || t === "child") return t;
+    return "female";
+  });
   const [libraryQuery, setLibraryQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [jobFilter, setJobFilter] = useState("");
@@ -146,17 +150,21 @@ export default function ManhuaCharacterGallery({
     [topicHint],
   );
   const topicCoupleSet = useMemo(() => new Set(topicCoupleRec.packIds), [topicCoupleRec.packIds]);
-  const females = useMemo(() => listManhuaCharactersByGender("female"), []);
-  const males = useMemo(() => listManhuaCharactersByGender("male"), []);
   const selectedFemale = femaleId ? getManhuaCharacterById(femaleId) : null;
   const selectedMale = maleId ? getManhuaCharacterById(maleId) : null;
   const favoriteSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
-  const pool = libraryTab === "female" ? females : males;
+  const pool = useMemo(() => listManhuaCharactersForLibraryTab(libraryTab), [libraryTab]);
+  const isLeadTab = libraryTab === "female" || libraryTab === "male";
+  const characterInTab = (c: ManhuaCharacterTemplate) => {
+    if (libraryTab === "elder") return getManhuaCharacterLifeStage(c) === "elder";
+    if (libraryTab === "child") return getManhuaCharacterLifeStage(c) === "child";
+    return getManhuaCharacterLifeStage(c) === "adult" && c.gender === libraryTab;
+  };
   const recentInTab = useMemo(() => {
     const out: ManhuaCharacterTemplate[] = [];
     for (const id of recentIds) {
       const c = getManhuaCharacterById(id);
-      if (c && c.gender === libraryTab) out.push(c);
+      if (c && characterInTab(c)) out.push(c);
       if (out.length >= 6) break;
     }
     return out;
@@ -165,13 +173,20 @@ export default function ManhuaCharacterGallery({
     const out: ManhuaCharacterTemplate[] = [];
     for (const id of favoriteIds) {
       const c = getManhuaCharacterById(id);
-      if (c && c.gender === libraryTab) out.push(c);
+      if (c && characterInTab(c)) out.push(c);
       if (out.length >= 8) break;
     }
     return out;
   }, [favoriteIds, libraryTab]);
+  const selectedInTab = useMemo(() => {
+    if (libraryTab === "female") return femaleId;
+    if (libraryTab === "male") return maleId;
+    if (femaleId && pool.some((c) => c.id === femaleId)) return femaleId;
+    if (maleId && pool.some((c) => c.id === maleId)) return maleId;
+    return "";
+  }, [libraryTab, femaleId, maleId, pool]);
   const similarInTab = useMemo(() => {
-    const current = pool.find((c) => c.id === (libraryTab === "female" ? femaleId : maleId));
+    const current = pool.find((c) => c.id === selectedInTab);
     if (!current) return [] as ManhuaCharacterTemplate[];
     const tags = new Set(current.temperamentTags);
     return pool
@@ -184,23 +199,21 @@ export default function ManhuaCharacterGallery({
       .sort((a, b) => b.score - a.score || a.c.nameZh.localeCompare(b.c.nameZh, "zh"))
       .slice(0, 5)
       .map((x) => x.c);
-  }, [pool, libraryTab, femaleId, maleId]);
+  }, [pool, selectedInTab]);
   const contrastPartners = useMemo(() => {
-    const anchorId = libraryTab === "female" ? femaleId : maleId;
-    if (!anchorId) return [] as ManhuaCharacterTemplate[];
-    return suggestManhuaContrastPartner(anchorId, {
+    if (!isLeadTab || !selectedInTab) return [] as ManhuaCharacterTemplate[];
+    return suggestManhuaContrastPartner(selectedInTab, {
       excludeIds: [femaleId, maleId],
       limit: 5,
     });
-  }, [libraryTab, femaleId, maleId]);
+  }, [isLeadTab, selectedInTab, femaleId, maleId]);
   const sameFieldPartners = useMemo(() => {
-    const anchorId = libraryTab === "female" ? femaleId : maleId;
-    if (!anchorId) return [] as ManhuaCharacterTemplate[];
-    return suggestManhuaSameFieldPartner(anchorId, {
+    if (!isLeadTab || !selectedInTab) return [] as ManhuaCharacterTemplate[];
+    return suggestManhuaSameFieldPartner(selectedInTab, {
       excludeIds: [femaleId, maleId],
       limit: 5,
     });
-  }, [libraryTab, femaleId, maleId]);
+  }, [isLeadTab, selectedInTab, femaleId, maleId]);
 
   const tagOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -225,18 +238,21 @@ export default function ManhuaCharacterGallery({
   }, [pool]);
   const filteredPool = useMemo(() => {
     const selectedIds = new Set([femaleId, maleId].filter(Boolean));
-    const anchorAge =
-      libraryTab === "female"
+    const anchorAge = isLeadTab
+      ? libraryTab === "female"
         ? getManhuaCharacterById(maleId)?.age
-        : getManhuaCharacterById(femaleId)?.age;
+        : getManhuaCharacterById(femaleId)?.age
+      : undefined;
     const list = pool.filter((c) => {
       if (favoritesOnly && !favoriteSet.has(c.id)) return false;
       if (unselectedOnly && selectedIds.has(c.id)) return false;
       if (!characterMatchesTemperamentPack(c, packFilter)) return false;
       if (tagFilter && !c.temperamentTags.includes(tagFilter)) return false;
       if (jobFilter && c.jobZh !== jobFilter) return false;
-      if (!matchesAgeBand(c, ageBand)) return false;
-      if (ageGapMax && anchorAge && c.age && Math.abs(c.age - anchorAge) > ageGapMax) return false;
+      if (isLeadTab && !matchesAgeBand(c, ageBand)) return false;
+      if (isLeadTab && ageGapMax && anchorAge && c.age && Math.abs(c.age - anchorAge) > ageGapMax) {
+        return false;
+      }
       return matchesCharacterQuery(c, libraryQuery);
     });
     if (sortMode === "name") {
@@ -259,10 +275,10 @@ export default function ManhuaCharacterGallery({
     packFilter,
     sortMode,
     libraryTab,
+    isLeadTab,
     femaleId,
     maleId,
   ]);
-  const selectedInTab = libraryTab === "female" ? femaleId : maleId;
 
   const rememberSelect = (id: string, gender: ManhuaCharacterGender) => {
     if (gender === "female") onSelectFemale(id);
@@ -272,6 +288,25 @@ export default function ManhuaCharacterGallery({
       setRecentIds(loadRecentIds());
     }
   };
+
+  const selectFromLibrary = (c: ManhuaCharacterTemplate) => {
+    rememberSelect(c.id, c.gender);
+  };
+
+  const tabAccent = (c?: ManhuaCharacterTemplate | null): "cyan" | "amber" => {
+    if (libraryTab === "female") return "cyan";
+    if (libraryTab === "male") return "amber";
+    return c?.gender === "female" ? "cyan" : "amber";
+  };
+
+  const tabLabelZh =
+    libraryTab === "female"
+      ? "女主"
+      : libraryTab === "male"
+        ? "男主"
+        : libraryTab === "elder"
+          ? "老人"
+          : "儿童";
 
   const applyCouplePair = (
     female: string,
@@ -501,7 +536,7 @@ export default function ManhuaCharacterGallery({
     const others = filteredPool.filter((c) => c.id !== selectedInTab);
     const bag = others.length ? others : filteredPool;
     const pick = bag[Math.floor(Math.random() * bag.length)];
-    if (pick) rememberSelect(pick.id, libraryTab);
+    if (pick) selectFromLibrary(pick);
   };
 
   const copyFilteredIds = async () => {
@@ -770,7 +805,7 @@ export default function ManhuaCharacterGallery({
           ? (idx + 1) % filteredPool.length
           : (idx - 1 + filteredPool.length) % filteredPool.length;
       const next = filteredPool[nextIdx];
-      if (next) rememberSelect(next.id, libraryTab);
+      if (next) selectFromLibrary(next);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1040,37 +1075,34 @@ export default function ManhuaCharacterGallery({
               {compactUi ? "精简模式" : "完整筛选"}
             </button>
           </div>
-          <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                setLibraryTab("female");
-                setLibraryQuery("");
-                setTagFilter("");
-                setJobFilter("");
-                setPackFilterId("");
-              }}
-              className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
-                libraryTab === "female" ? "bg-cyan-500/25 text-cyan-100" : "text-white/55"
-              }`}
-            >
-              女主
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLibraryTab("male");
-                setLibraryQuery("");
-                setTagFilter("");
-                setJobFilter("");
-                setPackFilterId("");
-              }}
-              className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
-                libraryTab === "male" ? "bg-amber-500/25 text-amber-100" : "text-white/55"
-              }`}
-            >
-              男主
-            </button>
+          <div className="inline-flex flex-wrap rounded-lg border border-white/10 bg-black/40 p-0.5">
+            {(
+              [
+                { id: "female" as const, label: "女主", on: "bg-cyan-500/25 text-cyan-100" },
+                { id: "male" as const, label: "男主", on: "bg-amber-500/25 text-amber-100" },
+                { id: "elder" as const, label: "老人", on: "bg-stone-400/25 text-stone-100" },
+                { id: "child" as const, label: "儿童", on: "bg-emerald-500/25 text-emerald-100" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setLibraryTab(tab.id);
+                  setLibraryQuery("");
+                  setTagFilter("");
+                  setJobFilter("");
+                  setPackFilterId("");
+                  setAgeBand("");
+                  setAgeGapMax(0);
+                }}
+                className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                  libraryTab === tab.id ? tab.on : "text-white/55"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
         <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1220,7 +1252,7 @@ export default function ManhuaCharacterGallery({
             />
           </>
         ) : null}
-        {!compactUi ? (
+        {!compactUi && isLeadTab ? (
           <ManhuaCharacterPartnerSuggestStrips
             disabled={disabled}
             libraryTab={libraryTab}
@@ -1229,6 +1261,13 @@ export default function ManhuaCharacterGallery({
             sameFieldPartners={sameFieldPartners}
             onSelect={rememberSelect}
           />
+        ) : null}
+        {!isLeadTab ? (
+          <p className="mb-2 text-[10px] text-white/40">
+            {libraryTab === "elder"
+              ? "老人配角库：点选后写入对应性别槽（女→女主位 / 男→男主位），不参与默认恋爱配对推荐。"
+              : "剧用儿童库（约 8–12 岁·家庭向）：点选写入对应性别槽；不参与默认男女主推荐。"}
+          </p>
         ) : null}
         {favoritesInTab.length ? (
           <div className="mb-2">
@@ -1239,7 +1278,7 @@ export default function ManhuaCharacterGallery({
                   key={`fav-${c.id}`}
                   type="button"
                   disabled={disabled}
-                  onClick={() => rememberSelect(c.id, libraryTab)}
+                  onClick={() => selectFromLibrary(c)}
                   className={`rounded-full border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
                     selectedInTab === c.id
                       ? "border-rose-300/45 bg-rose-500/15 text-rose-100"
@@ -1271,10 +1310,10 @@ export default function ManhuaCharacterGallery({
                   key={`recent-${c.id}`}
                   type="button"
                   disabled={disabled}
-                  onClick={() => rememberSelect(c.id, libraryTab)}
+                  onClick={() => selectFromLibrary(c)}
                   className={`rounded-full border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
                     selectedInTab === c.id
-                      ? libraryTab === "female"
+                      ? tabAccent(c) === "cyan"
                         ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
                         : "border-amber-400/45 bg-amber-500/15 text-amber-100"
                       : "border-white/10 text-white/55 hover:border-white/25"
@@ -1309,7 +1348,7 @@ export default function ManhuaCharacterGallery({
           <ul className="mb-2 list-inside list-disc space-y-0.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] text-white/45">
             <li>悬停看三视图 · 右键钉住预览</li>
             <li>★/F 收藏 · R/Shift+R 随机 · C 对比 · L 锁画风 · U 精简 · B 短名片 · I 复制 id · T 题材首推 · H 滚库 · ?</li>
-            <li>[ 女主库 · ] 男主库 · 1–9/0 套组 · Esc 清筛选 · ←/→ 换人</li>
+            <li>[ 女主库 · ] 男主库 · Tab 可切老人/儿童 · 1–9/0 套组 · Esc 清筛选 · ←/→ 换人</li>
             <li>三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行</li>
           </ul>
         ) : null}
@@ -1321,7 +1360,7 @@ export default function ManhuaCharacterGallery({
               </div>
               <ManhuaCharacterSheetPreview
                 character={compareCharacter}
-                accent={libraryTab === "female" ? "cyan" : "amber"}
+                accent={tabAccent(compareCharacter)}
                 artStyleId={artStyleId}
                 compact
               />
@@ -1332,7 +1371,7 @@ export default function ManhuaCharacterGallery({
               </div>
               <ManhuaCharacterSheetPreview
                 character={selectedForCompare}
-                accent={libraryTab === "female" ? "cyan" : "amber"}
+                accent={tabAccent(selectedForCompare)}
                 artStyleId={artStyleId}
                 compact
               />
@@ -1349,7 +1388,7 @@ export default function ManhuaCharacterGallery({
               : "grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4"
           }`}
           role="listbox"
-          aria-label={`${libraryTab === "female" ? "女主" : "男主"}角色库`}
+          aria-label={`${tabLabelZh}角色库`}
         >
           {filteredPool.map((c) => (
             <ManhuaCharacterLibraryCard
@@ -1357,9 +1396,9 @@ export default function ManhuaCharacterGallery({
               character={c}
               selected={selectedInTab === c.id}
               favorited={favoriteSet.has(c.id)}
-              accent={libraryTab === "female" ? "cyan" : "amber"}
+              accent={tabAccent(c)}
               disabled={disabled}
-              onSelect={() => rememberSelect(c.id, libraryTab)}
+              onSelect={() => selectFromLibrary(c)}
               onToggleFavorite={() => toggleFavorite(c.id)}
             />
           ))}
@@ -1367,7 +1406,8 @@ export default function ManhuaCharacterGallery({
             <div className="col-span-full rounded-lg border border-dashed border-white/15 px-3 py-8 text-center text-[11px] text-white/40">
               {favoritesOnly
                 ? "当前没有收藏角色，点卡片左上角 ★ 收藏后再筛"
-                : ageGapMax &&
+                : isLeadTab &&
+                    ageGapMax &&
                     !(libraryTab === "female" ? maleId : femaleId)
                   ? "年龄差筛选需先选定另一侧角色"
                   : "无匹配角色，试试清空搜索或气质筛选"}

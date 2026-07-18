@@ -6,7 +6,8 @@
  *   IDS=char_f_02,char_m_01 LIMIT=4
  *   FORCE=1 RESTORE_BACKUP=1          # 从备份重跑已成功槽（方案 A 加大骨相）
  *   SOFT_REF=0                         # 关闭 me/t1–t3 / jul18 女像参考
- *   FACE_LOCK=1                        # 男主：实拍同脸融图（默认开）；女主仍只借皮肤
+ *   FACE_LOCK=1                        # 成人男主：实拍皮肤+五官轮廓锚（默认开）；女主仍只借皮肤
+ *   INCLUDE_AGE_SLOTS=1                # 默认跳过老人/儿童（用 manhua:photoreal-age-slots）
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,10 +17,12 @@ import { fileURLToPath } from "node:url";
 import {
   MANHUA_CHARACTER_ASSET_LIBRARY,
   MANHUA_PHOTOREAL_NAME_ZH,
+  getManhuaCharacterLifeStage,
   type ManhuaCharacterTemplate,
 } from "../shared/manhuaCharacterAssetLibrary.js";
 import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
   PHOTOREAL_FACE_LOCK_BLEND_ZH,
   PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
@@ -41,8 +44,9 @@ const LOG = "/tmp/diversify-photoreal-jaws.log";
 const TIMEOUT_MS = Math.min(Math.max(Number(process.env.GEN_TIMEOUT_MS) || 540_000, 120_000), 900_000);
 /** 默认开参考图；SOFT_REF=0 可关 */
 const USE_SOFT_REF = !/^(0|false|no)$/i.test(String(process.env.SOFT_REF || "1"));
-/** 男主同脸融图（用户拍板）；FACE_LOCK=0 则退回只借皮肤 */
+/** 成人男主：皮肤+轮廓锚；FACE_LOCK=0 则退回只借皮肤 */
 const USE_FACE_LOCK = !/^(0|false|no)$/i.test(String(process.env.FACE_LOCK || "1"));
+const INCLUDE_AGE_SLOTS = /^(1|true|yes)$/i.test(String(process.env.INCLUDE_AGE_SLOTS || ""));
 
 type Row = {
   id: string;
@@ -80,6 +84,9 @@ function pickTargets(): ManhuaCharacterTemplate[] {
   );
   const limit = Math.max(0, Number(process.env.LIMIT || 0) || 0);
   let list = [...MANHUA_CHARACTER_ASSET_LIBRARY].filter((c) => !skip.has(c.id));
+  if (!INCLUDE_AGE_SLOTS) {
+    list = list.filter((c) => getManhuaCharacterLifeStage(c) === "adult");
+  }
   if (idFilter.length) list = list.filter((c) => idFilter.includes(c.id));
   if (limit > 0) list = list.slice(0, limit);
   return list;
@@ -312,11 +319,13 @@ function firstExisting(...candidates: string[]): string | undefined {
 }
 
 /**
- * 男：me 为主锚 + t1–t3 轮转辅锚（同脸融图）。
- * 女：jul18 ready 女像（只借皮肤；不用男脸硬贴女主）。
+ * 成人男：me + t1–t3 作皮肤/轮廓锚（非网红整容）。
+ * 成人女：jul18 ready 女像（只借皮肤）。
  */
 function pickSoftRefLocalPaths(c: ManhuaCharacterTemplate): string[] {
   if (!USE_SOFT_REF) return [];
+  // 老人/儿童不挂男主实拍脸
+  if (getManhuaCharacterLifeStage(c) !== "adult") return [];
   const n = Number((c.id.match(/(\d+)$/) || [])[1] || 0);
   if (c.gender === "male") {
     const me = firstExisting(path.join(REFS_DL, "me.jpg"), path.join(REFS_PUBLIC, "me.jpg"));
@@ -354,15 +363,16 @@ function buildHeroEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): s
   const faceLock = c.gender === "male" && USE_FACE_LOCK && hasSoftRef;
   return [
     faceLock
-      ? "竖屏 9:16 安全向肖像融图编辑：第一张为库图构图/服装底，其后为实拍人脸锚——把实拍脸融进库图，允许同脸复制后再微调。"
+      ? "竖屏 9:16 安全向肖像编辑：第一张为库图构图/服装底，其后为实拍参考——只调皮肤质感与五官轮廓，禁止整容成网红美男。"
       : "竖屏 9:16 安全向肖像编辑：保持同一人身份与发型大轮廓，但下颌骨相必须明显拉开（并排放一眼可辨），不是磨皮级微调。",
-    `角色「${name}」目标骨相：${shape.labelZh}${faceLock ? "（在实拍同脸上微调下颌，勿换人）" : "——下颌宽度、下巴形状、下颌角按该目标明显偏移"}。`,
+    `角色「${name}」目标骨相：${shape.labelZh}${faceLock ? "（轮廓微调，勿整容换人）" : "——下颌宽度、下巴形状、下颌角按该目标明显偏移"}。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
     faceLock
-      ? "五官以实拍为准；服装/背景/构图跟库图；下颌可按骨相轮盘轻微拉开，仍须是同一张脸。"
+      ? "皮肤与大轮廓跟实拍气质；服装/背景/构图跟库图；允许普通长相与轻微岁月痕迹。"
       : "眉眼鼻唇可保留可识别连续性；下庭轮廓必须改到与原图有清晰差异；禁止仍是统一小尖下巴/小V脸。",
     "禁止名人脸、禁止暴露服装、禁止性暗示、禁止未成年人形象。",
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
     refPolicyBlock(c, hasSoftRef),
     PHOTOREAL_ANTI_AI_LOCK_ZH,
     PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
@@ -378,11 +388,12 @@ function buildSheetEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): 
   return [
     "竖屏设定卡安全向编辑：上半胸像与下半 FRONT/SIDE/BACK 三视图同一张脸、同一骨相。",
     faceLock
-      ? `角色「${name}」。第二张为已融脸胸像、其后可含实拍锚——三视图必须是同一张实拍脸，禁止另长一张脸。`
+      ? `角色「${name}」。第二张为已改皮肤/轮廓的胸像、其后可含实拍锚——三视图须同一人，禁止另长一张网红脸。`
       : `角色「${name}」。第二张参考为已改骨相胸像——三视图对齐该骨相（下颌差异必须保留到三视图）。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
     "下颌/下巴须与胸像一致；服装保持得体日常覆盖；禁止暴露、禁止换成别人。",
     PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
     refPolicyBlock(c, hasSoftRef),
     "无文字水印。全家宜内容。",
   ]

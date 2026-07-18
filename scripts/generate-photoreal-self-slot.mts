@@ -3,7 +3,7 @@
  *
  * 口径（用户已拍板）：
  * - 过审槽默认不动；FORCE=1 可重做
- * - 本人脸允许同脸复制 / 融图 / 微调（服装发型可改）
+ * - 实拍锚只调皮肤质感与五官轮廓，禁止整容成网红美男（服装发型可改）
  * - 不同槽位用 me + 轮转 t1–t3，并做发型/下颌微调以免十四张完全同一帧
  *
  *   FLY_ORIGIN=https://mvstudiopro.fly.dev IDS=char_m_14 pnpm run manhua:photoreal-self
@@ -201,8 +201,8 @@ function faceDiversityBlock(id: string, name: string): string {
   const v = variants[n % variants.length]!;
   return [
     PHOTOREAL_FACE_LOCK_BLEND_ZH,
-    `【本槽微调·${name}】在实拍同脸基础上做可辨差异：${v}。`,
-    "仍须一眼能认出是参考图同一个人；禁止换成别人或名人脸。",
+    `【本槽微调·${name}】在实拍皮肤与轮廓基础上做可辨差异：${v}。`,
+    "可保留同源气质；禁止整容成网红美男，禁止换成别人或名人脸。",
   ].join("\n");
 }
 
