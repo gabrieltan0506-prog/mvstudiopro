@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
+import { HTML_PPT_VIZ_KINDS, type HtmlPptVizKind } from "../shared/htmlPptMaker.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
@@ -7224,7 +7225,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             bullets: z.array(z.string()).max(8).optional(),
             kpi: z.string().max(24).optional(),
             note: z.string().max(220).optional(),
-            viz: z.string().max(24).optional(),
+            viz: z
+              .enum(HTML_PPT_VIZ_KINDS as [HtmlPptVizKind, ...HtmlPptVizKind[]])
+              .optional(),
             series: z
               .array(z.object({ label: z.string(), value: z.number() }))
               .max(8)
@@ -7318,7 +7321,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             bullets: z.array(z.string()).max(8).optional(),
             kpi: z.string().max(24).optional(),
             note: z.string().max(220).optional(),
-            viz: z.string().max(24).optional(),
+            viz: z
+              .enum(HTML_PPT_VIZ_KINDS as [HtmlPptVizKind, ...HtmlPptVizKind[]])
+              .optional(),
             series: z
               .array(z.object({ label: z.string(), value: z.number() }))
               .max(8)
