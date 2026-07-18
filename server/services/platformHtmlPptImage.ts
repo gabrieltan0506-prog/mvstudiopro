@@ -13,12 +13,15 @@ export async function generateHtmlPptSlideImage(opts: {
   deckTitle: string;
   /** 用户指定模板；空 / auto → 启发式推荐 */
   templateId?: string | null;
+  /** 演示风格：插图配色对齐所选 PPT 模板 */
+  styleId?: string | null;
 }): Promise<{ imageUrl: string; templateId: string }> {
   const templateId = resolveHtmlPptImageTemplateId(opts.templateId, opts.page);
   const prompt = buildHtmlPptSlideImagePrompt({
     templateId,
     page: opts.page,
     deckTitle: opts.deckTitle,
+    styleId: opts.styleId,
   });
   if (!prompt.trim()) {
     throw new Error("生图提示词为空");

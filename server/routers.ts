@@ -7315,6 +7315,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           deckTitle: z.string().min(1).max(80),
           templateId: z.string().max(80).optional().nullable(),
+          styleId: z
+            .enum([
+              "dark_research",
+              "pitch_orange",
+              "figma_timeline",
+              "emerald_boardroom",
+              "noir_gold",
+              "rose_editorial",
+              "slate_consulting",
+              "ivory_academic",
+              "ocean_brief",
+            ])
+            .optional()
+            .nullable(),
           page: z.object({
             title: z.string().min(1).max(80),
             subtitle: z.string().max(160).optional(),
@@ -7340,6 +7354,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return await generateHtmlPptSlideImage({
             deckTitle: input.deckTitle,
             templateId: input.templateId,
+            styleId: input.styleId,
             page: input.page,
           });
         } catch (err) {

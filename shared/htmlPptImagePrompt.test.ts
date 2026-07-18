@@ -53,12 +53,23 @@ describe("htmlPptImagePrompt", () => {
       },
     });
     expect(prompt).toContain("内容锁定·强制");
+    expect(prompt).toContain("插图简洁·强制");
     expect(prompt).toContain("16:9");
     expect(prompt).toContain("竞争格局对照");
     expect(prompt).toContain("付费转化");
     expect(prompt).toContain("LAYOUT ONLY");
     expect(prompt).not.toMatch(/阿里巴巴|Alibaba|Hermès|Tesla/i);
     expect(prompt).toContain("--ar 16:9");
+  });
+
+  it("aligns image prompt with selected deck style", () => {
+    const prompt = buildHtmlPptSlideImagePrompt({
+      templateId: "auto",
+      styleId: "ivory_academic",
+      page: hubPage,
+    });
+    expect(prompt).toContain("演示气质");
+    expect(prompt).toContain("象牙学术");
   });
 
   it("uses explicit template id when valid", () => {
