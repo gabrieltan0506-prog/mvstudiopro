@@ -1046,6 +1046,34 @@ async function buildPlatformDashboard(params: {
  */
 function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...raw };
+  /** 禁止对嵌套对象 String(obj) → "[object Object]" 写进文案/步骤 */
+  const safeScalar = (v: unknown): string => {
+    if (v == null) return "";
+    if (typeof v === "string") {
+      const t = v.trim();
+      return t === "[object Object]" ? "" : v;
+    }
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      for (const k of ["title", "text", "content", "name", "desc", "description", "detail", "action", "label", "value", "step"]) {
+        if (typeof o[k] === "string" && String(o[k]).trim() && String(o[k]).trim() !== "[object Object]") {
+          return String(o[k]);
+        }
+      }
+      const nested = Object.values(o).find((x) => typeof x === "string" && String(x).trim() && String(x).trim() !== "[object Object]");
+      if (typeof nested === "string") return nested;
+      try {
+        const json = JSON.stringify(v);
+        if (json && json !== "{}" && json !== "[]") return json;
+      } catch {
+        /* ignore */
+      }
+    }
+    return "";
+  };
+  const safeStringList = (arr: unknown[]): string[] =>
+    arr.map((x) => safeScalar(x).trim()).filter((s) => s && s !== "[object Object]");
 
   // ── Top-level array key aliases ──────────────────────────────────────────
   // contentBlueprints
@@ -1094,6 +1122,10 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
         const sa = b.steps ?? b.actionSteps ?? b.actions ?? b.nextSteps ?? b.executionSteps;
         b.actionableSteps = Array.isArray(sa) ? sa : [];
       }
+      b.actionableSteps = safeStringList(b.actionableSteps as unknown[]);
+      b.suitablePlatforms = safeStringList(
+        Array.isArray(b.suitablePlatforms) ? (b.suitablePlatforms as unknown[]) : [],
+      );
       // detailedScript
       if (!b.detailedScript) b.detailedScript = b.script ?? b.storyboard ?? b.detailed_script ?? b.shooting_script ?? "";
       // publishingAdvice
@@ -1111,7 +1143,7 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
         b.executionDetails = {
           environmentAndWardrobe: "",
           lightingAndCamera: "",
-          stepByStepScript: b.executionDetails,
+          stepByStepScript: safeStringList(b.executionDetails),
         };
       } else if (typeof b.executionDetails === "object") {
         const ed = b.executionDetails as Record<string, unknown>;
@@ -1121,18 +1153,22 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
           const ss = ed.steps ?? ed.script ?? ed.stepByStep ?? ed.step_by_step_script;
           ed.stepByStepScript = Array.isArray(ss) ? ss : [];
         }
+        ed.environmentAndWardrobe = safeScalar(ed.environmentAndWardrobe);
+        ed.lightingAndCamera = safeScalar(ed.lightingAndCamera);
+        ed.stepByStepScript = safeStringList(ed.stepByStepScript as unknown[]);
         b.executionDetails = ed;
       }
-      // 常见标量字段若被模型打成数字，转成 string，避免 UI / 下游报错
+      // 常见标量字段若被模型打成数字/对象，安全抽字串（禁止 String(obj)）
       for (const key of ["title", "format", "hook", "copywriting", "detailedScript", "publishingAdvice"] as const) {
         const v = b[key];
-        if (v != null && typeof v !== "string") b[key] = String(v);
+        if (v != null && typeof v !== "string") b[key] = safeScalar(v);
+        else if (typeof v === "string" && v.trim() === "[object Object]") b[key] = "";
       }
       // highlightKeywords：蓝海/高亮词，统一为 string[]
       if (!Array.isArray(b.highlightKeywords)) {
         const hk = b.highlightKeywords ?? b.blueOceanKeywords ?? b.keywords ?? b["高亮词"] ?? b["蓝海词"];
         if (Array.isArray(hk)) {
-          b.highlightKeywords = hk.map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
+          b.highlightKeywords = safeStringList(hk).slice(0, 8);
         } else if (typeof hk === "string" && hk.trim()) {
           b.highlightKeywords = hk
             .split(/[,，、/\s]+/)
@@ -1143,10 +1179,7 @@ function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<stri
           b.highlightKeywords = [];
         }
       } else {
-        b.highlightKeywords = (b.highlightKeywords as unknown[])
-          .map((x) => String(x).trim())
-          .filter(Boolean)
-          .slice(0, 8);
+        b.highlightKeywords = safeStringList(b.highlightKeywords as unknown[]).slice(0, 8);
       }
       // commentHooks：≤3 字生活化评论钩
       b.commentHooks = normalizeCommentHooksList(b.commentHooks ?? b.commentHook ?? b["评论关键词"]);

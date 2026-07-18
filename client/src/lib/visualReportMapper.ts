@@ -75,9 +75,48 @@ export function mapGenerateVisualReportResult(
       platform: String(p.platform || ""),
       displayName:
         PLATFORM_NAMES[p.platform as VisualReportPlatformKey] || String(p.platform || ""),
-      trafficBoosters: Array.isArray(p.trafficBoosters) ? (p.trafficBoosters as string[]) : [],
-      cashRewards: Array.isArray(p.cashRewards) ? (p.cashRewards as string[]) : [],
-      hotTopics: Array.isArray(p.hotTopics) ? (p.hotTopics as string[]) : [],
+      trafficBoosters: Array.isArray(p.trafficBoosters)
+        ? p.trafficBoosters
+            .map((b) => {
+              if (typeof b === "string") return b;
+              if (b && typeof b === "object") {
+                const o = b as Record<string, unknown>;
+                for (const k of ["text", "title", "name", "content", "label", "desc"]) {
+                  if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]);
+                }
+              }
+              return "";
+            })
+            .filter((s) => s && s !== "[object Object]")
+        : [],
+      cashRewards: Array.isArray(p.cashRewards)
+        ? p.cashRewards
+            .map((b) => {
+              if (typeof b === "string") return b;
+              if (b && typeof b === "object") {
+                const o = b as Record<string, unknown>;
+                for (const k of ["text", "title", "name", "content", "label"]) {
+                  if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]);
+                }
+              }
+              return "";
+            })
+            .filter((s) => s && s !== "[object Object]")
+        : [],
+      hotTopics: Array.isArray(p.hotTopics)
+        ? p.hotTopics
+            .map((b) => {
+              if (typeof b === "string") return b;
+              if (b && typeof b === "object") {
+                const o = b as Record<string, unknown>;
+                for (const k of ["text", "title", "name", "content", "label"]) {
+                  if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]);
+                }
+              }
+              return "";
+            })
+            .filter((s) => s && s !== "[object Object]")
+        : [],
       blueOceanWords: normalizeBlueOceanWords(p.blueOceanWords),
     }),
   );

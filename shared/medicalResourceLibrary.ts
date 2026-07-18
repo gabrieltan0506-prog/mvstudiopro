@@ -341,7 +341,13 @@ export function pickMedicalResources(params: {
 
 /** 文案/口播可落的一句引用（含 URL） */
 export function formatMedicalResourceCite(pick: MedicalResourcePick): string {
-  const url = pick.searchUrl || pick.mediaUrls[0] || pick.hubUrl;
+  // 优先 hub，避免把超长 SearchResults?query=%E5… 塞进正文导致卡片/PDF 横向溢出。
+  const hub = String(pick.hubUrl || "").trim();
+  const media = String(pick.mediaUrls[0] || "").trim();
+  const url = hub || media || String(pick.searchUrl || "").trim();
+  if (hub && pick.searchUrl) {
+    return `公开资源可对照：${pick.nameZh}（入口 ${hub}；可在站内搜索相关词条）——只作图示/机制理解，不替代就诊。`;
+  }
   return `公开资源可对照：${pick.nameZh}（${url}）——只作图示/机制理解，不替代就诊。`;
 }
 

@@ -203,7 +203,19 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       dedupeKey: String(r.dedupeKey || deriveTopicDedupeKey(title, String(r.hookSketch || ""))).slice(0, 80),
       commentHook: normalizeCommentHook(r.commentHook),
       linkedCampaigns: Array.isArray(r.linkedCampaigns)
-        ? r.linkedCampaigns.map(String).filter(Boolean).slice(0, 4)
+        ? r.linkedCampaigns
+            .map((x) => {
+              if (typeof x === "string") return x.trim();
+              if (x && typeof x === "object") {
+                const o = x as Record<string, unknown>;
+                for (const k of ["name", "title", "label", "text", "campaign"]) {
+                  if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]).trim();
+                }
+              }
+              return "";
+            })
+            .filter((s) => s && s !== "[object Object]")
+            .slice(0, 4)
         : undefined,
     };
     const checked = platformTopicShortlistItemSchema.safeParse(item);
@@ -349,12 +361,25 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       bp.dedupeKey = pick.dedupeKey;
       bp.shortlistId = pick.id;
       const linkedCampaigns = Array.isArray(pick.linkedCampaigns)
-        ? pick.linkedCampaigns.map(String).filter(Boolean).slice(0, 4)
+        ? pick.linkedCampaigns
+            .map((x) => {
+              if (typeof x === "string") return x.trim();
+              if (x && typeof x === "object") {
+                const o = x as Record<string, unknown>;
+                for (const k of ["name", "title", "label", "text", "campaign"]) {
+                  if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]).trim();
+                }
+              }
+              return "";
+            })
+            .filter((s) => s && s !== "[object Object]")
+            .slice(0, 4)
         : [];
       bp.linkedCampaigns = linkedCampaigns;
       if (linkedCampaigns.length) {
         const tag = linkedCampaigns.join(" · ");
-        bp.publishingAdvice = `${String(bp.publishingAdvice || "").trim()}\n官方活动：${tag}（发布时挂同名话题/参与创作者中心活动）`.trim();
+        const prevAdvice = typeof bp.publishingAdvice === "string" ? bp.publishingAdvice.trim() : "";
+        bp.publishingAdvice = `${prevAdvice}\n官方活动：${tag}（发布时挂同名话题/参与创作者中心活动）`.trim();
       }
       bp.commentHooks = Array.isArray(bp.commentHooks)
         ? (bp.commentHooks as unknown[]).map((x) => normalizeCommentHook(x)).slice(0, 4)

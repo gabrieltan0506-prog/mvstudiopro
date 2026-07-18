@@ -18,9 +18,13 @@ function parseMetadata(raw: string | null | undefined): Record<string, unknown> 
 }
 
 function isLikelyValidImageUrl(url: string): boolean {
-  const u = url.trim().toLowerCase();
-  if (!u) return false;
-  if (u.includes("timeout") || u.includes("error")) return false;
+  const raw = url.trim();
+  if (!raw) return false;
+  const u = raw.toLowerCase();
+  if (u === "timeout" || u === "error" || u === "failed") return false;
+  if (/^(error|timeout|failed)[:/]/i.test(raw)) return false;
+  if (/[?&#](?:error|status|code)=(timeout|error|failed)\b/i.test(raw)) return false;
+  if (/\/(timeout|error|failed)(?:\/|$|\?)/i.test(raw)) return false;
   return u.startsWith("http://") || u.startsWith("https://");
 }
 
