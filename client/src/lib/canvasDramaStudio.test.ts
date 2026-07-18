@@ -107,6 +107,24 @@ describe("canvasDramaStudio factory", () => {
     expect(reverse.prompt).toContain("贴身近景");
   });
 
+  it("spawn and applyFactoryPrefs inject selected prop anchors", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "商战并购",
+      propIds: ["demo_prop_business_fountain_pen"],
+    });
+    expect(blocks.find((b) => b.id.startsWith("bible-"))!.prompt).toContain("【点选道具锚点】");
+    expect(blocks.find((b) => b.id.startsWith("bible-"))!.prompt).toContain("签约钢笔");
+    expect(blocks.find((b) => b.id.startsWith("keyart-"))!.prompt).toContain("签约钢笔");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      propIds: ["demo_prop_romance_ring_box"],
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
+    expect(bible).toContain("戒指盒");
+    expect(bible).not.toContain("签约钢笔");
+  });
+
   it("applyFactoryPrefsToBlocks syncs scene into story/keyart", () => {
     const { blocks } = spawnManhuaDramaStudio({
       genreId: "xianxia",

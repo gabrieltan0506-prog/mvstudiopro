@@ -1,6 +1,6 @@
 /**
  * 漫剧资产墙：复用现成人物库预览 + 20 场景文案库 + 已落盘场景/道具示范图。
- * 点击场景写入工厂 sceneId；道具仅展示锚点（供编剧/静帧参考）。
+ * 点击场景写入工厂 sceneId；点击道具写入工厂 propIds（圣经/节拍/静帧锚点）。
  */
 import { useMemo, useState } from "react";
 import {
@@ -21,7 +21,6 @@ import {
   listManhuaDemoAssets,
   listManhuaDemoAssetsForSceneTemplate,
   recommendManhuaContentLanesFromTopic,
-  type ManhuaDemoAsset,
 } from "@shared/manhuaScenePropDemoCatalog";
 import ManhuaScenePropDemoStrip from "@/components/ManhuaScenePropDemoStrip";
 
@@ -123,6 +122,7 @@ export default function ManhuaAssetWall({
   femaleId,
   maleId,
   sceneId,
+  propIds,
   topic,
   genreId,
   artStyleId,
@@ -130,10 +130,12 @@ export default function ManhuaAssetWall({
   onSelectScene,
   onSelectFemale,
   onSelectMale,
+  onToggleProp,
 }: {
   femaleId?: string;
   maleId?: string;
   sceneId?: string;
+  propIds?: string[];
   topic?: string;
   genreId?: string;
   artStyleId?: string;
@@ -141,6 +143,7 @@ export default function ManhuaAssetWall({
   onSelectScene?: (sceneId: string) => void;
   onSelectFemale?: (id: string) => void;
   onSelectMale?: (id: string) => void;
+  onToggleProp?: (propId: string) => void;
 }) {
   const [tab, setTab] = useState<"leads" | "support" | "scenes">("scenes");
   const lanes = useMemo(() => recommendManhuaContentLanesFromTopic(topic), [topic]);
@@ -178,12 +181,8 @@ export default function ManhuaAssetWall({
     return map;
   }, [scenes]);
 
-  const readyDemoCount = useMemo(() => {
-    return listManhuaDemoAssets().filter((a: ManhuaDemoAsset) => {
-      // 浏览器无法同步 stat；用 public 路径，加载失败由 img onError 处理
-      return Boolean(getManhuaDemoAssetPublicUrl(a.id));
-    }).length;
-  }, []);
+  const catalogCount = listManhuaDemoAssets().length;
+  const pinnedPropCount = propIds?.length ?? 0;
 
   return (
     <div
@@ -195,11 +194,12 @@ export default function ManhuaAssetWall({
         <div>
           <div className="text-sm font-semibold text-white/90">资产墙</div>
           <p className="mt-0.5 text-[11px] leading-5 text-white/45">
-            复用人物库设定卡 + 20 场景文案模板 + 示范空镜/道具（有图优先）。点场景可写入工厂主场景。
+            复用人物库设定卡 + 20 场景文案模板 + 示范空镜/道具（有图优先）。点场景写主场景；点道具可锁定外形锚点（最多 4）。
           </p>
         </div>
         <div className="text-[10px] text-white/35">
-          示范条目 {readyDemoCount} · 题材赛道 {lanes.map((l) => MANHUA_CONTENT_LANE_LABEL_ZH[l]).join("·") || "—"}
+          目录 {catalogCount} · 已点道具 {pinnedPropCount} · 题材赛道{" "}
+          {lanes.map((l) => MANHUA_CONTENT_LANE_LABEL_ZH[l]).join("·") || "—"}
         </div>
       </div>
 
@@ -328,8 +328,10 @@ export default function ManhuaAssetWall({
             sceneTemplateId={sceneId}
             topic={topic}
             genreId={genreId}
+            selectedPropIds={propIds}
             disabled={disabled}
             onApplySceneTemplate={onSelectScene}
+            onToggleProp={onToggleProp}
           />
         </div>
       ) : null}

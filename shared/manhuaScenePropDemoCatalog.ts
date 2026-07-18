@@ -586,14 +586,19 @@ export function composeManhuaSceneDemoAnchorBlock(sceneTemplateId: string | unde
 /** 编剧室/角色圣经：道具示范外观锚点 */
 export function composeManhuaPropDemoPromptBlock(opts?: {
   lanes?: ManhuaContentLane[];
+  /** 用户在资产墙点选的道具 id（优先置顶） */
+  propIds?: string[];
   limit?: number;
 }): string {
   const limit = Math.max(1, Math.min(8, opts?.limit ?? 4));
+  const pinned = (opts?.propIds || [])
+    .map((id) => getManhuaDemoAsset(id))
+    .filter((a): a is ManhuaDemoAsset => Boolean(a && a.kind === "prop"));
   const prefer =
     opts?.lanes?.length
       ? opts.lanes
       : (["intrigue", "business", "revenge", "romance", "ancient", "xianxia"] as ManhuaContentLane[]);
-  const picked: ManhuaDemoAsset[] = [];
+  const picked: ManhuaDemoAsset[] = [...pinned];
   for (const lane of prefer) {
     for (const p of listManhuaDemoPropsForLane(lane)) {
       if (picked.length >= limit) break;
@@ -604,11 +609,32 @@ export function composeManhuaPropDemoPromptBlock(opts?: {
   if (!picked.length) return "";
   const lines = picked.map((a) => {
     const overseas = a.overseasHintZh ? `｜海外：${a.overseasHintZh}` : "";
-    return `- ${a.nameZh}｜${MANHUA_CONTENT_LANE_LABEL_ZH[a.lane]}${overseas}\n  外观：${a.promptZh}`;
+    const pin = pinned.some((p) => p.id === a.id) ? "｜已点选" : "";
+    return `- ${a.nameZh}｜${MANHUA_CONTENT_LANE_LABEL_ZH[a.lane]}${overseas}${pin}\n  外观：${a.promptZh}`;
   });
   return [
     "【道具示范库】",
     "外观锚点可锁定连载外形；禁止抄具体剧名道具造型。权谋/商战道具优先考虑海外可读符号。",
+    ...lines,
+  ].join("\n");
+}
+
+/** 工厂静帧/节拍：仅注入用户点选的道具（无点选则空） */
+export function composeManhuaSelectedPropAnchorBlock(propIds: string[] | undefined | null): string {
+  const ids = (propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
+  if (!ids.length) return "";
+  const props = ids
+    .map((id) => getManhuaDemoAsset(id))
+    .filter((a): a is ManhuaDemoAsset => Boolean(a && a.kind === "prop"));
+  if (!props.length) return "";
+  const lines = props.map((a) => {
+    const url = getManhuaDemoAssetPublicUrl(a.id);
+    const overseas = a.overseasHintZh ? ` · ${a.overseasHintZh}` : "";
+    return `- ${a.nameZh}（${MANHUA_CONTENT_LANE_LABEL_ZH[a.lane]}）${url ? ` · ${url}` : ""}${overseas}\n  外观：${a.promptZh}`;
+  });
+  return [
+    "【点选道具锚点】",
+    "下列为资产墙已点选道具；角色圣经/节拍/静帧须锁定外形与叙事作用，禁止换成无关物件。",
     ...lines,
   ].join("\n");
 }

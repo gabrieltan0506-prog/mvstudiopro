@@ -39,6 +39,11 @@ const MANIFEST = path.join(OUT_ROOT, "manifest.json");
 const PUBLIC_SCENES = path.join(ROOT, "client/public/manhua-scenes");
 const PUBLIC_PROPS = path.join(ROOT, "client/public/manhua-props");
 const TIMEOUT_MS = Math.min(Math.max(Number(process.env.GEN_TIMEOUT_MS) || 540_000, 120_000), 900_000);
+/** 开跑前探测 Fly；连不上立刻退出，避免本地空挂重试 */
+const PREFLIGHT_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.PREFLIGHT_TIMEOUT_MS) || 20_000, 5_000),
+  60_000,
+);
 const FORCE = /^(1|true|yes)$/i.test(String(process.env.FORCE || ""));
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.DRY_RUN || ""));
 const COPY_PUBLIC = /^(1|true|yes)$/i.test(String(process.env.COPY_PUBLIC || "1"));
@@ -89,6 +94,26 @@ function buildPrompt(a: ManhuaDemoAsset): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+async function preflightFly(): Promise<void> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PREFLIGHT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${FLY_ORIGIN}/api/health`, {
+      method: "GET",
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    console.log(`  · preflight ok · ${FLY_ORIGIN} · ${PREFLIGHT_TIMEOUT_MS}ms budget`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Fly 预检失败（${PREFLIGHT_TIMEOUT_MS}ms）：${msg} → ${FLY_ORIGIN}。本机网络不可达时勿空挂补图。`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function flyGenerateOnce(prompt: string): Promise<string> {
@@ -252,6 +277,8 @@ async function main() {
     return;
   }
   if (DRY_RUN) return;
+
+  await preflightFly();
 
   const rows: ManifestRow[] = [];
   for (const a of batch) {

@@ -4,6 +4,7 @@ import {
   MANHUA_SCENE_PROP_DEMO_CATALOG,
   composeManhuaPropDemoPromptBlock,
   composeManhuaSceneDemoAnchorBlock,
+  composeManhuaSelectedPropAnchorBlock,
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssets,
   pickDailyManhuaDemoBatch,
@@ -62,6 +63,16 @@ describe("manhuaScenePropDemoCatalog", () => {
     expect(sceneAnchor).toContain("皇宫");
     const propBlock = composeManhuaPropDemoPromptBlock({ lanes: ["business", "intrigue"], limit: 3 });
     expect(propBlock).toContain("【道具示范库】");
+    const pinned = composeManhuaSelectedPropAnchorBlock(["demo_prop_business_fountain_pen"]);
+    expect(pinned).toContain("【点选道具锚点】");
+    expect(pinned).toContain("签约钢笔");
+    expect(
+      composeManhuaPropDemoPromptBlock({
+        propIds: ["demo_prop_business_fountain_pen"],
+        lanes: ["romance"],
+        limit: 2,
+      }),
+    ).toContain("已点选");
     expect(recommendManhuaContentLanesFromTopic("宫廷权谋商战并购")).toEqual(
       expect.arrayContaining(["intrigue", "business"]),
     );

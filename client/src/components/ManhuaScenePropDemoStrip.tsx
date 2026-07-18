@@ -69,18 +69,24 @@ export default function ManhuaScenePropDemoStrip({
   sceneTemplateId,
   topic,
   genreId,
+  selectedPropIds,
   disabled,
   onApplySceneTemplate,
+  onToggleProp,
 }: {
   sceneTemplateId?: string;
   topic?: string;
   genreId?: string;
+  selectedPropIds?: string[];
   disabled?: boolean;
   /** 点示范空镜且绑定了 scene_XX 时，写入工厂主场景 */
   onApplySceneTemplate?: (sceneTemplateId: string) => void;
+  /** 点道具：写入/取消工厂点选锚点 */
+  onToggleProp?: (propId: string) => void;
 }) {
   const [laneFilter, setLaneFilter] = useState<ManhuaContentLane | "">("");
   const [focusId, setFocusId] = useState<string>("");
+  const selectedProps = selectedPropIds || [];
 
   const recommendedLanes = useMemo(() => {
     const fromTopic = recommendManhuaContentLanesFromTopic(topic);
@@ -198,8 +204,11 @@ export default function ManhuaScenePropDemoStrip({
               <DemoThumb
                 key={a.id}
                 asset={a}
-                active={focusId === a.id}
-                onClick={() => setFocusId(a.id === focusId ? "" : a.id)}
+                active={focusId === a.id || selectedProps.includes(a.id)}
+                onClick={() => {
+                  setFocusId(a.id === focusId ? "" : a.id);
+                  onToggleProp?.(a.id);
+                }}
               />
             ))}
           </div>
@@ -211,6 +220,7 @@ export default function ManhuaScenePropDemoStrip({
           <p className="min-w-0 flex-1 line-clamp-3 text-[10px] leading-snug text-white/55">
             {focus.nameZh}：{focus.promptZh}
             {focus.overseasHintZh ? ` · ${focus.overseasHintZh}` : ""}
+            {focus.kind === "prop" && selectedProps.includes(focus.id) ? " · 已写入工厂" : ""}
           </p>
           <button
             type="button"
@@ -232,7 +242,7 @@ export default function ManhuaScenePropDemoStrip({
         </div>
       ) : (
         <p className="mt-2 text-[10px] text-white/35">
-          点空镜可写入工厂主场景（若已绑定 scene_XX）；点缩略图看锚点。权谋 / 商战偏海外可读符号。
+          点空镜写主场景（绑定 scene_XX 时）；点道具锁定外形锚点（再点取消）。权谋 / 商战偏海外可读符号。
         </p>
       )}
     </div>
