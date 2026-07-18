@@ -32,7 +32,7 @@ describe("htmlPptOutlinePrompt", () => {
         { id: "risk", title: "风险清单" },
       ],
     });
-    expect(p).toContain("[market] 市场规模");
+    expect(p).toContain("themeId=market → 可见标题「市场规模」");
     expect(p).toContain("P1 必须是目录");
   });
 

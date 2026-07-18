@@ -60,7 +60,9 @@ describe("HB prompt assets", () => {
       pages,
     });
     expect(html).toContain("<!DOCTYPE html>");
-    expect(html).toContain(HTML_PPT_STYLES.dark_research.labelZh);
+    expect(html).not.toContain(HTML_PPT_STYLES.dark_research.labelZh);
+    expect(html).toContain("controls{position:fixed;top:12px;right:12px");
+    expect(html).toContain("竖屏阅读模式");
     expect(html).toContain("translateX");
     expect(html).toContain("下一步动效");
     expect(html).toContain("is-active");

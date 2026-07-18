@@ -11,6 +11,7 @@ import {
   type HtmlPptTheme,
   type HtmlPptVizKind,
 } from "@shared/htmlPptMaker";
+import { downloadHtmlPptPptx } from "@shared/htmlPptPptx";
 import { INFOGRAPHIC_NOTE_TEMPLATES } from "@shared/infographicNoteTemplates";
 import {
   CREDIT_COSTS,
@@ -208,6 +209,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             const img = await slideImageMutation.mutateAsync({
               deckTitle: title.trim(),
               templateId: imageTemplateId === "auto" ? null : imageTemplateId,
+              styleId,
               page: {
                 title: page.title,
                 subtitle: page.subtitle,
@@ -357,6 +359,28 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     a.download = `${title.slice(0, 24).replace(/\s+/g, "-") || "website-ppt"}.html`;
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  const downloadPptx = async () => {
+    const normalized = normalizeHtmlPptPages(pages);
+    const deckPages = normalized.length
+      ? normalized
+      : buildDefaultHtmlPptPages(title, pageCount ?? PLATFORM_HTML_PPT_PAGE_MIN, purpose, styleId);
+    setAiError(null);
+    setAiBusy(true);
+    setAiBusyLabel("正在导出可编辑 PPTX…");
+    try {
+      await downloadHtmlPptPptx({
+        title,
+        styleId,
+        purposeZh: purpose,
+        pages: deckPages,
+      });
+    } catch (e: unknown) {
+      setAiError(e instanceof Error ? e.message : "PPTX 导出失败");
+    } finally {
+      setAiBusy(false);
+    }
   };
 
   const rebuildLocalFree = () => {
@@ -760,7 +784,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       {step === "export" ? (
         <div className="space-y-3">
           <p className="text-[11px] text-white/50">
-            数字写错：点「返回改清单」免费改 → 再刷新预览。空格=下一步动效，←→=翻页。
+            数字写错：点「返回改清单」免费改 → 再刷新预览。空格=下一步动效，←→=翻页。HTML
+            适合投屏；PPTX 适合拿回本地改隐私数据与措辞。
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -786,6 +811,14 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50"
             >
               导出 HTML
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void downloadPptx()}
+              className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-[12px] font-semibold text-amber-50"
+            >
+              导出可编辑 PPTX
             </button>
             {previewUrl ? (
               <a
