@@ -124,7 +124,7 @@ describe("manhuaCharacterAssetLibrary", () => {
       artStyleId: "photoreal",
     });
     expect(prompt).toMatch(/剧用儿童|8–12/);
-    expect(prompt).toMatch(/禁止.*性暗示|暴露/);
+    expect(prompt).toMatch(/校服|全家宜|G 级/);
     expect(prompt).toMatch(/去美颜|禁止全员帅哥美女/);
   });
 

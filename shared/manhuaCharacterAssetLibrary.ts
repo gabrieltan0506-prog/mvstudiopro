@@ -546,7 +546,7 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     age: 10,
     jobZh: "小学生",
     temperamentTags: ["机灵", "粘人", "好奇"],
-    promptZh: "东亚约10岁男孩，短发，日常校服或卫衣长裤，家庭向短剧儿童配角，表情自然，完全得体着装。",
+    promptZh: "东亚约10岁小学生男生，短发，蓝白校服外套与长裤，校园短剧配角，笑容自然。",
     sourceFile: "photoreal-age/boy_01.jpg",
   },
   {
@@ -557,7 +557,7 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     age: 9,
     jobZh: "小学生",
     temperamentTags: ["安静", "懂事", "内向"],
-    promptZh: "东亚约9岁男孩，圆脸短发，素色外套与长裤，安静懂事的家庭向儿童配角，非成人化造型。",
+    promptZh: "东亚约9岁小学生男生，圆脸短发，深色冬装外套与长裤，安静懂事的校园配角。",
     sourceFile: "photoreal-age/boy_02.jpg",
   },
   {
@@ -568,7 +568,7 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     age: 11,
     jobZh: "小学生",
     temperamentTags: ["倔强", "明媚", "正义感"],
-    promptZh: "东亚约11岁女孩，马尾或短发，校服或连衣裙配外套，家庭向短剧儿童配角，日常得体着装无化妆。",
+    promptZh: "东亚约11岁小学生女生，马尾，校服外套与长裤或及膝裙配外套，校园短剧配角，素颜。",
     sourceFile: "photoreal-age/girl_01.jpg",
   },
   {
@@ -579,7 +579,7 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     age: 8,
     jobZh: "小学生",
     temperamentTags: ["软萌", "爱笑", "黏大人"],
-    promptZh: "东亚约8岁女孩，圆脸黑发，毛衣与长裤或背带裤，软萌爱笑的家庭向儿童配角，完全覆盖得体服装。",
+    promptZh: "东亚约8岁小学生女生，圆脸黑发，厚毛衣与长裤，爱笑的校园短剧配角。",
     sourceFile: "photoreal-age/girl_02.jpg",
   },
 ];

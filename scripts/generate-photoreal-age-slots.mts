@@ -98,29 +98,36 @@ function saveManifest(items: ManifestItem[]) {
 function roleLabel(c: ManhuaCharacterTemplate): string {
   const stage = getManhuaCharacterLifeStage(c);
   if (stage === "elder") return c.gender === "female" ? "老年女配" : "老年男配";
-  return c.gender === "female" ? "剧用女孩" : "剧用男孩";
+  return c.gender === "female" ? "小学女生配角" : "小学男生配角";
 }
 
 function buildHeroPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const style = getManhuaArtStylePreset("photoreal");
   const stage = getManhuaCharacterLifeStage(c);
+  const isChild = stage === "child";
   return [
-    `竖屏9:16半身胸像写真，东亚${roleLabel(c)}「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
+    isChild
+      ? `竖屏9:16学校年册式半身肖像，东亚${roleLabel(c)}「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`
+      : `竖屏9:16半身肖像写真，东亚${roleLabel(c)}「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
     "",
     photorealLifeStagePromptBlock(stage),
-    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
-    formatPhotorealFaceShapeBlock(c.id, c.gender),
+    isChild ? "" : PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    isChild ? "自然皮肤，生活感普通长相，禁止网红修图脸。" : PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
+    isChild ? "" : formatPhotorealFaceShapeBlock(c.id, c.gender),
     "",
     `外形锚点：${c.promptZh}`,
-    "构图：胸像偏上，自然光，浅景深干净背景；禁止名人脸、无文字无水印。",
-    "禁止挂任何成年男主实拍脸参考；纯文生角色卡。",
+    isChild
+      ? "构图：半身偏上，柔和白天光线，浅景深干净教室/白墙背景；校服完整；无文字无水印；G 级全家宜。"
+      : "构图：半身偏上，自然光，浅景深干净背景；禁止名人脸、无文字无水印。",
+    "纯文生角色卡，不使用任何真人照片参考。",
     "",
     `【画风】${style.labelZh}`,
-    style.promptZh,
+    isChild
+      ? "写实摄影感，自然日系校园短剧配角肖像，干净通透，非广告模特。"
+      : style.promptZh,
     "",
-    PHOTOREAL_ANTI_AI_LOCK_ZH,
+    isChild ? "禁止名人脸、禁止水印字幕。" : PHOTOREAL_ANTI_AI_LOCK_ZH,
   ]
     .filter(Boolean)
     .join("\n");
@@ -130,25 +137,28 @@ function buildSheetPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const style = getManhuaArtStylePreset("photoreal");
   const stage = getManhuaCharacterLifeStage(c);
+  const isChild = stage === "child";
   return [
     "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景，印刷清晰）：",
     "版式硬约束：",
-    "1) 上半：半身/胸像人像 + 姓名占位 + 气质标签条 + 妆造短句；",
+    "1) 上半：半身人像 + 姓名占位 + 气质标签条 + 妆造短句；",
     "2) 下半：同一人物全身 FRONT / SIDE / BACK 三视图并排，比例一致、服装一致、锁脸；",
     "3) 三视图下方可有极简英文标注 FRONT SIDE BACK；禁止水印、禁止真实名人脸。",
     "",
     `角色：${roleLabel(c)}「${name}」·${c.jobZh}·气质 ${c.temperamentTags.join("·")}`,
     `外形锚点：${c.promptZh}`,
     photorealLifeStagePromptBlock(stage),
-    formatPhotorealFaceShapeBlock(c.id, c.gender),
-    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
-    "上半与三视图必须是同一张脸；服装得体日常覆盖。",
+    isChild ? "" : formatPhotorealFaceShapeBlock(c.id, c.gender),
+    isChild ? "自然皮肤；完整校服或冬装外套长裤；G 级全家宜。" : PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    isChild ? "" : PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
+    "上半与三视图必须是同一张脸；服装完整日常覆盖。",
     "",
     `【画风】${style.labelZh}`,
-    style.promptZh,
+    isChild
+      ? "写实摄影感，自然校园短剧配角设定卡，干净通透。"
+      : style.promptZh,
     "",
-    PHOTOREAL_ANTI_AI_LOCK_ZH,
+    isChild ? "禁止名人脸、禁止水印字幕。" : PHOTOREAL_ANTI_AI_LOCK_ZH,
   ]
     .filter(Boolean)
     .join("\n");

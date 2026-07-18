@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-18T09:37:00.825Z",
+  "generatedAt": "2026-07-18T09:42:51.199Z",
   "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
   "policy": "age slots text-to-image · no male face-lock",
   "items": [
@@ -29,6 +29,23 @@
       "hero": "char_elder_f_01_hero.jpg",
       "sheet": "char_elder_f_01_sheet.jpg",
       "at": "2026-07-18T09:37:00.825Z"
+    },
+    {
+      "id": "char_elder_f_02",
+      "photorealNameZh": "刘秀兰",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_f_02_hero.jpg",
+      "sheet": "char_elder_f_02_sheet.jpg",
+      "at": "2026-07-18T09:40:47.501Z"
+    },
+    {
+      "id": "char_boy_01",
+      "photorealNameZh": "小宇",
+      "lifeStage": "child",
+      "ok": false,
+      "error": "EvoLink task failed: Contains inappropriate content.\nPlease remove suggestive or explicit material.\nTips: Ensure content is appropriate for all ages.",
+      "at": "2026-07-18T09:42:51.199Z"
     }
   ]
 }

@@ -54,7 +54,7 @@ describe("photoreal face shape wheel", () => {
   it("elder and child cast hard blocks", () => {
     expect(PHOTOREAL_ELDER_CAST_ZH).toMatch(/60–75|花白|法令纹/);
     expect(PHOTOREAL_CHILD_CAST_ZH).toMatch(/8–12/);
-    expect(PHOTOREAL_CHILD_CAST_ZH).toMatch(/禁止.*性暗示|暴露/);
+    expect(PHOTOREAL_CHILD_CAST_ZH).toMatch(/校服|全家宜|G 级/);
     expect(photorealLifeStagePromptBlock("elder")).toContain("老人");
     expect(photorealLifeStagePromptBlock("child")).toContain("剧用儿童");
     expect(photorealLifeStagePromptBlock("adult")).toBe("");
