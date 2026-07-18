@@ -2622,7 +2622,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       });
     }
 
-    /** /canvas 自由画布 · GPT-Image-2（EvoLink）；勿与 workflowGenerateSceneImage 混淆 */
+    /** /canvas 自由画布 · GPT-Image-2（OpenAI 优先 / EvoLink 兜底，见 GPT_IMAGE2_PROVIDER）；勿与 workflowGenerateSceneImage 混淆 */
     if (opNormalized === "canvasgptimage2") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
