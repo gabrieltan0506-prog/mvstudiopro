@@ -1,85 +1,153 @@
 import { useMemo, useState } from "react";
 import {
-  HTML_PPT_QUALITY_CHECKLIST_ZH,
   HTML_PPT_STYLES,
+  HTML_PPT_VIZ_KINDS,
   buildDefaultHtmlPptPages,
   buildHtmlPptDocument,
   normalizeHtmlPptPages,
   recommendHtmlPptStyle,
   type HtmlPptPage,
   type HtmlPptStyleId,
+  type HtmlPptTheme,
+  type HtmlPptVizKind,
 } from "@shared/htmlPptMaker";
-import { CREDIT_COSTS, platformHtmlPptOutlineCredits } from "@shared/plans";
+import { INFOGRAPHIC_NOTE_TEMPLATES } from "@shared/infographicNoteTemplates";
+import {
+  CREDIT_COSTS,
+  PLATFORM_HTML_PPT_PAGE_MAX,
+  PLATFORM_HTML_PPT_PAGE_MIN,
+  platformHtmlPptOutlineCredits,
+  platformHtmlPptPagePatchCredits,
+} from "@shared/plans";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 
-type StepId = "setup" | "outline" | "export";
+type StepId = "setup" | "themes" | "outline" | "export";
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: "setup", label: "1. 设定" },
-  { id: "outline", label: "2. 页面清单" },
-  { id: "export", label: "3. 预览导出" },
+  { id: "themes", label: "2. 大纲" },
+  { id: "outline", label: "3. 页面清单" },
+  { id: "export", label: "4. 预览导出" },
 ];
+
+type ThemeRow = { id: string; title: string; source: "user" | "ai"; selected: boolean };
+
+function newThemeId(prefix: string, i: number) {
+  return `${prefix}_${i + 1}_${Math.random().toString(36).slice(2, 6)}`;
+}
 
 export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean }) {
   const [step, setStep] = useState<StepId>("setup");
   const [title, setTitle] = useState("AI漫剧的市场现状与前景");
   const [purpose, setPurpose] = useState("行业路演 / 数据洞察汇报");
-  /** 页数由用户指定；未选时不预填 */
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [styleId, setStyleId] = useState<HtmlPptStyleId>(() => recommendHtmlPptStyle("数据洞察汇报"));
   const [briefZh, setBriefZh] = useState(
     [
-      "请做成高密度投屏稿，复杂比较必须进图表（bars/columns/compare/line/ring），禁止纯文字页。",
-      "公开口径（DataEye/钛媒体等转述，讲解时标注来源）：",
-      "· 2025 漫剧市场规模约 168 亿元；2026 预估约 243.6 亿元（+45%）。",
-      "· 2025 抖音端原生上线破 6 万部；全年播放量超 700 亿次量级；用户约 1.2 亿→2026 或 2.8 亿。",
-      "· 供给品类：表情包/沙雕 44.44%；解说/小说漫 25.89%；2D/3D 21.81%；AIGC/仿真人 6.1%；游戏编辑器 1.76%。",
-      "· 漫剧占短剧播放：约 6 月 5%→12 月 35%；AIGC 播放量全年约 ×181；核心受众偏 24–30 岁男性。",
-      "· 国内：抖音端原生领军、红果崛起；投流头部效应（番茄等）。",
-      "· 出海：短剧出海渠道+本地化；国内备案仍是底座。",
-      "· 政策：动画微短剧（含 AIGC）专项治理；2026-04-01 未备案存量强下线；红果/抖音 4/7 起升审核（立意+风险分级）；AI换脸/声纹侵权高风险。",
-      "务必覆盖：品类占比、规模与预测、发展历史、新手入局、坑、国内平台、海外、政策；收束给可执行结论。",
+      "请做成高密度投屏稿；复杂比较进图表；禁止纯文字空页。",
+      "公开口径示例（讲解时标注来源）：2025 漫剧约 168 亿；2026 预估约 243.6 亿（+45%）。",
     ].join("\n"),
   );
+  const [userThemeInputs, setUserThemeInputs] = useState<string[]>([
+    "关键爆品",
+    "现有市场规模",
+    "入局门槛",
+  ]);
+  const [themeRows, setThemeRows] = useState<ThemeRow[]>([]);
+  const [imageTemplateId, setImageTemplateId] = useState<string>("auto");
+  const [enableSlideImages, setEnableSlideImages] = useState(true);
+
   const [pages, setPages] = useState<HtmlPptPage[]>([]);
   const [html, setHtml] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [aiModel, setAiModel] = useState<string | null>(null);
   const [aiCost, setAiCost] = useState<number | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiBusyLabel, setAiBusyLabel] = useState("AI 清单生成中…");
+  const [aiBusyLabel, setAiBusyLabel] = useState("处理中…");
+  const [patchNotes, setPatchNotes] = useState<Record<number, string>>({});
 
   const perPageCost = CREDIT_COSTS.platformHtmlPptOutlinePerPage;
   const outlineCost = pageCount != null ? platformHtmlPptOutlineCredits(pageCount) : null;
+  const patchCost = platformHtmlPptPagePatchCredits();
+  const pageReady = pageCount != null && pageCount >= PLATFORM_HTML_PPT_PAGE_MIN;
+  const userThemesReady = userThemeInputs.map((t) => t.trim()).filter(Boolean).length >= 3;
+
   const generateOutlineMutation = trpc.mvAnalysis.generateHtmlPptOutline.useMutation();
-  const pageReady = pageCount != null && pageCount >= 5;
+  const suggestThemesMutation = trpc.mvAnalysis.suggestHtmlPptThemes.useMutation();
+  const patchPageMutation = trpc.mvAnalysis.patchHtmlPptPage.useMutation();
+  const slideImageMutation = trpc.mvAnalysis.generateHtmlPptSlideImage.useMutation();
 
   const styleList = useMemo(
     () => Object.entries(HTML_PPT_STYLES) as [HtmlPptStyleId, (typeof HTML_PPT_STYLES)[HtmlPptStyleId]][],
     [],
   );
 
-  const busy = disabled || aiBusy || generateOutlineMutation.isPending;
+  const busy =
+    disabled ||
+    aiBusy ||
+    generateOutlineMutation.isPending ||
+    suggestThemesMutation.isPending ||
+    patchPageMutation.isPending ||
+    slideImageMutation.isPending;
 
-  const rebuildOutlineLocal = () => {
-    if (pageCount == null || pageCount < 5) {
-      setAiError("请先选择页数（最少 5 页）");
+  const confirmedThemes = (): HtmlPptTheme[] =>
+    themeRows.filter((t) => t.selected && t.title.trim()).map((t) => ({ id: t.id, title: t.title.trim() }));
+
+  const goSuggestThemes = async () => {
+    const themes = userThemeInputs.map((t) => t.trim()).filter(Boolean);
+    if (themes.length < 3) {
+      setAiError("请至少填写 3 条大纲主题");
+      return;
+    }
+    if (!title.trim()) {
+      setAiError("请填写主题");
       return;
     }
     setAiError(null);
-    setAiSummary(null);
-    setAiModel(null);
-    setAiCost(null);
-    setPages(buildDefaultHtmlPptPages(title, pageCount, purpose, styleId));
-    setStep("outline");
+    setAiBusy(true);
+    setAiBusyLabel("正在补全大纲…");
+    try {
+      const res = await suggestThemesMutation.mutateAsync({
+        title: title.trim(),
+        purposeZh: purpose.trim() || undefined,
+        briefZh: briefZh.trim() || undefined,
+        userThemes: themes,
+      });
+      if (res.polishedTitle?.trim()) setTitle(res.polishedTitle.trim());
+      const userRows: ThemeRow[] = themes.map((t, i) => ({
+        id: newThemeId("u", i),
+        title: t,
+        source: "user",
+        selected: true,
+      }));
+      const aiRows: ThemeRow[] = (res.suggestedThemes || []).slice(0, 4).map((t, i) => ({
+        id: t.id || newThemeId("ai", i),
+        title: t.title,
+        source: "ai",
+        selected: true,
+      }));
+      setThemeRows([...userRows, ...aiRows]);
+      setStep("themes");
+    } catch (e: unknown) {
+      setAiError(e instanceof Error ? e.message : "大纲补全失败");
+    } finally {
+      setAiBusy(false);
+    }
   };
 
-  const rebuildOutlineWithAi = async () => {
-    if (pageCount == null || pageCount < 5) {
-      setAiError("请先选择页数（最少 5 页）");
+  const generateOutlineWithAi = async () => {
+    const themes = confirmedThemes();
+    if (themes.length < 3) {
+      setAiError("请至少勾选 3 条大纲主题");
+      return;
+    }
+    if (pageCount == null || pageCount < PLATFORM_HTML_PPT_PAGE_MIN) {
+      setAiError(`请先选择页数（最少 ${PLATFORM_HTML_PPT_PAGE_MIN} 页）`);
+      return;
+    }
+    if (!window.confirm(`将扣 ${outlineCost} 积分（${pageCount}×${perPageCost}，只收这一次）。确认生成？`)) {
       return;
     }
     setAiError(null);
@@ -92,54 +160,78 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         pageCount,
         styleId,
         briefZh: briefZh.trim() || undefined,
+        confirmedThemes: themes,
       });
       setAiCost(typeof enqueued.cost === "number" ? enqueued.cost : outlineCost);
-      setAiBusyLabel("后台生成中，请稍候…");
+      setAiBusyLabel("后台生成页面清单…");
       const j = await pollJobUntilTerminal(enqueued.jobId, {
         intervalMs: 2500,
         maxWaitMs: 24 * 60_000,
         adaptiveBackoffAfterAttempts: 36,
         maxIntervalMs: 8000,
         onPoll: ({ status, attempt }) => {
-          setAiBusyLabel(
-            status === "queued"
-              ? `排队中（第 ${attempt} 次）…`
-              : `生成中（第 ${attempt} 次）…`,
-          );
+          setAiBusyLabel(status === "queued" ? `排队中（${attempt}）…` : `生成中（${attempt}）…`);
         },
       });
-      if (j.status === "failed") {
-        throw new Error(j.error || "动效PPT 清单生成失败");
-      }
+      if (j.status === "failed") throw new Error(j.error || "清单生成失败");
       const out =
         j.output && typeof j.output === "object" && !Array.isArray(j.output)
-          ? (j.output as {
-              pages?: unknown;
-              deckTitle?: string;
-              summary?: string;
-              cost?: number;
-            })
+          ? (j.output as { pages?: HtmlPptPage[]; deckTitle?: string; summary?: string; cost?: number })
           : {};
-      const rawPages = Array.isArray(out.pages) ? (out.pages as HtmlPptPage[]) : [];
-      const nextPages = normalizeHtmlPptPages(rawPages);
+      let nextPages = normalizeHtmlPptPages(Array.isArray(out.pages) ? out.pages : []);
       if (nextPages.length < pageCount) {
         throw new Error(`返回页数不足（${nextPages.length}/${pageCount}）`);
       }
       if (out.deckTitle?.trim()) setTitle(out.deckTitle.trim());
-      setPages(nextPages);
       setAiSummary(out.summary || null);
-      setAiModel("AI");
       if (typeof out.cost === "number") setAiCost(out.cost);
+
+      if (enableSlideImages) {
+        setAiBusyLabel("正在按版式模板生成插图…");
+        const indices = [0, Math.min(2, nextPages.length - 1), Math.min(4, nextPages.length - 1)].filter(
+          (v, i, a) => a.indexOf(v) === i,
+        );
+        for (const idx of indices) {
+          const page = nextPages[idx];
+          if (!page) continue;
+          try {
+            const img = await slideImageMutation.mutateAsync({
+              deckTitle: title.trim(),
+              templateId: imageTemplateId === "auto" ? null : imageTemplateId,
+              page: {
+                title: page.title,
+                subtitle: page.subtitle,
+                bullets: page.bullets,
+                kpi: page.kpi,
+                note: page.note,
+                viz: page.viz,
+                series: page.series,
+                themeId: page.themeId,
+                themeTitle: page.themeTitle,
+                highlight: page.highlight,
+              },
+            });
+            nextPages = nextPages.map((p, i) =>
+              i === idx ? { ...p, imageUrl: img.imageUrl } : p,
+            );
+          } catch {
+            /* 插图失败不阻断清单 */
+          }
+        }
+      }
+
+      setPages(nextPages);
       setStep("outline");
     } catch (e: unknown) {
-      const raw = e instanceof Error ? e.message : "AI 清单生成失败";
-      const msg = /Unexpected end of JSON|JSON\.parse|截断|页数不足|不完整/i.test(raw)
-        ? "清单输出不完整。请减少页数后重试，或稍后再试。"
-        : raw;
-      setAiError(msg);
+      const raw = e instanceof Error ? e.message : "清单生成失败";
+      setAiError(
+        /Unexpected end of JSON|JSON\.parse|截断|页数不足|不完整/i.test(raw)
+          ? "清单输出不完整。请减少页数后重试，或稍后再试。"
+          : raw,
+      );
     } finally {
       setAiBusy(false);
-      setAiBusyLabel("AI 清单生成中…");
+      setAiBusyLabel("处理中…");
     }
   };
 
@@ -158,31 +250,70 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     );
   };
 
-  const addBullet = (pageIndex: number) => {
+  const updateSeries = (pageIndex: number, seriesIndex: number, patch: { label?: string; value?: number }) => {
     setPages((prev) =>
       prev.map((p, i) => {
         if (i !== pageIndex) return p;
-        const bullets = [...(p.bullets || []), "新要点"];
-        return { ...p, bullets: bullets.slice(0, 8) };
+        const series = [...(p.series || [])];
+        const cur = series[seriesIndex] || { label: "", value: 0 };
+        series[seriesIndex] = {
+          label: patch.label != null ? patch.label : cur.label,
+          value: patch.value != null ? patch.value : cur.value,
+        };
+        return { ...p, series };
       }),
     );
   };
 
-  const removePage = (index: number) => {
-    setPages((prev) => (prev.length <= 3 ? prev : prev.filter((_, i) => i !== index)));
-  };
-
-  const addPage = () => {
-    setPages((prev) => {
-      if (prev.length >= 16) return prev;
-      return [...prev, { title: `新页面 ${prev.length + 1}`, bullets: ["要点一", "要点二"], viz: "bars" }];
-    });
+  const patchOnePage = async (index: number) => {
+    const note = (patchNotes[index] || "").trim();
+    if (note.length < 2) {
+      setAiError("请先填写本页修改说明");
+      return;
+    }
+    if (!window.confirm(`单页重修将扣 ${patchCost} 积分。确认？`)) return;
+    const page = pages[index];
+    if (!page) return;
+    setAiError(null);
+    setAiBusy(true);
+    setAiBusyLabel(`正在重修第 ${index + 1} 页…`);
+    try {
+      const res = await patchPageMutation.mutateAsync({
+        title: title.trim(),
+        purposeZh: purpose.trim() || undefined,
+        briefZh: briefZh.trim() || undefined,
+        styleId,
+        page: {
+          title: page.title,
+          subtitle: page.subtitle,
+          bullets: page.bullets,
+          kpi: page.kpi,
+          note: page.note,
+          viz: page.viz,
+          series: page.series,
+          themeId: page.themeId,
+          themeTitle: page.themeTitle,
+          highlight: page.highlight,
+          imageUrl: page.imageUrl,
+        },
+        pageIndex: index,
+        totalPages: Math.max(PLATFORM_HTML_PPT_PAGE_MIN, pages.length),
+        patchNote: note,
+        confirmedThemes: confirmedThemes().length >= 3 ? confirmedThemes() : undefined,
+      });
+      updatePage(index, res.page);
+      if (typeof res.cost === "number") setAiCost((c) => (c || 0) + res.cost);
+    } catch (e: unknown) {
+      setAiError(e instanceof Error ? e.message : "单页重修失败");
+    } finally {
+      setAiBusy(false);
+    }
   };
 
   const generateFromOutline = () => {
     const normalized = normalizeHtmlPptPages(pages);
-    if (normalized.length < 3) {
-      rebuildOutlineLocal();
+    if (normalized.length < PLATFORM_HTML_PPT_PAGE_MIN) {
+      setAiError(`清单至少 ${PLATFORM_HTML_PPT_PAGE_MIN} 页`);
       return;
     }
     const doc = buildHtmlPptDocument({
@@ -208,7 +339,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         purposeZh: purpose,
         pages: normalized.length
           ? normalized
-          : buildDefaultHtmlPptPages(title, pageCount ?? 5, purpose, styleId),
+          : buildDefaultHtmlPptPages(title, pageCount ?? PLATFORM_HTML_PPT_PAGE_MIN, purpose, styleId),
       });
     const blob = new Blob([doc], { type: "text/html;charset=utf-8" });
     const a = document.createElement("a");
@@ -218,12 +349,25 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     URL.revokeObjectURL(a.href);
   };
 
+  const rebuildLocalFree = () => {
+    if (pageCount == null || !pageReady) {
+      setAiError(`请先选择页数（最少 ${PLATFORM_HTML_PPT_PAGE_MIN}）`);
+      return;
+    }
+    setPages(buildDefaultHtmlPptPages(title, pageCount, purpose, styleId));
+    setAiSummary(null);
+    setAiCost(null);
+    setStep("outline");
+  };
+
   return (
     <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
       <div>
         <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          AI 写详尽清单与图表数据（{perPageCost} 积分/页，用户自选页数），前端多色 SVG 分步动效。空格=下一步动效，←→=翻页。
+          先填主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
+          SVG/表格动效保留；插图默认开，且必须套版式模板（可选或自动判断），禁止短句抽卡。
+          改数字请直接改清单再刷新预览（免费）。
         </p>
       </div>
 
@@ -232,11 +376,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           <button
             key={s.id}
             type="button"
-            onClick={() => {
-              if (s.id === "outline" && !pages.length) rebuildOutlineLocal();
-              else setStep(s.id);
-            }}
-            className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40 ${
+            disabled={busy}
+            onClick={() => setStep(s.id)}
+            className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold ${
               step === s.id ? "bg-white/15 text-white" : "text-white/45 hover:text-white/70"
             }`}
           >
@@ -247,10 +389,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
 
       {step === "setup" ? (
         <div className="space-y-3">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">设定</div>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block text-[11px] text-white/60">
-              主题
+              主题（必填）
               <input
                 disabled={busy}
                 value={title}
@@ -268,16 +409,56 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                   setStyleId(recommendHtmlPptStyle(e.target.value));
                 }}
                 className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
-                placeholder="汇报 / 路演 / 复盘…"
               />
             </label>
           </div>
+
           <div>
             <div className="mb-1.5 text-[11px] text-white/60">
-              页数 <span className="text-white/35">（必选 · 最少 5 · {perPageCost} 积分/页）</span>
+              大纲主题（至少 3 条，写在正文逻辑里的大标题）
+            </div>
+            <div className="space-y-1.5">
+              {userThemeInputs.map((t, i) => (
+                <div key={`ut-${i}`} className="flex gap-2">
+                  <input
+                    disabled={busy}
+                    value={t}
+                    onChange={(e) =>
+                      setUserThemeInputs((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))
+                    }
+                    placeholder={`大纲 ${i + 1}`}
+                    className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-[12px] text-white"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || userThemeInputs.length <= 3}
+                    onClick={() => setUserThemeInputs((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-[10px] text-white/40 disabled:opacity-30"
+                  >
+                    删
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                disabled={busy || userThemeInputs.length >= 8}
+                onClick={() => setUserThemeInputs((prev) => [...prev, ""])}
+                className="text-[10px] text-cyan-200/70 underline-offset-2 hover:underline disabled:opacity-40"
+              >
+                + 加一条大纲
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] text-white/60">
+              页数（必选 · 最少 {PLATFORM_HTML_PPT_PAGE_MIN} · {perPageCost} 积分/页）
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {Array.from({ length: 12 }, (_, i) => i + 5).map((n) => (
+              {Array.from(
+                { length: PLATFORM_HTML_PPT_PAGE_MAX - PLATFORM_HTML_PPT_PAGE_MIN + 1 },
+                (_, i) => i + PLATFORM_HTML_PPT_PAGE_MIN,
+              ).map((n) => (
                 <button
                   key={n}
                   type="button"
@@ -286,115 +467,157 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                   className={`min-w-[2.5rem] rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold disabled:opacity-40 ${
                     pageCount === n
                       ? "border-emerald-400/55 bg-emerald-500/20 text-emerald-50"
-                      : "border-white/15 bg-black/40 text-white/70 hover:border-white/30"
+                      : "border-white/15 bg-black/40 text-white/70"
                   }`}
                 >
                   {n}
                 </button>
               ))}
             </div>
-            {pageCount == null ? (
-              <p className="mt-1.5 text-[10px] text-amber-200/80">请先点选页数</p>
-            ) : (
+            {pageCount != null && outlineCost != null ? (
               <p className="mt-1.5 text-[10px] text-emerald-200/70">
-                本次 AI 清单：{outlineCost} 积分（{pageCount}×{perPageCost}）
+                生成页面内容：{outlineCost} 积分（{pageCount}×{perPageCost}，只扣这一次；补大纲免费）
               </p>
+            ) : (
+              <p className="mt-1.5 text-[10px] text-amber-200/80">请先点选页数</p>
             )}
           </div>
+
           <label className="block text-[11px] text-white/60">
-            补充背景 / 数据口径 / 受众（AI 必读，越具体越好）
+            补充背景 / 数据口径
             <textarea
               disabled={busy}
               value={briefZh}
               onChange={(e) => setBriefZh(e.target.value)}
               rows={3}
-              placeholder="例：近 7 日小红书蓝海词、热搜 Top、品牌切入方向；受众为品牌运营…"
-              className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/25"
+              className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
             />
           </label>
-          <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">
-              风格（选用前可预览）
-            </div>
-            <div className="grid gap-3 lg:grid-cols-[1fr_minmax(220px,320px)]">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {styleList.map(([id, meta]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    disabled={busy}
-                    title={meta.whenZh}
-                    onClick={() => setStyleId(id)}
-                    className={`overflow-hidden rounded-xl border text-left disabled:opacity-40 ${
-                      styleId === id
-                        ? "border-emerald-400/55 ring-1 ring-emerald-400/30"
-                        : "border-white/10 hover:border-white/25"
-                    }`}
-                  >
-                    <div className="aspect-video w-full bg-black/40">
-                      <img
-                        src={meta.previewUrl}
-                        alt={meta.labelZh}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    </div>
-                    <div className="space-y-0.5 px-2 py-1.5">
-                      <div className="text-[11px] font-semibold text-white/90">{meta.labelZh}</div>
-                      <div className="line-clamp-2 text-[10px] text-white/40">{meta.blurbZh}</div>
-                    </div>
-                  </button>
+
+          <div className="rounded-xl border border-white/10 bg-black/25 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-[11px] text-white/70">
+              <input
+                type="checkbox"
+                checked={enableSlideImages}
+                disabled={busy}
+                onChange={(e) => setEnableSlideImages(e.target.checked)}
+              />
+              默认生成关键页插图（版式模板 + 页内容锁定；SVG/表格仍保留）
+            </label>
+            <label className="block text-[11px] text-white/60">
+              插图版式模板
+              <select
+                disabled={busy || !enableSlideImages}
+                value={imageTemplateId}
+                onChange={(e) => setImageTemplateId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-[12px] text-white"
+              >
+                <option value="auto">自动判断（按页内容选版式）</option>
+                {INFOGRAPHIC_NOTE_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.labelZh}
+                  </option>
                 ))}
-              </div>
-              <div className="space-y-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">
-                  当前选中预览
-                </div>
-                {(() => {
-                  const meta = HTML_PPT_STYLES[styleId];
-                  return (
-                    <div
-                      className="aspect-video overflow-hidden rounded-xl border border-white/15 shadow-lg"
-                      style={{ background: meta.palette.bg, color: meta.palette.text }}
-                    >
-                      <img
-                        src={meta.previewUrl}
-                        alt={`${meta.labelZh} 预览`}
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                  );
-                })()}
-              </div>
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">风格</div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {styleList.map(([id, meta]) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setStyleId(id)}
+                  className={`overflow-hidden rounded-xl border text-left disabled:opacity-40 ${
+                    styleId === id ? "border-emerald-400/55 ring-1 ring-emerald-400/30" : "border-white/10"
+                  }`}
+                >
+                  <img src={meta.previewUrl} alt={meta.labelZh} className="aspect-video w-full object-cover" />
+                  <div className="px-2 py-1.5 text-[11px] font-semibold text-white/90">{meta.labelZh}</div>
+                </button>
+              ))}
             </div>
           </div>
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={busy || !title.trim() || !pageReady}
-              onClick={() => void rebuildOutlineWithAi()}
+              disabled={busy || !title.trim() || !userThemesReady || !pageReady}
+              onClick={() => void goSuggestThemes()}
               className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
             >
-              {aiBusy || generateOutlineMutation.isPending
-                ? aiBusyLabel
-                : pageReady
-                  ? `用 AI 生成页面清单（${outlineCost} 积分）`
-                  : "请先选择页数"}
+              {aiBusy ? aiBusyLabel : "免费补全大纲并进入勾选"}
             </button>
             <button
               type="button"
               disabled={busy || !title.trim() || !pageReady}
-              onClick={rebuildOutlineLocal}
+              onClick={rebuildLocalFree}
               className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] font-semibold text-white/70 disabled:opacity-40"
             >
               仅用模板骨架（免费）
             </button>
           </div>
-          {aiError ? (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
-              {aiError}
-            </div>
-          ) : null}
+        </div>
+      ) : null}
+
+      {step === "themes" ? (
+        <div className="space-y-3">
+          <p className="text-[11px] text-white/50">
+            勾选本次要讲的大纲（建议 4–8 条）。未勾选不会进入生成。可改名。
+          </p>
+          <div className="space-y-1.5 max-h-[360px] overflow-y-auto">
+            {themeRows.map((row, i) => (
+              <label
+                key={row.id}
+                className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/35 px-3 py-2"
+              >
+                <input
+                  type="checkbox"
+                  checked={row.selected}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setThemeRows((prev) =>
+                      prev.map((r, j) => (j === i ? { ...r, selected: e.target.checked } : r)),
+                    )
+                  }
+                />
+                <span className="text-[10px] text-white/35 w-10">{row.source === "user" ? "我的" : "建议"}</span>
+                <input
+                  disabled={busy}
+                  value={row.title}
+                  onChange={(e) =>
+                    setThemeRows((prev) =>
+                      prev.map((r, j) => (j === i ? { ...r, title: e.target.value } : r)),
+                    )
+                  }
+                  className="flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[12px] text-white"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || confirmedThemes().length < 3}
+              onClick={() => void generateOutlineWithAi()}
+              className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
+            >
+              {aiBusy
+                ? aiBusyLabel
+                : `确认大纲并生成页面（${outlineCost ?? "—"} 积分）`}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setStep("setup")}
+              className="rounded-lg border border-white/20 px-3 py-2 text-[12px] text-white/60"
+            >
+              返回设定
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -402,63 +625,52 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">
-              页面清单（可改标题/要点，确认后再导出）
-              {aiModel ? (
-                <span className="ml-2 text-emerald-300/80">
-                  · {aiModel}
-                  {aiCost != null ? ` · 已扣 ${aiCost} 点` : ""}
-                </span>
-              ) : (
-                <span className="ml-2 text-white/35">· 模板骨架</span>
-              )}
+              页面清单（可改标题/要点/数字/viz · 刷新预览免费）
+              {aiCost != null ? <span className="ml-2 text-emerald-300/80">· 已扣 {aiCost} 点</span> : null}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void rebuildOutlineWithAi()}
-                className="text-[10px] text-emerald-300/80 underline-offset-2 hover:underline disabled:opacity-40"
-              >
-                再跑 AI
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={rebuildOutlineLocal}
-                className="text-[10px] text-white/50 underline-offset-2 hover:underline disabled:opacity-40"
-              >
-                换模板骨架
-              </button>
-              <button
-                type="button"
-                disabled={busy || pages.length >= 16}
-                onClick={addPage}
-                className="text-[10px] text-white/50 underline-offset-2 hover:underline disabled:opacity-40"
-              >
-                加一页
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm(`整份重跑将再扣 ${outlineCost} 积分。仍要继续？`)) {
+                  void generateOutlineWithAi();
+                }
+              }}
+              className="text-[10px] text-amber-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              整份重跑（再收费）
+            </button>
           </div>
           {aiSummary ? (
             <p className="rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-[11px] text-white/55">
               {aiSummary}
             </p>
           ) : null}
-          {aiError ? (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
-              {aiError}
-            </div>
-          ) : null}
-          <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+          <div className="max-h-[480px] space-y-2 overflow-y-auto pr-1">
             {pages.map((p, i) => (
-              <div key={`page-${i}`} className="rounded-xl border border-white/10 bg-black/35 p-3">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
+              <div key={`page-${i}`} className="rounded-xl border border-white/10 bg-black/35 p-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] text-white/35">P{i + 1}</span>
-                  {p.viz ? (
-                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-100">
-                      {p.viz}
+                  {p.themeTitle ? (
+                    <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 text-[10px] text-cyan-100">
+                      {p.themeTitle}
                     </span>
                   ) : null}
+                  <select
+                    disabled={busy}
+                    value={p.viz || ""}
+                    onChange={(e) =>
+                      updatePage(i, { viz: (e.target.value || undefined) as HtmlPptVizKind | undefined })
+                    }
+                    className="rounded-md border border-white/10 bg-black/40 px-1.5 py-1 text-[10px] text-violet-100"
+                  >
+                    <option value="">自动</option>
+                    {HTML_PPT_VIZ_KINDS.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
                   <input
                     disabled={busy}
                     value={p.title}
@@ -472,63 +684,88 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                     placeholder="KPI"
                     className="w-20 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-violet-100/80"
                   />
-                  <button
-                    type="button"
-                    disabled={busy || pages.length <= 3}
-                    onClick={() => removePage(i)}
-                    className="text-[10px] text-white/35 hover:text-white/70 disabled:opacity-30"
-                  >
-                    删除
-                  </button>
                 </div>
-                <div className="space-y-1">
-                  {(p.bullets || []).map((b, bi) => (
-                    <input
-                      key={`b-${i}-${bi}`}
-                      disabled={busy}
-                      value={b}
-                      onChange={(e) => updateBullet(i, bi, e.target.value)}
-                      className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white/75"
-                    />
-                  ))}
+                {(p.bullets || []).map((b, bi) => (
+                  <input
+                    key={`b-${i}-${bi}`}
+                    disabled={busy}
+                    value={b}
+                    onChange={(e) => updateBullet(i, bi, e.target.value)}
+                    className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white/75"
+                  />
+                ))}
+                {p.series?.length ? (
+                  <div className="space-y-1">
+                    <div className="text-[10px] text-white/35">图表数据（可改）</div>
+                    {p.series.map((s, si) => (
+                      <div key={`s-${i}-${si}`} className="flex gap-2">
+                        <input
+                          disabled={busy}
+                          value={s.label}
+                          onChange={(e) => updateSeries(i, si, { label: e.target.value })}
+                          className="flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white/75"
+                        />
+                        <input
+                          disabled={busy}
+                          type="number"
+                          value={s.value}
+                          onChange={(e) => updateSeries(i, si, { value: Number(e.target.value) || 0 })}
+                          className="w-24 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-emerald-100"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input
+                    disabled={busy}
+                    value={patchNotes[i] || ""}
+                    onChange={(e) => setPatchNotes((prev) => ({ ...prev, [i]: e.target.value }))}
+                    placeholder="本页修改说明（结构跑题时再用）"
+                    className="min-w-[180px] flex-1 rounded-md border border-amber-400/20 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-50/90"
+                  />
                   <button
                     type="button"
-                    disabled={busy || (p.bullets || []).length >= 8}
-                    onClick={() => addBullet(i)}
-                    className="text-[10px] text-white/40 underline-offset-2 hover:underline disabled:opacity-40"
+                    disabled={busy}
+                    onClick={() => void patchOnePage(i)}
+                    className="text-[10px] text-amber-200/80 underline-offset-2 hover:underline disabled:opacity-40"
                   >
-                    + 要点
+                    按页重修（{patchCost} 积分）
                   </button>
-                  {p.series?.length ? (
-                    <div className="pt-1 text-[10px] text-white/35">
-                      图表数据：
-                      {p.series.map((s) => `${s.label}${Math.round(s.value)}`).join(" · ")}
-                    </div>
-                  ) : null}
                 </div>
               </div>
             ))}
           </div>
           <button
             type="button"
-            disabled={busy || pages.length < 3}
+            disabled={busy || pages.length < PLATFORM_HTML_PPT_PAGE_MIN}
             onClick={generateFromOutline}
             className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
           >
-            确认清单并生成预览
+            确认清单并生成预览（免费重渲）
           </button>
         </div>
       ) : null}
 
       {step === "export" ? (
         <div className="space-y-3">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">预览导出</div>
+          <p className="text-[11px] text-white/50">
+            数字写错：点「返回改清单」免费改 → 再刷新预览。空格=下一步动效，←→=翻页。
+          </p>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={busy}
+              onClick={() => setStep("outline")}
+              className="rounded-lg border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-100"
+            >
+              返回改清单（不扣费）
+            </button>
+            <button
+              type="button"
+              disabled={busy}
               onClick={generateFromOutline}
-              className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-40"
+              className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-[12px] font-semibold text-white"
             >
               刷新预览
             </button>
@@ -536,7 +773,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               type="button"
               disabled={busy}
               onClick={download}
-              className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
+              className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50"
             >
               导出 HTML
             </button>
@@ -547,35 +784,19 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                 rel="noreferrer"
                 className="rounded-lg border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[12px] text-sky-100"
               >
-                新窗口打开
+                新窗口全屏预览
               </a>
             ) : null}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setStep("outline")}
-              className="text-[11px] text-white/45 underline-offset-2 hover:underline"
-            >
-              返回改清单
-            </button>
           </div>
-          <p className="text-[11px] leading-relaxed text-white/45">
-            投屏操作：空格 / 点击 / ↓ = 下一步动效；← → = 翻页（与动效分离，不会进页一次播完）。
-          </p>
           {previewUrl ? (
-            <iframe
-              title="html-ppt-preview"
-              src={previewUrl}
-              className="h-[360px] w-full overflow-hidden rounded-xl border border-white/10 bg-black"
-            />
-          ) : (
-            <div className="rounded-xl border border-dashed border-white/15 px-3 py-10 text-center text-[11px] text-white/40">
-              请先确认页面清单
-            </div>
-          )}
-          <pre className="whitespace-pre-wrap rounded-lg border border-white/10 bg-black/40 p-3 text-[10px] leading-relaxed text-white/45">
-            {HTML_PPT_QUALITY_CHECKLIST_ZH}
-          </pre>
+            <iframe title="ppt-preview" src={previewUrl} className="h-[420px] w-full rounded-xl border border-white/10 bg-black" />
+          ) : null}
+        </div>
+      ) : null}
+
+      {aiError ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+          {aiError}
         </div>
       ) : null}
     </div>

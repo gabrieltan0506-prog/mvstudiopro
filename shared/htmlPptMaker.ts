@@ -25,9 +25,13 @@ export type HtmlPptVizKind =
   | "cards"
   | "line"
   /** 左右对照：series 前半 vs 后半，适合年份/区域/模式对比 */
-  | "compare";
+  | "compare"
+  | "table"
+  | "scene_cards"
+  | "sentiment"
+  | "hub";
 
-const HTML_PPT_VIZ_OK = new Set<HtmlPptVizKind>([
+export const HTML_PPT_VIZ_KINDS: readonly HtmlPptVizKind[] = [
   "cover",
   "ring",
   "bars",
@@ -36,7 +40,15 @@ const HTML_PPT_VIZ_OK = new Set<HtmlPptVizKind>([
   "cards",
   "line",
   "compare",
-]);
+  "table",
+  "scene_cards",
+  "sentiment",
+  "hub",
+] as const;
+
+const HTML_PPT_VIZ_OK = new Set<HtmlPptVizKind>(HTML_PPT_VIZ_KINDS);
+
+export type HtmlPptTheme = { id: string; title: string };
 
 /** series 允许绝对量级（亿元、万部、倍速）；条形宽度按页内 max 归一 */
 function clampSeriesValue(v: unknown): number {
@@ -67,6 +79,13 @@ export type HtmlPptPage = {
   viz?: HtmlPptVizKind;
   /** 条形/柱状数据；不填则从要点或演示种子生成 */
   series?: Array<{ label: string; value: number }>;
+  /** 挂靠的大纲主题 id */
+  themeId?: string;
+  themeTitle?: string;
+  /** 需高亮闪烁的短句（与 bullets 对齐或独立） */
+  highlight?: string[];
+  /** 可选插图 HTTPS URL（封面/关键页） */
+  imageUrl?: string;
 };
 
 export type HtmlPptDeckInput = {
@@ -517,7 +536,7 @@ export function buildDefaultHtmlPptPages(
   purposeZh?: string,
   styleId: HtmlPptStyleId = "dark_research",
 ): HtmlPptPage[] {
-  const n = Math.max(5, Math.min(16, Math.floor(pageCount || 5)));
+  const n = Math.max(10, Math.min(16, Math.floor(pageCount || 10)));
   const topic = String(title || "主题").trim().slice(0, 80);
   const purpose = String(purposeZh || "汇报").trim().slice(0, 40);
   const styleLabel = HTML_PPT_STYLES[styleId]?.labelZh || "动效 PPT";
@@ -563,6 +582,15 @@ export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
             .filter((s) => s.label)
             .slice(0, 8)
         : undefined,
+      themeId: p?.themeId ? String(p.themeId).trim().slice(0, 40) : undefined,
+      themeTitle: p?.themeTitle ? String(p.themeTitle).trim().slice(0, 40) : undefined,
+      highlight: Array.isArray(p?.highlight)
+        ? p.highlight.map((h) => String(h || "").trim()).filter(Boolean).slice(0, 6)
+        : undefined,
+      imageUrl:
+        typeof p?.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl.trim())
+          ? p.imageUrl.trim().slice(0, 2048)
+          : undefined,
     }))
     .filter((p) => p.title)
     .slice(0, 16);
@@ -619,15 +647,19 @@ function seriesFromPage(page: HtmlPptPage, index: number): Array<{ label: string
 export function inferHtmlPptViz(page: HtmlPptPage, index: number, total: number): HtmlPptVizKind {
   if (page.viz) return page.viz;
   if (index === 0) return "cover";
-  if (index === 1 && /目录|叙事|议程/.test(page.title)) return "steps";
+  if (index === 1 && /目录|叙事|议程|大纲/.test(page.title)) return "steps";
   if (index === total - 1) return "steps";
+  if (/情绪|爆发|酝酿|下降|冷热/.test(page.title)) return "sentiment";
+  if (/枢纽|生态|板块|模块/.test(page.title)) return "hub";
+  if (/场景|业务块|信息块/.test(page.title)) return "scene_cards";
+  if (/表格|对照表|清单表/.test(page.title)) return "table";
   if (parseKpiPercent(page.kpi) != null || /%|数据|指标|ROI|完成/.test(`${page.title}${page.kpi || ""}`)) {
     return "ring";
   }
-  if (/路径|阶段|里程碑|路线|时间线|步骤|Now|Next/.test(page.title)) return "steps";
+  if (/路径|阶段|里程碑|路线|时间线|步骤|Now|Next|大纲/.test(page.title)) return "steps";
   if (/对照|对比|VS|vs|前后|国内外|付费.*免费/.test(page.title)) return "compare";
   if (/结构|拆解|市场|TAM|占比/.test(page.title)) return "columns";
-  if (/趋势|走势|波动|增长曲线|热度|预测/.test(page.title)) return "line";
+  if (/趋势|走势|波动|增长曲线|热度|预测|未来规模/.test(page.title)) return "line";
   if ((page.bullets || []).length >= 3 && (page.series?.length || /风险|竞争|壁垒|缺口/.test(page.title))) {
     return "bars";
   }
@@ -654,6 +686,42 @@ function chartTone(i: number) {
 function toneStyle(i: number, extra = ""): string {
   const t = chartTone(i);
   return `--i:${i};--c:${t.c};--g:${t.g}${extra ? `;${extra}` : ""}`;
+}
+
+const SCENE_CARD_EMOJI = ["📊", "🎯", "⚡", "🔍", "📈", "🧩"] as const;
+const SENTIMENT_BUCKETS = [
+  { key: "爆发", emoji: "🔥", cls: "sent-up" },
+  { key: "酝酿", emoji: "🌱", cls: "sent-mid" },
+  { key: "下降", emoji: "📉", cls: "sent-down" },
+] as const;
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 将 bullets 中与 highlight 匹配的短语包成闪烁 span */
+export function renderBulletsWithHighlights(bullet: string, highlights: string[] | undefined): string {
+  const text = String(bullet || "");
+  const phrases = (highlights || []).map((h) => String(h || "").trim()).filter(Boolean);
+  if (!phrases.length) return escapeHtml(text);
+  let out = escapeHtml(text);
+  for (const phrase of phrases) {
+    if (!phrase || !text.includes(phrase)) continue;
+    const re = new RegExp(escapeRegExp(phrase), "g");
+    out = out.replace(re, `<span class="hl-flash highlight-flash">${escapeHtml(phrase)}</span>`);
+  }
+  return out;
+}
+
+function renderHighlightOnlyList(highlights: string[], buildStart: number): string {
+  const items = highlights
+    .slice(0, 3)
+    .map(
+      (h, i) =>
+        `<li class="anim talk-point hl-only" data-build="${buildStart + i + 1}"><span class="hl-flash highlight-flash">${escapeHtml(h)}</span></li>`,
+    )
+    .join("");
+  return `<ul class="talk-bullets hl-list">${items}</ul>`;
 }
 
 function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): string {
@@ -786,6 +854,60 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     return `<div class="viz viz-compare">${renderSide(left, 1, leftHead)}${renderSide(right, 2 + left.length, rightHead)}</div>`;
   }
 
+  if (kind === "table") {
+    const bullets = (page.bullets || []).slice(0, 6);
+    const rows = series.slice(0, 8).map((s, i) => {
+      const note = bullets[i] || "";
+      return `<tr class="tbl-row chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><td class="tbl-rank">${i + 1}</td><td class="tbl-lab">${escapeHtml(s.label)}</td><td class="tbl-val countup" data-to="${Math.round(s.value)}" data-display="${formatSeriesDisplay(s.value)}">0</td>${note ? `<td class="tbl-note">${escapeHtml(note)}</td>` : ""}</tr>`;
+    });
+    const hasNote = bullets.some(Boolean);
+    const head = hasNote
+      ? `<thead><tr><th>#</th><th>维度</th><th>数值</th><th>说明</th></tr></thead>`
+      : `<thead><tr><th>#</th><th>维度</th><th>数值</th></tr></thead>`;
+    return `<div class="viz viz-table"><table class="data-table">${head}<tbody>${rows.join("")}</tbody></table></div>`;
+  }
+
+  if (kind === "scene_cards") {
+    const items = series.slice(0, 6);
+    const cards = items
+      .map(
+        (s, i) =>
+          `<div class="scene-card chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><div class="scene-icon" aria-hidden="true">${SCENE_CARD_EMOJI[i % SCENE_CARD_EMOJI.length]}</div><div class="scene-lab">${escapeHtml(s.label)}</div><div class="scene-val countup" data-to="${Math.round(s.value)}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
+      )
+      .join("");
+    return `<div class="viz viz-scene-cards">${cards}</div>`;
+  }
+
+  if (kind === "sentiment") {
+    const bullets = (page.bullets || []).slice(0, 3);
+    const vals = SENTIMENT_BUCKETS.map((b, i) => {
+      const fromSeries = series.find((s) => s.label.includes(b.key));
+      const fromBullet = bullets[i]?.match(/(\d+(?:\.\d+)?)/);
+      const value = fromSeries?.value ?? (fromBullet ? Number(fromBullet[1]) : series[i]?.value ?? 33 + i * 12);
+      const caption = bullets[i] || fromSeries?.label || b.key;
+      return { ...b, value: Math.round(value), caption };
+    });
+    const faces = vals
+      .map(
+        (v, i) =>
+          `<div class="sent-face chart-in ${v.cls}" data-build="${i + 1}" style="${toneStyle(i, `--v:${Math.max(8, Math.min(100, v.value))}`)}"><div class="sent-emoji">${v.emoji}</div><div class="sent-key">${escapeHtml(v.key)}</div><div class="sent-val countup" data-to="${v.value}">0</div><div class="sent-cap">${escapeHtml(v.caption.slice(0, 24))}</div></div>`,
+      )
+      .join("");
+    return `<div class="viz viz-sentiment">${faces}</div>`;
+  }
+
+  if (kind === "hub") {
+    const mods = series.slice(0, 8);
+    const hubLabel = escapeHtml(page.kpi || page.title.slice(0, 12) || "枢纽");
+    const spokes = mods
+      .map(
+        (s, i) =>
+          `<div class="hub-spoke chart-in" data-build="${i + 1}" style="${toneStyle(i, `--a:${Math.round((i / Math.max(1, mods.length)) * 360)}`)}"><div class="hub-node"><span class="hub-dot"></span><b>${escapeHtml(s.label)}</b><em class="countup" data-to="${Math.round(s.value)}">0</em></div></div>`,
+      )
+      .join("");
+    return `<div class="viz viz-hub"><div class="hub-core chart-in" data-build="0"><div class="hub-ring"></div><strong>${hubLabel}</strong></div><div class="hub-spokes">${spokes}</div></div>`;
+  }
+
   // bars：按页内 max 归一宽度，数字显示绝对量级（亿/万/占比皆可）
   const barMax = Math.max(1, ...series.slice(0, 8).map((s) => s.value));
   const bars = series
@@ -813,29 +935,50 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
       const viz = renderVizHtml(kind, p, i);
       // steps/cover 的 bullets 已进主可视化；其余图表页把 bullets 挂在图表动效之后，供口播分步
       const bulletsInViz = kind === "steps" || kind === "cover";
+      const seriesLen = (p.series || seriesFromPage(p, i)).length;
+      const bulletLen = (p.bullets || []).length;
       const seriesBuildCount =
         kind === "compare"
-          ? Math.min(8, (p.series || []).length) + 2
+          ? Math.min(8, seriesLen) + 2
           : kind === "ring"
-            ? 1 + Math.min(5, (p.series || p.bullets || []).length)
-            : Math.min(8, (p.series || []).length);
+            ? 1 + Math.min(5, seriesLen || bulletLen)
+            : kind === "hub"
+              ? 1 + Math.min(8, seriesLen)
+              : kind === "table"
+                ? Math.min(8, seriesLen)
+                : kind === "scene_cards"
+                  ? Math.min(6, seriesLen)
+                  : kind === "sentiment"
+                    ? 3
+                    : Math.min(8, seriesLen);
       const talkBullets = bulletsInViz ? [] : (p.bullets || []).slice(0, 4);
+      const highlights = (p.highlight || []).filter(Boolean);
       const bulletItems = talkBullets
         .map(
           (b, bi) =>
-            `<li class="anim talk-point" data-build="${Math.max(1, seriesBuildCount) + bi + 1}">${escapeHtml(b)}</li>`,
+            `<li class="anim talk-point" data-build="${Math.max(1, seriesBuildCount) + bi + 1}">${renderBulletsWithHighlights(b, highlights)}</li>`,
         )
         .join("");
       const bulletList = bulletItems ? `<ul class="talk-bullets">${bulletItems}</ul>` : "";
+      const highlightOnly =
+        !bulletList && highlights.length
+          ? renderHighlightOnlyList(highlights, Math.max(1, seriesBuildCount))
+          : "";
       const noteBuild =
         kind === "cover"
           ? 2
-          : Math.max(1, seriesBuildCount) + talkBullets.length + 1;
-      return `<section class="slide${i === 0 ? " is-active" : ""}" data-i="${i}" data-viz="${kind}">
+          : Math.max(1, seriesBuildCount) + talkBullets.length + (highlightOnly ? highlights.length : 0) + 1;
+      const hasImage = Boolean(p.imageUrl);
+      const imagePanel = hasImage
+        ? `<aside class="slide-image anim" data-build="0"><img src="${escapeHtml(p.imageUrl!)}" alt="" loading="lazy" decoding="async"/></aside>`
+        : "";
+      const bodyClass = hasImage ? " slide-has-image" : "";
+      return `<section class="slide${i === 0 ? " is-active" : ""}${bodyClass}" data-i="${i}" data-viz="${kind}">
   <div class="slide-bg" aria-hidden="true"></div>
   <div class="fx-orb o1" aria-hidden="true"></div>
   <div class="fx-orb o2" aria-hidden="true"></div>
   <div class="slide-inner">
+  <div class="slide-body">
   <div class="accent-line anim" data-build="0"></div>
   <div class="meta anim" data-build="0"><span class="accent">${escapeHtml(styleMeta.labelZh)}</span><span>${i + 1} / ${safePages.length}</span></div>
   ${kind === "cover" && p.kpi ? "" : p.kpi && kind !== "ring" ? `<div class="kpi anim" data-build="0">${escapeHtml(p.kpi)}</div>` : ""}
@@ -843,7 +986,10 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
   ${p.subtitle ? `<p class="sub anim" data-build="0">${escapeHtml(p.subtitle)}</p>` : ""}
   ${viz}
   ${bulletList}
+  ${highlightOnly}
   ${p.note ? `<p class="note anim" data-build="${Math.max(1, noteBuild)}">${escapeHtml(p.note)}</p>` : ""}
+  </div>
+  ${imagePanel}
   </div>
 </section>`;
     })
@@ -868,6 +1014,15 @@ ${STYLE_CSS[styleId]}
 .slide.is-active .fx-orb{animation:orbPulse 2.8s ease-in-out both}
 .slide.is-active .fx-orb.o2{animation-delay:.35s}
 .slide-inner{position:relative;z-index:1;display:flex;flex-direction:column;justify-content:center;min-height:72%;max-width:1100px;width:100%}
+.slide-inner:has(.slide-image){max-width:1180px}
+.slide-body{flex:1;min-width:0}
+.slide-has-image .slide-inner{flex-direction:row;align-items:center;gap:clamp(16px,3vw,32px)}
+.slide-image{flex:0 0 min(38%,320px);max-width:42%;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.12);box-shadow:0 12px 40px rgba(0,0,0,.35);background:rgba(15,23,42,.35)}
+.slide-image img{display:block;width:100%;height:auto;max-height:min(52vh,420px);object-fit:cover}
+@media (max-width:900px){.slide-has-image .slide-inner{flex-direction:column}.slide-image{flex:0 0 auto;max-width:100%;width:100%}}
+.hl-flash,.highlight-flash{display:inline;padding:0 4px;border-radius:6px;background:linear-gradient(90deg,rgba(250,204,21,.25),rgba(251,146,60,.22));box-shadow:0 0 0 1px rgba(250,204,21,.35);animation:hlFlash 2.4s ease-in-out infinite}
+.fx-show .hl-flash,.fx-show .highlight-flash{animation:hlFlash 2.4s ease-in-out infinite}
+@keyframes hlFlash{0%,100%{opacity:1;box-shadow:0 0 0 1px rgba(250,204,21,.35),0 0 8px rgba(250,204,21,.15)}50%{opacity:1;box-shadow:0 0 0 1px rgba(251,146,60,.55),0 0 18px rgba(250,204,21,.45)}}
 .accent-line{height:3px;width:120px;background:linear-gradient(90deg,#22d3ee,#a78bfa,#a3e635,#fb923c);margin-bottom:10px;box-shadow:0 0 12px rgba(34,211,238,.35);transform-origin:left center}
 .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:14px}
 h1{font-size:clamp(1.7rem,4.2vw,3rem);line-height:1.15;margin:6px 0 10px;letter-spacing:-.02em;max-width:22ch}
@@ -952,6 +1107,40 @@ li{margin:7px 0}
 .line-lab{font-size:11px;color:var(--c);text-shadow:0 0 8px var(--g)}
 .viz-cover{position:relative;width:min(180px,36vw);margin-top:8px;filter:drop-shadow(0 0 16px var(--g))}
 .cover-kpi{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(1.4rem,3vw,2rem);font-weight:800;color:#f8fafc;text-shadow:0 0 16px var(--g)}
+.viz-table{max-width:820px;overflow:auto}
+.data-table{width:100%;border-collapse:separate;border-spacing:0 8px;font-size:13px}
+.data-table th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:0 10px 4px}
+.tbl-row{background:rgba(15,23,42,.45);box-shadow:0 0 0 1px rgba(148,163,184,.14)}
+.tbl-row td{padding:10px 12px;vertical-align:middle}
+.tbl-row td:first-child{border-radius:10px 0 0 10px}
+.tbl-row td:last-child{border-radius:0 10px 10px 0}
+.tbl-rank{font-weight:800;color:var(--c);width:36px}
+.tbl-lab{color:var(--text);font-weight:600}
+.tbl-val{color:var(--c);font-weight:800;text-align:right;white-space:nowrap;text-shadow:0 0 10px var(--g)}
+.tbl-note{color:var(--muted);font-size:12px;max-width:220px}
+.viz-scene-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;max-width:860px}
+.scene-card{border-radius:16px;padding:14px 12px 16px;background:rgba(15,23,42,.5);border:1px solid color-mix(in srgb,var(--c) 38%,transparent);box-shadow:0 0 18px color-mix(in srgb,var(--g) 24%,transparent);min-height:118px}
+.scene-icon{font-size:clamp(1.4rem,2.5vw,1.8rem);margin-bottom:8px;filter:drop-shadow(0 0 8px var(--g))}
+.scene-lab{font-size:13px;color:var(--text);line-height:1.35;margin-bottom:6px}
+.scene-val{font-size:clamp(1.3rem,2.4vw,1.8rem);font-weight:800;color:var(--c);text-shadow:0 0 12px var(--g)}
+.viz-sentiment{display:grid;grid-template-columns:repeat(3,minmax(100px,1fr));gap:14px;max-width:720px}
+.sent-face{border-radius:18px;padding:16px 12px;text-align:center;background:rgba(15,23,42,.48);border:1px solid color-mix(in srgb,var(--c) 42%,transparent);position:relative;overflow:hidden}
+.sent-face::after{content:"";position:absolute;inset:auto 0 0 0;height:4px;background:var(--c);width:calc(var(--v)*1%);box-shadow:0 0 12px var(--g)}
+.sent-emoji{font-size:clamp(2rem,4vw,2.6rem);line-height:1;margin-bottom:6px}
+.sent-key{font-size:12px;font-weight:800;color:var(--c);letter-spacing:.08em;margin-bottom:4px}
+.sent-val{font-size:clamp(1.4rem,2.8vw,2rem);font-weight:800;color:#f8fafc;text-shadow:0 0 14px var(--g)}
+.sent-cap{margin-top:6px;font-size:11px;color:var(--muted);line-height:1.35}
+.viz-hub{position:relative;min-height:240px;max-width:820px;display:grid;place-items:center;padding:12px 0}
+.hub-core{position:relative;z-index:2;width:min(140px,28vw);aspect-ratio:1;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;background:radial-gradient(circle at 35% 30%,color-mix(in srgb,var(--accent,#22d3ee) 35%,#0b1020),rgba(15,23,42,.85));border:2px solid var(--accent,#22d3ee);box-shadow:0 0 28px rgba(34,211,238,.35)}
+.hub-ring{position:absolute;inset:-8px;border-radius:50%;border:1px dashed rgba(148,163,184,.35);animation:hubSpin 18s linear infinite}
+.hub-core strong{font-size:clamp(.85rem,1.6vw,1rem);line-height:1.25;color:var(--text);font-weight:800}
+.hub-spokes{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.hub-spoke{position:absolute;width:100%;height:100%;transform:rotate(calc(var(--a)*1deg))}
+.hub-node{position:absolute;top:50%;left:50%;transform:rotate(calc(var(--a)*-1deg)) translate(calc(min(34vw,180px)),-50%);display:flex;flex-direction:column;align-items:center;gap:4px;min-width:88px;max-width:120px;padding:8px 10px;border-radius:12px;background:rgba(15,23,42,.72);border:1px solid color-mix(in srgb,var(--c) 45%,transparent);box-shadow:0 0 14px color-mix(in srgb,var(--g) 30%,transparent);pointer-events:auto}
+.hub-dot{width:10px;height:10px;border-radius:50%;background:var(--c);box-shadow:0 0 10px var(--g)}
+.hub-node b{font-size:11px;color:var(--text);text-align:center;line-height:1.3}
+.hub-node em{font-style:normal;font-size:12px;font-weight:800;color:var(--c)}
+@keyframes hubSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes chartIn{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
 @keyframes barGrow{from{transform:scaleX(.2);opacity:.4}to{transform:none;opacity:1}}
@@ -965,7 +1154,7 @@ li{margin:7px 0}
 @keyframes dotPop{from{opacity:0;r:0}to{opacity:1}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes orbPulse{0%{opacity:0;transform:scale(.85)}40%{opacity:.9}100%{opacity:.55;transform:scale(1.05)}}
-@media (max-width:720px){.viz-split,.viz-compare{grid-template-columns:1fr}.hbar{grid-template-columns:24px 64px 1fr 36px}.viz-cols{height:160px}.controls{left:8px;right:8px;transform:none;flex-wrap:wrap;justify-content:center}}
+@media (max-width:720px){.viz-split,.viz-compare,.viz-sentiment{grid-template-columns:1fr}.hbar{grid-template-columns:24px 64px 1fr 36px}.viz-cols{height:160px}.viz-hub{min-height:320px}.hub-node{transform:rotate(calc(var(--a)*-1deg)) translate(120px,-50%)}.controls{left:8px;right:8px;transform:none;flex-wrap:wrap;justify-content:center}}
 </style>
 </head>
 <body>

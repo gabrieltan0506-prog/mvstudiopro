@@ -268,11 +268,14 @@ export const CREDIT_COSTS = {
   /** 自定义文案 · 深度优化（纯 LLM，无出图；GPT-5.5 结构化改写） */
   platformOptimizeCustomCopy: 25,
   /**
-   * 动效 PPT · GPT-5.6 Sol 清单：按页单价（积分/页）。
-   * 总价 = 页数 × 本值；保守 API 成本下毛利约 50–60%（1 积分≈¥0.6 内部口径）。
+   * 动效 PPT · 按页单价（积分/页，可为小数）。
+   * 整次流程只在「生成页面内容」收一次：总价 = round(页数 × 本值)。
+   * 补大纲/标题优化含在该次内不另扣；按页重修另按 1 页价。
    * @see platformHtmlPptOutlineCredits
    */
-  platformHtmlPptOutlinePerPage: 3,
+  platformHtmlPptOutlinePerPage: 4.5,
+  /** 动效 PPT · 按页重修（与单页价一致，入账取整） */
+  platformHtmlPptPagePatch: 4.5,
   /** @deprecated 改按页计费，见 {@link platformHtmlPptOutlinePerPage} / {@link platformHtmlPptOutlineCredits} */
   platformHtmlPptOutline: 25,
   /** 自定义抠像·单张原价（GPT-IMAGE-2 场景/主体图；去背景为白底主体直出）；2 张九折、4 张八折 */
@@ -307,16 +310,21 @@ export const CREDIT_COSTS = {
 export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 10;
 
 /** 动效 PPT 清单页数范围（用户必选） */
-export const PLATFORM_HTML_PPT_PAGE_MIN = 5;
+export const PLATFORM_HTML_PPT_PAGE_MIN = 10;
 export const PLATFORM_HTML_PPT_PAGE_MAX = 16;
 
-/** 动效 PPT · Sol 清单总积分 = 页数 × 每页单价 */
+/** 动效 PPT · 总积分 = round(页数 × 每页单价)；账本为整数 */
 export function platformHtmlPptOutlineCredits(pageCount: number): number {
   const n = Math.max(
     PLATFORM_HTML_PPT_PAGE_MIN,
     Math.min(PLATFORM_HTML_PPT_PAGE_MAX, Math.floor(Number(pageCount) || 0)),
   );
-  return n * CREDIT_COSTS.platformHtmlPptOutlinePerPage;
+  return Math.round(n * CREDIT_COSTS.platformHtmlPptOutlinePerPage);
+}
+
+/** 动效 PPT · 按页重修积分（1 页价取整） */
+export function platformHtmlPptPagePatchCredits(): number {
+  return Math.max(1, Math.round(CREDIT_COSTS.platformHtmlPptPagePatch));
 }
 
 /**

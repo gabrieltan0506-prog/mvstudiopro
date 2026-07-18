@@ -1042,9 +1042,17 @@ async function processPlatformJob(
     if (input.action === "platform_html_ppt_outline") {
       const title = String(params.title || "").trim();
       const purposeZh = params.purposeZh != null ? String(params.purposeZh) : undefined;
-      const pageCount = Number(params.pageCount || 8);
+      const pageCount = Number(params.pageCount || 10);
       const styleId = String(params.styleId || "dark_research");
       const briefZh = params.briefZh != null ? String(params.briefZh) : undefined;
+      const confirmedThemes = Array.isArray(params.confirmedThemes)
+        ? (params.confirmedThemes as Array<{ id?: string; title?: string }>)
+            .map((t) => ({
+              id: String(t?.id || "").trim(),
+              title: String(t?.title || "").trim(),
+            }))
+            .filter((t) => t.id && t.title)
+        : undefined;
       const cost = Number(params.cost || 0);
       const creditsCharged = params.creditsCharged === true;
       const uidNum = jobUserId != null ? Number(jobUserId) : NaN;
@@ -1057,6 +1065,7 @@ async function processPlatformJob(
           pageCount,
           styleId: styleId as Parameters<typeof generateHtmlPptOutline>[0]["styleId"],
           briefZh,
+          confirmedThemes,
         });
         return {
           provider: "openai",
