@@ -138,7 +138,7 @@ export function normalizeHtmlPptImageMotion(raw: unknown): HtmlPptImageKeyframe[
     byAt.set(at, pose);
   }
   if (byAt.size === 0) return undefined;
-  let frames = [...byAt.entries()]
+  let frames = Array.from(byAt.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([at, pose]) => ({ at, pose }));
   if (frames[0]?.at !== 0) {
@@ -663,13 +663,13 @@ export function scrubVisibleThemeIdLeaks(text: string, knownIds?: string[]): str
 
 /** 规范化用户编辑后的清单 */
 export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
-  const deckThemeIds = [
-    ...new Set(
+  const deckThemeIds = Array.from(
+    new Set(
       (pages || [])
         .map((p) => String(p?.themeId || "").trim().slice(0, 40))
         .filter((id) => id.length >= 2),
     ),
-  ];
+  );
   return (pages || [])
     .map((p) => {
       const themeId = p?.themeId ? String(p.themeId).trim().slice(0, 40) : undefined;
