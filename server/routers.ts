@@ -7059,6 +7059,90 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
+     * 动效 PPT · GPT-5.6 Sol 生成页面清单与图表数据（方案 A，无出图）。
+     * 扣 {@link CREDIT_COSTS.platformHtmlPptOutline} 积分/次。
+     */
+    generateHtmlPptOutline: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().min(2).max(80),
+          purposeZh: z.string().max(80).optional(),
+          pageCount: z.number().int().min(3).max(16).default(8),
+          styleId: z
+            .enum([
+              "dark_research",
+              "pitch_orange",
+              "figma_timeline",
+              "emerald_boardroom",
+              "noir_gold",
+              "rose_editorial",
+              "slate_consulting",
+              "ivory_academic",
+              "ocean_brief",
+            ])
+            .default("dark_research"),
+          briefZh: z.string().max(4000).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformHtmlPptOutline;
+        let creditsCharged = false;
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，动效PPT AI 清单需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(userId, "platformHtmlPptOutline", "动效PPT · GPT-5.6 Sol 页面清单");
+          creditsCharged = true;
+        }
+
+        try {
+          const { generateHtmlPptOutline } = await import("./services/platformHtmlPptOutline");
+          const result = await generateHtmlPptOutline({
+            title: input.title,
+            purposeZh: input.purposeZh,
+            pageCount: input.pageCount,
+            styleId: input.styleId,
+            briefZh: input.briefZh,
+          });
+          return {
+            success: true as const,
+            cost: isAdminUser ? 0 : cost,
+            model: result.model,
+            deckTitle: result.deckTitle,
+            summary: result.summary,
+            pages: result.pages,
+          };
+        } catch (error) {
+          if (creditsCharged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "platformHtmlPptOutline 失败退还").catch(
+              (refundErr: unknown) => {
+                console.error("[generateHtmlPptOutline] refund failed:", refundErr);
+              },
+            );
+          }
+          const { HTML_PPT_OUTLINE_CAPACITY_MESSAGE } = await import(
+            "./services/platformHtmlPptOutline.js"
+          );
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const isCapacity = rawMessage === HTML_PPT_OUTLINE_CAPACITY_MESSAGE;
+          throw new TRPCError({
+            code: isCapacity ? "SERVICE_UNAVAILABLE" : "INTERNAL_SERVER_ERROR",
+            message: isCapacity
+              ? `${HTML_PPT_OUTLINE_CAPACITY_MESSAGE}${creditsCharged ? "（积分已退回）" : ""}`
+              : rawMessage || `动效PPT 清单生成失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
+          });
+        }
+      }),
+
+    /**
      * 自定义创作工作台 · 深度优化文案（纯 LLM，无出图）。
      * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
      */

@@ -9,6 +9,8 @@ import {
   type HtmlPptPage,
   type HtmlPptStyleId,
 } from "@shared/htmlPptMaker";
+import { CREDIT_COSTS } from "@shared/plans";
+import { trpc } from "@/lib/trpc";
 
 type StepId = "setup" | "outline" | "export";
 
@@ -24,18 +26,56 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const [purpose, setPurpose] = useState("数据洞察汇报");
   const [pageCount, setPageCount] = useState(8);
   const [styleId, setStyleId] = useState<HtmlPptStyleId>(() => recommendHtmlPptStyle("数据洞察汇报"));
+  const [briefZh, setBriefZh] = useState("");
   const [pages, setPages] = useState<HtmlPptPage[]>([]);
   const [html, setHtml] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiModel, setAiModel] = useState<string | null>(null);
+  const [aiCost, setAiCost] = useState<number | null>(null);
+
+  const outlineCost = CREDIT_COSTS.platformHtmlPptOutline;
+  const generateOutlineMutation = trpc.mvAnalysis.generateHtmlPptOutline.useMutation();
 
   const styleList = useMemo(
     () => Object.entries(HTML_PPT_STYLES) as [HtmlPptStyleId, (typeof HTML_PPT_STYLES)[HtmlPptStyleId]][],
     [],
   );
 
-  const rebuildOutline = () => {
+  const busy = disabled || generateOutlineMutation.isPending;
+
+  const rebuildOutlineLocal = () => {
+    setAiError(null);
+    setAiSummary(null);
+    setAiModel(null);
+    setAiCost(null);
     setPages(buildDefaultHtmlPptPages(title, pageCount, purpose, styleId));
     setStep("outline");
+  };
+
+  const rebuildOutlineWithAi = async () => {
+    setAiError(null);
+    try {
+      const res = await generateOutlineMutation.mutateAsync({
+        title: title.trim(),
+        purposeZh: purpose.trim() || undefined,
+        pageCount,
+        styleId,
+        briefZh: briefZh.trim() || undefined,
+      });
+      const nextPages = normalizeHtmlPptPages(res.pages || []);
+      if (nextPages.length < 3) throw new Error("返回页数不足");
+      if (res.deckTitle?.trim()) setTitle(res.deckTitle.trim());
+      setPages(nextPages);
+      setAiSummary(res.summary || null);
+      setAiModel(res.model || "gpt-5.6-sol");
+      setAiCost(typeof res.cost === "number" ? res.cost : outlineCost);
+      setStep("outline");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "AI 清单生成失败";
+      setAiError(msg);
+    }
   };
 
   const updatePage = (index: number, patch: Partial<HtmlPptPage>) => {
@@ -70,14 +110,14 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const addPage = () => {
     setPages((prev) => {
       if (prev.length >= 16) return prev;
-      return [...prev, { title: `新页面 ${prev.length + 1}`, bullets: ["要点一", "要点二"] }];
+      return [...prev, { title: `新页面 ${prev.length + 1}`, bullets: ["要点一", "要点二"], viz: "bars" }];
     });
   };
 
   const generateFromOutline = () => {
     const normalized = normalizeHtmlPptPages(pages);
     if (normalized.length < 3) {
-      rebuildOutline();
+      rebuildOutlineLocal();
       return;
     }
     const doc = buildHtmlPptDocument({
@@ -116,8 +156,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       <div>
         <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          流程：设定 → 确认页面清单 → 预览导出。多风格 16:9 横向翻页单文件 HTML（站内预设，无需上传
-          PPTX）。
+          方案 A：<span className="text-emerald-200/90">GPT-5.6 Sol</span> 写八页文案与图表数据（
+          {outlineCost} 积分/次），前端用多色 SVG 画环形/条形/柱状动效。图表不是 Image-2。模板骨架可免费试用。
         </p>
       </div>
 
@@ -127,7 +167,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             key={s.id}
             type="button"
             onClick={() => {
-              if (s.id === "outline" && !pages.length) rebuildOutline();
+              if (s.id === "outline" && !pages.length) rebuildOutlineLocal();
               else setStep(s.id);
             }}
             className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40 ${
@@ -146,7 +186,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             <label className="block text-[11px] text-white/60">
               主题
               <input
-                disabled={disabled}
+                disabled={busy}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
@@ -155,7 +195,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             <label className="block text-[11px] text-white/60">
               用途
               <input
-                disabled={disabled}
+                disabled={busy}
                 value={purpose}
                 onChange={(e) => {
                   setPurpose(e.target.value);
@@ -172,10 +212,21 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               type="number"
               min={3}
               max={16}
-              disabled={disabled}
+              disabled={busy}
               value={pageCount}
               onChange={(e) => setPageCount(Number(e.target.value) || 8)}
               className="mt-1 w-24 rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white"
+            />
+          </label>
+          <label className="block text-[11px] text-white/60">
+            补充背景 / 数据口径 / 受众（AI 必读，越具体越好）
+            <textarea
+              disabled={busy}
+              value={briefZh}
+              onChange={(e) => setBriefZh(e.target.value)}
+              rows={3}
+              placeholder="例：近 7 日小红书蓝海词、热搜 Top、品牌切入方向；受众为品牌运营…"
+              className="mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/25"
             />
           </label>
           <div>
@@ -188,7 +239,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                   <button
                     key={id}
                     type="button"
-                    disabled={disabled}
+                    disabled={busy}
                     title={meta.whenZh}
                     onClick={() => setStyleId(id)}
                     className={`overflow-hidden rounded-xl border text-left disabled:opacity-40 ${
@@ -208,15 +259,6 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                     <div className="space-y-0.5 px-2 py-1.5">
                       <div className="text-[11px] font-semibold text-white/90">{meta.labelZh}</div>
                       <div className="line-clamp-2 text-[10px] text-white/40">{meta.blurbZh}</div>
-                      <div className="flex gap-1 pt-0.5">
-                        {[meta.palette.bg, meta.palette.accent, meta.palette.text].map((c) => (
-                          <span
-                            key={c}
-                            className="h-2.5 w-2.5 rounded-full border border-white/20"
-                            style={{ background: c }}
-                          />
-                        ))}
-                      </div>
                     </div>
                   </button>
                 ))}
@@ -240,21 +282,34 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                     </div>
                   );
                 })()}
-                <p className="text-[10px] leading-relaxed text-white/45">
-                  {HTML_PPT_STYLES[styleId].labelZh} · {HTML_PPT_STYLES[styleId].whenZh}
-                  。本地包：Downloads/2026Jul18/template/{styleId}/
-                </p>
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            disabled={disabled || !title.trim()}
-            onClick={rebuildOutline}
-            className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
-          >
-            用此风格生成页面清单
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || !title.trim()}
+              onClick={() => void rebuildOutlineWithAi()}
+              className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
+            >
+              {generateOutlineMutation.isPending
+                ? "GPT-5.6 Sol 生成中…"
+                : `用 GPT-5.6 Sol 生成页面清单（${outlineCost} 积分）`}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !title.trim()}
+              onClick={rebuildOutlineLocal}
+              className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] font-semibold text-white/70 disabled:opacity-40"
+            >
+              仅用模板骨架（免费）
+            </button>
+          </div>
+          {aiError ? (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+              {aiError}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -263,19 +318,35 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">
               页面清单（可改标题/要点，确认后再导出）
+              {aiModel ? (
+                <span className="ml-2 text-emerald-300/80">
+                  · {aiModel}
+                  {aiCost != null ? ` · 已扣 ${aiCost} 点` : ""}
+                </span>
+              ) : (
+                <span className="ml-2 text-white/35">· 模板骨架</span>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                disabled={disabled}
-                onClick={rebuildOutline}
-                className="text-[10px] text-white/50 underline-offset-2 hover:underline disabled:opacity-40"
+                disabled={busy}
+                onClick={() => void rebuildOutlineWithAi()}
+                className="text-[10px] text-emerald-300/80 underline-offset-2 hover:underline disabled:opacity-40"
               >
-                按设定重生成
+                再跑 AI
               </button>
               <button
                 type="button"
-                disabled={disabled || pages.length >= 16}
+                disabled={busy}
+                onClick={rebuildOutlineLocal}
+                className="text-[10px] text-white/50 underline-offset-2 hover:underline disabled:opacity-40"
+              >
+                换模板骨架
+              </button>
+              <button
+                type="button"
+                disabled={busy || pages.length >= 16}
                 onClick={addPage}
                 className="text-[10px] text-white/50 underline-offset-2 hover:underline disabled:opacity-40"
               >
@@ -283,19 +354,34 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               </button>
             </div>
           </div>
+          {aiSummary ? (
+            <p className="rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-[11px] text-white/55">
+              {aiSummary}
+            </p>
+          ) : null}
+          {aiError ? (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-200">
+              {aiError}
+            </div>
+          ) : null}
           <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
             {pages.map((p, i) => (
               <div key={`page-${i}`} className="rounded-xl border border-white/10 bg-black/35 p-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="text-[10px] text-white/35">P{i + 1}</span>
+                  {p.viz ? (
+                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-100">
+                      {p.viz}
+                    </span>
+                  ) : null}
                   <input
-                    disabled={disabled}
+                    disabled={busy}
                     value={p.title}
                     onChange={(e) => updatePage(i, { title: e.target.value })}
                     className="min-w-[160px] flex-1 rounded-md border border-white/15 bg-black/40 px-2 py-1 text-[12px] font-semibold text-white"
                   />
                   <input
-                    disabled={disabled}
+                    disabled={busy}
                     value={p.kpi || ""}
                     onChange={(e) => updatePage(i, { kpi: e.target.value })}
                     placeholder="KPI"
@@ -303,7 +389,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                   />
                   <button
                     type="button"
-                    disabled={disabled || pages.length <= 3}
+                    disabled={busy || pages.length <= 3}
                     onClick={() => removePage(i)}
                     className="text-[10px] text-white/35 hover:text-white/70 disabled:opacity-30"
                   >
@@ -314,7 +400,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                   {(p.bullets || []).map((b, bi) => (
                     <input
                       key={`b-${i}-${bi}`}
-                      disabled={disabled}
+                      disabled={busy}
                       value={b}
                       onChange={(e) => updateBullet(i, bi, e.target.value)}
                       className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-white/75"
@@ -322,19 +408,25 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                   ))}
                   <button
                     type="button"
-                    disabled={disabled || (p.bullets || []).length >= 8}
+                    disabled={busy || (p.bullets || []).length >= 8}
                     onClick={() => addBullet(i)}
                     className="text-[10px] text-white/40 underline-offset-2 hover:underline disabled:opacity-40"
                   >
                     + 要点
                   </button>
+                  {p.series?.length ? (
+                    <div className="pt-1 text-[10px] text-white/35">
+                      图表数据：
+                      {p.series.map((s) => `${s.label}${Math.round(s.value)}`).join(" · ")}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}
           </div>
           <button
             type="button"
-            disabled={disabled || pages.length < 3}
+            disabled={busy || pages.length < 3}
             onClick={generateFromOutline}
             className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
           >
@@ -349,7 +441,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={disabled}
+              disabled={busy}
               onClick={generateFromOutline}
               className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-40"
             >
@@ -357,7 +449,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             </button>
             <button
               type="button"
-              disabled={disabled}
+              disabled={busy}
               onClick={download}
               className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
             >
@@ -375,7 +467,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
             ) : null}
             <button
               type="button"
-              disabled={disabled}
+              disabled={busy}
               onClick={() => setStep("outline")}
               className="text-[11px] text-white/45 underline-offset-2 hover:underline"
             >

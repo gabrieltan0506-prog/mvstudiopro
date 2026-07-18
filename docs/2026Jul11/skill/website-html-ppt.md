@@ -9,9 +9,10 @@ defaultEnabled: false
 # 动效PPT生成演示 Skill
 
 ## 用途
-在 `/platform`「动效PPT生成演示」：主题 → 选风格 → 出页面清单 → 生成可横向翻页的单文件 HTML。
+在 `/platform`「动效PPT生成演示」：主题 → 选风格 → **GPT-5.6 Sol 生成页面清单+图表数据（方案 A，25 积分）** → 前端 SVG 多色动效渲染 → 导出单文件 HTML。  
+也可用免费「模板骨架」预览版式（无 LLM）。
 
-实现见 `shared/htmlPptMaker.ts`。原版 Marvis html-ppt-maker 未开源；站内用 CSS+版式预设重建并扩容。
+实现：`shared/htmlPptMaker.ts`（渲染）+ `shared/htmlPptOutlinePrompt.ts` / `server/services/platformHtmlPptOutline.ts`（Sol 大纲）。**不用 Image-2。**
 
 ## 模板怎么扩？
 - **默认：代码自生成**——在 `HTML_PPT_STYLES` / `STYLE_CSS` 加风格即可，**不需要**上传 `.pptx`。
@@ -24,7 +25,7 @@ defaultEnabled: false
 
 ## 硬约束
 1. 每页固定 16:9，横向翻页，禁止长页面博客滚动。  
-2. 每页一个主判断（大标题 + 关键数字或主列表）。  
-3. 含页码；←→/空格翻页；入场动效克制。  
-4. 导出 `.html` 本地可开即可用。  
+2. 每页一个主判断（大标题 + 关键数字或主列表），并带可视化：环形图 / 条形 / 柱状 / 步骤轨 / 指标卡（SVG+CSS，翻页重播）。  
+3. 含页码；←→/空格/点击翻页。  
+4. 导出 `.html` 单文件可投屏（图表内嵌，不依赖外部 JS CDN）。  
 5. 质量复查用 `HTML_PPT_QUALITY_CHECKLIST_ZH`。

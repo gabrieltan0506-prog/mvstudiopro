@@ -14,7 +14,7 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
-import { extractVideoFramesFromUrl } from "./extractVideoFrames";
+import { extractVideoFramesFromUrl, extractVideoTailFramesFromUrl } from "./extractVideoFrames";
 import {
   VIDEO_REVERSE_DEFAULT_INTERVAL_SEC,
   VIDEO_REVERSE_MAX_DURATION_SEC,
@@ -24,6 +24,10 @@ import {
   parseVideoReverseOutputMode,
   type VideoReverseOutputMode,
 } from "@shared/videoReversePrompt";
+import {
+  MANHUA_CLIP_CONTINUITY_HINT_ZH,
+  MANHUA_CLIP_TAIL_FRAME_COUNT,
+} from "@shared/manhuaClipContinuity";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -232,10 +236,13 @@ async function runSeedance20(
   prompt: string,
   imageUrl: string | undefined,
   aspectRatio: "9:16" | "16:9",
+  opts?: { imageUrls?: string[]; videoUrls?: string[] },
 ): Promise<string> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
   const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
   const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
+  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
@@ -243,7 +250,9 @@ async function runSeedance20(
       credentials: "omit",
       body: JSON.stringify({
         prompt,
-        imageUrl: imageUrl || undefined,
+        imageUrl: imageUrl || imageUrls[0] || undefined,
+        imageUrls: imageUrls.length ? imageUrls.slice(0, 6) : undefined,
+        videoUrls: videoUrls.length ? videoUrls.slice(0, 3) : undefined,
         resolution: "720p",
         aspectRatio,
         duration: 15,
@@ -451,12 +460,42 @@ export async function runCanvasBlock(
 
   if (block.kind === "video") {
     const ar = block.aspectRatio;
-    const motionPrompt = compileI2VMotionPrompt(mergedPrompt, {
-      hasReferenceImage: Boolean(refUrl),
-    });
+    const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
+    const continuityVideoUrl =
+      block.refVideoUrl ||
+      uploadedVideoUrl ||
+      (looksLikeVideo(refUrl) ? refUrl : undefined) ||
+      upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
+    const stillRef =
+      refUrl && !looksLikeVideo(refUrl)
+        ? refUrl
+        : upstream.visionImages.find((i) => i.url && !looksLikeVideo(i.url))?.url;
+    const motionPrompt = compileI2VMotionPrompt(
+      continuityVideoUrl ? `${mergedPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}` : mergedPrompt,
+      { hasReferenceImage: Boolean(stillRef || continuityVideoUrl) },
+    );
     let url = "";
     if (block.videoModel === "seedance-2.0") {
-      url = await runSeedance20(motionPrompt, refUrl, ar);
+      const imageUrls: string[] = [];
+      if (stillRef) imageUrls.push(stillRef);
+      // 段间接力：优先把上一段成片 URL 交给 Evolink；并尽量抽末几帧作附加参考
+      // （末帧多为 dataURL；Evolink 若拒 dataURL，仍靠 videoUrls 承接连续性）
+      if (continuityVideoUrl && /^https?:\/\//i.test(continuityVideoUrl)) {
+        try {
+          const { frames } = await extractVideoTailFramesFromUrl(continuityVideoUrl, {
+            frameCount: MANHUA_CLIP_TAIL_FRAME_COUNT,
+          });
+          for (const f of frames) {
+            if (f.dataUrl) imageUrls.push(f.dataUrl);
+          }
+        } catch {
+          /* 抽帧失败不阻断：仍传 videoUrls */
+        }
+      }
+      url = await runSeedance20(motionPrompt, stillRef, ar, {
+        imageUrls: imageUrls.length ? imageUrls : undefined,
+        videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
+      });
     } else {
       // 工厂 omni_edit-*：上游成片 URL（常经 refImageUrl/refVideoUrl 传入）→ Gemini Omni edit_video
       const isOmniEdit = block.id.startsWith("omni_edit-");

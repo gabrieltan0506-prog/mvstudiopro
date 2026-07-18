@@ -855,10 +855,21 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           current.kind === "image" || current.kind === "video"
             ? current.refImageUrl || resolveNearestUpstreamImageUrl(blockId, working, edges)
             : current.refImageUrl;
-        const runBlockPayload =
+        let runBlockPayload =
           nearestRef && nearestRef !== current.refImageUrl
             ? { ...current, refImageUrl: nearestRef }
             : current;
+        // 多集连续：clip 阶段把上一集成片 URL 注入 refVideoUrl，供 Seedance 末帧/视频参考
+        if (stage === "clip" && !runBlockPayload.refVideoUrl) {
+          const ep = getBlockEpisodeIndex(runBlockPayload);
+          if (ep != null && ep >= 2) {
+            const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
+            const prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
+            if (prevClipUrl) {
+              runBlockPayload = { ...runBlockPayload, refVideoUrl: prevClipUrl };
+            }
+          }
+        }
 
         const docTexts =
           current.kind === "text" || current.kind === "copy_organize"

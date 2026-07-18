@@ -1,0 +1,132 @@
+{
+  "updatedAt": "2026-07-18T01:01:38.745Z",
+  "policy": "1C jaw diversify via image-2-edit",
+  "items": [
+    {
+      "id": "char_f_01",
+      "shapeId": "f_soft_square",
+      "labelZh": "软方脸",
+      "ok": true,
+      "at": "2026-07-17T23:39:04.397Z"
+    },
+    {
+      "id": "char_f_02",
+      "shapeId": "f_long_oval",
+      "labelZh": "长鹅蛋·实质下巴",
+      "ok": true,
+      "at": "2026-07-17T23:42:49.317Z"
+    },
+    {
+      "id": "char_f_03",
+      "shapeId": "f_diamond",
+      "labelZh": "菱形·颧高颌收有度",
+      "ok": true,
+      "at": "2026-07-18T00:04:28.948Z"
+    },
+    {
+      "id": "char_f_04",
+      "shapeId": "f_heart_soft",
+      "labelZh": "柔心形·下庭不削",
+      "ok": true,
+      "at": "2026-07-18T00:08:47.330Z"
+    },
+    {
+      "id": "char_f_05",
+      "shapeId": "f_wide_jaw",
+      "labelZh": "宽下颌·国字柔化",
+      "ok": true,
+      "at": "2026-07-18T00:12:55.713Z"
+    },
+    {
+      "id": "char_f_06",
+      "shapeId": "f_oblong",
+      "labelZh": "长脸·平直颌线",
+      "ok": true,
+      "at": "2026-07-18T00:17:22.550Z"
+    },
+    {
+      "id": "char_f_07",
+      "shapeId": "f_pear",
+      "labelZh": "梨形·下庭更宽",
+      "ok": true,
+      "at": "2026-07-18T00:22:44.972Z"
+    },
+    {
+      "id": "char_f_08",
+      "shapeId": "f_oval_soft_chin",
+      "labelZh": "椭圆·圆润下庭",
+      "ok": true,
+      "at": "2026-07-18T00:26:15.239Z"
+    },
+    {
+      "id": "char_f_09",
+      "shapeId": "f_square_strong",
+      "labelZh": "方脸·有力下颌",
+      "ok": true,
+      "at": "2026-07-18T00:29:50.807Z"
+    },
+    {
+      "id": "char_f_10",
+      "shapeId": "f_soft_square",
+      "labelZh": "软方脸",
+      "ok": true,
+      "at": "2026-07-18T00:33:30.839Z"
+    },
+    {
+      "id": "char_f_11",
+      "shapeId": "f_long_oval",
+      "labelZh": "长鹅蛋·实质下巴",
+      "ok": true,
+      "at": "2026-07-18T00:37:10.867Z"
+    },
+    {
+      "id": "char_f_12",
+      "shapeId": "f_diamond",
+      "labelZh": "菱形·颧高颌收有度",
+      "ok": true,
+      "at": "2026-07-18T00:40:41.788Z"
+    },
+    {
+      "id": "char_f_13",
+      "shapeId": "f_heart_soft",
+      "labelZh": "柔心形·下庭不削",
+      "ok": true,
+      "at": "2026-07-18T00:44:22.916Z"
+    },
+    {
+      "id": "char_f_14",
+      "shapeId": "f_wide_jaw",
+      "labelZh": "宽下颌·国字柔化",
+      "ok": true,
+      "at": "2026-07-18T00:48:03.489Z"
+    },
+    {
+      "id": "char_f_15",
+      "shapeId": "f_oblong",
+      "labelZh": "长脸·平直颌线",
+      "ok": true,
+      "at": "2026-07-18T00:51:27.858Z"
+    },
+    {
+      "id": "char_m_01",
+      "shapeId": "m_long_rect",
+      "labelZh": "长方脸",
+      "ok": true,
+      "at": "2026-07-18T00:54:43.920Z"
+    },
+    {
+      "id": "char_m_02",
+      "shapeId": "m_round_soft",
+      "labelZh": "圆润男脸",
+      "ok": true,
+      "at": "2026-07-18T00:58:06.347Z"
+    },
+    {
+      "id": "char_m_03",
+      "shapeId": "m_diamond",
+      "labelZh": "菱形·锐但不尖",
+      "ok": true,
+      "at": "2026-07-18T01:01:38.745Z"
+    }
+  ]
+}
