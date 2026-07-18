@@ -90,19 +90,20 @@ function saveManifest(items: Row[]) {
   fs.writeFileSync(path.join(OUT_PUBLIC, "jaw-diversify-manifest.json"), JSON.stringify(payload, null, 2));
 }
 
-async function trpcUploadSignedUrl(fileName: string, mimeType: string) {
+async function trpcUploadSignedUrlOnce(fileName: string, mimeType: string) {
   const url = `${FLY_ORIGIN}/api/trpc/mvAnalysis.getVideoUploadSignedUrl?batch=1`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ "0": { json: { fileName, mimeType } } }),
+    signal: AbortSignal.timeout(60_000),
   });
   const text = await res.text();
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
-    throw new Error(`signedUrl 非 JSON: ${text.slice(0, 200)}`);
+    throw new Error(`signedUrl 非 JSON HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   const row = Array.isArray(json) ? json[0] : json;
   const data =
@@ -111,12 +112,29 @@ async function trpcUploadSignedUrl(fileName: string, mimeType: string) {
     (row as Record<string, string>);
   const uploadUrl = String((data as { uploadUrl?: string })?.uploadUrl || "");
   const gcsUri = String((data as { gcsUri?: string })?.gcsUri || "");
-  if (!uploadUrl || !gcsUri) throw new Error(`signedUrl 失败: ${text.slice(0, 300)}`);
+  if (!uploadUrl || !gcsUri) throw new Error(`signedUrl 失败 HTTP ${res.status}: ${text.slice(0, 300)}`);
   return {
     uploadUrl,
     gcsUri,
     requiredHeaders: (data as { requiredHeaders?: Record<string, string> }).requiredHeaders,
   };
+}
+
+async function trpcUploadSignedUrl(fileName: string, mimeType: string) {
+  const retries = Math.max(1, Number(process.env.UPLOAD_RETRIES || 5) || 5);
+  let lastErr: unknown;
+  for (let i = 1; i <= retries; i++) {
+    try {
+      return await trpcUploadSignedUrlOnce(fileName, mimeType);
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const waitMs = Math.min(30_000, 1500 * i * i);
+      log(`  · signedUrl fail ${i}/${retries}: ${msg.slice(0, 120)} · sleep ${waitMs}ms`);
+      await sleep(waitMs);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function resolveReadUrl(gcsUri: string): Promise<string> {
@@ -143,40 +161,43 @@ async function uploadLocalJpg(localPath: string, objectHint: string): Promise<st
   const { path: shrunkPath, bytes } = shrinkJpgBinary(localPath, objectHint);
   const fileName = path.basename(localPath).replace(/\.[^.]+$/, ".jpg");
   log(`  · binary PUT ${bytes.length} bytes`);
-  const signed = await trpcUploadSignedUrl(`jaw-div/${objectHint}-${fileName}`, "image/jpeg");
-  const headerArgs: string[] = ["-H", "Content-Type: image/jpeg"];
-  for (const [k, v] of Object.entries(signed.requiredHeaders || {})) {
-    headerArgs.push("-H", `${k}: ${v}`);
-  }
-  const put = spawnSync(
-    "curl",
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "-X",
-      "PUT",
-      ...headerArgs,
-      "--data-binary",
-      `@${shrunkPath}`,
-      signed.uploadUrl,
-    ],
-    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
-  );
-  if (shrunkPath !== localPath) {
-    try {
-      fs.unlinkSync(shrunkPath);
-    } catch {
-      /* keep */
+  try {
+    const signed = await trpcUploadSignedUrl(`jaw-div/${objectHint}-${fileName}`, "image/jpeg");
+    const headerArgs: string[] = ["-H", "Content-Type: image/jpeg"];
+    for (const [k, v] of Object.entries(signed.requiredHeaders || {})) {
+      headerArgs.push("-H", `${k}: ${v}`);
+    }
+    const put = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "-X",
+        "PUT",
+        ...headerArgs,
+        "--data-binary",
+        `@${shrunkPath}`,
+        signed.uploadUrl,
+      ],
+      { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+    );
+    const code = String(put.stdout || "").trim();
+    if (put.status !== 0 || !/^2\d\d$/.test(code)) {
+      throw new Error(`GCS binary PUT fail status=${put.status} http=${code} err=${put.stderr?.slice(0, 200)}`);
+    }
+    return await resolveReadUrl(signed.gcsUri);
+  } finally {
+    if (shrunkPath !== localPath) {
+      try {
+        fs.unlinkSync(shrunkPath);
+      } catch {
+        /* keep */
+      }
     }
   }
-  const code = String(put.stdout || "").trim();
-  if (put.status !== 0 || !/^2\d\d$/.test(code)) {
-    throw new Error(`GCS binary PUT fail status=${put.status} http=${code} err=${put.stderr?.slice(0, 200)}`);
-  }
-  return resolveReadUrl(signed.gcsUri);
 }
 
 async function flyGenerateOnce(prompt: string, imageUrls: string[]): Promise<string> {
@@ -259,6 +280,19 @@ function backupIfNeeded(id: string, kind: "hero" | "sheet") {
   if (fs.existsSync(src) && !fs.existsSync(dest)) fs.copyFileSync(src, dest);
 }
 
+/** 失败重跑前还原备份，避免半成功 hero 被二次改骨相 */
+function restoreFromBackupIfRequested(id: string) {
+  if (String(process.env.RESTORE_BACKUP || "").trim() !== "1") return;
+  for (const kind of ["hero", "sheet"] as const) {
+    const dest = path.join(OUT_DL, `${id}_${kind}.jpg`);
+    const src = path.join(BACKUP, `${id}_${kind}.jpg`);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, dest);
+      log(`  · restore ${kind} from backup`);
+    }
+  }
+}
+
 function buildHeroEditPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const shape = getPhotorealFaceShapeForId(c.id, c.gender);
@@ -294,6 +328,7 @@ async function processOne(c: ManhuaCharacterTemplate): Promise<Row> {
 
   backupIfNeeded(c.id, "hero");
   backupIfNeeded(c.id, "sheet");
+  restoreFromBackupIfRequested(c.id);
 
   log(`\n━━ ${c.id} ${MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh} · ${shape.labelZh} ━━`);
   log("  upload hero…");
