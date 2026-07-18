@@ -21,11 +21,18 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
   log.push(message);
 }
 
+function isValidOpenAiSkKey(raw: string): boolean {
+  // 官方密钥以 sk- 开头；过滤占位伪值（中文、[set]、空串等）
+  return /^sk-[A-Za-z0-9]/.test(raw);
+}
+
 export function getOpenAiImageApiKey(): string {
-  const raw = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
-  // 官方密钥以 sk- 开头；过滤 shell 里中文占位等非 ASCII 伪值，避免 auto 误判已配置
-  if (!raw || !/^sk-[A-Za-z0-9]/.test(raw)) return "";
-  return raw;
+  // 逐个校验：IMAGE 钥若是无效占位，不得挡住可用的 OPENAI_API_KEY
+  for (const candidate of [process.env.OPENAI_IMAGE_API_KEY, process.env.OPENAI_API_KEY]) {
+    const raw = String(candidate || "").trim();
+    if (isValidOpenAiSkKey(raw)) return raw;
+  }
+  return "";
 }
 
 export function isOpenAiGptImage2Configured(): boolean {
