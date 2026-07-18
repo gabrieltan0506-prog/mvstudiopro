@@ -709,8 +709,13 @@ export default function OmniCanvas() {
     setBlocks(spawned.blocks);
     setEdges(spawned.edges);
     saveCanvasState(spawned.blocks, spawned.edges);
+    // 铺板后预勾选各集 story，便于立刻用「成片坞已勾选集」跑多集
+    setDockSelectedIds(
+      new Set(spawned.blocks.filter((b) => b.id.startsWith("story-")).map((b) => b.id)),
+    );
+    setFactoryRunScope("dock");
     toast.success(
-      `已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入；第3集起含前情提要片头）`,
+      `已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入；第3集起含前情提要片头；坞已预勾选可跑）`,
     );
   }, [
     writerPack,
@@ -1450,7 +1455,12 @@ export default function OmniCanvas() {
                 artStyleId={factoryArtStyleId}
                 selectedIds={dockSelectedIds}
                 onSelectedIdsChange={setDockSelectedIds}
-                onFocusBlock={(id) => setFocusBlockId(id)}
+                onFocusBlock={(id) => {
+                  setFocusBlockId(id);
+                  const hit = blocks.find((b) => b.id === id);
+                  const ep = hit ? getBlockEpisodeIndex(hit) : null;
+                  if (ep != null) setWriterFocusEpisode(ep);
+                }}
               />
             </div>
           </div>
