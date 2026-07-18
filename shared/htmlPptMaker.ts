@@ -35,7 +35,7 @@ export type HtmlPptStyleMeta = {
   labelZh: string;
   blurbZh: string;
   whenZh: string;
-  /** 选用前预览用色板（与 Downloads/template/*/style.json 对齐） */
+  /** 选用前预览用色板（与 Downloads template 下各风格 style.json 对齐） */
   palette: { bg: string; text: string; muted: string; accent: string; card: string };
   /** 站内预览图（client/public） */
   previewUrl: string;
