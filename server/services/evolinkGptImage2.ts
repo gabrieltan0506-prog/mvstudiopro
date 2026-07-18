@@ -12,10 +12,18 @@ const EVOLINK_MODEL = "gpt-image-2" as const;
 /** EvoLink 默认 quality；请求方可传 `quality` 覆写（如 2×4 宽幅固定 low）。 */
 /** 默认 high：对标文档 text_to_image_hd / 可发笔记清晰度；可用 EVOLINK_GPT_IMAGE2_QUALITY 下调。 */
 const EVOLINK_DEFAULT_QUALITY = String(process.env.EVOLINK_GPT_IMAGE2_QUALITY || "high").trim() || "high";
-/** 比例模式下生效；封面/分镜/图文默认 2K（约 4MP）。 */
-const EVOLINK_RESOLUTION = String(process.env.EVOLINK_GPT_IMAGE2_RESOLUTION || "2K").trim() || "2K";
+/** 比例模式下默认分辨率；封面/分镜维持 2K。自定义图文笔记可覆写为 4K。 */
+const EVOLINK_RESOLUTION_DEFAULT = String(process.env.EVOLINK_GPT_IMAGE2_RESOLUTION || "2K").trim() || "2K";
+export type EvolinkGptImage2Resolution = "1K" | "2K" | "4K";
+
+function normalizeEvolinkResolution(raw: string | undefined | null): EvolinkGptImage2Resolution {
+  const v = String(raw || "").trim().toUpperCase();
+  if (v === "1K" || v === "4K" || v === "2K") return v;
+  return "2K";
+}
+
 /**
- * EvoLink 主路径用**比例** + `resolution: 2K`（文档推荐）。
+ * EvoLink 主路径用**比例** + `resolution`（文档推荐；默认 2K）。
  * 显式 WxH 仍可用（此时 EvoLink 忽略 resolution）；OhMyGPT/fal 白名单另见 proxyImageService。
  */
 export const EVOLINK_GPT_IMAGE2_PORTRAIT_SIZE = "9:16" as const;
@@ -63,6 +71,7 @@ function buildEvolinkRequestBody(
   quality: string,
   imageUrls?: string[],
   maskUrl?: string,
+  resolution?: EvolinkGptImage2Resolution,
 ): Record<string, unknown> {
   const isRatio = size.includes(":");
   const body: Record<string, unknown> = {
@@ -73,7 +82,7 @@ function buildEvolinkRequestBody(
     n: 1,
   };
   if (isRatio) {
-    body.resolution = EVOLINK_RESOLUTION;
+    body.resolution = normalizeEvolinkResolution(resolution || EVOLINK_RESOLUTION_DEFAULT);
   }
   // image-to-image / edit：附参考图（1~16 张，URL 须服务器可直接抓取）。
   const refs = (imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
@@ -183,8 +192,14 @@ export async function postEvolinkGptImage2AndUpload(
     aspectRatio?: "9:16" | "16:9";
     size?: string;
     flowLog?: string[];
-    /** 覆写 EvoLink quality；未传则用 EVOLINK_GPT_IMAGE2_QUALITY（默认 medium） */
+    /** 覆写 EvoLink quality；未传则用 EVOLINK_GPT_IMAGE2_QUALITY（默认 high） */
     quality?: string;
+    /**
+     * 比例模式下的分辨率覆写。默认 2K（封面/分镜）；
+     * 自定义图文笔记（single_page_knowledge_card）传 4K。
+     * 若同时传了 WxH `size`，EvoLink 会忽略本字段。
+     */
+    resolution?: EvolinkGptImage2Resolution;
     /** image-to-image / edit：参考图 URL（1~16 张，须公网可直接抓取）。换脸/换人时传上传的人像 URL。 */
     imageUrls?: string[];
     /** 局部重绘遮罩 PNG（alpha 通道）URL，仅在传了 imageUrls 时生效。 */
@@ -206,6 +221,7 @@ export async function postEvolinkGptImage2AndUpload(
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveEvolinkSize(aspectRatio, opts.size);
   const quality = String(opts.quality || EVOLINK_DEFAULT_QUALITY).trim() || EVOLINK_DEFAULT_QUALITY;
+  const resolution = normalizeEvolinkResolution(opts.resolution || EVOLINK_RESOLUTION_DEFAULT);
   // 分镜/图文/封面：送 EvoLink 前强制简体（OpenCC + 屏内字锁）
   const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
   if (!promptTrimmed) {
@@ -216,7 +232,7 @@ export async function postEvolinkGptImage2AndUpload(
   const refImageUrls = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
   appendImageFlowLog(
     L,
-    `[GPT-IMAGE-2·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · size=${size} · quality=${quality}${size.includes(":") ? ` · resolution=${EVOLINK_RESOLUTION}` : ""}${refImageUrls.length ? ` · edit模式·参考图=${refImageUrls.length}张` : ""}`,
+    `[GPT-IMAGE-2·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · size=${size} · quality=${quality}${size.includes(":") ? ` · resolution=${resolution}` : " · resolution=ignored(WxH)"}${refImageUrls.length ? ` · edit模式·参考图=${refImageUrls.length}张` : ""}`,
   );
 
   try {
@@ -226,7 +242,9 @@ export async function postEvolinkGptImage2AndUpload(
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(buildEvolinkRequestBody(promptTrimmed, size, quality, refImageUrls, opts.maskUrl)),
+      body: JSON.stringify(
+        buildEvolinkRequestBody(promptTrimmed, size, quality, refImageUrls, opts.maskUrl, resolution),
+      ),
       signal: AbortSignal.timeout(60_000),
     });
     const createJson = (await createRes.json().catch(() => ({}))) as EvolinkTaskDetail & {

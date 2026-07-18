@@ -6453,7 +6453,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `编导分镜图文参考（导演板编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : input.kind === "single_page_knowledge_card"
-                ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`
+                ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · 4K）· ${input.title.slice(0, 48)}`
                 : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
