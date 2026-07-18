@@ -88,7 +88,7 @@ export default function ManhuaClipDock({
         <div>
           <div className="text-sm font-semibold text-white/90">成片坞</div>
           <p className="mt-0.5 text-[11px] leading-5 text-white/45">
-            勾选画布上已有静帧 / 成片；导出为素材工程包（不含长片拼接）。
+            勾选本集可作工厂「运行范围」；有静帧/成片时可导出工程包（不含长片拼接）。
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -121,7 +121,9 @@ export default function ManhuaClipDock({
       </div>
 
       {!items.length ? (
-        <p className="mt-3 text-[11px] text-white/40">尚无已生成的静帧 / 成片。跑完至少一集后会出现在这里。</p>
+        <p className="mt-3 text-[11px] text-white/40">
+          画布尚无工厂链。请先「按集铺板」或「铺节点」；铺好后即可勾选集号跑工厂。
+        </p>
       ) : (
         <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
           {byEpisode.map(([ep, list]) => {
@@ -157,7 +159,11 @@ export default function ManhuaClipDock({
                         />
                         <span className="min-w-0 flex-1 truncate text-[11px] text-white/75">
                           {it.label}
-                          {it.kind === "text" ? " · md" : it.outputUrl ? "" : ""}
+                          {it.outputUrl || it.outputText?.trim()
+                            ? it.kind === "text"
+                              ? " · md"
+                              : ""
+                            : " · 待跑"}
                         </span>
                         {onFocusBlock ? (
                           <button

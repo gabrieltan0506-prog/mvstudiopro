@@ -96,8 +96,16 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
         outputUrl: "https://cdn.example/ep2.mp4",
         status: "done" as const,
       };
-      const items = collectManhuaClipDockItems([key1, clip2]);
-      expect(items).toHaveLength(2);
+      const pendingStory = {
+        ...defaultCanvasBlock("text", 0, 0),
+        id: "story-e03-z",
+        episodeIndex: 3,
+        episodeTitle: "本名",
+        status: "idle" as const,
+      };
+      const items = collectManhuaClipDockItems([key1, clip2, pendingStory]);
+      expect(items).toHaveLength(3);
+      expect(episodeIndexesFromDockSelection(items, [pendingStory.id])).toEqual([3]);
       const selected = [key1.id, clip2.id];
       expect(episodeIndexesFromDockSelection(items, selected)).toEqual([1, 2]);
 

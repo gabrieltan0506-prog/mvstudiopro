@@ -7,7 +7,9 @@ import {
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
   isTransientFactoryError,
+  replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
+  resolveManhuaEpisodeSpawnContinuity,
   resolveManhuaFactoryOrderedIds,
   runManhuaDramaFactoryPipeline,
   spawnManhuaDramaStudio,
@@ -390,5 +392,54 @@ slow dolly in, soft rain, trembling hand
     });
     expect(episodeCount).toBe(4);
     expect(blocks.filter((b) => b.id.startsWith("story-"))).toHaveLength(4);
+  });
+
+  it("resolveManhuaEpisodeSpawnContinuity mirrors series prior hooks/recap", () => {
+    const eps = [
+      { index: 1, title: "石门异响", body: "听见异响", endHook: "门缝透出冷光" },
+      { index: 2, title: "冷光之后", body: "推门", endHook: "身后有人叫她本名" },
+      { index: 3, title: "本名", body: "回头", endHook: "玉佩碎裂" },
+    ];
+    const c2 = resolveManhuaEpisodeSpawnContinuity(eps, 2);
+    expect(c2.previousEndingHook).toBe("门缝透出冷光");
+    expect(c2.previouslyOnRecap).toBeUndefined();
+    const c3 = resolveManhuaEpisodeSpawnContinuity(eps, 3);
+    expect(c3.previousEndingHook).toBe("身后有人叫她本名");
+    expect(c3.previouslyOnRecap).toContain("【前情提要·片头】");
+    expect(c3.previouslyOnRecap).toContain("门缝透出冷光");
+  });
+
+  it("replaceManhuaEpisodeChain keeps other episodes", () => {
+    const series = spawnManhuaDramaStudioSeries({
+      topic: "仙侠",
+      genreId: "xianxia",
+      episodes: [
+        { index: 1, title: "一", endHook: "钩A" },
+        { index: 2, title: "二", endHook: "钩B" },
+      ],
+      rowGap: 400,
+    });
+    const ep1StoryBefore = series.blocks.find((b) => b.id.startsWith("story-e01-"))!;
+    const continuity = resolveManhuaEpisodeSpawnContinuity(
+      [
+        { index: 1, title: "一", endHook: "钩A" },
+        { index: 2, title: "二改", endHook: "钩B2" },
+      ],
+      2,
+    );
+    const respawn = spawnManhuaDramaStudio({
+      topic: "仙侠",
+      genreId: "xianxia",
+      originY: 440,
+      ...continuity,
+      previousEndingHook: continuity.previousEndingHook,
+    });
+    const merged = replaceManhuaEpisodeChain(series.blocks, series.edges, respawn, 2);
+    expect(merged.blocks.find((b) => b.id === ep1StoryBefore.id)).toBeTruthy();
+    expect(merged.blocks.filter((b) => getBlockEpisodeIndex(b) === 1)).toHaveLength(7);
+    expect(merged.blocks.filter((b) => getBlockEpisodeIndex(b) === 2)).toHaveLength(7);
+    const ep2Story = merged.blocks.find((b) => b.id.startsWith("story-e02-"))!;
+    expect(ep2Story.prompt).toContain("【上集钩子】钩A");
+    expect(ep2Story.episodeTitle).toBe("二改");
   });
 });

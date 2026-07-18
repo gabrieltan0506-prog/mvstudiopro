@@ -169,6 +169,78 @@ export function filterBlocksByEpisode(blocks: CanvasBlock[], episodeIndex: numbe
   });
 }
 
+/** 工厂阶段节点是否属于某集（无集号戳的旧链视为第 1 集） */
+export function blockBelongsToManhuaEpisode(block: CanvasBlock, episodeIndex: number): boolean {
+  const ep = getBlockEpisodeIndex(block);
+  if (ep != null) return ep === episodeIndex;
+  return episodeIndex === 1 && Boolean(stageKeyFromBlockId(block.id));
+}
+
+/**
+ * 单集铺板/确认进编导用：从上集取钩子，第 3 集起拼前情提要（与 series spawn 同口径）。
+ */
+export function resolveManhuaEpisodeSpawnContinuity(
+  episodes: ManhuaSeriesEpisodeInput[],
+  episodeIndex: number,
+): {
+  episodeIndex: number;
+  episodeTitle?: string;
+  endingHook?: string;
+  previousEndingHook?: string;
+  previouslyOnRecap?: string;
+} {
+  const sorted = [...(episodes || [])]
+    .filter((e) => e && Number.isFinite(e.index) && e.index >= 1)
+    .sort((a, b) => a.index - b.index);
+  const target = Math.max(1, Math.floor(episodeIndex));
+  const ep = sorted.find((e) => e.index === target) || sorted[0];
+  if (!ep) {
+    return { episodeIndex: target };
+  }
+  const idx = sorted.findIndex((e) => e.index === ep.index);
+  const prev = idx > 0 ? sorted[idx - 1] : undefined;
+  const priorForRecap = sorted.slice(0, Math.max(0, idx)).map((e) => ({
+    index: e.index,
+    title: e.title,
+    body: String(e.body || "").trim(),
+    endHook: String(e.endHook || "").trim(),
+  }));
+  const previouslyOnRecap =
+    shouldAttachManhuaPreviouslyOn(ep.index) && priorForRecap.length
+      ? buildManhuaPreviouslyOnRecap(priorForRecap)
+      : undefined;
+  return {
+    episodeIndex: ep.index,
+    episodeTitle: ep.title,
+    endingHook: String(ep.endHook || "").trim() || undefined,
+    previousEndingHook: String(prev?.endHook || "").trim() || undefined,
+    previouslyOnRecap: previouslyOnRecap || undefined,
+  };
+}
+
+/** 只替换指定集的工厂链，保留画布上其他集的节点与边 */
+export function replaceManhuaEpisodeChain(
+  existingBlocks: CanvasBlock[],
+  existingEdges: CanvasEdge[],
+  spawned: DramaStudioSpawn,
+  episodeIndex: number,
+): DramaStudioSpawn {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const removedIds = new Set(
+    existingBlocks.filter((b) => blockBelongsToManhuaEpisode(b, ep)).map((b) => b.id),
+  );
+  const keepBlocks = existingBlocks.filter((b) => !removedIds.has(b.id));
+  const keepEdges = existingEdges.filter((e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId));
+  return {
+    blocks: [...keepBlocks, ...spawned.blocks],
+    edges: [...keepEdges, ...spawned.edges],
+    resolvedGenreId: spawned.resolvedGenreId,
+    genreInferred: spawned.genreInferred,
+    resolvedSceneId: spawned.resolvedSceneId,
+    characterIds: spawned.characterIds,
+  };
+}
+
 function makeFactoryStageId(stage: string, episodeIndex?: number): string {
   if (typeof episodeIndex === "number" && episodeIndex >= 1) {
     const ep = String(Math.floor(episodeIndex)).padStart(2, "0");
@@ -398,27 +470,17 @@ export function spawnManhuaDramaStudioSeries(opts: SpawnManhuaDramaStudioSeriesO
 
   for (let i = 0; i < episodes.length; i++) {
     const ep = episodes[i]!;
-    const prev = i > 0 ? episodes[i - 1] : undefined;
     const writerContext = String(opts.writerContextForEpisode?.(ep) || "").trim();
-    const priorForRecap = episodes.slice(0, i).map((e) => ({
-      index: e.index,
-      title: e.title,
-      body: String(e.body || "").trim(),
-      endHook: String(e.endHook || "").trim(),
-    }));
-    const previouslyOnRecap =
-      shouldAttachManhuaPreviouslyOn(ep.index) && priorForRecap.length
-        ? buildManhuaPreviouslyOnRecap(priorForRecap)
-        : "";
+    const continuity = resolveManhuaEpisodeSpawnContinuity(episodes, ep.index);
     const spawned = spawnManhuaDramaStudio({
       ...opts,
       originX,
       originY: originY + i * rowGap,
-      episodeIndex: ep.index,
-      episodeTitle: ep.title,
-      endingHook: ep.endHook,
-      previousEndingHook: prev?.endHook,
-      previouslyOnRecap: previouslyOnRecap || undefined,
+      episodeIndex: continuity.episodeIndex,
+      episodeTitle: continuity.episodeTitle,
+      endingHook: continuity.endingHook,
+      previousEndingHook: continuity.previousEndingHook,
+      previouslyOnRecap: continuity.previouslyOnRecap,
       seriesTitle: opts.seriesTitle || opts.topic,
       writerContext: writerContext || undefined,
       includeDirectorCraft: opts.includeDirectorCraft ?? Boolean(writerContext),

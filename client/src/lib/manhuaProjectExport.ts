@@ -28,14 +28,27 @@ const STAGE_FILE: Partial<Record<ManhuaFactoryStageKey, { base: string; extHint:
   story: { base: "story", extHint: "md" },
 };
 
-export function collectManhuaClipDockItems(blocks: CanvasBlock[]): ManhuaClipDockItem[] {
+export type CollectManhuaClipDockItemsOpts = {
+  /**
+   * 为 true 时，无产出的 story 节点也会进坞（用于「运行范围·坞内勾选集」；导出仍会跳过空产物）。
+   * 默认 true。
+   */
+  includePendingStory?: boolean;
+};
+
+export function collectManhuaClipDockItems(
+  blocks: CanvasBlock[],
+  opts?: CollectManhuaClipDockItemsOpts,
+): ManhuaClipDockItem[] {
+  const includePendingStory = opts?.includePendingStory !== false;
   const items: ManhuaClipDockItem[] = [];
   for (const b of blocks) {
     const stage = stageKeyFromBlockId(b.id);
     if (!stage || !MANHUA_CLIP_DOCK_STAGES.includes(stage as ManhuaClipDockStage)) continue;
     const hasMedia = Boolean(b.outputUrl || (b.outputUrls && b.outputUrls[0]));
     const hasText = Boolean(b.outputText?.trim()) && stage === "story";
-    if (!hasMedia && !hasText) continue;
+    const pendingStory = stage === "story" && includePendingStory && !hasText;
+    if (!hasMedia && !hasText && !pendingStory) continue;
     const episodeIndex = getBlockEpisodeIndex(b) ?? 1;
     items.push({
       blockId: b.id,
@@ -51,13 +64,21 @@ export function collectManhuaClipDockItems(blocks: CanvasBlock[]): ManhuaClipDoc
               ? "微动成片"
               : stage === "omni_edit"
                 ? "视频改写"
-                : "故事大纲",
+                : pendingStory
+                  ? "故事链（待跑·可勾选运行）"
+                  : "故事大纲",
       outputUrl: b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,
     });
   }
   return items.sort((a, b) => a.episodeIndex - b.episodeIndex || a.stage.localeCompare(b.stage));
+}
+
+/** 是否有可写入 zip 的产出 */
+export function manhuaClipDockItemHasExportableOutput(item: ManhuaClipDockItem): boolean {
+  if (item.stage === "story") return Boolean(item.outputText?.trim());
+  return Boolean(item.outputUrl);
 }
 
 export function episodeIndexesFromDockSelection(
@@ -137,9 +158,11 @@ export async function exportManhuaProjectZip(
   opts: ExportManhuaProjectZipOpts,
 ): Promise<ExportManhuaProjectZipResult> {
   const selectedSet = new Set(opts.selectedIds);
-  const selected = opts.items.filter((it) => selectedSet.has(it.blockId));
+  const selected = opts.items.filter(
+    (it) => selectedSet.has(it.blockId) && manhuaClipDockItemHasExportableOutput(it),
+  );
   if (!selected.length) {
-    throw new Error("请先勾选至少一个静帧或成片");
+    throw new Error("请先勾选至少一个已有产物的静帧或成片（仅勾选待跑集不能导出）");
   }
 
   const zip = new JSZip();
