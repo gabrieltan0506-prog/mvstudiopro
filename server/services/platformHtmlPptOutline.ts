@@ -1,6 +1,7 @@
 /**
  * 动效 PPT 页面清单：Sol 生成文案与图表数据（方案 A）。
  * 主题补全 / 标题润色：Terra（免费）。
+ * 路由：官方 OpenAI → OpenRouter（不走 EvoLink）。
  * 长页数分片生成，避免网关/模型截断导致 Unexpected end of JSON。
  * 对外失败文案勿暴露模型名；调用方用异步 job，勿同步硬等。
  */
@@ -10,6 +11,8 @@ import {
   getPlatformStage2OpenAiModel,
   resolvePlatformSkillQaReasoningEffort,
 } from "../config/platformSwitches";
+import { getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
+import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import {
   HTML_PPT_OUTLINE_CAPACITY_MESSAGE,
   buildHtmlPptOutlineSystemPrompt,
@@ -51,10 +54,7 @@ async function invokeSolJson(
   reasoningEffort: ReasoningEffort,
   maxTokens = HTML_PPT_OUTLINE_MAX_TOKENS,
 ): Promise<string> {
-  const hasKey = Boolean(
-    String(process.env.OPENAI_API_KEY || "").trim() || String(process.env.EVOLINK_API_KEY || "").trim(),
-  );
-  if (!hasKey) {
+  if (!getOfficialOpenAiApiKey() && !getOpenRouterApiKey()) {
     throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({
@@ -78,10 +78,7 @@ async function invokeTerraJson(
   reasoningEffort: ReasoningEffort,
   maxTokens = HTML_PPT_THEME_SUGGEST_MAX_TOKENS,
 ): Promise<string> {
-  const hasKey = Boolean(
-    String(process.env.OPENAI_API_KEY || "").trim() || String(process.env.EVOLINK_API_KEY || "").trim(),
-  );
-  if (!hasKey) {
+  if (!getOfficialOpenAiApiKey() && !getOpenRouterApiKey()) {
     throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({

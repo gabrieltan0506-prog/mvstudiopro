@@ -7317,7 +7317,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     /**
      * 动效 PPT · 单页插图（含在整次按页价内，不另扣）。
-     * 必须套百科版式模板 + 页内容锁定；EvoLink GPT-IMAGE-2 · 16:9 · medium。
+     * 必须套百科版式模板 + 页内容锁定；官方 OpenAI gpt-image-2（失败回落 OpenRouter）· 16:9 · medium。
      */
     generateHtmlPptSlideImage: protectedProcedure
       .input(
