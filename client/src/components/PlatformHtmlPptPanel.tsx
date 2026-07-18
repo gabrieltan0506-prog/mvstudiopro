@@ -110,7 +110,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               cost?: number;
             })
           : {};
-      const nextPages = normalizeHtmlPptPages(out.pages || []);
+      const rawPages = Array.isArray(out.pages) ? (out.pages as HtmlPptPage[]) : [];
+      const nextPages = normalizeHtmlPptPages(rawPages);
       if (nextPages.length < 3) throw new Error("返回页数不足");
       if (out.deckTitle?.trim()) setTitle(out.deckTitle.trim());
       setPages(nextPages);
