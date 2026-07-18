@@ -104,7 +104,7 @@ export function formatEvolinkChatApiError(status: number, statusText: string, er
   return `Evolink API error ${status}: ${statusText} – ${errorText.slice(0, 400)}`;
 }
 
-export type OpenAiCompatibleChatProviderLabel = "Evolink" | "OhMyGPT" | "OpenAI";
+export type OpenAiCompatibleChatProviderLabel = "Evolink" | "OhMyGPT" | "OpenAI" | "OpenRouter";
 
 /**
  * 自定义选题 / 文案链路：区分积分不足 vs 模型配置问题。
@@ -119,6 +119,12 @@ export function toOpenAiCompatibleChatUserMessage(
     if (providerLabel === "OhMyGPT") {
       return "OhMyGPT 账户额度不足，请前往控制台充值后再试";
     }
+    if (providerLabel === "OpenRouter") {
+      return "OpenRouter 账户额度不足，请前往控制台充值后再试";
+    }
+    if (providerLabel === "OpenAI") {
+      return "OpenAI 账户额度不足，请前往控制台充值后再试";
+    }
     return "EvoLink 账户积分不足，请前往控制台充值后再试（https://evolink.ai/dashboard/billing）";
   }
   if (isEvolinkChatModelNotFoundError(status, errorText)) {
@@ -127,6 +133,12 @@ export function toOpenAiCompatibleChatUserMessage(
   if (status === 401 || /invalid or expired token|authentication_error/i.test(errorText)) {
     if (providerLabel === "OhMyGPT") {
       return "模型服务鉴权失败，请联系管理员检查 OhMyGPT / PROXY_OPENAI API Key";
+    }
+    if (providerLabel === "OpenRouter") {
+      return "模型服务鉴权失败，请联系管理员检查 OPENROUTER_API_KEY";
+    }
+    if (providerLabel === "OpenAI") {
+      return "模型服务鉴权失败，请联系管理员检查 OPENAI_API_KEY";
     }
     return "模型服务鉴权失败，请联系管理员检查 EvoLink API Key";
   }
