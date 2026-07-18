@@ -392,6 +392,7 @@ export default function OmniCanvas() {
   }, [writerConfirmed, writerPack, writerFocusEpisode]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
+  const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
@@ -399,8 +400,17 @@ export default function OmniCanvas() {
         const res = await optimizeCopyMutation.mutateAsync({ sourceText, optimizationBrief });
         return res.result.optimizedMarkdown;
       },
+      uploadImageFile: async (file) => {
+        const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
+        const asset = await uploadOneCanvasAsset({
+          file,
+          index: Date.now() % 1000,
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+        });
+        return asset.url;
+      },
     }),
-    [optimizeCopyMutation],
+    [optimizeCopyMutation, getSignedUrlMutation],
   );
 
   const handleBlocksChange = useCallback(

@@ -35,7 +35,45 @@ const GEMINI_MODEL_MAP = {
 
 export type CanvasRunDeps = {
   optimizeCopy: (input: { sourceText: string; optimizationBrief?: string }) => Promise<string>;
+  /** 把 dataURL/本地图上传为 HTTPS，供 Evolink/Seedance 引用（可选） */
+  uploadImageFile?: (file: File) => Promise<string>;
 };
+
+function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
+  const m = /^data:(image\/(?:jpeg|jpg|png|webp));base64,(.+)$/i.exec(dataUrl);
+  if (!m) return null;
+  const mime = m[1]!.toLowerCase().replace("image/jpg", "image/jpeg");
+  const bin = atob(m[2]!);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: mime });
+}
+
+async function toHttpsImageUrls(
+  deps: CanvasRunDeps,
+  urls: string[],
+): Promise<string[]> {
+  const out: string[] = [];
+  for (let i = 0; i < urls.length; i++) {
+    const u = String(urls[i] || "").trim();
+    if (!u) continue;
+    if (/^https?:\/\//i.test(u)) {
+      out.push(u);
+      continue;
+    }
+    if (u.startsWith("data:image/") && deps.uploadImageFile) {
+      const file = dataUrlToJpegFile(u, `continuity-tail-${i}.jpg`);
+      if (!file) continue;
+      try {
+        const https = String((await deps.uploadImageFile(file)) || "").trim();
+        if (/^https?:\/\//i.test(https)) out.push(https);
+      } catch {
+        /* 单帧失败不阻断 */
+      }
+    }
+  }
+  return out;
+}
 
 /** JSON 导演中台 → LLM 翻译 → 生图可用英文提示词（失败则本地 fallback） */
 async function resolveImagePromptViaJsonDirector(
@@ -478,22 +516,22 @@ export async function runCanvasBlock(
     if (block.videoModel === "seedance-2.0") {
       const imageUrls: string[] = [];
       if (stillRef) imageUrls.push(stillRef);
-      // 段间接力：优先把上一段成片 URL 交给 Evolink；并尽量抽末几帧作附加参考
-      // （末帧多为 dataURL；Evolink 若拒 dataURL，仍靠 videoUrls 承接连续性）
+      // 段间接力：成片 URL + 末帧（dataURL 先上传成 HTTPS，避免 Evolink 拒本地帧）
       if (continuityVideoUrl && /^https?:\/\//i.test(continuityVideoUrl)) {
         try {
           const { frames } = await extractVideoTailFramesFromUrl(continuityVideoUrl, {
             frameCount: MANHUA_CLIP_TAIL_FRAME_COUNT,
           });
-          for (const f of frames) {
-            if (f.dataUrl) imageUrls.push(f.dataUrl);
-          }
+          const rawFrames = frames.map((f) => f.dataUrl).filter(Boolean);
+          const httpsFrames = await toHttpsImageUrls(deps, rawFrames);
+          for (const f of httpsFrames) imageUrls.push(f);
         } catch {
-          /* 抽帧失败不阻断：仍传 videoUrls */
+          /* 抽帧/上传失败不阻断：仍传 videoUrls */
         }
       }
+      const httpsImages = await toHttpsImageUrls(deps, imageUrls);
       url = await runSeedance20(motionPrompt, stillRef, ar, {
-        imageUrls: imageUrls.length ? imageUrls : undefined,
+        imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
       });
     } else {

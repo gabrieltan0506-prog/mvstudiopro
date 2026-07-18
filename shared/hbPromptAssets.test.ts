@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   INFOGRAPHIC_NOTE_TEMPLATES,
+  composeInfographicScriptContext,
   fillInfographicTemplatePrompt,
 } from "./infographicNoteTemplates";
 import { IMAGE2_PROMPT_TEMPLATES, buildImage2TemplatePrompt } from "./image2PromptTemplates";
@@ -22,11 +23,22 @@ import { listImage2TemplatesByGroup } from "./image2PromptTemplates";
 import { listInfographicTemplatesByMode } from "./infographicNoteTemplates";
 
 describe("HB prompt assets", () => {
-  it("infographic templates fill subject", () => {
+  it("infographic templates are layout-only and bind user copy", () => {
     expect(INFOGRAPHIC_NOTE_TEMPLATES.length).toBeGreaterThanOrEqual(6);
-    const p = fillInfographicTemplatePrompt("infographic_material_lab", "LEICA M11");
-    expect(p).toContain("LEICA M11");
-    expect(p).toContain("encyclopedic");
+    const joined = INFOGRAPHIC_NOTE_TEMPLATES.map((t) => t.layoutPromptEn).join("\n");
+    expect(joined).not.toMatch(/阿里巴巴|Alibaba|Hermès|Tesla|Leica|青铜器/i);
+    const userCopy =
+      "# 小红书全链路引流与获客\n\n公域曝光到成交复购的完整闭环。";
+    const ctx = composeInfographicScriptContext({
+      templateId: "infographic_business_ecosystem",
+      userCopy,
+    });
+    expect(ctx).toContain("小红书全链路引流与获客");
+    expect(ctx).toContain("用户正文·唯一内容来源");
+    expect(ctx).not.toMatch(/阿里巴巴|Alibaba/i);
+    expect(fillInfographicTemplatePrompt("infographic_material_lab", "用户主题")).toContain(
+      "encyclopedic",
+    );
   });
 
   it("image2 templates expose 10 prompts", () => {

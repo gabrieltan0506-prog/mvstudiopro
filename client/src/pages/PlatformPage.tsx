@@ -7,6 +7,10 @@ import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugP
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
 import InfographicTemplatePicker from "@/components/InfographicTemplatePicker";
+import {
+  composeInfographicScriptContext,
+  extractInfographicSubjectFromUserCopy,
+} from "@shared/infographicNoteTemplates";
 import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import {
@@ -1974,6 +1978,11 @@ export default function PlatformPage() {
   const [customNoteKind, setCustomNoteKind] = useState<
     "single_page_knowledge_card" | "storyboard_sheet_landscape" | "optimize_custom_copy"
   >("single_page_knowledge_card");
+  /** 百科可视化：只选版式；主题以正文为准，提示词后台注入 */
+  const [customNoteInfographicTemplateId, setCustomNoteInfographicTemplateId] = useState<string | null>(
+    null,
+  );
+  const [customNoteInfographicLabelZh, setCustomNoteInfographicLabelZh] = useState<string | null>(null);
   /** 深度优化：用户额外要求（封面/分镜/平台等） */
   const [customOptimizeBrief, setCustomOptimizeBrief] = useState("");
   /** 深度优化结果（Markdown） */
@@ -4486,10 +4495,18 @@ export default function PlatformPage() {
   ): Promise<string> => {
     const sceneId = `custom-note-${notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
+    const title = extractInfographicSubjectFromUserCopy(trimmed);
+    const scriptContext =
+      kind === "single_page_knowledge_card" && customNoteInfographicTemplateId
+        ? composeInfographicScriptContext({
+            templateId: customNoteInfographicTemplateId,
+            userCopy: trimmed,
+          })
+        : trimmed;
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,
-      title: trimmed.slice(0, 80),
-      scriptContext: trimmed,
+      title,
+      scriptContext,
       kind,
       ...(notePart ? { notePart } : {}),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
@@ -8047,11 +8064,21 @@ export default function PlatformPage() {
               <div className="mb-3">
                 <InfographicTemplatePicker
                   disabled={customNoteBusy}
-                  onApply={(prompt, labelZh) => {
-                    setCustomNoteText(prompt);
-                    toast.success(`已套用可视化模板「${labelZh}」`);
+                  selectedTemplateId={customNoteInfographicTemplateId}
+                  onSelect={(t) => {
+                    setCustomNoteInfographicTemplateId(t?.id ?? null);
+                    setCustomNoteInfographicLabelZh(t?.labelZh ?? null);
+                    if (t) {
+                      setCustomNoteKind("single_page_knowledge_card");
+                      toast.success(`已选版式「${t.labelZh}」· 主题以正文为准`);
+                    }
                   }}
                 />
+                {customNoteInfographicLabelZh ? (
+                  <p className="mt-1.5 text-[11px] text-cyan-100/55">
+                    已选版式：{customNoteInfographicLabelZh}（提示词不展示，生成时后台套用你的正文）
+                  </p>
+                ) : null}
               </div>
 
               <textarea
@@ -8060,7 +8087,7 @@ export default function PlatformPage() {
                   customNoteKind === "optimize_custom_copy"
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
-                      ? "粘贴中文文案 / Markdown，直接生成单页连贯图文知识卡片（上篇 + 下篇两张）…（建议 200–1500 字）"
+                      ? "粘贴中文正文 / Markdown（主题写在正文标题里即可）…生成上篇 + 下篇两张"
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
@@ -8102,7 +8129,17 @@ export default function PlatformPage() {
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); setCustomNoteText(""); setCustomOptimizeBrief(""); }}
+                    onClick={() => {
+                      setCustomNoteImageUpper(null);
+                      setCustomNoteImageLower(null);
+                      setCustomNoteError(null);
+                      setCustomOptimizeResult(null);
+                      setCustomOptimizeSummary(null);
+                      setCustomNoteText("");
+                      setCustomOptimizeBrief("");
+                      setCustomNoteInfographicTemplateId(null);
+                      setCustomNoteInfographicLabelZh(null);
+                    }}
                     className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
                   >
                     清除

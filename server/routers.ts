@@ -6453,7 +6453,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `编导分镜图文参考（导演板编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : input.kind === "single_page_knowledge_card"
-                ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`
+                ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · 4K）· ${input.title.slice(0, 48)}`
                 : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
@@ -7059,7 +7059,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 动效 PPT · GPT-5.6 Sol 页面清单：入队长任务（避免同步 tRPC/网关超时）。
+     * 动效 PPT · AI 页面清单：入队长任务（避免同步 tRPC/网关超时）。
      * 按页扣费（{@link platformHtmlPptOutlineCredits}）；失败由 worker 在终态退还。
      * 前端用 pollJobUntilTerminal 取 output.pages / deckTitle / summary / model。
      */
@@ -7068,7 +7068,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           title: z.string().min(2).max(80),
           purposeZh: z.string().max(80).optional(),
-          pageCount: z.number().int().min(5).max(16),
+          pageCount: z.number().int().min(10).max(16),
           styleId: z
             .enum([
               "dark_research",
@@ -7083,6 +7083,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             ])
             .default("dark_research"),
           briefZh: z.string().max(4000).optional(),
+          confirmedThemes: z
+            .array(z.object({ id: z.string().min(1).max(40), title: z.string().min(1).max(40) }))
+            .min(3)
+            .max(12),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -7108,7 +7112,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             userId,
             cost,
             "platformHtmlPptOutline",
-            `动效PPT · GPT-5.6 Sol 页面清单（${input.pageCount}页）`,
+            `动效PPT · AI 页面清单（${input.pageCount}页）`,
           );
           creditsCharged = true;
         }
@@ -7128,6 +7132,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 pageCount: input.pageCount,
                 styleId: input.styleId,
                 briefZh: input.briefZh,
+                confirmedThemes: input.confirmedThemes,
                 cost: creditsCharged ? cost : 0,
                 creditsCharged,
               },
@@ -7159,6 +7164,186 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           status: "queued" as const,
           cost: creditsCharged ? cost : 0,
         };
+      }),
+
+    /**
+     * 动效 PPT · 主题补全 + 标题润色（免费，同步）。
+     */
+    suggestHtmlPptThemes: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().min(2).max(80),
+          purposeZh: z.string().max(80).optional(),
+          briefZh: z.string().max(4000).optional(),
+          userThemes: z.array(z.string().min(1).max(40)).min(3).max(12),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { suggestHtmlPptThemes } = await import("./services/platformHtmlPptOutline.js");
+        try {
+          const result = await suggestHtmlPptThemes(input);
+          return {
+            polishedTitle: result.polishedTitle,
+            suggestedThemes: result.suggestedThemes,
+            model: result.model,
+          };
+        } catch (err) {
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: rawMessage || "主题补全失败，请稍后重试",
+          });
+        }
+      }),
+
+    /**
+     * 动效 PPT · 单页重修（按页扣费 {@link platformHtmlPptPagePatchCredits}）。
+     */
+    patchHtmlPptPage: protectedProcedure
+      .input(
+        z.object({
+          title: z.string().min(2).max(80),
+          purposeZh: z.string().max(80).optional(),
+          briefZh: z.string().max(4000).optional(),
+          styleId: z
+            .enum([
+              "dark_research",
+              "pitch_orange",
+              "figma_timeline",
+              "emerald_boardroom",
+              "noir_gold",
+              "rose_editorial",
+              "slate_consulting",
+              "ivory_academic",
+              "ocean_brief",
+            ])
+            .default("dark_research"),
+          page: z.object({
+            title: z.string().min(1).max(80),
+            subtitle: z.string().max(160).optional(),
+            bullets: z.array(z.string()).max(8).optional(),
+            kpi: z.string().max(24).optional(),
+            note: z.string().max(220).optional(),
+            viz: z.string().max(24).optional(),
+            series: z
+              .array(z.object({ label: z.string(), value: z.number() }))
+              .max(8)
+              .optional(),
+            themeId: z.string().max(40).optional(),
+            themeTitle: z.string().max(40).optional(),
+            highlight: z.array(z.string()).max(6).optional(),
+            imageUrl: z.string().url().max(2048).optional(),
+          }),
+          pageIndex: z.number().int().min(0).max(15),
+          totalPages: z.number().int().min(10).max(16),
+          patchNote: z.string().min(2).max(800),
+          confirmedThemes: z
+            .array(z.object({ id: z.string().min(1).max(40), title: z.string().min(1).max(40) }))
+            .min(3)
+            .max(12)
+            .optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const { platformHtmlPptPagePatchCredits } = await import("../shared/plans.js");
+        const cost = platformHtmlPptPagePatchCredits();
+        let creditsCharged = false;
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，单页重修需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformHtmlPptPagePatch",
+            "动效PPT · 单页重修",
+          );
+          creditsCharged = true;
+        }
+
+        const { patchHtmlPptPage } = await import("./services/platformHtmlPptOutline.js");
+        try {
+          const result = await patchHtmlPptPage({
+            title: input.title,
+            purposeZh: input.purposeZh,
+            briefZh: input.briefZh,
+            styleId: input.styleId,
+            page: input.page,
+            pageIndex: input.pageIndex,
+            totalPages: input.totalPages,
+            patchNote: input.patchNote,
+            confirmedThemes: input.confirmedThemes,
+          });
+          return {
+            page: result.page,
+            model: result.model,
+            cost: creditsCharged ? cost : 0,
+          };
+        } catch (err) {
+          if (creditsCharged) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(userId, cost, "platformHtmlPptPagePatch 失败退还").catch(
+              (refundErr: unknown) => {
+                console.error("[patchHtmlPptPage] refund failed:", refundErr);
+              },
+            );
+          }
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: rawMessage || `单页重修失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
+          });
+        }
+      }),
+
+    /**
+     * 动效 PPT · 单页插图（含在整次按页价内，不另扣）。
+     * 必须套百科版式模板 + 页内容锁定；EvoLink GPT-IMAGE-2 · 16:9 · medium。
+     */
+    generateHtmlPptSlideImage: protectedProcedure
+      .input(
+        z.object({
+          deckTitle: z.string().min(1).max(80),
+          templateId: z.string().max(80).optional().nullable(),
+          page: z.object({
+            title: z.string().min(1).max(80),
+            subtitle: z.string().max(160).optional(),
+            bullets: z.array(z.string()).max(8).optional(),
+            kpi: z.string().max(24).optional(),
+            note: z.string().max(220).optional(),
+            viz: z.string().max(24).optional(),
+            series: z
+              .array(z.object({ label: z.string(), value: z.number() }))
+              .max(8)
+              .optional(),
+            themeId: z.string().max(40).optional(),
+            themeTitle: z.string().max(40).optional(),
+            highlight: z.array(z.string()).max(6).optional(),
+          }),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { generateHtmlPptSlideImage } = await import("./services/platformHtmlPptImage.js");
+        try {
+          return await generateHtmlPptSlideImage({
+            deckTitle: input.deckTitle,
+            templateId: input.templateId,
+            page: input.page,
+          });
+        } catch (err) {
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: rawMessage || "插图生成失败，请稍后重试",
+          });
+        }
       }),
 
     /**

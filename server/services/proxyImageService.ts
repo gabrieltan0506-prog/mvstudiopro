@@ -1417,7 +1417,18 @@ export async function generatePlatformCompositeSheetImage(options: {
   if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
-  const subdir = isStoryboard ? "platform_storyboard_sheet" : "platform_xhs_dual";
+  const subdir = isStoryboard
+    ? "platform_storyboard_sheet"
+    : isKnowledgeCard
+      ? "platform_knowledge_card"
+      : "platform_xhs_dual";
+  /** 自定义图文笔记：比例 16:9 + resolution=4K + quality=high；封面/分镜维持 2K（传 WxH 或不覆写）。 */
+  const knowledgeCardEvoOpts = {
+    aspectRatio: "16:9" as const,
+    // 勿传 WxH，否则 EvoLink 忽略 resolution
+    quality: "high" as const,
+    resolution: "4K" as const,
+  };
   const referencePhotoUrlEarly = String(options.referencePhotoUrl || "").trim() || undefined;
   const continuityRefsEarly = (options.continuityReferenceImageUrls || [])
     .map((u) => String(u || "").trim())
@@ -1666,9 +1677,13 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       const hasSheetRefs = refImageUrls.length > 0;
       appendImageFlowLog(
         L,
-        `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
-          hasSheetRefs ? "换脸·EvoLink edit → NB2" : "顺序 OhMyGPT → EvoLink → fal → NB2"
-        }`,
+        isKnowledgeCard
+          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · resolution=4K · gcsSubdir=${subdir} · ${
+              hasSheetRefs ? "换脸·EvoLink edit" : "EvoLink 比例模式直出"
+            }`
+          : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
+              hasSheetRefs ? "换脸·EvoLink edit → NB2" : "顺序 OhMyGPT → EvoLink → fal → NB2"
+            }`,
       );
 
       if (hasSheetRefs && isEvolinkGptImage2Configured()) {
@@ -1684,14 +1699,20 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         const promptForEvo = `${promptForImage}${refDirectives}`;
         appendImageFlowLog(
           L,
-          `[2×4·步骤2a·换脸主力] EvoLink GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
+          isKnowledgeCard
+            ? `[图文笔记·换脸] EvoLink edit · 16:9 · 4K · high · 参考=${refImageUrls.length}张`
+            : `[2×4·步骤2a·换脸主力] EvoLink GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
         );
         const evoErr: { message?: string } = {};
         let fromEvolink = await postEvolinkGptImage2AndUpload(promptForEvo, subdir, {
-          aspectRatio: "16:9",
-          size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+          ...(isKnowledgeCard
+            ? knowledgeCardEvoOpts
+            : {
+                aspectRatio: "16:9" as const,
+                size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+                quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+              }),
           flowLog: L,
-          quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
           imageUrls: refImageUrls,
           captureError: evoErr,
         });
@@ -1702,10 +1723,14 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
             `${promptForEvo}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
             subdir,
             {
-              aspectRatio: "16:9",
-              size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+              ...(isKnowledgeCard
+                ? knowledgeCardEvoOpts
+                : {
+                    aspectRatio: "16:9" as const,
+                    size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+                    quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+                  }),
               flowLog: L,
-              quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
               imageUrls: refImageUrls,
               captureError: retryErr,
             },
@@ -1738,13 +1763,19 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       }
       appendImageFlowLog(
         L,
-        `[2×4·唯一路径] EvoLink GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
+        isKnowledgeCard
+          ? `[图文笔记·唯一路径] EvoLink GPT-IMAGE-2 · 16:9 · quality=high · resolution=4K`
+          : `[2×4·唯一路径] EvoLink GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
       );
       const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
-        aspectRatio: "16:9",
-        size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+        ...(isKnowledgeCard
+          ? knowledgeCardEvoOpts
+          : {
+              aspectRatio: "16:9" as const,
+              size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
+              quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
+            }),
         flowLog: L,
-        quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
       });
       if (fromEvolink) {
         appendImageFlowLog(L, `[2×4·唯一路径] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
