@@ -52,6 +52,7 @@ describe("manhuaCharacterAssetLibrary", () => {
       elders.map((c) => c.id),
     );
     expect(listManhuaCharactersForLibraryTab("child").length).toBe(4);
+    expect(listManhuaCharactersByAgeBand("elder").length).toBe(4);
     expect(getManhuaCharacterPreviewUrl("char_boy_01", { artStyleId: "photoreal" })).toBe(
       "/manhua-characters/photoreal/char_boy_01_sheet.jpg",
     );
