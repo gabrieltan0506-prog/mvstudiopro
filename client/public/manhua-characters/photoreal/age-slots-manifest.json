@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-07-18T10:12:46.205Z",
-  "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
+  "generatedAt": "2026-07-18T11:55:58.668Z",
+  "via": "https://api.mvstudiopro.com/api/jobs?op=canvasGptImage2",
   "policy": "age slots text-to-image · no male face-lock",
   "items": [
     {
@@ -70,9 +70,10 @@
       "id": "char_girl_02",
       "photorealNameZh": "圆圆",
       "lifeStage": "child",
-      "ok": false,
-      "error": "Insufficient credits",
-      "at": "2026-07-18T10:12:46.204Z"
+      "ok": true,
+      "hero": "char_girl_02_hero.jpg",
+      "sheet": "char_girl_02_sheet.jpg",
+      "at": "2026-07-18T11:55:58.667Z"
     }
   ]
 }
