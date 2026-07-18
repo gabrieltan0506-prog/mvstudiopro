@@ -10,6 +10,7 @@ import {
   type HtmlPptStyleId,
 } from "@shared/htmlPptMaker";
 import { CREDIT_COSTS } from "@shared/plans";
+import { pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 
 type StepId = "setup" | "outline" | "export";
@@ -47,6 +48,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiModel, setAiModel] = useState<string | null>(null);
   const [aiCost, setAiCost] = useState<number | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiBusyLabel, setAiBusyLabel] = useState("GPT-5.6 Sol 生成中…");
 
   const outlineCost = CREDIT_COSTS.platformHtmlPptOutline;
   const generateOutlineMutation = trpc.mvAnalysis.generateHtmlPptOutline.useMutation();
@@ -56,7 +59,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     [],
   );
 
-  const busy = disabled || generateOutlineMutation.isPending;
+  const busy = disabled || aiBusy || generateOutlineMutation.isPending;
 
   const rebuildOutlineLocal = () => {
     setAiError(null);
@@ -69,21 +72,51 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
 
   const rebuildOutlineWithAi = async () => {
     setAiError(null);
+    setAiBusy(true);
+    setAiBusyLabel("正在入队…");
     try {
-      const res = await generateOutlineMutation.mutateAsync({
+      const enqueued = await generateOutlineMutation.mutateAsync({
         title: title.trim(),
         purposeZh: purpose.trim() || undefined,
         pageCount,
         styleId,
         briefZh: briefZh.trim() || undefined,
       });
-      const nextPages = normalizeHtmlPptPages(res.pages || []);
+      setAiCost(typeof enqueued.cost === "number" ? enqueued.cost : outlineCost);
+      setAiBusyLabel("后台生成中，请稍候…");
+      const j = await pollJobUntilTerminal(enqueued.jobId, {
+        intervalMs: 2500,
+        maxWaitMs: 16 * 60_000,
+        adaptiveBackoffAfterAttempts: 36,
+        maxIntervalMs: 8000,
+        onPoll: ({ status, attempt }) => {
+          setAiBusyLabel(
+            status === "queued"
+              ? `排队中（第 ${attempt} 次）…`
+              : `Sol 生成中（第 ${attempt} 次）…`,
+          );
+        },
+      });
+      if (j.status === "failed") {
+        throw new Error(j.error || "动效PPT 清单生成失败");
+      }
+      const out =
+        j.output && typeof j.output === "object" && !Array.isArray(j.output)
+          ? (j.output as {
+              pages?: unknown;
+              deckTitle?: string;
+              summary?: string;
+              model?: string;
+              cost?: number;
+            })
+          : {};
+      const nextPages = normalizeHtmlPptPages(out.pages || []);
       if (nextPages.length < 3) throw new Error("返回页数不足");
-      if (res.deckTitle?.trim()) setTitle(res.deckTitle.trim());
+      if (out.deckTitle?.trim()) setTitle(out.deckTitle.trim());
       setPages(nextPages);
-      setAiSummary(res.summary || null);
-      setAiModel(res.model || "gpt-5.6-sol");
-      setAiCost(typeof res.cost === "number" ? res.cost : outlineCost);
+      setAiSummary(out.summary || null);
+      setAiModel(out.model || "gpt-5.6-sol");
+      if (typeof out.cost === "number") setAiCost(out.cost);
       setStep("outline");
     } catch (e: unknown) {
       const raw = e instanceof Error ? e.message : "AI 清单生成失败";
@@ -91,6 +124,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         ? "清单输出不完整（可能被截断）。请将页数调到 10 以内后重试，或稍后再试。"
         : raw;
       setAiError(msg);
+    } finally {
+      setAiBusy(false);
+      setAiBusyLabel("GPT-5.6 Sol 生成中…");
     }
   };
 
@@ -308,8 +344,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               onClick={() => void rebuildOutlineWithAi()}
               className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
             >
-              {generateOutlineMutation.isPending
-                ? "GPT-5.6 Sol 生成中…"
+              {aiBusy || generateOutlineMutation.isPending
+                ? aiBusyLabel
                 : `用 GPT-5.6 Sol 生成页面清单（${outlineCost} 积分）`}
             </button>
             <button

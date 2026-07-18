@@ -760,6 +760,12 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         if (Number.isFinite(raw) && raw >= 120_000) return raw;
         return 28 * 60_000;
       }
+      if (input.action === "platform_html_ppt_outline") {
+        const raw = Number(process.env.PLATFORM_HTML_PPT_OUTLINE_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 120_000) return raw;
+        // Sol 两段大纲：默认 15min
+        return 15 * 60_000;
+      }
     } catch {
       /* fall through */
     }
@@ -1030,6 +1036,54 @@ async function processPlatformJob(
           engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-3.1-pro-preview", snapshotDepth: "full" },
         },
       };
+    }
+
+    // ── platform_html_ppt_outline（动效 PPT · GPT-5.6 Sol 清单，异步）────────────
+    if (input.action === "platform_html_ppt_outline") {
+      const title = String(params.title || "").trim();
+      const purposeZh = params.purposeZh != null ? String(params.purposeZh) : undefined;
+      const pageCount = Number(params.pageCount || 8);
+      const styleId = String(params.styleId || "dark_research");
+      const briefZh = params.briefZh != null ? String(params.briefZh) : undefined;
+      const cost = Number(params.cost || 0);
+      const creditsCharged = params.creditsCharged === true;
+      const uidNum = jobUserId != null ? Number(jobUserId) : NaN;
+
+      try {
+        const { generateHtmlPptOutline } = await import("../services/platformHtmlPptOutline.js");
+        const result = await generateHtmlPptOutline({
+          title,
+          purposeZh,
+          pageCount,
+          styleId: styleId as Parameters<typeof generateHtmlPptOutline>[0]["styleId"],
+          briefZh,
+        });
+        return {
+          provider: "openai",
+          output: {
+            success: true,
+            cost: creditsCharged ? cost : 0,
+            model: result.model,
+            deckTitle: result.deckTitle,
+            summary: result.summary,
+            pages: result.pages,
+            completedAt: new Date().toISOString(),
+          },
+        };
+      } catch (err) {
+        if (creditsCharged && Number.isFinite(uidNum) && cost > 0 && platformJobId) {
+          const { getJobById } = await import("./repository.js");
+          const jobRow = await getJobById(platformJobId);
+          // attempts 在 claim 时 +1；>=2 表示将进入终态失败，才退积分（避免首轮 requeue 误退）
+          if ((jobRow?.attempts ?? 0) >= 2) {
+            const { refundCredits } = await import("../credits.js");
+            await refundCredits(uidNum, cost, "platform_html_ppt_outline 失败退还").catch((e) =>
+              console.error("[platform_html_ppt_outline] refund failed:", e),
+            );
+          }
+        }
+        throw err;
+      }
     }
 
     // ── platform_qa ──────────────────────────────────────────────────────────────
