@@ -13,8 +13,12 @@ import {
   applyTopicToFactoryStory,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
+  manhuaEpisodeHasFactoryChain,
+  replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
+  resolveManhuaEpisodeSpawnContinuity,
   runManhuaDramaFactoryPipeline,
+  sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
   stageKeyFromBlockId,
@@ -24,6 +28,7 @@ import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
 } from "@/lib/manhuaProjectExport";
+import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -438,38 +443,64 @@ export default function OmniCanvas() {
   const stageChipStatus = useMemo(() => {
     const scoped = filterBlocksByEpisode(blocks, writerFocusEpisode);
     const pool = scoped.length ? scoped : blocks;
-    return MANHUA_FACTORY_STAGE_ORDER.map((stage) => {
+    return MANHUA_FACTORY_STAGE_ORDER.flatMap((stage) => {
       const b = pool.find((x) => x.id.startsWith(`${stage}-`));
-      return {
-        stage,
-        label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
-        status: b?.status || ("idle" as const),
-      };
+      // 第 1–2 集无 recap_card：不展示空闲 chip，避免误导
+      if (stage === "recap_card" && !b) return [];
+      return [
+        {
+          stage,
+          label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
+          status: b?.status || ("idle" as const),
+        },
+      ];
     });
   }, [blocks, writerFocusEpisode]);
 
-  const resolveRunEpisodeIndexes = useCallback((): number[] => {
-    if (factoryRunScope === "dock") {
-      const items = collectManhuaClipDockItems(blocks);
-      const fromDock = episodeIndexesFromDockSelection(items, dockSelectedIds);
-      if (fromDock.length) return fromDock;
-      toast.message("坞内未勾选片段，改跑焦点集");
-    }
-    const onCanvas = new Set(
-      blocks.map((b) => getBlockEpisodeIndex(b)).filter((n): n is number => n != null),
-    );
-    if (onCanvas.size && !onCanvas.has(writerFocusEpisode)) {
-      return [Array.from(onCanvas).sort((a, b) => a - b)[0]!];
-    }
-    return [writerFocusEpisode];
-  }, [factoryRunScope, blocks, dockSelectedIds, writerFocusEpisode]);
+  const resolveRunEpisodeIndexes = useCallback(
+    (sourceBlocks: CanvasBlock[] = blocks): number[] => {
+      if (factoryRunScope === "dock") {
+        const items = collectManhuaClipDockItems(sourceBlocks);
+        const fromDock = episodeIndexesFromDockSelection(items, dockSelectedIds);
+        if (fromDock.length) return fromDock;
+        toast.message("坞内未勾选片段，改跑焦点集");
+      }
+      const onCanvas = new Set(
+        sourceBlocks.map((b) => getBlockEpisodeIndex(b)).filter((n): n is number => n != null),
+      );
+      if (onCanvas.has(writerFocusEpisode) || !onCanvas.size) {
+        return [writerFocusEpisode];
+      }
+      // 焦点集链尚未铺上时，仍优先跑焦点集（ensureStudioSpawned 应已补铺）
+      return [writerFocusEpisode];
+    },
+    [factoryRunScope, blocks, dockSelectedIds, writerFocusEpisode],
+  );
+
+  const remapDockSelectionAfterSpawn = useCallback(
+    (nextBlocks: CanvasBlock[], touchedEpisode?: number) => {
+      setDockSelectedIds((prev) => {
+        const alive = new Set(nextBlocks.map((b) => b.id));
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (alive.has(id)) next.add(id);
+        }
+        if (touchedEpisode != null) {
+          const story = nextBlocks.find(
+            (b) => b.id.startsWith("story-") && getBlockEpisodeIndex(b) === touchedEpisode,
+          );
+          if (story) next.add(story.id);
+        }
+        return next;
+      });
+    },
+    [],
+  );
 
   const ensureStudioSpawned = useCallback(
     (topic?: string) => {
-      const hasFactory = ["story", "bible", "beats"].every((s) =>
-        blocks.some((b) => b.id.startsWith(`${s}-`)),
-      );
-      if (hasFactory) {
+      const focusEp = Math.max(1, Math.floor(writerFocusEpisode));
+      if (manhuaEpisodeHasFactoryChain(blocks, focusEp)) {
         const nextBlocks = topic ? applyTopicToFactoryStory(blocks, topic) : blocks;
         if (topic) {
           setBlocks(nextBlocks);
@@ -477,10 +508,26 @@ export default function OmniCanvas() {
         }
         return { blocks: nextBlocks, edges };
       }
+
+      const continuity =
+        writerConfirmed && writerPack
+          ? resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, focusEp)
+          : {
+              episodeIndex: focusEp,
+              episodeTitle: undefined as string | undefined,
+              endingHook: undefined as string | undefined,
+              previousEndingHook: undefined as string | undefined,
+              previouslyOnRecap: undefined as string | undefined,
+            };
+      const focusCtx =
+        writerConfirmed && writerPack
+          ? composeWriterPackFactoryContext(writerPack, continuity.episodeIndex)
+          : writerContext;
       const spawned = spawnManhuaDramaStudio({
         originX: 60,
-        originY: 80,
+        originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
         topic,
+        seriesTitle: writerPack?.seriesTitle,
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
         characterIds: selectedCharacterIds,
@@ -488,8 +535,13 @@ export default function OmniCanvas() {
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
         videoReverseOutputMode: factoryReverseMode,
-        writerContext,
-        includeDirectorCraft: Boolean(writerContext) || directorUnlocked,
+        writerContext: focusCtx,
+        includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
+        episodeIndex: continuity.episodeIndex,
+        episodeTitle: continuity.episodeTitle,
+        endingHook: continuity.endingHook,
+        previousEndingHook: continuity.previousEndingHook,
+        previouslyOnRecap: continuity.previouslyOnRecap,
       });
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
@@ -500,10 +552,22 @@ export default function OmniCanvas() {
       if (spawned.resolvedSceneId && !factorySceneId) {
         setFactorySceneId(spawned.resolvedSceneId);
       }
-      setBlocks(spawned.blocks);
-      setEdges(spawned.edges);
-      saveCanvasState(spawned.blocks, spawned.edges);
-      return spawned;
+
+      const hasOtherEpisodes = blocks.some((b) => {
+        const ep = getBlockEpisodeIndex(b);
+        return ep != null && ep !== continuity.episodeIndex;
+      });
+      const next = hasOtherEpisodes
+        ? replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex)
+        : spawned;
+      setBlocks(next.blocks);
+      setEdges(next.edges);
+      saveCanvasState(next.blocks, next.edges);
+      remapDockSelectionAfterSpawn(next.blocks, continuity.episodeIndex);
+      if (hasOtherEpisodes) {
+        toast.message(`已补铺第${continuity.episodeIndex}集工厂链`);
+      }
+      return next;
     },
     [
       blocks,
@@ -517,6 +581,10 @@ export default function OmniCanvas() {
       factoryReverseMode,
       writerContext,
       directorUnlocked,
+      writerConfirmed,
+      writerPack,
+      writerFocusEpisode,
+      remapDockSelectionAfterSpawn,
     ],
   );
 
@@ -567,12 +635,12 @@ export default function OmniCanvas() {
     if (!factoryTopic.trim()) {
       setFactoryTopic(writerPack.seriesTitle || writerPack.logline || "连载短剧");
     }
-    const focusEp =
-      writerPack.episodes.find((e) => e.index === writerFocusEpisode) || writerPack.episodes[0];
+    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode);
     const spawned = spawnManhuaDramaStudio({
       originX: 60,
-      originY: 80,
+      originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
       topic: factoryTopic.trim() || writerPack.seriesTitle,
+      seriesTitle: writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
       characterIds: selectedCharacterIds,
@@ -580,19 +648,40 @@ export default function OmniCanvas() {
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
       videoReverseOutputMode: factoryReverseMode,
-      writerContext: composeWriterPackFactoryContext(writerPack, writerFocusEpisode),
+      writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex),
       includeDirectorCraft: true,
-      episodeIndex: focusEp?.index ?? writerFocusEpisode,
-      episodeTitle: focusEp?.title,
-      endingHook: focusEp?.endHook,
+      episodeIndex: continuity.episodeIndex,
+      episodeTitle: continuity.episodeTitle,
+      endingHook: continuity.endingHook,
+      previousEndingHook: continuity.previousEndingHook,
+      previouslyOnRecap: continuity.previouslyOnRecap,
     });
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
       setFactoryGenreId(spawned.resolvedGenreId);
     }
-    setBlocks(spawned.blocks);
-    setEdges(spawned.edges);
-    saveCanvasState(spawned.blocks, spawned.edges);
-    toast.success("已确认剧情，编导分镜链路已就绪（焦点集）");
+    if (spawned.resolvedSceneId && !factorySceneId) {
+      setFactorySceneId(spawned.resolvedSceneId);
+    }
+    const hasOtherEpisodes = blocks.some((b) => {
+      const ep = getBlockEpisodeIndex(b);
+      return ep != null && ep !== continuity.episodeIndex;
+    });
+    const next = hasOtherEpisodes
+      ? replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex)
+      : spawned;
+    setBlocks(next.blocks);
+    setEdges(next.edges);
+    saveCanvasState(next.blocks, next.edges);
+    remapDockSelectionAfterSpawn(next.blocks, continuity.episodeIndex);
+    const tips = [
+      continuity.previousEndingHook ? "上集钩子" : null,
+      continuity.previouslyOnRecap ? "前情提要" : null,
+    ].filter(Boolean);
+    toast.success(
+      tips.length
+        ? `已确认剧情，焦点集编导链已就绪（含${tips.join("·")}）`
+        : "已确认剧情，编导分镜链路已就绪（焦点集）",
+    );
   }, [
     writerPack,
     factoryTopic,
@@ -604,6 +693,9 @@ export default function OmniCanvas() {
     factoryGenreId,
     factorySceneId,
     writerFocusEpisode,
+    blocks,
+    edges,
+    remapDockSelectionAfterSpawn,
   ]);
 
   const confirmWriterSeriesSpawn = useCallback(() => {
@@ -615,7 +707,10 @@ export default function OmniCanvas() {
       .sort((a, b) => a.index - b.index)
       .slice(0, MANHUA_SERIES_SPAWN_MAX);
     const n = episodes.length;
-    const nodeEstimate = n * 7;
+    const nodeEstimate = episodes.reduce(
+      (sum, ep) => sum + (shouldAttachManhuaPreviouslyOn(ep.index) ? 8 : 7),
+      0,
+    );
     if (
       !window.confirm(
         `将按集铺 ${n} 条工厂链（约 ${nodeEstimate} 个节点，最多 ${MANHUA_SERIES_SPAWN_MAX} 集同屏），积分与耗时较高。继续？`,
@@ -659,8 +754,13 @@ export default function OmniCanvas() {
     setBlocks(spawned.blocks);
     setEdges(spawned.edges);
     saveCanvasState(spawned.blocks, spawned.edges);
+    // 铺板后预勾选各集 story，便于立刻用「成片坞已勾选集」跑多集
+    setDockSelectedIds(
+      new Set(spawned.blocks.filter((b) => b.id.startsWith("story-")).map((b) => b.id)),
+    );
+    setFactoryRunScope("dock");
     toast.success(
-      `已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入；第3集起含前情提要片头）`,
+      `已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入；第3集起含前情提要片头；坞已预勾选可跑）`,
     );
   }, [
     writerPack,
@@ -680,7 +780,16 @@ export default function OmniCanvas() {
   }, []);
 
   const runFactory = useCallback(
-    async (untilStage: ManhuaFactoryStageKey, opts?: { forceFromStage?: ManhuaFactoryStageKey }) => {
+    async (
+      untilStage: ManhuaFactoryStageKey,
+      opts?: {
+        forceFromStage?: ManhuaFactoryStageKey;
+        /** 按集各自续跑起点；优先于 forceFromStage */
+        forceFromStageByEpisode?: Partial<Record<number, ManhuaFactoryStageKey>>;
+        /** 覆盖运行范围解析出的集号列表 */
+        episodeIndexes?: number[];
+      },
+    ) => {
       if (factoryBusy) return;
       const ac = new AbortController();
       abortRef.current = ac;
@@ -688,7 +797,22 @@ export default function OmniCanvas() {
       setFactoryProgress("准备中…");
       try {
         const spawned = ensureStudioSpawned(factoryTopic);
-        const episodeIndexes = resolveRunEpisodeIndexes();
+        const cleanedGraph = sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
+        let workingBlocks = cleanedGraph.blocks;
+        let workingEdges = cleanedGraph.edges;
+        if (
+          cleanedGraph.edges.length !== spawned.edges.length ||
+          spawned.blocks.some(
+            (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
+          )
+        ) {
+          setBlocks(workingBlocks);
+          setEdges(workingEdges);
+          saveCanvasState(workingBlocks, workingEdges);
+        }
+        const episodeIndexes = opts?.episodeIndexes?.length
+          ? opts.episodeIndexes
+          : resolveRunEpisodeIndexes(workingBlocks);
         toast.message(
           untilStage === "reverse"
             ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
@@ -699,18 +823,18 @@ export default function OmniCanvas() {
         let completed = 0;
         let skipped = 0;
         let lastError: { id: string; message: string } | null = null;
-        let workingBlocks = spawned.blocks;
-        let workingEdges = spawned.edges;
         for (const episodeIndex of episodeIndexes) {
           if (ac.signal.aborted) break;
           setFactoryProgress(`第${episodeIndex}集 · 准备…`);
+          const forceFromStage =
+            opts?.forceFromStageByEpisode?.[episodeIndex] ?? opts?.forceFromStage;
           const result = await runManhuaDramaFactoryPipeline({
             deps: runDeps,
             blocks: workingBlocks,
             edges: workingEdges,
             untilStage,
             episodeIndex,
-            forceFromStage: opts?.forceFromStage,
+            forceFromStage,
             skipDone: true,
             signal: ac.signal,
             onBlocksChange: (next) => {
@@ -768,14 +892,27 @@ export default function OmniCanvas() {
 
   const resumeFromFailure = useCallback(() => {
     const episodeIndexes = resolveRunEpisodeIndexes();
-    const episodeIndex = episodeIndexes[0] ?? writerFocusEpisode;
-    const stage = resolveFactoryResumeStage(blocks, episodeIndex);
-    if (!stage) {
-      toast.message(`第${episodeIndex}集链路都已完成，无需续跑`);
+    const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> = {};
+    const toRun: number[] = [];
+    for (const ep of episodeIndexes) {
+      const stage = resolveFactoryResumeStage(blocks, ep);
+      if (!stage) continue;
+      forceFromStageByEpisode[ep] = stage;
+      toRun.push(ep);
+    }
+    if (!toRun.length) {
+      toast.message(
+        episodeIndexes.length > 1
+          ? `第 ${episodeIndexes.join("、")} 集链路都已完成，无需续跑`
+          : `第${episodeIndexes[0] ?? writerFocusEpisode}集链路都已完成，无需续跑`,
+      );
       return;
     }
-    toast.message(`第${episodeIndex}集从「${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]}」续跑`);
-    void runFactory("clip", { forceFromStage: stage });
+    const summary = toRun
+      .map((ep) => `第${ep}集·${MANHUA_FACTORY_STAGE_LABEL_ZH[forceFromStageByEpisode[ep]!]}`)
+      .join("；");
+    toast.message(`按集续跑：${summary}`);
+    void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
   }, [blocks, runFactory, resolveRunEpisodeIndexes, writerFocusEpisode]);
 
   return (
@@ -1223,10 +1360,24 @@ export default function OmniCanvas() {
                   disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-rose-400/35 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-50 hover:bg-rose-500/25 disabled:opacity-50"
                   onClick={() => {
+                    const continuity = writerPack
+                      ? resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode)
+                      : {
+                          episodeIndex: writerFocusEpisode,
+                          episodeTitle: undefined as string | undefined,
+                          endingHook: undefined as string | undefined,
+                          previousEndingHook: undefined as string | undefined,
+                          previouslyOnRecap: undefined as string | undefined,
+                        };
+                    const focusCtx =
+                      writerPack && writerConfirmed
+                        ? composeWriterPackFactoryContext(writerPack, continuity.episodeIndex)
+                        : writerContext;
                     const spawned = spawnManhuaDramaStudio({
                       originX: 60,
-                      originY: 80,
+                      originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
                       topic: factoryTopic,
+                      seriesTitle: writerPack?.seriesTitle,
                       genreId: factoryGenreId || undefined,
                       sceneId: factorySceneId || undefined,
                       characterIds: selectedCharacterIds,
@@ -1234,10 +1385,13 @@ export default function OmniCanvas() {
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
                       videoReverseOutputMode: factoryReverseMode,
-                      writerContext,
+                      writerContext: focusCtx,
                       includeDirectorCraft: true,
-                      episodeIndex: writerFocusEpisode,
-                      episodeTitle: writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.title,
+                      episodeIndex: continuity.episodeIndex,
+                      episodeTitle: continuity.episodeTitle,
+                      endingHook: continuity.endingHook,
+                      previousEndingHook: continuity.previousEndingHook,
+                      previouslyOnRecap: continuity.previouslyOnRecap,
                     });
                     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
                       setFactoryGenreId(spawned.resolvedGenreId);
@@ -1245,10 +1399,29 @@ export default function OmniCanvas() {
                     if (spawned.resolvedSceneId && !factorySceneId) {
                       setFactorySceneId(spawned.resolvedSceneId);
                     }
-                    setBlocks(spawned.blocks);
-                    setEdges(spawned.edges);
-                    saveCanvasState(spawned.blocks, spawned.edges);
-                    toast.success("已铺好编导节点（含视频改写）");
+                    const hasOtherEpisodes = blocks.some((b) => {
+                      const ep = getBlockEpisodeIndex(b);
+                      return ep != null && ep !== continuity.episodeIndex;
+                    });
+                    if (hasOtherEpisodes) {
+                      const merged = replaceManhuaEpisodeChain(
+                        blocks,
+                        edges,
+                        spawned,
+                        continuity.episodeIndex,
+                      );
+                      setBlocks(merged.blocks);
+                      setEdges(merged.edges);
+                      saveCanvasState(merged.blocks, merged.edges);
+                      remapDockSelectionAfterSpawn(merged.blocks, continuity.episodeIndex);
+                      toast.success(`已重铺第${continuity.episodeIndex}集节点（其它集保留）`);
+                    } else {
+                      setBlocks(spawned.blocks);
+                      setEdges(spawned.edges);
+                      saveCanvasState(spawned.blocks, spawned.edges);
+                      remapDockSelectionAfterSpawn(spawned.blocks, continuity.episodeIndex);
+                      toast.success("已铺好编导节点（含视频改写）");
+                    }
                   }}
                 >
                   <Sparkles className="h-3.5 w-3.5" />
@@ -1330,7 +1503,12 @@ export default function OmniCanvas() {
                 artStyleId={factoryArtStyleId}
                 selectedIds={dockSelectedIds}
                 onSelectedIdsChange={setDockSelectedIds}
-                onFocusBlock={(id) => setFocusBlockId(id)}
+                onFocusBlock={(id) => {
+                  setFocusBlockId(id);
+                  const hit = blocks.find((b) => b.id === id);
+                  const ep = hit ? getBlockEpisodeIndex(hit) : null;
+                  if (ep != null) setWriterFocusEpisode(ep);
+                }}
               />
             </div>
           </div>

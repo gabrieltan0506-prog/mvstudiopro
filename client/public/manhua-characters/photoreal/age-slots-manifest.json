@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-07-18T10:12:46.205Z",
+  "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
+  "policy": "age slots text-to-image · no male face-lock",
+  "items": [
+    {
+      "id": "char_elder_m_01",
+      "photorealNameZh": "周伯年",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_m_01_hero.jpg",
+      "sheet": "char_elder_m_01_sheet.jpg",
+      "at": "2026-07-18T09:29:28.807Z"
+    },
+    {
+      "id": "char_elder_m_02",
+      "photorealNameZh": "老沈头",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_m_02_hero.jpg",
+      "sheet": "char_elder_m_02_sheet.jpg",
+      "at": "2026-07-18T09:33:03.824Z"
+    },
+    {
+      "id": "char_elder_f_01",
+      "photorealNameZh": "张桂芬",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_f_01_hero.jpg",
+      "sheet": "char_elder_f_01_sheet.jpg",
+      "at": "2026-07-18T09:37:00.825Z"
+    },
+    {
+      "id": "char_elder_f_02",
+      "photorealNameZh": "刘秀兰",
+      "lifeStage": "elder",
+      "ok": true,
+      "hero": "char_elder_f_02_hero.jpg",
+      "sheet": "char_elder_f_02_sheet.jpg",
+      "at": "2026-07-18T09:40:47.501Z"
+    },
+    {
+      "id": "char_boy_01",
+      "photorealNameZh": "小宇",
+      "lifeStage": "child",
+      "ok": true,
+      "hero": "char_boy_01_hero.jpg",
+      "sheet": "char_boy_01_sheet.jpg",
+      "at": "2026-07-18T09:57:22.200Z"
+    },
+    {
+      "id": "char_boy_02",
+      "photorealNameZh": "浩浩",
+      "lifeStage": "child",
+      "ok": true,
+      "hero": "char_boy_02_hero.jpg",
+      "sheet": "char_boy_02_sheet.jpg",
+      "at": "2026-07-18T10:00:55.437Z"
+    },
+    {
+      "id": "char_girl_01",
+      "photorealNameZh": "小夏",
+      "lifeStage": "child",
+      "ok": true,
+      "hero": "char_girl_01_hero.jpg",
+      "sheet": "char_girl_01_sheet.jpg",
+      "at": "2026-07-18T10:04:42.495Z"
+    },
+    {
+      "id": "char_girl_02",
+      "photorealNameZh": "圆圆",
+      "lifeStage": "child",
+      "ok": false,
+      "error": "Insufficient credits",
+      "at": "2026-07-18T10:12:46.204Z"
+    }
+  ]
+}

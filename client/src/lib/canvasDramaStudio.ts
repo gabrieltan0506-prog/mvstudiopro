@@ -169,6 +169,84 @@ export function filterBlocksByEpisode(blocks: CanvasBlock[], episodeIndex: numbe
   });
 }
 
+/** 某集是否已有故事→角色→节拍三段（工厂链就绪判定） */
+export function manhuaEpisodeHasFactoryChain(blocks: CanvasBlock[], episodeIndex: number): boolean {
+  const scoped = filterBlocksByEpisode(blocks, episodeIndex);
+  return ["story", "bible", "beats"].every((s) => scoped.some((b) => b.id.startsWith(`${s}-`)));
+}
+
+/** 工厂阶段节点是否属于某集（无集号戳的旧链视为第 1 集） */
+export function blockBelongsToManhuaEpisode(block: CanvasBlock, episodeIndex: number): boolean {
+  const ep = getBlockEpisodeIndex(block);
+  if (ep != null) return ep === episodeIndex;
+  return episodeIndex === 1 && Boolean(stageKeyFromBlockId(block.id));
+}
+
+/**
+ * 单集铺板/确认进编导用：从上集取钩子，第 3 集起拼前情提要（与 series spawn 同口径）。
+ */
+export function resolveManhuaEpisodeSpawnContinuity(
+  episodes: ManhuaSeriesEpisodeInput[],
+  episodeIndex: number,
+): {
+  episodeIndex: number;
+  episodeTitle?: string;
+  endingHook?: string;
+  previousEndingHook?: string;
+  previouslyOnRecap?: string;
+} {
+  const sorted = [...(episodes || [])]
+    .filter((e) => e && Number.isFinite(e.index) && e.index >= 1)
+    .sort((a, b) => a.index - b.index);
+  const target = Math.max(1, Math.floor(episodeIndex));
+  const ep = sorted.find((e) => e.index === target) || sorted[0];
+  if (!ep) {
+    return { episodeIndex: target };
+  }
+  const idx = sorted.findIndex((e) => e.index === ep.index);
+  const prev = idx > 0 ? sorted[idx - 1] : undefined;
+  const priorForRecap = sorted.slice(0, Math.max(0, idx)).map((e) => ({
+    index: e.index,
+    title: e.title,
+    body: String(e.body || "").trim(),
+    endHook: String(e.endHook || "").trim(),
+  }));
+  const previouslyOnRecap =
+    shouldAttachManhuaPreviouslyOn(ep.index) && priorForRecap.length
+      ? buildManhuaPreviouslyOnRecap(priorForRecap)
+      : undefined;
+  return {
+    episodeIndex: ep.index,
+    episodeTitle: ep.title,
+    endingHook: String(ep.endHook || "").trim() || undefined,
+    previousEndingHook: String(prev?.endHook || "").trim() || undefined,
+    previouslyOnRecap: previouslyOnRecap || undefined,
+  };
+}
+
+/** 只替换指定集的工厂链，保留画布上其他集的节点与边 */
+export function replaceManhuaEpisodeChain(
+  existingBlocks: CanvasBlock[],
+  existingEdges: CanvasEdge[],
+  spawned: DramaStudioSpawn,
+  episodeIndex: number,
+): DramaStudioSpawn {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const removedIds = new Set(
+    existingBlocks.filter((b) => blockBelongsToManhuaEpisode(b, ep)).map((b) => b.id),
+  );
+  const keepBlocks = existingBlocks.filter((b) => !removedIds.has(b.id));
+  const keepEdges = existingEdges.filter((e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId));
+  return {
+    blocks: [...keepBlocks, ...spawned.blocks],
+    edges: [...keepEdges, ...spawned.edges],
+    resolvedGenreId: spawned.resolvedGenreId,
+    genreInferred: spawned.genreInferred,
+    resolvedSceneId: spawned.resolvedSceneId,
+    characterIds: spawned.characterIds,
+  };
+}
+
 function makeFactoryStageId(stage: string, episodeIndex?: number): string {
   if (typeof episodeIndex === "number" && episodeIndex >= 1) {
     const ep = String(Math.floor(episodeIndex)).padStart(2, "0");
@@ -281,7 +359,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   story.width = 400;
   story.height = 320;
   story.textModel = "gemini-3.1-pro";
-  if (recapCard) story.parentId = recapCard.id;
+  // 故意不把 story.parentId / edge 接到 recap_card：提要文案已写入 story prompt，
+  // 若挂上游会污染 text vision 与 keyart 的最近参考图。
 
   const bible = defaultCanvasBlock("text", originX + gapX * (col0 + 1), originY);
   bible.id = makeFactoryStageId("bible", episodeIndex);
@@ -347,16 +426,14 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     Boolean,
   ) as CanvasBlock[];
   const blocks = rawBlocks.map((b) => stampEpisodeMeta(b, episodeIndex, episodeTitle));
-  const edges: CanvasEdge[] = [];
-  if (recapCard) edges.push({ fromId: recapCard.id, toId: story.id });
-  edges.push(
+  const edges: CanvasEdge[] = [
     { fromId: story.id, toId: bible.id },
     { fromId: bible.id, toId: beats.id },
     { fromId: beats.id, toId: reverse.id },
     { fromId: reverse.id, toId: keyArt.id },
     { fromId: keyArt.id, toId: clip.id },
     { fromId: clip.id, toId: omniEdit.id },
-  );
+  ];
 
   return {
     blocks,
@@ -398,27 +475,17 @@ export function spawnManhuaDramaStudioSeries(opts: SpawnManhuaDramaStudioSeriesO
 
   for (let i = 0; i < episodes.length; i++) {
     const ep = episodes[i]!;
-    const prev = i > 0 ? episodes[i - 1] : undefined;
     const writerContext = String(opts.writerContextForEpisode?.(ep) || "").trim();
-    const priorForRecap = episodes.slice(0, i).map((e) => ({
-      index: e.index,
-      title: e.title,
-      body: String(e.body || "").trim(),
-      endHook: String(e.endHook || "").trim(),
-    }));
-    const previouslyOnRecap =
-      shouldAttachManhuaPreviouslyOn(ep.index) && priorForRecap.length
-        ? buildManhuaPreviouslyOnRecap(priorForRecap)
-        : "";
+    const continuity = resolveManhuaEpisodeSpawnContinuity(episodes, ep.index);
     const spawned = spawnManhuaDramaStudio({
       ...opts,
       originX,
       originY: originY + i * rowGap,
-      episodeIndex: ep.index,
-      episodeTitle: ep.title,
-      endingHook: ep.endHook,
-      previousEndingHook: prev?.endHook,
-      previouslyOnRecap: previouslyOnRecap || undefined,
+      episodeIndex: continuity.episodeIndex,
+      episodeTitle: continuity.episodeTitle,
+      endingHook: continuity.endingHook,
+      previousEndingHook: continuity.previousEndingHook,
+      previouslyOnRecap: continuity.previouslyOnRecap,
       seriesTitle: opts.seriesTitle || opts.topic,
       writerContext: writerContext || undefined,
       includeDirectorCraft: opts.includeDirectorCraft ?? Boolean(writerContext),
@@ -564,8 +631,29 @@ export function applyFactoryPrefsToBlocks(
         prompt: motionBlock ? `${base}\n\n${motionBlock}` : base,
       };
     }
+    if (b.id.startsWith("recap_card-")) {
+      const base = stripMarkedSection(b.prompt, "【画风硬锁】");
+      return { ...b, prompt: artStyleBlock ? `${base}\n\n${artStyleBlock}` : base };
+    }
     return b;
   });
+}
+
+/** 清除误挂到前情提要卡的 story 父链（旧画布兼容） */
+export function sanitizeManhuaRecapUpstreamLinks(
+  blocks: CanvasBlock[],
+  edges: CanvasEdge[],
+): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
+  const nextBlocks = blocks.map((b) => {
+    if (b.id.startsWith("story-") && b.parentId?.startsWith("recap_card-")) {
+      return { ...b, parentId: undefined };
+    }
+    return b;
+  });
+  const nextEdges = edges.filter(
+    (e) => !(e.fromId.startsWith("recap_card-") || e.toId.startsWith("recap_card-")),
+  );
+  return { blocks: nextBlocks, edges: nextEdges };
 }
 
 export function resolveManhuaFactoryOrderedIds(
@@ -780,8 +868,19 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const stopOnError = opts.stopOnError !== false;
   const skipDone = opts.skipDone !== false;
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
-  let working = opts.blocks.map((b) => ({ ...b }));
-  const edges = opts.edges;
+  const hadPoisonedRecapLink = opts.blocks.some(
+    (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
+  );
+  const sanitized = sanitizeManhuaRecapUpstreamLinks(
+    opts.blocks.map((b) => ({ ...b })),
+    opts.edges,
+  );
+  let working = sanitized.blocks;
+  const edges = sanitized.edges;
+  if (hadPoisonedRecapLink) {
+    // 旧画布误挂 recap→story 时，写回清理后的 parentId，避免手点节点仍吃到提要图
+    opts.onBlocksChange?.(working);
+  }
   const orderedIds = resolveManhuaFactoryOrderedIds(
     working,
     opts.untilStage ?? "clip",

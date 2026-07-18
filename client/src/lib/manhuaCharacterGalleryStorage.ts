@@ -4,7 +4,7 @@
 import {
   getManhuaCharacterById,
   type ManhuaArtStyleId,
-  type ManhuaCharacterGender,
+  type ManhuaLibraryCastTab,
 } from "@shared/manhuaCharacterAssetLibrary";
 
 export const RECENT_LS_KEY = "mv-manhua-character-recent-v1";
@@ -14,7 +14,7 @@ export const LIBRARY_PREFS_LS_KEY = "mv-manhua-character-library-prefs-v1";
 export const RECENT_COUPLE_PACK_LS_KEY = "mv-manhua-character-recent-couple-packs-v1";
 
 export type LibraryPrefs = {
-  tab?: ManhuaCharacterGender;
+  tab?: ManhuaLibraryCastTab;
   packFilterId?: string;
   sortMode?: "default" | "name" | "age";
   dense?: boolean;

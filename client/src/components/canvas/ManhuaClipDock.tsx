@@ -58,6 +58,18 @@ export default function ManhuaClipDock({
     onSelectedIdsChange(next);
   };
 
+  const toggleEpisode = (ep: number) => {
+    const epItems = items.filter((it) => it.episodeIndex === ep);
+    if (!epItems.length) return;
+    const allOn = epItems.every((it) => selectedIds.has(it.blockId));
+    const next = new Set(selectedIds);
+    for (const it of epItems) {
+      if (allOn) next.delete(it.blockId);
+      else next.add(it.blockId);
+    }
+    onSelectedIdsChange(next);
+  };
+
   const handleExport = async () => {
     if (!selectedIds.size) return;
     setExportBusy(true);
@@ -88,7 +100,7 @@ export default function ManhuaClipDock({
         <div>
           <div className="text-sm font-semibold text-white/90">成片坞</div>
           <p className="mt-0.5 text-[11px] leading-5 text-white/45">
-            勾选画布上已有静帧 / 成片；导出为素材工程包（不含长片拼接）。
+            勾选本集可作工厂「运行范围」；有静帧/成片时可导出工程包（不含长片拼接）。
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -121,18 +133,34 @@ export default function ManhuaClipDock({
       </div>
 
       {!items.length ? (
-        <p className="mt-3 text-[11px] text-white/40">尚无已生成的静帧 / 成片。跑完至少一集后会出现在这里。</p>
+        <p className="mt-3 text-[11px] text-white/40">
+          画布尚无工厂链。请先「按集铺板」或「铺节点」；铺好后即可勾选集号跑工厂。
+        </p>
       ) : (
         <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
           {byEpisode.map(([ep, list]) => {
             const title = list.find((x) => x.episodeTitle)?.episodeTitle;
+            const epAllOn = list.every((it) => selectedIds.has(it.blockId));
+            const epSomeOn = !epAllOn && list.some((it) => selectedIds.has(it.blockId));
             return (
               <div key={ep} className="rounded-xl border border-white/8 bg-black/25 p-2.5">
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
-                  <div className="text-[11px] font-medium text-white/85">
-                    第{ep}集{title ? ` · ${title}` : ""}
-                    <span className="ml-1.5 text-white/35">{list.length} 项</span>
-                  </div>
+                  <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-[11px] font-medium text-white/85">
+                    <input
+                      type="checkbox"
+                      checked={epAllOn}
+                      ref={(el) => {
+                        if (el) el.indeterminate = epSomeOn;
+                      }}
+                      onChange={() => toggleEpisode(ep)}
+                      className="h-3.5 w-3.5 accent-amber-400"
+                      title="勾选本集作工厂运行范围"
+                    />
+                    <span className="truncate">
+                      第{ep}集{title ? ` · ${title}` : ""}
+                      <span className="ml-1.5 text-white/35">{list.length} 项</span>
+                    </span>
+                  </label>
                   <button
                     type="button"
                     onClick={() => selectEpisode(ep)}
@@ -157,7 +185,11 @@ export default function ManhuaClipDock({
                         />
                         <span className="min-w-0 flex-1 truncate text-[11px] text-white/75">
                           {it.label}
-                          {it.kind === "text" ? " · md" : it.outputUrl ? "" : ""}
+                          {it.outputUrl || it.outputText?.trim()
+                            ? it.kind === "text"
+                              ? " · md"
+                              : ""
+                            : " · 待跑"}
                         </span>
                         {onFocusBlock ? (
                           <button

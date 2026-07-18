@@ -36,6 +36,25 @@ describe("manhuaProjectExport", () => {
     expect(episodeIndexesFromDockSelection(items, ["clip-e02-b", "keyart-e01-a"])).toEqual([1, 2]);
   });
 
+  it("includes pending story so dock can select episodes before outputs exist", () => {
+    const story1 = defaultCanvasBlock("text", 0, 0);
+    story1.id = "story-e01-p";
+    story1.episodeIndex = 1;
+    story1.episodeTitle = "开局";
+    const story2 = defaultCanvasBlock("text", 0, 400);
+    story2.id = "story-e02-q";
+    story2.episodeIndex = 2;
+    story2.episodeTitle = "转折";
+
+    const items = collectManhuaClipDockItems([story1, story2]);
+    expect(items).toHaveLength(2);
+    expect(items.every((i) => i.label.includes("待跑"))).toBe(true);
+    expect(episodeIndexesFromDockSelection(items, [story1.id, story2.id])).toEqual([1, 2]);
+
+    const exportOnly = collectManhuaClipDockItems([story1, story2], { includePendingStory: false });
+    expect(exportOnly).toHaveLength(0);
+  });
+
   it("builds zip with manifest and ep folders", async () => {
     const prevFetch = globalThis.fetch;
     globalThis.fetch = (async () =>

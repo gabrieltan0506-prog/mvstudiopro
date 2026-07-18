@@ -8,13 +8,21 @@ import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
   PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   formatPhotorealFaceShapeBlock,
+  photorealLifeStagePromptBlock,
 } from "./photorealCharacterPrompt.js";
 
 export type ManhuaCharacterGender = "female" | "male";
 
+/** 出戏年龄带：adult=男女主；elder/child=配角库 */
+export type ManhuaCharacterLifeStage = "child" | "adult" | "elder";
+
+export type ManhuaLibraryCastTab = "female" | "male" | "elder" | "child";
+
 export type ManhuaCharacterTemplate = {
   id: string;
   gender: ManhuaCharacterGender;
+  /** 缺省视为 adult（现有 29 槽） */
+  lifeStage?: ManhuaCharacterLifeStage;
   nameZh: string;
   age?: number;
   jobZh: string;
@@ -24,6 +32,12 @@ export type ManhuaCharacterTemplate = {
   /** 本机素材文件名（CH 目录） */
   sourceFile: string;
 };
+
+export function getManhuaCharacterLifeStage(
+  c: Pick<ManhuaCharacterTemplate, "lifeStage"> | null | undefined,
+): ManhuaCharacterLifeStage {
+  return c?.lifeStage === "child" || c?.lifeStage === "elder" ? c.lifeStage : "adult";
+}
 
 /** 仿真人独立取名（与 CG nameZh 脱钩） */
 export const MANHUA_PHOTOREAL_NAME_ZH: Record<string, string> = {
@@ -55,8 +69,16 @@ export const MANHUA_PHOTOREAL_NAME_ZH: Record<string, string> = {
   char_m_11: "霍砚",
   char_m_12: "程远",
   char_m_13: "顾行舟",
-  /** 软参考补槽名（本人 refs 只作族裔/质感先验，须按角色分异脸） */
+  /** 实拍皮肤/轮廓锚补槽 */
   char_m_14: "唐知衡",
+  char_elder_m_01: "周伯年",
+  char_elder_m_02: "老沈头",
+  char_elder_f_01: "张桂芬",
+  char_elder_f_02: "刘秀兰",
+  char_boy_01: "小宇",
+  char_boy_02: "浩浩",
+  char_girl_01: "小夏",
+  char_girl_02: "圆圆",
 };
 
 /** 按画风取展示名：仿真人用独立名，其余用 CG 名 */
@@ -72,11 +94,18 @@ export function getManhuaCharacterDisplayName(
   return c.nameZh;
 }
 
+const MANHUA_CHARACTER_ID_RE =
+  /^char_(?:[fm]|elder_[fm]|boy|girl)_\d{2}$/;
+
 /** 浏览器可访问的设定卡预览（含底部正/侧/背三视图），见 client/public/manhua-characters/ */
 export function getManhuaCharacterPreviewUrl(id: string, opts?: { artStyleId?: string | null }): string {
   const key = String(id || "").trim();
-  if (!/^char_[fm]_\d+$/.test(key)) return "";
+  if (!MANHUA_CHARACTER_ID_RE.test(key)) return "";
   if (String(opts?.artStyleId || "").trim() === "photoreal") {
+    return `/manhua-characters/photoreal/${key}_sheet.jpg`;
+  }
+  // 老人/儿童目前仅仿真人资产
+  if (/^char_(?:elder_|boy_|girl_)/.test(key)) {
     return `/manhua-characters/photoreal/${key}_sheet.jpg`;
   }
   return `/manhua-characters/${key}.jpg`;
@@ -464,10 +493,122 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     promptZh: "半写实动漫，乙女游戏立绘品质，韩国厚涂，纯白简约背景，电影级柔光，椭圆脸，黑色燕尾服酒红领结，指挥棒，冷静沉稳艺术气息，超写实8K。",
     sourceFile: "微信圖片_20260717074448_2349_558.jpg",
   },
+  // —— 老人 / 儿童配角（仿真人优先；生活感，非俊男美女）——
+  {
+    id: "char_elder_m_01",
+    gender: "male",
+    lifeStage: "elder",
+    nameZh: "周伯年",
+    age: 68,
+    jobZh: "退休中学教师",
+    temperamentTags: ["慈祥", "固执", "念旧"],
+    promptZh: "东亚约68岁老年男性，花白短发，法令纹与眼袋明显，普通生活长相，棉质衬衫与薄外套，手持旧书，家庭向短剧长辈。",
+    sourceFile: "photoreal-age/elder_m_01.jpg",
+  },
+  {
+    id: "char_elder_m_02",
+    gender: "male",
+    lifeStage: "elder",
+    nameZh: "老沈头",
+    age: 72,
+    jobZh: "社区门卫",
+    temperamentTags: ["朴实", "警惕", "热心"],
+    promptZh: "东亚约72岁老年男性，灰白寸发，宽下颌有岁月痕迹，深蓝工装外套，普通长相非明星扮老，社区生活感。",
+    sourceFile: "photoreal-age/elder_m_02.jpg",
+  },
+  {
+    id: "char_elder_f_01",
+    gender: "female",
+    lifeStage: "elder",
+    nameZh: "张桂芬",
+    age: 66,
+    jobZh: "退休护士",
+    temperamentTags: ["温和", "强势妈", "碎念"],
+    promptZh: "东亚约66岁老年女性，花白短卷发，温和带锋芒的眼神，针织开衫与布裤，生活感长辈，非网红扮老。",
+    sourceFile: "photoreal-age/elder_f_01.jpg",
+  },
+  {
+    id: "char_elder_f_02",
+    gender: "female",
+    lifeStage: "elder",
+    nameZh: "刘秀兰",
+    age: 70,
+    jobZh: "菜市场摊主",
+    temperamentTags: ["泼辣", "护犊", "市井"],
+    promptZh: "东亚约70岁老年女性，灰白发髻，市井泼辣神情，围裙与棉衣，普通脸相有皱纹，短剧街坊长辈。",
+    sourceFile: "photoreal-age/elder_f_02.jpg",
+  },
+  {
+    id: "char_boy_01",
+    gender: "male",
+    lifeStage: "child",
+    nameZh: "小宇",
+    age: 10,
+    jobZh: "小学生",
+    temperamentTags: ["机灵", "粘人", "好奇"],
+    promptZh: "东亚约10岁小学生男生，短发，蓝白校服外套与长裤，校园短剧配角，笑容自然。",
+    sourceFile: "photoreal-age/boy_01.jpg",
+  },
+  {
+    id: "char_boy_02",
+    gender: "male",
+    lifeStage: "child",
+    nameZh: "浩浩",
+    age: 9,
+    jobZh: "小学生",
+    temperamentTags: ["安静", "懂事", "内向"],
+    promptZh: "东亚约9岁小学生男生，圆脸短发，深色冬装外套与长裤，安静懂事的校园配角。",
+    sourceFile: "photoreal-age/boy_02.jpg",
+  },
+  {
+    id: "char_girl_01",
+    gender: "female",
+    lifeStage: "child",
+    nameZh: "小夏",
+    age: 11,
+    jobZh: "小学生",
+    temperamentTags: ["倔强", "明媚", "正义感"],
+    promptZh: "东亚约11岁小学生女生，马尾，校服外套与长裤或及膝裙配外套，校园短剧配角，素颜。",
+    sourceFile: "photoreal-age/girl_01.jpg",
+  },
+  {
+    id: "char_girl_02",
+    gender: "female",
+    lifeStage: "child",
+    nameZh: "圆圆",
+    age: 8,
+    jobZh: "小学生",
+    temperamentTags: ["软萌", "爱笑", "黏大人"],
+    promptZh: "东亚约8岁小学生女生，圆脸黑发，厚毛衣与长裤，爱笑的校园短剧配角。",
+    sourceFile: "photoreal-age/girl_02.jpg",
+  },
 ];
 
-export function listManhuaCharactersByGender(gender: ManhuaCharacterGender) {
-  return MANHUA_CHARACTER_ASSET_LIBRARY.filter((c) => c.gender === gender);
+/** 默认只列 adult（男女主库）；配角请用 lifeStage 过滤 */
+export function listManhuaCharactersByGender(
+  gender: ManhuaCharacterGender,
+  opts?: { lifeStage?: ManhuaCharacterLifeStage | "any" },
+) {
+  const stage = opts?.lifeStage ?? "adult";
+  return MANHUA_CHARACTER_ASSET_LIBRARY.filter((c) => {
+    if (c.gender !== gender) return false;
+    if (stage === "any") return true;
+    return getManhuaCharacterLifeStage(c) === stage;
+  });
+}
+
+export function listManhuaCharactersByLifeStage(lifeStage: ManhuaCharacterLifeStage) {
+  return MANHUA_CHARACTER_ASSET_LIBRARY.filter((c) => getManhuaCharacterLifeStage(c) === lifeStage);
+}
+
+/** 计划口径别名：ageBand ≡ lifeStage（避免与画廊数值年龄筛选 ManhuaAgeBand 撞名） */
+export const listManhuaCharactersByAgeBand = listManhuaCharactersByLifeStage;
+
+/** 画廊 Tab 用的角色池 */
+export function listManhuaCharactersForLibraryTab(tab: ManhuaLibraryCastTab) {
+  if (tab === "elder") return listManhuaCharactersByLifeStage("elder");
+  if (tab === "child") return listManhuaCharactersByLifeStage("child");
+  return listManhuaCharactersByGender(tab);
 }
 
 export function getManhuaCharacterById(id: string) {
@@ -958,14 +1099,27 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
   const base = opts?.characterId ? getManhuaCharacterById(opts.characterId) : null;
   const gender: ManhuaCharacterGender =
     base?.gender || (opts?.gender === "male" ? "male" : "female");
-  const roleZh = gender === "female" ? "女主" : "男主";
+  const stage = getManhuaCharacterLifeStage(base);
+  const roleZh =
+    stage === "elder"
+      ? gender === "female"
+        ? "老年女配"
+        : "老年男配"
+      : stage === "child"
+        ? gender === "female"
+          ? "剧用女孩"
+          : "剧用男孩"
+        : gender === "female"
+          ? "女主"
+          : "男主";
   const seed = base
     ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，禁止复刻同一张脸。\n外形锚点：${base.promptZh}`
     : `生成一名都市现代向${roleZh}新人设定卡，气质鲜明、可连载锁脸。`;
   const hint = String(opts?.userHint || "").trim();
+  const lifeStageBlock = photorealLifeStagePromptBlock(stage);
   const antiAi =
     style.id === "photoreal"
-      ? `\n${PHOTOREAL_ANTI_AI_LOCK_ZH}`
+      ? `\n${PHOTOREAL_ANTI_AI_LOCK_ZH}${lifeStageBlock ? `\n${lifeStageBlock}` : ""}`
       : "";
   return [
     "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景，印刷清晰）：",
@@ -1021,8 +1175,23 @@ export function buildManhuaCharacterPromptBlock(
     const display = getManhuaCharacterDisplayName(c.id, { artStyleId: style.id });
     const preview = getManhuaCharacterPreviewUrl(c.id, { artStyleId: style.id });
     const previewLine = preview ? `\n预览图：${preview}` : "";
+    const stage = getManhuaCharacterLifeStage(c);
+    const roleLabel =
+      stage === "elder"
+        ? c.gender === "female"
+          ? "老年女配"
+          : "老年男配"
+        : stage === "child"
+          ? c.gender === "female"
+            ? "剧用女孩"
+            : "剧用男孩"
+          : c.gender === "female"
+            ? "女主"
+            : "男主";
     const bone = isPhotoreal ? `\n${formatPhotorealFaceShapeBlock(c.id, c.gender)}` : "";
-    return `${i + 1}. ${display}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${previewLine}`;
+    const life = isPhotoreal ? photorealLifeStagePromptBlock(stage) : "";
+    const lifeLine = life ? `\n${life}` : "";
+    return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${lifeLine}${previewLine}`;
   });
   return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n【画风】${style.labelZh}\n${style.promptZh}\n${linesOut.join("\n")}`;
 }

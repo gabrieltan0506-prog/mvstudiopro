@@ -11,7 +11,11 @@ import {
   characterMatchesTemperamentPack,
   getManhuaCharacterById,
   getManhuaCharacterPreviewUrl,
+  getManhuaCharacterLifeStage,
+  listManhuaCharactersByAgeBand,
   listManhuaCharactersByGender,
+  listManhuaCharactersByLifeStage,
+  listManhuaCharactersForLibraryTab,
   parseManhuaCoupleSelection,
   parseManhuaFavoriteIds,
   recommendManhuaArtStyleFromTopic,
@@ -25,10 +29,46 @@ import {
 
 describe("manhuaCharacterAssetLibrary", () => {
   it("has both male and female leads from CH 设定卡", () => {
-    expect(MANHUA_CHARACTER_ASSET_LIBRARY.length).toBeGreaterThanOrEqual(28);
+    expect(MANHUA_CHARACTER_ASSET_LIBRARY.length).toBeGreaterThanOrEqual(36);
     expect(listManhuaCharactersByGender("female").length).toBeGreaterThanOrEqual(14);
     expect(listManhuaCharactersByGender("male").length).toBeGreaterThanOrEqual(13);
+    expect(
+      listManhuaCharactersByGender("female").every((c) => getManhuaCharacterLifeStage(c) === "adult"),
+    ).toBe(true);
+    expect(
+      listManhuaCharactersByGender("female", { lifeStage: "any" }).some((c) => c.lifeStage === "child"),
+    ).toBe(true);
     expect(MANHUA_CHARACTER_FORMULA_ZH).toContain("脸型");
+  });
+
+  it("filters elder/child lifeStage and library tabs", () => {
+    const elders = listManhuaCharactersByLifeStage("elder");
+    const children = listManhuaCharactersByLifeStage("child");
+    expect(elders.length).toBe(4);
+    expect(children.length).toBe(4);
+    expect(elders.every((c) => getManhuaCharacterLifeStage(c) === "elder")).toBe(true);
+    expect(children.every((c) => /^char_(boy|girl)_/.test(c.id))).toBe(true);
+    expect(listManhuaCharactersForLibraryTab("elder").map((c) => c.id)).toEqual(
+      elders.map((c) => c.id),
+    );
+    expect(listManhuaCharactersForLibraryTab("child").length).toBe(4);
+    expect(listManhuaCharactersByAgeBand("elder").length).toBe(4);
+    expect(getManhuaCharacterPreviewUrl("char_boy_01", { artStyleId: "photoreal" })).toBe(
+      "/manhua-characters/photoreal/char_boy_01_sheet.jpg",
+    );
+    expect(getManhuaCharacterPreviewUrl("char_elder_f_01")).toBe(
+      "/manhua-characters/photoreal/char_elder_f_01_sheet.jpg",
+    );
+  });
+
+  it("topic recommend stays adult leads only", () => {
+    const rec = recommendManhuaCharactersFromTopic("甜宠恋爱校园");
+    expect(rec.femaleId).toBeTruthy();
+    expect(rec.maleId).toBeTruthy();
+    expect(getManhuaCharacterLifeStage(getManhuaCharacterById(rec.femaleId!))).toBe("adult");
+    expect(getManhuaCharacterLifeStage(getManhuaCharacterById(rec.maleId!))).toBe("adult");
+    expect(rec.femaleId).not.toMatch(/boy|girl|elder/);
+    expect(rec.maleId).not.toMatch(/boy|girl|elder/);
   });
 
   it("looks up by id and builds inject block", () => {
@@ -78,6 +118,16 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(prompt).toContain("沈清辞");
     expect(prompt).toContain("新面孔新人");
     expect(prompt).toContain("CG 漫剧");
+  });
+
+  it("photoreal child sheet prompt includes family-safe cast block", () => {
+    const prompt = buildManhuaCharacterSheetGenPrompt({
+      characterId: "char_girl_01",
+      artStyleId: "photoreal",
+    });
+    expect(prompt).toMatch(/剧用儿童|8–12/);
+    expect(prompt).toMatch(/校服|全家宜|G 级/);
+    expect(prompt).toMatch(/去美颜|禁止全员帅哥美女/);
   });
 
   it("builds clipboard text for a single character", () => {

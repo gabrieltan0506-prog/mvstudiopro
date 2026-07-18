@@ -1,10 +1,10 @@
 /**
  * 用本人实拍 refs（me / t1–t3）作「软参考」重做指定男主槽。
  *
- * 口径（硬）：
- * - 过审槽不动；只补失败/未完成槽
- * - 本人脸是族裔/年龄段/皮肤质感先验，NOT 1:1 同一张脸
- * - 每个角色名必须长出可区分的五官差异（眉眼宽窄、下颌、发型、年龄微调）
+ * 口径（用户已拍板）：
+ * - 过审槽默认不动；FORCE=1 可重做
+ * - 实拍锚只调皮肤质感与五官轮廓，禁止整容成网红美男（服装发型可改）
+ * - 不同槽位用 me + 轮转 t1–t3，并做发型/下颌微调以免十四张完全同一帧
  *
  *   FLY_ORIGIN=https://mvstudiopro.fly.dev IDS=char_m_14 pnpm run manhua:photoreal-self
  */
@@ -19,6 +19,7 @@ import {
 } from "../shared/manhuaCharacterAssetLibrary.js";
 import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
+  PHOTOREAL_FACE_LOCK_BLEND_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
 } from "../shared/photorealCharacterPrompt.js";
 
@@ -199,10 +200,9 @@ function faceDiversityBlock(id: string, name: string): string {
   ];
   const v = variants[n % variants.length]!;
   return [
-    "【软参考·禁止同脸复制】参考图只提供：东亚中年男性、皮肤质感、成熟气场；禁止复制同一五官比例与发际线。",
-    `【本角色分异·${name}】必须长成可辨认的另一张脸：${v}。`,
-    "与参考图可以像「同一族裔年龄段」，但并排放一起必须一眼能分出不是同一个人。",
-    "禁止名人脸；禁止所有男主槽共用一张脸。",
+    PHOTOREAL_FACE_LOCK_BLEND_ZH,
+    `【本槽微调·${name}】在实拍皮肤与轮廓基础上做可辨差异：${v}。`,
+    "可保留同源气质；禁止整容成网红美男，禁止换成别人或名人脸。",
   ].join("\n");
 }
 
@@ -267,16 +267,22 @@ async function main() {
     .map((s) => s.trim())
     .filter(Boolean);
   const meJpg = path.join(REFS_DIR, "me.jpg");
-  const t1Jpg = path.join(REFS_DIR, "t1.jpg");
+  const tJpgs = ["t1.jpg", "t2.jpg", "t3.jpg"]
+    .map((f) => path.join(REFS_DIR, f))
+    .filter((p) => fs.existsSync(p));
   if (!fs.existsSync(meJpg)) throw new Error(`缺少 ${meJpg}`);
-  if (!fs.existsSync(t1Jpg)) console.warn(`⚠ 缺少 t1.jpg，仅用 me.jpg`);
+  if (!tJpgs.length) console.warn(`⚠ 缺少 t1–t3.jpg，仅用 me.jpg`);
 
-  console.log("↑ 上传本人 refs 到 GCS…");
+  console.log("↑ 上传本人 refs 到 GCS（me + t1–t3）…");
   const meUrl = await uploadLocalJpg(meJpg, "me");
   console.log("  meUrl ok");
-  const t1Url = fs.existsSync(t1Jpg) ? await uploadLocalJpg(t1Jpg, "t1") : "";
-  if (t1Url) console.log("  t1Url ok");
-  const faceRefs = [meUrl, t1Url].filter(Boolean);
+  const tUrls: string[] = [];
+  for (const p of tJpgs) {
+    const url = await uploadLocalJpg(p, path.basename(p, ".jpg"));
+    tUrls.push(url);
+    console.log(`  ${path.basename(p)} ok`);
+  }
+  const faceRefs = [meUrl, ...tUrls].filter(Boolean);
 
   let items = loadManifest();
   fs.mkdirSync(OUT_PUBLIC, { recursive: true });
@@ -292,8 +298,10 @@ async function main() {
     }
     const name = MANHUA_PHOTOREAL_NAME_ZH[id] || c.nameZh;
     console.log(`\n━━ 软参考补槽 ${id} ${name}（CG:${c.nameZh} · 分异脸）━━`);
-    // 主参考用 me；辅参考最多再挂一张，降低「粘成同一张脸」
-    const refsForHero = faceRefs.slice(0, 1);
+    // 主参考 me；按槽位轮转挂一张 t*，降低粘成同一张脸
+    const n = Number((id.match(/(\d+)$/) || [])[1] || 0);
+    const tExtra = tUrls.length ? tUrls[n % tUrls.length]! : "";
+    const refsForHero = [meUrl, tExtra].filter(Boolean);
     const heroUrl = await flyGenerate(buildHeroPrompt(c, name), refsForHero);
     console.log("  hero ok");
     const heroBasePub = path.join(OUT_PUBLIC, `${id}_hero`);

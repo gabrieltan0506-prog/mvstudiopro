@@ -1,9 +1,8 @@
 /**
- * 方案 C · 仿真人库批量生成（打 Fly 站内 Evolink gpt-image-2，无需本地 EVOLINK_API_KEY）
+ * 仿真人库 · 老人 / 剧用儿童槽批量生成（文生，不挂男主实拍脸）
  *
- *   FLY_ORIGIN=https://mvstudiopro.fly.dev pnpm run manhua:photoreal-library
- *   SKIP_IDS=char_f_01 IDS=char_f_02,char_m_02  # 可选过滤
- *   LIMIT=4
+ *   FLY_ORIGIN=https://mvstudiopro.fly.dev pnpm run manhua:photoreal-age-slots
+ *   IDS=char_elder_m_01,char_boy_01 LIMIT=2 FORCE=1
  *
  * 输出：
  *   - client/public/manhua-characters/photoreal/{id}_{hero|sheet}.jpg
@@ -23,9 +22,9 @@ import {
 import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
   PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
-  PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
   formatPhotorealFaceShapeBlock,
+  photorealLifeStagePromptBlock,
 } from "../shared/photorealCharacterPrompt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,13 +32,14 @@ const ROOT = path.resolve(__dirname, "..");
 const FLY_ORIGIN = String(process.env.FLY_ORIGIN || "https://mvstudiopro.fly.dev").replace(/\/$/, "");
 const OUT_PUBLIC = path.join(ROOT, "client/public/manhua-characters/photoreal");
 const OUT_DOWNLOADS = path.join(os.homedir(), "Downloads", "2026Jul18", "photoreal-library");
-const MANIFEST_PATH = path.join(OUT_DOWNLOADS, "manifest.json");
+const MANIFEST_PATH = path.join(OUT_DOWNLOADS, "age-slots-manifest.json");
 const TIMEOUT_MS = Math.min(Math.max(Number(process.env.GEN_TIMEOUT_MS) || 540_000, 120_000), 900_000);
+const FORCE = /^(1|true|yes)$/i.test(String(process.env.FORCE || ""));
 
 type ManifestItem = {
   id: string;
   photorealNameZh: string;
-  cgNameZh: string;
+  lifeStage: string;
   ok: boolean;
   hero?: string;
   sheet?: string;
@@ -52,21 +52,22 @@ function sleep(ms: number) {
 }
 
 function pickTargets(): ManhuaCharacterTemplate[] {
-  const skip = new Set(
-    String(process.env.SKIP_IDS || "char_f_01")
-      .split(/[,\s]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
   const idFilter = String(process.env.IDS || "")
     .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-  const limit = Math.max(0, Number(process.env.LIMIT || 0) || 0);
-  // 老人/儿童走 manhua:photoreal-age-slots
-  let list = [...MANHUA_CHARACTER_ASSET_LIBRARY].filter(
-    (c) => !skip.has(c.id) && getManhuaCharacterLifeStage(c) === "adult",
+  const skip = new Set(
+    String(process.env.SKIP_IDS || "")
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
   );
+  const limit = Math.max(0, Number(process.env.LIMIT || 0) || 0);
+  let list = MANHUA_CHARACTER_ASSET_LIBRARY.filter((c) => {
+    if (skip.has(c.id)) return false;
+    const stage = getManhuaCharacterLifeStage(c);
+    return stage === "elder" || stage === "child";
+  });
   if (idFilter.length) list = list.filter((c) => idFilter.includes(c.id));
   if (limit > 0) list = list.slice(0, limit);
   return list;
@@ -86,49 +87,47 @@ function saveManifest(items: ManifestItem[]) {
   const payload = {
     generatedAt: new Date().toISOString(),
     via: `${FLY_ORIGIN}/api/jobs?op=canvasGptImage2`,
+    policy: "age slots text-to-image · no male face-lock",
     items,
   };
   fs.writeFileSync(MANIFEST_PATH, JSON.stringify(payload, null, 2));
   fs.mkdirSync(OUT_PUBLIC, { recursive: true });
-  fs.writeFileSync(path.join(OUT_PUBLIC, "manifest.json"), JSON.stringify(payload, null, 2));
+  fs.writeFileSync(path.join(OUT_PUBLIC, "age-slots-manifest.json"), JSON.stringify(payload, null, 2));
 }
 
-function refUrlFor(id: string): string {
-  return `${FLY_ORIGIN}/manhua-characters/${id}.jpg`;
-}
-
-function clothingOverrideBlock(c: ManhuaCharacterTemplate): string {
-  const env = String(process.env.PHOTOREAL_CLOTHING_OVERRIDE || "").trim();
-  if (env) {
-    return `【服装硬改·过审】忽略原外形里的吊带/开叉/深V/露肤描述，改为：${env}`;
-  }
-  if (String(process.env.PHOTOREAL_FORCE_MODEST || "").trim() === "1" || c.id === "char_f_11") {
-    return "【服装硬改·过审】黑色高领丝绒长裙，肩臂完全覆盖，无吊带无开叉无深V，晚宴得体，露肤极少。全身三视图同样锁此服装。";
-  }
-  return "";
+function roleLabel(c: ManhuaCharacterTemplate): string {
+  const stage = getManhuaCharacterLifeStage(c);
+  if (stage === "elder") return c.gender === "female" ? "老年女配" : "老年男配";
+  return c.gender === "female" ? "小学女生配角" : "小学男生配角";
 }
 
 function buildHeroPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const style = getManhuaArtStylePreset("photoreal");
-  const role = c.gender === "female" ? "女主" : "男主";
-  const modest = clothingOverrideBlock(c);
+  const stage = getManhuaCharacterLifeStage(c);
+  const isChild = stage === "child";
   return [
-    `竖屏9:16半身胸像写真，东亚成年${role}「${name}」${c.age ? `${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
+    isChild
+      ? `竖屏9:16学校年册式半身肖像，东亚${roleLabel(c)}「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`
+      : `竖屏9:16半身肖像写真，东亚${roleLabel(c)}「${name}」${c.age ? `约${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
     "",
-    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
-    formatPhotorealFaceShapeBlock(c.id, c.gender),
-    PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
+    photorealLifeStagePromptBlock(stage),
+    isChild ? "" : PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    isChild ? "自然皮肤，生活感普通长相，禁止网红修图脸。" : PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
+    isChild ? "" : formatPhotorealFaceShapeBlock(c.id, c.gender),
     "",
-    `外形锚点（转写实，去除二次元/厚涂表述）：${c.promptZh}`,
-    modest,
-    "构图：胸像偏上，电影柔光，浅景深干净背景。若有参考图：严格锁同一张脸五官比例与发际线，禁止换人、禁止名人脸、无文字无水印。",
+    `外形锚点：${c.promptZh}`,
+    isChild
+      ? "构图：半身偏上，柔和白天光线，浅景深干净教室/白墙背景；校服完整；无文字无水印；G 级全家宜。"
+      : "构图：半身偏上，自然光，浅景深干净背景；禁止名人脸、无文字无水印。",
+    "纯文生角色卡，不使用任何真人照片参考。",
     "",
     `【画风】${style.labelZh}`,
-    style.promptZh,
+    isChild
+      ? "写实摄影感，自然日系校园短剧配角肖像，干净通透，非广告模特。"
+      : style.promptZh,
     "",
-    PHOTOREAL_ANTI_AI_LOCK_ZH,
+    isChild ? "禁止名人脸、禁止水印字幕。" : PHOTOREAL_ANTI_AI_LOCK_ZH,
   ]
     .filter(Boolean)
     .join("\n");
@@ -137,28 +136,29 @@ function buildHeroPrompt(c: ManhuaCharacterTemplate): string {
 function buildSheetPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const style = getManhuaArtStylePreset("photoreal");
-  const role = c.gender === "female" ? "女主" : "男主";
-  const modest = clothingOverrideBlock(c);
+  const stage = getManhuaCharacterLifeStage(c);
+  const isChild = stage === "child";
   return [
     "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景，印刷清晰）：",
     "版式硬约束：",
-    "1) 上半：半身/胸像人像 + 姓名占位 + 气质标签条 + 妆造短句；",
+    "1) 上半：半身人像 + 姓名占位 + 气质标签条 + 妆造短句；",
     "2) 下半：同一人物全身 FRONT / SIDE / BACK 三视图并排，比例一致、服装一致、锁脸；",
     "3) 三视图下方可有极简英文标注 FRONT SIDE BACK；禁止水印、禁止真实名人脸。",
     "",
-    `角色：${role}「${name}」·${c.jobZh}·气质 ${c.temperamentTags.join("·")}`,
+    `角色：${roleLabel(c)}「${name}」·${c.jobZh}·气质 ${c.temperamentTags.join("·")}`,
     `外形锚点：${c.promptZh}`,
-    formatPhotorealFaceShapeBlock(c.id, c.gender),
-    modest,
-    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
-    PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
-    "若有参考图：上半与三视图必须是同一张脸，锁五官与发型轮廓。",
+    photorealLifeStagePromptBlock(stage),
+    isChild ? "" : formatPhotorealFaceShapeBlock(c.id, c.gender),
+    isChild ? "自然皮肤；完整校服或冬装外套长裤；G 级全家宜。" : PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    isChild ? "" : PHOTOREAL_ANTI_BEAUTY_FILTER_ZH,
+    "上半与三视图必须是同一张脸；服装完整日常覆盖。",
     "",
     `【画风】${style.labelZh}`,
-    style.promptZh,
+    isChild
+      ? "写实摄影感，自然校园短剧配角设定卡，干净通透。"
+      : style.promptZh,
     "",
-    PHOTOREAL_ANTI_AI_LOCK_ZH,
+    isChild ? "禁止名人脸、禁止水印字幕。" : PHOTOREAL_ANTI_AI_LOCK_ZH,
   ]
     .filter(Boolean)
     .join("\n");
@@ -200,7 +200,7 @@ async function flyGenerateOnce(prompt: string, imageUrls: string[]): Promise<str
   }
 }
 
-async function flyGenerate(prompt: string, imageUrls: string[]): Promise<string> {
+async function flyGenerate(prompt: string, imageUrls: string[] = []): Promise<string> {
   const retries = Math.max(1, Number(process.env.GEN_RETRIES || 5) || 5);
   let lastErr: unknown;
   for (let i = 1; i <= retries; i++) {
@@ -209,7 +209,6 @@ async function flyGenerate(prompt: string, imageUrls: string[]): Promise<string>
     } catch (e) {
       lastErr = e;
       const msg = e instanceof Error ? e.message : String(e);
-      // fetch failed / abort：拉长退避，避免打满 Fly 瞬时断连
       const transient = /fetch failed|aborted|ECONNRESET|ETIMEDOUT|socket|503|502|429/i.test(msg);
       const waitMs = transient ? Math.min(45_000, 4000 * i * i) : 2000 * i;
       console.warn(`  · gen fail attempt ${i}/${retries}: ${msg} · sleep ${waitMs}ms`);
@@ -227,7 +226,6 @@ async function downloadToJpg(url: string, destBaseNoExt: string): Promise<void> 
   const jpgPath = `${destBaseNoExt}.jpg`;
   fs.mkdirSync(path.dirname(destBaseNoExt), { recursive: true });
   fs.writeFileSync(pngPath, buf);
-  // sips → jpg（macOS）；失败则保留 png 并复制为 .jpg 兜底
   const { spawnSync } = await import("node:child_process");
   const r = spawnSync(
     "sips",
@@ -245,6 +243,7 @@ async function downloadToJpg(url: string, destBaseNoExt: string): Promise<void> 
 }
 
 function alreadyOk(items: ManifestItem[], id: string): boolean {
+  if (FORCE) return false;
   const hit = items.find((x) => x.id === id && x.ok);
   if (!hit) return false;
   const hero = path.join(OUT_PUBLIC, `${id}_hero.jpg`);
@@ -254,22 +253,20 @@ function alreadyOk(items: ManifestItem[], id: string): boolean {
 
 async function processOne(c: ManhuaCharacterTemplate): Promise<ManifestItem> {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
-  const ref = refUrlFor(c.id);
-  console.log(`\n━━ ${c.id} ${name}（CG:${c.nameZh}）━━`);
+  const stage = getManhuaCharacterLifeStage(c);
+  console.log(`\n━━ ${c.id} ${name} · ${stage} ━━`);
 
-  const heroUrl = await flyGenerate(buildHeroPrompt(c), [ref]);
+  // 文生：不挂参考图（尤其不挂男主实拍）
+  const heroUrl = await flyGenerate(buildHeroPrompt(c), []);
   console.log("  hero ok");
   const heroBasePub = path.join(OUT_PUBLIC, `${c.id}_hero`);
   const heroBaseDl = path.join(OUT_DOWNLOADS, `${c.id}_hero`);
   await downloadToJpg(heroUrl, heroBasePub);
   fs.copyFileSync(`${heroBasePub}.jpg`, `${heroBaseDl}.jpg`);
 
-  // 三视图：主图锁脸 + 原设定卡
-  const sheetUrl = await flyGenerate(buildSheetPrompt(c), [
-    // 公开站上刚写入的相对路径不可被 Evolink 抓；用 GCS 返回的 heroUrl
-    heroUrl,
-    ref,
-  ]);
+  // 儿童：sheet 也纯文生（挂 hero 易被当成「真人脸参考」误杀）
+  const sheetRefs = getManhuaCharacterLifeStage(c) === "child" ? [] : [heroUrl];
+  const sheetUrl = await flyGenerate(buildSheetPrompt(c), sheetRefs);
   console.log("  sheet ok");
   const sheetBasePub = path.join(OUT_PUBLIC, `${c.id}_sheet`);
   const sheetBaseDl = path.join(OUT_DOWNLOADS, `${c.id}_sheet`);
@@ -279,7 +276,7 @@ async function processOne(c: ManhuaCharacterTemplate): Promise<ManifestItem> {
   return {
     id: c.id,
     photorealNameZh: name,
-    cgNameZh: c.nameZh,
+    lifeStage: stage,
     ok: true,
     hero: `${c.id}_hero.jpg`,
     sheet: `${c.id}_sheet.jpg`,
@@ -287,39 +284,15 @@ async function processOne(c: ManhuaCharacterTemplate): Promise<ManifestItem> {
   };
 }
 
-process.on("uncaughtException", (e) => {
-  console.error("uncaughtException", e);
-});
-process.on("unhandledRejection", (e) => {
-  console.error("unhandledRejection", e);
-});
-
 async function main() {
   fs.mkdirSync(OUT_PUBLIC, { recursive: true });
   fs.mkdirSync(OUT_DOWNLOADS, { recursive: true });
 
-  // 确保 char_f_01 验收版写入 manifest
   let items = loadManifest();
-  if (!items.find((x) => x.id === "char_f_01" && x.ok)) {
-    if (
-      fs.existsSync(path.join(OUT_PUBLIC, "char_f_01_hero.jpg")) &&
-      fs.existsSync(path.join(OUT_PUBLIC, "char_f_01_sheet.jpg"))
-    ) {
-      items.push({
-        id: "char_f_01",
-        photorealNameZh: "岑停云",
-        cgNameZh: "沈清辞",
-        ok: true,
-        hero: "char_f_01_hero.jpg",
-        sheet: "char_f_01_sheet.jpg",
-        at: new Date().toISOString(),
-      });
-      saveManifest(items);
-    }
-  }
-
   const targets = pickTargets();
-  console.log(`🚀 Fly 批量仿真人 · ${FLY_ORIGIN} · 待处理 ${targets.length}（跳过已完成）`);
+  console.log(
+    `🚀 age slots · ${FLY_ORIGIN} · ${targets.length} to run · force=${FORCE ? "on" : "off"}`,
+  );
 
   for (const c of targets) {
     if (alreadyOk(items, c.id)) {
@@ -337,7 +310,7 @@ async function main() {
       items = items.filter((x) => x.id !== c.id).concat({
         id: c.id,
         photorealNameZh: MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh,
-        cgNameZh: c.nameZh,
+        lifeStage: getManhuaCharacterLifeStage(c),
         ok: false,
         error: msg,
         at: new Date().toISOString(),
