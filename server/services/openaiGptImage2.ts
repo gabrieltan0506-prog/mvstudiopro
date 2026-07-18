@@ -1,10 +1,8 @@
 /**
  * 官方 OpenAI `gpt-image-2`（images/generations + images/edits）
- * 供 canvasGptImage2 / 平台单帧在 EvoLink 额度不足时改走。
+ * 供 canvasGptImage2 / 平台单帧像素链（不再走 EvoLink）。
  *
- * 环境变量：
- * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
- * - GPT_IMAGE2_PROVIDER=openai|evolink|auto（见 proxyImageService）
+ * 环境变量：OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
  */
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
