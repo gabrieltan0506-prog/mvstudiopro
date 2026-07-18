@@ -4,6 +4,8 @@
  *
  *   FLY_ORIGIN=https://mvstudiopro.fly.dev pnpm run manhua:photoreal-diversify-jaws
  *   IDS=char_f_02,char_m_01 LIMIT=4
+ *   FORCE=1 RESTORE_BACKUP=1          # 从备份重跑已成功槽（方案 A 加大骨相）
+ *   SOFT_REF=0                         # 关闭 me/t1–t3 / jul18 女像软参考
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -19,6 +21,7 @@ import {
   PHOTOREAL_ANTI_AI_LOCK_ZH,
   PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
   PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+  PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH,
   formatPhotorealFaceShapeBlock,
   getPhotorealFaceShapeForId,
 } from "../shared/photorealCharacterPrompt.js";
@@ -27,11 +30,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const FLY_ORIGIN = String(process.env.FLY_ORIGIN || "https://mvstudiopro.fly.dev").replace(/\/$/, "");
 const OUT_PUBLIC = path.join(ROOT, "client/public/manhua-characters/photoreal");
+const REFS_PUBLIC = path.join(OUT_PUBLIC, "refs");
 const OUT_DL = path.join(os.homedir(), "Downloads", "2026Jul18", "photoreal-library");
+const REFS_DL = path.join(OUT_DL, "refs");
 const BACKUP = path.join(OUT_DL, "jaw-diversify-backup");
 const MANIFEST = path.join(OUT_DL, "jaw-diversify-manifest.json");
 const LOG = "/tmp/diversify-photoreal-jaws.log";
 const TIMEOUT_MS = Math.min(Math.max(Number(process.env.GEN_TIMEOUT_MS) || 540_000, 120_000), 900_000);
+/** 默认开软参考；SOFT_REF=0 可关 */
+const USE_SOFT_REF = !/^(0|false|no)$/i.test(String(process.env.SOFT_REF || "1"));
 
 type Row = {
   id: string;
@@ -293,33 +300,78 @@ function restoreFromBackupIfRequested(id: string) {
   }
 }
 
-function buildHeroEditPrompt(c: ManhuaCharacterTemplate): string {
+function firstExisting(...candidates: string[]): string | undefined {
+  for (const p of candidates) {
+    if (p && fs.existsSync(p)) return p;
+  }
+  return undefined;
+}
+
+/** 男：me + t1–t3 轮转；女：jul18 ready 女像轮转。只借皮肤/光感，禁止粘脸。 */
+function pickSoftRefLocalPaths(c: ManhuaCharacterTemplate): string[] {
+  if (!USE_SOFT_REF) return [];
+  const n = Number((c.id.match(/(\d+)$/) || [])[1] || 0);
+  if (c.gender === "male") {
+    const me = firstExisting(path.join(REFS_DL, "me.jpg"), path.join(REFS_PUBLIC, "me.jpg"));
+    const tPool = ["t1.jpg", "t2.jpg", "t3.jpg"]
+      .map((f) => firstExisting(path.join(REFS_DL, f), path.join(REFS_PUBLIC, f)))
+      .filter((x): x is string => Boolean(x));
+    const t = tPool.length ? tPool[n % tPool.length]! : undefined;
+    return [me, t].filter((x): x is string => Boolean(x));
+  }
+  const readyDir = path.join(REFS_PUBLIC, "jul18-ref", "ready");
+  let females: string[] = [];
+  try {
+    females = fs
+      .readdirSync(readyDir)
+      .filter((f) => /female/i.test(f) && /\.jpe?g$/i.test(f))
+      .map((f) => path.join(readyDir, f))
+      .sort();
+  } catch {
+    females = [];
+  }
+  if (!females.length) return [];
+  return [females[n % females.length]!];
+}
+
+function buildHeroEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const shape = getPhotorealFaceShapeForId(c.id, c.gender);
   return [
-    "竖屏 9:16 安全向肖像编辑：只微调下颌骨相轮廓，保持同一人身份与发型大轮廓、得体日常服装、干净背景。",
-    `角色「${name}」目标骨相：${shape.labelZh}。`,
+    "竖屏 9:16 安全向肖像编辑：保持同一人身份与发型大轮廓，但下颌骨相必须明显拉开（并排放一眼可辨），不是磨皮级微调。",
+    `角色「${name}」目标骨相：${shape.labelZh}——下颌宽度、下巴形状、下颌角按该目标明显偏移。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
-    "保留眼睛/眉毛/鼻梁/唇形连续性；下颌宽度与下巴形状按目标改变，避免全员尖下巴。",
+    "眉眼鼻唇可保留可识别连续性；下庭轮廓必须改到与原图有清晰差异；禁止仍是统一小尖下巴/小V脸。",
     "禁止换人、禁止名人脸、禁止暴露服装、禁止性暗示、禁止未成年人形象。",
-    "自然光写实皮肤即可，勿强调敏感部位。",
+    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    hasSoftRef ? PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH : "",
+    PHOTOREAL_ANTI_AI_LOCK_ZH,
     PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
-    "无文字无水印。全家宜内容。",
-  ].join("\n");
+    "得体日常服装、干净背景；无文字无水印。全家宜内容。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-function buildSheetEditPrompt(c: ManhuaCharacterTemplate): string {
+function buildSheetEditPrompt(c: ManhuaCharacterTemplate, hasSoftRef: boolean): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   return [
     "竖屏设定卡安全向编辑：上半胸像与下半 FRONT/SIDE/BACK 三视图同一张脸、同一骨相。",
-    `角色「${name}」。第二张参考为已改骨相胸像——三视图对齐该骨相。`,
+    `角色「${name}」。第二张参考为已改骨相胸像——三视图对齐该骨相（下颌差异必须保留到三视图）。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
-    "可微调下颌使三视图一致；服装保持得体日常覆盖；禁止暴露、禁止换人。",
+    "下颌/下巴须与胸像目标骨相一致且一眼可辨；服装保持得体日常覆盖；禁止暴露、禁止换人。",
+    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
+    hasSoftRef ? PHOTOREAL_SOFT_REF_SKIN_ONLY_ZH : "",
     "无文字水印。全家宜内容。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-async function processOne(c: ManhuaCharacterTemplate): Promise<Row> {
+async function processOne(
+  c: ManhuaCharacterTemplate,
+  softRefUrlByPath: Map<string, string>,
+): Promise<Row> {
   const shape = getPhotorealFaceShapeForId(c.id, c.gender);
   const heroPath = path.join(OUT_DL, `${c.id}_hero.jpg`);
   const sheetPath = path.join(OUT_DL, `${c.id}_sheet.jpg`);
@@ -330,11 +382,18 @@ async function processOne(c: ManhuaCharacterTemplate): Promise<Row> {
   backupIfNeeded(c.id, "sheet");
   restoreFromBackupIfRequested(c.id);
 
-  log(`\n━━ ${c.id} ${MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh} · ${shape.labelZh} ━━`);
+  const softPaths = pickSoftRefLocalPaths(c);
+  const softUrls = softPaths
+    .map((p) => softRefUrlByPath.get(p))
+    .filter((u): u is string => Boolean(u));
+  const hasSoftRef = softUrls.length > 0;
+
+  log(`\n━━ ${c.id} ${MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh} · ${shape.labelZh}${hasSoftRef ? " · soft-ref" : ""} ━━`);
   log("  upload hero…");
   const heroUrl = await uploadLocalJpg(heroPath, `${c.id}-hero`);
   log("  edit hero jaw…");
-  const newHeroUrl = await flyGenerate(buildHeroEditPrompt(c), [heroUrl]);
+  // 第一张=本槽库图；其后=实拍软参考（皮肤/光感）
+  const newHeroUrl = await flyGenerate(buildHeroEditPrompt(c, hasSoftRef), [heroUrl, ...softUrls.slice(0, 1)]);
   await downloadToJpg(newHeroUrl, path.join(OUT_DL, `${c.id}_hero`));
   fs.copyFileSync(path.join(OUT_DL, `${c.id}_hero.jpg`), path.join(OUT_PUBLIC, `${c.id}_hero.jpg`));
 
@@ -342,7 +401,11 @@ async function processOne(c: ManhuaCharacterTemplate): Promise<Row> {
   const sheetUrl = await uploadLocalJpg(sheetPath, `${c.id}-sheet`);
   const newHeroRead = await uploadLocalJpg(path.join(OUT_DL, `${c.id}_hero.jpg`), `${c.id}-hero2`);
   log("  edit sheet lock jaw…");
-  const newSheetUrl = await flyGenerate(buildSheetEditPrompt(c), [sheetUrl, newHeroRead]);
+  const newSheetUrl = await flyGenerate(buildSheetEditPrompt(c, hasSoftRef), [
+    sheetUrl,
+    newHeroRead,
+    ...softUrls.slice(0, 1),
+  ]);
   await downloadToJpg(newSheetUrl, path.join(OUT_DL, `${c.id}_sheet`));
   fs.copyFileSync(path.join(OUT_DL, `${c.id}_sheet.jpg`), path.join(OUT_PUBLIC, `${c.id}_sheet.jpg`));
 
@@ -361,7 +424,26 @@ async function main() {
   const done = loadDone();
   const force = String(process.env.FORCE || "").trim() === "1";
   const targets = pickTargets().filter((c) => force || !done.has(c.id));
-  log(`🚀 jaw diversify · ${FLY_ORIGIN} · ${targets.length} to run (done=${done.size})`);
+  log(
+    `🚀 jaw diversify · ${FLY_ORIGIN} · ${targets.length} to run (done=${done.size}) · softRef=${USE_SOFT_REF ? "on" : "off"} · strength=A`,
+  );
+
+  const softRefUrlByPath = new Map<string, string>();
+  if (USE_SOFT_REF && targets.length) {
+    const uniq = new Set<string>();
+    for (const c of targets) {
+      for (const p of pickSoftRefLocalPaths(c)) uniq.add(p);
+    }
+    log(`↑ 上传软参考 ${uniq.size} 张…`);
+    let i = 0;
+    for (const p of uniq) {
+      i += 1;
+      const hint = `soft-${path.basename(p).replace(/\.[^.]+$/, "")}-${i}`;
+      const url = await uploadLocalJpg(p, hint);
+      softRefUrlByPath.set(p, url);
+      log(`  · ${path.basename(p)} ok`);
+    }
+  }
 
   let items: Row[] = [];
   try {
@@ -373,7 +455,7 @@ async function main() {
 
   for (const c of targets) {
     try {
-      const row = await processOne(c);
+      const row = await processOne(c, softRefUrlByPath);
       items = items.filter((x) => x.id !== c.id).concat(row);
       saveManifest(items);
     } catch (e) {

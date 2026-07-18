@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-18T01:12:07.412Z",
+  "updatedAt": "2026-07-18T08:55:44.099Z",
   "policy": "1C jaw diversify via image-2-edit",
   "items": [
     {
@@ -148,6 +148,62 @@
       "labelZh": "长脸·实质下巴",
       "ok": true,
       "at": "2026-07-18T01:12:07.412Z"
+    },
+    {
+      "id": "char_m_08",
+      "shapeId": "m_rugged",
+      "labelZh": "粗粝骨相",
+      "ok": true,
+      "at": "2026-07-18T01:20:21.028Z"
+    },
+    {
+      "id": "char_m_10",
+      "shapeId": "m_diamond",
+      "labelZh": "菱形·锐但不尖",
+      "ok": true,
+      "at": "2026-07-18T01:28:02.543Z"
+    },
+    {
+      "id": "char_m_11",
+      "shapeId": "m_wide_jaw",
+      "labelZh": "宽下颌",
+      "ok": true,
+      "at": "2026-07-18T01:34:31.922Z"
+    },
+    {
+      "id": "char_m_14",
+      "shapeId": "m_heart_soft",
+      "labelZh": "柔心形男",
+      "ok": true,
+      "at": "2026-07-18T01:46:29.662Z"
+    },
+    {
+      "id": "char_m_07",
+      "shapeId": "m_heart_soft",
+      "labelZh": "柔心形男",
+      "ok": true,
+      "at": "2026-07-18T08:40:25.670Z"
+    },
+    {
+      "id": "char_m_09",
+      "shapeId": "m_balanced",
+      "labelZh": "均衡三庭",
+      "ok": true,
+      "at": "2026-07-18T08:46:46.899Z"
+    },
+    {
+      "id": "char_m_12",
+      "shapeId": "m_soft_square",
+      "labelZh": "软方脸",
+      "ok": true,
+      "at": "2026-07-18T08:51:16.838Z"
+    },
+    {
+      "id": "char_m_13",
+      "shapeId": "m_oblong",
+      "labelZh": "长脸·实质下巴",
+      "ok": true,
+      "at": "2026-07-18T08:55:44.099Z"
     }
   ]
 }
