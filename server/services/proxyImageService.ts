@@ -1113,10 +1113,8 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
 /**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → GPT-Image-2 像素链。
  *
- * 供应商（`GPT_IMAGE2_PROVIDER`）：
- * - `openai`：官方 OpenAI `/v1/images/{generations,edits}`（`OPENAI_IMAGE_API_KEY` / `OPENAI_API_KEY`）
- * - `evolink`：仅 EvoLink（旧默认）
- * - `auto`（默认）：优先官方 OpenAI（有密钥时）；否则 EvoLink；任一路失败再试另一路
+ * **仅官方 OpenAI** `/v1/images/{generations,edits}`（`OPENAI_IMAGE_API_KEY` / `OPENAI_API_KEY`）。
+ * 不再走 EvoLink。
  *
  * 传 `referenceImageUrls` 时走 edit；Canvas `generalImageEdit` 不注入封面换脸指令。
  */
@@ -1144,7 +1142,11 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    * 出参：失败时回填供上层做「快速失败 / 用户提示」。
    * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
    */
-  captureError?: { message?: string; moderationBlocked?: boolean };
+  captureError?: {
+    message?: string;
+    moderationBlocked?: boolean;
+    openaiConfigured?: boolean;
+  };
 }): Promise<string | null> {
   const L = options.flowLog;
   const raw = String(options.englishPrompt || "").trim();
@@ -1171,144 +1173,46 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const prompt =
     hasRef && !generalEdit ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
 
-  const provider = String(process.env.GPT_IMAGE2_PROVIDER || "auto")
-    .trim()
-    .toLowerCase();
   const openaiReady = isOpenAiGptImage2Configured();
-  const evolinkReady = isEvolinkGptImage2Configured();
-  if (!openaiReady && !evolinkReady) {
-    appendImageFlowLog(
-      L,
-      "[单帧] 未配置 OPENAI_IMAGE_API_KEY/OPENAI_API_KEY 与 EVOLINK_API_KEY · 无法生图",
-    );
+  if (options.captureError) options.captureError.openaiConfigured = openaiReady;
+  if (!openaiReady) {
+    appendImageFlowLog(L, "[单帧] 未配置 OPENAI_IMAGE_API_KEY/OPENAI_API_KEY · 无法生图");
     if (options.captureError) {
-      options.captureError.message = "Neither OPENAI_API_KEY nor EVOLINK_API_KEY is configured";
+      options.captureError.message = "OPENAI_API_KEY (or OPENAI_IMAGE_API_KEY) is not configured";
     }
     return null;
   }
 
-  const evoPrompt = hasRef ? prompt : withProVisual;
+  const finalPrompt = hasRef ? prompt : withProVisual;
   const maskUrl = String(options.maskUrl || "").trim() || undefined;
   if (hasRef && maskUrl) {
     appendImageFlowLog(L, `[单帧·遮罩] mask_url 已附带 · ${maskUrl.slice(0, 96)}`);
   }
 
-  const tryOpenAi = async (tag: string): Promise<string | null> => {
-    if (!openaiReady) return null;
-    appendImageFlowLog(
-      L,
-      `[单帧·${tag}] OpenAI GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${options.aspectRatio === "16:9" ? "1536x1024" : "1024x1536"} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}`,
-    );
-    const err: { message?: string } = {};
-    const url = await postOpenAiGptImage2AndUpload(evoPrompt, options.gcsSubdir, {
-      aspectRatio: options.aspectRatio,
-      flowLog: L,
-      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-      imageUrls: hasRef ? refImageUrls : undefined,
-      maskUrl: hasRef ? maskUrl : undefined,
-      captureError: err,
-    });
-    if (url) {
-      appendImageFlowLog(L, `[单帧·${tag}] OpenAI GPT-IMAGE-2 成功，已落库`);
-      return url;
-    }
-    if (options.captureError && err.message) options.captureError.message = err.message;
-    return null;
-  };
-
-  const tryEvolink = async (tag: string): Promise<string | null> => {
-    if (!evolinkReady) return null;
-    appendImageFlowLog(
-      L,
-      `[单帧·${tag}] EvoLink GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · resolution=2K · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""} · prompt≈${evoPrompt.length}字`,
-    );
-    const evoErr: { message?: string } = {};
-    let fromEvolink = await postEvolinkGptImage2AndUpload(evoPrompt, options.gcsSubdir, {
-      aspectRatio: options.aspectRatio,
-      flowLog: L,
-      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-      imageUrls: hasRef ? refImageUrls : undefined,
-      maskUrl: hasRef ? maskUrl : undefined,
-      captureError: evoErr,
-    });
-    if (fromEvolink) {
-      appendImageFlowLog(L, `[单帧·${tag}] EvoLink GPT-IMAGE-2 成功，已落库`);
-      return fromEvolink;
-    }
-
-    if (hasRef && isEvolinkModerationFailure(evoErr.message)) {
-      appendImageFlowLog(
-        L,
-        `[单帧·换脸] EvoLink 内容审核拦截（${String(evoErr.message).slice(0, 80)}）→ 附澄清语境重试一次`,
-      );
-      const retryErr: { message?: string } = {};
-      fromEvolink = await postEvolinkGptImage2AndUpload(
-        `${evoPrompt}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
-        options.gcsSubdir,
-        {
-          aspectRatio: options.aspectRatio,
-          flowLog: L,
-          quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-          imageUrls: refImageUrls,
-          maskUrl,
-          captureError: retryErr,
-        },
-      );
-      if (fromEvolink) {
-        appendImageFlowLog(L, "[单帧·换脸] 澄清语境重试成功，已落库");
-        return fromEvolink;
-      }
-      if (isEvolinkModerationFailure(retryErr.message || evoErr.message)) {
-        if (options.captureError) {
-          options.captureError.moderationBlocked = true;
-          options.captureError.message = retryErr.message || evoErr.message;
-        }
-        appendImageFlowLog(L, "[单帧·换脸] 澄清重试后仍被内容审核拦截 → 快速失败");
-        return null;
-      }
-    }
-
-    if (options.captureError && evoErr.message) {
-      options.captureError.message = evoErr.message;
-    }
-    return null;
-  };
-
-  // openai：只走官方；evolink：只走 EvoLink（失败再兜 OpenAI）；auto：OpenAI 优先，再 EvoLink
-  if (provider === "openai") {
-    const url = await tryOpenAi("强制OpenAI");
-    if (url) return url;
-    appendImageFlowLog(L, "[单帧] OpenAI GPT-IMAGE-2 无图 · 本条失败");
-    return null;
+  appendImageFlowLog(
+    L,
+    `[单帧·OpenAI] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${options.aspectRatio === "16:9" ? "1536x1024" : "1024x1536"} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}`,
+  );
+  const err: { message?: string } = {};
+  const url = await postOpenAiGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
+    aspectRatio: options.aspectRatio,
+    flowLog: L,
+    quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+    imageUrls: hasRef ? refImageUrls : undefined,
+    maskUrl: hasRef ? maskUrl : undefined,
+    captureError: err,
+  });
+  if (url) {
+    appendImageFlowLog(L, "[单帧·OpenAI] GPT-IMAGE-2 成功，已落库");
+    return url;
   }
-
-  if (provider === "evolink") {
-    const url = await tryEvolink("强制EvoLink");
-    if (url) return url;
-    if (options.captureError?.moderationBlocked) return null;
-    const fallback = await tryOpenAi("EvoLink失败→OpenAI");
-    if (fallback) return fallback;
-    appendImageFlowLog(L, "[单帧] EvoLink/OpenAI GPT-IMAGE-2 均无图 · 本条失败");
-    return null;
-  }
-
-  // auto（默认）：有 OpenAI 钥则先走官方（EvoLink 额度常不足）
-  if (openaiReady) {
-    const url = await tryOpenAi("auto·OpenAI优先");
-    if (url) return url;
-  }
-  if (evolinkReady) {
-    const url = await tryEvolink(openaiReady ? "auto·OpenAI失败→EvoLink" : "auto·仅EvoLink");
-    if (url) return url;
-    if (options.captureError?.moderationBlocked) return null;
-  }
-
-  appendImageFlowLog(L, "[单帧] OpenAI/EvoLink GPT-IMAGE-2 均无图 · 本条失败");
+  if (options.captureError && err.message) options.captureError.message = err.message;
+  appendImageFlowLog(L, "[单帧] OpenAI GPT-IMAGE-2 无图 · 本条失败");
   return null;
 }
 
 /**
- * 版式出图：走 {@link generateGptImage2FromRawEnglishPrompt}（OpenAI / EvoLink，见 GPT_IMAGE2_PROVIDER）。
+ * 版式出图：走 {@link generateGptImage2FromRawEnglishPrompt}（仅官方 OpenAI）。
  */
 export async function generateGptImage2(options: {
   title: string;
@@ -1327,7 +1231,7 @@ export async function generateGptImage2(options: {
     forImagenFallback: false,
   });
   // 只传版式核心；画幅锁 + 摄影修饰由 generateGptImage2FromRawEnglishPrompt 统一追加
-  appendImageFlowLog(L, "[版式] GPT-IMAGE-2 · 9:16（OpenAI/EvoLink 按 GPT_IMAGE2_PROVIDER）");
+  appendImageFlowLog(L, "[版式] GPT-IMAGE-2 · 9:16（仅官方 OpenAI）");
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: core,
     aspectRatio: "9:16",
