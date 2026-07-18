@@ -35,6 +35,10 @@ import {
   isOpenAiGptImage2Configured,
   postOpenAiGptImage2AndUpload,
 } from "./openaiGptImage2.js";
+import {
+  isOpenRouterGptImage2Configured,
+  postOpenRouterGptImage2AndUpload,
+} from "./openrouterGptImage2.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -1113,7 +1117,7 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
 /**
  * 已由 Gemini **双语编导**写好的 **完整英文 raw prompt** → GPT-Image-2 像素链。
  *
- * **仅官方 OpenAI** `/v1/images/{generations,edits}`（`OPENAI_IMAGE_API_KEY` / `OPENAI_API_KEY`）。
+ * 路径：官方 OpenAI →（失败）OpenRouter `openai/gpt-image-2`（`OPENROUTER_API_KEY`）。
  * 不再走 EvoLink。
  *
  * 传 `referenceImageUrls` 时走 edit；Canvas `generalImageEdit` 不注入封面换脸指令。
@@ -1131,6 +1135,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   /**
    * 局部重绘遮罩 PNG 的公网 URL（alpha：透明=可改区域，不透明=保留）。
    * 仅在传了 referenceImageUrls 时生效；须服务器可直接抓取。
+   * 注：OpenRouter 回落目前只传参考图 URL（input_references），不传 mask。
    */
   maskUrl?: string;
   /**
@@ -1146,6 +1151,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     message?: string;
     moderationBlocked?: boolean;
     openaiConfigured?: boolean;
+    openrouterConfigured?: boolean;
+    openaiError?: string;
+    openrouterError?: string;
   };
 }): Promise<string | null> {
   const L = options.flowLog;
@@ -1173,12 +1181,24 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const prompt =
     hasRef && !generalEdit ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
 
+  const providerMode = String(process.env.GPT_IMAGE2_PROVIDER || "auto")
+    .trim()
+    .toLowerCase();
   const openaiReady = isOpenAiGptImage2Configured();
-  if (options.captureError) options.captureError.openaiConfigured = openaiReady;
-  if (!openaiReady) {
-    appendImageFlowLog(L, "[单帧] 未配置 OPENAI_IMAGE_API_KEY/OPENAI_API_KEY · 无法生图");
+  const openrouterReady = isOpenRouterGptImage2Configured();
+  const tryOpenAi = providerMode !== "openrouter" && openaiReady;
+  const tryOpenRouter = providerMode !== "openai" && openrouterReady;
+  if (options.captureError) {
+    options.captureError.openaiConfigured = openaiReady;
+    options.captureError.openrouterConfigured = openrouterReady;
+  }
+  if (!tryOpenAi && !tryOpenRouter) {
+    appendImageFlowLog(
+      L,
+      `[单帧] 无可走供应商 · mode=${providerMode || "auto"} · openai=${openaiReady} · openrouter=${openrouterReady}`,
+    );
     if (options.captureError) {
-      options.captureError.message = "OPENAI_API_KEY (or OPENAI_IMAGE_API_KEY) is not configured";
+      options.captureError.message = "Neither OPENAI_API_KEY nor OPENROUTER_API_KEY is configured";
     }
     return null;
   }
@@ -1189,30 +1209,61 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     appendImageFlowLog(L, `[单帧·遮罩] mask_url 已附带 · ${maskUrl.slice(0, 96)}`);
   }
 
-  appendImageFlowLog(
-    L,
-    `[单帧·OpenAI] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${options.aspectRatio === "16:9" ? "1536x1024" : "1024x1536"} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}`,
-  );
-  const err: { message?: string } = {};
-  const url = await postOpenAiGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
-    aspectRatio: options.aspectRatio,
-    flowLog: L,
-    quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
-    imageUrls: hasRef ? refImageUrls : undefined,
-    maskUrl: hasRef ? maskUrl : undefined,
-    captureError: err,
-  });
-  if (url) {
-    appendImageFlowLog(L, "[单帧·OpenAI] GPT-IMAGE-2 成功，已落库");
-    return url;
+  if (tryOpenAi) {
+    appendImageFlowLog(
+      L,
+      `[单帧·OpenAI] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${options.aspectRatio === "16:9" ? "1536x1024" : "1024x1536"} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}`,
+    );
+    const err: { message?: string } = {};
+    const url = await postOpenAiGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
+      aspectRatio: options.aspectRatio,
+      flowLog: L,
+      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+      imageUrls: hasRef ? refImageUrls : undefined,
+      maskUrl: hasRef ? maskUrl : undefined,
+      captureError: err,
+    });
+    if (url) {
+      appendImageFlowLog(L, "[单帧·OpenAI] GPT-IMAGE-2 成功，已落库");
+      return url;
+    }
+    if (options.captureError && err.message) {
+      options.captureError.openaiError = err.message;
+      options.captureError.message = err.message;
+    }
+    appendImageFlowLog(L, `[单帧·OpenAI] 失败 · ${String(err.message || "empty").slice(0, 160)}`);
   }
-  if (options.captureError && err.message) options.captureError.message = err.message;
-  appendImageFlowLog(L, "[单帧] OpenAI GPT-IMAGE-2 无图 · 本条失败");
+
+  if (openrouterReady) {
+    appendImageFlowLog(
+      L,
+      `[单帧·OpenRouter] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${openaiReady ? " · OpenAI失败后回落" : ""}`,
+    );
+    const orErr: { message?: string } = {};
+    const url = await postOpenRouterGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
+      aspectRatio: options.aspectRatio,
+      flowLog: L,
+      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+      imageUrls: hasRef ? refImageUrls : undefined,
+      captureError: orErr,
+    });
+    if (url) {
+      appendImageFlowLog(L, "[单帧·OpenRouter] GPT-IMAGE-2 成功，已落库");
+      return url;
+    }
+    if (options.captureError && orErr.message) {
+      options.captureError.openrouterError = orErr.message;
+      const oai = options.captureError.openaiError;
+      options.captureError.message = oai ? `OpenAI: ${oai} | OpenRouter: ${orErr.message}` : orErr.message;
+    }
+  }
+
+  appendImageFlowLog(L, "[单帧] OpenAI/OpenRouter GPT-IMAGE-2 均无图 · 本条失败");
   return null;
 }
 
 /**
- * 版式出图：走 {@link generateGptImage2FromRawEnglishPrompt}（仅官方 OpenAI）。
+ * 版式出图：走 {@link generateGptImage2FromRawEnglishPrompt}（OpenAI → OpenRouter）。
  */
 export async function generateGptImage2(options: {
   title: string;
@@ -1231,7 +1282,7 @@ export async function generateGptImage2(options: {
     forImagenFallback: false,
   });
   // 只传版式核心；画幅锁 + 摄影修饰由 generateGptImage2FromRawEnglishPrompt 统一追加
-  appendImageFlowLog(L, "[版式] GPT-IMAGE-2 · 9:16（仅官方 OpenAI）");
+  appendImageFlowLog(L, "[版式] GPT-IMAGE-2 · 9:16（OpenAI → OpenRouter）");
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: core,
     aspectRatio: "9:16",
