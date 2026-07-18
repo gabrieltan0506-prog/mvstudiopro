@@ -72,6 +72,8 @@ const queryClient = new QueryClient();
 const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.getGrowthSnapshot",
   "mvAnalysis.getPlatformDashboard",
+  /** 同步全案 Stage2（冒烟/部分入口）；与入队路径同级长耗时，须打 Fly 避免 Vercel 反代超时 */
+  "mvAnalysis.getPlatformContent",
   "mvAnalysis.generateVisualReport",
   "mvAnalysis.generatePlatformTopicShortlist",
   "mvAnalysis.expandPlatformTopicPicks",
