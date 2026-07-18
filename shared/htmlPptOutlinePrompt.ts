@@ -156,7 +156,7 @@ export function buildHtmlPptOutlineSystemPrompt(): string {
 
 硬性要求（不过关=失败）：
 1. 紧扣用户主题/用途/补充背景里的数字与口径；禁止无关行业模板套话。补充背景有具体数字时，**必须原样或近似写入 series/kpi/note**，不得改成 0–100 假占比而丢掉量级（如 168亿、6万部、181倍）。
-2. **第 1 页（P1）必须是目录/议程（viz=steps 或 hub）**，逐条列出 confirmedThemes 的**中文 themeTitle**（写在 series.label / bullets）；后续页按主题展开。每页 JSON **必须**带 themeId/themeTitle 元数据，但 **themeId 禁止出现在任何可见文案**（title/subtitle/kpi/note/bullets/highlight/series.label），禁止写成 [u_1_xxx]、growth_forecast 市场规模 这类泄漏。
+2. **页序**：pages[0] 必须是封面（viz=cover）；pages[1] 必须是目录/议程（viz=steps 或 hub），逐条列出 confirmedThemes 的**中文 themeTitle**（写在 series.label / bullets）；后续页按主题展开。每页 JSON **必须**带 themeId/themeTitle 元数据，但 **themeId 禁止出现在任何可见文案**（title/subtitle/kpi/note/bullets/highlight/series.label），禁止写成 [u_1_xxx]、growth_forecast 市场规模 这类泄漏。
 3. 若 confirmedThemes 含「前景/预测/展望/2026/2030」等未来向主题，**必须至少 1 页 line 或 cards 呈现预测走势/区间**。
 4. 每页一个主判断；标题短而锋利；bullets ≥3 条且含数字/对比/动作；subtitle 写清口径或时间窗。
 5. **≥70% 页面必须带 series**（每页 3–8 项）。value 可以是绝对量级或 0–100 占比/强度；label 用短中文（≤12 字）。
@@ -230,7 +230,7 @@ function manhuaMarketSlotBrief(pageCount: number): string {
 function formatConfirmedThemes(themes?: HtmlPptTheme[]): string {
   if (!themes?.length) return "";
   return [
-    "【已确认大纲主题——P1 目录须全覆盖，后续页逐主题展开】",
+    "【已确认大纲主题——pages[1] 目录须全覆盖，后续页逐主题展开】",
     "说明：方括号内是 JSON 元数据 themeId，**投屏文案只写后面的中文标题**。",
     ...themes.map((t, i) => `${i + 1}. themeId=${t.id} → 可见标题「${t.title}」`),
   ].join("\n");
@@ -255,7 +255,7 @@ export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): st
       : "【补充背景】无；请基于主题做合理、具体、可投屏的专业推断，关键数字在 note 标明「推演量级」。",
     isManhuaMarketTopic(title, brief) ? manhuaMarketSlotBrief(n) : "",
     themesBlock
-      ? "P1 必须是目录/议程（steps 或 hub），series/bullets 只写中文 themeTitle；每页 JSON 带 themeId/themeTitle，可见文案禁止出现 themeId。"
+      ? "pages[0]=封面(cover)；pages[1]=目录/议程(steps 或 hub)，series/bullets 只写中文 themeTitle；每页 JSON 带 themeId/themeTitle，可见文案禁止出现 themeId。"
       : "",
     "图表纪律：复杂比较必须进 series + 选对 viz（bars/columns/compare/line/ring/table 等），禁止只用文字罗列。",
     "图表页仍须给 ≥3 条 bullets（讲解口播点）；highlight[] 标注 0–3 条需高亮的关键短语。",
@@ -326,7 +326,7 @@ function mapRawPage(r: Record<string, unknown>): HtmlPptPage {
           const n = Number(x.value);
           return {
             label: String(x.label || "").trim().slice(0, 28),
-            value: Number.isFinite(n) && n >= 0 ? Math.min(1_000_000, n) : 0,
+            value: Number.isFinite(n) && n >= 0 ? Math.min(100_000_000, n) : 0,
           };
         })
         .filter((s) => s.label)

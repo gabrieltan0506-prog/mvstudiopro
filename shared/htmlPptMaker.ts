@@ -54,7 +54,14 @@ export type HtmlPptTheme = { id: string; title: string };
 function clampSeriesValue(v: unknown): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.min(1_000_000, n);
+  return Math.min(100_000_000, n);
+}
+
+/** bullets 推断：亿相对「万」放大，便于同页混排时保留量级差 */
+function scaleAbsoluteSeriesUnit(n: number, unit?: string): number {
+  if (unit === "亿") return clampSeriesValue(n * 10_000);
+  if (unit === "万" || unit === "倍") return clampSeriesValue(n);
+  return clampSeriesValue(n);
 }
 
 function seriesBarPct(value: number, max: number): number {
@@ -656,10 +663,17 @@ export function scrubVisibleThemeIdLeaks(text: string, knownIds?: string[]): str
 
 /** 规范化用户编辑后的清单 */
 export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
+  const deckThemeIds = [
+    ...new Set(
+      (pages || [])
+        .map((p) => String(p?.themeId || "").trim().slice(0, 40))
+        .filter((id) => id.length >= 2),
+    ),
+  ];
   return (pages || [])
     .map((p) => {
       const themeId = p?.themeId ? String(p.themeId).trim().slice(0, 40) : undefined;
-      const known = themeId ? [themeId] : undefined;
+      const known = deckThemeIds.length ? deckThemeIds : themeId ? [themeId] : undefined;
       const scrub = (raw: unknown, max: number) =>
         scrubVisibleThemeIdLeaks(String(raw || ""), known).slice(0, max);
       return {
@@ -732,9 +746,16 @@ function seriesFromPage(page: HtmlPptPage, index: number): Array<{ label: string
       const value = pctMatch
         ? Math.max(0, Math.min(100, Number(pctMatch[1])))
         : absMatch
-          ? clampSeriesValue(Number(absMatch[1]) * (absMatch[2] === "亿" ? 1 : absMatch[2] === "万" ? 1 : 1))
+          ? scaleAbsoluteSeriesUnit(Number(absMatch[1]), absMatch[2])
           : 35 + ((seed >> (i * 3)) % 55);
-      return { label: b.replace(/\s*\d+(?:\.\d+)?\s*%?/g, "").trim().slice(0, 18) || `项${i + 1}`, value };
+      return {
+        label:
+          b
+            .replace(/\s*\d+(?:\.\d+)?\s*(?:%|亿|万|倍)?/g, "")
+            .trim()
+            .slice(0, 18) || `项${i + 1}`,
+        value,
+      };
     });
   }
   if (pct != null) {
@@ -857,19 +878,33 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 5)
       .map(
         (s, i) =>
-          `<div class="metric-row chart-in" data-build="${i + 2}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, sideMax)}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b><i></i></div>`,
+          `<div class="metric-row chart-in" data-build="${i + 2}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, sideMax)}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}" data-display="${escapeHtml(formatSeriesDisplay(s.value))}">0</b><i></i></div>`,
       )
       .join("");
     const kpiText = page.kpi || `${Math.round(pct)}%`;
-    const kpiNum = parseKpiPercent(page.kpi) ?? Math.round(pct);
+    const kpiPct = parseKpiPercent(page.kpi);
+    const rgId = `rg-${index}`;
+    let kpiHtml: string;
+    if (kpiPct != null || !page.kpi) {
+      const kpiNum = kpiPct ?? Math.round(pct);
+      kpiHtml = `<strong class="countup" data-to="${kpiNum}" data-suffix="%" data-display="${escapeHtml(kpiText)}">${escapeHtml(kpiText)}</strong>`;
+    } else {
+      const abs = page.kpi.match(/^(\d+(?:\.\d+)?)(.*)$/);
+      if (abs) {
+        const suffix = abs[2] || "";
+        kpiHtml = `<strong class="countup" data-to="${Number(abs[1])}" data-suffix="${escapeHtml(suffix)}" data-display="${escapeHtml(kpiText)}">${escapeHtml(kpiText)}</strong>`;
+      } else {
+        kpiHtml = `<strong>${escapeHtml(kpiText)}</strong>`;
+      }
+    }
     return `<div class="viz viz-split">
   <div class="viz-ring chart-in" data-build="1" style="--c:${t0.c};--g:${t0.g}">
     <svg class="ring-svg" viewBox="0 0 140 140" aria-hidden="true">
-      <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${t0.c}"/><stop offset="55%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
+      <defs><linearGradient id="${rgId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${t0.c}"/><stop offset="55%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
       <circle class="ring-track" cx="70" cy="70" r="${r}"/>
-      <circle class="ring-value ring-grad" cx="70" cy="70" r="${r}" stroke-dasharray="${dash} ${circ.toFixed(1)}"/>
+      <circle class="ring-value" cx="70" cy="70" r="${r}" stroke="url(#${rgId})" stroke-dasharray="${dash} ${circ.toFixed(1)}"/>
     </svg>
-    <div class="ring-label"><strong class="countup" data-to="${kpiNum}" data-suffix="%">${escapeHtml(kpiText)}</strong><span>主指标</span></div>
+    <div class="ring-label">${kpiHtml}<span>主指标</span></div>
   </div>
   <div class="viz-side">${side}</div>
 </div>`;
@@ -931,10 +966,11 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const labs = pts
       .map((s, i) => `<span class="line-lab chart-in" data-build="${i + 2}" style="${toneStyle(i)}">${escapeHtml(s.label)}</span>`)
       .join("");
+    const lgId = `lg-${index}`;
     return `<div class="viz viz-line">
   <svg class="line-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
-    <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="${t0.c}"/><stop offset="50%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
-    <polyline class="line-path chart-in" data-build="1" points="${poly}" fill="none" stroke="url(#lg)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <defs><linearGradient id="${lgId}" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="${t0.c}"/><stop offset="50%" stop-color="${t1.c}"/><stop offset="100%" stop-color="${t3.c}"/></linearGradient></defs>
+    <polyline class="line-path chart-in" data-build="1" points="${poly}" fill="none" stroke="url(#${lgId})" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
     ${dots}
   </svg>
   <div class="line-labs">${labs}</div>
@@ -1031,7 +1067,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
 export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
   const styleId = input.styleId in HTML_PPT_STYLES ? input.styleId : "dark_research";
   const styleMeta = HTML_PPT_STYLES[styleId];
-  const pages = (input.pages || []).filter((p) => p && p.title);
+  const pages = normalizeHtmlPptPages(input.pages || []);
   const safePages = pages.length
     ? pages
     : buildDefaultHtmlPptPages(input.title, 6, input.purposeZh, styleId);
@@ -1191,7 +1227,6 @@ li{margin:7px 0}
 .ring-svg{width:100%;height:100%;transform:rotate(-90deg)}
 .ring-track{fill:none;stroke:rgba(148,163,184,.22);stroke-width:12}
 .ring-value{fill:none;stroke:var(--c,#22d3ee);stroke-width:12;stroke-linecap:round}
-.ring-value.ring-grad{stroke:url(#rg)}
 .viz-ring:not(.fx-show) .ring-value,.viz-cover:not(.fx-show) .ring-value{stroke-dasharray:0 999 !important}
 .viz-ring.fx-show .ring-value,.viz-cover.fx-show .ring-value{animation:ringDraw 1.45s cubic-bezier(.22,1,.36,1) both}
 .ring-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
@@ -1354,6 +1389,7 @@ ${slidesHtml}
       node.setAttribute('data-counted','1');
       var to=Number(node.getAttribute('data-to')||0);
       var suffix=node.getAttribute('data-suffix')||'';
+      var display=node.getAttribute('data-display')||'';
       var start=performance.now();
       var dur=1200;
       function tick(now){
@@ -1361,6 +1397,7 @@ ${slidesHtml}
         var eased=1-Math.pow(1-t,3);
         node.textContent=Math.round(to*eased)+suffix;
         if(t<1) requestAnimationFrame(tick);
+        else if(display) node.textContent=display;
       }
       node.textContent='0'+suffix;
       requestAnimationFrame(tick);

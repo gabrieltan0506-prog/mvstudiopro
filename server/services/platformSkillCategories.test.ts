@@ -6,9 +6,11 @@ import {
 } from "../../shared/platformSkillCategories.js";
 
 describe("platformSkillCategories", () => {
-  it("classifies core / graphic / video / lane / custom", () => {
+  it("classifies core / graphic / templates / deck / video / lane / custom", () => {
     expect(resolvePlatformSkillCategory({ id: "hook-solution-cta" })).toBe("core");
     expect(resolvePlatformSkillCategory({ id: "xhs-collectible-note" })).toBe("graphic");
+    expect(resolvePlatformSkillCategory({ id: "encyclopedic-infographic" })).toBe("templates");
+    expect(resolvePlatformSkillCategory({ id: "website-html-ppt" })).toBe("deck");
     expect(resolvePlatformSkillCategory({ id: "director-craft" })).toBe("video");
     expect(resolvePlatformSkillCategory({ id: "forensic-life-lens" })).toBe("lane");
     expect(resolvePlatformSkillCategory({ id: "my-skill", source: "user" })).toBe("custom");

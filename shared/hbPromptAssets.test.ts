@@ -97,14 +97,16 @@ describe("HB prompt assets", () => {
 
   it("skills and templates stay categorized", () => {
     expect(resolvePlatformSkillCategory({ id: "encyclopedic-infographic" })).toBe("templates");
+    expect(resolvePlatformSkillCategory({ id: "website-html-ppt" })).toBe("deck");
     expect(resolvePlatformSkillCategory({ id: "graphic-note-rhythm" })).toBe("graphic");
     expect(resolvePlatformSkillCategory({ id: "ai-feed-ad" })).toBe("video");
     const groups = groupPlatformSkillsByCategory([
       { id: "ai-feed-ad", source: "builtin" },
       { id: "encyclopedic-infographic", source: "builtin" },
+      { id: "website-html-ppt", source: "builtin" },
       { id: "graphic-note-rhythm", source: "builtin" },
     ]);
-    expect(groups.map((g) => g.category.id)).toEqual(["graphic", "templates", "video"]);
+    expect(groups.map((g) => g.category.id)).toEqual(["graphic", "templates", "deck", "video"]);
     expect(listImage2TemplatesByGroup().map((g) => g.group.id)).toEqual([
       "portrait",
       "lifestyle",

@@ -137,6 +137,7 @@ import {
   PenLine,
   PlayCircle,
   Rocket,
+  Presentation,
   RefreshCw,
   Scissors,
   Share2,
@@ -7890,7 +7891,7 @@ export default function PlatformPage() {
             })()}
           </div>
 
-          {/* 一级 Tab：按「文案 / 模板 / 素材」三段排布，勿打散 */}
+          {/* 一级 Tab：按「文案 / 动效PPT / 素材」三段排布，勿打散 */}
           <div className="mb-5 flex flex-col gap-2">
             <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
               <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">文案</span>
@@ -7948,20 +7949,29 @@ export default function PlatformPage() {
                 自定义选题
               </button>
             </div>
-            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
-              <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">模板</span>
+            <div
+              className={`flex flex-wrap items-center gap-2 rounded-xl border p-1.5 transition ${
+                customWorkspaceTab === "htmlPpt"
+                  ? "border-indigo-400/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(129,140,248,0.08))] shadow-[0_0_0_1px_rgba(129,140,248,0.12)]"
+                  : "border-indigo-400/25 bg-[rgba(99,102,241,0.08)]"
+              }`}
+            >
+              <div className="flex min-w-[7.5rem] flex-col px-2 py-0.5">
+                <span className="text-[11px] font-bold tracking-wide text-indigo-200">动效PPT</span>
+                <span className="text-[10px] leading-tight text-indigo-100/55">路演投屏 · 独立能力</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setCustomWorkspaceTab("htmlPpt")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "htmlPpt"
                     ? "bg-[linear-gradient(135deg,#818cf8,#6366f1)] text-white shadow-sm"
-                    : "text-[#c9c0e6]/70 hover:text-white"
+                    : "bg-black/25 text-indigo-100/85 hover:bg-black/40 hover:text-white"
                 }`}
               >
-                <FileText className="h-3.5 w-3.5 shrink-0" />
-                动效PPT生成演示
+                <Presentation className="h-4 w-4 shrink-0" />
+                生成动效PPT
               </button>
             </div>
             <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">

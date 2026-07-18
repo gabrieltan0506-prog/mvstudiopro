@@ -7236,6 +7236,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             themeTitle: z.string().max(40).optional(),
             highlight: z.array(z.string()).max(6).optional(),
             imageUrl: z.string().url().max(2048).optional(),
+            imageMotion: z
+              .array(
+                z.object({
+                  at: z.number().int().min(0).max(20),
+                  pose: z.enum(["hero", "dock_right", "dock_left", "dock_bottom"]),
+                }),
+              )
+              .max(5)
+              .optional(),
           }),
           pageIndex: z.number().int().min(0).max(15),
           totalPages: z.number().int().min(10).max(16),
@@ -7362,6 +7371,31 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
             message: rawMessage || "插图生成失败，请稍后重试",
+          });
+        }
+      }),
+
+    /**
+     * 动效 PPT · PPTX 导出前拉取插图 data URL（免费；绕过 GCS CORS）。
+     */
+    resolveHtmlPptPptxImages: protectedProcedure
+      .input(
+        z.object({
+          urls: z.array(z.string().url().max(2048)).max(16),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { fetchHtmlPptPptxImageDataUrls } = await import(
+          "./services/platformHtmlPptPptxAssets.js"
+        );
+        try {
+          const imageDataByUrl = await fetchHtmlPptPptxImageDataUrls(input.urls);
+          return { imageDataByUrl };
+        } catch (err) {
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: rawMessage || "插图载入失败，请稍后重试",
           });
         }
       }),

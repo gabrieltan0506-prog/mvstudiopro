@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   HTML_PPT_STYLES,
   HTML_PPT_VIZ_KINDS,
@@ -11,7 +11,7 @@ import {
   type HtmlPptTheme,
   type HtmlPptVizKind,
 } from "@shared/htmlPptMaker";
-import { downloadHtmlPptPptx } from "@shared/htmlPptPptx";
+import { downloadHtmlPptPptx, listHtmlPptPptxImageUrls } from "@shared/htmlPptPptx";
 import { INFOGRAPHIC_NOTE_TEMPLATES } from "@shared/infographicNoteTemplates";
 import {
   CREDIT_COSTS,
@@ -84,6 +84,13 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const suggestThemesMutation = trpc.mvAnalysis.suggestHtmlPptThemes.useMutation();
   const patchPageMutation = trpc.mvAnalysis.patchHtmlPptPage.useMutation();
   const slideImageMutation = trpc.mvAnalysis.generateHtmlPptSlideImage.useMutation();
+  const resolvePptxImagesMutation = trpc.mvAnalysis.resolveHtmlPptPptxImages.useMutation();
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const styleList = useMemo(
     () => Object.entries(HTML_PPT_STYLES) as [HtmlPptStyleId, (typeof HTML_PPT_STYLES)[HtmlPptStyleId]][],
@@ -96,7 +103,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     generateOutlineMutation.isPending ||
     suggestThemesMutation.isPending ||
     patchPageMutation.isPending ||
-    slideImageMutation.isPending;
+    slideImageMutation.isPending ||
+    resolvePptxImagesMutation.isPending;
 
   const confirmedThemes = (): HtmlPptTheme[] =>
     themeRows.filter((t) => t.selected && t.title.trim()).map((t) => ({ id: t.id, title: t.title.trim() }));
@@ -201,34 +209,49 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         const indices = [0, Math.min(2, nextPages.length - 1), Math.min(4, nextPages.length - 1)].filter(
           (v, i, a) => a.indexOf(v) === i,
         );
-        for (const idx of indices) {
-          const page = nextPages[idx];
-          if (!page) continue;
+        const pollLabel = window.setInterval(() => {
           setAiBusyLabel(formatWaitLabel("正在生成插图", Date.now() - imgStartedAt));
-          try {
-            const img = await slideImageMutation.mutateAsync({
-              deckTitle: title.trim(),
-              templateId: imageTemplateId === "auto" ? null : imageTemplateId,
-              styleId,
-              page: {
-                title: page.title,
-                subtitle: page.subtitle,
-                bullets: page.bullets,
-                kpi: page.kpi,
-                note: page.note,
-                viz: page.viz,
-                series: page.series,
-                themeId: page.themeId,
-                themeTitle: page.themeTitle,
-                highlight: page.highlight,
-              },
+        }, 1000);
+        try {
+          const settled = await Promise.all(
+            indices.map(async (idx) => {
+              const page = nextPages[idx];
+              if (!page) return null;
+              try {
+                const img = await slideImageMutation.mutateAsync({
+                  deckTitle: title.trim(),
+                  templateId: imageTemplateId === "auto" ? null : imageTemplateId,
+                  styleId,
+                  page: {
+                    title: page.title,
+                    subtitle: page.subtitle,
+                    bullets: page.bullets,
+                    kpi: page.kpi,
+                    note: page.note,
+                    viz: page.viz,
+                    series: page.series,
+                    themeId: page.themeId,
+                    themeTitle: page.themeTitle,
+                    highlight: page.highlight,
+                  },
+                });
+                return { idx, imageUrl: img.imageUrl };
+              } catch {
+                return null;
+              }
+            }),
+          );
+          const byIdx = new Map(
+            settled.filter((x): x is { idx: number; imageUrl: string } => Boolean(x)).map((x) => [x.idx, x.imageUrl]),
+          );
+          if (byIdx.size) {
+            nextPages = nextPages.map((p, i) => {
+              const url = byIdx.get(i);
+              return url ? { ...p, imageUrl: url } : p;
             });
-            nextPages = nextPages.map((p, i) =>
-              i === idx ? { ...p, imageUrl: img.imageUrl } : p,
-            );
-          } catch {
-            /* 插图失败不阻断清单 */
           }
+        } finally {
+          window.clearInterval(pollLabel);
         }
       }
 
@@ -307,6 +330,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           themeTitle: page.themeTitle,
           highlight: page.highlight,
           imageUrl: page.imageUrl,
+          imageMotion: page.imageMotion,
         },
         pageIndex: index,
         totalPages: Math.max(PLATFORM_HTML_PPT_PAGE_MIN, pages.length),
@@ -366,16 +390,50 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     const deckPages = normalized.length
       ? normalized
       : buildDefaultHtmlPptPages(title, pageCount ?? PLATFORM_HTML_PPT_PAGE_MIN, purpose, styleId);
+    const deck = {
+      title,
+      styleId,
+      purposeZh: purpose,
+      pages: deckPages,
+    };
     setAiError(null);
     setAiBusy(true);
     setAiBusyLabel("正在导出可编辑 PPTX…");
     try {
-      await downloadHtmlPptPptx({
-        title,
-        styleId,
-        purposeZh: purpose,
-        pages: deckPages,
-      });
+      const imageUrls = listHtmlPptPptxImageUrls(deck);
+      let imageDataByUrl: Record<string, string> = {};
+      if (imageUrls.length) {
+        setAiBusyLabel(`正在载入插图（${imageUrls.length}）…`);
+        const resolved = await resolvePptxImagesMutation.mutateAsync({ urls: imageUrls });
+        imageDataByUrl = resolved.imageDataByUrl || {};
+        const missing = imageUrls.filter((u) => !imageDataByUrl[u]);
+        if (missing.length) {
+          throw new Error("部分插图未能载入，请重试导出");
+        }
+      }
+
+      let styleBgDataUrl: string | undefined;
+      try {
+        const bgPath = HTML_PPT_STYLES[styleId]?.bgUrl;
+        if (bgPath && typeof window !== "undefined") {
+          const abs = new URL(bgPath, window.location.origin).toString();
+          const resp = await fetch(abs);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            styleBgDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ""));
+              reader.onerror = () => reject(new Error("叠底图读取失败"));
+              reader.readAsDataURL(blob);
+            });
+          }
+        }
+      } catch {
+        /* 叠底可选 */
+      }
+
+      setAiBusyLabel("正在写入 PPTX…");
+      await downloadHtmlPptPptx(deck, undefined, { imageDataByUrl, styleBgDataUrl });
     } catch (e: unknown) {
       setAiError(e instanceof Error ? e.message : "PPTX 导出失败");
     } finally {
@@ -395,12 +453,12 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   };
 
   return (
-    <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+    <div className="space-y-4 rounded-2xl border border-indigo-400/25 bg-[linear-gradient(180deg,rgba(99,102,241,0.10),rgba(0,0,0,0.28))] p-4">
       <div>
-        <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
-        <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          先填主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
-          SVG/表格动效保留；插图默认开，且必须套版式模板（可选或自动判断）。
+        <div className="text-sm font-semibold text-indigo-100">动效PPT</div>
+        <p className="mt-1 text-[11px] leading-relaxed text-white/55">
+          路演投屏专用：主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
+          支持分步 SVG 动效、关键页插图，导出 HTML 或可编辑 PPTX。
           改数字请直接改清单再刷新预览（免费）。
         </p>
       </div>
@@ -785,7 +843,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         <div className="space-y-3">
           <p className="text-[11px] text-white/50">
             数字写错：点「返回改清单」免费改 → 再刷新预览。空格=下一步动效，←→=翻页。HTML
-            适合投屏；PPTX 适合拿回本地改隐私数据与措辞。
+            适合投屏；PPTX 保留同款配色与插图（无分步动效），便于本地改隐私数据与措辞。
           </p>
           <div className="flex flex-wrap gap-2">
             <button

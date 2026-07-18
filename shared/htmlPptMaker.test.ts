@@ -44,6 +44,24 @@ describe("normalizeHtmlPptPages", () => {
     expect(page?.themeId).toBe("u_1_oaic");
   });
 
+  it("scrubs other pages' themeIds using deck-wide known ids", () => {
+    const pages = normalizeHtmlPptPages([
+      {
+        title: "目录",
+        themeId: "agenda",
+        bullets: ["growth_forecast 增长", "content_supply 供给"],
+      },
+      {
+        title: "市场规模",
+        themeId: "growth_forecast",
+        subtitle: "content_supply 不应泄漏",
+      },
+    ]);
+    expect(pages[0]?.bullets?.join(" ")).not.toMatch(/growth_forecast|content_supply/);
+    expect(pages[0]?.bullets?.join(" ")).toContain("增长");
+    expect(pages[1]?.subtitle).toBe("不应泄漏");
+  });
+
   it("fills default imageMotion when page has imageUrl", () => {
     const [page] = normalizeHtmlPptPages([
       {
@@ -116,6 +134,32 @@ describe("resolveHtmlPptImageMotion", () => {
 });
 
 describe("buildHtmlPptDocument quality gates", () => {
+  it("uses per-page gradient ids and does not force % on absolute ring kpi", () => {
+    const pages = buildDefaultHtmlPptPages("环形指标", 10, "数据洞察", "dark_research").map((p, i) =>
+      i === 2
+        ? {
+            ...p,
+            title: "渗透",
+            viz: "ring" as const,
+            kpi: "168亿",
+            series: [
+              { label: "渗透", value: 35 },
+              { label: "对照", value: 20 },
+            ],
+          }
+        : p,
+    );
+    const html = buildHtmlPptDocument({
+      title: "环形指标",
+      styleId: "dark_research",
+      pages,
+    });
+    expect(html).toContain('id="rg-2"');
+    expect(html).toContain("stroke=\"url(#rg-2)\"");
+    expect(html).toContain('data-suffix="亿"');
+    expect(html).not.toMatch(/data-to="168"[^>]*data-suffix="%"/);
+  });
+
   it("does not show style labelZh in slide chrome; controls sit top-right", () => {
     const pages = buildDefaultHtmlPptPages("象牙测试", 10, "学术汇报", "ivory_academic");
     const html = buildHtmlPptDocument({
