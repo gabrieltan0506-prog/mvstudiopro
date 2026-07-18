@@ -137,7 +137,9 @@ export async function generateHtmlPptOutline(
     );
 
     const pages = [...part1.pages, ...part2.pages].slice(0, pageCount);
-    if (pages.length < 3) throw new Error("模型返回页数不足，请重试");
+    if (pages.length < pageCount) {
+      throw new Error(`模型返回页数不足（${pages.length}/${pageCount}），请重试`);
+    }
     if (pages[0] && !pages[0].viz) pages[0] = { ...pages[0], viz: "cover" };
     const last = pages[pages.length - 1];
     if (last && !last.viz) pages[pages.length - 1] = { ...last, viz: "steps" };

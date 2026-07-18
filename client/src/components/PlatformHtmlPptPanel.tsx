@@ -86,7 +86,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       setAiBusyLabel("后台生成中，请稍候…");
       const j = await pollJobUntilTerminal(enqueued.jobId, {
         intervalMs: 2500,
-        maxWaitMs: 16 * 60_000,
+        maxWaitMs: 24 * 60_000,
         adaptiveBackoffAfterAttempts: 36,
         maxIntervalMs: 8000,
         onPoll: ({ status, attempt }) => {
@@ -112,7 +112,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           : {};
       const rawPages = Array.isArray(out.pages) ? (out.pages as HtmlPptPage[]) : [];
       const nextPages = normalizeHtmlPptPages(rawPages);
-      if (nextPages.length < 3) throw new Error("返回页数不足");
+      if (nextPages.length < pageCount) {
+        throw new Error(`返回页数不足（${nextPages.length}/${pageCount}）`);
+      }
       if (out.deckTitle?.trim()) setTitle(out.deckTitle.trim());
       setPages(nextPages);
       setAiSummary(out.summary || null);

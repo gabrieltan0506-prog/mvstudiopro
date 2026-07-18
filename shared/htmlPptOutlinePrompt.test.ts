@@ -16,6 +16,32 @@ describe("htmlPptOutlinePrompt", () => {
     expect(p).toContain("正好 8 页");
     expect(p).toContain("dark_research");
     expect(p).toContain("近7日蓝海词");
+    expect(p).not.toContain("必覆盖槽位");
+  });
+
+  it("injects manhua market slot checklist for 漫剧 topics", () => {
+    const p = buildHtmlPptOutlineUserPrompt({
+      title: "AI漫剧的市场现状与前景",
+      purposeZh: "行业路演",
+      pageCount: 13,
+      styleId: "dark_research",
+      briefZh: "DataEye 168亿；红果/抖音政策",
+    });
+    expect(p).toContain("必覆盖槽位");
+    expect(p).toContain("品类供给占比");
+    expect(p).toContain("国内 vs 出海");
+  });
+
+  it("rejects short outlines when pageCount is required", () => {
+    const raw = JSON.stringify({
+      deckTitle: "短稿",
+      summary: "不够",
+      pages: [
+        { title: "封面", viz: "cover" },
+        { title: "一点", viz: "bars", series: [{ label: "A", value: 1 }] },
+      ],
+    });
+    expect(() => parseHtmlPptOutlineJson(raw, { pageCount: 8 })).toThrow(/页数不足/);
   });
 
   it("parses llm json into pages with series", () => {

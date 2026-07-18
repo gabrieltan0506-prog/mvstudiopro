@@ -7139,6 +7139,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           });
         }
 
+        // 立刻唤醒 worker，避免首轮 poll 空等
+        void import("./jobs/runner.js")
+          .then((m) => m.processJobsOnce())
+          .catch(() => {});
+
         return {
           jobId,
           status: "queued" as const,
