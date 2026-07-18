@@ -7367,6 +7367,31 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
+     * 动效 PPT · PPTX 导出前拉取插图 data URL（免费；绕过 GCS CORS）。
+     */
+    resolveHtmlPptPptxImages: protectedProcedure
+      .input(
+        z.object({
+          urls: z.array(z.string().url().max(2048)).max(16),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { fetchHtmlPptPptxImageDataUrls } = await import(
+          "./services/platformHtmlPptPptxAssets.js"
+        );
+        try {
+          const imageDataByUrl = await fetchHtmlPptPptxImageDataUrls(input.urls);
+          return { imageDataByUrl };
+        } catch (err) {
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: rawMessage || "插图载入失败，请稍后重试",
+          });
+        }
+      }),
+
+    /**
      * 自定义创作工作台 · 深度优化文案（纯 LLM，无出图）。
      * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
      */
