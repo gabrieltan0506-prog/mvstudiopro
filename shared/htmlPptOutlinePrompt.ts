@@ -97,6 +97,61 @@ export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): st
   ].join("\n");
 }
 
+/** 从被截断的模型输出里尽量捞出完整 page 对象 */
+function salvageTruncatedOutlineJson(raw: string): Record<string, unknown> | null {
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  const body = raw.slice(start);
+  const pagesIdx = body.search(/"pages"\s*:\s*\[/);
+  if (pagesIdx < 0) return null;
+  const arrStart = body.indexOf("[", pagesIdx);
+  if (arrStart < 0) return null;
+  const pages: unknown[] = [];
+  let i = arrStart + 1;
+  while (i < body.length) {
+    while (i < body.length && /[\s,]/.test(body[i]!)) i++;
+    if (body[i] === "]") break;
+    if (body[i] !== "{") break;
+    let depth = 0;
+    let j = i;
+    let inStr = false;
+    let esc = false;
+    for (; j < body.length; j++) {
+      const ch = body[j]!;
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          j++;
+          break;
+        }
+      }
+    }
+    if (depth !== 0) break;
+    try {
+      pages.push(JSON.parse(body.slice(i, j)));
+    } catch {
+      break;
+    }
+    i = j;
+  }
+  if (pages.length < 3) return null;
+  const titleMatch = body.match(/"deckTitle"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  const summaryMatch = body.match(/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  return {
+    deckTitle: titleMatch?.[1]?.replace(/\\"/g, '"') || "",
+    summary: summaryMatch?.[1]?.replace(/\\"/g, '"') || "",
+    pages,
+  };
+}
+
 export function parseHtmlPptOutlineJson(
   raw: string,
   opts?: { pageCount?: number },
@@ -113,7 +168,10 @@ export function parseHtmlPptOutlineJson(
       : trimmed;
     parsed = JSON.parse(jsonStr) as Record<string, unknown>;
   } catch {
-    throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
+    // 尝试从截断 JSON 抢救已完成的 pages 对象
+    const salvaged = salvageTruncatedOutlineJson(trimmed);
+    if (!salvaged) throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
+    parsed = salvaged;
   }
 
   const rawPages = Array.isArray(parsed.pages) ? parsed.pages : [];
