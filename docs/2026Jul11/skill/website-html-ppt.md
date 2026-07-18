@@ -1,18 +1,20 @@
 ---
 id: website-html-ppt
-name: 动效PPT生成演示
+name: 动效PPT
 description: 多风格 16:9 横向翻页 HTML 动效 PPT；可选插图动效；导出 HTML + 可编辑 PPTX
-version: 2026-07-18-harden
-defaultEnabled: false
+version: 2026-07-18-deck
+defaultEnabled: true
 ---
 
-# 动效PPT生成演示 Skill
+# 动效PPT Skill
 
 ## 用途
-在 `/platform`「动效PPT生成演示」：主题 → 选风格 → 确认大纲主题 → **按页计费生成页面清单+图表数据** → 可选关键页插图 → 前端 SVG 分步动效渲染 → 导出单文件 HTML / 可编辑 PPTX。  
+在 `/platform` 一级栏位「动效PPT」：主题 → 选风格 → 确认大纲主题 → **按页计费生成页面清单+图表数据** → 可选关键页插图 → 前端 SVG 分步动效渲染 → 导出单文件 HTML / 可编辑 PPTX。  
 也可用免费「模板骨架」预览版式（无 LLM）。
 
 实现：`shared/htmlPptMaker.ts`（HTML 渲染）+ `shared/htmlPptPptx.ts`（PPTX）+ `shared/htmlPptOutlinePrompt.ts` / `server/services/platformHtmlPptOutline.ts`（大纲）+ 插图服务（可选）。计费见 `platformHtmlPptOutlineCredits` / `platformHtmlPptPagePatchCredits`。
+
+Skill 分类：`deck`（独立于「一键模板」）。
 
 ## 模板怎么扩？
 - **默认：代码自生成**——在 `HTML_PPT_STYLES` / `STYLE_CSS` 加风格即可，**不需要**上传 `.pptx`。

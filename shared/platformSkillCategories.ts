@@ -11,6 +11,7 @@ export type PlatformSkillCategoryId =
   | "core"
   | "graphic"
   | "templates"
+  | "deck"
   | "video"
   | "lane"
   | "custom";
@@ -25,7 +26,8 @@ export type PlatformSkillCategoryMeta = {
 export const PLATFORM_SKILL_CATEGORY_ORDER: readonly PlatformSkillCategoryMeta[] = [
   { id: "core", label: "核心通用", hint: "钩子结构、平台母语、审核表达、封面停滑等底座" },
   { id: "graphic", label: "图文笔记", hint: "笔记节奏、高收藏、蓝海自然、连载弧" },
-  { id: "templates", label: "一键模板", hint: "百科可视化、Image-2 复刻、HTML PPT、即梦封面" },
+  { id: "templates", label: "一键模板", hint: "百科可视化、Image-2 复刻、即梦封面" },
+  { id: "deck", label: "动效PPT", hint: "路演投屏、分步动效、HTML / PPTX 导出" },
   { id: "video", label: "视频与广告", hint: "导演中台、产品广告、短剧钩子、带货广告" },
   { id: "lane", label: "赛道专项", hint: "虚拟资料店、畅销品科普、法医、跨界医学、身份反差等" },
   { id: "custom", label: "我上传的", hint: "你自己上传的 Skill.md" },
@@ -44,11 +46,12 @@ export const PLATFORM_SKILL_ID_ORDER: readonly string[] = [
   "xhs-collectible-note",
   "blue-ocean-natural",
   "batch-arc-engagement",
-  // templates（HB 一键能力）
+  // templates（HB 一键能力；不含动效PPT）
   "encyclopedic-infographic",
   "image2-quick-templates",
-  "website-html-ppt",
   "jimeng-cover",
+  // deck（路演动效 PPT，独立栏位）
+  "website-html-ppt",
   // video / ads
   "director-craft",
   "json-director-middleware",
@@ -79,9 +82,10 @@ const GRAPHIC_IDS = new Set([
 const TEMPLATE_IDS = new Set([
   "encyclopedic-infographic",
   "image2-quick-templates",
-  "website-html-ppt",
   "jimeng-cover",
 ]);
+
+const DECK_IDS = new Set(["website-html-ppt"]);
 
 const VIDEO_IDS = new Set([
   "director-craft",
@@ -114,6 +118,7 @@ export function resolvePlatformSkillCategory(skill: {
 }): PlatformSkillCategoryId {
   if (skill.source === "user") return "custom";
   const id = String(skill.id || "").trim();
+  if (DECK_IDS.has(id)) return "deck";
   if (TEMPLATE_IDS.has(id)) return "templates";
   if (GRAPHIC_IDS.has(id)) return "graphic";
   if (VIDEO_IDS.has(id)) return "video";

@@ -96,7 +96,7 @@ ${parts.join("\n\n---\n\n")}`;
   return block;
 }
 
-/** /platform 内置池（不含 Canvas-only）。顺序对齐分类：core → graphic → templates → video → lane */
+/** /platform 内置池（不含 Canvas-only）。顺序对齐分类：core → graphic → templates → deck → video → lane */
 export const PLATFORM_BUILTIN_SKILL_IDS = [
   // core
   "hook-solution-cta",
@@ -112,8 +112,9 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   // templates
   "encyclopedic-infographic",
   "image2-quick-templates",
-  "website-html-ppt",
   "jimeng-cover",
+  // deck
+  "website-html-ppt",
   // video / ads
   "director-craft",
   "json-director-middleware",

@@ -453,12 +453,12 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   };
 
   return (
-    <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+    <div className="space-y-4 rounded-2xl border border-indigo-400/25 bg-[linear-gradient(180deg,rgba(99,102,241,0.10),rgba(0,0,0,0.28))] p-4">
       <div>
-        <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
-        <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          先填主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
-          SVG/表格动效保留；插图默认开，且必须套版式模板（可选或自动判断）。
+        <div className="text-sm font-semibold text-indigo-100">动效PPT</div>
+        <p className="mt-1 text-[11px] leading-relaxed text-white/55">
+          路演投屏专用：主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
+          支持分步 SVG 动效、关键页插图，导出 HTML 或可编辑 PPTX。
           改数字请直接改清单再刷新预览（免费）。
         </p>
       </div>
