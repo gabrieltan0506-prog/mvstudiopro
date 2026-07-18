@@ -263,28 +263,25 @@ function buildHeroEditPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   const shape = getPhotorealFaceShapeForId(c.id, c.gender);
   return [
-    "竖屏 9:16 图像编辑：只改骨相/下颌轮廓，保持同一人身份与发型大轮廓、服装、背景构图。",
+    "竖屏 9:16 安全向肖像编辑：只微调下颌骨相轮廓，保持同一人身份与发型大轮廓、得体日常服装、干净背景。",
     `角色「${name}」目标骨相：${shape.labelZh}。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
-    "保留眼睛/眉毛/鼻梁/唇形的可识别连续性，但下颌宽度与下巴形状必须按目标明显改变，拉开与网红尖下巴的差距。",
-    "禁止换人、禁止名人脸、禁止改成全员同一张小V脸。",
-    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    PHOTOREAL_ANTI_AI_LOCK_ZH,
+    "保留眼睛/眉毛/鼻梁/唇形连续性；下颌宽度与下巴形状按目标改变，避免全员尖下巴。",
+    "禁止换人、禁止名人脸、禁止暴露服装、禁止性暗示、禁止未成年人形象。",
+    "自然光写实皮肤即可，勿强调敏感部位。",
     PHOTOREAL_LOCK_FACE_NOT_WARDROBE_ZH,
-    "无文字无水印。",
+    "无文字无水印。全家宜内容。",
   ].join("\n");
 }
 
 function buildSheetEditPrompt(c: ManhuaCharacterTemplate): string {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
   return [
-    "竖屏设定卡图像编辑：上半胸像与下半 FRONT/SIDE/BACK 三视图必须同一张脸、同一骨相。",
-    `角色「${name}」。第二张参考为已改骨相的胸像——三视图与上半必须对齐该骨相。`,
+    "竖屏设定卡安全向编辑：上半胸像与下半 FRONT/SIDE/BACK 三视图同一张脸、同一骨相。",
+    `角色「${name}」。第二张参考为已改骨相胸像——三视图对齐该骨相。`,
     formatPhotorealFaceShapeBlock(c.id, c.gender),
-    "可微调下颌使三视图一致；禁止换装大改、禁止换人。",
-    PHOTOREAL_SKIN_TEXTURE_LOCK_ZH,
-    PHOTOREAL_ANTI_AI_LOCK_ZH,
-    "无文字水印杂讯。",
+    "可微调下颌使三视图一致；服装保持得体日常覆盖；禁止暴露、禁止换人。",
+    "无文字水印。全家宜内容。",
   ].join("\n");
 }
 
