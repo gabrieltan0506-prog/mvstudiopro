@@ -353,7 +353,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   story.width = 400;
   story.height = 320;
   story.textModel = "gemini-3.1-pro";
-  if (recapCard) story.parentId = recapCard.id;
+  // 故意不把 story.parentId / edge 接到 recap_card：提要文案已写入 story prompt，
+  // 若挂上游会污染 text vision 与 keyart 的最近参考图。
 
   const bible = defaultCanvasBlock("text", originX + gapX * (col0 + 1), originY);
   bible.id = makeFactoryStageId("bible", episodeIndex);
@@ -419,16 +420,14 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     Boolean,
   ) as CanvasBlock[];
   const blocks = rawBlocks.map((b) => stampEpisodeMeta(b, episodeIndex, episodeTitle));
-  const edges: CanvasEdge[] = [];
-  if (recapCard) edges.push({ fromId: recapCard.id, toId: story.id });
-  edges.push(
+  const edges: CanvasEdge[] = [
     { fromId: story.id, toId: bible.id },
     { fromId: bible.id, toId: beats.id },
     { fromId: beats.id, toId: reverse.id },
     { fromId: reverse.id, toId: keyArt.id },
     { fromId: keyArt.id, toId: clip.id },
     { fromId: clip.id, toId: omniEdit.id },
-  );
+  ];
 
   return {
     blocks,
@@ -626,8 +625,29 @@ export function applyFactoryPrefsToBlocks(
         prompt: motionBlock ? `${base}\n\n${motionBlock}` : base,
       };
     }
+    if (b.id.startsWith("recap_card-")) {
+      const base = stripMarkedSection(b.prompt, "【画风硬锁】");
+      return { ...b, prompt: artStyleBlock ? `${base}\n\n${artStyleBlock}` : base };
+    }
     return b;
   });
+}
+
+/** 清除误挂到前情提要卡的 story 父链（旧画布兼容） */
+export function sanitizeManhuaRecapUpstreamLinks(
+  blocks: CanvasBlock[],
+  edges: CanvasEdge[],
+): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
+  const nextBlocks = blocks.map((b) => {
+    if (b.id.startsWith("story-") && b.parentId?.startsWith("recap_card-")) {
+      return { ...b, parentId: undefined };
+    }
+    return b;
+  });
+  const nextEdges = edges.filter(
+    (e) => !(e.fromId.startsWith("recap_card-") || e.toId.startsWith("recap_card-")),
+  );
+  return { blocks: nextBlocks, edges: nextEdges };
 }
 
 export function resolveManhuaFactoryOrderedIds(
@@ -842,8 +862,19 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const stopOnError = opts.stopOnError !== false;
   const skipDone = opts.skipDone !== false;
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
-  let working = opts.blocks.map((b) => ({ ...b }));
-  const edges = opts.edges;
+  const hadPoisonedRecapLink = opts.blocks.some(
+    (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
+  );
+  const sanitized = sanitizeManhuaRecapUpstreamLinks(
+    opts.blocks.map((b) => ({ ...b })),
+    opts.edges,
+  );
+  let working = sanitized.blocks;
+  const edges = sanitized.edges;
+  if (hadPoisonedRecapLink) {
+    // 旧画布误挂 recap→story 时，写回清理后的 parentId，避免手点节点仍吃到提要图
+    opts.onBlocksChange?.(working);
+  }
   const orderedIds = resolveManhuaFactoryOrderedIds(
     working,
     opts.untilStage ?? "clip",

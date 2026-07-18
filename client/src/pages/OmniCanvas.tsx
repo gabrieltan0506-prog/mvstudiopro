@@ -17,6 +17,7 @@ import {
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
   runManhuaDramaFactoryPipeline,
+  sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
   stageKeyFromBlockId,
@@ -598,6 +599,9 @@ export default function OmniCanvas() {
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
       setFactoryGenreId(spawned.resolvedGenreId);
     }
+    if (spawned.resolvedSceneId && !factorySceneId) {
+      setFactorySceneId(spawned.resolvedSceneId);
+    }
     const hasOtherEpisodes = blocks.some((b) => {
       const ep = getBlockEpisodeIndex(b);
       return ep != null && ep !== continuity.episodeIndex;
@@ -709,7 +713,16 @@ export default function OmniCanvas() {
   }, []);
 
   const runFactory = useCallback(
-    async (untilStage: ManhuaFactoryStageKey, opts?: { forceFromStage?: ManhuaFactoryStageKey }) => {
+    async (
+      untilStage: ManhuaFactoryStageKey,
+      opts?: {
+        forceFromStage?: ManhuaFactoryStageKey;
+        /** 按集各自续跑起点；优先于 forceFromStage */
+        forceFromStageByEpisode?: Partial<Record<number, ManhuaFactoryStageKey>>;
+        /** 覆盖运行范围解析出的集号列表 */
+        episodeIndexes?: number[];
+      },
+    ) => {
       if (factoryBusy) return;
       const ac = new AbortController();
       abortRef.current = ac;
@@ -717,7 +730,9 @@ export default function OmniCanvas() {
       setFactoryProgress("准备中…");
       try {
         const spawned = ensureStudioSpawned(factoryTopic);
-        const episodeIndexes = resolveRunEpisodeIndexes();
+        const cleanedGraph = sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
+        const episodeIndexes =
+          opts?.episodeIndexes?.length ? opts.episodeIndexes : resolveRunEpisodeIndexes();
         toast.message(
           untilStage === "reverse"
             ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
@@ -728,18 +743,30 @@ export default function OmniCanvas() {
         let completed = 0;
         let skipped = 0;
         let lastError: { id: string; message: string } | null = null;
-        let workingBlocks = spawned.blocks;
-        let workingEdges = spawned.edges;
+        let workingBlocks = cleanedGraph.blocks;
+        let workingEdges = cleanedGraph.edges;
+        if (
+          cleanedGraph.edges.length !== spawned.edges.length ||
+          spawned.blocks.some(
+            (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
+          )
+        ) {
+          setBlocks(workingBlocks);
+          setEdges(workingEdges);
+          saveCanvasState(workingBlocks, workingEdges);
+        }
         for (const episodeIndex of episodeIndexes) {
           if (ac.signal.aborted) break;
           setFactoryProgress(`第${episodeIndex}集 · 准备…`);
+          const forceFromStage =
+            opts?.forceFromStageByEpisode?.[episodeIndex] ?? opts?.forceFromStage;
           const result = await runManhuaDramaFactoryPipeline({
             deps: runDeps,
             blocks: workingBlocks,
             edges: workingEdges,
             untilStage,
             episodeIndex,
-            forceFromStage: opts?.forceFromStage,
+            forceFromStage,
             skipDone: true,
             signal: ac.signal,
             onBlocksChange: (next) => {
@@ -797,14 +824,27 @@ export default function OmniCanvas() {
 
   const resumeFromFailure = useCallback(() => {
     const episodeIndexes = resolveRunEpisodeIndexes();
-    const episodeIndex = episodeIndexes[0] ?? writerFocusEpisode;
-    const stage = resolveFactoryResumeStage(blocks, episodeIndex);
-    if (!stage) {
-      toast.message(`第${episodeIndex}集链路都已完成，无需续跑`);
+    const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> = {};
+    const toRun: number[] = [];
+    for (const ep of episodeIndexes) {
+      const stage = resolveFactoryResumeStage(blocks, ep);
+      if (!stage) continue;
+      forceFromStageByEpisode[ep] = stage;
+      toRun.push(ep);
+    }
+    if (!toRun.length) {
+      toast.message(
+        episodeIndexes.length > 1
+          ? `第 ${episodeIndexes.join("、")} 集链路都已完成，无需续跑`
+          : `第${episodeIndexes[0] ?? writerFocusEpisode}集链路都已完成，无需续跑`,
+      );
       return;
     }
-    toast.message(`第${episodeIndex}集从「${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]}」续跑`);
-    void runFactory("clip", { forceFromStage: stage });
+    const summary = toRun
+      .map((ep) => `第${ep}集·${MANHUA_FACTORY_STAGE_LABEL_ZH[forceFromStageByEpisode[ep]!]}`)
+      .join("；");
+    toast.message(`按集续跑：${summary}`);
+    void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
   }, [blocks, runFactory, resolveRunEpisodeIndexes, writerFocusEpisode]);
 
   return (
