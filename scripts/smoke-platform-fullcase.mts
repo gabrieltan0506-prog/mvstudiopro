@@ -43,31 +43,55 @@ const CONTEXT =
   "生命科学研究者，兴趣历史与城市漫步，想在小红书做可收藏的生活化科普，避免说教。";
 const OUT_DIR = process.env.SMOKE_OUT_DIR || join(process.cwd(), ".cache", "platform-fullcase-smoke");
 
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+function isTransportError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err || "");
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up|AbortError|network/i.test(msg);
+}
+
 async function trpcMutationRemote<T>(path: string, input: unknown, timeoutMs: number): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${FLY_TRPC}/${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ json: input }),
-      signal: ctrl.signal,
-    });
-    const text = await res.text();
-    let parsed: any;
+  const maxAttempts = Math.max(1, Number(process.env.SMOKE_REMOTE_RETRIES || 3));
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error(`tRPC ${path} non-JSON HTTP ${res.status}: ${text.slice(0, 240)}`);
+      const res = await fetch(`${FLY_TRPC}/${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ json: input }),
+        signal: ctrl.signal,
+      });
+      const text = await res.text();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error(`tRPC ${path} non-JSON HTTP ${res.status}: ${text.slice(0, 240)}`);
+      }
+      if (!res.ok) {
+        throw new Error(`tRPC ${path} HTTP ${res.status}: ${text.slice(0, 400)}`);
+      }
+      const data = parsed?.result?.data?.json ?? parsed?.result?.data ?? parsed;
+      return data as T;
+    } catch (err) {
+      lastErr = err;
+      if (!isTransportError(err) || attempt >= maxAttempts) throw err;
+      const waitMs = Math.min(30_000, 2_000 * attempt);
+      console.warn(
+        `[fullcase] remote transport retry ${attempt}/${maxAttempts} · ${path} · wait ${waitMs}ms · ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      await sleep(waitMs);
+    } finally {
+      clearTimeout(timer);
     }
-    if (!res.ok) {
-      throw new Error(`tRPC ${path} HTTP ${res.status}: ${text.slice(0, 400)}`);
-    }
-    const data = parsed?.result?.data?.json ?? parsed?.result?.data ?? parsed;
-    return data as T;
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 function hasObjectObject(value: unknown, path = ""): string[] {
