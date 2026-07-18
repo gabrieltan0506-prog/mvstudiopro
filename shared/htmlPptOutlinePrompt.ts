@@ -26,35 +26,52 @@ export type HtmlPptOutlineLlmResult = {
   pages: HtmlPptPage[];
 };
 
-const VIZ_OK = new Set<HtmlPptVizKind>(["cover", "ring", "bars", "columns", "steps", "cards", "line"]);
+const VIZ_OK = new Set<HtmlPptVizKind>([
+  "cover",
+  "ring",
+  "bars",
+  "columns",
+  "steps",
+  "cards",
+  "line",
+  "compare",
+]);
 
 export function buildHtmlPptOutlineSystemPrompt(): string {
-  return `你是 mvstudiopro「动效PPT」内容策划，用 **GPT-5.6 Sol** 产出可直接投屏的中文演示大纲。
-图表由前端 SVG 绘制，你只负责**高信息密度文案 + 可量化 series**，禁止空泛正确废话。
+  return `你是 mvstudiopro「动效PPT」首席内容策划，用 **GPT-5.6 Sol** 产出可直接路演投屏的高密度中文演示大纲。
+图表由前端 SVG 分步动效绘制，你只负责**可量化、可对比、可讲解**的文案与 series，禁止空泛正确废话。
 
-硬性要求：
-1. 紧扣用户主题/用途/补充背景；禁止无关行业模板套话。
-2. 每页一个主判断；标题短而锋利；bullets 写具体结论（可含数字、对比、动作）。
-3. 至少一半页面必须带 series（2–6 项，value 为 0–100 相对强度或占比），便于多色条形/柱状/环形图。
-4. viz 只能是：cover | ring | bars | columns | steps | cards | line。
-5. 封面用 cover；目录/路径用 steps；含 %/完成度用 ring；对比/结构用 columns 或 bars；走势/热度用 line；3–4 个并列指标用 cards。
-6. 至少一页 bars（多色排名条）+ 一页 ring 或 line，保证有「图表动效」而不只是文字。
-7. 语气像趋势洞察看板：高亮对比、可执行下一步，不是百科简介。
-8. 只输出 JSON（json_object），不要 Markdown 围栏。
+硬性要求（不过关=失败）：
+1. 紧扣用户主题/用途/补充背景里的数字与口径；禁止无关行业模板套话。补充背景有具体数字时，**必须原样或近似写入 series/kpi/note**，不得改成 0–100 假占比而丢掉量级（如 168亿、6万部、181倍）。
+2. 每页一个主判断；标题短而锋利；bullets ≥3 条且含数字/对比/动作；subtitle 写清口径或时间窗。
+3. **≥70% 页面必须带 series**（每页 3–8 项）。value 可以是：
+   - 绝对量级（168、244、700、181…）→ 前端会按页内 max 归一条宽；
+   - 或 0–100 占比/强度。
+   label 用短中文（≤12 字），可含单位词如「亿元」「万部」「倍」。
+4. viz 只能是：cover | ring | bars | columns | steps | cards | line | compare。
+5. 版式分工：
+   - 封面 cover；目录/路径/入局 steps；
+   - 结构占比 columns 或 bars；年份/区域/模式对照用 **compare**（series 前半=左栏，后半=右栏；bullets[0]/[1] 作左右栏标题）；
+   - 走势/预测 line；完成度/渗透 ring；3–4 个并列 KPI cards。
+6. **最少同时包含**：1 页 bars + 1 页 columns 或 compare + 1 页 line + 1 页 ring。禁止「全文 steps/纯 bullets」。
+7. 复杂比较必须拆页可视化，例如：品类占比、规模预测、国内vs海外、付费vs免费、风险权重——各用独立图表页，不要挤在一段文字里。
+8. note 写数据来源或「推演量级/公开研报口径」；kpi 用真人能念的大数字（168亿 / 45% / 181×）。
+9. 语气像买方尽调看板：对比、拐点、可执行下一步。
+10. 只输出 JSON（json_object），不要 Markdown 围栏。
 
 JSON schema:
 {
   "deckTitle": "演示总标题",
-  "summary": "一句话说明本套 PPT 主叙事",
+  "summary": "一句话主叙事（含核心数字）",
   "pages": [
     {
       "title": "页标题",
-      "subtitle": "可选副标",
-      "kpi": "可选大数字如 72% / 3× / GO",
-      "note": "可选脚注",
-      "bullets": ["要点1","要点2"],
+      "subtitle": "口径/时间窗",
+      "kpi": "168亿",
+      "note": "来源或推演说明",
+      "bullets": ["要点1（含数字）","要点2","要点3"],
       "viz": "bars",
-      "series": [{"label":"短标签","value":72}]
+      "series": [{"label":"沙雕漫","value":44},{"label":"小说漫","value":26}]
     }
   ]
 }`;
@@ -72,7 +89,10 @@ export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): st
     `【用途】${purpose}`,
     `【页数】必须正好 ${n} 页（含封面与收束页）`,
     `【风格】${styleId} · ${style.labelZh}（${style.whenZh}）`,
-    brief ? `【补充背景/数据/受众】\n${brief}` : "【补充背景】无；请基于主题做合理、具体、可投屏的专业推断，并标明是推演量级。",
+    brief
+      ? `【补充背景/数据/受众】\n${brief}`
+      : "【补充背景】无；请基于主题做合理、具体、可投屏的专业推断，关键数字在 note 标明「推演量级」。",
+    "图表纪律：复杂比较必须进 series + 选对 viz（bars/columns/compare/line/ring），禁止只用文字罗列。",
     "请输出 pages 数组，长度严格等于页数。",
   ].join("\n");
 }
@@ -104,9 +124,10 @@ export function parseHtmlPptOutlineJson(
       ? r.series
           .map((s) => {
             const x = (s || {}) as Record<string, unknown>;
+            const n = Number(x.value);
             return {
-              label: String(x.label || "").trim().slice(0, 24),
-              value: Math.max(0, Math.min(100, Number(x.value) || 0)),
+              label: String(x.label || "").trim().slice(0, 28),
+              value: Number.isFinite(n) && n >= 0 ? Math.min(1_000_000, n) : 0,
             };
           })
           .filter((s) => s.label)
@@ -131,14 +152,13 @@ export function parseHtmlPptOutlineJson(
   if (pages.length < 3) {
     throw new Error("模型返回页数不足，请重试");
   }
-  // 保证封面/收束有 viz
   if (pages[0] && !pages[0].viz) pages[0] = { ...pages[0], viz: "cover" };
   const last = pages[pages.length - 1];
   if (last && !last.viz) pages[pages.length - 1] = { ...last, viz: "steps" };
 
   return {
     deckTitle: String(parsed.deckTitle || pages[0]?.title || "动效PPT").trim().slice(0, 80),
-    summary: String(parsed.summary || "").trim().slice(0, 200),
+    summary: String(parsed.summary || "").trim().slice(0, 240),
     pages,
   };
 }

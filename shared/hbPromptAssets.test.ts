@@ -50,12 +50,16 @@ describe("HB prompt assets", () => {
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain(HTML_PPT_STYLES.dark_research.labelZh);
     expect(html).toContain("translateX");
-    expect(html).toContain("动效PPT");
+    expect(html).toContain("下一步动效");
     expect(html).toContain("is-active");
     expect(html).toContain("playEnter");
+    expect(html).toContain("nextBuild");
+    expect(html).toContain("data-build");
+    expect(html).toContain("fx-show");
+    expect(html).toContain("btnNextBuild");
     expect(html).toContain("/html-ppt-templates/dark_research/bg.png");
     expect(html).toContain("@keyframes rise");
-    expect(html).toMatch(/viz-(ring|bars|columns|steps|cards|cover)/);
+    expect(html).toMatch(/viz-(ring|bars|columns|steps|cards|cover|compare)/);
     expect(html).toContain("ring-svg");
     expect(html).toContain("hbar-fill");
     expect(html).toContain("#22d3ee");

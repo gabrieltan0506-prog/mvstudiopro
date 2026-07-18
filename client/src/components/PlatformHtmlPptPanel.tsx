@@ -22,11 +22,24 @@ const STEPS: { id: StepId; label: string }[] = [
 
 export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean }) {
   const [step, setStep] = useState<StepId>("setup");
-  const [title, setTitle] = useState("AI 行业趋势汇报");
-  const [purpose, setPurpose] = useState("数据洞察汇报");
-  const [pageCount, setPageCount] = useState(8);
+  const [title, setTitle] = useState("AI漫剧的市场现状与前景");
+  const [purpose, setPurpose] = useState("行业路演 / 数据洞察汇报");
+  const [pageCount, setPageCount] = useState(13);
   const [styleId, setStyleId] = useState<HtmlPptStyleId>(() => recommendHtmlPptStyle("数据洞察汇报"));
-  const [briefZh, setBriefZh] = useState("");
+  const [briefZh, setBriefZh] = useState(
+    [
+      "请做成高密度投屏稿，复杂比较必须进图表（bars/columns/compare/line/ring），禁止纯文字页。",
+      "公开口径（DataEye/钛媒体等转述，讲解时标注来源）：",
+      "· 2025 漫剧市场规模约 168 亿元；2026 预估约 243.6 亿元（+45%）。",
+      "· 2025 抖音端原生上线破 6 万部；全年播放量超 700 亿次量级；用户约 1.2 亿→2026 或 2.8 亿。",
+      "· 供给品类：表情包/沙雕 44.44%；解说/小说漫 25.89%；2D/3D 21.81%；AIGC/仿真人 6.1%；游戏编辑器 1.76%。",
+      "· 漫剧占短剧播放：约 6 月 5%→12 月 35%；AIGC 播放量全年约 ×181；核心受众偏 24–30 岁男性。",
+      "· 国内：抖音端原生领军、红果崛起；投流头部效应（番茄等）。",
+      "· 出海：短剧出海渠道+本地化；国内备案仍是底座。",
+      "· 政策：动画微短剧（含 AIGC）专项治理；2026-04-01 未备案存量强下线；红果/抖音 4/7 起升审核（立意+风险分级）；AI换脸/声纹侵权高风险。",
+      "务必覆盖：品类占比、规模与预测、发展历史、新手入局、坑、国内平台、海外、政策；收束给可执行结论。",
+    ].join("\n"),
+  );
   const [pages, setPages] = useState<HtmlPptPage[]>([]);
   const [html, setHtml] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -156,8 +169,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       <div>
         <div className="text-sm font-semibold text-white/90">动效PPT生成演示</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/50">
-          方案 A：<span className="text-emerald-200/90">GPT-5.6 Sol</span> 写八页文案与图表数据（
-          {outlineCost} 积分/次），前端用多色 SVG 画环形/条形/柱状动效。图表不是 Image-2。模板骨架可免费试用。
+          方案 A：<span className="text-emerald-200/90">GPT-5.6 Sol</span> 写详尽清单与绝对量级图表数据（
+          {outlineCost} 积分/次），前端多色 SVG 分步动效（条/柱/环/折线/对照 compare）。图表不是 Image-2。空格=下一步动效，←→=翻页。
         </p>
       </div>
 
@@ -474,6 +487,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               返回改清单
             </button>
           </div>
+          <p className="text-[11px] leading-relaxed text-white/45">
+            投屏操作：空格 / 点击 / ↓ = 下一步动效；← → = 翻页（与动效分离，不会进页一次播完）。
+          </p>
           {previewUrl ? (
             <iframe
               title="html-ppt-preview"
