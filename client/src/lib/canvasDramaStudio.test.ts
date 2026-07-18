@@ -7,6 +7,7 @@ import {
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
   isTransientFactoryError,
+  manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
@@ -394,6 +395,21 @@ slow dolly in, soft rain, trembling hand
     });
     expect(episodeCount).toBe(4);
     expect(blocks.filter((b) => b.id.startsWith("story-"))).toHaveLength(4);
+  });
+
+  it("manhuaEpisodeHasFactoryChain detects missing focus episode chain", () => {
+    const series = spawnManhuaDramaStudioSeries({
+      topic: "仙侠",
+      episodes: [
+        { index: 1, title: "一", endHook: "钩A" },
+        { index: 2, title: "二", endHook: "钩B" },
+      ],
+    });
+    expect(manhuaEpisodeHasFactoryChain(series.blocks, 1)).toBe(true);
+    expect(manhuaEpisodeHasFactoryChain(series.blocks, 2)).toBe(true);
+    const onlyEp1 = series.blocks.filter((b) => getBlockEpisodeIndex(b) === 1);
+    expect(manhuaEpisodeHasFactoryChain(onlyEp1, 1)).toBe(true);
+    expect(manhuaEpisodeHasFactoryChain(onlyEp1, 2)).toBe(false);
   });
 
   it("resolveManhuaEpisodeSpawnContinuity mirrors series prior hooks/recap", () => {

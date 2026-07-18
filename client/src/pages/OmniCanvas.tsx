@@ -13,6 +13,7 @@ import {
   applyTopicToFactoryStory,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
+  manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
@@ -499,11 +500,7 @@ export default function OmniCanvas() {
   const ensureStudioSpawned = useCallback(
     (topic?: string) => {
       const focusEp = Math.max(1, Math.floor(writerFocusEpisode));
-      const focusScoped = filterBlocksByEpisode(blocks, focusEp);
-      const hasFocusChain = ["story", "bible", "beats"].every((s) =>
-        focusScoped.some((b) => b.id.startsWith(`${s}-`)),
-      );
-      if (hasFocusChain) {
+      if (manhuaEpisodeHasFactoryChain(blocks, focusEp)) {
         const nextBlocks = topic ? applyTopicToFactoryStory(blocks, topic) : blocks;
         if (topic) {
           setBlocks(nextBlocks);

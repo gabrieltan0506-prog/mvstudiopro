@@ -169,6 +169,12 @@ export function filterBlocksByEpisode(blocks: CanvasBlock[], episodeIndex: numbe
   });
 }
 
+/** 某集是否已有故事→角色→节拍三段（工厂链就绪判定） */
+export function manhuaEpisodeHasFactoryChain(blocks: CanvasBlock[], episodeIndex: number): boolean {
+  const scoped = filterBlocksByEpisode(blocks, episodeIndex);
+  return ["story", "bible", "beats"].every((s) => scoped.some((b) => b.id.startsWith(`${s}-`)));
+}
+
 /** 工厂阶段节点是否属于某集（无集号戳的旧链视为第 1 集） */
 export function blockBelongsToManhuaEpisode(block: CanvasBlock, episodeIndex: number): boolean {
   const ep = getBlockEpisodeIndex(block);
