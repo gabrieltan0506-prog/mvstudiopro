@@ -452,6 +452,13 @@ export default function FreeformCanvas({
       if (!block) return;
       // 与工厂管线对齐：切断 recap→story 误连，避免手点节点吃到前情提要图
       const { blocks: safeBlocks, edges: safeEdges } = sanitizeManhuaRecapUpstreamLinks(blocks, edges);
+      if (
+        safeEdges.length !== edges.length ||
+        blocks.some((b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")))
+      ) {
+        onBlocksChange(safeBlocks);
+        onEdgesChange(safeEdges);
+      }
       const visionImages = collectVisionImages(blockId, safeBlocks, safeEdges);
       const nearestRef =
         block.kind === "image" || block.kind === "video"
@@ -492,7 +499,7 @@ export default function FreeformCanvas({
         toast.error(msg);
       }
     },
-    [blocks, edges, patchOne, runDeps],
+    [blocks, edges, onBlocksChange, onEdgesChange, patchOne, runDeps],
   );
 
   const uploadFilesForBlock = useCallback(
