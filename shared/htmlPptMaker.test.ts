@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildDefaultHtmlPptPages,
   buildHtmlPptDocument,
+  DEFAULT_HTML_PPT_IMAGE_MOTION,
+  normalizeHtmlPptImageMotion,
   normalizeHtmlPptPages,
+  resolveHtmlPptImageMotion,
   scrubVisibleThemeIdLeaks,
 } from "./htmlPptMaker";
 
@@ -40,6 +43,76 @@ describe("normalizeHtmlPptPages", () => {
     expect(page?.series?.[0]?.label).toBe("内容供给");
     expect(page?.themeId).toBe("u_1_oaic");
   });
+
+  it("fills default imageMotion when page has imageUrl", () => {
+    const [page] = normalizeHtmlPptPages([
+      {
+        title: "有图页",
+        imageUrl: "https://cdn.example.com/a.png",
+      },
+    ]);
+    expect(page?.imageMotion).toEqual(DEFAULT_HTML_PPT_IMAGE_MOTION);
+  });
+
+  it("keeps custom imageMotion without imageUrl for later attach", () => {
+    const [page] = normalizeHtmlPptPages([
+      {
+        title: "预编排",
+        imageMotion: [
+          { at: 0, pose: "hero" },
+          { at: 1, pose: "dock_right" },
+          { at: 3, pose: "hero" },
+          { at: 4, pose: "dock_left" },
+        ],
+      },
+    ]);
+    expect(page?.imageMotion).toEqual([
+      { at: 0, pose: "hero" },
+      { at: 1, pose: "dock_right" },
+      { at: 3, pose: "hero" },
+      { at: 4, pose: "dock_left" },
+    ]);
+  });
+
+  it("drops illegal imageMotion and falls back when has image", () => {
+    const [page] = normalizeHtmlPptPages([
+      {
+        title: "坏关键帧",
+        imageUrl: "https://cdn.example.com/b.png",
+        imageMotion: [{ at: 2, pose: "zoom" as "hero" }],
+      },
+    ]);
+    expect(page?.imageMotion).toEqual(DEFAULT_HTML_PPT_IMAGE_MOTION);
+  });
+});
+
+describe("normalizeHtmlPptImageMotion", () => {
+  it("prepends hero@0 and clamps length", () => {
+    const frames = normalizeHtmlPptImageMotion([
+      { at: 2, pose: "dock_left" },
+      { at: 1, pose: "dock_right" },
+      { at: 3, pose: "hero" },
+      { at: 4, pose: "dock_bottom" },
+      { at: 5, pose: "dock_right" },
+      { at: 6, pose: "hero" },
+    ]);
+    expect(frames?.[0]).toEqual({ at: 0, pose: "hero" });
+    expect(frames).toHaveLength(5);
+  });
+
+  it("returns undefined for all-illegal poses", () => {
+    expect(normalizeHtmlPptImageMotion([{ at: 0, pose: "fly" }])).toBeUndefined();
+  });
+});
+
+describe("resolveHtmlPptImageMotion", () => {
+  it("returns undefined without imageUrl", () => {
+    expect(
+      resolveHtmlPptImageMotion({
+        imageMotion: DEFAULT_HTML_PPT_IMAGE_MOTION,
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("buildHtmlPptDocument quality gates", () => {
@@ -57,5 +130,51 @@ describe("buildHtmlPptDocument quality gates", () => {
     expect(html).toContain("竖屏阅读模式");
     expect(html).toContain("hub-grid");
     expect(html).toContain("color:var(--accent");
+  });
+
+  it("emits default imageMotion keyframes and pose sync", () => {
+    const pages = buildDefaultHtmlPptPages("插图动效", 10, "数据洞察", "rose_editorial").map(
+      (p, i) =>
+        i === 0
+          ? { ...p, imageUrl: "https://cdn.example.com/slide-hero.png" }
+          : p,
+    );
+    const html = buildHtmlPptDocument({
+      title: "插图动效",
+      styleId: "rose_editorial",
+      pages,
+    });
+    expect(html).toContain("data-img-motion=");
+    expect(html).toContain("dock_right");
+    expect(html).toContain('data-role="slide-image"');
+    expect(html).toContain("syncImagePose");
+    expect(html).toContain("img-pose-hero");
+    expect(html).toContain("img-pose-dock_right");
+  });
+
+  it("emits custom keyframes including dock_left and re-hero", () => {
+    const pages = buildDefaultHtmlPptPages("自定义关键帧", 10, "数据洞察", "rose_editorial").map(
+      (p, i) =>
+        i === 0
+          ? {
+              ...p,
+              imageUrl: "https://cdn.example.com/custom.png",
+              imageMotion: [
+                { at: 0, pose: "hero" as const },
+                { at: 1, pose: "dock_right" as const },
+                { at: 3, pose: "hero" as const },
+                { at: 4, pose: "dock_left" as const },
+              ],
+            }
+          : p,
+    );
+    const html = buildHtmlPptDocument({
+      title: "自定义关键帧",
+      styleId: "rose_editorial",
+      pages,
+    });
+    expect(html).toContain("dock_left");
+    expect(html).toContain("img-pose-dock_left");
+    expect(html).toContain("&quot;at&quot;:3");
   });
 });

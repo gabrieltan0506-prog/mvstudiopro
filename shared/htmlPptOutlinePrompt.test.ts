@@ -174,4 +174,30 @@ describe("htmlPptOutlinePrompt", () => {
     expect(out.pages[1]?.series?.[0]?.value).toBe(168);
     expect(out.pages[1]?.series?.[2]?.value).toBe(243.6);
   });
+
+  it("preserves legal imageMotion from outline json", () => {
+    const pages = Array.from({ length: 10 }, (_, i) => {
+      if (i === 0) {
+        return {
+          title: "封面",
+          viz: "cover",
+          imageMotion: [
+            { at: 0, pose: "hero" },
+            { at: 1, pose: "dock_right" },
+            { at: 3, pose: "hero" },
+            { at: 4, pose: "dock_left" },
+          ],
+        };
+      }
+      return { title: `页${i + 1}`, viz: "steps", bullets: ["要点"] };
+    });
+    const raw = JSON.stringify({ deckTitle: "关键帧稿", summary: "测", pages });
+    const out = parseHtmlPptOutlineJson(raw, { pageCount: 10 });
+    expect(out.pages[0]?.imageMotion).toEqual([
+      { at: 0, pose: "hero" },
+      { at: 1, pose: "dock_right" },
+      { at: 3, pose: "hero" },
+      { at: 4, pose: "dock_left" },
+    ]);
+  });
 });
