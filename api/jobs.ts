@@ -1276,9 +1276,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     /**
      * 密钥探针（不回传密钥本身）：
-     * - OpenRouter：`POST /api/v1/images` · model=openai/gpt-image-2
-     * - OpenAI 官方：`POST /v1/chat/completions` · model=gpt-5.6-sol（验 Fly OPENAI_API_KEY）
-     * - OpenAI 生图：`POST /v1/images/generations` · model=gpt-image-2（验 IMAGE/API 钥）
+     * - OpenRouter 生图：`POST /api/v1/images` · openai/gpt-image-2
+     * - OpenAI 官方文案：`POST /v1/chat/completions` · gpt-5.6-sol
+     * - OpenRouter 文案：`POST /api/v1/chat/completions` · openai/gpt-5.6-sol
+     * - OpenAI 生图：gpt-image-2
+     * which=sol → 同时打官方 Sol + OpenRouter Sol（跳过生图）
      */
     if (opNormalized === "probegptkeys") {
       if (req.method !== "POST" && req.method !== "GET") {
@@ -1287,13 +1289,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const want = String(b.which || q.which || "all")
         .trim()
         .toLowerCase();
-      const runOr = want === "all" || want === "openrouter" || want === "or";
-      const runChat = want === "all" || want === "openai_chat" || want === "sol" || want === "gpt56";
+      const runOrImg = want === "all" || want === "openrouter" || want === "or";
+      const runOpenAiChat =
+        want === "all" || want === "openai_chat" || want === "sol" || want === "gpt56" || want === "openai_sol";
+      const runOrChat =
+        want === "all" ||
+        want === "sol" ||
+        want === "gpt56" ||
+        want === "openrouter_sol" ||
+        want === "or_sol" ||
+        want === "openrouter_chat";
       const runImg = want === "all" || want === "openai_image" || want === "image";
 
       const out: Record<string, unknown> = { ok: true, at: new Date().toISOString() };
 
-      if (runOr) {
+      if (runOrImg) {
         const t0 = Date.now();
         try {
           const { isOpenRouterGptImage2Configured, postOpenRouterGptImage2AndUpload } = await import(
@@ -1322,7 +1332,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      if (runChat) {
+      if (runOpenAiChat) {
         const t0 = Date.now();
         const apiKey = String(process.env.OPENAI_API_KEY || process.env.OPENAI_CHAT_API_KEY || "").trim();
         const keyShape = !apiKey
@@ -1364,6 +1374,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
+      if (runOrChat) {
+        const t0 = Date.now();
+        const orKey = String(process.env.OPENROUTER_API_KEY || "").trim();
+        const configured = Boolean(orKey && /^sk-[A-Za-z0-9]/.test(orKey));
+        if (!configured) {
+          out.openrouter_gpt56_sol = {
+            ok: false,
+            configured: false,
+            error: "OPENROUTER_API_KEY missing/invalid",
+            ms: Date.now() - t0,
+          };
+        } else {
+          try {
+            const referer = String(process.env.OPENROUTER_HTTP_REFERER || process.env.APP_URL || "https://www.mvstudiopro.com")
+              .trim()
+              .replace(/\/+$/, "");
+            const title = String(process.env.OPENROUTER_APP_TITLE || "MV Studio Pro").trim() || "MV Studio Pro";
+            const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${orKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": referer || "https://www.mvstudiopro.com",
+                "X-Title": title,
+                "X-OpenRouter-Title": title,
+              },
+              body: JSON.stringify({
+                model: "openai/gpt-5.6-sol",
+                messages: [{ role: "user", content: "Reply with exactly: pong" }],
+                max_tokens: 16,
+              }),
+              signal: AbortSignal.timeout(90_000),
+            });
+            const json: any = await r.json().catch(() => ({}));
+            const text = String(json?.choices?.[0]?.message?.content || "").trim();
+            out.openrouter_gpt56_sol = {
+              ok: r.ok && Boolean(text),
+              configured: true,
+              model: "openai/gpt-5.6-sol",
+              status: r.status,
+              ms: Date.now() - t0,
+              reply: text.slice(0, 80) || null,
+              error: r.ok ? null : json?.error?.message || JSON.stringify(json).slice(0, 240),
+            };
+          } catch (e: any) {
+            out.openrouter_gpt56_sol = {
+              ok: false,
+              configured: true,
+              error: e?.message || String(e),
+              ms: Date.now() - t0,
+            };
+          }
+        }
+      }
+
       if (runImg) {
         const t0 = Date.now();
         try {
@@ -1393,7 +1458,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      const fails = ["openrouter_image", "openai_gpt56_sol", "openai_gpt_image2"].filter(
+      const fails = ["openrouter_image", "openai_gpt56_sol", "openrouter_gpt56_sol", "openai_gpt_image2"].filter(
         (k) => out[k] && (out[k] as { ok?: boolean }).ok === false,
       );
       out.ok = fails.length === 0;
