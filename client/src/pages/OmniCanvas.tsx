@@ -482,7 +482,7 @@ export default function OmniCanvas() {
       setDockSelectedIds((prev) => {
         const alive = new Set(nextBlocks.map((b) => b.id));
         const next = new Set<string>();
-        for (const id of prev) {
+        for (const id of Array.from(prev)) {
           if (alive.has(id)) next.add(id);
         }
         if (touchedEpisode != null) {
