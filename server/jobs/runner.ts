@@ -763,8 +763,8 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       if (input.action === "platform_html_ppt_outline") {
         const raw = Number(process.env.PLATFORM_HTML_PPT_OUTLINE_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 120_000) return raw;
-        // Sol 两段大纲：默认 15min
-        return 15 * 60_000;
+        // 13 页双段 Sol（含 reasoning 重试）默认 22min，避免墙钟砍半稿
+        return 22 * 60_000;
       }
     } catch {
       /* fall through */

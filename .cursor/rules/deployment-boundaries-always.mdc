@@ -14,7 +14,7 @@ alwaysApply: true
 
 ## 部署通道（Fly only）
 
-- **線上只走 Fly**（`main` → Actions `Fly Deploy`）。Vercel Git 自動部署已關閉；**禁止**再開/依賴 Vercel Preview 當門禁。
+- **API 走 Fly**（`main` → Actions `Fly Deploy`）；**www 前台走 Vercel Git 自動部署**（`vercel.json` 已開啟）。不要把 Vercel Preview 當 CI 門禁；正式域名以 production 為準。
 - 使用者要求線上生效 → 以 **Fly Deploy success** 為準，忽略 Vercel 紅燈（含 rate limit）。
 - 對方明文要求時可操作 Fly / `fly.toml` / Deploy workflow。
 

@@ -77,8 +77,38 @@ JSON schema:
 }`;
 }
 
+/** 漫剧/短剧市场主题：强制覆盖讲解槽位（与默认 brief、本地样张对齐） */
+function isManhuaMarketTopic(title: string, brief: string): boolean {
+  const t = `${title}\n${brief}`;
+  return /漫剧|短剧|AIGC|仿真人|DataEye|红果|微短剧/.test(t);
+}
+
+function manhuaMarketSlotBrief(pageCount: number): string {
+  const slots = [
+    "封面（cover）",
+    "议程/五件事（steps）",
+    "当前市场规模（cards，含 168 亿等口径）",
+    "2026 预测走势（line，含 243.6/45%）",
+    "品类供给占比（bars）",
+    "流量/渗透（ring，含 35%/×181）",
+    "发展历史四阶（steps）",
+    "新手入局路径（steps）",
+    "常见坑/风险权重（bars）",
+    "国内平台格局（columns）",
+    "国内 vs 出海对照（compare）",
+    "政策与平台规则（steps）",
+    "结论与下一步（steps）",
+  ];
+  const pick = pageCount >= 13 ? slots : slots.slice(0, Math.max(5, pageCount));
+  return [
+    "【必覆盖槽位｜顺序可微调但主题不可缺】",
+    ...pick.map((s, i) => `${i + 1}. ${s}`),
+    "全稿须同时含 bars +（columns 或 compare）+ line + ring；复杂比较禁止纯文字页。",
+  ].join("\n");
+}
+
 export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): string {
-  const n = Math.max(3, Math.min(16, Math.floor(input.pageCount || 8)));
+  const n = Math.max(5, Math.min(16, Math.floor(input.pageCount || 5)));
   const styleId = input.styleId in HTML_PPT_STYLES ? input.styleId : "dark_research";
   const style = HTML_PPT_STYLES[styleId as HtmlPptStyleId];
   const title = String(input.title || "").trim().slice(0, 80);
@@ -87,14 +117,18 @@ export function buildHtmlPptOutlineUserPrompt(input: HtmlPptOutlineLlmInput): st
   return [
     `【主题】${title}`,
     `【用途】${purpose}`,
-    `【页数】必须正好 ${n} 页（含封面与收束页）`,
+    `【页数】必须正好 ${n} 页（含封面与收束页）；少一页即失败`,
     `【风格】${styleId} · ${style.labelZh}（${style.whenZh}）`,
     brief
       ? `【补充背景/数据/受众】\n${brief}`
       : "【补充背景】无；请基于主题做合理、具体、可投屏的专业推断，关键数字在 note 标明「推演量级」。",
+    isManhuaMarketTopic(title, brief) ? manhuaMarketSlotBrief(n) : "",
     "图表纪律：复杂比较必须进 series + 选对 viz（bars/columns/compare/line/ring），禁止只用文字罗列。",
+    "图表页仍须给 ≥3 条 bullets（讲解口播点）；前端会在图表动效后分步显示。",
     "请输出 pages 数组，长度严格等于页数。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** 从被截断的模型输出里尽量捞出完整 page 对象 */
@@ -205,10 +239,10 @@ export function parseHtmlPptOutlineJson(
   });
 
   let pages = normalizeHtmlPptPages(mapped);
-  const want = Math.max(3, Math.min(16, Math.floor(opts?.pageCount || pages.length || 8)));
+  const want = Math.max(5, Math.min(16, Math.floor(opts?.pageCount || pages.length || 5)));
   if (pages.length > want) pages = pages.slice(0, want);
-  if (pages.length < 3) {
-    throw new Error("模型返回页数不足，请重试");
+  if (pages.length < want) {
+    throw new Error(`模型返回页数不足（${pages.length}/${want}），请重试`);
   }
   if (pages[0] && !pages[0].viz) pages[0] = { ...pages[0], viz: "cover" };
   const last = pages[pages.length - 1];

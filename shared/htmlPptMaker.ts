@@ -517,7 +517,7 @@ export function buildDefaultHtmlPptPages(
   purposeZh?: string,
   styleId: HtmlPptStyleId = "dark_research",
 ): HtmlPptPage[] {
-  const n = Math.max(3, Math.min(16, Math.floor(pageCount || 6)));
+  const n = Math.max(5, Math.min(16, Math.floor(pageCount || 5)));
   const topic = String(title || "主题").trim().slice(0, 80);
   const purpose = String(purposeZh || "汇报").trim().slice(0, 40);
   const styleLabel = HTML_PPT_STYLES[styleId]?.labelZh || "动效 PPT";
@@ -811,26 +811,26 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
     .map((p, i) => {
       const kind = inferHtmlPptViz(p, i, safePages.length);
       const viz = renderVizHtml(kind, p, i);
-      const chartKinds = new Set(["steps", "cards", "bars", "columns", "ring", "line", "cover", "compare"]);
-      const bulletItems = chartKinds.has(kind)
-        ? ""
-        : (p.bullets || [])
-            .map((b, bi) => `<li class="anim" data-build="${bi + 1}">${escapeHtml(b)}</li>`)
-            .join("");
-      const bulletList = bulletItems ? `<ul>${bulletItems}</ul>` : "";
+      // steps/cover 的 bullets 已进主可视化；其余图表页把 bullets 挂在图表动效之后，供口播分步
+      const bulletsInViz = kind === "steps" || kind === "cover";
+      const seriesBuildCount =
+        kind === "compare"
+          ? Math.min(8, (p.series || []).length) + 2
+          : kind === "ring"
+            ? 1 + Math.min(5, (p.series || p.bullets || []).length)
+            : Math.min(8, (p.series || []).length);
+      const talkBullets = bulletsInViz ? [] : (p.bullets || []).slice(0, 4);
+      const bulletItems = talkBullets
+        .map(
+          (b, bi) =>
+            `<li class="anim talk-point" data-build="${Math.max(1, seriesBuildCount) + bi + 1}">${escapeHtml(b)}</li>`,
+        )
+        .join("");
+      const bulletList = bulletItems ? `<ul class="talk-bullets">${bulletItems}</ul>` : "";
       const noteBuild =
         kind === "cover"
           ? 2
-          : kind === "ring"
-            ? 2 + Math.min(5, (p.series || p.bullets || []).length)
-            : kind === "line"
-              ? 1 + Math.min(8, (p.series || p.bullets || []).length)
-              : 1 +
-                Math.max(
-                  Math.min(8, (p.series || []).length),
-                  Math.min(6, (p.bullets || []).length),
-                  chartKinds.has(kind) ? 0 : (p.bullets || []).length,
-                );
+          : Math.max(1, seriesBuildCount) + talkBullets.length + 1;
       return `<section class="slide${i === 0 ? " is-active" : ""}" data-i="${i}" data-viz="${kind}">
   <div class="slide-bg" aria-hidden="true"></div>
   <div class="fx-orb o1" aria-hidden="true"></div>
@@ -873,6 +873,7 @@ ${STYLE_CSS[styleId]}
 h1{font-size:clamp(1.7rem,4.2vw,3rem);line-height:1.15;margin:6px 0 10px;letter-spacing:-.02em;max-width:22ch}
 .sub{color:var(--muted);font-size:clamp(.95rem,1.8vw,1.2rem);margin:0 0 14px;max-width:48ch}
 ul{margin:10px 0 0;padding-left:1.1em;font-size:clamp(1rem,1.8vw,1.2rem);line-height:1.55}
+ul.talk-bullets{margin-top:14px;font-size:clamp(0.92rem,1.5vw,1.08rem);opacity:0.92}
 li{margin:7px 0}
 .note{margin-top:16px;color:var(--muted);font-size:13px}
 .kpi{color:#facc15;font-weight:800;font-size:clamp(2rem,5vw,3.6rem);letter-spacing:-.03em;text-shadow:0 0 18px rgba(250,204,21,.35)}

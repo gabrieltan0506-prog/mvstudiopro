@@ -7060,7 +7060,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     /**
      * 动效 PPT · GPT-5.6 Sol 页面清单：入队长任务（避免同步 tRPC/网关超时）。
-     * 扣 {@link CREDIT_COSTS.platformHtmlPptOutline} 积分/次；失败由 worker 在终态退还。
+     * 按页扣费（{@link platformHtmlPptOutlineCredits}）；失败由 worker 在终态退还。
      * 前端用 pollJobUntilTerminal 取 output.pages / deckTitle / summary / model。
      */
     generateHtmlPptOutline: protectedProcedure
@@ -7068,7 +7068,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           title: z.string().min(2).max(80),
           purposeZh: z.string().max(80).optional(),
-          pageCount: z.number().int().min(3).max(16).default(8),
+          pageCount: z.number().int().min(5).max(16),
           styleId: z
             .enum([
               "dark_research",
@@ -7088,7 +7088,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const cost = CREDIT_COSTS.platformHtmlPptOutline;
+        const {
+          platformHtmlPptOutlineCredits,
+          CREDIT_COSTS: SHARED_CREDIT_COSTS,
+        } = await import("../shared/plans.js");
+        const cost = platformHtmlPptOutlineCredits(input.pageCount);
+        const perPage = SHARED_CREDIT_COSTS.platformHtmlPptOutlinePerPage;
         let creditsCharged = false;
 
         if (!isAdminUser) {
@@ -7096,10 +7101,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (creditsInfo.totalAvailable < cost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，动效PPT AI 清单需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，动效PPT AI 清单需要 ${cost} 点（${input.pageCount} 页×${perPage}；当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCredits(userId, "platformHtmlPptOutline", "动效PPT · GPT-5.6 Sol 页面清单");
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformHtmlPptOutline",
+            `动效PPT · GPT-5.6 Sol 页面清单（${input.pageCount}页）`,
+          );
           creditsCharged = true;
         }
 
@@ -7138,6 +7148,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: rawMessage || `动效PPT 清单入队失败${creditsCharged ? "，积分已退回" : ""}，请稍后重试`,
           });
         }
+
+        // 立刻唤醒 worker，避免首轮 poll 空等
+        void import("./jobs/runner.js")
+          .then((m) => m.processJobsOnce())
+          .catch(() => {});
 
         return {
           jobId,
