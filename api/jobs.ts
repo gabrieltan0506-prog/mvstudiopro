@@ -1387,49 +1387,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           };
         } else {
           try {
-            const referer = String(process.env.OPENROUTER_HTTP_REFERER || process.env.APP_URL || "https://www.mvstudiopro.com")
+            // 连通性测法：显式 HTTP-Referer / X-Title + 简短 Connection test（model 用 gpt-5.6-sol）
+            const model = String(b.model || q.model || "gpt-5.6-sol").trim() || "gpt-5.6-sol";
+            const referer = String(
+              b.httpReferer || process.env.OPENROUTER_HTTP_REFERER || "https://your-drama-website.com",
+            )
               .trim()
               .replace(/\/+$/, "");
-            const title = String(process.env.OPENROUTER_APP_TITLE || "MV Studio Pro").trim() || "MV Studio Pro";
-            // 与 OpenRouter 文档示例一致：reasoning.enabled + openai/gpt-5.6-sol
+            const title = String(
+              b.xTitle || process.env.OPENROUTER_APP_TITLE || "Comic Drama Automation Workflow",
+            ).trim() || "Comic Drama Automation Workflow";
             const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${orKey}`,
                 "Content-Type": "application/json",
-                "HTTP-Referer": referer || "https://www.mvstudiopro.com",
+                "HTTP-Referer": referer,
                 "X-Title": title,
-                "X-OpenRouter-Title": title,
               },
               body: JSON.stringify({
-                model: "openai/gpt-5.6-sol",
-                messages: [
-                  {
-                    role: "user",
-                    content: "How many r`s are in the word `strawberry`?",
-                  },
-                ],
-                reasoning: { enabled: true },
+                model,
+                messages: [{ role: "user", content: "Connection test. Please reply with only 'OK'." }],
               }),
-              signal: AbortSignal.timeout(180_000),
+              signal: AbortSignal.timeout(90_000),
             });
             const json: any = await r.json().catch(() => ({}));
             const text = String(json?.choices?.[0]?.message?.content || "").trim();
-            const reasoningText = String(
-              json?.choices?.[0]?.message?.reasoning ||
-                json?.choices?.[0]?.reasoning ||
-                json?.reasoning ||
-                "",
-            ).trim();
             out.openrouter_gpt56_sol = {
               ok: r.ok && Boolean(text),
               configured: true,
-              model: "openai/gpt-5.6-sol",
-              reasoningEnabled: true,
+              model,
+              httpReferer: referer,
+              xTitle: title,
               status: r.status,
               ms: Date.now() - t0,
               reply: text.slice(0, 240) || null,
-              reasoningPrefix: reasoningText ? reasoningText.slice(0, 160) : null,
               error: r.ok ? null : json?.error?.message || JSON.stringify(json).slice(0, 240),
             };
           } catch (e: any) {
