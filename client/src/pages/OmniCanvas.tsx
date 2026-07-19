@@ -3218,12 +3218,24 @@ export default function OmniCanvas() {
           {canvasMode === "manhua" || canvasMode === "freeform" ? (
           <div id="freeform-canvas-zone" className="scroll-mt-24">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-sm font-semibold text-white/85">
-                {canvasMode === "manhua" ? "工厂画布节点" : "自由画布"}
+              <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/85">
+                {canvasMode === "manhua" ? (
+                  <>
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-[10px] font-bold text-white/50">
+                      板
+                    </span>
+                    工厂画布节点
+                    <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-normal text-white/40">
+                      专家视图
+                    </span>
+                  </>
+                ) : (
+                  "自由画布"
+                )}
               </div>
               <span className="text-[11px] text-white/40">
                 {canvasMode === "manhua"
-                  ? "漫剧流水线铺出的节点 · 可点选聚焦"
+                  ? "节点明细 · 日常请用上方工作台与成片坞；此处可聚焦排错"
                   : "多任务节点自由接线 · 文生图 / 视频 / 提文字 / 文案"}
               </span>
             </div>
