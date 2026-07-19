@@ -190,9 +190,9 @@ export default function ManhuaScriptWorkbench({
   return (
     <div
       id="manhua-workbench-shell"
-      className="mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
+      className="mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] w-full min-w-[1180px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
     >
-      {/* 顶栏：对标阿硕剧本工作室细顶栏 */}
+      {/* 顶栏 */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />
@@ -267,10 +267,10 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 三栏主区：始终横向 左资产｜中片段｜右预览（对标阿硕，禁止竖向堆叠） */}
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {/* 左 240｜中弹性≥360｜右 440，总宽≥1180，避免中栏被挤没 */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* 左：本集资产 */}
-        <aside className="min-h-0 w-[200px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5 md:w-[220px] xl:w-[240px]">
+        <aside className="min-h-0 w-[240px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5">
           <div className="mb-2 flex items-center justify-between">
             <div className="text-[12px] font-semibold text-white/85">本集资产</div>
             <button
@@ -433,8 +433,8 @@ export default function ManhuaScriptWorkbench({
           </div>
         </aside>
 
-        {/* 中：片段脚本（可滚） */}
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3">
+        {/* 中：片段脚本 */}
+        <section className="flex min-h-0 min-w-[360px] flex-1 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/85">
               片段 {String(Math.min(shotIndex + 1, Math.max(shots.length, 1))).padStart(2, "0")}
@@ -522,8 +522,8 @@ export default function ManhuaScriptWorkbench({
           </p>
         </section>
 
-        {/* 右：视频结果（横向第三栏，固定占比） */}
-        <aside className="flex min-h-0 w-[36%] min-w-[260px] max-w-[46%] shrink-0 flex-col p-2.5 md:p-3 xl:w-[40%]">
+        {/* 右：视频结果 */}
+        <aside className="flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3">
           <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">视频结果</div>
             {factoryBusy ? (

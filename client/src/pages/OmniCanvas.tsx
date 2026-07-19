@@ -2161,7 +2161,7 @@ export default function OmniCanvas() {
             <>
             {/* 确认编剧 + 工作台：编剧室压到工作台之后，主屏先出三栏 */}
             {writerConfirmed && manhuaUiMode === "workbench" ? (
-              <div id="manhua-workbench-zone" className="scroll-mt-24">
+              <div id="manhua-workbench-zone" className="-mx-3 scroll-mt-24 overflow-x-auto px-3">
                 <ManhuaScriptWorkbench
                   blocks={blocks}
                   topic={factoryTopic}
