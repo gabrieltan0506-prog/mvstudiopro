@@ -20,6 +20,7 @@ import {
   getManhuaDemoAsset,
   listManhuaDemoPropsForLane,
   recommendManhuaContentLanesFromTopic,
+  type ManhuaContentLane,
   type ManhuaDemoAsset,
 } from "./manhuaScenePropDemoCatalog.js";
 import { resolveManhuaGenreId } from "./screenwriterGenreTemplates.js";
@@ -83,13 +84,12 @@ function recommendPropIds(
 ): string[] {
   const lanes = recommendManhuaContentLanesFromTopic(topic);
   // 剧种微调：古风优先 ancient/intrigue；都市商战优先 business
-  let ordered = [...lanes];
+  let ordered: ManhuaContentLane[] = [...lanes];
   if (lane === "ancient" || genreId === "ancient" || genreId === "xianxia") {
+    const ancientFirst: ManhuaContentLane[] = ["ancient", "intrigue", "xianxia"];
     ordered = Array.from(
-      new Set([
-        "ancient",
-        "intrigue",
-        "xianxia",
+      new Set<ManhuaContentLane>([
+        ...ancientFirst,
         ...lanes.filter((l) => l !== "romance" && l !== "business"),
       ]),
     );
