@@ -59,10 +59,7 @@ import {
   recommendCraftShotFromTopic,
   type CraftShotCategory,
 } from "@shared/craftShotBank";
-import {
-  listPathCameraRecipes,
-  recommendPathCameraFromTopic,
-} from "@shared/manhuaPathCameraRecipeBank";
+import { recommendPathCameraFromTopic } from "@shared/manhuaPathCameraRecipeBank";
 import {
   listNarrativeLighting,
   recommendNarrativeLightingFromTopic,
@@ -77,10 +74,7 @@ import {
   recommendMaleMicroExpressionFromTopic,
 } from "@shared/manhuaMaleMicroExpressionBank";
 import { listPromoCoverLayouts } from "@shared/manhuaPromoCoverLayouts";
-import {
-  listActionCameraRecipes,
-  recommendActionCameraFromTopic,
-} from "@shared/manhuaActionCameraRecipeBank";
+import { recommendActionCameraFromTopic } from "@shared/manhuaActionCameraRecipeBank";
 import { MANHUA_CINE_VOCAB_BANK } from "@shared/manhuaCineVocabBank";
 import { listWardrobePropContinuity } from "@shared/manhuaWardrobePropContinuity";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
@@ -1559,25 +1553,20 @@ export default function OmniCanvas() {
                 </div>
               </div>
               {recommendedScene ? (
-                <p className="mt-1.5 text-[10px] leading-snug text-emerald-200/80">
-                  当前推荐主场景：{String(recommendedScene.no).padStart(2, "0")} {recommendedScene.nameZh}
+                <p className="mt-1.5 text-[10px] text-emerald-200/75">
+                  场景推荐：{String(recommendedScene.no).padStart(2, "0")} {recommendedScene.nameZh}
                   {sceneAutoApplied ? " ·自动" : sceneManual ? " ·手选" : ""}
-                  {recommendedSceneRec.reasonZh ? ` · ${recommendedSceneRec.reasonZh}` : ""}
-                  （未手选时自动套；已铺板更换会同步进节点，可下拉手选）
                 </p>
-              ) : (
-                <p className="mt-1.5 text-[10px] text-white/35">
-                  填写题材或选手动剧种后，将按关键词自动推荐一条主场景（如「秘境」→ 洞府）。
-                </p>
-              )}
+              ) : null}
 
+              {/* 主区只留：手法 + 运镜工作台；其余进折叠，降低侧栏密度 */}
               <div className="mt-3 max-w-md space-y-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
+                    <label className="block text-[11px] text-white/45">拍摄手法</label>
                     {craftAutoApplied ? (
                       <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
-                        已按题材自动套用
+                        已自动
                       </span>
                     ) : null}
                     {craftShotManual ? (
@@ -1587,7 +1576,7 @@ export default function OmniCanvas() {
                         onClick={() => setCraftShotManual(false)}
                         className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
                       >
-                        恢复自动推荐
+                        恢复推荐
                       </button>
                     ) : null}
                   </div>
@@ -1611,58 +1600,7 @@ export default function OmniCanvas() {
                       </optgroup>
                     ))}
                   </select>
-                  <p className="mt-1 text-[10px] leading-snug text-violet-100/70">
-                    {recommendedCraft.reasonZh}
-                    {selectedCraftShot
-                      ? ` · 当前「${selectedCraftShot.nameZh}」${craftAutoApplied ? "·自动" : craftShotManual ? "·手选" : ""}`
-                      : ""}
-                  </p>
                 </div>
-
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-[11px] text-white/45">路径运镜</label>
-                    <select
-                      value={factoryPathRecipeId}
-                      onChange={(e) => {
-                        setPathRecipeManual(true);
-                        setFactoryPathRecipeId(e.target.value);
-                      }}
-                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                      className="mt-1 w-full rounded-lg border border-cyan-400/25 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
-                    >
-                      <option value="">不指定</option>
-                      {listPathCameraRecipes().map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {String(e.no).padStart(2, "0")} {e.nameZh}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-white/45">动作运镜</label>
-                    <select
-                      value={factoryActionRecipeId}
-                      onChange={(e) => {
-                        setActionRecipeManual(true);
-                        setFactoryActionRecipeId(e.target.value);
-                      }}
-                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                      className="mt-1 w-full rounded-lg border border-rose-400/25 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none focus:border-rose-300/40 disabled:opacity-50"
-                    >
-                      <option value="">不指定</option>
-                      {listActionCameraRecipes().map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {String(e.no).padStart(2, "0")} {e.nameZh}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <p className="text-[10px] text-white/40">
-                  {recommendedPath.reasonZh} · {recommendedAction.reasonZh}
-                  {actionRecipeManual ? " ·动作手选" : ""}
-                </p>
 
                 <ManhuaPathCameraAnnotatePanel
                   imageUrl={keyArtPreviewUrl || undefined}
@@ -1680,6 +1618,10 @@ export default function OmniCanvas() {
                     setFactoryActionRecipeId(id);
                   }}
                 />
+                <p className="text-[10px] text-white/35">
+                  {recommendedPath.reasonZh}
+                  {recommendedAction.reasonZh ? ` · ${recommendedAction.reasonZh}` : ""}
+                </p>
 
                 <div className="rounded-lg border border-white/10 bg-white/[0.02]">
                   <button
@@ -1687,7 +1629,7 @@ export default function OmniCanvas() {
                     onClick={() => setFactoryAdvancedOpen((v) => !v)}
                     className="flex w-full items-center justify-between px-3 py-2 text-left text-[11px] font-medium text-white/70 hover:bg-white/[0.04]"
                   >
-                    <span>进阶注入（灯光 / 造型 / 宣发 / 词条…）</span>
+                    <span>进阶（灯光·造型·宣发·词条·动效）</span>
                     <span className="text-white/40">{factoryAdvancedOpen ? "收起" : "展开"}</span>
                   </button>
                   {factoryAdvancedOpen ? (

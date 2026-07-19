@@ -1,6 +1,5 @@
 /**
- * 自研静帧路径运镜标注：拖拽画线 / 点击加点，红蓝双轨，导出 JSON / 运镜句。
- * 交互自研，不仿制第三方工具栏。
+ * 自研静帧红/蓝双轨标注：默认拖拽画流畅笔迹，抽稀锚点供编译。
  */
 import {
   useCallback,
@@ -17,8 +16,10 @@ import {
   downsampleStrokeToAnchors,
   formatPathAnnotationBrief,
   mergeTrackAnchors,
+  upsertStroke,
   type ManhuaPathAnchor,
   type ManhuaPathAnnotation,
+  type ManhuaPathStroke,
   type ManhuaPathTrackRole,
 } from "@shared/manhuaPathCameraAnnotate";
 import {
@@ -70,6 +71,10 @@ function clientToNorm(el: HTMLElement, clientX: number, clientY: number) {
   };
 }
 
+function polyPoints(pts: Array<{ x: number; y: number }>) {
+  return pts.map((a) => `${a.x * 100},${a.y * 100}`).join(" ");
+}
+
 export default function ManhuaPathCameraAnnotatePanel({
   imageUrl,
   value,
@@ -90,6 +95,7 @@ export default function ManhuaPathCameraAnnotatePanel({
   const strokeRef = useRef<Array<{ x: number; y: number }>>([]);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const anchors = value?.anchors || [];
+  const strokes = value?.strokes || [];
   const activeActionId = actionRecipeId || value?.actionRecipeId || "";
 
   const motionPreview = useMemo(() => {
@@ -99,28 +105,38 @@ export default function ManhuaPathCameraAnnotatePanel({
 
   const brief = useMemo(() => (value ? formatPathAnnotationBrief(value) : ""), [value]);
 
-  const commit = useCallback(
-    (
-      nextAnchors: ManhuaPathAnchor[],
-      patch?: Partial<Pick<ManhuaPathAnnotation, "recipeId" | "actionRecipeId">>,
-    ) => {
-      const renumbered = nextAnchors.slice(0, PATH_ANNOTATE_ANCHOR_MAX).map((a, i) => ({
+  const commitAnnotation = useCallback(
+    (next: {
+      anchors: ManhuaPathAnchor[];
+      strokes?: ManhuaPathStroke[];
+      recipeId?: string | null;
+      actionRecipeId?: string | null;
+    }) => {
+      const renumbered = next.anchors.slice(0, PATH_ANNOTATE_ANCHOR_MAX).map((a, i) => ({
         ...a,
         index: i + 1,
       }));
-      if (!renumbered.length) {
+      if (!renumbered.length && !(next.strokes || []).length) {
         onChange(null);
         return;
       }
       onChange({
         version: 1,
         imageUrl,
-        recipeId: patch?.recipeId !== undefined ? patch.recipeId : recipeId || value?.recipeId || null,
+        recipeId:
+          next.recipeId !== undefined ? next.recipeId : recipeId || value?.recipeId || null,
         actionRecipeId:
-          patch?.actionRecipeId !== undefined
-            ? patch.actionRecipeId
+          next.actionRecipeId !== undefined
+            ? next.actionRecipeId
             : activeActionId || value?.actionRecipeId || null,
-        anchors: renumbered,
+        anchors: renumbered.length
+          ? renumbered
+          : [
+              emptyAnchor(1, 0.3, 0.7, "subject"),
+              emptyAnchor(2, 0.5, 0.5, "subject"),
+              emptyAnchor(3, 0.7, 0.3, "camera"),
+            ],
+        strokes: next.strokes,
       });
     },
     [activeActionId, imageUrl, onChange, recipeId, value?.actionRecipeId, value?.recipeId],
@@ -130,8 +146,13 @@ export default function ManhuaPathCameraAnnotatePanel({
     (id: string) => {
       onRecipeIdChange?.(id);
       if (!id) {
-        if (value?.anchors?.length) commit(value.anchors, { recipeId: null });
-        else onChange(null);
+        if (value?.anchors?.length) {
+          commitAnnotation({
+            anchors: value.anchors,
+            strokes: value.strokes,
+            recipeId: null,
+          });
+        } else onChange(null);
         return;
       }
       const ann = annotationFromRecipeId(id, { imageUrl });
@@ -139,18 +160,23 @@ export default function ManhuaPathCameraAnnotatePanel({
         onChange({
           ...ann,
           actionRecipeId: activeActionId || null,
+          strokes: undefined,
         });
         setSelectedIndex(1);
       }
     },
-    [activeActionId, commit, imageUrl, onChange, onRecipeIdChange, value?.anchors],
+    [activeActionId, commitAnnotation, imageUrl, onChange, onRecipeIdChange, value],
   );
 
   const applyActionRecipe = useCallback(
     (id: string) => {
       onActionRecipeIdChange?.(id);
       if (value?.anchors?.length) {
-        commit(value.anchors, { actionRecipeId: id || null });
+        commitAnnotation({
+          anchors: value.anchors,
+          strokes: value.strokes,
+          actionRecipeId: id || null,
+        });
       } else if (id) {
         onChange({
           version: 1,
@@ -166,7 +192,7 @@ export default function ManhuaPathCameraAnnotatePanel({
         setSelectedIndex(1);
       }
     },
-    [commit, imageUrl, onActionRecipeIdChange, onChange, recipeId, value?.anchors],
+    [commitAnnotation, imageUrl, onActionRecipeIdChange, onChange, recipeId, value],
   );
 
   const finishStroke = useCallback(() => {
@@ -176,14 +202,18 @@ export default function ManhuaPathCameraAnnotatePanel({
     setStrokePreview([]);
     if (pts.length < 2) return;
     const otherCount = anchors.filter((a) => (a.trackRole || "subject") !== paintRole).length;
-    const room = Math.max(PATH_ANNOTATE_ANCHOR_MIN, PATH_ANNOTATE_ANCHOR_MAX - otherCount);
-    const sampled = downsampleStrokeToAnchors(pts, paintRole, { maxPoints: Math.min(5, room) });
+    const room = Math.max(2, PATH_ANNOTATE_ANCHOR_MAX - otherCount);
+    const sampled = downsampleStrokeToAnchors(pts, paintRole, {
+      maxPoints: Math.min(5, room),
+      minDist: 0.03,
+    });
     if (!sampled.length) return;
-    const merged = mergeTrackAnchors(anchors, sampled, paintRole);
-    commit(merged);
-    const firstOfRole = merged.find((a) => (a.trackRole || "subject") === paintRole);
+    const mergedAnchors = mergeTrackAnchors(anchors, sampled, paintRole);
+    const nextStrokes = upsertStroke(strokes, paintRole, pts);
+    commitAnnotation({ anchors: mergedAnchors, strokes: nextStrokes });
+    const firstOfRole = mergedAnchors.find((a) => (a.trackRole || "subject") === paintRole);
     if (firstOfRole) setSelectedIndex(firstOfRole.index);
-  }, [anchors, commit, paintRole]);
+  }, [anchors, commitAnnotation, paintRole, strokes]);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (disabled || !imageUrl) return;
@@ -195,7 +225,7 @@ export default function ManhuaPathCameraAnnotatePanel({
     if (inputMode === "tap") {
       if (anchors.length >= PATH_ANNOTATE_ANCHOR_MAX) return;
       const next = [...anchors, emptyAnchor(anchors.length + 1, p.x, p.y, paintRole)];
-      commit(next);
+      commitAnnotation({ anchors: next, strokes });
       setSelectedIndex(next.length);
       return;
     }
@@ -213,7 +243,7 @@ export default function ManhuaPathCameraAnnotatePanel({
     const p = clientToNorm(el, e.clientX, e.clientY);
     if (!p) return;
     const prev = strokeRef.current[strokeRef.current.length - 1];
-    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.008) return;
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.006) return;
     strokeRef.current = [...strokeRef.current, p];
     setStrokePreview(strokeRef.current);
   };
@@ -232,21 +262,42 @@ export default function ManhuaPathCameraAnnotatePanel({
 
   const patchSelected = (patch: Partial<ManhuaPathAnchor>) => {
     if (!selected) return;
-    commit(anchors.map((a) => (a.index === selected.index ? { ...a, ...patch } : a)));
+    commitAnnotation({
+      anchors: anchors.map((a) => (a.index === selected.index ? { ...a, ...patch } : a)),
+      strokes,
+    });
+  };
+
+  const clearTrack = (role: ManhuaPathTrackRole) => {
+    const nextAnchors = anchors.filter((a) => (a.trackRole || "subject") !== role);
+    const nextStrokes = strokes.filter((s) => s.trackRole !== role);
+    if (!nextAnchors.length && !nextStrokes.length) {
+      onChange(null);
+      return;
+    }
+    commitAnnotation({ anchors: nextAnchors, strokes: nextStrokes });
   };
 
   const strokeColor = paintRole === "camera" ? "rgba(56,189,248,0.95)" : "rgba(251,113,133,0.95)";
 
+  const displayPolylines = (["subject", "camera"] as const).map((role) => {
+    const stroke = strokes.find((s) => s.trackRole === role);
+    if (stroke && stroke.points.length >= 2) return { role, pts: stroke.points, dense: true };
+    const pts = anchors.filter((a) => (a.trackRole || "subject") === role);
+    if (pts.length >= 2) return { role, pts, dense: false };
+    return null;
+  });
+
   return (
     <div className="space-y-2 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="text-[11px] text-cyan-100/80">路径运镜标注（静帧）</label>
+        <label className="text-[11px] font-medium text-cyan-100/90">运镜工作台 · 红蓝双轨</label>
         <div className="flex flex-wrap gap-1.5">
           <select
             value={recipeId || value?.recipeId || ""}
             disabled={disabled}
             onChange={(e) => applyRecipe(e.target.value)}
-            className="max-w-[11rem] rounded-md border border-cyan-400/30 bg-black/50 px-2 py-1 text-[11px] text-white/90 outline-none disabled:opacity-50"
+            className="max-w-[10.5rem] rounded-md border border-cyan-400/30 bg-black/50 px-2 py-1 text-[11px] text-white/90 outline-none disabled:opacity-50"
           >
             <option value="">路径配方</option>
             {recipes.map((r: ManhuaPathCameraRecipe) => (
@@ -259,7 +310,7 @@ export default function ManhuaPathCameraAnnotatePanel({
             value={activeActionId}
             disabled={disabled}
             onChange={(e) => applyActionRecipe(e.target.value)}
-            className="max-w-[11rem] rounded-md border border-rose-400/35 bg-black/50 px-2 py-1 text-[11px] text-white/90 outline-none disabled:opacity-50"
+            className="max-w-[10.5rem] rounded-md border border-rose-400/35 bg-black/50 px-2 py-1 text-[11px] text-white/90 outline-none disabled:opacity-50"
           >
             <option value="">动作配方</option>
             {actionRecipes.map((r: ManhuaActionCameraRecipe) => (
@@ -271,14 +322,14 @@ export default function ManhuaPathCameraAnnotatePanel({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           disabled={disabled}
           onClick={() => setPaintRole("subject")}
-          className={`rounded border px-2 py-0.5 text-[10px] ${
+          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
             paintRole === "subject"
-              ? "border-rose-300/70 bg-rose-500/25 text-rose-50"
+              ? "border-rose-300/80 bg-rose-500/30 text-rose-50"
               : "border-white/10 text-white/50"
           }`}
         >
@@ -288,9 +339,9 @@ export default function ManhuaPathCameraAnnotatePanel({
           type="button"
           disabled={disabled}
           onClick={() => setPaintRole("camera")}
-          className={`rounded border px-2 py-0.5 text-[10px] ${
+          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
             paintRole === "camera"
-              ? "border-sky-300/70 bg-sky-500/25 text-sky-50"
+              ? "border-sky-300/80 bg-sky-500/30 text-sky-50"
               : "border-white/10 text-white/50"
           }`}
         >
@@ -303,11 +354,11 @@ export default function ManhuaPathCameraAnnotatePanel({
           onClick={() => setInputMode("draw")}
           className={`rounded border px-2 py-0.5 text-[10px] ${
             inputMode === "draw"
-              ? "border-emerald-300/60 bg-emerald-500/20 text-emerald-50"
-              : "border-white/10 text-white/50"
+              ? "border-emerald-300/70 bg-emerald-500/25 text-emerald-50"
+              : "border-white/10 text-white/45"
           }`}
         >
-          拖拽画线
+          画线
         </button>
         <button
           type="button"
@@ -315,19 +366,27 @@ export default function ManhuaPathCameraAnnotatePanel({
           onClick={() => setInputMode("tap")}
           className={`rounded border px-2 py-0.5 text-[10px] ${
             inputMode === "tap"
-              ? "border-emerald-300/60 bg-emerald-500/20 text-emerald-50"
-              : "border-white/10 text-white/50"
+              ? "border-white/35 bg-white/10 text-white/80"
+              : "border-white/10 text-white/40"
           }`}
         >
-          点击加点
+          加点
+        </button>
+        <button
+          type="button"
+          disabled={disabled || (!strokes.some((s) => s.trackRole === paintRole) && !anchors.some((a) => (a.trackRole || "subject") === paintRole))}
+          onClick={() => clearTrack(paintRole)}
+          className="rounded border border-white/10 px-2 py-0.5 text-[10px] text-white/45 hover:text-white/80 disabled:opacity-30"
+        >
+          清当前轨
         </button>
       </div>
 
-      <p className="text-[10px] leading-snug text-white/40">
+      <p className="text-[10px] leading-snug text-white/45">
         {inputMode === "draw"
-          ? "按住拖拽画当前轨；松手后自动抽稀为锚点并替换该轨（另一轨保留）。"
-          : `点击添加锚点（${PATH_ANNOTATE_ANCHOR_MIN}–${PATH_ANNOTATE_ANCHOR_MAX}）。`}{" "}
-        红=人物，蓝=镜头；成片不显示轨迹。
+          ? "按住拖出流畅轨迹；松手保留笔迹，并抽稀为编译锚点（替换当前轨）。"
+          : `点击加点（合计 ${PATH_ANNOTATE_ANCHOR_MIN}–${PATH_ANNOTATE_ANCHOR_MAX}）。`}{" "}
+        成片不显示轨迹线。
       </p>
 
       <div
@@ -337,7 +396,7 @@ export default function ManhuaPathCameraAnnotatePanel({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        className={`relative mx-auto aspect-[9/16] max-h-72 w-full max-w-[12rem] touch-none overflow-hidden rounded-md border border-white/15 bg-black/60 ${
+        className={`relative mx-auto aspect-[9/16] max-h-80 w-full max-w-[14rem] touch-none overflow-hidden rounded-lg border border-white/20 bg-black/60 shadow-inner ${
           disabled || !imageUrl
             ? "cursor-not-allowed opacity-60"
             : inputMode === "draw"
@@ -353,23 +412,23 @@ export default function ManhuaPathCameraAnnotatePanel({
             className="pointer-events-none absolute inset-0 h-full w-full object-cover select-none"
           />
         ) : (
-          <div className="flex h-full items-center justify-center px-2 text-center text-[10px] text-white/35">
-            生成静帧后可在此画红/蓝轨迹
+          <div className="flex h-full items-center justify-center px-3 text-center text-[10px] leading-relaxed text-white/40">
+            生成静帧后，在此拖出红轨（人物）与蓝轨（镜头）
           </div>
         )}
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-          {(["subject", "camera"] as const).map((role) => {
-            const pts = anchors.filter((a) => (a.trackRole || "subject") === role);
-            if (pts.length < 2) return null;
+          {displayPolylines.map((line) => {
+            if (!line) return null;
             return (
               <polyline
-                key={role}
+                key={line.role}
                 fill="none"
-                stroke={role === "camera" ? "rgba(56,189,248,0.9)" : "rgba(251,113,133,0.9)"}
-                strokeWidth="1.4"
+                stroke={line.role === "camera" ? "rgba(56,189,248,0.92)" : "rgba(251,113,133,0.92)"}
+                strokeWidth={line.dense ? 2.2 : 1.4}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                points={pts.map((a) => `${a.x * 100},${a.y * 100}`).join(" ")}
+                opacity={0.95}
+                points={polyPoints(line.pts)}
               />
             );
           })}
@@ -377,11 +436,10 @@ export default function ManhuaPathCameraAnnotatePanel({
             <polyline
               fill="none"
               stroke={strokeColor}
-              strokeWidth="2"
+              strokeWidth="2.6"
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeDasharray="2 1.5"
-              points={strokePreview.map((a) => `${a.x * 100},${a.y * 100}`).join(" ")}
+              points={polyPoints(strokePreview)}
             />
           ) : null}
           {anchors.map((a) => {
@@ -391,21 +449,19 @@ export default function ManhuaPathCameraAnnotatePanel({
                 <circle
                   cx={a.x * 100}
                   cy={a.y * 100}
-                  r={a.index === selectedIndex ? 3.2 : 2.4}
+                  r={a.index === selectedIndex ? 2.8 : 2.1}
                   fill={isCam ? "#38bdf8" : "#fb7185"}
                   stroke="#0f172a"
-                  strokeWidth="0.6"
+                  strokeWidth="0.5"
+                  opacity={0.85}
                 />
-                <text x={a.x * 100} y={a.y * 100 - 4} textAnchor="middle" fontSize="4" fill="#ecfeff">
-                  {a.index}
-                </text>
               </g>
             );
           })}
         </svg>
       </div>
 
-      {selected ? (
+      {selected && inputMode === "tap" ? (
         <div className="grid gap-1.5 sm:grid-cols-2">
           <label className="text-[10px] text-white/45">
             轨色
@@ -428,24 +484,6 @@ export default function ManhuaPathCameraAnnotatePanel({
               className="mt-0.5 w-full rounded border border-white/10 bg-black/40 px-1.5 py-1 text-[11px] text-white/90"
             />
           </label>
-          <label className="text-[10px] text-white/45 sm:col-span-2">
-            镜头（英文短句）
-            <input
-              value={selected.cameraEn}
-              disabled={disabled}
-              onChange={(e) => patchSelected({ cameraEn: e.target.value })}
-              className="mt-0.5 w-full rounded border border-white/10 bg-black/40 px-1.5 py-1 text-[11px] text-white/90"
-            />
-          </label>
-          <label className="text-[10px] text-white/45 sm:col-span-2">
-            主体微动（英文短句）
-            <input
-              value={selected.subjectActionEn}
-              disabled={disabled}
-              onChange={(e) => patchSelected({ subjectActionEn: e.target.value })}
-              className="mt-0.5 w-full rounded border border-white/10 bg-black/40 px-1.5 py-1 text-[11px] text-white/90"
-            />
-          </label>
         </div>
       ) : null}
 
@@ -459,28 +497,18 @@ export default function ManhuaPathCameraAnnotatePanel({
             className={`rounded border px-1.5 py-0.5 text-[10px] ${
               a.index === selectedIndex
                 ? "border-cyan-300/60 bg-cyan-500/20 text-cyan-50"
-                : "border-white/10 bg-black/30 text-white/60"
+                : "border-white/10 bg-black/30 text-white/55"
             }`}
           >
-            {a.index}.{a.trackRole === "camera" ? "蓝" : "红"}·{a.focusZh}
+            {a.index}.{a.trackRole === "camera" ? "蓝" : "红"}
           </button>
         ))}
-        {anchors.length ? (
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => commit(anchors.slice(0, -1))}
-            className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-white/50 hover:text-white/80"
-          >
-            撤销末点
-          </button>
-        ) : null}
         {value ? (
           <button
             type="button"
             disabled={disabled}
             onClick={() => onChange(null)}
-            className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-white/50 hover:text-white/80"
+            className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-white/45 hover:text-white/80"
           >
             清空
           </button>
@@ -488,17 +516,17 @@ export default function ManhuaPathCameraAnnotatePanel({
       </div>
 
       {brief ? (
-        <pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border border-white/8 bg-black/40 p-1.5 text-[9px] text-white/45">
+        <pre className="max-h-16 overflow-auto whitespace-pre-wrap rounded border border-white/8 bg-black/40 p-1.5 text-[9px] text-white/40">
           {brief}
         </pre>
       ) : null}
       {motionPreview ? (
-        <pre className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-cyan-400/20 bg-black/50 p-1.5 text-[9px] leading-snug text-cyan-50/80">
+        <pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border border-cyan-400/20 bg-black/50 p-1.5 text-[9px] leading-snug text-cyan-50/80">
           {motionPreview}
         </pre>
       ) : (
         <p className="text-[10px] text-white/30">
-          至少 {PATH_ANNOTATE_ANCHOR_MIN} 个锚点后生成运镜句（可先画红轨再画蓝轨）。
+          画满至少一轨流畅线（合计 ≥{PATH_ANNOTATE_ANCHOR_MIN} 锚点）后生成运镜句。
         </p>
       )}
     </div>

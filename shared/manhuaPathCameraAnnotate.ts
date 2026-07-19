@@ -34,6 +34,12 @@ export type ManhuaPathAnchor = {
   trackRole?: ManhuaPathTrackRole;
 };
 
+/** 稠密笔迹（画线显示）；anchors 为编译用抽稀点 */
+export type ManhuaPathStroke = {
+  trackRole: ManhuaPathTrackRole;
+  points: Array<{ x: number; y: number }>;
+};
+
 export type ManhuaPathAnnotation = {
   version: 1;
   imageUrl?: string;
@@ -41,8 +47,12 @@ export type ManhuaPathAnnotation = {
   /** 动作运镜配方 id（FPV / 打斗 / 双轨） */
   actionRecipeId?: string | null;
   anchors: ManhuaPathAnchor[];
+  /** 红/蓝轨流畅笔迹（每轨最多保留一条最新笔迹） */
+  strokes?: ManhuaPathStroke[];
   notesZh?: string;
 };
+
+export const PATH_STROKE_POINT_MAX = 96;
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -51,6 +61,29 @@ function clamp01(n: number): number {
 
 function parseTrackRole(raw: unknown): ManhuaPathTrackRole {
   return raw === "camera" ? "camera" : "subject";
+}
+
+/** 稠密笔迹归一化（显示用；可少于编译锚点下限） */
+export function normalizeStrokePoints(
+  points: unknown,
+  opts?: { max?: number; minDist?: number },
+): Array<{ x: number; y: number }> {
+  const max = opts?.max ?? PATH_STROKE_POINT_MAX;
+  const minDist = opts?.minDist ?? 0.012;
+  const raw = Array.isArray(points) ? points : [];
+  const out: Array<{ x: number; y: number }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const p = item as Record<string, unknown>;
+    const x = clamp01(Number(p.x));
+    const y = clamp01(Number(p.y));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const prev = out[out.length - 1];
+    if (prev && Math.hypot(x - prev.x, y - prev.y) < minDist) continue;
+    out.push({ x, y });
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function normalizePathAnnotation(raw: unknown): ManhuaPathAnnotation | null {
@@ -74,14 +107,43 @@ export function normalizePathAnnotation(raw: unknown): ManhuaPathAnnotation | nu
     });
   }
   if (anchors.length < PATH_ANNOTATE_ANCHOR_MIN) return null;
+
+  const strokesRaw = Array.isArray(o.strokes) ? o.strokes : [];
+  const strokes: ManhuaPathStroke[] = [];
+  for (const s of strokesRaw) {
+    if (!s || typeof s !== "object") continue;
+    const row = s as Record<string, unknown>;
+    const trackRole = parseTrackRole(row.trackRole);
+    const points = normalizeStrokePoints(row.points);
+    if (points.length < 2) continue;
+    // 每轨只留一条
+    const without = strokes.filter((x) => x.trackRole !== trackRole);
+    without.push({ trackRole, points });
+    strokes.length = 0;
+    strokes.push(...without);
+  }
+
   return {
     version: 1,
     imageUrl: o.imageUrl ? String(o.imageUrl).slice(0, 2000) : undefined,
     recipeId: o.recipeId != null ? String(o.recipeId) : null,
     actionRecipeId: o.actionRecipeId != null ? String(o.actionRecipeId) : null,
     anchors,
+    strokes: strokes.length ? strokes : undefined,
     notesZh: o.notesZh ? String(o.notesZh).slice(0, 500) : undefined,
   };
+}
+
+/** 用新笔迹替换同轨笔迹 */
+export function upsertStroke(
+  existing: ManhuaPathStroke[] | undefined,
+  trackRole: ManhuaPathTrackRole,
+  points: Array<{ x: number; y: number }>,
+): ManhuaPathStroke[] {
+  const dense = normalizeStrokePoints(points);
+  const rest = (existing || []).filter((s) => s.trackRole !== trackRole);
+  if (dense.length < 2) return rest;
+  return [...rest, { trackRole, points: dense }];
 }
 
 export function anchorsFromRecipe(
@@ -223,11 +285,8 @@ export function downsampleStrokeToAnchors(
   trackRole: ManhuaPathTrackRole,
   opts?: { maxPoints?: number; minDist?: number },
 ): ManhuaPathAnchor[] {
-  const maxPoints = Math.max(
-    PATH_ANNOTATE_ANCHOR_MIN,
-    Math.min(PATH_ANNOTATE_ANCHOR_MAX, opts?.maxPoints ?? 5),
-  );
-  const minDist = opts?.minDist ?? 0.045;
+  const maxPoints = Math.max(2, Math.min(PATH_ANNOTATE_ANCHOR_MAX, opts?.maxPoints ?? 5));
+  const minDist = opts?.minDist ?? 0.035;
   const raw = (points || [])
     .map((p) => ({ x: clamp01(p.x), y: clamp01(p.y) }))
     .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
