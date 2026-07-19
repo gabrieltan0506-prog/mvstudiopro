@@ -13,6 +13,7 @@ import { AmbientSceneProvider } from "@/components/AmbientSceneProvider";
 import GlobalAmbientBackdrop from "@/components/GlobalAmbientBackdrop";
 
 import { captureSupervisorTokenFromUrl } from "@/lib/supervisorTrpcToken";
+import PlatformProAgentDock from "@/components/PlatformProAgentDock";
 
 function DomainRedirector() {
   const { user, loading } = useAuth();
@@ -171,6 +172,7 @@ function App() {
               <Toaster />
               <PWAInstallButton />
               <Router />
+              <PlatformProAgentDock />
             </div>
           </AmbientSceneProvider>
         </TooltipProvider>

@@ -334,14 +334,13 @@ export function getVisualReportOpenAiModel(): string {
 
 /**
  * /platform 创作顾问免费问答默认模型：**gpt-5.6-terra**。
- * 一般用户强制 Terra；supervisor/admin 可请求 Sol（见 {@link resolvePlatformSkillQaOpenAiModel}）。
  */
 export function getPlatformSkillQaOpenAiModel(): string {
   return getEvolinkGpt56TerraModel();
 }
 
-/** 创作顾问问答推理强度：固定 **high**（可用 `PLATFORM_SKILL_QA_REASONING_EFFORT` 覆盖）。 */
-export function resolvePlatformSkillQaReasoningEffort():
+/** 创作顾问问答推理强度：可用 `PLATFORM_SKILL_QA_REASONING_EFFORT` 全局覆盖；否则按模型默认。 */
+export function resolvePlatformSkillQaReasoningEffort(mode?: "terra" | "sol"):
   | "none"
   | "minimal"
   | "low"
@@ -351,23 +350,41 @@ export function resolvePlatformSkillQaReasoningEffort():
   const raw = norm(process.env.PLATFORM_SKILL_QA_REASONING_EFFORT);
   const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
   if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformSkillQaReasoningEffort>;
+  if (mode === "sol") return "high";
+  if (mode === "terra") return "medium";
+  // 未传 mode 的旧调用方（如动效PPT）保持 high
   return "high";
 }
 
 /**
- * 解析创作顾问问答模型：非 supervisor 一律 Terra；supervisor 可选 Sol / Terra。
+ * 解析创作顾问问答模型：用户/管理者均可选 Sol 或 Terra（计费与免费额度不同）。
  */
 export function resolvePlatformSkillQaOpenAiModel(params: {
   requested?: string | null;
-  isSupervisor: boolean;
+  /** @deprecated 不再强制一般用户 Terra；保留参数以免调用方报错 */
+  isSupervisor?: boolean;
 }): PlatformSkillQaModelChoice {
-  if (!params.isSupervisor) return EVOLINK_CHAT_MODEL_GPT56_TERRA;
   const req = normalizeEvolinkChatModel(
     params.requested || getEvolinkGpt56TerraModel(),
     EVOLINK_CHAT_MODEL_GPT56_TERRA,
   );
   if (req === EVOLINK_CHAT_MODEL_GPT56_SOL) return EVOLINK_CHAT_MODEL_GPT56_SOL;
   return EVOLINK_CHAT_MODEL_GPT56_TERRA;
+}
+
+/** 创作顾问超额售价（API 成本估值积分 × 1.6；可用 env 覆盖成本基数） */
+export function resolvePlatformSkillQaPaidCredits(mode: "terra" | "sol"): number {
+  const envKey =
+    mode === "sol" ? "PLATFORM_SKILL_QA_SOL_API_COST_CREDITS" : "PLATFORM_SKILL_QA_TERRA_API_COST_CREDITS";
+  const fromEnv = Number(process.env[envKey]);
+  const apiCost =
+    Number.isFinite(fromEnv) && fromEnv > 0
+      ? fromEnv
+      : mode === "sol"
+        ? 12
+        : 5;
+  // ceil：保证不低于成本+60%（12×1.6=19.2 → 20）
+  return Math.max(1, Math.ceil(apiCost * 1.6 - 1e-9));
 }
 
 /** Stage 1 / Stage 2 文案 GPT‑5.6 推理强度：默认 **high**（结果优先；可用 `PLATFORM_STAGE2_OPENAI_REASONING_EFFORT` 下调）。 */

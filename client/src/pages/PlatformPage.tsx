@@ -50,7 +50,9 @@ import type {
 import {
   CREDIT_COSTS,
   PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL,
-  PLATFORM_SKILL_QA_DAILY_FREE_LIMIT,
+  PLATFORM_SKILL_QA_SOL_DAILY_FREE,
+  PLATFORM_SKILL_QA_TERRA_DAILY_FREE,
+  platformSkillQaPaidCredits,
   platformCoverBundleTotalCredits,
   platformCompositeBundleTotalCreditsForGrid,
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
@@ -184,8 +186,8 @@ const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
 
-/** supervisor：创作顾问免费问答模型（一般用户服务端固定 Terra） */
-const PLATFORM_SKILL_QA_MODEL_LS_KEY = "mvstudiopro.platform.skillQaModel.v1";
+/** 创作顾问问答模型（所有登录用户可选；Sol/Terra 免费额度与超额单价不同） */
+const PLATFORM_SKILL_QA_MODEL_LS_KEY = "mvstudiopro.platform.skillQaModel.v2";
 type PlatformSkillQaModelChoice = "gpt-5.6-terra" | "gpt-5.6-sol";
 
 function readPlatformSkillQaModelFromLs(): PlatformSkillQaModelChoice {
@@ -1936,9 +1938,8 @@ export default function PlatformPage() {
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
-  /** 创作顾问问答模型切换：仅 supervisor / admin 可见；一般用户服务端固定 Terra */
-  const canConfigureSkillQaModel =
-    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  /** 创作顾问：所有登录用户可选 Sol / Terra（计费不同） */
+  const canConfigureSkillQaModel = Boolean(isAuthenticated);
 
   const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
     readPlatformCopyLlmEngineFromLs(),
@@ -2410,25 +2411,67 @@ export default function PlatformPage() {
       toast.error("请先登录后再提问");
       return;
     }
+    const mode = skillQaModel === "gpt-5.6-sol" ? "sol" : "terra";
+    const paidUnit = platformSkillQaPaidCredits(mode);
+    const freeLimit = mode === "sol" ? PLATFORM_SKILL_QA_SOL_DAILY_FREE : PLATFORM_SKILL_QA_TERRA_DAILY_FREE;
+    const remaining = skillQaRemaining;
+    let confirmPaid = false;
+    if (remaining != null && remaining <= 0) {
+      const ok = window.confirm(
+        `今日 ${mode === "sol" ? "5.6 Sol" : "5.6 Terra"} 免费 ${freeLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次。确认？`,
+      );
+      if (!ok) return;
+      confirmPaid = true;
+    }
     try {
       const supervisorTok = getSupervisorTrpcToken();
       const res = await askPlatformSkillQaMutation.mutateAsync({
         question: q,
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
-        ...(canConfigureSkillQaModel
-          ? {
-              qaModel: skillQaModel,
-              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-            }
-          : {}),
+        qaModel: skillQaModel,
+        confirmPaid,
+        ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
       });
       setSkillQaAnswer(res.answer || "");
       setSkillQaRemaining(res.remainingFreeToday);
       setSkillQaImageOffer(res.imageOffer ?? null);
       setSkillQaImageUrl(null);
+      if (res.paidThisTurn && res.creditsCharged > 0) {
+        toast.message(`已扣 ${res.creditsCharged} 积分（超额问答）`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (/免费.*已用完|PAYMENT_REQUIRED|扣除/.test(msg) && !confirmPaid) {
+        const ok = window.confirm(`${sanitizePlatformUserMessage(msg, "")}\n\n确认扣点继续？`);
+        if (ok) {
+          try {
+            const supervisorTok = getSupervisorTrpcToken();
+            const res = await askPlatformSkillQaMutation.mutateAsync({
+              question: q,
+              enabledSkillIds: Array.from(enabledPlatformSkillIds),
+              allowBloggerTitle,
+              qaModel: skillQaModel,
+              confirmPaid: true,
+              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+            });
+            setSkillQaAnswer(res.answer || "");
+            setSkillQaRemaining(res.remainingFreeToday);
+            setSkillQaImageOffer(res.imageOffer ?? null);
+            setSkillQaImageUrl(null);
+            if (res.creditsCharged > 0) toast.message(`已扣 ${res.creditsCharged} 积分（超额问答）`);
+            return;
+          } catch (err2) {
+            toast.error(
+              sanitizePlatformUserMessage(
+                err2 instanceof Error ? err2.message : String(err2),
+                "问答失败，请稍后重试",
+              ),
+            );
+            return;
+          }
+        }
+      }
       toast.error(sanitizePlatformUserMessage(msg, "问答失败，请稍后重试"));
     }
   }, [
@@ -2437,8 +2480,8 @@ export default function PlatformPage() {
     askPlatformSkillQaMutation,
     enabledPlatformSkillIds,
     allowBloggerTitle,
-    canConfigureSkillQaModel,
     skillQaModel,
+    skillQaRemaining,
   ]);
 
   const handleConfirmSkillQaImage = useCallback(async () => {
@@ -2764,25 +2807,40 @@ export default function PlatformPage() {
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold text-white/90">创作顾问问答</div>
             <p className="mt-0.5 text-[10px] leading-snug text-gray-500">
-              每日免费 {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
-              {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
-              。生图另计费。
+              可问创作 / Skill / 运营等问题。
+              {skillQaModel === "gpt-5.6-sol" ? (
+                <>
+                  {" "}
+                  Sol 每日免费 {PLATFORM_SKILL_QA_SOL_DAILY_FREE} 次
+                  {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
+                  ，超额 {platformSkillQaPaidCredits("sol")} 积分/次。
+                </>
+              ) : (
+                <>
+                  {" "}
+                  Terra 每日免费 {PLATFORM_SKILL_QA_TERRA_DAILY_FREE} 次
+                  {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
+                  ，超额 {platformSkillQaPaidCredits("terra")} 积分/次。
+                </>
+              )}{" "}
+              生图另计：首张九折 {CREDIT_COSTS.platformSkillQaImageFirst} 点，之后{" "}
+              {CREDIT_COSTS.platformTopicFrameGraphic} 点。
             </p>
           </div>
           {canConfigureSkillQaModel ? (
             <label className="flex shrink-0 flex-col gap-1 text-[10px] text-[#8cefff]/90">
-              <span className="font-semibold uppercase tracking-[0.12em]">Supervisor · 问答模型</span>
+              <span className="font-semibold uppercase tracking-[0.12em]">问答模型</span>
               <select
                 value={skillQaModel}
-                onChange={(e) =>
-                  setSkillQaModel(
-                    e.target.value === "gpt-5.6-sol" ? "gpt-5.6-sol" : "gpt-5.6-terra",
-                  )
-                }
+                onChange={(e) => {
+                  const next = e.target.value === "gpt-5.6-sol" ? "gpt-5.6-sol" : "gpt-5.6-terra";
+                  setSkillQaModel(next);
+                  setSkillQaRemaining(null);
+                }}
                 className="rounded-md border border-[#49e6ff]/35 bg-black/50 px-2 py-1.5 text-[11px] font-semibold text-white focus:border-[#49e6ff]/60 focus:outline-none"
               >
-                <option value="gpt-5.6-terra">GPT-5.6 Terra（默认）</option>
-                <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+                <option value="gpt-5.6-terra">5.6 Terra · 免{PLATFORM_SKILL_QA_TERRA_DAILY_FREE}次</option>
+                <option value="gpt-5.6-sol">5.6 Sol · 免{PLATFORM_SKILL_QA_SOL_DAILY_FREE}次</option>
               </select>
             </label>
           ) : null}
