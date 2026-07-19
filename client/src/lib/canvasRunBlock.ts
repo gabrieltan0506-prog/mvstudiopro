@@ -34,7 +34,12 @@ const GEMINI_MODEL_MAP = {
 } as const;
 
 export type CanvasRunDeps = {
-  optimizeCopy: (input: { sourceText: string; optimizationBrief?: string }) => Promise<string>;
+  optimizeCopy: (input: {
+    sourceText: string;
+    optimizationBrief?: string;
+    /** 画布文本模型：gpt-5.6-sol / gpt-5.6-terra / gpt-5.5 / gpt-5.4 */
+    modelName?: string;
+  }) => Promise<string>;
   /** 把 dataURL/本地图上传为 HTTPS，供 Evolink/Seedance 引用（可选） */
   uploadImageFile?: (file: File) => Promise<string>;
 };
@@ -439,13 +444,14 @@ export async function runCanvasBlock(
       return { outputText: text };
     }
     const brief =
-      model === "gpt-5.4"
+      model === "gpt-5.6-terra" || model === "gpt-5.4"
         ? "你是创作助手：根据原文直接输出可发布的完整 Markdown 文案，语气专业、有画面感。"
         : "你是创作助手：深度优化并输出可直接发布的完整 Markdown（含标题、正文、平台适配要点）。";
     const sourceText = mergedPrompt.length >= 10 ? mergedPrompt : `${mergedPrompt}\n（请补全为完整创作文案）`;
     const text = await deps.optimizeCopy({
       sourceText,
       optimizationBrief: block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief,
+      modelName: model,
     });
     return { outputText: text };
   }

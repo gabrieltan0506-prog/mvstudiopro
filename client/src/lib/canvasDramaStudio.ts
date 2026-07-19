@@ -366,7 +366,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   story.prompt = storyPrompt;
   story.width = 400;
   story.height = 320;
-  story.textModel = "gemini-3.1-pro";
+  story.textModel = "gpt-5.6-sol";
   // 故意不把 story.parentId / edge 接到 recap_card：提要文案已写入 story prompt，
   // 若挂上游会污染 text vision 与 keyart 的最近参考图。
 
@@ -377,7 +377,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
   bible.prompt = [bibleBase, characterBlock, propAnchorBlock].filter(Boolean).join("\n\n");
   bible.parentId = story.id;
-  bible.textModel = "gemini-3.1-pro";
+  bible.textModel = "gpt-5.6-sol";
 
   const beats = defaultCanvasBlock("text", originX + gapX * (col0 + 2), originY);
   beats.id = makeFactoryStageId("beats", episodeIndex);
@@ -386,7 +386,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
   beats.prompt = [beatsBase, craftShotBlock, propAnchorBlock].filter(Boolean).join("\n\n");
   beats.parentId = bible.id;
-  beats.textModel = "gemini-3.1-pro";
+  beats.textModel = "gpt-5.6-sol";
 
   const reverse = defaultCanvasBlock("video_reverse", originX + gapX * (col0 + 3), originY);
   reverse.id = makeFactoryStageId("reverse", episodeIndex);

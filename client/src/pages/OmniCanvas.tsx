@@ -406,8 +406,12 @@ export default function OmniCanvas() {
 
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
-      optimizeCopy: async ({ sourceText, optimizationBrief }) => {
-        const res = await optimizeCopyMutation.mutateAsync({ sourceText, optimizationBrief });
+      optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
+        const res = await optimizeCopyMutation.mutateAsync({
+          sourceText,
+          optimizationBrief,
+          modelName,
+        });
         return res.result.optimizedMarkdown;
       },
       uploadImageFile: async (file) => {
