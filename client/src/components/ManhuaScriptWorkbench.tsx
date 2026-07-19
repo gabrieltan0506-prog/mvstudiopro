@@ -50,6 +50,8 @@ type Props = {
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
   factoryBusy?: boolean;
+  /** 工厂进度一行（如「第2集 · 静帧」） */
+  factoryProgress?: string;
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
@@ -87,6 +89,7 @@ export default function ManhuaScriptWorkbench({
   narrativeLightingLabelZh,
   finalVideoUrl,
   factoryBusy,
+  factoryProgress,
   canRun,
   onOpenCharacterCard,
   onOpenAssetWall,
@@ -228,7 +231,7 @@ export default function ManhuaScriptWorkbench({
         <div className="border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-2 md:px-4">
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            本集工厂链路生成中…
+            {factoryProgress?.trim() ? factoryProgress : "本集工厂链路生成中…"}
           </div>
           <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
             <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/80 to-teal-300/80" />

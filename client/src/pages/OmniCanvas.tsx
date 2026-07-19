@@ -2393,6 +2393,9 @@ export default function OmniCanvas() {
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
                   finalVideoUrl={finalAssembleVideoUrl}
                   factoryBusy={factoryBusy || assembleBusy}
+                  factoryProgress={
+                    assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
+                  }
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
