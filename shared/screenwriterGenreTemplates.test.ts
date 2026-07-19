@@ -39,9 +39,13 @@ describe("screenwriterGenreTemplates + scene library", () => {
     const key = buildManhuaStagePromptWithGenre("key_art", {
       genreId: "campus",
       sceneId: "scene_14",
+      writerContext: "【编剧视觉摘要】校服领带松垮，黄昏天台对峙。",
     });
     expect(key).toContain("校园教室");
     expect(key).toContain("本集主场景优先");
+    expect(key).toContain("【编剧剧种模板");
+    expect(key).toContain("编剧视觉摘要");
+    expect(key).toContain("校服领带");
   });
 
   it("recommends scene id from topic keywords not only genre default", () => {

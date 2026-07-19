@@ -188,6 +188,41 @@ describe("canvasDramaStudio factory", () => {
     const keyart = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
     expect(keyart).toContain("【画风硬锁】");
     expect(keyart).toContain("仿真人");
+    expect(keyart).toContain("【角色库锚点】");
+  });
+
+  it("spawn/prefs inject wardrobe+cast+genre into keyart (not bible-only)", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "仙侠剑修闯秘境",
+      genreId: "xianxia",
+      sceneId: "scene_04",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      wardrobePropContinuityIds: ["wpc_01_xianxia_sword"],
+      propIds: ["demo_prop_xianxia_sword"],
+      writerContext: "【编剧视觉摘要】女帝青衣佩剑，雨夜秘境石阶，冷青雾气。",
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(key).toContain("【服装道具连续性】");
+    expect(key).toContain("仙侠剑修连续");
+    expect(key).toContain("【古风原型锚点】");
+    expect(key).toContain("【编剧剧种模板");
+    expect(key).toContain("编剧视觉摘要");
+    expect(key).toContain("本集主场景优先");
+    expect(key).toMatch(/秘境|洞府/);
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      wardrobePropContinuityIds: ["wpc_03_urban_power"],
+      characterIds: ["char_f_02", "char_m_02"],
+      ancientArchetypeIds: [],
+      genreId: "urban",
+      sceneId: "scene_12",
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const key2 = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(key2).toContain("都市权谋连续");
+    expect(key2).not.toContain("仙侠剑修连续");
+    expect(key2).toContain("【角色库锚点】");
+    expect(key2).toContain("都市办公室");
   });
 
   it("spawn injects art style into bible and keyart", () => {

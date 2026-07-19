@@ -517,12 +517,18 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const keyArtBase = usePack
     ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
+  const sceneDemoAtSpawn = composeManhuaSceneDemoAnchorBlock(sceneId);
+  // 静帧必须确定性带上角色/服装/道具/场景示范，不能只靠 bible 跑完再 enrich
   keyArt.prompt = [
     keyArtBase,
+    characterBlock,
+    ancientBlock,
+    wardrobeBlock,
     craftShotBlock,
     narrativeLightingBlock,
     maleMicroBlock,
     artStyleBlock,
+    sceneDemoAtSpawn,
     propAnchorBlock,
   ]
     .filter(Boolean)
@@ -787,7 +793,10 @@ export function applyFactoryPrefsToBlocks(
       b.id.startsWith("reverse-") ||
       b.id.startsWith("keyart-");
     const syncGenre =
-      b.id.startsWith("story-") || b.id.startsWith("bible-") || b.id.startsWith("beats-");
+      b.id.startsWith("story-") ||
+      b.id.startsWith("bible-") ||
+      b.id.startsWith("beats-") ||
+      b.id.startsWith("keyart-");
 
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-") || b.id.startsWith("keyart-")) {
       let base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
@@ -803,6 +812,9 @@ export function applyFactoryPrefsToBlocks(
         if (b.id.startsWith("keyart-")) {
           base = stripMarkedSection(base, "【本集主场景优先】");
           base = stripMarkedSection(base, "【画风硬锁】");
+          base = stripMarkedSection(base, "【角色库锚点】");
+          base = stripMarkedSection(base, "【古风原型锚点】");
+          base = stripMarkedSection(base, "【服装道具连续性】");
         }
       }
       base = stripMarkedSection(base, "【点选道具锚点】");
@@ -814,6 +826,9 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("keyart-") && scene
           ? `【本集主场景优先】${scene.nameZh}\n直接吸收其生图提示词与核心元素，角色必须融入场景：\n${scene.promptZh}`
           : "",
+        b.id.startsWith("keyart-") && characterBlock ? characterBlock : "",
+        b.id.startsWith("keyart-") && ancientBlock ? ancientBlock : "",
+        b.id.startsWith("keyart-") && wardrobeBlock ? wardrobeBlock : "",
         craftBlock,
         !b.id.startsWith("keyart-") ? pathCameraBlock : "",
         !b.id.startsWith("keyart-") ? actionCameraBlock : "",

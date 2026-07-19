@@ -359,10 +359,23 @@ export function buildManhuaStagePromptWithGenre(
       : "";
 
   const parts = [base];
-  if (writerContext && (stage === "story_brief" || stage === "character_bible" || stage === "episode_beats")) {
-    parts.push(writerContext.slice(0, 6000));
+  // 静帧也要编剧包视觉摘要 + 剧种调性，否则成图与题材/服化道脱节
+  if (
+    writerContext &&
+    (stage === "story_brief" ||
+      stage === "character_bible" ||
+      stage === "episode_beats" ||
+      stage === "key_art")
+  ) {
+    parts.push(writerContext.slice(0, stage === "key_art" ? 2800 : 6000));
   }
-  if (genreBlock && (stage === "story_brief" || stage === "character_bible" || stage === "episode_beats")) {
+  if (
+    genreBlock &&
+    (stage === "story_brief" ||
+      stage === "character_bible" ||
+      stage === "episode_beats" ||
+      stage === "key_art")
+  ) {
     parts.push(genreBlock);
   }
   if (sceneBlock) parts.push(sceneBlock);
