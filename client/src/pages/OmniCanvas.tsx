@@ -2227,8 +2227,31 @@ export default function OmniCanvas() {
                 </button>
               </div>
 
+              {writerBusy ? (
+                <div className="mt-3 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-[11px] font-medium text-cyan-50">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    正在扩写连载剧情包…
+                  </div>
+                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full w-1/2 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/70 to-teal-300/80" />
+                  </div>
+                </div>
+              ) : null}
+
               {writerPack ? (
-                <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                <div
+                  className={`mt-4 rounded-xl border p-3 ${
+                    writerConfirmed
+                      ? "border-emerald-400/25 bg-emerald-500/[0.06]"
+                      : "border-cyan-400/25 bg-cyan-500/[0.07]"
+                  }`}
+                >
+                  {!writerConfirmed ? (
+                    <div className="mb-2 rounded-lg border border-cyan-400/30 bg-cyan-500/12 px-2.5 py-1.5 text-[10px] font-medium text-cyan-50">
+                      剧情包已就绪 · 请点上方主按钮「确认并进入工作台」
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-sm font-semibold text-white">{writerPack.seriesTitle}</div>
                     {writerPack.logline ? (
@@ -2238,7 +2261,11 @@ export default function OmniCanvas() {
                       <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100">
                         已确认
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="rounded-md border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[10px] text-amber-50">
+                        待确认
+                      </span>
+                    )}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {writerPack.episodes.map((ep) => (
