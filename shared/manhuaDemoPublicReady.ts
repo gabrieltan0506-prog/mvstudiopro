@@ -6,8 +6,13 @@
  */
 
 export const MANHUA_DEMO_PUBLIC_READY_IDS: ReadonlySet<string> = new Set([
+  "demo_scene_ancient_jianghu_inn",
   "demo_scene_ancient_palace",
   "demo_scene_ancient_street",
+  "demo_scene_ancient_wedding_hall",
+  "demo_scene_intrigue_court",
+  "demo_scene_intrigue_court_empty_front",
+  "demo_scene_intrigue_study",
   "demo_scene_novel_manor_yard",
   "demo_scene_revenge_border_farm",
   "demo_scene_revenge_rain_alley",
@@ -16,8 +21,12 @@ export const MANHUA_DEMO_PUBLIC_READY_IDS: ReadonlySet<string> = new Set([
   "demo_scene_xianxia_sect",
   "demo_scene_xuanhuan_demon_palace",
   "demo_scene_xuanhuan_spirit_field",
+  "demo_prop_ancient_bridal_fan",
   "demo_prop_ancient_hairpin",
   "demo_prop_ancient_jade",
+  "demo_prop_ancient_phoenix_crown",
+  "demo_prop_intrigue_seal",
+  "demo_prop_intrigue_secret_letter",
   "demo_prop_novel_system_panel",
   "demo_prop_revenge_contract",
   "demo_prop_romance_ring_box",
