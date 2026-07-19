@@ -2101,9 +2101,9 @@ export default function OmniCanvas() {
                     漫剧创作
                   </div>
                   <p className="mt-3 text-[13px] leading-6 text-white/60">
-                    展开完整工作流：题材扩写 → 编导确认 → 铺板跑静帧与成片。适合竖屏连载短剧。
+                    引导式路径：题材 → 编剧确认 → 自动套造型 → 工作台出片 → 成片坞合成。适合竖屏连载短剧。
                   </p>
-                  <span className="mt-4 inline-block text-[12px] font-medium text-emerald-200/90">进入漫剧工作流 →</span>
+                  <span className="mt-4 inline-block text-[12px] font-medium text-emerald-200/90">进入引导式漫剧 →</span>
                 </button>
                 <button
                   type="button"
