@@ -188,66 +188,42 @@ export default function ManhuaScriptWorkbench({
   }, [blocks, focusEpisode, episodeKeyarts, activeKeyart?.id]);
 
   return (
-    <div className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]">
-      {/* 顶栏：对标竞品工作台条，路径轨由页顶引导条负责，此处不再重复 */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 md:px-4">
+    <div
+      id="manhua-workbench-shell"
+      className="mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
+    >
+      {/* 顶栏：对标阿硕剧本工作室细顶栏 */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-white/95">剧本工作台</div>
-            <p className="truncate text-[11px] text-white/40">
-              {seriesTitle || topic || "未填题材"}
-              {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
-              {" · "}
-              第{focusEpisode}集 · 约 {totalSec}s · {shots.length} 镜
-            </p>
+            <div className="truncate text-[13px] font-semibold text-white/95">
+              {seriesTitle || topic || "剧本工作室"}
+              <span className="ml-2 text-[11px] font-normal text-white/40">
+                第{focusEpisode}集 · {shots.length} 片段 · 约 {totalSec}s
+                {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
+              </span>
+            </div>
           </div>
         </div>
-        {projectBibleSummary ? (
-          <p className="max-w-md truncate text-[10px] text-emerald-100/70" title={projectBibleSummary}>
-            专案设定：{projectBibleSummary}
-          </p>
-        ) : (
-          <p className="text-[10px] text-white/35">确认编剧后绑定角色 / 画风至各集</p>
-        )}
-      </div>
-
-      {/* 主 CTA 区：生成本集为主，全自动/续跑为次 */}
-      {!canRun ? (
-        <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50/90 md:px-4">
-          工作台出片尚未解锁 · 请先在上方编剧室扩写并点「确认并进入工作台」
-        </div>
-      ) : null}
-      {canRun && factoryBusy ? (
-        <div className="border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-2 md:px-4">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {factoryProgress?.trim() ? factoryProgress : "本集工厂链路生成中…"}
-          </div>
-          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
-            <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/80 to-teal-300/80" />
-          </div>
-        </div>
-      ) : null}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 md:px-4">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             disabled={!canRun || factoryBusy}
             onClick={() => onSpawnAndRunClip?.()}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3.5 py-2 text-[12px] font-semibold text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.1)] disabled:opacity-45"
+            className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
           >
             <Play className="h-3.5 w-3.5" />
-            {factoryBusy ? "生成中…" : "生成本集成片"}
+            {factoryBusy ? "生成中…" : "生成"}
           </button>
           {onRunFullAuto ? (
             <button
               type="button"
               disabled={!canRun || factoryBusy}
               onClick={() => onRunFullAuto()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] font-medium text-white/60 hover:bg-white/[0.06] disabled:opacity-45"
+              className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06] disabled:opacity-45"
             >
-              勾选集全自动
+              全自动
             </button>
           ) : null}
           {onResumeFromFailure ? (
@@ -255,35 +231,48 @@ export default function ManhuaScriptWorkbench({
               type="button"
               disabled={!canRun || factoryBusy}
               onClick={() => onResumeFromFailure()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] font-medium text-white/60 hover:bg-white/[0.06] disabled:opacity-45"
+              className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06] disabled:opacity-45"
             >
-              从失败处续跑
+              续跑
             </button>
           ) : null}
-        </div>
-        <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
             onClick={() => onOpenCharacterCard?.()}
-            className="rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-1.5 text-[11px] text-white/65 hover:bg-white/[0.07]"
+            className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
           >
             角色库
           </button>
           <button
             type="button"
             onClick={() => onOpenAssetWall?.()}
-            className="rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-1.5 text-[11px] text-white/65 hover:bg-white/[0.07]"
+            className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
           >
             资产墙
           </button>
         </div>
       </div>
 
-      <div className="grid gap-0 xl:grid-cols-[280px_minmax(0,1fr)_minmax(420px,46vw)] lg:grid-cols-[240px_minmax(0,1fr)_minmax(340px,40vw)]">
-        {/* 左：本案资产（角色缩略 + 场景墙 + 道具墙） */}
-        <aside className="max-h-[min(78vh,860px)] overflow-y-auto border-b border-white/10 p-3 lg:border-b-0 lg:border-r">
+      {!canRun ? (
+        <div className="shrink-0 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-50/90">
+          请先确认编剧，再出片
+        </div>
+      ) : null}
+      {canRun && factoryBusy ? (
+        <div className="shrink-0 border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {factoryProgress?.trim() ? factoryProgress : "生成中…"}
+          </div>
+        </div>
+      ) : null}
+
+      {/* 三栏主区：左资产 · 中片段 · 右预览（满高，对标阿硕） */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_minmax(320px,42%)] xl:grid-cols-[240px_minmax(0,1fr)_minmax(380px,44%)]">
+        {/* 左：本集资产 */}
+        <aside className="min-h-0 overflow-y-auto border-b border-white/10 p-2.5 lg:border-b-0 lg:border-r">
           <div className="mb-2 flex items-center justify-between">
-            <div className="text-[12px] font-semibold text-white/85">本案资产</div>
+            <div className="text-[12px] font-semibold text-white/85">本集资产</div>
             <button
               type="button"
               onClick={() => onOpenCharacterCard?.()}
@@ -444,14 +433,14 @@ export default function ManhuaScriptWorkbench({
           </div>
         </aside>
 
-        {/* 中：脚本 + 多镜（对标竞品「片段」编辑区） */}
-        <section className="min-w-0 border-b border-white/10 p-3 lg:max-h-[min(78vh,860px)] lg:overflow-y-auto lg:border-b-0 lg:border-r">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* 中：片段脚本（可滚） */}
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b border-white/10 p-2.5 lg:border-b-0 lg:border-r md:p-3">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/85">
-              片段 {String(focusEpisode).padStart(2, "0")}
+              片段 {String(Math.min(shotIndex + 1, Math.max(shots.length, 1))).padStart(2, "0")}
               {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
               <span className="ml-2 font-normal text-white/40">
-                镜 {activeShot?.index ?? "—"}/{shots.length}
+                {activeShot?.durationSec ?? 5}s · 镜 {activeShot?.index ?? "—"}/{shots.length || 1}
               </span>
             </div>
             <div className="flex flex-wrap gap-1">
@@ -474,17 +463,17 @@ export default function ManhuaScriptWorkbench({
             </div>
           </div>
 
-          <p className="mt-2 max-h-16 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
+          <p className="mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
             {(story?.outputText || story?.prompt || topic || "铺板并跑过故事节点后，此处显示本集摘要。").slice(
               0,
               360,
             )}
           </p>
 
-          <div className="mt-3 text-[11px] font-semibold text-white/70">
+          <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
             分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
           </div>
-          <div className="mt-1.5 max-h-[min(52vh,480px)] space-y-1.5 overflow-y-auto pr-1">
+          <div className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
             {shots.map((shot, i) => {
               const on = i === Math.min(shotIndex, shots.length - 1);
               const shotKey =
@@ -533,10 +522,10 @@ export default function ManhuaScriptWorkbench({
           </p>
         </section>
 
-        {/* 右：视频结果（主视觉，对标竞品大预览） */}
-        <aside className="flex flex-col p-3 lg:min-h-[min(78vh,860px)]">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="text-[13px] font-semibold text-white/90">视频结果</div>
+        {/* 右：视频结果（满高主预览） */}
+        <aside className="flex min-h-0 flex-col p-2.5 md:p-3">
+          <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
+            <div className="text-[12px] font-semibold text-white/90">视频结果</div>
             {factoryBusy ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -561,38 +550,33 @@ export default function ManhuaScriptWorkbench({
             )}
           </div>
           <div
-            className={`flex min-h-[420px] w-full flex-1 items-center justify-center overflow-hidden rounded-xl border bg-black/70 ${
+            className={`flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-lg border bg-black ${
               finalVideoUrl || previewIsVideo
                 ? "border-cyan-400/45"
                 : factoryBusy
                   ? "border-amber-400/35"
                   : "border-white/12"
-            } aspect-[9/16] max-h-[min(78vh,820px)]`}
+            }`}
           >
             {finalVideoUrl ? (
-              <video src={finalVideoUrl} controls className="h-full w-full object-contain" />
+              <video src={finalVideoUrl} controls className="h-full max-h-full w-full object-contain" />
             ) : previewUrl ? (
               previewIsVideo ? (
-                <video src={previewUrl} controls className="h-full w-full object-contain" />
+                <video src={previewUrl} controls className="h-full max-h-full w-full object-contain" />
               ) : (
-                <img src={previewUrl} alt="" className="h-full w-full object-contain" />
+                <img src={previewUrl} alt="" className="h-full max-h-full w-full object-contain" />
               )
             ) : (
               <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
-                {factoryBusy
-                  ? "正在生成，推进状态见上方「生成推进」条…"
-                  : "生成后在此即时预览本集静帧 / 成片（对标工作台右栏「视频结果」）。"}
-                <br />
-                {!factoryBusy ? "主按钮：「生成本集成片」。" : null}
+                {factoryBusy ? "正在生成…" : "点「生成」后，静帧 / 成片在此预览"}
               </div>
             )}
           </div>
-          {finalVideoUrl ? (
-            <p className="mt-1.5 text-[10px] text-cyan-100/75">
-              当前预览：多集合成长片（含配乐）·{" "}
+          <div className="mt-1.5 flex shrink-0 flex-wrap gap-1.5">
+            {finalVideoUrl ? (
               <button
                 type="button"
-                className="underline underline-offset-2 hover:text-cyan-50"
+                className="text-[10px] text-cyan-100/75 underline underline-offset-2 hover:text-cyan-50"
                 onClick={() =>
                   document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
                     behavior: "smooth",
@@ -602,90 +586,104 @@ export default function ManhuaScriptWorkbench({
               >
                 打开成片坞
               </button>
-            </p>
-          ) : null}
-          <div className="mt-2 flex flex-wrap gap-2">
+            ) : null}
             {activeKeyart?.id ? (
               <button
                 type="button"
                 onClick={() => onFocusBlock?.(activeKeyart.id)}
-                className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/65 hover:bg-white/5"
+                className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/65 hover:bg-white/5"
               >
-                <Focus className="h-3 w-3" /> 聚焦本镜静帧
+                <Focus className="h-3 w-3" /> 静帧节点
               </button>
             ) : null}
             {clip?.id ? (
               <button
                 type="button"
                 onClick={() => onFocusBlock?.(clip.id)}
-                className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/65 hover:bg-white/5"
+                className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/65 hover:bg-white/5"
               >
-                <Focus className="h-3 w-3" /> 聚焦成片节点
+                <Focus className="h-3 w-3" /> 成片节点
               </button>
             ) : null}
           </div>
         </aside>
       </div>
 
-      {/* 底：本集分镜胶片 + 集时间线 */}
-      <div className="border-t border-white/10 px-3 py-2.5 md:px-4">
-        <div className="mb-2.5">
-          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold text-white/70">
-              片段时间线 · 第{focusEpisode}集
-            </div>
+      {/* 底胶片：片段条为主（对标阿硕），集切换为次 */}
+      <div className="shrink-0 border-t border-white/10 bg-[#080b12] px-2.5 py-2 md:px-3">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] font-semibold text-white/75">片段</div>
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-[9px] text-white/35">
-              静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
-              {Math.max(episodeKeyarts.length, shots.length, 1)} · 点选切换预览
+              已出静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
+              {Math.max(episodeKeyarts.length, shots.length, 1)}
             </span>
+            <div className="flex gap-1 overflow-x-auto">
+              {episodeIndexes.map((ep) => {
+                const bound = bibleBoundEpisodes.includes(ep);
+                const on = ep === focusEpisode;
+                return (
+                  <button
+                    key={`ep-chip-${ep}`}
+                    type="button"
+                    onClick={() => onFocusEpisode(ep)}
+                    className={`rounded-md border px-1.5 py-0.5 text-[9px] ${
+                      on
+                        ? "border-cyan-400/50 bg-cyan-500/20 text-cyan-50"
+                        : "border-white/10 text-white/40 hover:text-white/65"
+                    }`}
+                    title={bound ? "设定已绑定" : undefined}
+                  >
+                    第{ep}集{bound ? "·" : ""}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {shots.map((shot, i) => {
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-0.5">
+          {(shots.length ? shots : [{ index: 1, durationSec: 5, cameraZh: "", actionZh: "" } as ManhuaWorkbenchShot]).map(
+            (shot, i) => {
               const shotKey =
                 episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
                 episodeKeyarts[i];
               const thumb = mediaUrl(shotKey);
-              const on = i === Math.min(shotIndex, shots.length - 1);
+              const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
+              const dur = shot.durationSec || 5;
               return (
                 <button
                   key={`shot-${shot.index}`}
                   type="button"
                   onClick={() => setShotIndex(i)}
-                  className={`relative w-[88px] shrink-0 overflow-hidden rounded-lg border text-left ${
-                    on ? "border-cyan-400/60 ring-1 ring-cyan-400/35" : "border-white/12"
+                  className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
+                    on ? "border-white/70 ring-1 ring-white/40" : "border-white/12"
                   }`}
                 >
-                  <div className="aspect-[9/16] bg-black/55">
+                  <div className="aspect-video bg-black/70">
                     {thumb ? (
                       <img src={thumb} alt="" className="h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
-                        <span className="text-[12px] font-semibold">
+                        <span className="text-[11px] font-semibold">
                           {String(shot.index).padStart(2, "0")}
                         </span>
                         <span className="text-[8px]">待出</span>
                       </div>
                     )}
                   </div>
-                  <div className="truncate px-1 py-0.5 text-[9px] text-white/60">
-                    片段{String(shot.index).padStart(2, "0")}
+                  <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
+                    <span>片段 {String(shot.index).padStart(2, "0")}</span>
+                    <span className="text-white/40">{dur.toFixed(1)}s</span>
                   </div>
                 </button>
               );
-            })}
-          </div>
+            },
+          )}
         </div>
-        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-white/35">
-            集时间线
-            {bibleBoundEpisodes.length ? " · 绿点=设定已绑定" : ""}
-          </div>
-          <span className="text-[9px] text-white/30">点选切换焦点集 · 合成长片见成片坞</span>
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        {/* 集缩略（窄条，不抢片段胶片） */}
+        <div className="mt-2 hidden gap-1.5 overflow-x-auto border-t border-white/5 pt-2 sm:flex">
           {episodeIndexes.map((ep) => {
             const epKeys = keyartsForEpisode(blocks, ep);
-            const epKeyart = epKeys[0];
             const epClip = blockByStage(blocks, ep, "clip");
             const thumb = mediaUrl(epClip) || epKeys.map(mediaUrl).find(Boolean);
             const clipReady = Boolean(mediaUrl(epClip));
