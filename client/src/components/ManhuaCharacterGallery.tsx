@@ -56,6 +56,7 @@ import ManhuaCharacterLibraryFilterChips, {
 import ManhuaCharacterPartnerSuggestStrips from "@/components/ManhuaCharacterPartnerSuggestStrips";
 import ManhuaCharacterSheetPreview from "@/components/ManhuaCharacterSheetPreview";
 import ManhuaDualCompareStrip from "@/components/ManhuaDualCompareStrip";
+import ManhuaAncientArchetypeStrip from "@/components/ManhuaAncientArchetypeStrip";
 
 function matchesAgeBand(c: ManhuaCharacterTemplate, band: ManhuaAgeBand): boolean {
   if (!band) return true;
@@ -90,6 +91,9 @@ type Props = {
   reasonZh?: string;
   /** 题材文案：软高亮套组，不自动覆盖 */
   topicHint?: string;
+  /** 古风原型 arch_*（与都市槽并行） */
+  ancientArchetypeIds?: string[];
+  onToggleAncientArchetype?: (id: string) => void;
 };
 
 function EmptyLead({ label }: { label: string }) {
@@ -115,6 +119,8 @@ export default function ManhuaCharacterGallery({
   onGenerateSameLayout,
   reasonZh,
   topicHint,
+  ancientArchetypeIds = [],
+  onToggleAncientArchetype,
 }: Props) {
   const initialPrefs = useMemo(() => loadLibraryPrefs(), []);
   const [libraryTab, setLibraryTab] = useState<ManhuaLibraryCastTab>(() => {
@@ -1473,8 +1479,16 @@ export default function ManhuaCharacterGallery({
         </p>
       </div>
 
+      {onToggleAncientArchetype ? (
+        <ManhuaAncientArchetypeStrip
+          selectedIds={ancientArchetypeIds}
+          disabled={disabled}
+          onToggle={onToggleAncientArchetype}
+        />
+      ) : null}
+
       <p className="mt-3 text-[10px] leading-snug text-white/35">
-        验收口径：三视图=设定卡裁切（非三张独立渲染）；换画风只改 prompt，预览仍为 CG 底图；「同版式」勿点运行以免烧生图。
+        验收口径：三视图=设定卡裁切（非三张独立渲染）；换画风只改 prompt，预览仍为 CG 底图；「同版式」勿点运行以免烧生图。古风原型为独立设计板锚点。
       </p>
     </div>
   );

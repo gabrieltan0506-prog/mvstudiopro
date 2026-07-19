@@ -1,8 +1,10 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen, Bot } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { hasSupervisorAccess } from "@/lib/supervisorAccess";
+import { requestOpenProAgent } from "@/components/PlatformProAgentDock";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,6 +54,11 @@ export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [, setSearchTick] = useState(0);
   const showTestLab = import.meta.env.DEV || user?.role === "admin";
+  const showProAgent = useMemo(
+    () =>
+      hasSupervisorAccess() || user?.role === "admin" || user?.role === "supervisor",
+    [user?.role],
+  );
   const navItems = showTestLab
     ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]
     : NAV_ITEMS;
@@ -109,8 +116,21 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* Auth (desktop) */}
+        {/* Auth (desktop) · Pro Agent 贴管理者入口旁，勿用右下角悬浮 */}
         <div className="hidden xl:flex items-center gap-3 shrink-0">
+          {showProAgent ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-violet-400/40 bg-violet-500/10 text-violet-100 hover:bg-violet-500/20"
+              onClick={() => requestOpenProAgent()}
+              title="管理者 Pro Agent"
+            >
+              <Bot className="h-4 w-4" />
+              Pro Agent
+            </Button>
+          ) : null}
           {isAuthenticated && user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -157,14 +177,25 @@ export default function Navbar() {
           )}
         </div>
 
-        {/* Mobile trigger */}
+        {/* Mobile: Pro Agent + menu（右上，避开左下 PWA） */}
+        <div className="xl:hidden flex items-center gap-1.5 shrink-0">
+          {showProAgent ? (
+            <button
+              type="button"
+              aria-label="打开 Pro Agent"
+              onClick={() => requestOpenProAgent()}
+              className="inline-flex items-center justify-center min-h-11 min-w-11 rounded-md border border-violet-400/40 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25 active:scale-95 transition"
+            >
+              <Bot className="h-5 w-5" />
+            </button>
+          ) : null}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <button
               type="button"
               aria-label={mobileOpen ? "关闭菜单" : "打开菜单"}
               aria-expanded={mobileOpen}
-              className="xl:hidden inline-flex items-center justify-center min-h-11 min-w-11 rounded-md text-foreground hover:bg-accent active:scale-95 transition"
+              className="inline-flex items-center justify-center min-h-11 min-w-11 rounded-md text-foreground hover:bg-accent active:scale-95 transition"
             >
               <Menu className="h-5 w-5" />
             </button>
@@ -280,6 +311,7 @@ export default function Navbar() {
             </div>
           </SheetContent>
         </Sheet>
+        </div>
       </div>
     </nav>
   );

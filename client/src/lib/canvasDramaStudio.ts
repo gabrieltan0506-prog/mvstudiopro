@@ -37,6 +37,7 @@ import {
   getManhuaArtStylePreset,
   type ManhuaArtStyleId,
 } from "@shared/manhuaCharacterAssetLibrary";
+import { buildAncientArchetypePromptBlock } from "@shared/manhuaAncientArchetypeLibrary";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
 import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
 import {
@@ -70,6 +71,8 @@ export type DramaStudioSpawn = {
   resolvedSceneId?: string;
   /** 手选角色库 id（女主/男主） */
   characterIds?: string[];
+  /** 手选古风原型 arch_* */
+  ancientArchetypeIds?: string[];
 };
 
 /** 漫剧工厂固定阶段顺序（与 spawn id 前缀对齐；recap_card 仅第3集起存在） */
@@ -110,6 +113,8 @@ export type SpawnManhuaDramaStudioOpts = {
   propIds?: string[];
   /** 角色库 id：char_f_* / char_m_*（可多选，注入角色卡） */
   characterIds?: string[];
+  /** 古风原型 arch_*（与都市槽并行注入） */
+  ancientArchetypeIds?: string[];
   /** 角色/场景统一画风 A/B/C */
   artStyleId?: ManhuaArtStyleId | string;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
@@ -328,6 +333,11 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
     artStyleId: opts.artStyleId,
   });
+  const ancientArchetypeIds = (opts.ancientArchetypeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds);
   const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
   const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
@@ -386,7 +396,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     includeDirectorCraft,
     directorCraftBlock: includeDirectorCraft ? CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK : undefined,
   };
-  const usePack = Boolean(genreId || sceneId || writerContext || characterBlock || craftShotBlock);
+  const usePack = Boolean(
+    genreId || sceneId || writerContext || characterBlock || ancientBlock || craftShotBlock,
+  );
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);
   const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const hasRecapCard = Boolean(previouslyOnRecap);
@@ -441,6 +453,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   bible.prompt = [
     bibleBase,
     characterBlock,
+    ancientBlock,
     maleHairstyleBlock,
     wardrobeBlock,
     propAnchorBlock,
@@ -589,6 +602,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     genreInferred: resolved.inferred,
     resolvedSceneId: sceneId,
     characterIds,
+    ancientArchetypeIds,
   };
 }
 
@@ -714,6 +728,7 @@ export function applyFactoryPrefsToBlocks(
     propIds?: string[];
     genreId?: string;
     characterIds?: string[];
+    ancientArchetypeIds?: string[];
     artStyleId?: ManhuaArtStyleId | string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
@@ -732,6 +747,7 @@ export function applyFactoryPrefsToBlocks(
   const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || [], {
     artStyleId: opts.artStyleId,
   });
+  const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);
   const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const scene = getManhuaSceneTemplate(opts.sceneId);
@@ -806,6 +822,7 @@ export function applyFactoryPrefsToBlocks(
       }
       if (b.id.startsWith("bible-")) {
         base = stripMarkedSection(base, "【角色库锚点】");
+        base = stripMarkedSection(base, "【古风原型锚点】");
         base = stripMarkedSection(base, "【点选道具锚点】");
         base = stripMarkedSection(base, "【男发预设库】");
         base = stripMarkedSection(base, "【服装道具连续性】");
@@ -816,8 +833,12 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("story-") && sceneBlock ? sceneBlock : "",
         b.id.startsWith("story-") && sceneDemoBlock ? sceneDemoBlock : "",
         b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
+<<<<<<< HEAD
         b.id.startsWith("bible-") && maleHairstyleBlock ? maleHairstyleBlock : "",
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
+=======
+        b.id.startsWith("bible-") && ancientBlock ? ancientBlock : "",
+>>>>>>> origin/main
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };

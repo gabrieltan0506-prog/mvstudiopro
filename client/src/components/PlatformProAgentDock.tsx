@@ -1,14 +1,28 @@
 /**
- * 管理者全站悬浮 Pro Agent（Responses Pro · 多轮）。
- * 附件：PDF/文档/图片（官方 input_file / input_image）；视频暂不支持。
+ * 管理者 Pro Agent（Responses Pro · 多轮）。
+ * 入口固定在右上（顶栏下方），避免与左下 PWA「新增到手机桌面」叠挡。
+ * 打开：点本组件按钮，或 `window.dispatchEvent(new Event(PRO_AGENT_OPEN_EVENT))`。
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, MessageSquare, Paperclip, X } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import { getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+
+export const PRO_AGENT_OPEN_EVENT = "mvs:pro-agent-open";
+export const PRO_AGENT_TOGGLE_EVENT = "mvs:pro-agent-toggle";
+
+export function requestOpenProAgent() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(PRO_AGENT_OPEN_EVENT));
+}
+
+export function requestToggleProAgent() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(PRO_AGENT_TOGGLE_EVENT));
+}
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
@@ -46,6 +60,18 @@ export default function PlatformProAgentDock() {
   const [pending, setPending] = useState<PendingFile[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const chatMutation = trpc.mvAnalysis.chatPlatformProAgent.useMutation();
+
+  useEffect(() => {
+    if (!canSee) return;
+    const onOpen = () => setOpen(true);
+    const onToggle = () => setOpen((v) => !v);
+    window.addEventListener(PRO_AGENT_OPEN_EVENT, onOpen);
+    window.addEventListener(PRO_AGENT_TOGGLE_EVENT, onToggle);
+    return () => {
+      window.removeEventListener(PRO_AGENT_OPEN_EVENT, onOpen);
+      window.removeEventListener(PRO_AGENT_TOGGLE_EVENT, onToggle);
+    };
+  }, [canSee]);
 
   const addFiles = useCallback(async (files: FileList | null) => {
     if (!files?.length) return;
@@ -121,8 +147,18 @@ export default function PlatformProAgentDock() {
 
   if (!canSee) return null;
 
+  /* 右上 · 顶栏下方；左下留给 PWA。勿再占用 bottom-right。 */
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[80] flex flex-col items-end gap-2">
+    <div className="pointer-events-none fixed right-3 top-[4.5rem] z-[60] flex flex-col items-end gap-2 sm:right-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-violet-400/45 bg-violet-600/90 px-3 py-1.5 text-[11px] font-bold text-white shadow-lg hover:bg-violet-500"
+        title="管理者 Pro Agent"
+      >
+        <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+        {open ? "收起 Pro" : "Pro Agent"}
+      </button>
       {open ? (
         <div className="pointer-events-auto flex h-[min(70vh,560px)] w-[min(92vw,400px)] flex-col overflow-hidden rounded-2xl border border-violet-400/40 bg-[#0a0618]/95 shadow-[0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-white/10 px-3 py-2.5">
@@ -145,8 +181,9 @@ export default function PlatformProAgentDock() {
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
             {messages.length === 0 ? (
               <p className="text-[12px] leading-relaxed text-white/45">
-                多轮参谋 · 可上传 <strong className="text-white/70">PDF</strong>（官方提取文字+页图）、图片、Office/文本。
-                视频暂不支持（Responses 无原生 video input）。
+                多轮参谋 · 可上传 <strong className="text-white/70">PDF</strong>
+                （官方提取文字+页图）、图片、Office/文本。 视频暂不支持（Responses 无原生
+                video input）。
               </p>
             ) : null}
             {messages.map((m, i) => (
@@ -233,14 +270,6 @@ export default function PlatformProAgentDock() {
           </div>
         </div>
       ) : null}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-violet-400/45 bg-violet-600/90 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-lg hover:bg-violet-500"
-      >
-        <MessageSquare className="h-4 w-4" aria-hidden />
-        {open ? "收起 Pro" : "Pro Agent"}
-      </button>
     </div>
   );
 }
