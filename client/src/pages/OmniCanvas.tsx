@@ -62,6 +62,7 @@ import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
@@ -1051,44 +1052,57 @@ export default function OmniCanvas() {
         await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
         charged.push("final_render");
 
-        pushDebug("assemble:music", { level: "info", detail: "generating score…" });
-        const url = withLongJobsFlyDirect("/api/jobs?op=manhuaAssembleFinal");
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({
-            clips: ready,
-            topic: factoryTopic,
-            seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
-            logline: writerPack?.logline || projectBible?.logline || "",
-            // 一次约 4 分钟够约两集；常一次两首 → 三集一轮够用（失败服务端回退另一渠道）
-            musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
-            transition: "fade",
-            resolution: "9:16",
-            musicVolume: 0.35,
-            musicFadeInSec: 1,
-            musicFadeOutSec: 2,
-          }),
+        // 短入队（www→Vercel rewrite→Fly）+ GET 轮询，不走长任务直连 api 子域
+        pushDebug("assemble:music", { level: "info", detail: "queued · polling…" });
+        const { jobId } = await createJobSameOrigin({
+          type: "video",
+          userId: user?.id ? String(user.id) : "",
+          input: {
+            action: "manhua_assemble_final",
+            params: {
+              clips: ready,
+              topic: factoryTopic,
+              seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
+              logline: writerPack?.logline || projectBible?.logline || "",
+              musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
+              transition: "fade",
+              resolution: "9:16",
+              musicVolume: 0.35,
+              musicFadeInSec: 1,
+              musicFadeOutSec: 2,
+            },
+          },
         });
-        const json = (await resp.json().catch(() => ({}))) as {
-          ok?: boolean;
-          finalVideoUrl?: string;
-          musicUrl?: string;
-          sceneCount?: number;
-          skippedEpisodes?: unknown;
-          message?: string;
-          error?: string;
-        };
-        if (!resp.ok || json?.ok === false || !json.finalVideoUrl) {
-          throw new Error(json?.message || json?.error || `合成失败 HTTP ${resp.status}`);
+        pushDebug("assemble:queued", { level: "info", detail: `jobId=${jobId}` });
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 18 * 60_000,
+          intervalMs: 3000,
+          onPoll: (tick) => {
+            if (tick.attempt === 1 || tick.attempt % 5 === 0) {
+              pushDebug("assemble:poll", {
+                level: "info",
+                detail: `#${tick.attempt} · ${tick.status} · ${Math.round(tick.elapsedMs / 1000)}s`,
+              });
+            }
+          },
+        });
+        if (job.status !== "succeeded") {
+          throw new Error(job.error || "合成失败");
         }
-        setFinalAssembleVideoUrl(json.finalVideoUrl);
+        const out = (job.output || {}) as {
+          finalVideoUrl?: string;
+          videoUrl?: string;
+          sceneCount?: number;
+        };
+        const finalVideoUrl = String(out.finalVideoUrl || out.videoUrl || "").trim();
+        if (!finalVideoUrl) throw new Error("合成完成但未返回成片地址");
+        setFinalAssembleVideoUrl(finalVideoUrl);
         pushDebug("assemble:done", {
           level: "ok",
-          detail: `scenes=${json.sceneCount || ready.length} · final ok`,
-          response: json.finalVideoUrl.slice(0, 180),
+          detail: `scenes=${out.sceneCount || ready.length} · final ok`,
+          response: finalVideoUrl.slice(0, 180),
         });
-        toast.success(`长片已合成（${json.sceneCount || ready.length} 集 + 配乐）`);
+        toast.success(`长片已合成（${out.sceneCount || ready.length} 集 + 配乐）`);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "合成失败";
         for (const step of charged.reverse()) {
@@ -1113,6 +1127,7 @@ export default function OmniCanvas() {
       projectBible?.seriesTitle,
       projectBible?.logline,
       pushDebug,
+      user?.id,
     ],
   );
 

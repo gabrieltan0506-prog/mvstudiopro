@@ -171,6 +171,8 @@ export async function createOmniFlashInteraction(input: OmniInteractionCreateInp
       "Content-Type": "application/json; charset=utf-8",
       "x-goog-api-key": apiKey,
       "X-Goog-Api-Client": "genai-node/omni-canvas-rest-create",
+      // 2026-05 Interactions 新 schema；1.x SDK 轮询会报 legacy schema removed
+      "Api-Revision": "2026-05-20",
     },
     body: JSON.stringify(body),
   });

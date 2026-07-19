@@ -2,8 +2,8 @@
 
 ## 能力
 
-- 成片坞「合成长片（含配乐）」→ `POST /api/jobs?op=manhuaAssembleFinal`
-- 同源 `renderWorkflowFinalVideo`（fade + 9:16）+ 自动配乐
+- 成片坞「合成长片（含配乐）」→ **同源** `POST /api/jobs` 入队（`action=manhua_assemble_final`）→ `GET /api/jobs/:id` 轮询（www→Vercel rewrite→Fly；**不**走长任务直连 `api.*`）
+- Fly worker 内：自动配乐 + 同源 `renderWorkflowFinalVideo`（fade + 9:16）
 - 工作台露出：蓝轨/红轨状态、叙事灯光名称
 
 ## 线上手测清单
