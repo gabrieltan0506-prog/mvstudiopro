@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
@@ -2066,6 +2067,7 @@ export default function PlatformPage() {
   const pendingOptimizeVisionRef = useRef<string | undefined>(undefined);
   const pendingOptimizeLiveTrendsRef = useRef(false);
   const [assetAnalysisBusy, setAssetAnalysisBusy] = useState(false);
+  const [locationPath, setLocationPath] = useLocation();
   /** 素材分析完成后的拍摄手法摘要，注入分镜 scriptContext */
   const lastShootingTechniqueBriefRef = useRef<string>("");
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
@@ -2074,12 +2076,41 @@ export default function PlatformPage() {
   >("copy");
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
-    if (tab === "assets" || tab === "copy" || tab === "topic" || tab === "matting" || tab === "htmlPpt") {
-      setCustomWorkspaceTab(tab);
-    }
-  }, []);
+    const applyTabFromUrl = (opts?: { scroll?: boolean }) => {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab");
+      const videoDeepTabs = new Set(["assets", "video", "deep-video", "video-deep"]);
+      if (tab && videoDeepTabs.has(tab)) {
+        setCustomWorkspaceTab("assets");
+        if (opts?.scroll !== false) {
+          window.setTimeout(() => {
+            document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 80);
+        }
+        return;
+      }
+      if (tab === "copy" || tab === "topic" || tab === "matting" || tab === "htmlPpt") {
+        setCustomWorkspaceTab(tab);
+      }
+    };
+    applyTabFromUrl({ scroll: true });
+    const onUrl = () => applyTabFromUrl({ scroll: true });
+    window.addEventListener("popstate", onUrl);
+    window.addEventListener("mvs:platform-tab", onUrl as EventListener);
+    return () => {
+      window.removeEventListener("popstate", onUrl);
+      window.removeEventListener("mvs:platform-tab", onUrl as EventListener);
+    };
+  }, [locationPath]);
+
+  const openVideoDeepBreakdown = useCallback(() => {
+    setCustomWorkspaceTab("assets");
+    setLocationPath("/platform?tab=video");
+    window.dispatchEvent(new Event("mvs:platform-tab"));
+    window.setTimeout(() => {
+      document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }, [setLocationPath]);
 
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
@@ -7633,6 +7664,14 @@ export default function PlatformPage() {
               <PenLine className="h-3.5 w-3.5" />
               自定义创作
             </a>
+            <button
+              type="button"
+              onClick={openVideoDeepBreakdown}
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-[linear-gradient(135deg,rgba(52,211,153,0.22),rgba(16,185,129,0.10))] px-3.5 py-2 text-xs font-bold text-emerald-100 shadow-[0_4px_20px_rgba(52,211,153,0.18)] transition hover:border-emerald-300/55 hover:brightness-110"
+            >
+              <Video className="h-3.5 w-3.5" />
+              视频深度拆解
+            </button>
           </div>
           <div className="rounded-full border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#8cefff]">
             Platform Intelligence
@@ -7696,11 +7735,11 @@ export default function PlatformPage() {
           <div className="flex flex-wrap items-center gap-2 mb-1">
             <PenLine className="h-5 w-5 text-[#ff4fb8]" />
             <h2 className="text-lg md:text-xl font-black tracking-tight text-white">自定义创作工作台</h2>
-            <span className="ml-1 rounded-full border border-[#ff4fb8]/50 bg-[rgba(255,79,184,0.12)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#ff9fe0]">
-              成长营已并入
+            <span className="ml-1 rounded-full border border-emerald-400/45 bg-[rgba(52,211,153,0.12)] px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-emerald-100">
+              含视频深度拆解
             </span>
           </div>
-          <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、上传素材分析、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
+          <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、视频深度拆解、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
 
           {/* 平台趋势分析 · 常驻在工作台顶部，不依赖下方全案区是否展开 */}
           <div
@@ -8136,7 +8175,7 @@ export default function PlatformPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setCustomWorkspaceTab("assets")}
+                onClick={openVideoDeepBreakdown}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "assets"
@@ -8144,8 +8183,8 @@ export default function PlatformPage() {
                     : "text-[#c9c0e6]/70 hover:text-white"
                 }`}
               >
-                <Layers className="h-3.5 w-3.5 shrink-0" />
-                素材分析
+                <Video className="h-3.5 w-3.5 shrink-0" />
+                视频深度拆解
               </button>
               <button
                 type="button"
@@ -9056,7 +9095,7 @@ export default function PlatformPage() {
 
         {customWorkspaceOperating ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与素材分析仍可在上方工作台查看。
+            自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
           </p>
         ) : null}
         <div className={customWorkspaceOperating ? "hidden" : undefined} aria-hidden={customWorkspaceOperating}>

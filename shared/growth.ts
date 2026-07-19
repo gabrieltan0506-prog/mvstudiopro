@@ -25,6 +25,8 @@ export function growthPlatformsForStatsAggregationList(): (typeof growthPlatform
 
 export const growthCampModelValues = [
   "gemini-3.5-flash",
+  "gpt-5.6-sol",
+  /** @deprecated Phase 2 已迁至 gpt-5.6-sol；保留以便旧客户端/任务入参通过校验 */
   "gpt-5.5",
 ] as const;
 

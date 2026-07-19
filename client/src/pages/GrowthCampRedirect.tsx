@@ -1,7 +1,7 @@
 import { useLayoutEffect } from "react";
 import { useLocation } from "wouter";
 
-/** 仅 `/creator-growth-camp/platform` · `/analysis` · `/viral` 跳转到 /platform；主成长营页保留 MVAnalysis 与 Debug 并存 */
+/** 仅 `/creator-growth-camp/platform` · `/analysis` · `/viral` 跳转到 /platform；视频深度拆解入口为 /platform?tab=video */
 export default function GrowthCampRedirect() {
   const [, setLocation] = useLocation();
 

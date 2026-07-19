@@ -436,8 +436,8 @@ export default function PlatformAssetAnalysisPanel({
         toast.success("素材视觉分析完成");
       }
     } catch (analysisError: unknown) {
-      const raw = analysisError instanceof Error ? analysisError.message : "素材分析失败";
-      const msg = sanitizePlatformUserMessage(raw, "素材分析暂时不可用，请稍后重试");
+      const raw = analysisError instanceof Error ? analysisError.message : "视频深度拆解失败";
+      const msg = sanitizePlatformUserMessage(raw, "视频深度拆解暂时不可用，请稍后重试");
       const snapshots = partialSnapshotRef.current;
       if (snapshots.length > 0) {
         setPartialFailure(msg);
@@ -450,7 +450,7 @@ export default function PlatformAssetAnalysisPanel({
               ),
         );
         setStage("done");
-        toast.warning("部分素材分析失败，已展示先完成的结果");
+        toast.warning("部分拆解失败，已展示先完成的结果");
       } else {
         setError(msg);
         setStage("error");
@@ -519,8 +519,8 @@ export default function PlatformAssetAnalysisPanel({
       <div className="mb-5 grid gap-2 sm:grid-cols-3">
         <PlatformWorkspaceStepHint
           step={1}
-          title="上传并分析"
-          lines={["添加封面/分镜 PNG/JPG，或 1 个 MP4 参考视频。", "点击「开始视觉分析」，结果只绑定你的素材。"]}
+          title="上传并深度拆解"
+          lines={["优先上传 1 个 MP4 做高密度抽帧拆解；也可附封面/分镜 PNG/JPG。", "点击「开始深度拆解」，结论只绑定你的素材。"]}
           active={!analysis && !busy}
           done={Boolean(analysis)}
         />
@@ -739,8 +739,8 @@ export default function PlatformAssetAnalysisPanel({
             <>
               <Sparkles className="h-4 w-4" />
               {supervisorAccess || analysisCost <= 0
-                ? "开始视觉分析"
-                : `开始视觉分析（${analysisCost} 积分）`}
+                ? "开始深度拆解"
+                : `开始深度拆解（${analysisCost} 积分）`}
             </>
           )}
         </button>
@@ -773,7 +773,7 @@ export default function PlatformAssetAnalysisPanel({
         <div ref={partialLiveRef}>
           <AssetAnalysisWaitPanel
             percent={displayPercent}
-            label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传素材…" : "正在分析您的素材…")}
+            label={analysisProgress.label || stageLabel || (stage === "uploading" ? "正在上传素材…" : "正在深度拆解视频/素材…")}
             detail={analysisProgress.detail}
             phase={stage === "uploading" ? "upload" : "analyze"}
             tracks={analysisProgress.tracks}
@@ -958,7 +958,7 @@ export default function PlatformAssetAnalysisPanel({
 
       {debugMode ? (
         <div className="mt-6 rounded-2xl border border-emerald-200/15 bg-black/15 p-4 text-xs text-white/75">
-          <div className="text-xs uppercase tracking-[0.16em] text-emerald-100">素材分析 Debug</div>
+          <div className="text-xs uppercase tracking-[0.16em] text-emerald-100">视频深度拆解 Debug</div>
           <div className="mt-3 space-y-2 leading-6">
             <div>1. 图片素材：{assets.map((a) => a.fileName).join("、") || "-"}</div>
             <div>

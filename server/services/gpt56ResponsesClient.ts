@@ -17,8 +17,23 @@ export const OPENAI_OFFICIAL_RESPONSES_URL = "https://api.openai.com/v1/response
 export type Gpt56ReasoningMode = "standard" | "pro";
 export type Gpt56ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 
+export type Gpt56ResponsesInputPart =
+  | { type: "input_text"; text: string }
+  | { type: "input_image"; image_url: string }
+  | {
+      type: "input_file";
+      filename: string;
+      /** data:mime;base64,... */
+      file_data: string;
+      /** PDF 页图清晰度；仅 PDF 有效 */
+      detail?: "auto" | "low" | "high";
+    };
+
 export type InvokeGpt56ResponsesOpts = {
-  input: string;
+  /** 纯文本 input；与 inputParts 二选一（有 parts 时优先 parts） */
+  input?: string;
+  /** 多模态：文本 + 图片 URL / data URL */
+  inputParts?: Gpt56ResponsesInputPart[];
   instructions?: string;
   modelName?: string;
   reasoningMode?: Gpt56ReasoningMode;
@@ -78,9 +93,33 @@ async function postOfficialResponses(opts: InvokeGpt56ResponsesOpts): Promise<In
   const reasoningEffort = opts.reasoningEffort || "medium";
   const timeoutMs = Math.min(Math.max(Number(opts.timeoutMs) || 180_000, 30_000), 600_000);
 
+  const parts = Array.isArray(opts.inputParts) ? opts.inputParts.filter(Boolean) : [];
+  const inputPayload =
+    parts.length > 0
+      ? [
+          {
+            role: "user",
+            content: parts.map((p) => {
+              if (p.type === "input_image") {
+                return { type: "input_image", image_url: p.image_url };
+              }
+              if (p.type === "input_file") {
+                return {
+                  type: "input_file",
+                  filename: p.filename,
+                  file_data: p.file_data,
+                  ...(p.detail ? { detail: p.detail } : {}),
+                };
+              }
+              return { type: "input_text", text: String(p.text || "") };
+            }),
+          },
+        ]
+      : String(opts.input || "");
+
   const body: Record<string, unknown> = {
     model: modelName,
-    input: String(opts.input || ""),
+    input: inputPayload,
     store: opts.store === true,
     reasoning: {
       mode: reasoningMode,
@@ -133,10 +172,43 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
     opts.modelName || getEvolinkGpt56SolModel(),
     EVOLINK_CHAT_MODEL_GPT56_SOL,
   );
-  const messages: Array<{ role: "system" | "user"; content: string }> = [];
   const instructions = String(opts.instructions || "").trim();
+  const parts = Array.isArray(opts.inputParts) ? opts.inputParts : [];
+  const textFromParts = parts
+    .filter((p): p is Extract<Gpt56ResponsesInputPart, { type: "input_text" }> => p.type === "input_text")
+    .map((p) => p.text)
+    .join("\n\n");
+  const imageUrls = parts
+    .filter((p): p is Extract<Gpt56ResponsesInputPart, { type: "input_image" }> => p.type === "input_image")
+    .map((p) => p.image_url)
+    .filter(Boolean);
+  const fileNames = parts
+    .filter((p): p is Extract<Gpt56ResponsesInputPart, { type: "input_file" }> => p.type === "input_file")
+    .map((p) => p.filename);
+  const fileNote =
+    fileNames.length > 0
+      ? `\n\n【附件】本次含文件：${fileNames.join("、")}（Chat Completions 回退无法完整解析 PDF/Office，请重试官方 Responses）。`
+      : "";
+  const userText = String(opts.input || textFromParts || "").trim() + fileNote;
+  if (!userText.trim() && imageUrls.length === 0) throw new Error("Responses input is empty");
+
+  type ContentPart =
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } };
+  const userContent: string | ContentPart[] =
+    imageUrls.length === 0
+      ? userText
+      : [
+          ...(userText ? [{ type: "text" as const, text: userText }] : []),
+          ...imageUrls.map((url) => ({
+            type: "image_url" as const,
+            image_url: { url },
+          })),
+        ];
+
+  const messages: Array<{ role: "system" | "user"; content: string | ContentPart[] }> = [];
   if (instructions) messages.push({ role: "system", content: instructions });
-  messages.push({ role: "user", content: String(opts.input || "") });
+  messages.push({ role: "user", content: userContent });
 
   const response = await invokeLLM({
     provider: "openai",
@@ -144,7 +216,7 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
     max_tokens: 16_384,
     temperature: 0.8,
     reasoningEffort: opts.reasoningEffort === "none" ? "minimal" : "medium",
-    messages,
+    messages: messages as Parameters<typeof invokeLLM>[0]["messages"],
     response_format: opts.jsonObject ? { type: "json_object" } : undefined,
     abortSignal: opts.abortSignal,
   });
@@ -159,8 +231,9 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
 
 /** 官方 Responses（可 Pro）→ 失败则 Chat Completions 标准模式 */
 export async function invokeGpt56Responses(opts: InvokeGpt56ResponsesOpts): Promise<InvokeGpt56ResponsesResult> {
+  const hasParts = Array.isArray(opts.inputParts) && opts.inputParts.length > 0;
   const input = String(opts.input || "").trim();
-  if (!input) throw new Error("Responses input is empty");
+  if (!hasParts && !input) throw new Error("Responses input is empty");
 
   try {
     return await postOfficialResponses(opts);

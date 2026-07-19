@@ -15,6 +15,7 @@ import {
 import { invokeLLM, extractJsonString } from "../_core/llm";
 import {
   resolveGrowthCampStrategistEngine,
+  growthCampPhase2InvokeOpts,
   type GrowthCampStrategistEngine,
 } from "./extractorPipeline";
 
@@ -24,15 +25,7 @@ type StrategistUserContent = Array<
 >;
 
 function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
-  const base = {
-    model: "pro" as const,
-    provider: engine.provider,
-    modelName: engine.modelName,
-  };
-  if (engine.provider === "openai" && engine.modelName === "gpt-5.5") {
-    return { ...base, reasoningEffort: "medium" as const };
-  }
-  return base;
+  return growthCampPhase2InvokeOpts(engine);
 }
 
 function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T {

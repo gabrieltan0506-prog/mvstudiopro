@@ -13,10 +13,10 @@ export const GROWTH_CAMP_JOB_MAX_WAIT_MS = GROWTH_CAMP_JOB_MAX_WAIT_CAP_MS;
 /** @deprecated 使用 resolveGrowthCampJobMaxWaitMs */
 export const GROWTH_CAMP_PLATFORM_ASSET_MAX_WAIT_MS = 8 * 60_000;
 
-export const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
+export const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.6-sol";
 
 export const GROWTH_CAMP_IMAGE_PIPELINE_DEBUG_NOTE =
-  "每份素材上传完成即入队分析（可边传边析）· Flash 语音 scan → GPT-5.5 抽针 · 人设/趋势库注入 context";
+  "每份素材上传完成即入队分析（可边传边析）· Flash 语音 scan → GPT-5.6 Sol 抽针 · 人设/趋势库注入 context";
 
 export type AssetAnalysisTrackProgress = {
   kind: "video" | "image";
