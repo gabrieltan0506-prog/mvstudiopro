@@ -2250,6 +2250,22 @@ export default function OmniCanvas() {
                     );
                     void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
                   }}
+                  onRerunKeyartsFromReverse={() => {
+                    if (
+                      !window.confirm(
+                        `将从编导反推重跑第${writerFocusEpisode}集静帧（覆盖右栏旧图）。继续？`,
+                      )
+                    ) {
+                      return;
+                    }
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    toast.message(`第${writerFocusEpisode}集 · 从反推重出静帧`);
+                    void runFactory("keyart", {
+                      forceFromStage: "reverse",
+                      episodeIndexes: [writerFocusEpisode],
+                    });
+                  }}
                 />
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
                   <button
