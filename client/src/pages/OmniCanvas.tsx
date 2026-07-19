@@ -75,6 +75,19 @@ import { toast } from "sonner";
 
 const LS_KEY = "mv-freeform-canvas-v1";
 const LS_FACTORY_PREFS_KEY = "mv-manhua-factory-character-prefs-v1";
+const LS_CANVAS_MODE_KEY = "mv-canvas-workspace-mode-v1";
+
+type CanvasWorkspaceMode = "pick" | "manhua" | "freeform";
+
+function loadCanvasWorkspaceMode(): CanvasWorkspaceMode {
+  try {
+    const raw = localStorage.getItem(LS_CANVAS_MODE_KEY);
+    if (raw === "manhua" || raw === "freeform" || raw === "pick") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "pick";
+}
 
 type FactoryCharacterPrefs = {
   topic?: string;
@@ -166,7 +179,17 @@ export default function OmniCanvas() {
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
+  const [canvasMode, setCanvasMode] = useState<CanvasWorkspaceMode>(() => loadCanvasWorkspaceMode());
   const abortRef = useRef<AbortController | null>(null);
+
+  const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
+    setCanvasMode(mode);
+    try {
+      localStorage.setItem(LS_CANVAS_MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const genreOptions = useMemo(() => listScreenwriterGenres({ onlyReady: true }), []);
   const factoryGenreLabel = useMemo(() => {
     const g = genreOptions.find((x) => x.id === factoryGenreId);
@@ -920,50 +943,81 @@ export default function OmniCanvas() {
       <main className="px-4 pb-10 pt-24 md:px-6">
         <div className="mx-auto max-w-[1920px]">
           <div className="mb-5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
-              <Clapperboard className="h-3.5 w-3.5" />
-              漫剧工厂 · 自由画布
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
+                {canvasMode === "manhua" ? (
+                  <>
+                    <Clapperboard className="h-3.5 w-3.5" />
+                    漫剧创作
+                  </>
+                ) : canvasMode === "freeform" ? (
+                  <>
+                    <LayoutTemplate className="h-3.5 w-3.5" />
+                    自由画布
+                  </>
+                ) : (
+                  <>
+                    <Clapperboard className="h-3.5 w-3.5" />
+                    创作画布
+                  </>
+                )}
+              </div>
+              {canvasMode !== "pick" ? (
+                <button
+                  type="button"
+                  onClick={() => selectCanvasMode("pick")}
+                  className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
+                >
+                  切换模式
+                </button>
+              ) : null}
             </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">创作画布</h1>
+            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">
+              {canvasMode === "manhua" ? "漫剧创作" : canvasMode === "freeform" ? "自由画布" : "创作画布"}
+            </h1>
             <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
-              做连载短剧走左边漫剧工厂；随便拼文本/图/视频节点走右边自由画布。
+              {canvasMode === "pick"
+                ? "先选工作方式：连载短剧走漫剧工作流；单次图/视频/文案任务走自由画布。"
+                : canvasMode === "manhua"
+                  ? "编剧室扩写 → 确认后铺板 → 静帧与成片。画布区承载工厂节点，可按集续跑。"
+                  : "文生图 / 文生视频 / 图生视频、提文字、文案整理等简单任务，多节点自由接线，不铺漫剧流水线。"}
             </p>
 
-            <div className="mt-5 grid max-w-4xl gap-3 md:grid-cols-2">
-              <button
-                type="button"
-                onClick={() =>
-                  document.getElementById("manhua-factory-zone")?.scrollIntoView({ behavior: "smooth", block: "start" })
-                }
-                className="rounded-2xl border border-emerald-400/35 bg-gradient-to-b from-emerald-500/15 to-transparent p-4 text-left transition hover:border-emerald-300/50 hover:from-emerald-500/25"
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-50">
-                  <Clapperboard className="h-4 w-4" />
-                  漫剧工厂
-                </div>
-                <p className="mt-2 text-[12px] leading-5 text-white/60">
-                  一句题材 → 扩写连载（GPT-5.6 Pro）→ 确认后铺板跑静帧与成片。适合竖屏短剧流水线。
-                </p>
-                <span className="mt-3 inline-block text-[11px] font-medium text-emerald-200/90">进入编剧室 ↓</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  document.getElementById("freeform-canvas-zone")?.scrollIntoView({ behavior: "smooth", block: "start" })
-                }
-                className="rounded-2xl border border-sky-400/35 bg-gradient-to-b from-sky-500/15 to-transparent p-4 text-left transition hover:border-sky-300/50 hover:from-sky-500/25"
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold text-sky-50">
-                  <LayoutTemplate className="h-4 w-4" />
-                  自由画布
-                </div>
-                <p className="mt-2 text-[12px] leading-5 text-white/60">
-                  文本 / 图片 / 视频方块自由连线，按节点跑。适合实验构图、单镜改写、非连载任务。
-                </p>
-                <span className="mt-3 inline-block text-[11px] font-medium text-sky-200/90">跳到画布 ↓</span>
-              </button>
-            </div>
+            {canvasMode === "pick" ? (
+              <div className="mt-6 grid max-w-3xl gap-4 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => selectCanvasMode("manhua")}
+                  className="rounded-2xl border border-emerald-400/35 bg-gradient-to-b from-emerald-500/15 to-transparent p-5 text-left transition hover:border-emerald-300/50 hover:from-emerald-500/25"
+                >
+                  <div className="flex items-center gap-2 text-base font-semibold text-emerald-50">
+                    <Clapperboard className="h-5 w-5" />
+                    漫剧创作
+                  </div>
+                  <p className="mt-3 text-[13px] leading-6 text-white/60">
+                    展开完整工作流：题材扩写（GPT-5.6 Pro）→ 编导确认 → 铺板跑静帧与成片。适合竖屏连载短剧。
+                  </p>
+                  <span className="mt-4 inline-block text-[12px] font-medium text-emerald-200/90">进入漫剧工作流 →</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectCanvasMode("freeform")}
+                  className="rounded-2xl border border-sky-400/35 bg-gradient-to-b from-sky-500/15 to-transparent p-5 text-left transition hover:border-sky-300/50 hover:from-sky-500/25"
+                >
+                  <div className="flex items-center gap-2 text-base font-semibold text-sky-50">
+                    <LayoutTemplate className="h-5 w-5" />
+                    自由画布
+                  </div>
+                  <p className="mt-3 text-[13px] leading-6 text-white/60">
+                    不展开漫剧流水线。文本 / 图片 / 视频节点自由连线，按任务跑——文生图、文生视频、图生视频、提文字、文案整理等。
+                  </p>
+                  <span className="mt-4 inline-block text-[12px] font-medium text-sky-200/90">打开自由画布 →</span>
+                </button>
+              </div>
+            ) : null}
 
+            {canvasMode === "manhua" ? (
+            <>
             {/* ① 编剧室 */}
             <div
               id="manhua-factory-zone"
@@ -1582,12 +1636,21 @@ export default function OmniCanvas() {
                 }}
               />
             </div>
+            </>
+            ) : null}
           </div>
 
+          {canvasMode === "manhua" || canvasMode === "freeform" ? (
           <div id="freeform-canvas-zone" className="scroll-mt-24">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-sm font-semibold text-white/85">自由画布</div>
-              <span className="text-[11px] text-white/40">方块连线 · 与上方漫剧工厂互补</span>
+              <div className="text-sm font-semibold text-white/85">
+                {canvasMode === "manhua" ? "工厂画布节点" : "自由画布"}
+              </div>
+              <span className="text-[11px] text-white/40">
+                {canvasMode === "manhua"
+                  ? "漫剧流水线铺出的节点 · 可点选聚焦"
+                  : "多任务节点自由接线 · 文生图 / 视频 / 提文字 / 文案"}
+              </span>
             </div>
           <FreeformCanvas
             blocks={blocks}
@@ -1599,6 +1662,7 @@ export default function OmniCanvas() {
             onFocusBlockConsumed={() => setFocusBlockId(null)}
           />
           </div>
+          ) : null}
         </div>
       </main>
     </div>
