@@ -121,6 +121,10 @@ export type CanvasBlock = {
   episodeIndex?: number;
   /** 本集标题（坞列表 / story 注释用） */
   episodeTitle?: string;
+  /** 路径运镜配方 id（视频节点 I2V 优先） */
+  pathCameraRecipeId?: string;
+  /** 静帧路径标注 JSON（视频节点 I2V 优先于配方） */
+  pathAnnotationJson?: unknown;
 };
 
 export type CanvasEdge = { fromId: string; toId: string };

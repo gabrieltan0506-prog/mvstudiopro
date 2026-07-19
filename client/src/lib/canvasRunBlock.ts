@@ -516,7 +516,11 @@ export async function runCanvasBlock(
         : upstream.visionImages.find((i) => i.url && !looksLikeVideo(i.url))?.url;
     const motionPrompt = compileI2VMotionPrompt(
       continuityVideoUrl ? `${mergedPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}` : mergedPrompt,
-      { hasReferenceImage: Boolean(stillRef || continuityVideoUrl) },
+      {
+        hasReferenceImage: Boolean(stillRef || continuityVideoUrl),
+        pathCameraRecipeId: block.pathCameraRecipeId,
+        pathAnnotationJson: block.pathAnnotationJson,
+      },
     );
     let url = "";
     if (block.videoModel === "seedance-2.0") {

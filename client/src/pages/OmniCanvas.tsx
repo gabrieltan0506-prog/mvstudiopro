@@ -59,6 +59,26 @@ import {
   recommendCraftShotFromTopic,
   type CraftShotCategory,
 } from "@shared/craftShotBank";
+import {
+  listPathCameraRecipes,
+  recommendPathCameraFromTopic,
+} from "@shared/manhuaPathCameraRecipeBank";
+import {
+  listNarrativeLighting,
+  recommendNarrativeLightingFromTopic,
+} from "@shared/manhuaNarrativeLightingBank";
+import {
+  buildMaleHairstyleInjectBlock,
+  listMaleHairstylePresets,
+} from "@shared/manhuaMaleHairstylePresetBank";
+import {
+  buildMaleMicroExpressionInjectBlock,
+  listMaleMicroExpressions,
+  recommendMaleMicroExpressionFromTopic,
+} from "@shared/manhuaMaleMicroExpressionBank";
+import { listPromoCoverLayouts } from "@shared/manhuaPromoCoverLayouts";
+import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
+import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 import type { VideoReverseOutputMode } from "@shared/videoReversePrompt";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
@@ -166,6 +186,17 @@ export default function OmniCanvas() {
   /** 手选手法后不再被题材自动覆盖 */
   const [craftShotManual, setCraftShotManual] = useState(false);
   const [motionManual, setMotionManual] = useState(false);
+  const [factoryPathRecipeId, setFactoryPathRecipeId] = useState("");
+  const [pathRecipeManual, setPathRecipeManual] = useState(false);
+  const [factoryPathAnnotation, setFactoryPathAnnotation] = useState<ManhuaPathAnnotation | null>(
+    null,
+  );
+  const [factoryNarrativeLightingId, setFactoryNarrativeLightingId] = useState("");
+  const [narrativeLightingManual, setNarrativeLightingManual] = useState(false);
+  const [factoryMaleHairstyleId, setFactoryMaleHairstyleId] = useState("");
+  const [factoryMaleMicroId, setFactoryMaleMicroId] = useState("");
+  const [maleMicroManual, setMaleMicroManual] = useState(false);
+  const [factoryPromoLayoutId, setFactoryPromoLayoutId] = useState("");
   const [factoryReverseMode, setFactoryReverseMode] = useState<VideoReverseOutputMode>("zh");
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
@@ -335,6 +366,37 @@ export default function OmniCanvas() {
     }
   }, [recommendedMotion.motionId, motionManual]);
 
+  const recommendedPath = useMemo(
+    () => recommendPathCameraFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const recommendedNarrativeLighting = useMemo(
+    () => recommendNarrativeLightingFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const recommendedMaleMicro = useMemo(
+    () => recommendMaleMicroExpressionFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+
+  useEffect(() => {
+    if (!pathRecipeManual && recommendedPath.recipeId) {
+      setFactoryPathRecipeId(recommendedPath.recipeId);
+    }
+  }, [recommendedPath.recipeId, pathRecipeManual]);
+
+  useEffect(() => {
+    if (!narrativeLightingManual && recommendedNarrativeLighting.lightingId) {
+      setFactoryNarrativeLightingId(recommendedNarrativeLighting.lightingId);
+    }
+  }, [recommendedNarrativeLighting.lightingId, narrativeLightingManual]);
+
+  useEffect(() => {
+    if (!maleMicroManual && recommendedMaleMicro.expressionId) {
+      setFactoryMaleMicroId(recommendedMaleMicro.expressionId);
+    }
+  }, [recommendedMaleMicro.expressionId, maleMicroManual]);
+
   const selectedCharacterIds = useMemo(
     () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
     [factoryFemaleId, factoryMaleId],
@@ -347,6 +409,33 @@ export default function OmniCanvas() {
     () => (factoryCraftShotId.trim() ? [factoryCraftShotId.trim()] : []),
     [factoryCraftShotId],
   );
+  const selectedPathRecipeIds = useMemo(
+    () => (factoryPathRecipeId.trim() ? [factoryPathRecipeId.trim()] : []),
+    [factoryPathRecipeId],
+  );
+  const selectedNarrativeLightingIds = useMemo(
+    () => (factoryNarrativeLightingId.trim() ? [factoryNarrativeLightingId.trim()] : []),
+    [factoryNarrativeLightingId],
+  );
+  const selectedMaleHairstyleIds = useMemo(
+    () => (factoryMaleHairstyleId.trim() ? [factoryMaleHairstyleId.trim()] : []),
+    [factoryMaleHairstyleId],
+  );
+  const selectedMaleMicroIds = useMemo(
+    () => (factoryMaleMicroId.trim() ? [factoryMaleMicroId.trim()] : []),
+    [factoryMaleMicroId],
+  );
+  const selectedPromoLayoutIds = useMemo(
+    () => (factoryPromoLayoutId.trim() ? [factoryPromoLayoutId.trim()] : []),
+    [factoryPromoLayoutId],
+  );
+
+  const keyArtPreviewUrl = useMemo(() => {
+    const key = blocks.find(
+      (b) => b.id.startsWith("keyart-") && (b.outputUrl || b.outputUrls?.[0] || b.refImageUrl),
+    );
+    return key?.outputUrl || key?.outputUrls?.[0] || key?.refImageUrl || "";
+  }, [blocks]);
 
   /** 已铺工厂板时：手法/动效/场景/反推档（已铺可同步）变更同步进节点，不必整板重铺（短防抖） */
   useEffect(() => {
@@ -357,6 +446,12 @@ export default function OmniCanvas() {
         const next = applyFactoryPrefsToBlocks(prev, {
           craftShotIds: selectedCraftShotIds,
           motionPromptIds: selectedMotionIds,
+          pathCameraRecipeIds: selectedPathRecipeIds,
+          pathAnnotationJson: factoryPathAnnotation,
+          narrativeLightingIds: selectedNarrativeLightingIds,
+          maleHairstyleIds: selectedMaleHairstyleIds,
+          maleMicroExpressionIds: selectedMaleMicroIds,
+          promoCoverLayoutIds: selectedPromoLayoutIds,
           sceneId: factorySceneId || undefined,
           propIds: factoryPropIds,
           genreId: factoryGenreId || undefined,
@@ -369,7 +464,9 @@ export default function OmniCanvas() {
           return (
             !p ||
             p.prompt !== b.prompt ||
-            p.videoReverseOutputMode !== b.videoReverseOutputMode
+            p.videoReverseOutputMode !== b.videoReverseOutputMode ||
+            p.pathCameraRecipeId !== b.pathCameraRecipeId ||
+            p.pathAnnotationJson !== b.pathAnnotationJson
           );
         });
         if (!changed) return prev;
@@ -382,6 +479,12 @@ export default function OmniCanvas() {
   }, [
     factoryCraftShotId,
     factoryMotionId,
+    factoryPathRecipeId,
+    factoryPathAnnotation,
+    factoryNarrativeLightingId,
+    factoryMaleHairstyleId,
+    factoryMaleMicroId,
+    factoryPromoLayoutId,
     factorySceneId,
     factoryPropIds,
     factoryGenreId,
@@ -391,6 +494,11 @@ export default function OmniCanvas() {
     factoryReverseMode,
     selectedCraftShotIds,
     selectedMotionIds,
+    selectedPathRecipeIds,
+    selectedNarrativeLightingIds,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+    selectedPromoLayoutIds,
     selectedCharacterIds,
   ]);
   const motionGrouped = useMemo(() => {
@@ -558,6 +666,12 @@ export default function OmniCanvas() {
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
+        pathCameraRecipeIds: selectedPathRecipeIds,
+        pathAnnotationJson: factoryPathAnnotation,
+        narrativeLightingIds: selectedNarrativeLightingIds,
+        maleHairstyleIds: selectedMaleHairstyleIds,
+        maleMicroExpressionIds: selectedMaleMicroIds,
+        promoCoverLayoutIds: selectedPromoLayoutIds,
         videoReverseOutputMode: factoryReverseMode,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
@@ -603,6 +717,12 @@ export default function OmniCanvas() {
       selectedCharacterIds,
       selectedMotionIds,
       selectedCraftShotIds,
+      selectedPathRecipeIds,
+      factoryPathAnnotation,
+      selectedNarrativeLightingIds,
+      selectedMaleHairstyleIds,
+      selectedMaleMicroIds,
+      selectedPromoLayoutIds,
       factoryReverseMode,
       writerContext,
       directorUnlocked,
@@ -624,9 +744,16 @@ export default function OmniCanvas() {
     setWriterConfirmed(false);
     try {
       const count = clampWriterEpisodeCount(writerEpisodeCount);
+      const designInject = [
+        buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
+        buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
       const res = await expandWriterMutation.mutateAsync({
         topic,
-        brief: brief || undefined,
+        brief: mergedBrief || undefined,
         episodeCount: count,
       });
       const pack = res.pack;
@@ -641,7 +768,14 @@ export default function OmniCanvas() {
     } finally {
       setWriterBusy(false);
     }
-  }, [factoryTopic, writerBrief, writerEpisodeCount, expandWriterMutation]);
+  }, [
+    factoryTopic,
+    writerBrief,
+    writerEpisodeCount,
+    expandWriterMutation,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+  ]);
 
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -666,6 +800,12 @@ export default function OmniCanvas() {
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
+      pathCameraRecipeIds: selectedPathRecipeIds,
+      pathAnnotationJson: factoryPathAnnotation,
+      narrativeLightingIds: selectedNarrativeLightingIds,
+      maleHairstyleIds: selectedMaleHairstyleIds,
+      maleMicroExpressionIds: selectedMaleMicroIds,
+      promoCoverLayoutIds: selectedPromoLayoutIds,
       videoReverseOutputMode: factoryReverseMode,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex),
       includeDirectorCraft: true,
@@ -755,6 +895,12 @@ export default function OmniCanvas() {
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
+      pathCameraRecipeIds: selectedPathRecipeIds,
+      pathAnnotationJson: factoryPathAnnotation,
+      narrativeLightingIds: selectedNarrativeLightingIds,
+      maleHairstyleIds: selectedMaleHairstyleIds,
+      maleMicroExpressionIds: selectedMaleMicroIds,
+      promoCoverLayoutIds: selectedPromoLayoutIds,
       videoReverseOutputMode: factoryReverseMode,
       episodes: episodes.map((ep) => ({
         index: ep.index,
@@ -1387,6 +1533,110 @@ export default function OmniCanvas() {
                   </p>
                 </div>
                 <div>
+                  <label className="block text-[11px] text-white/45">路径运镜配方（可选 · 1 条）</label>
+                  <select
+                    value={factoryPathRecipeId}
+                    onChange={(e) => {
+                      setPathRecipeManual(true);
+                      setFactoryPathRecipeId(e.target.value);
+                    }}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-cyan-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {listPathCameraRecipes().map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {String(e.no).padStart(2, "0")} {e.nameZh}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-cyan-100/60">{recommendedPath.reasonZh}</p>
+                </div>
+                <ManhuaPathCameraAnnotatePanel
+                  imageUrl={keyArtPreviewUrl || undefined}
+                  value={factoryPathAnnotation}
+                  recipeId={factoryPathRecipeId}
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  onChange={setFactoryPathAnnotation}
+                  onRecipeIdChange={(id) => {
+                    setPathRecipeManual(true);
+                    setFactoryPathRecipeId(id);
+                  }}
+                />
+                <div>
+                  <label className="block text-[11px] text-white/45">叙事灯光（可选 · 1 条）</label>
+                  <select
+                    value={factoryNarrativeLightingId}
+                    onChange={(e) => {
+                      setNarrativeLightingManual(true);
+                      setFactoryNarrativeLightingId(e.target.value);
+                    }}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-amber-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-amber-300/40 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {listNarrativeLighting().map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {String(e.no).padStart(2, "0")} {e.nameZh} · {e.stageZh}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-amber-100/60">{recommendedNarrativeLighting.reasonZh}</p>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">男发预设（可选 · 注入圣经）</label>
+                  <select
+                    value={factoryMaleHairstyleId}
+                    onChange={(e) => setFactoryMaleHairstyleId(e.target.value)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {listMaleHairstylePresets().map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {String(e.no).padStart(2, "0")} {e.nameZh}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">男生微表情（可选）</label>
+                  <select
+                    value={factoryMaleMicroId}
+                    onChange={(e) => {
+                      setMaleMicroManual(true);
+                      setFactoryMaleMicroId(e.target.value);
+                    }}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                  >
+                    <option value="">不指定</option>
+                    {listMaleMicroExpressions().map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {String(e.no).padStart(2, "0")} {e.nameZh}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-white/35">{recommendedMaleMicro.reasonZh}</p>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">宣发封面构图（可选 · 额外节点）</label>
+                  <select
+                    value={factoryPromoLayoutId}
+                    onChange={(e) => setFactoryPromoLayoutId(e.target.value)}
+                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                    className="mt-1 w-full rounded-lg border border-fuchsia-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-fuchsia-300/40 disabled:opacity-50"
+                  >
+                    <option value="">不铺宣发封面</option>
+                    {listPromoCoverLayouts().map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {String(e.no).padStart(2, "0")} {e.nameZh}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] text-fuchsia-100/55">人景双重曝光等构图；不改六栏分镜主路径。</p>
+                </div>
+                <div>
                   <label className="block text-[11px] text-white/45">反推输出档</label>
                   <select
                     value={factoryReverseMode}
@@ -1507,6 +1757,12 @@ export default function OmniCanvas() {
                       artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
+                      pathCameraRecipeIds: selectedPathRecipeIds,
+                      pathAnnotationJson: factoryPathAnnotation,
+                      narrativeLightingIds: selectedNarrativeLightingIds,
+                      maleHairstyleIds: selectedMaleHairstyleIds,
+                      maleMicroExpressionIds: selectedMaleMicroIds,
+                      promoCoverLayoutIds: selectedPromoLayoutIds,
                       videoReverseOutputMode: factoryReverseMode,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,
