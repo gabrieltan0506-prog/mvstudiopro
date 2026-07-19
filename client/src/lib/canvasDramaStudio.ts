@@ -521,7 +521,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   keyArt.parentId = reverse.id;
-  /** 成片底图必须 Image-2；NB2 易多肢/手，不作视频静帧主路径 */
+  /** 成片底图默认 Image-2；用户可手选 NB2 省钱（计费不同） */
   keyArt.imageModel = "gpt-image-2";
   keyArt.aspectRatio = "9:16";
 

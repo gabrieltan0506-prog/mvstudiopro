@@ -460,13 +460,9 @@ export async function runCanvasBlock(
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
     const isEdit = block.imageMode === "edit";
-    /** 工厂静帧 keyart-* 是 Seedance/I2V 底图：强制 Image-2，禁止 NB2（多手等问题） */
-    const forceImage2ForVideoStill = /^keyart-/.test(String(block.id || ""));
-    const imageModel: CanvasBlock["imageModel"] = forceImage2ForVideoStill
-      ? "gpt-image-2"
-      : block.imageModel === "nano-banana-2"
-        ? "nano-banana-2"
-        : "gpt-image-2";
+    /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
+    const imageModel: CanvasBlock["imageModel"] =
+      block.imageModel === "nano-banana-2" ? "nano-banana-2" : "gpt-image-2";
     const editRef =
       refUrl ||
       block.uploadedAssets?.find((a) => a.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(a.fileName || a.url))
