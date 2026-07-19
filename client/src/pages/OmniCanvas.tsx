@@ -2147,7 +2147,9 @@ export default function OmniCanvas() {
             {/* ① 题材 + 编剧室（确认后默认收起，腾出可视区给画布推进） */}
             <div
               id="manhua-factory-zone"
-              className="mt-2 max-w-3xl scroll-mt-44 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5"
+              className={`mt-2 scroll-mt-44 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5 ${
+                writerConfirmed && manhuaUiMode === "workbench" ? "max-w-3xl opacity-90" : "max-w-3xl"
+              }`}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
@@ -2366,19 +2368,22 @@ export default function OmniCanvas() {
               </details>
             </div>
 
-            <ManhuaCastStrip
-              characterIds={selectedCharacterIds}
-              ancientArchetypeIds={factoryAncientArchetypeIds}
-              sceneId={factorySceneId || recommendedScene?.id}
-              propIds={factoryPropIds}
-              writerConfirmed={writerConfirmed}
-              artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
-              onOpenCharacters={() => setManhuaAssetDrawer("characters")}
-              onOpenAssets={() => setManhuaAssetDrawer("assets")}
-            />
+            {/* 工作台模式下资产进左栏「本案资产」，不再叠一条 CastStrip 占屏 */}
+            {manhuaUiMode !== "workbench" || !writerConfirmed ? (
+              <ManhuaCastStrip
+                characterIds={selectedCharacterIds}
+                ancientArchetypeIds={factoryAncientArchetypeIds}
+                sceneId={factorySceneId || recommendedScene?.id}
+                propIds={factoryPropIds}
+                writerConfirmed={writerConfirmed}
+                artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
+                onOpenCharacters={() => setManhuaAssetDrawer("characters")}
+                onOpenAssets={() => setManhuaAssetDrawer("assets")}
+              />
+            ) : null}
 
             {/* 对标 c1/c2：工作台三栏（右栏大预览）为主屏；推进条 sticky；节点画布降级可展开 */}
-            <div className="mt-3 flex max-w-6xl flex-wrap items-center gap-2">
+            <div className="mt-3 flex max-w-[1920px] flex-wrap items-center gap-2">
               <span className="text-[11px] text-white/45">生产主界面</span>
               <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
                 <button
@@ -2405,12 +2410,12 @@ export default function OmniCanvas() {
                 </button>
               </div>
               <span className="text-[10px] text-white/35">
-                主屏=工作台右栏「视频结果」+ 底栏集时间线 · 节点画布可展开
+                左资产墙 · 中片段脚本 · 右大预览 · 底片段胶片
               </span>
             </div>
 
             {manhuaUiMode === "workbench" ? (
-              <div id="manhua-workbench-zone" className="max-w-6xl scroll-mt-44">
+              <div id="manhua-workbench-zone" className="max-w-[1920px] scroll-mt-44">
                 <ManhuaScriptWorkbench
                   blocks={blocks}
                   topic={factoryTopic}
