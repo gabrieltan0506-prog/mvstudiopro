@@ -2077,6 +2077,15 @@ export default function OmniCanvas() {
                     setManhuaUiMode("workbench");
                   }
                 }}
+                busyLabel={
+                  assembleBusy
+                    ? "正在合成长片与配乐"
+                    : factoryBusy
+                      ? "工厂出片进行中"
+                      : writerBusy
+                        ? "编剧室扩写中"
+                        : null
+                }
               />
             ) : null}
 

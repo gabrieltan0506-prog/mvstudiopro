@@ -2,7 +2,7 @@
  * 示意 A · 引导式实测路径轨（整页地基）+ 下一步行动条
  */
 import { useMemo } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import {
   MANHUA_GUIDED_STEPS,
   resolveManhuaGuidedActiveStep,
@@ -18,6 +18,8 @@ type Props = {
   activeStepId?: ManhuaGuidedStepId;
   onStepClick?: (stepId: ManhuaGuidedStepId, href: string) => void;
   onNextActionClick?: (stepId: ManhuaGuidedStepId, href: string) => void;
+  /** 工厂出片 / 合成进行中时，下一步条改显示忙态 */
+  busyLabel?: string | null;
 };
 
 function scrollToHref(href: string) {
@@ -30,10 +32,12 @@ export default function ManhuaGuidedPathRail({
   activeStepId,
   onStepClick,
   onNextActionClick,
+  busyLabel,
 }: Props) {
   const activeId = activeStepId || resolveManhuaGuidedActiveStep(progress);
   const activeIndex = MANHUA_GUIDED_STEPS.findIndex((s) => s.id === activeId);
   const next = useMemo(() => resolveManhuaGuidedNextAction(progress), [progress]);
+  const busy = Boolean(busyLabel?.trim());
 
   const doneFlags = useMemo(() => {
     return {
@@ -105,12 +109,27 @@ export default function ManhuaGuidedPathRail({
         })}
       </div>
 
-      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3 py-2">
+      <div
+        className={`mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 ${
+          busy
+            ? "border-amber-400/30 bg-amber-500/10"
+            : "border-cyan-400/25 bg-cyan-500/10"
+        }`}
+      >
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold text-cyan-50">
-            下一步 · {next.title}
+          <div className={`text-[11px] font-semibold ${busy ? "text-amber-50" : "text-cyan-50"}`}>
+            {busy ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                进行中 · {busyLabel}
+              </span>
+            ) : (
+              <>下一步 · {next.title}</>
+            )}
           </div>
-          <p className="mt-0.5 text-[10px] leading-snug text-white/50">{next.hint}</p>
+          <p className="mt-0.5 text-[10px] leading-snug text-white/50">
+            {busy ? "可留在本页等待，或点步骤跳转查看对应区块。" : next.hint}
+          </p>
         </div>
         <button
           type="button"
@@ -119,9 +138,13 @@ export default function ManhuaGuidedPathRail({
             onStepClick?.(next.stepId, next.href);
             scrollToHref(next.href);
           }}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/35 to-cyan-600/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-50"
+          className={`inline-flex shrink-0 items-center gap-1 rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
+            busy
+              ? "border-white/15 bg-white/[0.06] text-white/70"
+              : "border-cyan-300/45 bg-gradient-to-b from-cyan-400/35 to-cyan-600/30 text-cyan-50"
+          }`}
         >
-          {next.ctaLabel}
+          {busy ? "查看对应区块" : next.ctaLabel}
           <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </div>
