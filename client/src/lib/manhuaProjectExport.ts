@@ -107,6 +107,47 @@ export function selectExportableDockIds(items: ManhuaClipDockItem[]): string[] {
   return items.filter(manhuaClipDockItemHasExportableOutput).map((i) => i.blockId);
 }
 
+/** 成片坞 → 长片合成入参（按集取 clip + keyart） */
+export function collectManhuaAssembleClipsFromDock(
+  items: ManhuaClipDockItem[],
+  opts?: { selectedIds?: Set<string> | string[]; onlySelectedEpisodes?: boolean },
+): Array<{
+  episodeIndex: number;
+  episodeTitle?: string;
+  clipUrl?: string;
+  keyartUrl?: string;
+}> {
+  const selected = opts?.selectedIds
+    ? opts.selectedIds instanceof Set
+      ? opts.selectedIds
+      : new Set(opts.selectedIds)
+    : null;
+  const epFilter = new Set<number>();
+  if (opts?.onlySelectedEpisodes && selected?.size) {
+    for (const it of items) {
+      if (selected.has(it.blockId)) epFilter.add(it.episodeIndex);
+    }
+  }
+  const byEp = new Map<
+    number,
+    { episodeIndex: number; episodeTitle?: string; clipUrl?: string; keyartUrl?: string }
+  >();
+  for (const it of items) {
+    if (epFilter.size && !epFilter.has(it.episodeIndex)) continue;
+    const cur = byEp.get(it.episodeIndex) || {
+      episodeIndex: it.episodeIndex,
+      episodeTitle: it.episodeTitle,
+    };
+    if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
+    if (it.stage === "clip" && it.outputUrl) cur.clipUrl = it.outputUrl;
+    if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {
+      cur.keyartUrl = cur.keyartUrl || it.outputUrl;
+    }
+    byEp.set(it.episodeIndex, cur);
+  }
+  return Array.from(byEp.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
+}
+
 export function summarizeManhuaDockExport(items: ManhuaClipDockItem[]): {
   episodeCount: number;
   exportableCount: number;

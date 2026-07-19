@@ -53,9 +53,11 @@ import {
   loadManhuaWriterSessionFromStorage,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
+import { summarizeManhuaPathTrackStatus } from "@shared/manhuaFinalAssemble";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
+import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
@@ -71,6 +73,7 @@ import {
 } from "@shared/craftShotBank";
 import { recommendPathCameraFromTopic } from "@shared/manhuaPathCameraRecipeBank";
 import {
+  getNarrativeLightingById,
   listNarrativeLighting,
   recommendNarrativeLightingFromTopic,
 } from "@shared/manhuaNarrativeLightingBank";
@@ -379,7 +382,11 @@ export default function OmniCanvas() {
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [canvasMode, setCanvasMode] = useState<CanvasWorkspaceMode>(() => loadCanvasWorkspaceMode());
+  const [assembleBusy, setAssembleBusy] = useState(false);
+  const [finalAssembleVideoUrl, setFinalAssembleVideoUrl] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
+  const refundWorkflowStepMutation = trpc.workflow.refundStep.useMutation();
 
   const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
     setCanvasMode(mode);
@@ -1003,6 +1010,106 @@ export default function OmniCanvas() {
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+
+  const pathTrackStatus = useMemo(
+    () => summarizeManhuaPathTrackStatus(factoryPathAnnotation),
+    [factoryPathAnnotation],
+  );
+  const narrativeLightingLabelZh = useMemo(() => {
+    const e = getNarrativeLightingById(factoryNarrativeLightingId);
+    return e ? `${e.nameZh}（${e.stageZh}）` : "";
+  }, [factoryNarrativeLightingId]);
+
+  const assembleManhuaFinal = useCallback(
+    async (
+      clips: Array<{
+        episodeIndex: number;
+        episodeTitle?: string;
+        clipUrl?: string;
+        keyartUrl?: string;
+      }>,
+    ) => {
+      if (assembleBusy || factoryBusy) return;
+      const ready = clips.filter((c) => c.clipUrl);
+      if (!ready.length) {
+        toast.error("至少需要一集成片才能合成长片");
+        return;
+      }
+      setAssembleBusy(true);
+      pushDebug("assemble:start", {
+        level: "info",
+        detail: `clips=${ready.map((c) => c.episodeIndex).join(",")}`,
+      });
+      const charged: Array<"music" | "final_render"> = [];
+      try {
+        await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
+        charged.push("music");
+        await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
+        charged.push("final_render");
+
+        pushDebug("assemble:music", { level: "info", detail: "generating score…" });
+        const url = withLongJobsFlyDirect("/api/jobs?op=manhuaAssembleFinal");
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            clips: ready,
+            topic: factoryTopic,
+            seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
+            logline: writerPack?.logline || projectBible?.logline || "",
+            musicDuration: Math.min(120, Math.max(45, ready.length * 15 + 15)),
+            transition: "fade",
+            resolution: "9:16",
+            musicVolume: 0.35,
+            musicFadeInSec: 1,
+            musicFadeOutSec: 2,
+          }),
+        });
+        const json = (await resp.json().catch(() => ({}))) as {
+          ok?: boolean;
+          finalVideoUrl?: string;
+          musicUrl?: string;
+          sceneCount?: number;
+          skippedEpisodes?: unknown;
+          message?: string;
+          error?: string;
+        };
+        if (!resp.ok || json?.ok === false || !json.finalVideoUrl) {
+          throw new Error(json?.message || json?.error || `合成失败 HTTP ${resp.status}`);
+        }
+        setFinalAssembleVideoUrl(json.finalVideoUrl);
+        pushDebug("assemble:done", {
+          level: "ok",
+          detail: `scenes=${json.sceneCount || ready.length} · final ok`,
+          response: json.finalVideoUrl.slice(0, 180),
+        });
+        toast.success(`长片已合成（${json.sceneCount || ready.length} 集 + 配乐）`);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "合成失败";
+        for (const step of charged.reverse()) {
+          void refundWorkflowStepMutation
+            .mutateAsync({ step, quantity: 1, reason: `漫剧合成失败退款·${step}` })
+            .catch(() => {});
+        }
+        pushDebug("assemble:error", { level: "error", detail: msg });
+        toast.error(msg);
+      } finally {
+        setAssembleBusy(false);
+      }
+    },
+    [
+      assembleBusy,
+      factoryBusy,
+      chargeWorkflowStepMutation,
+      refundWorkflowStepMutation,
+      factoryTopic,
+      writerPack?.seriesTitle,
+      writerPack?.logline,
+      projectBible?.seriesTitle,
+      projectBible?.logline,
+      pushDebug,
+    ],
+  );
 
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
@@ -2138,7 +2245,10 @@ export default function OmniCanvas() {
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
-                  factoryBusy={factoryBusy}
+                  pathTrackLabelZh={pathTrackStatus.labelZh}
+                  narrativeLightingLabelZh={narrativeLightingLabelZh}
+                  finalVideoUrl={finalAssembleVideoUrl}
+                  factoryBusy={factoryBusy || assembleBusy}
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
@@ -2785,7 +2895,7 @@ export default function OmniCanvas() {
               {" · "}
               文生 / 图生 / 参考生已就绪，待开放；当前 Seedance 2.0（默认 15s）。
               {" · "}
-              工程包导出为素材 zip，不含自动拼接长片。
+              工程包可导出 zip；有成片后可用「合成长片（含配乐）」出多集长片。
             </p>
 
             <div className="mt-4 max-w-3xl">
@@ -2799,6 +2909,9 @@ export default function OmniCanvas() {
                 writerPackMarkdown={writerConfirmed ? writerPack?.rawMarkdown : undefined}
                 selectedIds={dockSelectedIds}
                 onSelectedIdsChange={setDockSelectedIds}
+                assembleBusy={assembleBusy}
+                finalVideoUrl={finalAssembleVideoUrl}
+                onAssembleFinal={(clips) => void assembleManhuaFinal(clips)}
                 onFocusBlock={(id) => {
                   setFocusBlockId(id);
                   const hit = blocks.find((b) => b.id === id);

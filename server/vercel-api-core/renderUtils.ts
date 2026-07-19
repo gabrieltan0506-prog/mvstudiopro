@@ -23,6 +23,11 @@ export function resolutionToSize(value: string | undefined) {
   if (raw === "1080p") return { width: 1920, height: 1080 };
   if (raw === "2k" || raw === "1440p") return { width: 2560, height: 1440 };
   if (raw === "4k" || raw === "2160p") return { width: 3840, height: 2160 };
+  // 竖屏漫剧 / 短剧成片
+  if (raw === "9:16" || raw === "portrait" || raw === "1080x1920") {
+    return { width: 1080, height: 1920 };
+  }
+  if (raw === "720x1280") return { width: 720, height: 1280 };
   return { width: 1920, height: 1080 };
 }
 

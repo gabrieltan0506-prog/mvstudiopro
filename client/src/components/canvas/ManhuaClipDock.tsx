@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { Download, Focus, Loader2 } from "lucide-react";
+import { Clapperboard, Download, Focus, Loader2 } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
+  collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
   downloadManhuaProjectZip,
   manhuaClipDockItemHasExportableOutput,
@@ -22,6 +23,10 @@ type Props = {
   selectedIds: Set<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
   onFocusBlock?: (blockId: string) => void;
+  /** 合成长片（含配乐）；由父组件扣点并调 jobs */
+  assembleBusy?: boolean;
+  finalVideoUrl?: string | null;
+  onAssembleFinal?: (clips: ReturnType<typeof collectManhuaAssembleClipsFromDock>) => void;
 };
 
 export default function ManhuaClipDock({
@@ -36,10 +41,22 @@ export default function ManhuaClipDock({
   selectedIds,
   onSelectedIdsChange,
   onFocusBlock,
+  assembleBusy,
+  finalVideoUrl,
+  onAssembleFinal,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
   const summary = useMemo(() => summarizeManhuaDockExport(items), [items]);
+  const assembleClips = useMemo(() => {
+    const fromSelected = collectManhuaAssembleClipsFromDock(items, {
+      selectedIds,
+      onlySelectedEpisodes: selectedIds.size > 0,
+    }).filter((c) => c.clipUrl);
+    if (fromSelected.length) return fromSelected;
+    return collectManhuaAssembleClipsFromDock(items).filter((c) => c.clipUrl);
+  }, [items, selectedIds]);
+  const canAssemble = assembleClips.length > 0 && Boolean(onAssembleFinal);
 
   const byEpisode = useMemo(() => {
     const map = new Map<number, ManhuaClipDockItem[]>();
@@ -153,7 +170,7 @@ export default function ManhuaClipDock({
         <div>
           <div className="text-sm font-semibold text-white/90">成片坞 · 多集导出</div>
           <p className="mt-0.5 text-[11px] leading-5 text-white/45">
-            勾选可作工厂运行范围；导出含故事/角色卡/节拍/反推/静帧/成片 + README/playlist（不含长片拼接）。
+            勾选可作工厂运行范围；导出含故事/角色卡/节拍/反推/静帧/成片 + README/playlist。有成片后可一键合成长片（含配乐）。
             {summary.episodeCount ? (
               <span className="text-white/55">
                 {" "}
@@ -164,6 +181,20 @@ export default function ManhuaClipDock({
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            disabled={assembleBusy || exportBusy || !canAssemble}
+            onClick={() => onAssembleFinal?.(assembleClips)}
+            className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/20 px-2.5 py-1 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-40"
+            title={
+              canAssemble
+                ? `将用 ${assembleClips.length} 集成片合成长片并自动配乐`
+                : "需至少一集有微动成片"
+            }
+          >
+            {assembleBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Clapperboard className="h-3 w-3" />}
+            合成长片（含配乐）
+          </button>
           <button
             type="button"
             disabled={!items.length}
@@ -208,6 +239,15 @@ export default function ManhuaClipDock({
           </button>
         </div>
       </div>
+
+      {finalVideoUrl ? (
+        <div className="mt-3 overflow-hidden rounded-xl border border-emerald-400/25 bg-black/40">
+          <div className="border-b border-white/10 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-100/85">
+            长片预览（已合成）
+          </div>
+          <video src={finalVideoUrl} controls className="max-h-56 w-full object-contain" />
+        </div>
+      ) : null}
 
       {!items.length ? (
         <p className="mt-3 text-[11px] text-white/40">

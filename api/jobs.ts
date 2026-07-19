@@ -26,6 +26,12 @@ import { characterLockStep } from "../server/workflow/steps/characterLockStep.js
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
+import {
+  buildManhuaAssemblePlan,
+  buildManhuaSunoPrompt,
+  type ManhuaAssembleClipInput,
+  type ManhuaAssembleSceneVideo,
+} from "../shared/manhuaFinalAssemble.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -2859,6 +2865,177 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         },
       });
       return res.status(200).json({ ok: true, workflow: next, finalVideoUrl });
+    }
+
+    /**
+     * 漫剧成片坞：各集 clip → 配乐 → 同源 Final Render 拼成长片。
+     * Body: { clips?: [...], sceneVideos?: [...], musicUrl?, musicPrompt?, topic?, seriesTitle?, logline?, musicDuration? }
+     */
+    if (opNormalized === "manhuaassemblefinal") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+
+      let sceneVideos: ManhuaAssembleSceneVideo[] = [];
+      let skippedEpisodes: Array<{ episodeIndex: number; reason: string; title?: string }> = [];
+      if (Array.isArray(b.sceneVideos) && b.sceneVideos.length) {
+        sceneVideos = b.sceneVideos
+          .map((row: any, i: number) => ({
+            sceneIndex: Math.max(1, Math.floor(Number(row?.sceneIndex) || i + 1)),
+            url: s(row?.url).trim(),
+            duration: s(row?.duration).trim() || "15s",
+            stillImageUrl: s(row?.stillImageUrl).trim() || undefined,
+            stillDuration: s(row?.stillDuration).trim() || undefined,
+          }))
+          .filter((row: ManhuaAssembleSceneVideo) => Boolean(row.url));
+      } else {
+        const clipsRaw = Array.isArray(b.clips) ? b.clips : [];
+        const clips: ManhuaAssembleClipInput[] = clipsRaw.map((row: any) => ({
+          episodeIndex: Math.floor(Number(row?.episodeIndex) || 0),
+          episodeTitle: s(row?.episodeTitle).trim() || undefined,
+          clipUrl: s(row?.clipUrl || row?.url).trim() || undefined,
+          keyartUrl: s(row?.keyartUrl || row?.stillImageUrl).trim() || undefined,
+          durationSec: Number(row?.durationSec) || undefined,
+        }));
+        const episodeIndexes = Array.isArray(b.episodeIndexes)
+          ? b.episodeIndexes.map((n: any) => Math.floor(Number(n) || 0)).filter((n: number) => n >= 1)
+          : undefined;
+        const plan = buildManhuaAssemblePlan(clips, { episodeIndexes });
+        sceneVideos = plan.sceneVideos;
+        skippedEpisodes = plan.skippedEpisodes;
+      }
+      if (!sceneVideos.length) {
+        return res.status(400).json(
+          fail("manhua_assemble_no_clips", "至少需要一集成片才能合成长片", { skippedEpisodes }),
+        );
+      }
+
+      let musicUrl = s(b.musicUrl).trim();
+      let musicPrompt = s(b.musicPrompt).trim();
+      if (!musicUrl) {
+        if (!AIM_KEY) {
+          return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
+        }
+        if (!musicPrompt) {
+          musicPrompt = buildManhuaSunoPrompt({
+            topic: s(b.topic),
+            seriesTitle: s(b.seriesTitle),
+            logline: s(b.logline),
+          });
+        }
+        const musicDuration = Math.max(30, Math.min(120, Math.floor(Number(b.musicDuration) || 60)));
+        const createUrl = `${AIM_BASE}/api/v1/sonic/create`;
+        const taskUrlBase = `${AIM_BASE}/api/v1/sonic/task/`;
+        const created = await fetchJson(createUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${AIM_KEY}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            task_type: "create_music",
+            custom_mode: false,
+            mv: "sonic-v5-5",
+            gpt_description_prompt: musicPrompt,
+          }),
+        });
+        if (!created.ok) {
+          return res.status(502).json(
+            fail("music_create_failed", "Music create request failed", { raw: created.json ?? created.rawText }),
+          );
+        }
+        const taskId = s(
+          created.json?.data?.task_id ||
+            created.json?.task_id ||
+            created.json?.taskId ||
+            created.json?.data?.id ||
+            created.json?.id,
+        ).trim();
+        if (!taskId) {
+          return res.status(502).json(
+            fail("missing_music_task_id", "Music task id is missing", { raw: created.json ?? created.rawText }),
+          );
+        }
+        let rawTask: any = null;
+        for (let i = 0; i < 40; i += 1) {
+          await sleep(3000);
+          const polled = await fetchJson(`${taskUrlBase}${encodeURIComponent(taskId)}`, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
+          });
+          const pollJson: any = polled.json ?? polled.rawText;
+          rawTask = pollJson;
+          const status = s(
+            pollJson?.status ||
+              pollJson?.state ||
+              pollJson?.data?.[0]?.status ||
+              pollJson?.data?.[0]?.state ||
+              "",
+          ).toLowerCase();
+          musicUrl = extractMusicUrlFromPayload(pollJson);
+          if (musicUrl) break;
+          if (status === "failed" || status === "error" || status === "cancelled") {
+            return res.status(502).json(
+              fail("music_task_failed", deriveMusicError(status, rawTask), { raw: rawTask }),
+            );
+          }
+        }
+        if (!musicUrl) {
+          return res.status(502).json(
+            fail("music_task_timeout_or_missing_music_url", "Music task timeout or missing music url", {
+              raw: rawTask,
+            }),
+          );
+        }
+        try {
+          musicUrl = await uploadWorkflowAudioToBlob(musicUrl, "manhua-music");
+        } catch (error: any) {
+          return res.status(502).json(
+            fail("music_download_failed", error?.message || String(error) || "music download failed", {
+              raw: rawTask,
+            }),
+          );
+        }
+      }
+
+      const musicVolume = Number.isFinite(Number(b.musicVolume)) ? Math.max(0, Number(b.musicVolume)) : 0.35;
+      const musicFadeInSec = Number.isFinite(Number(b.musicFadeInSec)) ? Math.max(0, Number(b.musicFadeInSec)) : 1;
+      const musicFadeOutSec = Number.isFinite(Number(b.musicFadeOutSec))
+        ? Math.max(0, Number(b.musicFadeOutSec))
+        : 2;
+      let finalVideoUrl = "";
+      try {
+        finalVideoUrl = await renderWorkflowFinalVideo({
+          sceneVideos: sceneVideos.map((sv) => ({
+            sceneIndex: sv.sceneIndex,
+            url: sv.url,
+            duration: sv.duration,
+            stillImageUrl: sv.stillImageUrl,
+            stillDuration: sv.stillDuration,
+          })),
+          musicUrl: musicUrl || undefined,
+          musicVolume,
+          musicFadeInSec,
+          musicFadeOutSec,
+          transition: s(b.transition).trim() || "fade",
+          resolution: s(b.resolution).trim() || "9:16",
+        });
+      } catch (error: any) {
+        return res.status(502).json(
+          fail("manhua_assemble_render_failed", error?.message || String(error) || "render failed", {
+            sceneCount: sceneVideos.length,
+          }),
+        );
+      }
+
+      return res.status(200).json({
+        ok: true,
+        finalVideoUrl,
+        musicUrl: musicUrl || undefined,
+        musicPrompt: musicPrompt || undefined,
+        sceneCount: sceneVideos.length,
+        episodeIndexes: sceneVideos.map((sv) => sv.sceneIndex),
+        skippedEpisodes,
+      });
     }
 
     if (opNormalized === "generatevoice") {
