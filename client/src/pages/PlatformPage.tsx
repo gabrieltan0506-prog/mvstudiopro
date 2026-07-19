@@ -6,7 +6,45 @@ import { AnimatePresence, motion } from "framer-motion";
 import PlatformAssetAnalysisPanel from "@/components/platform/PlatformAssetAnalysisPanel";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
+import { PlatformModeShell } from "@/components/platform/PlatformModeShell";
+import { PlatformCreateStepRail } from "@/components/platform/PlatformCreateStepRail";
+import { PlatformStickyCtaRail } from "@/components/platform/PlatformStickyCtaRail";
+import { PlatformCreateWorkbench } from "@/components/platform/PlatformCreateWorkbench";
+import { PlatformTrendWorkbench } from "@/components/platform/PlatformTrendWorkbench";
+import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkbench";
+import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
+import { PlatformOutputTypePicker } from "@/components/platform/PlatformOutputTypePicker";
+import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
 import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
+import {
+  composeFocusPromptFromPersona,
+  EMPTY_STRUCTURED_PERSONA,
+  LEGACY_VIDEO_TO_ASSETS_HINT,
+  normalizePlatformUrlInPlace,
+  parsePersonaFromFocusPrompt,
+  pushRecentTask,
+  readConfigPresets,
+  readRecentTasks,
+  readWorkbenchDraft,
+  resolvePlatformLocation,
+  syncPlatformModeToUrl,
+  toolsTabFromMode,
+  trackPlatformFunnel,
+  writePlatformModeToStorage,
+  writeWorkbenchDraft,
+  type PlatformConfigPreset,
+  type PlatformCreateStepId,
+  type PlatformOutputType,
+  type PlatformRecentTask,
+  type PlatformStructuredPersona,
+  type PlatformWorkbenchMode,
+} from "@/lib/platformWorkbenchMode";
+import {
+  buildCreatePrimaryCta,
+  buildToolsPrimaryCta,
+  buildTrendPrimaryCta,
+  type PlatformPrimaryCtaState,
+} from "@/lib/platformWorkbenchCta";
 import InfographicTemplatePicker from "@/components/InfographicTemplatePicker";
 import {
   composeInfographicScriptContext,
@@ -864,7 +902,7 @@ function getWindowLabel(value: PlatformWindowDays) {
 }
 
 function shellCardClasses(extra = "") {
-  return `rounded-[28px] border border-white/10 bg-[rgba(14,9,32,0.88)] shadow-[0_18px_80px_rgba(0,0,0,0.28)] backdrop-blur ${extra}`.trim();
+  return `rounded-2xl border border-white/8 bg-[rgba(12,8,28,0.9)] shadow-[0_12px_48px_rgba(0,0,0,0.22)] backdrop-blur ${extra}`.trim();
 }
 
 function splitAnswerParagraphs(value: string) {
@@ -2074,43 +2112,194 @@ export default function PlatformPage() {
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<
     "copy" | "topic" | "matting" | "assets" | "htmlPpt"
   >("copy");
+  /** 顶栏双模式 + 更多工具（URL ?mode= / localStorage） */
+  const [platformMode, setPlatformMode] = useState<PlatformWorkbenchMode>(() =>
+    resolvePlatformLocation().mode,
+  );
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [createStep, setCreateStep] = useState<PlatformCreateStepId>("persona");
+  const [structuredPersona, setStructuredPersona] = useState<PlatformStructuredPersona>({
+    ...EMPTY_STRUCTURED_PERSONA,
+  });
+  const [outputType, setOutputType] = useState<PlatformOutputType | null>(null);
+  const [configPresets, setConfigPresets] = useState<PlatformConfigPreset[]>([]);
+  const [recentTasks, setRecentTasks] = useState<PlatformRecentTask[]>([]);
+  const [draftMeta, setDraftMeta] = useState<{ savedAt: string } | null>(null);
+  const [personaFieldErrors, setPersonaFieldErrors] = useState<
+    Partial<Record<keyof PlatformStructuredPersona | "freeform", string>>
+  >({});
+  /** 完整描述是否被用户手动改写（canonical 仍为 structuredPersona） */
+  const [freeformOverride, setFreeformOverride] = useState(false);
+  const ctaInFlightRef = useRef(false);
+  const platformModeRef = useRef<PlatformWorkbenchMode>(platformMode);
+  const applyingFromHistoryRef = useRef(false);
+  platformModeRef.current = platformMode;
+
+  /** 仅登录且 auth 完成后才有稳定 userKey；禁止全体 anon 共桶 */
+  const workbenchUserKey = !loading && user?.id != null ? String(user.id) : null;
+  const workbenchStorageReady = Boolean(workbenchUserKey);
 
   useEffect(() => {
-    const applyTabFromUrl = (opts?: { scroll?: boolean }) => {
-      const params = new URLSearchParams(window.location.search);
-      const tab = params.get("tab");
-      const videoDeepTabs = new Set(["assets", "video", "deep-video", "video-deep"]);
-      if (tab && videoDeepTabs.has(tab)) {
-        setCustomWorkspaceTab("assets");
-        if (opts?.scroll !== false) {
-          window.setTimeout(() => {
-            document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }, 80);
+    if (!workbenchStorageReady || !workbenchUserKey) {
+      // 登出 / 未 hydration：清内存草稿，避免串号
+      setDraftMeta(null);
+      setConfigPresets([]);
+      setRecentTasks([]);
+      return;
+    }
+    try {
+      const draft = readWorkbenchDraft(workbenchUserKey);
+      setConfigPresets(readConfigPresets(workbenchUserKey));
+      setRecentTasks(readRecentTasks(workbenchUserKey));
+      if (draft) {
+        setDraftMeta({ savedAt: draft.updatedAt });
+        setFocusPrompt((prev) => (prev.trim() ? prev : draft.focusPrompt || ""));
+        if (draft.persona) setStructuredPersona(draft.persona);
+        setFreeformOverride(Boolean(draft.freeformOverride));
+        if (draft.outputType) setOutputType(draft.outputType);
+        if (draft.createStep) setCreateStep(draft.createStep);
+      } else {
+        setDraftMeta(null);
+      }
+    } catch {
+      setDraftMeta(null);
+      setConfigPresets([]);
+      setRecentTasks([]);
+    }
+  }, [workbenchStorageReady, workbenchUserKey]);
+
+  const applyPlatformMode = useCallback(
+    (next: PlatformWorkbenchMode, opts?: { toolTab?: "htmlPpt" | "matting" | "assets"; skipDirtyCheck?: boolean; history?: "push" | "replace" }) => {
+      if (!opts?.skipDirtyCheck && next !== platformMode) {
+        const draft = workbenchUserKey ? readWorkbenchDraft(workbenchUserKey) : null;
+        const dirty =
+          Boolean(focusPrompt.trim()) &&
+          (!draft || draft.focusPrompt !== focusPrompt.trim());
+        if (dirty) {
+          const ok = window.confirm(
+            "当前人物背景尚未写入草稿，切换模式前要先自动保存吗？\n\n确定=保存并切换；取消=留在当前模式。",
+          );
+          if (!ok) return;
+          if (workbenchUserKey) {
+            writeWorkbenchDraft(workbenchUserKey, {
+              mode: platformMode,
+              focusPrompt,
+              persona: structuredPersona,
+              freeformOverride,
+              enabledSkillIds: draft?.enabledSkillIds ?? [],
+              topicShortlistCount: draft?.topicShortlistCount ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT,
+              outputType: outputType ?? draft?.outputType ?? "single_page",
+              createStep,
+            });
+            setDraftMeta({ savedAt: new Date().toISOString() });
+            trackPlatformFunnel("draft_save", { reason: "mode_switch", mode: platformMode });
+          }
         }
-        return;
       }
-      if (tab === "copy" || tab === "topic" || tab === "matting" || tab === "htmlPpt") {
-        setCustomWorkspaceTab(tab);
+      setPlatformMode(next);
+      writePlatformModeToStorage(next);
+      const tab = opts?.toolTab
+        ? opts.toolTab
+        : next === "tools"
+          ? customWorkspaceTab === "htmlPpt" ||
+              customWorkspaceTab === "matting" ||
+              customWorkspaceTab === "assets"
+            ? customWorkspaceTab
+            : resolvePlatformLocation().tool
+          : toolsTabFromMode(next, customWorkspaceTab);
+      setCustomWorkspaceTab(tab);
+      // popstate 还原时禁止再 push，避免历史膨胀
+      if (!applyingFromHistoryRef.current) {
+        syncPlatformModeToUrl(next, {
+          tool:
+            next === "tools" && (tab === "htmlPpt" || tab === "matting" || tab === "assets")
+              ? tab
+              : undefined,
+          createTab: next === "create" ? (tab === "topic" ? "topic" : "copy") : undefined,
+          history: opts?.history ?? "push",
+        });
+        try {
+          const url = new URL(window.location.href);
+          const path = `${url.pathname}${url.search}${url.hash}`;
+          setLocationPath(path.startsWith("/platform") ? path : `/platform${url.search}`);
+        } catch {
+          /* ignore */
+        }
+      }
+      trackPlatformFunnel("mode_switch", { mode: next, tool: next === "tools" ? String(tab) : undefined });
+    },
+    [
+      platformMode,
+      focusPrompt,
+      structuredPersona,
+      freeformOverride,
+      outputType,
+      createStep,
+      customWorkspaceTab,
+      setLocationPath,
+      workbenchUserKey,
+    ],
+  );
+
+  useEffect(() => {
+    trackPlatformFunnel("mode_view", { mode: platformMode });
+  }, [platformMode]);
+
+  // URL 初始化 + popstate（前进/后退）；popstate 只读状态，不 push 历史
+  useEffect(() => {
+    const LEGACY_TOAST_KEY = "mvs.platform.legacyVideoToast.v1";
+    const applyFromLocation = (opts?: { scroll?: boolean; fromPopstate?: boolean }) => {
+      applyingFromHistoryRef.current = Boolean(opts?.fromPopstate);
+      try {
+        const loc = resolvePlatformLocation(window.location.search);
+        if (loc.normalized || loc.legacyVideoMapped) {
+          normalizePlatformUrlInPlace(loc); // replaceState only
+        }
+        setPlatformMode(loc.mode);
+        writePlatformModeToStorage(loc.mode);
+        if (loc.mode === "tools") {
+          setCustomWorkspaceTab(loc.tool);
+          if (loc.legacyVideoMapped) {
+            try {
+              if (sessionStorage.getItem(LEGACY_TOAST_KEY) !== "1") {
+                sessionStorage.setItem(LEGACY_TOAST_KEY, "1");
+                toast.message(LEGACY_VIDEO_TO_ASSETS_HINT);
+                trackPlatformFunnel("legacy_tab_mapped", { legacy: "video", tool: "assets" });
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+          if (opts?.scroll !== false && loc.tool === "assets") {
+            window.setTimeout(() => {
+              document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 80);
+          }
+        } else if (loc.mode === "create") {
+          setCustomWorkspaceTab(loc.createTab);
+        }
+      } finally {
+        applyingFromHistoryRef.current = false;
       }
     };
-    applyTabFromUrl({ scroll: true });
-    const onUrl = () => applyTabFromUrl({ scroll: true });
-    window.addEventListener("popstate", onUrl);
-    window.addEventListener("mvs:platform-tab", onUrl as EventListener);
+    applyFromLocation({ scroll: true, fromPopstate: false });
+    const onPop = () => applyFromLocation({ scroll: false, fromPopstate: true });
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("mvs:platform-tab", onPop as EventListener);
     return () => {
-      window.removeEventListener("popstate", onUrl);
-      window.removeEventListener("mvs:platform-tab", onUrl as EventListener);
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("mvs:platform-tab", onPop as EventListener);
     };
-  }, [locationPath]);
+    // 仅挂载时绑定；后续靠 popstate / 显式 applyPlatformMode，避免 locationPath 循环写历史
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const openVideoDeepBreakdown = useCallback(() => {
-    setCustomWorkspaceTab("assets");
-    setLocationPath("/platform?tab=video");
-    window.dispatchEvent(new Event("mvs:platform-tab"));
+    applyPlatformMode("tools", { toolTab: "assets" });
     window.setTimeout(() => {
       document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 40);
-  }, [setLocationPath]);
+  }, [applyPlatformMode]);
 
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
@@ -2559,62 +2748,100 @@ export default function PlatformPage() {
 
   const platformMainPersonaTopicsPanel = (
     <div className="space-y-4">
-      <div
+      <PlatformStructuredPersonaForm
         id="platform-persona-focus"
-        className="rounded-2xl border border-[#fbbf24]/40 bg-[rgba(251,191,36,0.1)] px-4 py-4"
-      >
-        <div className="flex items-center gap-2 text-lg font-bold text-[#fef08a] md:text-xl">
-          <Target className="h-5 w-5 shrink-0" aria-hidden />
-          人物背景与创作诉求
-          <span className="rounded border border-[#fbbf24]/35 bg-black/20 px-1.5 py-0.5 text-[11px] font-medium text-[#fde68a]">
-            全案 / 选题共用
-          </span>
-        </div>
-        <p className="mt-1.5 text-[13px] leading-snug text-gray-300">
-          写清职业、专长、兴趣与目标；全案分析与下方选题初选 / 扩写都读这一栏。
-        </p>
-        <div className="relative mt-3">
-          <textarea
-            value={focusPrompt}
-            onChange={(event) => setFocusPrompt(event.target.value)}
-            placeholder="例如：我是医学背景创作者，做小红书虚拟资料店；擅长慢病科普与资料包变现，想找持续量大、利润清晰的品类与定价。"
-            rows={4}
-            className="min-h-[110px] w-full rounded-xl border border-white/15 bg-[#0c061e] px-3.5 py-3 pr-12 text-[14px] leading-relaxed text-white outline-none transition focus:border-[#fbbf24]/45"
+        value={structuredPersona}
+        onChange={(next) => {
+          setStructuredPersona(next);
+          // 结构化为 canonical：未 override 时同步序列化到 focusPrompt
+          if (!freeformOverride) {
+            setFocusPrompt(composeFocusPromptFromPersona(next));
+          }
+          setPersonaFieldErrors({});
+        }}
+        freeform={focusPrompt}
+        onFreeformChange={(v) => {
+          setFocusPrompt(v);
+          const composed = composeFocusPromptFromPersona(structuredPersona);
+          setFreeformOverride(v.trim() !== composed.trim());
+          setPersonaFieldErrors({});
+        }}
+        errors={personaFieldErrors}
+        ipReady={isIpProfileReady(readIpProfile())}
+        onIpGeneFill={() => {
+          const profile = readIpProfile();
+          if (isIpProfileReady(profile)) {
+            const next = {
+              identity: profile.industry || structuredPersona.identity,
+              domain: profile.advantage || structuredPersona.domain,
+              audience: profile.audience || structuredPersona.audience,
+              businessGoal: profile.flagship || structuredPersona.businessGoal,
+            };
+            setStructuredPersona(next);
+            setFocusPrompt(composeFocusPromptFromPersona(next));
+            setFreeformOverride(false);
+            toast.success("已用企业 IP 基因快填");
+          } else {
+            toast.message("请先载入企业 IP 基因后再快填");
+            document.getElementById("platform-persona-focus-fullcase")?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }
+        }}
+        voiceSlot={
+          <VoiceInputButton
+            onTranscript={(t) => {
+              setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t));
+              setFreeformOverride(true);
+            }}
+            onDebugLog={addVoiceDebug}
+            size={26}
           />
-          <div className="absolute right-2 top-2">
-            <VoiceInputButton
-              onTranscript={(t) => setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t))}
-              onDebugLog={addVoiceDebug}
-              size={26}
-            />
-          </div>
-        </div>
-        {!focusPrompt.trim() ? (
-          <p className="mt-2 text-[12px] text-amber-200/90">未填写时无法生成初选（避免空背景抽卡）。</p>
-        ) : null}
-      </div>
+        }
+      />
+      {freeformOverride ? (
+        <button
+          type="button"
+          className="rounded-lg border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-3 py-2 text-[12px] font-semibold text-[#8cefff]"
+          onClick={() => {
+            const composed = composeFocusPromptFromPersona(structuredPersona);
+            setFocusPrompt(composed);
+            setFreeformOverride(false);
+            toast.success("已由结构化字段重新生成完整描述");
+          }}
+        >
+          由结构化内容生成完整描述
+        </button>
+      ) : null}
 
       <div className="rounded-2xl border border-[#10B981]/35 bg-[#10B981]/10 px-4 py-3.5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-semibold text-white">智能推荐 Skill</div>
+            <div className="text-[13px] font-semibold text-white">
+              Skill · 已启用 {enabledPlatformSkillIds.size}
+              {platformSkillRecommend.labels.length
+                ? ` · 推荐 ${platformSkillRecommend.labels.length}`
+                : ""}
+            </div>
             <p className="mt-1 text-[12px] leading-snug text-gray-300">
-              核心 Skill 已默认开启。根据你的背景
+              核心已默认开启。推荐原因：匹配你的人物背景
               {platformSkillRecommend.lane !== "default" ? `（赛道 ${platformSkillRecommend.lane}）` : ""}
-              ，建议加开：
+              。建议加开：
               <span className="text-[#a7f3d0]">
                 {platformSkillRecommend.labels.length
                   ? platformSkillRecommend.labels.join(" · ")
                   : "暂无额外赛道（保持核心即可）"}
               </span>
             </p>
+            <p className="mt-1 text-[11px] text-[#c9c0e6]/50">选题初选约 1–2 分钟；全案文案更久，点数见主按钮。</p>
           </div>
           <button
             type="button"
             onClick={applyPlatformSkillRecommend}
-            className="shrink-0 rounded-lg border border-[#10B981]/45 bg-[#10B981]/20 px-3 py-2 text-[12px] font-bold text-[#a7f3d0] hover:bg-[#10B981]/30"
+            className="shrink-0 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-[11px] font-semibold text-[#c9c0e6] hover:bg-white/10"
           >
-            一键采纳推荐
+            采纳推荐（次级）
           </button>
         </div>
       </div>
@@ -7555,6 +7782,421 @@ export default function PlatformPage() {
     document.getElementById("platform-custom-workspace-trends")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [snapshot, platformDashboard]);
 
+
+  /** Debug UI：优先 hasSupervisorAccess（含 ?supervisor=1），兼角色 admin/supervisor */
+  const canShowPlatformDebug =
+    supervisorAccess || user?.role === "supervisor" || user?.role === "admin";
+
+  useEffect(() => {
+    if (!canShowPlatformDebug && debugMode) setDebugMode(false);
+  }, [canShowPlatformDebug, debugMode]);
+
+  // P1：仅存背景/配置草稿（不含生成结果）；按账号隔离；hydration 前不写
+  useEffect(() => {
+    if (!workbenchUserKey) return;
+    if (!focusPrompt.trim() && !structuredPersona.identity.trim()) return;
+    const t = window.setTimeout(() => {
+      writeWorkbenchDraft(workbenchUserKey, {
+        mode: platformMode,
+        focusPrompt,
+        persona: structuredPersona,
+        freeformOverride,
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        topicShortlistCount,
+        outputType: outputType ?? "single_page",
+        createStep,
+      });
+      setDraftMeta({ savedAt: new Date().toISOString() });
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [
+    focusPrompt,
+    structuredPersona,
+    freeformOverride,
+    enabledPlatformSkillIds,
+    topicShortlistCount,
+    outputType,
+    createStep,
+    platformMode,
+    workbenchUserKey,
+  ]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!workbenchUserKey) return;
+      const draft = readWorkbenchDraft(workbenchUserKey);
+      if (focusPrompt.trim() && (!draft || draft.focusPrompt !== focusPrompt.trim())) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [focusPrompt, workbenchUserKey]);
+
+  const createDoneSteps = useMemo(() => {
+    const done = new Set<PlatformCreateStepId>();
+    if (focusPrompt.trim() || structuredPersona.identity.trim()) done.add("persona");
+    if (enabledPlatformSkillIds.size > 0) done.add("skills");
+    if (topicShortlist.length > 0) done.add("topics");
+    if (customNoteText.trim() || customTopicCard) done.add("copy");
+    if (outputType) done.add("output");
+    if (topicShortlist.length > 0 || platformContent) done.add("result");
+    return done;
+  }, [
+    focusPrompt,
+    structuredPersona.identity,
+    enabledPlatformSkillIds.size,
+    topicShortlist.length,
+    customNoteText,
+    customTopicCard,
+    outputType,
+    platformContent,
+  ]);
+
+  const createPrimaryCta = useMemo(
+    () =>
+      buildCreatePrimaryCta({
+        createStep,
+        focusPrompt,
+        topicShortlistCount,
+        isAuthenticated,
+        shortlistPending: generateTopicShortlistMutation.isPending,
+        fullcaseBusy: isAnalyzing || isDashboardLoading || isContentLoading,
+        customNoteBusy,
+        hasTopicResults: topicShortlist.length > 0,
+      }),
+    [
+      createStep,
+      focusPrompt,
+      topicShortlistCount,
+      isAuthenticated,
+      generateTopicShortlistMutation.isPending,
+      isAnalyzing,
+      isDashboardLoading,
+      isContentLoading,
+      customNoteBusy,
+      topicShortlist.length,
+    ],
+  );
+
+  const trendPrimaryCta = useMemo(
+    () =>
+      buildTrendPrimaryCta({
+        selectedPlatformCount: selectedTrendPlatforms.length,
+        isAuthenticated,
+        busy: isAnalyzing || isDashboardLoading || isVisualReportLoading,
+      }),
+    [
+      selectedTrendPlatforms.length,
+      isAuthenticated,
+      isAnalyzing,
+      isDashboardLoading,
+      isVisualReportLoading,
+    ],
+  );
+
+  const toolsPrimaryCta = useMemo(
+    () =>
+      buildToolsPrimaryCta({
+        toolsTab:
+          customWorkspaceTab === "matting" || customWorkspaceTab === "assets" || customWorkspaceTab === "htmlPpt"
+            ? customWorkspaceTab
+            : "htmlPpt",
+        isAuthenticated,
+        mattingPrompt: customMattingPrompt,
+        mattingCount: customMattingCount,
+        mattingBusy: customMattingBusy,
+        customNoteBusy,
+        customTopicBusy,
+        assetBusy: assetAnalysisBusy,
+      }),
+    [
+      customWorkspaceTab,
+      isAuthenticated,
+      customMattingPrompt,
+      customMattingCount,
+      customMattingBusy,
+      customNoteBusy,
+      customTopicBusy,
+      assetAnalysisBusy,
+    ],
+  );
+
+  const activePrimaryCta: PlatformPrimaryCtaState =
+    platformMode === "trend"
+      ? trendPrimaryCta
+      : platformMode === "tools"
+        ? toolsPrimaryCta
+        : createPrimaryCta;
+
+  const runCreateTopicShortlist = useCallback(async () => {
+    if (!focusPrompt.trim()) {
+      setPersonaFieldErrors({ freeform: "请先填写人物背景" });
+      setCreateStep("persona");
+      scrollToPlatformSection("platform-persona-focus");
+      toast.error("请先填写人物背景与创作诉求");
+      trackPlatformFunnel("cta_disabled", { reason: "empty_persona" });
+      return;
+    }
+    trackPlatformFunnel("topic_shortlist_start", { count: topicShortlistCount });
+    try {
+      const existingTitles = [
+        ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) => String(b?.title || "")),
+        ...topicShortlist.map((t) => t.title),
+      ].filter(Boolean);
+      const res = await generateTopicShortlistMutation.mutateAsync({
+        context: focusPrompt.trim() || undefined,
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        allowBloggerTitle,
+        existingTitles,
+        count: topicShortlistCount,
+      });
+      const topics = res.topics || [];
+      setTopicShortlist(topics);
+      setSelectedShortlistIds(new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)));
+      setCreateStep("result");
+      if (workbenchUserKey) {
+        pushRecentTask(workbenchUserKey, {
+          mode: "create",
+          label: `选题初选 ${topics.length} 条`,
+          credits: Number(res.chargedCredits || topicShortlistPrice.total) || undefined,
+        });
+        setRecentTasks(readRecentTasks(workbenchUserKey));
+      }
+      trackPlatformFunnel("topic_shortlist_done", { count: topics.length });
+      if (!topics.length) {
+        toast.error("初选未返回选题，请稍后重试");
+        return;
+      }
+      toast.success(
+        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(
+        msg.includes("timeout") || msg.includes("504")
+          ? "算力紧张或请求超时，请稍后重试选题初选"
+          : msg || "初选生成失败",
+      );
+    }
+  }, [
+    focusPrompt,
+    topicShortlistCount,
+    platformContent,
+    topicShortlist,
+    generateTopicShortlistMutation,
+    enabledPlatformSkillIds,
+    allowBloggerTitle,
+    topicShortlistPrice.total,
+    scrollToPlatformSection,
+  ]);
+
+  const recordCtaDisabled = useCallback(
+    (reason?: string) => {
+      trackPlatformFunnel("cta_disabled", {
+        mode: platformMode,
+        reason: reason || activePrimaryCta.disabledReason || "disabled",
+        handler: activePrimaryCta.handlerKey,
+      });
+      if (reason || activePrimaryCta.disabledReason) {
+        toast.message(reason || activePrimaryCta.disabledReason || "当前无法操作");
+      }
+    },
+    [platformMode, activePrimaryCta.disabledReason, activePrimaryCta.handlerKey],
+  );
+
+  const runActivePrimaryCta = useCallback(() => {
+    if (ctaInFlightRef.current || activePrimaryCta.busy) {
+      recordCtaDisabled("busy");
+      return;
+    }
+    if (activePrimaryCta.disabled) {
+      recordCtaDisabled();
+      return;
+    }
+    // 再次校验 active mode，禁止跨模式 fallback
+    if (activePrimaryCta.mode !== platformMode) {
+      trackPlatformFunnel("cta_disabled", { mode: platformMode, reason: "mode_mismatch" });
+      toast.message("模式已切换，请重试当前模式主按钮");
+      return;
+    }
+    const startedMode = platformMode;
+    const startedHandler = activePrimaryCta.handlerKey;
+    const startedCredits = activePrimaryCta.credits;
+    trackPlatformFunnel("cta_click", {
+      mode: startedMode,
+      handler: startedHandler,
+      credits: startedCredits,
+      confirmKind: activePrimaryCta.confirmKind,
+    });
+
+    ctaInFlightRef.current = true;
+    const release = () => {
+      ctaInFlightRef.current = false;
+    };
+    const stillSameMode = () => platformModeRef.current === startedMode;
+
+    try {
+      if (startedMode === "trend") {
+        if (startedHandler !== "handleTrendStandaloneAnalyze") {
+          trackPlatformFunnel("cta_disabled", { mode: "trend", reason: "bad_handler", handler: startedHandler });
+          release();
+          return;
+        }
+        void (async () => {
+          try {
+            if (!stillSameMode()) return;
+            await handleTrendStandaloneAnalyze();
+            if (!stillSameMode()) return;
+            if (workbenchUserKey) {
+              pushRecentTask(workbenchUserKey, {
+                mode: "trend",
+                label: "平台趋势分析",
+                credits: startedCredits,
+              });
+              setRecentTasks(readRecentTasks(workbenchUserKey));
+            }
+            trackPlatformFunnel("trend_start", { mode: "trend", handler: startedHandler });
+          } finally {
+            release();
+          }
+        })();
+        return;
+      }
+
+      if (startedMode === "tools") {
+        if (startedHandler === "customMattingGenerate") {
+          void (async () => {
+            try {
+              if (!stillSameMode()) return;
+              await handleGenerateCustomMatting();
+              if (!stillSameMode()) return;
+              if (workbenchUserKey) {
+                pushRecentTask(workbenchUserKey, {
+                  mode: "tools",
+                  label: "自定义抠像",
+                  credits: startedCredits,
+                });
+                setRecentTasks(readRecentTasks(workbenchUserKey));
+              }
+            } finally {
+              release();
+            }
+          })();
+          return;
+        }
+        if (startedHandler === "panelLocal") {
+          // 页级不代扣、不记虚假成功任务
+          document.getElementById("platform-tools-htmlppt")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          toast.message("请在下方面板内完成当前步骤（页级不代扣）");
+          release();
+          return;
+        }
+        trackPlatformFunnel("cta_disabled", { mode: "tools", reason: "no_page_cta", handler: startedHandler });
+        toast.message("请在下方面板内操作");
+        release();
+        return;
+      }
+
+      // create — 严格分支
+      if (startedMode !== "create") {
+        release();
+        return;
+      }
+      if (startedHandler === "handleAnalyze") {
+        void (async () => {
+          try {
+            if (!stillSameMode()) return;
+            await handleAnalyze();
+            if (!stillSameMode()) return;
+            if (workbenchUserKey) {
+              pushRecentTask(workbenchUserKey, {
+                mode: "create",
+                label: "生成选题与文案",
+                credits: startedCredits,
+              });
+              setRecentTasks(readRecentTasks(workbenchUserKey));
+            }
+            trackPlatformFunnel("fullcase_start", { mode: "create", handler: startedHandler });
+          } finally {
+            release();
+          }
+        })();
+        return;
+      }
+      if (startedHandler === "generateTopicShortlist") {
+        void (async () => {
+          try {
+            if (!stillSameMode()) return;
+            await runCreateTopicShortlist();
+          } finally {
+            release();
+          }
+        })();
+        return;
+      }
+      if (startedHandler === "noop") {
+        setCreateStep("result");
+        scrollToPlatformSection("platform-persona-focus");
+        release();
+        return;
+      }
+      trackPlatformFunnel("cta_disabled", { mode: "create", reason: "unknown_handler", handler: startedHandler });
+      toast.message("当前步骤无可用页级操作");
+      release();
+    } catch {
+      release();
+    }
+  }, [
+    activePrimaryCta,
+    platformMode,
+    handleTrendStandaloneAnalyze,
+    handleGenerateCustomMatting,
+    handleAnalyze,
+    runCreateTopicShortlist,
+    scrollToPlatformSection,
+    recordCtaDisabled,
+    workbenchUserKey,
+  ]);
+
+  const handleRestoreDraft = useCallback(() => {
+    if (!workbenchUserKey) {
+      toast.message("请先登录后再恢复草稿");
+      return;
+    }
+    const draft = readWorkbenchDraft(workbenchUserKey);
+    if (!draft) {
+      toast.message("暂无草稿");
+      return;
+    }
+    setFocusPrompt(draft.focusPrompt || "");
+    setStructuredPersona(draft.persona || { ...EMPTY_STRUCTURED_PERSONA });
+    setFreeformOverride(Boolean(draft.freeformOverride));
+    setTopicShortlistCount(draft.topicShortlistCount || PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+    setOutputType(draft.outputType || null);
+    setCreateStep(draft.createStep || "persona");
+    if (Array.isArray(draft.enabledSkillIds) && draft.enabledSkillIds.length) {
+      setEnabledPlatformSkillIds(new Set(draft.enabledSkillIds));
+    }
+    applyPlatformMode(draft.mode || "create", { skipDirtyCheck: true, history: "replace" });
+    trackPlatformFunnel("draft_restore", { mode: draft.mode });
+    toast.success("已恢复草稿");
+  }, [applyPlatformMode, workbenchUserKey]);
+
+  const stickyCtaNode = (
+    <PlatformStickyCtaRail
+      title={platformMode === "trend" ? "趋势分析" : platformMode === "tools" ? "工具操作" : "内容创作"}
+      label={activePrimaryCta.label}
+      creditsLabel={activePrimaryCta.creditsLabel}
+      disabled={activePrimaryCta.disabled}
+      disabledReason={activePrimaryCta.disabledReason}
+      busy={activePrimaryCta.busy}
+      onClick={() => runActivePrimaryCta()}
+      onDisabledAttempt={() => recordCtaDisabled()}
+    />
+  );
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-transparent text-white">
@@ -7567,7 +8209,7 @@ export default function PlatformPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-transparent px-6 text-white">
         <div className="max-w-lg rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-8 text-center shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
-          <div className="text-sm uppercase tracking-[0.24em] text-[#8cefff]">Platform Intelligence</div>
+          <div className="text-sm uppercase tracking-[0.24em] text-[#8cefff]">平台工作台</div>
           <div className="mt-4 text-3xl font-black">需要先登录</div>
           <p className="mt-4 text-sm leading-7 text-[#c8bfe7]">
             平台分析页不会再显示黑屏。当前会自动跳转登录；如果浏览器拦截了跳转，这里也会明确提示，而不是整页空白。
@@ -7647,39 +8289,29 @@ export default function PlatformPage() {
         </DialogContent>
       </Dialog>
 
-      <div className="mx-auto max-w-[min(1920px,100%)] px-4 py-6 md:px-6 md:py-8">
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => window.history.back()}
-              className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <a
-              href="#platform-custom-workspace"
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/35 bg-[linear-gradient(135deg,rgba(255,79,184,0.18),rgba(192,38,211,0.10))] px-3.5 py-2 text-xs font-bold text-[#ff9fe0] shadow-[0_4px_20px_rgba(255,79,184,0.15)] transition hover:border-[#ff4fb8]/55 hover:brightness-110"
-            >
-              <PenLine className="h-3.5 w-3.5" />
-              自定义创作
-            </a>
-            <button
-              type="button"
-              onClick={openVideoDeepBreakdown}
-              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-[linear-gradient(135deg,rgba(52,211,153,0.22),rgba(16,185,129,0.10))] px-3.5 py-2 text-xs font-bold text-emerald-100 shadow-[0_4px_20px_rgba(52,211,153,0.18)] transition hover:border-emerald-300/55 hover:brightness-110"
-            >
-              <Video className="h-3.5 w-3.5" />
-              视频深度拆解
-            </button>
-          </div>
-          <div className="rounded-full border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#8cefff]">
-            Platform Intelligence
-          </div>
-        </div>
+      <div className="relative mx-auto max-w-[1600px] px-4 py-6 md:px-6 md:py-8">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(73,230,255,0.08),transparent_55%),radial-gradient(ellipse_at_bottom,rgba(15,10,40,0.9),#07040f_70%)]"
+        />
+        <PlatformModeShell
+          mode={platformMode}
+          onModeChange={(m) => applyPlatformMode(m)}
+          toolsOpen={toolsMenuOpen}
+          onToolsOpenChange={setToolsMenuOpen}
+          onToolsPick={(tool) => applyPlatformMode("tools", { toolTab: tool })}
+          onHelp={() =>
+            toast.message(
+              platformMode === "trend"
+                ? "平台趋势：单选平台与窗口后点主按钮开始分析（与内容创作分开计费）。"
+                : platformMode === "tools"
+                  ? "更多工具：动效 PPT、抠像与素材分析；请按面板内步骤操作。"
+                  : "内容创作：填写人物背景 → 选题初选 → 文案/分镜；主按钮点数来自当前步骤。",
+            )
+          }
+        />
 
-
-        {(supervisorAccess || user?.role === "supervisor" || user?.role === "admin") ? (
+        {canShowPlatformDebug ? (
           <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
@@ -7703,10 +8335,10 @@ export default function PlatformPage() {
             </button>
           </div>
         ) : null}
-        {debugMode && (
+        {canShowPlatformDebug && debugMode ? (
           <div className="mb-6 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ff7fd5]">🎤 语音输入 Debug Log</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ff7fd5]">语音输入 Debug Log</div>
               <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
             </div>
             {voiceDebugLog.length === 0 ? (
@@ -7721,37 +8353,68 @@ export default function PlatformPage() {
               </div>
             )}
           </div>
-        )}
-        {debugMode ? (
+        ) : null}
+        {canShowPlatformDebug && debugMode ? (
           <GrowthSystemDebugPanel
             enabled={debugMode}
-            pollActive={debugMode || isAnalyzing}
+            pollActive={debugMode}
             growthSnapshotDebug={snapshotDebug}
             growthSnapshotNotes={snapshot?.status?.notes}
             className="mb-6"
           />
         ) : null}
 
-        {/* ── 自定义创作工作台 · 页面顶部快捷入口（不依赖 Stage 1/2） ── */}
+        {platformMode === "create" && draftMeta ? (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRestoreDraft}
+              className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] font-semibold text-[#c9c0e6] hover:bg-white/10"
+            >
+              恢复草稿
+            </button>
+            <span className="text-[11px] text-[#c9c0e6]/45">已自动保存配置（不含生成结果）</span>
+          </div>
+        ) : null}
+
+        {/* 三模式分流：仅渲染 active Workbench；state/hooks 留在 PlatformPage */}
         <section
           id="platform-custom-workspace"
-          className={`${shellCardClasses("relative overflow-hidden p-6 md:p-7 mb-6 scroll-mt-24")} ring-1 ring-[#ff4fb8]/30 shadow-[0_20px_70px_rgba(255,79,184,0.14)]`}
+          className={`${shellCardClasses("relative overflow-hidden p-5 md:p-6 mb-4 scroll-mt-24")} ${
+            platformMode === "create"
+              ? "border-[#ff4fb8]/20"
+              : platformMode === "trend"
+                ? "border-[#49e6ff]/20"
+                : "border-[#34d399]/20"
+          }`}
         >
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#ff4fb8,#49e6ff,#7d73ff)]" />
-          <div className="pointer-events-none absolute -left-20 -top-20 h-40 w-40 rounded-full bg-[#ff4fb8]/12 blur-3xl" />
-          <div className="pointer-events-none absolute right-0 top-0 h-32 w-32 rounded-full bg-[#49e6ff]/8 blur-3xl" />
           <div className="relative">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <PenLine className="h-5 w-5 text-[#ff4fb8]" />
-            <h2 className="text-lg md:text-xl font-black tracking-tight text-white">自定义创作工作台</h2>
-            <span className="ml-1 rounded-full border border-emerald-400/45 bg-[rgba(52,211,153,0.12)] px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-emerald-100">
-              含视频深度拆解
-            </span>
-          </div>
-          <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、视频深度拆解、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
-
-          {/* 平台趋势分析 · 常驻在工作台顶部，不依赖下方全案区是否展开 */}
-          <div
+            {platformMode === "trend" ? (
+              <PlatformTrendWorkbench stickyCta={stickyCtaNode}>
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-[#8cefff]" />
+                  <h2 className="text-lg font-black text-white md:text-xl">平台趋势</h2>
+                  <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.1)] px-2 py-0.5 text-[10px] font-bold text-[#8cefff]">
+                    与内容创作分开计费
+                  </span>
+                </div>
+                <p className="mb-4 text-xs text-[#c9c0e6]/55">
+                  单选平台与分析窗口后，使用右侧（或底部）主按钮开始分析。
+                </p>
+                {focusPrompt.trim() ? (
+                  <div className="mb-4 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[12px] text-[#c9c0e6]/80">
+                    已复用人物背景：
+                    <span className="text-white/90">
+                      {focusPrompt.trim().slice(0, 120)}
+                      {focusPrompt.trim().length > 120 ? "…" : ""}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="mb-4 text-[12px] text-amber-200/80">
+                    尚未填写人物背景；可先到「内容创作」填写，或直接开始趋势分析。
+                  </p>
+                )}
+<div
             id="platform-custom-workspace-trends"
             className="mb-6 rounded-2xl border border-[#49e6ff]/20 bg-[linear-gradient(180deg,rgba(73,230,255,0.08),rgba(12,8,28,0.35))] p-5 scroll-mt-24"
           >
@@ -8113,8 +8776,41 @@ export default function PlatformPage() {
               );
             })()}
           </div>
+              </PlatformTrendWorkbench>
+            ) : null}
 
-          {/* 一级 Tab：文案 / 选题 / 动效PPT / 素材 — 同一条连续，中间不插 Skill */}
+            {platformMode === "create" ? (
+              <PlatformCreateWorkbench
+                className="mb-0"
+                stepRail={
+                  <PlatformCreateStepRail
+                    activeStep={createStep}
+                    onStepChange={setCreateStep}
+                    doneSteps={createDoneSteps}
+                  />
+                }
+                mobileStepRail={
+                  <PlatformCreateStepRail
+                    orientation="horizontal"
+                    activeStep={createStep}
+                    onStepChange={setCreateStep}
+                    doneSteps={createDoneSteps}
+                  />
+                }
+                stickyCta={stickyCtaNode}
+              >
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <PenLine className="h-5 w-5 text-[#ff4fb8]" />
+                  <h2 className="text-lg font-black tracking-tight text-white md:text-xl">内容创作</h2>
+                  <span className="rounded-full border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.1)] px-2 py-0.5 text-[10px] font-bold text-[#ff9fe0]">
+                    生成选题与文案
+                  </span>
+                </div>
+                <p className="mb-4 text-xs text-[#c9c0e6]/55">
+                  人物背景 → Skill → 选题初选 → 文案/分镜 → 输出形式。
+                </p>
+
+          {/* 内容创作 Tab：仅文案 / 选题 */}
           <div className="mb-5 inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-1">
               <button
                 type="button"
@@ -8169,46 +8865,8 @@ export default function PlatformPage() {
                 <UserRound className="h-3.5 w-3.5 shrink-0" />
                 自定义选题
               </button>
-              <button
-                type="button"
-                onClick={() => setCustomWorkspaceTab("htmlPpt")}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
-                  customWorkspaceTab === "htmlPpt"
-                    ? "bg-[linear-gradient(135deg,#818cf8,#6366f1)] text-white shadow-sm"
-                    : "text-indigo-100/80 hover:text-white"
-                }`}
-              >
-                <Presentation className="h-4 w-4 shrink-0" />
-                动效PPT
-              </button>
-              <button
-                type="button"
-                onClick={openVideoDeepBreakdown}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                  customWorkspaceTab === "assets"
-                    ? "bg-[linear-gradient(135deg,#a3e635,#16a34a)] text-white shadow-sm"
-                    : "text-[#c9c0e6]/70 hover:text-white"
-                }`}
-              >
-                <Video className="h-3.5 w-3.5 shrink-0" />
-                视频深度拆解
-              </button>
-              <button
-                type="button"
-                onClick={() => setCustomWorkspaceTab("matting")}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                  customWorkspaceTab === "matting"
-                    ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
-                    : "text-[#c9c0e6]/70 hover:text-white"
-                }`}
-              >
-                <Scissors className="h-3.5 w-3.5 shrink-0" />
-                自定义抠像
-              </button>
           </div>
+
 
           {customWorkspaceTab === "copy" || customWorkspaceTab === "topic" ? (
             <div className="mb-5 space-y-4">
@@ -8281,23 +8939,43 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <div className="mb-3">
-                <InfographicTemplatePicker
-                  disabled={customNoteBusy}
-                  selectedTemplateId={customNoteInfographicTemplateId}
-                  onSelect={(t) => {
-                    setCustomNoteInfographicTemplateId(t?.id ?? null);
-                    setCustomNoteInfographicLabelZh(t?.labelZh ?? null);
-                    if (t) {
-                      setCustomNoteKind("single_page_knowledge_card");
-                      toast.success(`已选版式「${t.labelZh}」· 主题以正文为准`);
-                    }
+              <div className="mb-3 space-y-3">
+                <PlatformOutputTypePicker
+                  value={outputType}
+                  onChange={(v) => {
+                    setOutputType(v);
+                    trackPlatformFunnel("output_type_pick", { outputType: v });
+                    setCreateStep("output");
+                    if (v === "single_page") setCustomNoteKind("single_page_knowledge_card");
+                    else if (v === "storyboard_2x4") setCustomNoteKind("storyboard_sheet_landscape");
+                    else setCustomNoteKind("optimize_custom_copy");
                   }}
                 />
-                {customNoteInfographicLabelZh ? (
-                  <p className="mt-1.5 text-[11px] text-cyan-100/55">
-                    已选版式：{customNoteInfographicLabelZh}（提示词不展示，生成时后台套用你的正文）
-                  </p>
+                {outputType ? (
+                  <PlatformAdvancedSettingsFold
+                    title="高级设置"
+                    badge="百科可视化等版式"
+                    defaultOpen={Boolean(customNoteInfographicTemplateId)}
+                  >
+                    <InfographicTemplatePicker
+                      disabled={customNoteBusy}
+                      selectedTemplateId={customNoteInfographicTemplateId}
+                      onSelect={(t) => {
+                        setCustomNoteInfographicTemplateId(t?.id ?? null);
+                        setCustomNoteInfographicLabelZh(t?.labelZh ?? null);
+                        if (t) {
+                          setCustomNoteKind("single_page_knowledge_card");
+                          setOutputType("single_page");
+                          toast.success(`已选版式「${t.labelZh}」· 主题以正文为准`);
+                        }
+                      }}
+                    />
+                    {customNoteInfographicLabelZh ? (
+                      <p className="mt-1.5 text-[11px] text-cyan-100/55">
+                        已选版式：{customNoteInfographicLabelZh}（生成时后台套用你的正文）
+                      </p>
+                    ) : null}
+                  </PlatformAdvancedSettingsFold>
                 ) : null}
               </div>
 
@@ -8854,6 +9532,27 @@ export default function PlatformPage() {
                 </div>
               )}
             </>
+          ) : null}
+
+              </PlatformCreateWorkbench>
+            ) : null}
+
+            {platformMode === "tools" ? (
+              <PlatformToolsWorkbench
+                activeTab={
+                  customWorkspaceTab === "matting" || customWorkspaceTab === "assets" || customWorkspaceTab === "htmlPpt"
+                    ? customWorkspaceTab
+                    : "htmlPpt"
+                }
+                onTabChange={(tab) => applyPlatformMode("tools", { toolTab: tab, skipDirtyCheck: true })}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+              >
+                <div className="mb-3 hidden lg:block">{stickyCtaNode}</div>
+                <div id="platform-tools-htmlppt" className="scroll-mt-24">
+          {customWorkspaceTab === "htmlPpt" ? (
+            <PlatformHtmlPptPanel
+              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+            />
           ) : customWorkspaceTab === "assets" ? (
             <>
               <PlatformAssetAnalysisPanel
@@ -8916,10 +9615,7 @@ export default function PlatformPage() {
                 </div>
               ) : null}
             </>
-          ) : customWorkspaceTab === "htmlPpt" ? (
-            <PlatformHtmlPptPanel
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-            />
+
           ) : (
             <>
               <div className="mb-5 grid gap-2 sm:grid-cols-2">
@@ -9099,16 +9795,26 @@ export default function PlatformPage() {
               )}
             </>
           )}
+                </div>
+              </PlatformToolsWorkbench>
+            ) : null}
           </div>
         </section>
 
-        {customWorkspaceOperating ? (
+        {customWorkspaceOperating && platformMode === "create" ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
             自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
           </p>
         ) : null}
-        <div className={customWorkspaceOperating ? "hidden" : undefined} aria-hidden={customWorkspaceOperating}>
-        <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
+        <div
+          className={
+            platformMode === "tools" || customWorkspaceOperating
+              ? "hidden"
+              : undefined
+          }
+          aria-hidden={platformMode === "tools" || customWorkspaceOperating}
+        >
+        <section className={shellCardClasses("overflow-hidden p-5 md:p-6")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
           <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
             <div>
@@ -9116,7 +9822,8 @@ export default function PlatformPage() {
                 <TrendingUp className="h-3.5 w-3.5" />
                 平台顾问台
               </div>
-              <div className="mt-4 flex flex-col gap-3">
+              {/* 双入口大按钮已由顶栏模式切换替代，避免同屏两套主任务 */}
+              <div className="mt-4 hidden flex-col gap-3" aria-hidden>
                 <div className="text-sm font-bold uppercase tracking-[0.14em] text-[#8cefff] md:text-base">
                   本页付费能力 · 一键直达
                 </div>
