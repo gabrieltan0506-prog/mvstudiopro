@@ -33,7 +33,8 @@
 - **入队冒烟（2026-07-20）**：`type=video` + `action=manhua_assemble_final` 空 clips → `queued` → worker `failed`「至少需要一集成片才能合成长片」（`pnpm manhua:assemble-smoke`）
 - **剧本三集验收（待做）**：成片坞里各集真实 clip 就绪后，点「合成长片（含配乐）」→ 得该剧的 `finalVideoUrl`
 - 前台：成片坞文案无供应商名；Debug On 可看 `assemble:*` 日志
-- UI 地基：#872–#874 引导路径轨 / 下一步 / 成片坞终局出口（继续叠引导空态与造型预览）
+- UI 地基：#872–#874 引导路径轨 / 下一步 / 成片坞终局出口
+- UI 续叠（待合）：成片坞空态 CTA、ManhuaCastStrip、路径一键确认编剧、胶片条切焦点、工作台进度条
 
 ## 已知边界
 
