@@ -90,8 +90,18 @@ describe("manhuaProjectExport", () => {
       expect(filename).toBe("mv-manhua-ep01-测试系列.zip");
       expect(okCount).toBe(2);
       expect(manifest.failed).toHaveLength(0);
-      expect(manifest.note).toContain("不含自动拼接");
+      expect(manifest.note).toMatch(/合成长片|工程包/);
       expect(blob.size).toBeGreaterThan(40);
+
+      const withFinal = await exportManhuaProjectZip({
+        items,
+        selectedIds: items.map((i) => i.blockId),
+        topic: "测试题材",
+        seriesTitle: "测试系列",
+        finalVideoUrl: "https://cdn.example/final.mp4",
+      });
+      expect(withFinal.manifest.finalVideoUrl).toBe("https://cdn.example/final.mp4");
+      expect(withFinal.manifest.note).toContain("合成长片");
     } finally {
       globalThis.fetch = prevFetch;
     }

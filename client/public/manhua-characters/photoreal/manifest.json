@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-17T23:10:15.586Z",
+  "generatedAt": "2026-07-19T13:20:48.375Z",
   "via": "https://mvstudiopro.fly.dev/api/jobs?op=canvasGptImage2",
   "items": [
     {
@@ -261,6 +261,15 @@
       "hero": "char_f_11_hero.jpg",
       "sheet": "char_f_11_sheet.jpg",
       "at": "2026-07-17T23:10:15.586Z"
+    },
+    {
+      "id": "char_f_16",
+      "photorealNameZh": "沈红妆",
+      "cgNameZh": "顾凤仪",
+      "ok": true,
+      "hero": "char_f_16_hero.jpg",
+      "sheet": "char_f_16_sheet.jpg",
+      "at": "2026-07-19T13:20:48.374Z"
     }
   ]
 }

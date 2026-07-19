@@ -107,6 +107,47 @@ export function selectExportableDockIds(items: ManhuaClipDockItem[]): string[] {
   return items.filter(manhuaClipDockItemHasExportableOutput).map((i) => i.blockId);
 }
 
+/** 成片坞 → 长片合成入参（按集取 clip + keyart） */
+export function collectManhuaAssembleClipsFromDock(
+  items: ManhuaClipDockItem[],
+  opts?: { selectedIds?: Set<string> | string[]; onlySelectedEpisodes?: boolean },
+): Array<{
+  episodeIndex: number;
+  episodeTitle?: string;
+  clipUrl?: string;
+  keyartUrl?: string;
+}> {
+  const selected = opts?.selectedIds
+    ? opts.selectedIds instanceof Set
+      ? opts.selectedIds
+      : new Set(opts.selectedIds)
+    : null;
+  const epFilter = new Set<number>();
+  if (opts?.onlySelectedEpisodes && selected?.size) {
+    for (const it of items) {
+      if (selected.has(it.blockId)) epFilter.add(it.episodeIndex);
+    }
+  }
+  const byEp = new Map<
+    number,
+    { episodeIndex: number; episodeTitle?: string; clipUrl?: string; keyartUrl?: string }
+  >();
+  for (const it of items) {
+    if (epFilter.size && !epFilter.has(it.episodeIndex)) continue;
+    const cur = byEp.get(it.episodeIndex) || {
+      episodeIndex: it.episodeIndex,
+      episodeTitle: it.episodeTitle,
+    };
+    if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
+    if (it.stage === "clip" && it.outputUrl) cur.clipUrl = it.outputUrl;
+    if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {
+      cur.keyartUrl = cur.keyartUrl || it.outputUrl;
+    }
+    byEp.set(it.episodeIndex, cur);
+  }
+  return Array.from(byEp.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
+}
+
 export function summarizeManhuaDockExport(items: ManhuaClipDockItem[]): {
   episodeCount: number;
   exportableCount: number;
@@ -168,6 +209,8 @@ export type ManhuaProjectExportManifest = {
   characters?: string[];
   artStyleId?: string;
   sceneId?: string;
+  /** 成片坞合成长片 URL（有则写入） */
+  finalVideoUrl?: string;
   /** 库内可复用参考（人物设定卡 / 场景示范图路径） */
   libraryRefs?: Array<{ kind: "character" | "scene_demo" | "prop_demo"; id: string; path: string }>;
   selected: Array<{
@@ -197,6 +240,8 @@ export type ExportManhuaProjectZipOpts = {
   assetBaseUrl?: string;
   /** 编剧室已确认剧情包 Markdown（整包进 zip 根目录） */
   writerPackMarkdown?: string;
+  /** 成片坞「合成长片」结果 URL，有则写入 README / manifest */
+  finalVideoUrl?: string | null;
 };
 
 export type ExportManhuaProjectZipResult = {
@@ -371,15 +416,19 @@ export async function exportManhuaProjectZip(
     }
   }
 
+  const finalVideoUrl = String(opts.finalVideoUrl || "").trim() || undefined;
   const manifest: ManhuaProjectExportManifest = {
     format: "mv-manhua-project-v1",
     topic: String(opts.topic || "").trim(),
     seriesTitle: opts.seriesTitle,
     exportedAt: new Date().toISOString(),
-    note: "本包为素材工程包，不含自动拼接长片。可本地/桌面工具自行拼接。library/ 为站点复用资产（人物设定卡/场景道具示范）。",
+    note: finalVideoUrl
+      ? "本包含分集素材；长片合成链接见 README「合成长片」。library/ 为站点复用资产（人物设定卡/场景道具示范）。"
+      : "本包为素材工程包。有成片后可在成片坞一键合成长片（含配乐）；亦可本地按 epXX/clip.* 拼接。library/ 为站点复用资产。",
     characters: opts.characterIds,
     artStyleId: opts.artStyleId,
     sceneId: opts.sceneId,
+    finalVideoUrl,
     libraryRefs,
     selected: selectedMeta,
     failed,
@@ -421,7 +470,10 @@ export async function exportManhuaProjectZip(
       ? libraryRefs.map((r) => `- \`${r.path}\`（${r.kind} · ${r.id}）`).join("\n")
       : "- （无）",
     "",
-    "> 本包为素材工程包，不含自动拼接长片。可按 epXX/clip.* 顺序本地拼接。",
+    "## 合成长片",
+    finalVideoUrl
+      ? [`- 长片（含配乐）：\`${finalVideoUrl}\``, "- 亦可按 epXX/clip.* 顺序本地再拼接。"].join("\n")
+      : "> 尚未合成长片时，可在成片坞点「合成长片（含配乐）」；或按 epXX/clip.* 本地拼接。",
   ];
   zip.file("README.md", playlistLines.join("\n"));
   zip.file(
@@ -431,6 +483,7 @@ export async function exportManhuaProjectZip(
         seriesTitle: opts.seriesTitle,
         topic: opts.topic,
         sceneId: opts.sceneId,
+        finalVideoUrl: finalVideoUrl || undefined,
         libraryRefs,
         episodes: summary.byEpisode.map((ep) => ({
           episodeIndex: ep.episodeIndex,

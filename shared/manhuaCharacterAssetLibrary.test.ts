@@ -30,8 +30,13 @@ import {
 describe("manhuaCharacterAssetLibrary", () => {
   it("has both male and female leads from CH 设定卡", () => {
     expect(MANHUA_CHARACTER_ASSET_LIBRARY.length).toBeGreaterThanOrEqual(36);
-    expect(listManhuaCharactersByGender("female").length).toBeGreaterThanOrEqual(14);
+    expect(listManhuaCharactersByGender("female").length).toBeGreaterThanOrEqual(15);
     expect(listManhuaCharactersByGender("male").length).toBeGreaterThanOrEqual(13);
+    const bride = getManhuaCharacterById("char_f_16");
+    expect(bride?.jobZh).toContain("新娘");
+    expect(getManhuaCharacterPreviewUrl("char_f_16", { artStyleId: "photoreal" })).toContain(
+      "char_f_16_sheet.jpg",
+    );
     expect(
       listManhuaCharactersByGender("female").every((c) => getManhuaCharacterLifeStage(c) === "adult"),
     ).toBe(true);

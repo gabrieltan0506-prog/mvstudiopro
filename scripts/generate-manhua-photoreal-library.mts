@@ -97,6 +97,22 @@ function refUrlFor(id: string): string {
   return `${FLY_ORIGIN}/manhua-characters/${id}.jpg`;
 }
 
+/** 纯文生图（过审）：不喂任何参考图，避免真人演员脸入库。TEXT_ONLY=1 或 TEXT_ONLY_IDS=char_f_16 */
+function textOnlyIds(): Set<string> {
+  if (String(process.env.TEXT_ONLY || "").trim() === "1") return new Set(["*"]);
+  return new Set(
+    String(process.env.TEXT_ONLY_IDS || "")
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
+function shouldTextOnly(id: string): boolean {
+  const set = textOnlyIds();
+  return set.has("*") || set.has(id);
+}
+
 function clothingOverrideBlock(c: ManhuaCharacterTemplate): string {
   const env = String(process.env.PHOTOREAL_CLOTHING_OVERRIDE || "").trim();
   if (env) {
@@ -113,6 +129,7 @@ function buildHeroPrompt(c: ManhuaCharacterTemplate): string {
   const style = getManhuaArtStylePreset("photoreal");
   const role = c.gender === "female" ? "女主" : "男主";
   const modest = clothingOverrideBlock(c);
+  const pureText = shouldTextOnly(c.id);
   return [
     `竖屏9:16半身胸像写真，东亚成年${role}「${name}」${c.age ? `${c.age}岁` : ""}，${c.jobZh}，气质${c.temperamentTags.join("·")}。`,
     "",
@@ -123,7 +140,10 @@ function buildHeroPrompt(c: ManhuaCharacterTemplate): string {
     "",
     `外形锚点（转写实，去除二次元/厚涂表述）：${c.promptZh}`,
     modest,
-    "构图：胸像偏上，电影柔光，浅景深干净背景。若有参考图：严格锁同一张脸五官比例与发际线，禁止换人、禁止名人脸、无文字无水印。",
+    pureText
+      ? "【过审·纯文生图】禁止参考任何真人演员/可识别名人脸；仅按妆造·场景·道具描述原创面孔。无文字无水印。"
+      : "构图：胸像偏上，电影柔光，浅景深干净背景。若有参考图：严格锁同一张脸五官比例与发际线，禁止换人、禁止名人脸、无文字无水印。",
+    pureText ? "构图：胸像偏上，电影柔光，浅景深喜堂烛光或干净背景。" : "",
     "",
     `【画风】${style.labelZh}`,
     style.promptZh,
@@ -254,22 +274,20 @@ function alreadyOk(items: ManifestItem[], id: string): boolean {
 
 async function processOne(c: ManhuaCharacterTemplate): Promise<ManifestItem> {
   const name = MANHUA_PHOTOREAL_NAME_ZH[c.id] || c.nameZh;
-  const ref = refUrlFor(c.id);
-  console.log(`\n━━ ${c.id} ${name}（CG:${c.nameZh}）━━`);
+  const pureText = shouldTextOnly(c.id);
+  const ref = pureText ? "" : refUrlFor(c.id);
+  console.log(`\n━━ ${c.id} ${name}（CG:${c.nameZh}）${pureText ? "·TEXT_ONLY过审" : ""}━━`);
 
-  const heroUrl = await flyGenerate(buildHeroPrompt(c), [ref]);
+  const heroUrl = await flyGenerate(buildHeroPrompt(c), ref ? [ref] : []);
   console.log("  hero ok");
   const heroBasePub = path.join(OUT_PUBLIC, `${c.id}_hero`);
   const heroBaseDl = path.join(OUT_DOWNLOADS, `${c.id}_hero`);
   await downloadToJpg(heroUrl, heroBasePub);
   fs.copyFileSync(`${heroBasePub}.jpg`, `${heroBaseDl}.jpg`);
 
-  // 三视图：主图锁脸 + 原设定卡
-  const sheetUrl = await flyGenerate(buildSheetPrompt(c), [
-    // 公开站上刚写入的相对路径不可被 Evolink 抓；用 GCS 返回的 heroUrl
-    heroUrl,
-    ref,
-  ]);
+  // 三视图：主图锁脸；非纯文时再带 CG 设定卡。纯文只锁刚生成的 hero（新人脸）。
+  const sheetRefs = pureText ? [heroUrl] : [heroUrl, ref].filter(Boolean);
+  const sheetUrl = await flyGenerate(buildSheetPrompt(c), sheetRefs);
   console.log("  sheet ok");
   const sheetBasePub = path.join(OUT_PUBLIC, `${c.id}_sheet`);
   const sheetBaseDl = path.join(OUT_DOWNLOADS, `${c.id}_sheet`);

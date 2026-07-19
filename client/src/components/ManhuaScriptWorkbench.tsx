@@ -43,6 +43,11 @@ type Props = {
   projectBibleSummary?: string;
   /** Bible 已绑定造型的集号（1-based） */
   bibleBoundEpisodes?: number[];
+  /** 蓝/红轨 + 叙事灯光状态行 */
+  pathTrackLabelZh?: string;
+  narrativeLightingLabelZh?: string;
+  /** 合成长片预览（成片坞合成后） */
+  finalVideoUrl?: string | null;
   factoryBusy?: boolean;
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
@@ -74,6 +79,9 @@ export default function ManhuaScriptWorkbench({
   artStyleLabelZh,
   projectBibleSummary,
   bibleBoundEpisodes = [],
+  pathTrackLabelZh,
+  narrativeLightingLabelZh,
+  finalVideoUrl,
   factoryBusy,
   canRun,
   onOpenCharacterCard,
@@ -289,6 +297,16 @@ export default function ManhuaScriptWorkbench({
               <span className="text-[10px] text-white/35">未点选道具</span>
             ) : null}
           </div>
+
+          <div className="mt-3 rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-[10px] leading-relaxed text-white/55">
+            <div>{pathTrackLabelZh || "运镜标注：蓝轨— · 动作红轨—"}</div>
+            <div className="mt-0.5">
+              叙事灯光：{narrativeLightingLabelZh || "未选（节拍/静帧可注入）"}
+            </div>
+            <p className="mt-1 text-[9px] text-white/35">
+              蓝线=运镜轨迹，红线=动作轨迹；成片提示词会要求跟轨（不显示参考线）。
+            </p>
+          </div>
         </aside>
 
         {/* 中：脚本 + 多镜 */}
@@ -364,7 +382,9 @@ export default function ManhuaScriptWorkbench({
         <aside className="p-3">
           <div className="mb-2 text-[11px] font-semibold text-white/75">视频 / 静帧结果</div>
           <div className="flex aspect-[9/16] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/50">
-            {previewUrl ? (
+            {finalVideoUrl ? (
+              <video src={finalVideoUrl} controls className="h-full w-full object-contain" />
+            ) : previewUrl ? (
               previewIsVideo ? (
                 <video src={previewUrl} controls className="h-full w-full object-contain" />
               ) : (
@@ -378,6 +398,9 @@ export default function ManhuaScriptWorkbench({
               </div>
             )}
           </div>
+          {finalVideoUrl ? (
+            <p className="mt-1.5 text-[10px] text-emerald-200/70">当前预览：多集合成长片（含配乐）</p>
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
             {keyart?.id ? (
               <button
