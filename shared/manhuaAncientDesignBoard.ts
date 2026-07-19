@@ -72,7 +72,7 @@ export function buildAncientArchetypePrompt(
     `配色：${board.palette.join("、") || "素雅主色"}。`,
     `材质：${board.materials.join("、") || "棉麻与暗纹绣"}。`,
     `环境氛围：${board.atmosphereZh || "古风场景，光影克制"}。`,
-    "东方古风幻想设定卡；结构清晰可复用；禁止现代街拍与品牌水印。",
+    "东方古风幻想设定卡；结构清晰可复用；禁止现代街拍、西装连衣裙与品牌水印（时代服饰以剧本为准）。",
   ]
     .filter(Boolean)
     .join(" ");

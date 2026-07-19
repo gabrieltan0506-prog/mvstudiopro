@@ -40,10 +40,10 @@ import {
   buildManhuaCharacterSheetGenPrompt,
   getManhuaArtStylePreset,
   recommendManhuaArtStyleFromTopic,
-  recommendManhuaCharactersFromTopic,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
+import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import {
@@ -223,6 +223,8 @@ export default function OmniCanvas() {
   const [factoryPropIds, setFactoryPropIds] = useState<string[]>([]);
   /** 古风原型 arch_*（最多 2） */
   const [factoryAncientArchetypeIds, setFactoryAncientArchetypeIds] = useState<string[]>([]);
+  /** 剧本跟随身份锁（CastBundle） */
+  const [factoryIdentityLockZh, setFactoryIdentityLockZh] = useState("");
   /** 手选场景后不再被题材自动覆盖（⑤D） */
   const [sceneManual, setSceneManual] = useState(false);
   const [factoryFemaleId, setFactoryFemaleId] = useState(initialFactoryPrefs.femaleId || "");
@@ -230,6 +232,9 @@ export default function OmniCanvas() {
   /** 用户手选后不再被题材自动覆盖（4.B） */
   const [femaleLeadManual, setFemaleLeadManual] = useState(Boolean(initialFactoryPrefs.femaleLeadManual));
   const [maleLeadManual, setMaleLeadManual] = useState(Boolean(initialFactoryPrefs.maleLeadManual));
+  const [ancientManual, setAncientManual] = useState(false);
+  const [wardrobeManual, setWardrobeManual] = useState(false);
+  const [propManual, setPropManual] = useState(false);
   const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(
     initialFactoryPrefs.artStyleId || DEFAULT_MANHUA_ART_STYLE_ID,
   );
@@ -313,14 +318,25 @@ export default function OmniCanvas() {
     }
   }, [recommendedSceneRec.sceneId, sceneManual]);
 
-  const recommendedLeads = useMemo(
-    () => recommendManhuaCharactersFromTopic(factoryTopic),
-    [factoryTopic],
+  const castBundle = useMemo(
+    () =>
+      recommendManhuaCastBundle({
+        topic: factoryTopic,
+        genreId: factoryGenreId || undefined,
+        charactersMd: writerPack?.charactersMd,
+      }),
+    [factoryTopic, factoryGenreId, writerPack?.charactersMd],
   );
   const femaleAutoApplied =
-    !femaleLeadManual && Boolean(factoryFemaleId) && factoryFemaleId === recommendedLeads.femaleId;
+    !femaleLeadManual &&
+    castBundle.lane === "urban" &&
+    Boolean(factoryFemaleId) &&
+    factoryFemaleId === castBundle.femaleId;
   const maleAutoApplied =
-    !maleLeadManual && Boolean(factoryMaleId) && factoryMaleId === recommendedLeads.maleId;
+    !maleLeadManual &&
+    castBundle.lane === "urban" &&
+    Boolean(factoryMaleId) &&
+    factoryMaleId === castBundle.maleId;
   const recommendedArtStyle = useMemo(
     () => recommendManhuaArtStyleFromTopic(factoryTopic),
     [factoryTopic],
@@ -329,13 +345,30 @@ export default function OmniCanvas() {
     !artStyleManual && factoryArtStyleId === recommendedArtStyle.artStyleId;
 
   useEffect(() => {
-    if (!femaleLeadManual && recommendedLeads.femaleId) {
-      setFactoryFemaleId(recommendedLeads.femaleId);
+    if (castBundle.lane === "ancient") {
+      if (!femaleLeadManual) setFactoryFemaleId("");
+      if (!maleLeadManual) setFactoryMaleId("");
+      if (!ancientManual) setFactoryAncientArchetypeIds(castBundle.ancientArchetypeIds);
+    } else {
+      if (!femaleLeadManual && castBundle.femaleId) setFactoryFemaleId(castBundle.femaleId);
+      if (!maleLeadManual && castBundle.maleId) setFactoryMaleId(castBundle.maleId);
+      if (!ancientManual) setFactoryAncientArchetypeIds([]);
     }
-    if (!maleLeadManual && recommendedLeads.maleId) {
-      setFactoryMaleId(recommendedLeads.maleId);
+    if (!wardrobeManual) {
+      setFactoryWardrobeId(castBundle.wardrobePropContinuityIds[0] || "");
     }
-  }, [recommendedLeads.femaleId, recommendedLeads.maleId, femaleLeadManual, maleLeadManual]);
+    if (!propManual) {
+      setFactoryPropIds(castBundle.propIds);
+    }
+    setFactoryIdentityLockZh(castBundle.identityLockZh);
+  }, [
+    castBundle,
+    femaleLeadManual,
+    maleLeadManual,
+    ancientManual,
+    wardrobeManual,
+    propManual,
+  ]);
 
   useEffect(() => {
     if (!artStyleManual) {
@@ -598,6 +631,7 @@ export default function OmniCanvas() {
           genreId: factoryGenreId || undefined,
           characterIds: selectedCharacterIds,
           ancientArchetypeIds: factoryAncientArchetypeIds,
+          identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
           artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
         });
@@ -636,6 +670,7 @@ export default function OmniCanvas() {
     factoryFemaleId,
     factoryMaleId,
     factoryAncientArchetypeIds,
+    factoryIdentityLockZh,
     factoryArtStyleId,
     factoryReverseMode,
     selectedCraftShotIds,
@@ -860,6 +895,7 @@ export default function OmniCanvas() {
         propIds: factoryPropIds,
         characterIds: selectedCharacterIds,
         ancientArchetypeIds: factoryAncientArchetypeIds,
+        identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
@@ -1026,6 +1062,7 @@ export default function OmniCanvas() {
       propIds: factoryPropIds,
       characterIds: selectedCharacterIds,
       ancientArchetypeIds: factoryAncientArchetypeIds,
+      identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -1140,6 +1177,7 @@ export default function OmniCanvas() {
       propIds: factoryPropIds,
       characterIds: selectedCharacterIds,
       ancientArchetypeIds: factoryAncientArchetypeIds,
+      identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -1677,10 +1715,11 @@ export default function OmniCanvas() {
                 disabled={factoryBusy}
                 topicHint={[factoryGenreLabel, factoryTopic].filter(Boolean).join(" ")}
                 ancientArchetypeIds={factoryAncientArchetypeIds}
-                reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
+                castLane={castBundle.lane}
+                reasonZh={`${castBundle.reasonZh}；${recommendedArtStyle.reasonZh}${
                   selectedCharacterIds.length || factoryAncientArchetypeIds.length
-                    ? "；已选将在「铺编导节点」时注入角色卡/古风原型。预览/换人/画风/铺同版式节点均不烧 token。"
-                    : "；预览与换人不烧 token。"
+                    ? "；已套用将在「铺编导节点」注入角色卡/古风原型/服装/道具。点选可微调；「同版式」重生成不烧 token 至你点运行。"
+                    : "；填题材后自动套用人物·服装·道具。"
                 }`}
                 onSelectFemale={(id) => {
                   setFemaleLeadManual(true);
@@ -1696,6 +1735,7 @@ export default function OmniCanvas() {
                 }}
                 onGenerateSameLayout={spawnSameLayoutSheet}
                 onToggleAncientArchetype={(id) => {
+                  setAncientManual(true);
                   setFactoryAncientArchetypeIds((prev) => {
                     if (prev.includes(id)) return prev.filter((x) => x !== id);
                     return [...prev, id].slice(-2);
@@ -1705,6 +1745,9 @@ export default function OmniCanvas() {
                   setFemaleLeadManual(false);
                   setMaleLeadManual(false);
                   setArtStyleManual(false);
+                  setAncientManual(false);
+                  setWardrobeManual(false);
+                  setPropManual(false);
                 }}
               />
 
@@ -1731,6 +1774,7 @@ export default function OmniCanvas() {
                     setFactorySceneId(id);
                   }}
                   onToggleProp={(id) => {
+                    setPropManual(true);
                     setFactoryPropIds((prev) => {
                       if (prev.includes(id)) return prev.filter((x) => x !== id);
                       return [...prev, id].slice(-4);
@@ -1998,7 +2042,10 @@ export default function OmniCanvas() {
                           <label className="block text-[11px] text-white/45">服装道具连续</label>
                           <select
                             value={factoryWardrobeId}
-                            onChange={(e) => setFactoryWardrobeId(e.target.value)}
+                            onChange={(e) => {
+                              setWardrobeManual(true);
+                              setFactoryWardrobeId(e.target.value);
+                            }}
                             disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
                             className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
                           >
@@ -2131,6 +2178,7 @@ export default function OmniCanvas() {
                       propIds: factoryPropIds,
                       characterIds: selectedCharacterIds,
                       ancientArchetypeIds: factoryAncientArchetypeIds,
+                      identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
                       artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,

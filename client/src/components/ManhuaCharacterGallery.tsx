@@ -94,6 +94,8 @@ type Props = {
   /** 古风原型 arch_*（与都市槽并行） */
   ancientArchetypeIds?: string[];
   onToggleAncientArchetype?: (id: string) => void;
+  /** CastBundle 轨：古风时优先展示原型条、收起都市墙 */
+  castLane?: "urban" | "ancient";
 };
 
 function EmptyLead({ label }: { label: string }) {
@@ -121,7 +123,9 @@ export default function ManhuaCharacterGallery({
   topicHint,
   ancientArchetypeIds = [],
   onToggleAncientArchetype,
+  castLane = "urban",
 }: Props) {
+  const isAncientLane = castLane === "ancient";
   const initialPrefs = useMemo(() => loadLibraryPrefs(), []);
   const [libraryTab, setLibraryTab] = useState<ManhuaLibraryCastTab>(() => {
     const t = initialPrefs.tab;
@@ -149,7 +153,7 @@ export default function ManhuaCharacterGallery({
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [customCouples, setCustomCouples] = useState<CustomCouple[]>(() => loadCustomCouples());
   const [copyFlash, setCopyFlash] = useState("");
-  const libraryRef = useRef<HTMLDivElement | null>(null);
+  const libraryRef = useRef<HTMLDetailsElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const packFilter = useMemo(() => getManhuaTemperamentPackById(packFilterId), [packFilterId]);
   const topicCoupleRec = useMemo(
@@ -865,11 +869,16 @@ export default function ManhuaCharacterGallery({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="text-[12px] font-semibold text-white/90">② 角色卡</div>
-          <div className="mt-1.5 max-w-xl rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[10px] leading-relaxed text-white/55">
-            <span className="font-semibold text-white/70">怎么用：</span>
-            题材软推套组 → 点选/1–8 换双人 → 悬停看三视图 → 统一画风（L 可锁）→
-            「同版式」只铺节点（需你点运行，勿误触）
+          <div className="mt-1.5 max-w-xl rounded-lg border border-cyan-400/20 bg-cyan-500/[0.06] px-2.5 py-2 text-[10px] leading-relaxed text-white/65">
+            <span className="font-semibold text-cyan-100/90">怎么用：</span>
+            ① 题材自动套用人物/原型·服装·道具 → ② 悬停看三视图 → ③ 点选更换女主（青）/男主（琥珀）或古风原型 → ④
+            画风与场景统一 → 「同版式生成新人」只铺节点（需你点运行）
           </div>
+          {isAncientLane ? (
+            <p className="mt-1.5 text-[10px] text-amber-100/70">
+              当前为古风造型轨：已自动套用原型，都市西装库已收起；点选原型即套用。
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -940,34 +949,51 @@ export default function ManhuaCharacterGallery({
           ) : null}
         </div>
       </div>
-      {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
+      {reasonZh ? (
+        <p className="mt-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] leading-snug text-emerald-100/90">
+          <span className="font-semibold">已自动套用：</span>
+          {reasonZh}
+        </p>
+      ) : null}
       {copyFlash ? <p className="mt-1 text-[10px] text-emerald-200/85">{copyFlash}</p> : null}
-      <ManhuaDualCompareStrip female={selectedFemale} male={selectedMale} artStyleId={artStyleId} />
 
-      <ManhuaCharacterCoupleKitsPanel
-        disabled={disabled}
-        femaleId={femaleId}
-        maleId={maleId}
-        canRandomBoth={Boolean(randomBothPools.females.length && randomBothPools.males.length)}
-        topicReasonZh={topicCoupleRec.reasonZh}
-        topicFirstPackId={topicCoupleRec.packIds[0]}
-        topicCoupleIds={topicCoupleSet}
-        recentCouplePacks={recentCouplePacks}
-        customCouples={customCouples}
-        onApplyPack={applyCouplePack}
-        onApplyPair={applyCouplePair}
-        onPickRandomPack={pickRandomCouplePack}
-        onPickRandomBoth={pickRandomBothLeads}
-        onFavoriteBoth={favoriteBothLeads}
-        onSaveCurrentCustom={saveCurrentAsCustomCouple}
-        onClearRecentPacks={() => setRecentCouplePackIds(clearRecentCouplePackIds())}
-        onExportCustom={() => void exportCustomCouples()}
-        onImportCustom={() => void importCustomCouples()}
-        onRemoveCustom={removeCustomCouple}
-      />
+      {onToggleAncientArchetype ? (
+        <ManhuaAncientArchetypeStrip
+          selectedIds={ancientArchetypeIds}
+          disabled={disabled}
+          onToggle={onToggleAncientArchetype}
+        />
+      ) : null}
 
-      {/* 双人同显 */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      {!isAncientLane ? (
+        <>
+          <ManhuaDualCompareStrip female={selectedFemale} male={selectedMale} artStyleId={artStyleId} />
+          <ManhuaCharacterCoupleKitsPanel
+            disabled={disabled}
+            femaleId={femaleId}
+            maleId={maleId}
+            canRandomBoth={Boolean(randomBothPools.females.length && randomBothPools.males.length)}
+            topicReasonZh={topicCoupleRec.reasonZh}
+            topicFirstPackId={topicCoupleRec.packIds[0]}
+            topicCoupleIds={topicCoupleSet}
+            recentCouplePacks={recentCouplePacks}
+            customCouples={customCouples}
+            onApplyPack={applyCouplePack}
+            onApplyPair={applyCouplePair}
+            onPickRandomPack={pickRandomCouplePack}
+            onPickRandomBoth={pickRandomBothLeads}
+            onFavoriteBoth={favoriteBothLeads}
+            onSaveCurrentCustom={saveCurrentAsCustomCouple}
+            onClearRecentPacks={() => setRecentCouplePackIds(clearRecentCouplePackIds())}
+            onExportCustom={() => void exportCustomCouples()}
+            onImportCustom={() => void importCustomCouples()}
+            onRemoveCustom={removeCustomCouple}
+          />
+        </>
+      ) : null}
+
+      {/* 双人同显（古风轨默认折叠都市槽） */}
+      <div className={`mt-3 grid gap-3 lg:grid-cols-2 ${isAncientLane ? "opacity-80" : ""}`}>
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-cyan-100/80">女主（青色高亮）</div>
           {selectedFemale ? (
@@ -1067,10 +1093,15 @@ export default function ManhuaCharacterGallery({
         </div>
       </div>
 
-      <div ref={libraryRef} className="mt-4">
+      <details ref={libraryRef} className="mt-4" open={!isAncientLane}>
+        <summary className="mb-2 cursor-pointer list-none text-[11px] font-semibold text-white/70">
+          {isAncientLane
+            ? "更换 / 都市人物库（古风题材默认收起，点击展开）"
+            : "从角色库更换"}
+        </summary>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-[11px] font-semibold text-white/70">从角色库更换</div>
+            <div className="text-[11px] font-semibold text-white/50">筛选与点选</div>
             <button
               type="button"
               disabled={disabled}
@@ -1423,7 +1454,7 @@ export default function ManhuaCharacterGallery({
             </div>
           ) : null}
         </div>
-      </div>
+      </details>
 
       <div className="mt-3 rounded-xl border border-white/10 bg-black/35 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1479,16 +1510,8 @@ export default function ManhuaCharacterGallery({
         </p>
       </div>
 
-      {onToggleAncientArchetype ? (
-        <ManhuaAncientArchetypeStrip
-          selectedIds={ancientArchetypeIds}
-          disabled={disabled}
-          onToggle={onToggleAncientArchetype}
-        />
-      ) : null}
-
       <p className="mt-3 text-[10px] leading-snug text-white/35">
-        验收口径：三视图=设定卡裁切（非三张独立渲染）；换画风只改 prompt，预览仍为 CG 底图；「同版式」勿点运行以免烧生图。古风原型为独立设计板锚点。
+        验收口径：三视图=设定卡裁切（非三张独立渲染）；换画风只改 prompt；「同版式」勿点运行以免烧生图。古风题材以原型条为主、点选即套用。
       </p>
     </div>
   );

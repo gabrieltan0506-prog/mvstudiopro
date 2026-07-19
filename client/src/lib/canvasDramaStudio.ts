@@ -115,6 +115,8 @@ export type SpawnManhuaDramaStudioOpts = {
   characterIds?: string[];
   /** 古风原型 arch_*（与都市槽并行注入） */
   ancientArchetypeIds?: string[];
+  /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
+  identityLockZh?: string;
   /** 角色/场景统一画风 A/B/C */
   artStyleId?: ManhuaArtStyleId | string;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
@@ -330,14 +332,16 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     undefined;
   const writerContext = String(opts.writerContext || "").trim();
   const characterIds = (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
     artStyleId: opts.artStyleId,
+    identityLockZh,
   });
   const ancientArchetypeIds = (opts.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean)
     .slice(0, 2);
-  const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds);
+  const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds, { identityLockZh });
   const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
   const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
@@ -729,6 +733,7 @@ export function applyFactoryPrefsToBlocks(
     genreId?: string;
     characterIds?: string[];
     ancientArchetypeIds?: string[];
+    identityLockZh?: string;
     artStyleId?: ManhuaArtStyleId | string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
@@ -744,10 +749,14 @@ export function applyFactoryPrefsToBlocks(
   const cineVocabBlock = formatCineVocabInjectBlock(opts.cineVocabIds || []);
   const wardrobeBlock = buildWardrobePropContinuityInjectBlock(opts.wardrobePropContinuityIds || []);
   const pathRecipeId = (opts.pathCameraRecipeIds || []).map(String).filter(Boolean)[0];
+  const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
   const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || [], {
     artStyleId: opts.artStyleId,
+    identityLockZh,
   });
-  const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
+  const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || [], {
+    identityLockZh,
+  });
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);
   const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const scene = getManhuaSceneTemplate(opts.sceneId);
