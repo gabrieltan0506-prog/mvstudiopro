@@ -1,5 +1,5 @@
 /**
- * 剧本工作台：从工厂节点文本推导「片段内多镜」列表（先可读可测，再接批量静帧）。
+ * 剧本工作台：从工厂节点文本推导「片段内多镜」列表，供批量静帧与成片对齐。
  */
 
 export type ManhuaWorkbenchShot = {
@@ -90,3 +90,25 @@ function splitDurations(totalSec: number, n: number): number[] {
 export function workbenchShotTotalSec(shots: ManhuaWorkbenchShot[]): number {
   return Math.round(shots.reduce((s, x) => s + x.durationSec, 0) * 10) / 10;
 }
+
+/** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
+export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
+  return [
+    `【分镜 ${shot.index}·静帧】`,
+    `运镜：${shot.cameraZh}`,
+    `动作场面：${shot.actionZh}`,
+    "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
+  ].join("\n");
+}
+
+/** 从 keyart 节点 id / prompt 解析分镜号（默认 1） */
+export function resolveKeyartShotIndex(blockId: string, prompt?: string | null): number {
+  const fromId = String(blockId || "").match(/-s(\d{2})(?:-|$)/);
+  if (fromId?.[1]) return Math.max(1, parseInt(fromId[1], 10));
+  const fromPrompt = String(prompt || "").match(/【分镜\s*(\d+)/);
+  if (fromPrompt?.[1]) return Math.max(1, parseInt(fromPrompt[1], 10));
+  return 1;
+}
+
+/** 成片前按镜静帧上限（成本与编排平衡） */
+export const MANHUA_SHOT_KEYART_MAX = 4;

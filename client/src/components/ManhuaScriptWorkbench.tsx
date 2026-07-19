@@ -1,7 +1,6 @@
 /**
- * 剧本工作台（示意 A · 引导式实测路径）：
- * 左=本集资产 · 中=片段脚本+多镜 · 右=预览 · 底=集时间线
- * 数据接工厂节点；多镜先由节拍/反推解析（按镜批量属中期）。
+ * 剧本工作台：左=本集资产 · 中=片段脚本+多镜 · 右=预览 · 底=集/分镜时间线
+ * 数据接工厂节点；反推后按镜展开多张静帧。
  */
 import { useMemo, useState } from "react";
 import { Clapperboard, Focus, Loader2, Play, Sparkles } from "lucide-react";
@@ -23,6 +22,7 @@ import {
 } from "@shared/manhuaScenePropDemoCatalog";
 import {
   parseWorkbenchShotsFromText,
+  resolveKeyartShotIndex,
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
@@ -64,6 +64,16 @@ type Props = {
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
   return blocks.find((b) => stageKeyFromBlockId(b.id) === stage && (getBlockEpisodeIndex(b) ?? 1) === episode);
+}
+
+function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[] {
+  return blocks
+    .filter((b) => b.id.startsWith("keyart-") && (getBlockEpisodeIndex(b) ?? 1) === episode)
+    .sort(
+      (a, b) =>
+        resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt) ||
+        a.id.localeCompare(b.id),
+    );
 }
 
 function mediaUrl(b?: CanvasBlock): string | undefined {
@@ -112,7 +122,11 @@ export default function ManhuaScriptWorkbench({
 
   const beats = blockByStage(blocks, focusEpisode, "beats");
   const reverse = blockByStage(blocks, focusEpisode, "reverse");
-  const keyart = blockByStage(blocks, focusEpisode, "keyart");
+  const episodeKeyarts = useMemo(
+    () => keyartsForEpisode(blocks, focusEpisode),
+    [blocks, focusEpisode],
+  );
+  const keyart = episodeKeyarts[0];
   const clip = blockByStage(blocks, focusEpisode, "clip");
   const story = blockByStage(blocks, focusEpisode, "story");
 
@@ -126,7 +140,14 @@ export default function ManhuaScriptWorkbench({
 
   const totalSec = workbenchShotTotalSec(shots);
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
-  const previewUrl = mediaUrl(clip) || mediaUrl(keyart);
+  const activeKeyart =
+    episodeKeyarts.find(
+      (b) => resolveKeyartShotIndex(b.id, b.prompt) === (activeShot?.index ?? 1),
+    ) ||
+    episodeKeyarts[Math.min(shotIndex, Math.max(0, episodeKeyarts.length - 1))] ||
+    keyart;
+  const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
+  const previewUrl = mediaUrl(clip) || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(mediaUrl(clip));
 
   const characters = characterIds
@@ -141,6 +162,15 @@ export default function ManhuaScriptWorkbench({
   const stageStrip = useMemo(() => {
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
     return stages.map((stage) => {
+      if (stage === "keyart") {
+        const has = episodeKeyarts.some((b) => Boolean(mediaUrl(b)));
+        return {
+          stage,
+          label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
+          has,
+          blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
+        };
+      }
       const b = blockByStage(blocks, focusEpisode, stage);
       const has =
         Boolean(b && (b.outputUrl || b.outputUrls?.[0] || (b.outputText || "").trim()));
@@ -151,16 +181,16 @@ export default function ManhuaScriptWorkbench({
         blockId: b?.id,
       };
     });
-  }, [blocks, focusEpisode]);
+  }, [blocks, focusEpisode, episodeKeyarts, activeKeyart?.id]);
 
   const guidedActiveId = useMemo(() => {
     if (finalVideoUrl) return "preview";
     if (mediaUrl(clip)) return "clip";
-    if (mediaUrl(keyart)) return "keyart";
+    if (anyKeyartUrl) return "keyart";
     if (characters.length || archetypes.length) return "wb";
     if (projectBibleSummary) return "cast";
     return "wb";
-  }, [finalVideoUrl, clip, keyart, characters.length, archetypes.length, projectBibleSummary]);
+  }, [finalVideoUrl, clip, anyKeyartUrl, characters.length, archetypes.length, projectBibleSummary]);
 
   const guidedActiveIndex = MANHUA_GUIDED_STEPS.findIndex((s) => s.id === guidedActiveId);
 
@@ -475,7 +505,8 @@ export default function ManhuaScriptWorkbench({
             })}
           </div>
           <p className="mt-2 text-[10px] leading-snug text-white/35">
-            多镜列表由节拍/反推文本解析；成片仍是每集一条微动（下一步再接按镜静帧批量）。点阶段 chip 可聚焦对应画布节点。
+            分镜由节拍/反推解析；跑到静帧后每镜各出一张（最多 {Math.min(shots.length, 4)}{" "}
+            张），点分镜切换右栏预览。成片仍以第 1 镜为底图微动。
           </p>
         </section>
 
@@ -551,13 +582,13 @@ export default function ManhuaScriptWorkbench({
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
-            {keyart?.id ? (
+            {activeKeyart?.id ? (
               <button
                 type="button"
-                onClick={() => onFocusBlock?.(keyart.id)}
+                onClick={() => onFocusBlock?.(activeKeyart.id)}
                 className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/65 hover:bg-white/5"
               >
-                <Focus className="h-3 w-3" /> 聚焦静帧节点
+                <Focus className="h-3 w-3" /> 聚焦本镜静帧
               </button>
             ) : null}
             {clip?.id ? (
@@ -573,8 +604,53 @@ export default function ManhuaScriptWorkbench({
         </aside>
       </div>
 
-      {/* 底：集时间线胶片条 */}
+      {/* 底：本集分镜胶片 + 集时间线 */}
       <div className="border-t border-white/10 px-3 py-2.5 md:px-4">
+        {episodeKeyarts.length > 1 || shots.length > 1 ? (
+          <div className="mb-2.5">
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-white/35">
+                第{focusEpisode}集 · 分镜静帧
+              </div>
+              <span className="text-[9px] text-white/30">
+                {episodeKeyarts.filter((b) => mediaUrl(b)).length}/{Math.max(episodeKeyarts.length, shots.length)}{" "}
+                张已出
+              </span>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {shots.map((shot, i) => {
+                const shotKey =
+                  episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
+                  episodeKeyarts[i];
+                const thumb = mediaUrl(shotKey);
+                const on = i === Math.min(shotIndex, shots.length - 1);
+                return (
+                  <button
+                    key={`shot-${shot.index}`}
+                    type="button"
+                    onClick={() => setShotIndex(i)}
+                    className={`relative w-[72px] shrink-0 overflow-hidden rounded-lg border text-left ${
+                      on ? "border-cyan-400/55 ring-1 ring-cyan-400/30" : "border-white/12"
+                    }`}
+                  >
+                    <div className="aspect-[9/16] bg-black/50">
+                      {thumb ? (
+                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-[10px] text-white/30">
+                          {String(shot.index).padStart(2, "0")}
+                        </div>
+                      )}
+                    </div>
+                    <div className="truncate px-1 py-0.5 text-[9px] text-white/55">
+                      {String(shot.index).padStart(2, "0")}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/35">
             集时间线
@@ -584,11 +660,12 @@ export default function ManhuaScriptWorkbench({
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {episodeIndexes.map((ep) => {
-            const epKeyart = blockByStage(blocks, ep, "keyart");
+            const epKeys = keyartsForEpisode(blocks, ep);
+            const epKeyart = epKeys[0];
             const epClip = blockByStage(blocks, ep, "clip");
-            const thumb = mediaUrl(epKeyart) || mediaUrl(epClip);
+            const thumb = mediaUrl(epClip) || epKeys.map(mediaUrl).find(Boolean);
             const clipReady = Boolean(mediaUrl(epClip));
-            const stillReady = Boolean(mediaUrl(epKeyart));
+            const stillReady = epKeys.some((b) => Boolean(mediaUrl(b)));
             const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;
             return (

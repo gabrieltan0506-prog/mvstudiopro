@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultWorkbenchShots,
+  formatWorkbenchShotInjectBlock,
   parseWorkbenchShotsFromText,
+  resolveKeyartShotIndex,
   workbenchShotTotalSec,
 } from "./manhuaScriptWorkbench";
 
@@ -19,5 +21,18 @@ describe("manhuaScriptWorkbench", () => {
     const shots = parseWorkbenchShotsFromText("只有一段散文没有编号");
     expect(shots.length).toBeGreaterThanOrEqual(3);
     expect(defaultWorkbenchShots().length).toBe(4);
+  });
+
+  it("formats shot inject and resolves keyart shot index", () => {
+    const block = formatWorkbenchShotInjectBlock({
+      index: 2,
+      durationSec: 3.5,
+      cameraZh: "中近景",
+      actionZh: "递玉佩",
+    });
+    expect(block).toContain("【分镜 2·静帧】");
+    expect(block).toContain("递玉佩");
+    expect(resolveKeyartShotIndex("keyart-e01-s03-abc", "")).toBe(3);
+    expect(resolveKeyartShotIndex("keyart-e01-xyz", block)).toBe(2);
   });
 });

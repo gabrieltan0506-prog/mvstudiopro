@@ -3,6 +3,7 @@ import {
   MANHUA_FACTORY_STAGE_ORDER,
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
+  expandManhuaShotKeyartsAfterReverse,
   extractFactoryMotionHints,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
@@ -189,6 +190,49 @@ describe("canvasDramaStudio factory", () => {
     expect(keyart).toContain("【画风硬锁】");
     expect(keyart).toContain("仿真人");
     expect(keyart).toContain("【角色库锚点】");
+  });
+
+  it("spawns keyart in edit mode with scene/prop fusion refs when demos ready", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      sceneId: "scene_07",
+      propIds: ["demo_prop_xianxia_sword", "demo_prop_ancient_jade"],
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("edit");
+    expect(key.refImageUrl).toMatch(/\/manhua-scenes\//);
+    expect(key.editFusionUrls?.some((u) => u.includes("/manhua-props/"))).toBe(true);
+    expect(key.prompt).toContain("【静帧·示范图融图】");
+  });
+
+  it("expands multi-shot keyarts after reverse and orders all of them", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: [
+              "1. 刀客推门进客栈",
+              "2. 对峙油灯",
+              "3. 拔刀交锋",
+              "4. 雨夜收刀",
+            ].join("\n"),
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts.length).toBe(4);
+    expect(keyarts.every((k) => k.prompt.includes("【分镜"))).toBe(true);
+    expect(keyarts.some((k) => k.prompt.includes("拔刀交锋"))).toBe(true);
+    const ordered = resolveManhuaFactoryOrderedIds(expanded.blocks, "keyart", 1);
+    expect(ordered.filter((id) => id.startsWith("keyart-"))).toHaveLength(4);
   });
 
   it("spawn/prefs inject wardrobe+cast+genre into keyart (not bible-only)", () => {

@@ -82,6 +82,17 @@ export const MANHUA_WARDROBE_PROP_CONTINUITY_BANK: readonly ManhuaWardrobePropCo
     continuityForbid: ["松垮休闲装突然换色", "品牌运动鞋logo"],
     promptLockEn: "tactical runner suit continuity, matte tech fabric, fixed glow accent color",
   },
+  {
+    id: "wpc_07_court_phoenix",
+    no: 7,
+    nameZh: "宫廷凤仪连续",
+    whenToUseZh: "女帝、宫廷、宫斗、朝堂仪仗。",
+    wardrobeLayers: ["多层宫装礼服", "宽袖", "半透披帛", "曳地裙裾", "凤冠/步摇"],
+    signatureProps: ["凤印", "玉圭", "宫灯可选"],
+    materialLocks: ["金线织锦色号固定", "朱砂花钿位置一致", "曳地裙裾褶皱语言一致"],
+    continuityForbid: ["现代西装", "运动鞋", "甜宠短裙街拍"],
+    promptLockEn: "court phoenix gown continuity, fixed gold embroidery + forehead mark, no modern suits",
+  },
 ];
 
 export function getWardrobePropContinuityById(

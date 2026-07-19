@@ -264,6 +264,9 @@ const ARCHETYPE_TO_WARDROBE: Record<string, string> = {
   arch_rain_jianghu_dao: "wpc_02_jianghu_dao",
   arch_red_armor_general: "wpc_04_red_armor",
   arch_yaolu_physician: "wpc_05_physician",
+  arch_phoenix_empress: "wpc_07_court_phoenix",
+  arch_forest_phoenix_queen: "wpc_07_court_phoenix",
+  arch_cloud_phoenix_queen: "wpc_07_court_phoenix",
 };
 
 /**
