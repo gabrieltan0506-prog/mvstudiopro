@@ -7455,6 +7455,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           visionContext: z.string().max(8000).optional(),
           includeLiveTrends: z.boolean().optional(),
           liveTrendWindowDays: z.number().int().min(3).max(15).optional(),
+          /** 画布文本等：gpt-5.6-sol / gpt-5.6-terra / gpt-5.5 / gpt-5.4 */
+          modelName: z.string().min(3).max(80).optional(),
           supervisorToken: z.string().max(512).optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
@@ -7506,6 +7508,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             includeLiveTrends: input.includeLiveTrends,
             liveTrendWindowDays: input.liveTrendWindowDays,
             platformSkillsPrompt: platformSkillsPrompt || undefined,
+            modelName: input.modelName,
           });
 
           return {

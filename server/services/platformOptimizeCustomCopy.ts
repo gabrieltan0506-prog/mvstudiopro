@@ -9,6 +9,12 @@ import {
 } from "../config/platformSwitches";
 import { PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE } from "../../shared/platformCreatorInsightFraming.js";
 import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime";
+import {
+  EVOLINK_CHAT_MODEL_GPT56_SOL,
+  normalizeEvolinkChatModel,
+} from "./evolinkChatModel.js";
+import { getEvolinkApiKey, getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
+import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -20,6 +26,8 @@ export type OptimizeCustomCopyInput = {
   liveTrendWindowDays?: number;
   /** /platform 挂载 Skill 拼块 */
   platformSkillsPrompt?: string;
+  /** 画布/调用方指定模型（如 gpt-5.6-sol / gpt-5.6-terra） */
+  modelName?: string;
 };
 
 export type OptimizeCustomCopyResult = {
@@ -121,14 +129,29 @@ function parseOptimizeCustomCopyJson(raw: string): OptimizeCustomCopyResult {
   };
 }
 
-async function invokeOptimizeViaGpt55(userBlock: string, reasoningEffort: "low" | "minimal"): Promise<string> {
-  const hasEvolink = Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
-  if (!hasEvolink) {
+function resolveOptimizeCopyModelName(hint?: string): string {
+  const raw = String(hint || "").trim();
+  if (raw) {
+    return normalizeEvolinkChatModel(raw, getPlatformStage2OpenAiModel() || EVOLINK_CHAT_MODEL_GPT56_SOL);
+  }
+  return getPlatformStage2OpenAiModel() || EVOLINK_CHAT_MODEL_GPT56_SOL;
+}
+
+function hasOptimizeCopyGateway(): boolean {
+  return Boolean(getOfficialOpenAiApiKey() || getOpenRouterApiKey() || getEvolinkApiKey());
+}
+
+async function invokeOptimizeViaGpt(
+  userBlock: string,
+  reasoningEffort: "low" | "minimal",
+  modelName?: string,
+): Promise<string> {
+  if (!hasOptimizeCopyGateway()) {
     throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
   }
   const response = await invokeLLM({
     provider: "openai",
-    modelName: getPlatformStage2OpenAiModel(),
+    modelName: resolveOptimizeCopyModelName(modelName),
     reasoningEffort,
     max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
     temperature: 0.8,
@@ -165,19 +188,19 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
   let lastError: unknown;
   for (const reasoningEffort of [primaryReasoning, "minimal"] as const) {
     try {
-      const raw = await invokeOptimizeViaGpt55(userBlock, reasoningEffort);
+      const raw = await invokeOptimizeViaGpt(userBlock, reasoningEffort, input.modelName);
       return parseOptimizeCustomCopyJson(raw);
     } catch (err) {
       lastError = err;
       console.warn(
-        `[optimizeCustomCopy] Evolink GPT-5.6 失败 (reasoning=${reasoningEffort}):`,
+        `[optimizeCustomCopy] GPT-5.6 失败 (model=${resolveOptimizeCopyModelName(input.modelName)} reasoning=${reasoningEffort}):`,
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }
   }
 
   console.warn(
-    "[optimizeCustomCopy] Evolink GPT-5.6 全部失败（已取消 Gemini fallback）:",
+    "[optimizeCustomCopy] GPT-5.6 全部失败（已取消 Gemini fallback）:",
     lastError instanceof Error ? lastError.message.slice(0, 240) : lastError,
   );
   throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);

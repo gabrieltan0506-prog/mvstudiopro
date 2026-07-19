@@ -3,7 +3,32 @@ import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } fro
 
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
 
-export type CanvasTextModel = "gemini-3.1-pro" | "gpt-5.5" | "gpt-5.4";
+/** 画布文本主力：GPT-5.6 Sol / Terra；Gemini 仅保留选项（知识截止约 2025-01-01，偏旧）。 */
+export type CanvasTextModel =
+  | "gpt-5.6-sol"
+  | "gpt-5.6-terra"
+  | "gemini-3.1-pro"
+  | "gpt-5.5"
+  | "gpt-5.4";
+
+export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "gpt-5.6-sol";
+
+const CANVAS_TEXT_MODEL_IDS: CanvasTextModel[] = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gemini-3.1-pro",
+  "gpt-5.5",
+  "gpt-5.4",
+];
+
+export function normalizeCanvasTextModel(raw: unknown): CanvasTextModel {
+  const key = String(raw || "").trim();
+  if ((CANVAS_TEXT_MODEL_IDS as string[]).includes(key)) return key as CanvasTextModel;
+  // 旧画布别名
+  if (key === "gpt56sol" || key === "gpt-5.6") return "gpt-5.6-sol";
+  if (key === "gpt56terra") return "gpt-5.6-terra";
+  return DEFAULT_CANVAS_TEXT_MODEL;
+}
 export type CanvasImageModel = "nano-banana-2" | "gpt-image-2";
 export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
@@ -137,7 +162,9 @@ export const CANVAS_KIND_META: Record<
 };
 
 export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> = [
-  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol（主力）" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro（旧）" },
   { id: "gpt-5.5", label: "GPT 5.5" },
   { id: "gpt-5.4", label: "GPT 5.4" },
 ];
@@ -181,7 +208,7 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
             : kind === "video_reverse"
               ? "反推分镜表与 Seedance 微动句；成稿去导演名。可先上传 ≤120s 参考短片。"
               : "镜头缓慢推进，主体动作自然，电影级光影。",
-    textModel: "gemini-3.1-pro",
+    textModel: DEFAULT_CANVAS_TEXT_MODEL,
     imageModel: "nano-banana-2",
     videoModel: "gemini-omni-flash",
     aspectRatio: "9:16",
@@ -208,6 +235,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
 
   return {
     ...block,
+    textModel: normalizeCanvasTextModel(block.textModel),
     videoModel,
     imageMode: block.imageMode === "edit" ? "edit" : "generate",
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
