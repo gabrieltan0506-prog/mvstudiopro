@@ -1975,8 +1975,9 @@ export default function OmniCanvas() {
     void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
   }, [blocks, runFactory, resolveRunEpisodeIndexes, writerFocusEpisode]);
 
+  /** 工作台模式即沉浸三栏（不要求已确认；未确认时灰掉生成，题材从顶栏「改题材」进） */
   const immersiveWorkbench =
-    canvasMode === "manhua" && writerConfirmed && manhuaUiMode === "workbench";
+    canvasMode === "manhua" && manhuaUiMode === "workbench";
 
   return (
     <div className="min-h-dvh bg-transparent text-white">
@@ -2215,9 +2216,8 @@ export default function OmniCanvas() {
 
             {canvasMode === "manhua" ? (
             <>
-            {/* 确认编剧 + 工作台：编剧室压到工作台之后，主屏先出三栏 */}
-            {writerConfirmed &&
-            manhuaUiMode === "workbench" &&
+            {/* 工作台主屏：沉浸三栏（未确认也可进壳；题材从顶栏「改题材」） */}
+            {manhuaUiMode === "workbench" &&
             !(immersiveWorkbench && immersiveExtrasOpen) ? (
               <div
                 id="manhua-workbench-zone"
@@ -2651,49 +2651,6 @@ export default function OmniCanvas() {
                     经典表单编导
                   </button>
                 </div>
-              </div>
-            ) : null}
-
-            {/* 未确认时也可预览工作台壳；确认后已在上方渲染，避免双份 */}
-            {manhuaUiMode === "workbench" && !writerConfirmed ? (
-              <div id="manhua-workbench-zone" className="max-w-[1920px] scroll-mt-44">
-                <ManhuaScriptWorkbench
-                  blocks={blocks}
-                  topic={factoryTopic}
-                  seriesTitle={writerPack?.seriesTitle || projectBible?.seriesTitle}
-                  episodeCount={writerEpisodeCount}
-                  focusEpisode={writerFocusEpisode}
-                  onFocusEpisode={setWriterFocusEpisode}
-                  characterIds={selectedCharacterIds}
-                  ancientArchetypeIds={factoryAncientArchetypeIds}
-                  sceneId={factorySceneId || recommendedScene?.id}
-                  propIds={factoryPropIds}
-                  artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
-                  projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
-                  bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
-                  pathTrackLabelZh={pathTrackStatus.labelZh}
-                  narrativeLightingLabelZh={narrativeLightingLabelZh}
-                  finalVideoUrl={finalAssembleVideoUrl}
-                  factoryBusy={factoryBusy || assembleBusy}
-                  factoryProgress={
-                    assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
-                  }
-                  canRun={Boolean(directorUnlocked || writerConfirmed)}
-                  onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
-                  onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
-                  onFocusBlock={(id) => {
-                    setFocusBlockId(id);
-                    const details = document.getElementById(
-                      "manhua-factory-canvas-details",
-                    ) as HTMLDetailsElement | null;
-                    if (details) details.open = true;
-                  }}
-                  onSpawnAndRunClip={() => {
-                    setFactoryRunScope("focus");
-                    ensureStudioSpawned(factoryTopic);
-                    void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
-                  }}
-                />
               </div>
             ) : null}
 
