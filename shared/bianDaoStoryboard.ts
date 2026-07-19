@@ -17,6 +17,12 @@ import {
   formatAssignedCraftTechniqueZh,
   pickCraftTechniqueProfile,
 } from "./storyboardLightingEmotion.js";
+import {
+  formatPlotPurposeCameraBlock,
+  formatScenePacingBlock,
+  getManhuaPlotPurposeById,
+  getManhuaScenePacingById,
+} from "./manhuaPlotPurposeCameraBank.js";
 
 /** 用户可见产品名（按钮、画廊、扣费、导出） */
 export const BIAN_DAO_STORYBOARD_LABEL_ZH = "编导分镜图";
@@ -47,6 +53,10 @@ export function enrichScriptContextWithBianDaoDirectorBoard(
     /** 有值时注入一张稳定手法卡（全案/自定义按条轮换） */
     craftSeed?: string | number;
     craftSlotLabel?: string;
+    /** 剧情目的 → 镜头功能（manhuaPlotPurposeCameraBank） */
+    plotPurposeId?: string | null;
+    /** 戏种节奏（manhuaPlotPurposeCameraBank） */
+    scenePacingId?: string | null;
   },
 ): string {
   const base = String(scriptContext || "").trim();
@@ -68,6 +78,14 @@ export function enrichScriptContextWithBianDaoDirectorBoard(
   }
   if (!base.includes("【编导分镜·导演板")) {
     parts.push(BIAN_DAO_DIRECTOR_BOARD_GUIDANCE_ZH);
+  }
+  const purpose = getManhuaPlotPurposeById(opts?.plotPurposeId);
+  if (purpose && !base.includes("【剧情目的·镜头】") && !parts.some((p) => p.includes("【剧情目的·镜头】"))) {
+    parts.push(formatPlotPurposeCameraBlock(purpose));
+  }
+  const pacing = getManhuaScenePacingById(opts?.scenePacingId);
+  if (pacing && !base.includes("【戏种节奏】") && !parts.some((p) => p.includes("【戏种节奏】"))) {
+    parts.push(formatScenePacingBlock(pacing));
   }
   if (!parts.length) return base;
   return `${parts.join("\n\n")}\n\n${base}`.slice(0, 12000);

@@ -7,6 +7,13 @@ import {
   composeManhuaPropDemoPromptBlock,
   recommendManhuaContentLanesFromTopic,
 } from "./manhuaScenePropDemoCatalog.js";
+import { buildAncientArchetypePromptBlock } from "./manhuaAncientArchetypeLibrary.js";
+import {
+  formatPlotPurposeCameraBlock,
+  formatScenePacingBlock,
+  getManhuaPlotPurposeById,
+  getManhuaScenePacingById,
+} from "./manhuaPlotPurposeCameraBank.js";
 
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
@@ -54,6 +61,10 @@ export function buildManhuaWriterExpandPrompt(opts: {
   topic: string;
   brief: string;
   episodeCount: number;
+  /** 古风原型 arch_* */
+  ancientArchetypeIds?: string[];
+  plotPurposeId?: string | null;
+  scenePacingId?: string | null;
 }): string {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
@@ -62,6 +73,9 @@ export function buildManhuaWriterExpandPrompt(opts: {
     lanes: recommendManhuaContentLanesFromTopic(`${topic}\n${brief}`),
     limit: 4,
   });
+  const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
+  const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
+  const pacing = getManhuaScenePacingById(opts.scenePacingId);
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
@@ -71,10 +85,14 @@ export function buildManhuaWriterExpandPrompt(opts: {
     `4. 必须正好输出 ${n} 集；每一集结尾必须有「片尾钩子」（未揭答案、逼观众追下一集）。`,
     "5. 人物 / 道具 / 场景表要具体、可锁定外形与空间，禁止空泛。",
     "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
+    "7. 若提供古风原型设计板，人物外形与服饰层次须与之对齐。",
     "",
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
     propDemo,
+    ancientBlock,
+    purpose ? formatPlotPurposeCameraBlock(purpose) : "",
+    pacing ? formatScenePacingBlock(pacing) : "",
     "",
     "请严格按下列结构输出：",
     "",
