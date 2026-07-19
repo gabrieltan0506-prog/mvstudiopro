@@ -3,12 +3,8 @@
  * 支持红轨（人物）/ 蓝轨（镜头）双轨迹。
  */
 
+import { getActionCameraRecipeById } from "./manhuaActionCameraRecipeBank.js";
 import {
-  compileDualTrackMotionPrompt,
-  getActionCameraRecipeById,
-} from "./manhuaActionCameraRecipeBank.js";
-import {
-  compilePathCameraRecipeToMotionPrompt,
   getPathCameraRecipeById,
   type ManhuaPathCameraPhase,
   type ManhuaPathCameraRecipe,
@@ -192,16 +188,16 @@ export function annotationToPhases(ann: ManhuaPathAnnotation): ManhuaPathCameraP
   }));
 }
 
-/** 标注 JSON → Seedance 时段运镜句（支持双轨） */
-export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): string {
+/** 标注 JSON → 中文运镜说明（界面 + Seedance / I2V 同一套，可读可执行） */
+export function compilePathAnnotationToMotionPromptZh(ann: ManhuaPathAnnotation): string {
   const normalized = normalizePathAnnotation(ann);
   if (!normalized) {
-    return "Slow cinematic push-in, subtle natural movement, soft atmospheric haze";
+    return "缓慢电影感推进，主体微动自然，气氛柔和。";
   }
 
   const action = getActionCameraRecipeById(normalized.actionRecipeId);
   if (action?.trackMode === "fpv") {
-    return `${action.craftLockEn}. ${action.seedancePromptZh}`;
+    return `${action.craftSummaryZh} ${action.seedancePromptZh}`.trim();
   }
 
   const subjectAnchors = normalized.anchors.filter((a) => (a.trackRole || "subject") === "subject");
@@ -212,50 +208,67 @@ export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): 
 
   if (dual) {
     const subjectBeats = (subjectAnchors.length ? subjectAnchors : normalized.anchors).map(
-      (a) => a.subjectActionEn,
+      (a) => a.focusZh || "人物沿红轨推进",
     );
     const cameraBeats = (cameraAnchors.length ? cameraAnchors : normalized.anchors).map(
-      (a) => a.cameraEn,
+      (a) => a.focusZh || "镜头沿蓝轨推进",
     );
-    const dualEn = compileDualTrackMotionPrompt({ subjectBeats, cameraBeats });
-    return action ? `${action.craftLockEn}. ${dualEn}` : dualEn;
+    return [
+      action ? `【动作】${action.nameZh}：${action.craftSummaryZh}` : "【动作】红蓝双轨",
+      action?.seedancePromptZh || "人物沿红轨动作，镜头沿蓝轨调度；成片不显示轨迹参考线。",
+      `人物节拍：${subjectBeats.join(" → ")}`,
+      `镜头节拍：${cameraBeats.join(" → ")}`,
+      "保持人物身份、场景连续与空间关系稳定，动作流畅。",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   if (action?.trackMode === "single_action") {
     const parts = normalized.anchors.map((a) => {
       const t0 = normalized.anchors.slice(0, a.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
       const t1 = t0 + a.durationHintSec;
-      return `${t0}-${t1}s: subject ${a.subjectActionEn} along action path; camera ${a.cameraEn}`;
+      return `${t0}–${t1}秒：人物「${a.focusZh}」沿动作轨；镜头稳跟或轻跟。`;
     });
     return [
-      action.craftLockEn,
-      "Guide lines must not appear in final frames.",
+      `【动作】${action.nameZh}：${action.craftSummaryZh}`,
+      action.seedancePromptZh,
+      "成片不显示轨迹参考线。",
       ...parts,
-    ].join(" ");
+    ].join("\n");
   }
 
   if (normalized.recipeId) {
     const recipe = getPathCameraRecipeById(normalized.recipeId);
-    if (recipe && normalized.anchors.length === recipe.phases.length) {
-      const unchanged = normalized.anchors.every((a, i) => {
-        const p = recipe.phases[i]!;
-        return a.cameraEn === p.cameraEn && a.subjectActionEn === p.subjectActionEn;
+    if (recipe) {
+      const parts = recipe.phases.map((p) => {
+        const t0 = recipe.phases.slice(0, p.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
+        const t1 = t0 + p.durationHintSec;
+        return `${t0}–${t1}秒：镜头看向「${p.focusZh}」；主体配合微动。`;
       });
-      if (unchanged) return compilePathCameraRecipeToMotionPrompt(recipe);
+      return [
+        `【路径】${recipe.nameZh}：${recipe.craftSummaryZh}`,
+        `效果：${recipe.effectZh}`,
+        "每镜一个主运镜；镜头运动与主体动作分开写。",
+        ...parts,
+      ].join("\n");
     }
   }
 
   const parts = normalized.anchors.map((a) => {
     const t0 = normalized.anchors.slice(0, a.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
     const t1 = t0 + a.durationHintSec;
-    return `${t0}-${t1}s: camera ${a.cameraEn}; subject ${a.subjectActionEn}`;
+    const role = (a.trackRole || "subject") === "camera" ? "镜头" : "人物";
+    return `${t0}–${t1}秒：${role}「${a.focusZh}」`;
   });
-  return [
-    "One primary path move along annotated anchors.",
-    "Separate camera from subject action. No stacked camera moves.",
-    "Guide lines must not appear in final frames.",
-    ...parts,
-  ].join(" ");
+  return ["沿标注锚点推进一条主运镜。", "镜头与人物动作分开写；成片不显示轨迹参考线。", ...parts].join(
+    "\n",
+  );
+}
+
+/** 标注 JSON → Seedance / I2V 运镜句（中文；与 Zh 版同一实现） */
+export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): string {
+  return compilePathAnnotationToMotionPromptZh(ann);
 }
 
 export function formatPathAnnotationBrief(ann: ManhuaPathAnnotation): string {

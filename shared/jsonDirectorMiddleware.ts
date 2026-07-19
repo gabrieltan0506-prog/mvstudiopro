@@ -264,33 +264,33 @@ export function fallbackEnglishFromJson(lock: DirectorJsonLock): string {
 }
 
 function detectCameraMove(text: string): string | null {
-  if (/slow\s*zoom\s*out|缓慢拉远|慢慢拉远/i.test(text)) return "Slow cinematic zoom out";
-  if (/slow\s*zoom\s*in|缓慢推近|慢推|缓推/i.test(text)) return "Slow cinematic zoom in";
-  if (/push[- ]?in|推进/i.test(text)) return "Gentle push-in";
-  if (/pan\s*right|右摇/i.test(text)) return "Slow pan right";
-  if (/pan\s*left|左摇/i.test(text)) return "Slow pan left";
-  if (/orbit|环绕/i.test(text)) return "Subtle orbital move around subject";
-  if (/handheld|手持微晃/i.test(text)) return "Subtle handheld micro-shake";
-  if (/static|固定镜头|锁死机位/i.test(text)) return "Locked-off static camera";
+  if (/slow\s*zoom\s*out|缓慢拉远|慢慢拉远/i.test(text)) return "缓慢电影感拉远";
+  if (/slow\s*zoom\s*in|缓慢推近|慢推|缓推/i.test(text)) return "缓慢电影感推近";
+  if (/push[- ]?in|推进/i.test(text)) return "轻缓推进";
+  if (/pan\s*right|右摇/i.test(text)) return "缓慢右摇";
+  if (/pan\s*left|左摇/i.test(text)) return "缓慢左摇";
+  if (/orbit|环绕/i.test(text)) return "围绕主体轻微环绕";
+  if (/handheld|手持微晃/i.test(text)) return "手持微晃";
+  if (/static|固定镜头|锁死机位/i.test(text)) return "固定机位";
   return null;
 }
 
 function detectSubjectMicro(text: string): string | null {
-  if (/hair|发丝|头发/i.test(text)) return "hair softly moving in wind";
-  if (/breath|呼吸/i.test(text)) return "subtle chest breathing";
-  if (/coat|大衣|衣摆/i.test(text)) return "subtle coat fabric movement";
-  if (/look(?:ing)?\s*around|环顾/i.test(text)) return "eyes glancing naturally";
-  if (/smile|微笑/i.test(text)) return "tiny natural facial micro-expression";
-  if (/手|手指|gesture/i.test(text)) return "small hand micro-gesture";
+  if (/hair|发丝|头发/i.test(text)) return "发丝随风轻动";
+  if (/breath|呼吸/i.test(text)) return "胸口轻微呼吸起伏";
+  if (/coat|大衣|衣摆/i.test(text)) return "衣摆轻应";
+  if (/look(?:ing)?\s*around|环顾/i.test(text)) return "目光自然扫视";
+  if (/smile|微笑/i.test(text)) return "面部细微表情变化";
+  if (/手|手指|gesture/i.test(text)) return "手指细微动作";
   return null;
 }
 
 function detectAmbience(text: string): string | null {
-  if (/dust|尘/i.test(text)) return "dust floating in light beams";
-  if (/rain|雨/i.test(text)) return "light rain falling, wet reflections";
-  if (/smoke|雾|smoke|haze|薄雾/i.test(text)) return "soft haze drifting";
-  if (/snow|雪/i.test(text)) return "sparse snow drifting";
-  if (/neon|霓虹/i.test(text)) return "neon flicker and light spill breathing";
+  if (/dust|尘/i.test(text)) return "光束中尘粒漂浮";
+  if (/rain|雨/i.test(text)) return "细雨落下，湿路面反光";
+  if (/smoke|雾|haze|薄雾/i.test(text)) return "薄雾缓缓漂移";
+  if (/snow|雪/i.test(text)) return "稀疏雪花飘落";
+  if (/neon|霓虹/i.test(text)) return "霓虹轻微闪烁与溢色呼吸";
   return null;
 }
 
@@ -323,13 +323,13 @@ export function compileI2VMotionPrompt(
 
   const raw = stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
   if (!raw) {
-    return "Slow cinematic push-in, subtle natural breathing, soft atmospheric haze";
+    return "缓慢电影感推进，主体呼吸微动自然，气氛柔和。";
   }
 
   // 必须像「运镜口令」本身，不能仅因含 cinematic/dust 形容词就原样放行长文
   const alreadyMotionLike =
     raw.length <= 160 &&
-    /(slow\s+cinematic|zoom\s+(in|out)|push-?in|pan\s+(left|right)|orbit|handheld|locked-?off|缓慢(推|拉)|慢推|右摇|左摇|微动)/i.test(
+    /(slow\s+cinematic|zoom\s+(in|out)|push-?in|pan\s+(left|right)|orbit|handheld|locked-?off|缓慢(推|拉)|慢推|右摇|左摇|微动|推进|跟拍|环绕)/i.test(
       raw,
     ) &&
     !/(masterpiece|8k|cyberpunk|neon\s+masterpiece)/i.test(raw) &&
@@ -337,23 +337,30 @@ export function compileI2VMotionPrompt(
 
   if (alreadyMotionLike) return raw;
 
-  // 路径时段句（来自注入块）直接放行
-  if (/^\d+-\d+s:\s*camera/i.test(raw) || /One primary path move/i.test(raw)) {
+  // 中文路径时段句 / 红蓝双轨句直接放行
+  if (
+    /^\d+[–-]\d+秒[：:]/m.test(raw) ||
+    /【路径】|【动作】|红蓝双轨|人物节拍|镜头节拍/.test(raw) ||
+    /^\d+-\d+s:\s*camera/i.test(raw) ||
+    /One primary path move/i.test(raw)
+  ) {
     return raw.slice(0, 1200);
   }
 
-  const camera = detectCameraMove(raw) || (opts?.hasReferenceImage ? "Slow cinematic push-in" : "Slow cinematic zoom out");
-  const subject = detectSubjectMicro(raw) || "subtle natural movement, soft fabric response";
-  const ambience = detectAmbience(raw) || "gentle atmospheric particulate in motivated light";
+  const camera =
+    detectCameraMove(raw) ||
+    (opts?.hasReferenceImage ? "缓慢电影感推进" : "缓慢电影感拉远");
+  const subject = detectSubjectMicro(raw) || "主体微动自然，衣料轻应";
+  const ambience = detectAmbience(raw) || "动机光下轻薄气氛粒子";
 
   if (opts?.hasReferenceImage) {
     // 有静帧时禁止复述赛博/霓虹/电影感长清单
-    return `${camera}, ${subject}, ${ambience}`;
+    return `${camera}；${subject}；${ambience}。`;
   }
 
   // 无图 T2V：保留一句主体要点 + 微动公式
   const subjectHint = raw.replace(/\s+/g, " ").slice(0, 90);
-  return `${subjectHint}. ${camera}, ${subject}, ${ambience}`;
+  return `${subjectHint}。${camera}；${subject}；${ambience}。`;
 }
 
 /** 俯视调度组合公式（super-i 2917，成稿去名） */

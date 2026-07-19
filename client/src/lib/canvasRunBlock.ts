@@ -489,17 +489,34 @@ export async function runCanvasBlock(
           .filter(Boolean)
           .join("\n")
       : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
-    const urls =
-      imageModel === "gpt-image-2"
-        ? await runGptImage2Batch(
-            imagePrompt,
-            ar,
-            isEdit
-              ? { refImageUrl: editRef, referenceImageUrls: fusionUrls, maskUrl: maskUrl || undefined }
-              : { refImageUrl: refUrl },
-            count,
-          )
-        : await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
+    /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
+    const preferGptImage2 = imageModel !== "nano-banana-2";
+    let urls: string[] = [];
+    if (preferGptImage2) {
+      try {
+        urls = await runGptImage2Batch(
+          imagePrompt,
+          ar,
+          isEdit
+            ? { refImageUrl: editRef, referenceImageUrls: fusionUrls, maskUrl: maskUrl || undefined }
+            : { refImageUrl: refUrl },
+          count,
+        );
+      } catch (primaryErr) {
+        const reason =
+          primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
+        try {
+          urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
+          console.warn(`[canvasRunBlock] GPT-Image-2 失败，已回退 Nano Banana 2：${reason}`);
+        } catch (fallbackErr) {
+          const fb =
+            fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
+          throw new Error(`生图失败（官方 Image-2：${reason}；回退：${fb}）`);
+        }
+      }
+    } else {
+      urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
+    }
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");
     return { outputUrl: filtered[0], outputUrls: filtered };

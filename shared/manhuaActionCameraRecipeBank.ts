@@ -72,7 +72,7 @@ export function buildActionCameraInjectBlock(ids: string[]): string {
   if (!picked.length) return "";
   const lines = picked.map(
     (e, i) =>
-      `${i + 1}. 【动作运镜·${e.trackMode}】${e.nameZh}：${e.craftSummaryZh}\n   Seedance：${e.seedancePromptZh}\n   EN: ${e.craftLockEn}`,
+      `${i + 1}. 【动作运镜·${e.trackMode}】${e.nameZh}：${e.craftSummaryZh}\n   Seedance：${e.seedancePromptZh}`,
   );
   return [
     "【动作运镜配方】",
@@ -110,7 +110,7 @@ export function recommendActionCameraFromTopic(topic?: string): {
   };
 }
 
-/** 双轨英文编译辅助 */
+/** 双轨中文编译（Seedance / I2V / 界面同一套） */
 export function compileDualTrackMotionPrompt(opts: {
   subjectBeats: string[];
   cameraBeats: string[];
@@ -118,12 +118,12 @@ export function compileDualTrackMotionPrompt(opts: {
   const subject = opts.subjectBeats.filter(Boolean);
   const camera = opts.cameraBeats.filter(Boolean);
   return [
-    "Dual-track I2V: subject follows RED path; camera follows BLUE path.",
-    "Guide lines must not appear in final frames.",
-    subject.length ? `Subject beats: ${subject.join(" → ")}.` : "",
-    camera.length ? `Camera beats: ${camera.join(" → ")}.` : "",
-    "Keep character identity, scene continuity, stable spatial relations; smooth action.",
+    "红蓝双轨：人物沿红轨动作，镜头沿蓝轨调度。",
+    "成片不显示轨迹参考线。",
+    subject.length ? `人物节拍：${subject.join(" → ")}` : "",
+    camera.length ? `镜头节拍：${camera.join(" → ")}` : "",
+    "保持人物身份、场景连续与空间关系稳定，动作流畅。",
   ]
     .filter(Boolean)
-    .join(" ");
+    .join("\n");
 }
