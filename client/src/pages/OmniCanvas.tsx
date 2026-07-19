@@ -40,10 +40,16 @@ import {
   DEFAULT_MANHUA_ART_STYLE_ID,
   buildManhuaCharacterSheetGenPrompt,
   getManhuaArtStylePreset,
+  getManhuaCharacterById,
+  getManhuaCharacterPreviewUrl,
   recommendManhuaArtStyleFromTopic,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
+import {
+  getAncientArchetypeById,
+  getAncientArchetypePreviewUrl,
+} from "@shared/manhuaAncientArchetypeLibrary";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
 import {
   buildManhuaProjectBible,
@@ -2318,6 +2324,61 @@ export default function OmniCanvas() {
                   </button>
                 </div>
               </div>
+              {(selectedCharacterIds.length || factoryAncientArchetypeIds.length) ? (
+                <div className="mt-2.5 flex gap-2 overflow-x-auto pb-0.5">
+                  {selectedCharacterIds.map((id) => {
+                    const c = getManhuaCharacterById(id);
+                    if (!c) return null;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setManhuaAssetDrawer("characters")}
+                        className="w-[72px] shrink-0 overflow-hidden rounded-xl border border-white/12 bg-black/40 text-left hover:border-cyan-400/40"
+                        title={c.nameZh}
+                      >
+                        <img
+                          src={getManhuaCharacterPreviewUrl(id)}
+                          alt=""
+                          className="aspect-[3/4] w-full object-cover object-top"
+                          loading="lazy"
+                        />
+                        <div className="truncate px-1 py-0.5 text-[9px] text-white/70">{c.nameZh}</div>
+                      </button>
+                    );
+                  })}
+                  {factoryAncientArchetypeIds.map((id) => {
+                    const a = getAncientArchetypeById(id);
+                    if (!a) return null;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setManhuaAssetDrawer("characters")}
+                        className="w-[72px] shrink-0 overflow-hidden rounded-xl border border-amber-400/25 bg-amber-500/10 text-left hover:border-amber-400/45"
+                        title={a.nameZh}
+                      >
+                        <img
+                          src={getAncientArchetypePreviewUrl(id)}
+                          alt=""
+                          className="aspect-[3/4] w-full object-cover object-top"
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                        <div className="truncate px-1 py-0.5 text-[9px] text-amber-50/85">古风·{a.nameZh}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-2 text-[10px] text-white/35">
+                  {writerConfirmed
+                    ? "造型尚未露出缩略图时，点「打开角色库」微调。"
+                    : "确认编剧后，此处会出现已套角色缩略图。"}
+                </p>
+              )}
             </div>
 
             <div className="mt-3 flex max-w-6xl flex-wrap items-center gap-2">
@@ -3074,6 +3135,15 @@ export default function OmniCanvas() {
                 assembleBusy={assembleBusy}
                 finalVideoUrl={finalAssembleVideoUrl}
                 onAssembleFinal={(clips) => void assembleManhuaFinal(clips)}
+                onGoWorkbench={() => {
+                  setManhuaUiMode("workbench");
+                  window.setTimeout(() => {
+                    document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    });
+                  }, 60);
+                }}
                 onFocusBlock={(id) => {
                   setFocusBlockId(id);
                   const hit = blocks.find((b) => b.id === id);
