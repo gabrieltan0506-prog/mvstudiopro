@@ -1,16 +1,16 @@
 /**
  * 场景/道具示范库 · 每日分批生成（纯文生，不覆盖人物库）
  *
+ * 默认 GRID2X2=1：一次文生 2×2 拼图 → 裁成 4 张封面（约省 4× 积分）。
+ * 不足 4 张的余数仍走单张。GRID2X2=0 可关。
+ *
  * 权重见 shared/manhuaScenePropDemoCatalog.ts
- *   多生：古风/仙侠/玄幻/逆袭/甜宠/权谋/商战
- *   适量：小说改编壳/悬疑/科幻
- *   不生：沙雕搞笑
  *
  * 用法：
  *   pnpm run manhua:scene-prop-daily
  *   LIMIT=4 FORCE=1 LANE=intrigue,business pnpm run manhua:scene-prop-daily
- *   IDS=demo_scene_a,demo_scene_b pnpm run manhua:scene-prop-daily
- *   DRY_RUN=1 pnpm run manhua:scene-prop-daily
+ *   IDS=demo_scene_a,demo_scene_b,demo_scene_c,demo_scene_d pnpm run manhua:scene-prop-daily
+ *   GRID2X2=0 DRY_RUN=1 pnpm run manhua:scene-prop-daily
  *
  * 输出：
  *   ~/Downloads/2026Jul18/scene-prop-review/{scenes,props}/
@@ -30,6 +30,11 @@ import {
   type ManhuaContentLane,
   type ManhuaDemoAsset,
 } from "../shared/manhuaScenePropDemoCatalog.js";
+import {
+  buildDemoSheet2x2Prompt,
+  chunkDemoAssetsFor2x2,
+  cropImage2x2ToFiles,
+} from "../shared/manhuaDemoSheet2x2.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -49,6 +54,8 @@ const PREFLIGHT_TIMEOUT_MS = Math.min(
 const FORCE = /^(1|true|yes)$/i.test(String(process.env.FORCE || ""));
 const DRY_RUN = /^(1|true|yes)$/i.test(String(process.env.DRY_RUN || ""));
 const COPY_PUBLIC = /^(1|true|yes)$/i.test(String(process.env.COPY_PUBLIC || "1"));
+/** 默认开：2×2 拼图裁四张；设 GRID2X2=0 关闭 */
+const GRID2X2 = !/^(0|false|no|off)$/i.test(String(process.env.GRID2X2 || "1"));
 const LIMIT = Math.max(0, Number(process.env.LIMIT || 0) || 0);
 
 function sleep(ms: number) {
@@ -255,7 +262,9 @@ function pickBatch(): ManhuaDemoAsset[] {
   }
   const done = FORCE ? new Set<string>() : loadDoneIds();
   const quota = quotaFromEnv();
-  const sceneGapBudget = Math.max(quota.highScenes + quota.mediumScenes, LIMIT > 0 ? LIMIT : 8);
+  // 2×2 模式尽量凑满 4 的倍数，优先补场景模板缺口
+  const baseGap = Math.max(quota.highScenes + quota.mediumScenes, LIMIT > 0 ? LIMIT : 8);
+  const sceneGapBudget = GRID2X2 ? Math.max(4, Math.ceil(baseGap / 4) * 4) : baseGap;
   const gaps = pickSceneTemplateGaps(done, sceneGapBudget);
   const gapIds = new Set(gaps.map((a) => a.id));
   const restDone = new Set([...done, ...gapIds]);
@@ -308,6 +317,60 @@ function writeManifest(rows: ManifestRow[]) {
   );
 }
 
+function saveAssetJpg(a: ManhuaDemoAsset, jpgPath: string) {
+  fs.copyFileSync(jpgPath, destPath(a));
+  if (COPY_PUBLIC) fs.copyFileSync(jpgPath, publicPath(a));
+}
+
+function okRow(a: ManhuaDemoAsset): ManifestRow {
+  return {
+    id: a.id,
+    kind: a.kind,
+    lane: a.lane,
+    nameZh: a.nameZh,
+    ok: true,
+    path: destPath(a),
+    at: new Date().toISOString(),
+  };
+}
+
+function failRow(a: ManhuaDemoAsset, error: string): ManifestRow {
+  return {
+    id: a.id,
+    kind: a.kind,
+    lane: a.lane,
+    nameZh: a.nameZh,
+    ok: false,
+    error,
+    at: new Date().toISOString(),
+  };
+}
+
+async function generateOne(a: ManhuaDemoAsset): Promise<void> {
+  const url = await flyGenerate(buildPrompt(a));
+  const tmp = path.join(os.tmpdir(), `scene-prop-${a.id}`);
+  await downloadToJpg(url, tmp);
+  saveAssetJpg(a, `${tmp}.jpg`);
+}
+
+async function generateSheet2x2(cells: ManhuaDemoAsset[]): Promise<void> {
+  const prompt = buildDemoSheet2x2Prompt(cells);
+  const url = await flyGenerate(prompt);
+  const sheetBase = path.join(os.tmpdir(), `scene-prop-sheet-${cells.map((c) => c.id).join("_").slice(0, 80)}`);
+  await downloadToJpg(url, sheetBase);
+  const sheetJpg = `${sheetBase}.jpg`;
+  const outs: [string, string, string, string] = [
+    `${sheetBase}-tl.jpg`,
+    `${sheetBase}-tr.jpg`,
+    `${sheetBase}-bl.jpg`,
+    `${sheetBase}-br.jpg`,
+  ];
+  cropImage2x2ToFiles(sheetJpg, outs);
+  for (let i = 0; i < 4; i++) {
+    saveAssetJpg(cells[i]!, outs[i]!);
+  }
+}
+
 async function main() {
   fs.mkdirSync(SCENES_DIR, { recursive: true });
   fs.mkdirSync(PROPS_DIR, { recursive: true });
@@ -316,73 +379,83 @@ async function main() {
     fs.mkdirSync(PUBLIC_PROPS, { recursive: true });
   }
 
-  const batch = pickBatch();
+  const batch = pickBatch().filter((a) => FORCE || !alreadyOk(a));
+  const { sheets, singles } = GRID2X2
+    ? chunkDemoAssetsFor2x2(batch)
+    : { sheets: [] as ManhuaDemoAsset[][], singles: batch };
+
   console.log(
-    `🚀 scene/prop daily · ${FLY_ORIGIN} · n=${batch.length} · force=${FORCE ? "on" : "off"} · dry=${DRY_RUN ? "on" : "off"}`,
+    `🚀 scene/prop daily · ${FLY_ORIGIN} · n=${batch.length} · grid2x2=${GRID2X2 ? "on" : "off"} · sheets=${sheets.length} · singles=${singles.length} · dry=${DRY_RUN ? "on" : "off"}`,
   );
-  for (const a of batch) {
-    console.log(`  · queued ${a.weight}/${a.lane}/${a.kind} ${a.id} ${a.nameZh}`);
+  for (const sheet of sheets) {
+    console.log(`  · sheet2x2 ${sheet.map((a) => a.id).join(" + ")}`);
+  }
+  for (const a of singles) {
+    console.log(`  · single ${a.weight}/${a.lane}/${a.kind} ${a.id} ${a.nameZh}`);
   }
   if (!batch.length) {
     console.log("今日无缺口（目录已齐或 LIMIT/LANE 筛空）。可 FORCE=1 重跑或追加 catalog。");
     return;
   }
-  if (DRY_RUN) return;
+  if (DRY_RUN) {
+    if (sheets[0]) {
+      console.log("\n--- sample 2x2 prompt ---\n");
+      console.log(buildDemoSheet2x2Prompt(sheets[0]));
+    }
+    return;
+  }
 
   await preflightFly();
 
   const rows: ManifestRow[] = [];
-  for (const a of batch) {
-    if (alreadyOk(a)) {
-      console.log(`⏭ skip ${a.id}`);
-      rows.push({
-        id: a.id,
-        kind: a.kind,
-        lane: a.lane,
-        nameZh: a.nameZh,
-        ok: true,
-        path: destPath(a),
-        at: new Date().toISOString(),
-      });
-      continue;
+
+  for (const sheet of sheets) {
+    console.log(`\n━━ 2×2 sheet · ${sheet.map((a) => a.id).join(" · ")} ━━`);
+    try {
+      await generateSheet2x2(sheet);
+      for (const a of sheet) {
+        console.log(`  ok → ${destPath(a)}`);
+        rows.push(okRow(a));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`❌ sheet failed: ${msg}`);
+      console.warn("  · fallback: 逐张单生（仍可能耗积分）");
+      for (const a of sheet) {
+        try {
+          await generateOne(a);
+          console.log(`  ok(single) → ${destPath(a)}`);
+          rows.push(okRow(a));
+        } catch (e2) {
+          const msg2 = e2 instanceof Error ? e2.message : String(e2);
+          console.error(`❌ ${a.id}: ${msg2}`);
+          rows.push(failRow(a, msg2));
+        }
+        await sleep(800);
+      }
     }
+    writeManifest(rows);
+    await sleep(1200);
+  }
+
+  for (const a of singles) {
     console.log(`\n━━ ${a.kind} · ${a.lane} · ${a.id} ${a.nameZh} ━━`);
     try {
-      const url = await flyGenerate(buildPrompt(a));
-      const tmp = path.join(os.tmpdir(), `scene-prop-${a.id}`);
-      await downloadToJpg(url, tmp);
-      const jpg = `${tmp}.jpg`;
-      fs.copyFileSync(jpg, destPath(a));
-      if (COPY_PUBLIC) fs.copyFileSync(jpg, publicPath(a));
+      await generateOne(a);
       console.log(`  ok → ${destPath(a)}`);
-      rows.push({
-        id: a.id,
-        kind: a.kind,
-        lane: a.lane,
-        nameZh: a.nameZh,
-        ok: true,
-        path: destPath(a),
-        at: new Date().toISOString(),
-      });
+      rows.push(okRow(a));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`❌ ${a.id}: ${msg}`);
-      rows.push({
-        id: a.id,
-        kind: a.kind,
-        lane: a.lane,
-        nameZh: a.nameZh,
-        ok: false,
-        error: msg,
-        at: new Date().toISOString(),
-      });
+      rows.push(failRow(a, msg));
     }
     writeManifest(rows);
     await sleep(1200);
   }
 
   const ok = rows.filter((r) => r.ok).length;
-  console.log(`\n完成：ok=${ok}/${rows.length}`);
+  const apiCalls = sheets.length + singles.length;
+  console.log(`\n完成：ok=${ok}/${rows.length} · API 约 ${apiCalls} 次（2×2 模式下 4 张≈1 次）`);
   console.log(`审阅：${OUT_ROOT}`);
   if (COPY_PUBLIC) {
     const sync = spawnSync("pnpm", ["exec", "tsx", "scripts/sync-manhua-demo-public-ready.mts"], {
