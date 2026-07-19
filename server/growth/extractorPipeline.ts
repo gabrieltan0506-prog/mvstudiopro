@@ -47,17 +47,25 @@ export function growthCampPhase2InvokeOpts(engine: GrowthCampStrategistEngine) {
     modelName: engine.modelName,
   };
   if (engine.provider !== "openai") return base;
-  if (engine.modelName === GROWTH_CAMP_PHASE2_MODEL || engine.modelName === "gpt-5.6-sol") {
+  // Phase 2 统一 Sol：high + 128k（旧 gpt-5.5 别名也会 resolve 到 Sol）
+  if (
+    engine.modelName === GROWTH_CAMP_PHASE2_MODEL
+    || engine.modelName === "gpt-5.5"
+    || engine.modelName === "gemini-3.5-flash"
+  ) {
     return {
       ...base,
+      modelName: GROWTH_CAMP_PHASE2_MODEL,
       reasoningEffort: GROWTH_CAMP_PHASE2_REASONING_EFFORT,
       max_tokens: GROWTH_CAMP_PHASE2_MAX_TOKENS,
     };
   }
-  if (engine.modelName === "gpt-5.5") {
-    return { ...base, reasoningEffort: "medium" as const };
-  }
-  return base;
+  return {
+    ...base,
+    modelName: GROWTH_CAMP_PHASE2_MODEL,
+    reasoningEffort: GROWTH_CAMP_PHASE2_REASONING_EFFORT,
+    max_tokens: GROWTH_CAMP_PHASE2_MAX_TOKENS,
+  };
 }
 
 /** 成长营深度分析（Phase 2）引擎：默认 GPT-5.6 Sol；旧 gpt-5.5 / gemini 别名统一迁到 Sol。 */
