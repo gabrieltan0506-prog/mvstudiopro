@@ -46,3 +46,85 @@ export function resolveManhuaGuidedActiveStep(p: ManhuaGuidedProgress): ManhuaGu
   if (p.hasTopic) return "topic";
   return "topic";
 }
+
+export type ManhuaGuidedNextAction = {
+  stepId: ManhuaGuidedStepId;
+  title: string;
+  hint: string;
+  ctaLabel: string;
+  href: string;
+};
+
+/** 当前应点的下一步（整页「下一步」条用） */
+export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGuidedNextAction {
+  if (p.hasFinalVideo) {
+    return {
+      stepId: "preview",
+      title: "长片已就绪",
+      hint: "可在成片坞预览与导出工程包。",
+      ctaLabel: "查看成片坞",
+      href: "#manhua-clip-dock-zone",
+    };
+  }
+  if (p.hasClip) {
+    return {
+      stepId: "preview",
+      title: "合成长片",
+      hint: "各集微动已有产出，可一键拼接并自动配乐。",
+      ctaLabel: "去成片坞合成",
+      href: "#manhua-clip-dock-zone",
+    };
+  }
+  if (p.hasKeyart) {
+    return {
+      stepId: "clip",
+      title: "跑成本集成片",
+      hint: "静帧已出，继续生成微动成片。",
+      ctaLabel: "去工作台生成",
+      href: "#manhua-workbench-zone",
+    };
+  }
+  if (p.writerConfirmed && p.hasCast) {
+    return {
+      stepId: "wb",
+      title: "进入工作台出片",
+      hint: "造型已套好，生成本集静帧与成片。",
+      ctaLabel: "打开工作台",
+      href: "#manhua-workbench-zone",
+    };
+  }
+  if (p.writerConfirmed) {
+    return {
+      stepId: "cast",
+      title: "确认造型",
+      hint: "可打开角色库微调面孔与画风。",
+      ctaLabel: "打开角色库",
+      href: "#manhua-cast-zone",
+    };
+  }
+  if (p.hasWriterPack) {
+    return {
+      stepId: "writer",
+      title: "确认编剧",
+      hint: "剧情包已出，确认后自动套造型并解锁工作台。",
+      ctaLabel: "回到编剧室确认",
+      href: "#manhua-factory-zone",
+    };
+  }
+  if (p.hasTopic) {
+    return {
+      stepId: "topic",
+      title: "扩写剧情",
+      hint: "题材已填，点「扩写剧情」生成连载包。",
+      ctaLabel: "去编剧室扩写",
+      href: "#manhua-factory-zone",
+    };
+  }
+  return {
+    stepId: "topic",
+    title: "填写题材",
+    hint: "先写一句话题材与三到五句条件。",
+    ctaLabel: "去填题材",
+    href: "#manhua-factory-zone",
+  };
+}
