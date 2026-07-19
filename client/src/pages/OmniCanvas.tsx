@@ -50,6 +50,7 @@ import {
   getAncientArchetypeById,
   getAncientArchetypePreviewUrl,
 } from "@shared/manhuaAncientArchetypeLibrary";
+import { getManhuaDemoAsset } from "@shared/manhuaScenePropDemoCatalog";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
 import {
   buildManhuaProjectBible,
@@ -64,6 +65,7 @@ import {
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   summarizeManhuaPathTrackStatus,
 } from "@shared/manhuaFinalAssemble";
+import { buildManhuaAssembleJobInput } from "@shared/manhuaAssembleJobInput";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
@@ -1064,21 +1066,16 @@ export default function OmniCanvas() {
         const { jobId } = await createJobSameOrigin({
           type: "video",
           userId: user?.id ? String(user.id) : "",
-          input: {
-            action: "manhua_assemble_final",
-            params: {
-              clips: ready,
-              topic: factoryTopic,
-              seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
-              logline: writerPack?.logline || projectBible?.logline || "",
-              musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
-              transition: "fade",
-              resolution: "9:16",
-              musicVolume: 0.35,
-              musicFadeInSec: 1,
-              musicFadeOutSec: 2,
-            },
-          },
+          input: buildManhuaAssembleJobInput({
+            clips: ready,
+            topic: factoryTopic,
+            seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
+            logline: writerPack?.logline || projectBible?.logline || "",
+            musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
+            musicVolume: 0.35,
+            musicFadeInSec: 1,
+            musicFadeOutSec: 2,
+          }),
         });
         pushDebug("assemble:queued", { level: "info", detail: `jobId=${jobId}` });
         const job = await pollJobUntilTerminal(jobId, {
@@ -2415,6 +2412,32 @@ export default function OmniCanvas() {
                     : "确认编剧后，此处会出现已套角色缩略图。"}
                 </p>
               )}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {(factorySceneId || recommendedScene?.id) ? (
+                  <button
+                    type="button"
+                    onClick={() => setManhuaAssetDrawer("assets")}
+                    className="rounded-md border border-white/12 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/65 hover:border-cyan-400/35"
+                  >
+                    场景 ·{" "}
+                    {getManhuaSceneTemplate(factorySceneId || recommendedScene?.id || "")?.nameZh ||
+                      "已选"}
+                  </button>
+                ) : null}
+                {factoryPropIds.slice(0, 4).map((pid) => {
+                  const p = getManhuaDemoAsset(pid);
+                  return (
+                    <button
+                      key={pid}
+                      type="button"
+                      onClick={() => setManhuaAssetDrawer("assets")}
+                      className="rounded-md border border-white/12 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/60 hover:border-cyan-400/35"
+                    >
+                      道具 · {p?.nameZh || pid}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="mt-3 flex max-w-6xl flex-wrap items-center gap-2">
