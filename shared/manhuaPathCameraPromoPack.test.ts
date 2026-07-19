@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   annotationFromRecipeId,
   compilePathAnnotationToMotionPrompt,
+  downsampleStrokeToAnchors,
+  mergeTrackAnchors,
   normalizePathAnnotation,
   PATH_ANNOTATE_ANCHOR_MIN,
 } from "./manhuaPathCameraAnnotate";
@@ -155,6 +157,29 @@ describe("fusion + action dual-track + MIT vocab/wardrobe", () => {
     expect(block).toContain("动作运镜");
     expect(block).toContain("红轨");
     expect(block).not.toMatch(/CanvasPro|阿硕|李一帆|Seedance-2\.0|DirectorSKILL/i);
+  });
+
+  it("downsamples stroke to dual-track anchors", () => {
+    const stroke = Array.from({ length: 40 }, (_, i) => ({
+      x: 0.1 + i * 0.02,
+      y: 0.8 - i * 0.015,
+    }));
+    const red = downsampleStrokeToAnchors(stroke, "subject", { maxPoints: 4 });
+    expect(red.length).toBeGreaterThanOrEqual(PATH_ANNOTATE_ANCHOR_MIN);
+    expect(red.length).toBeLessThanOrEqual(4);
+    expect(red.every((a) => a.trackRole === "subject")).toBe(true);
+    const blue = downsampleStrokeToAnchors(
+      [
+        { x: 0.2, y: 0.2 },
+        { x: 0.5, y: 0.4 },
+        { x: 0.8, y: 0.3 },
+      ],
+      "camera",
+      { maxPoints: 3 },
+    );
+    const merged = mergeTrackAnchors(red, blue, "camera");
+    expect(merged.some((a) => a.trackRole === "subject")).toBe(true);
+    expect(merged.some((a) => a.trackRole === "camera")).toBe(true);
   });
 
   it("dual-track annotation compiles red/blue roles", () => {

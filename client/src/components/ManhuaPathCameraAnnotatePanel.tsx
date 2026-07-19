@@ -1,14 +1,22 @@
 /**
- * 自研静帧路径运镜标注：点击画面加点，编辑阶段文案，导出 JSON / 运镜句。
- * 支持红轨（人物）/ 蓝轨（镜头）；交互自研，不仿制第三方工具栏。
+ * 自研静帧路径运镜标注：拖拽画线 / 点击加点，红蓝双轨，导出 JSON / 运镜句。
+ * 交互自研，不仿制第三方工具栏。
  */
-import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   PATH_ANNOTATE_ANCHOR_MAX,
   PATH_ANNOTATE_ANCHOR_MIN,
   annotationFromRecipeId,
   compilePathAnnotationToMotionPrompt,
+  downsampleStrokeToAnchors,
   formatPathAnnotationBrief,
+  mergeTrackAnchors,
   type ManhuaPathAnchor,
   type ManhuaPathAnnotation,
   type ManhuaPathTrackRole,
@@ -33,6 +41,8 @@ type Props = {
   onActionRecipeIdChange?: (id: string) => void;
 };
 
+type InputMode = "draw" | "tap";
+
 function emptyAnchor(
   index: number,
   x: number,
@@ -51,6 +61,15 @@ function emptyAnchor(
   };
 }
 
+function clientToNorm(el: HTMLElement, clientX: number, clientY: number) {
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return {
+    x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+    y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+  };
+}
+
 export default function ManhuaPathCameraAnnotatePanel({
   imageUrl,
   value,
@@ -65,6 +84,11 @@ export default function ManhuaPathCameraAnnotatePanel({
   const actionRecipes = useMemo(() => listActionCameraRecipes(), []);
   const [selectedIndex, setSelectedIndex] = useState(1);
   const [paintRole, setPaintRole] = useState<ManhuaPathTrackRole>("subject");
+  const [inputMode, setInputMode] = useState<InputMode>("draw");
+  const [strokePreview, setStrokePreview] = useState<Array<{ x: number; y: number }>>([]);
+  const drawingRef = useRef(false);
+  const strokeRef = useRef<Array<{ x: number; y: number }>>([]);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const anchors = value?.anchors || [];
   const activeActionId = actionRecipeId || value?.actionRecipeId || "";
 
@@ -145,16 +169,63 @@ export default function ManhuaPathCameraAnnotatePanel({
     [commit, imageUrl, onActionRecipeIdChange, onChange, recipeId, value?.anchors],
   );
 
-  const onCanvasClick = (e: MouseEvent<HTMLDivElement>) => {
+  const finishStroke = useCallback(() => {
+    const pts = strokeRef.current;
+    drawingRef.current = false;
+    strokeRef.current = [];
+    setStrokePreview([]);
+    if (pts.length < 2) return;
+    const otherCount = anchors.filter((a) => (a.trackRole || "subject") !== paintRole).length;
+    const room = Math.max(PATH_ANNOTATE_ANCHOR_MIN, PATH_ANNOTATE_ANCHOR_MAX - otherCount);
+    const sampled = downsampleStrokeToAnchors(pts, paintRole, { maxPoints: Math.min(5, room) });
+    if (!sampled.length) return;
+    const merged = mergeTrackAnchors(anchors, sampled, paintRole);
+    commit(merged);
+    const firstOfRole = merged.find((a) => (a.trackRole || "subject") === paintRole);
+    if (firstOfRole) setSelectedIndex(firstOfRole.index);
+  }, [anchors, commit, paintRole]);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (disabled || !imageUrl) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    if (anchors.length >= PATH_ANNOTATE_ANCHOR_MAX) return;
-    const next = [...anchors, emptyAnchor(anchors.length + 1, x, y, paintRole)];
-    commit(next);
-    setSelectedIndex(next.length);
+    const el = surfaceRef.current;
+    if (!el) return;
+    const p = clientToNorm(el, e.clientX, e.clientY);
+    if (!p) return;
+
+    if (inputMode === "tap") {
+      if (anchors.length >= PATH_ANNOTATE_ANCHOR_MAX) return;
+      const next = [...anchors, emptyAnchor(anchors.length + 1, p.x, p.y, paintRole)];
+      commit(next);
+      setSelectedIndex(next.length);
+      return;
+    }
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drawingRef.current = true;
+    strokeRef.current = [p];
+    setStrokePreview([p]);
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drawingRef.current || inputMode !== "draw") return;
+    const el = surfaceRef.current;
+    if (!el) return;
+    const p = clientToNorm(el, e.clientX, e.clientY);
+    if (!p) return;
+    const prev = strokeRef.current[strokeRef.current.length - 1];
+    if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.008) return;
+    strokeRef.current = [...strokeRef.current, p];
+    setStrokePreview(strokeRef.current);
+  };
+
+  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drawingRef.current) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    finishStroke();
   };
 
   const selected = anchors.find((a) => a.index === selectedIndex) || anchors[anchors.length - 1];
@@ -163,6 +234,8 @@ export default function ManhuaPathCameraAnnotatePanel({
     if (!selected) return;
     commit(anchors.map((a) => (a.index === selected.index ? { ...a, ...patch } : a)));
   };
+
+  const strokeColor = paintRole === "camera" ? "rgba(56,189,248,0.95)" : "rgba(251,113,133,0.95)";
 
   return (
     <div className="space-y-2 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2.5">
@@ -209,7 +282,7 @@ export default function ManhuaPathCameraAnnotatePanel({
               : "border-white/10 text-white/50"
           }`}
         >
-          画红轨·人物
+          红轨·人物
         </button>
         <button
           type="button"
@@ -221,26 +294,67 @@ export default function ManhuaPathCameraAnnotatePanel({
               : "border-white/10 text-white/50"
           }`}
         >
-          画蓝轨·镜头
+          蓝轨·镜头
+        </button>
+        <span className="mx-0.5 h-4 w-px self-center bg-white/15" />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setInputMode("draw")}
+          className={`rounded border px-2 py-0.5 text-[10px] ${
+            inputMode === "draw"
+              ? "border-emerald-300/60 bg-emerald-500/20 text-emerald-50"
+              : "border-white/10 text-white/50"
+          }`}
+        >
+          拖拽画线
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setInputMode("tap")}
+          className={`rounded border px-2 py-0.5 text-[10px] ${
+            inputMode === "tap"
+              ? "border-emerald-300/60 bg-emerald-500/20 text-emerald-50"
+              : "border-white/10 text-white/50"
+          }`}
+        >
+          点击加点
         </button>
       </div>
 
       <p className="text-[10px] leading-snug text-white/40">
-        点击画面添加锚点（{PATH_ANNOTATE_ANCHOR_MIN}–{PATH_ANNOTATE_ANCHOR_MAX}）。红=人物动作，蓝=镜头路径；轨迹成片不显示。
+        {inputMode === "draw"
+          ? "按住拖拽画当前轨；松手后自动抽稀为锚点并替换该轨（另一轨保留）。"
+          : `点击添加锚点（${PATH_ANNOTATE_ANCHOR_MIN}–${PATH_ANNOTATE_ANCHOR_MAX}）。`}{" "}
+        红=人物，蓝=镜头；成片不显示轨迹。
       </p>
 
       <div
+        ref={surfaceRef}
         role="presentation"
-        onClick={onCanvasClick}
-        className={`relative mx-auto aspect-[9/16] max-h-56 w-full max-w-[10rem] overflow-hidden rounded-md border border-white/15 bg-black/60 ${
-          disabled || !imageUrl ? "cursor-not-allowed opacity-60" : "cursor-crosshair"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        className={`relative mx-auto aspect-[9/16] max-h-72 w-full max-w-[12rem] touch-none overflow-hidden rounded-md border border-white/15 bg-black/60 ${
+          disabled || !imageUrl
+            ? "cursor-not-allowed opacity-60"
+            : inputMode === "draw"
+              ? "cursor-crosshair"
+              : "cursor-cell"
         }`}
       >
         {imageUrl ? (
-          <img src={imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          <img
+            src={imageUrl}
+            alt=""
+            draggable={false}
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover select-none"
+          />
         ) : (
           <div className="flex h-full items-center justify-center px-2 text-center text-[10px] text-white/35">
-            生成静帧后可在此标注路径
+            生成静帧后可在此画红/蓝轨迹
           </div>
         )}
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -252,11 +366,24 @@ export default function ManhuaPathCameraAnnotatePanel({
                 key={role}
                 fill="none"
                 stroke={role === "camera" ? "rgba(56,189,248,0.9)" : "rgba(251,113,133,0.9)"}
-                strokeWidth="1.2"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 points={pts.map((a) => `${a.x * 100},${a.y * 100}`).join(" ")}
               />
             );
           })}
+          {strokePreview.length >= 2 ? (
+            <polyline
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray="2 1.5"
+              points={strokePreview.map((a) => `${a.x * 100},${a.y * 100}`).join(" ")}
+            />
+          ) : null}
           {anchors.map((a) => {
             const isCam = a.trackRole === "camera";
             return (
@@ -371,7 +498,7 @@ export default function ManhuaPathCameraAnnotatePanel({
         </pre>
       ) : (
         <p className="text-[10px] text-white/30">
-          至少 {PATH_ANNOTATE_ANCHOR_MIN} 个锚点后生成 Seedance 运镜句。
+          至少 {PATH_ANNOTATE_ANCHOR_MIN} 个锚点后生成运镜句（可先画红轨再画蓝轨）。
         </p>
       )}
     </div>

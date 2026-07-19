@@ -208,6 +208,8 @@ export default function OmniCanvas() {
   const [factoryCineVocabId, setFactoryCineVocabId] = useState("");
   const [factoryWardrobeId, setFactoryWardrobeId] = useState("");
   const [factoryReverseMode, setFactoryReverseMode] = useState<VideoReverseOutputMode>("zh");
+  /** 侧栏进阶下拉默认折叠，降低信息密度 */
+  const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
@@ -1558,7 +1560,7 @@ export default function OmniCanvas() {
               <div className="mt-3 max-w-md space-y-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="block text-[11px] text-white/45">拍摄手法（已铺可同步）（可选 · 1 条）</label>
+                    <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
                     {craftAutoApplied ? (
                       <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
                         已按题材自动套用
@@ -1600,29 +1602,54 @@ export default function OmniCanvas() {
                     {selectedCraftShot
                       ? ` · 当前「${selectedCraftShot.nameZh}」${craftAutoApplied ? "·自动" : craftShotManual ? "·手选" : ""}`
                       : ""}
-                    ；注入节拍 / 反推 / 静帧。
                   </p>
                 </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">路径运镜配方（可选 · 1 条）</label>
-                  <select
-                    value={factoryPathRecipeId}
-                    onChange={(e) => {
-                      setPathRecipeManual(true);
-                      setFactoryPathRecipeId(e.target.value);
-                    }}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-cyan-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {listPathCameraRecipes().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-cyan-100/60">{recommendedPath.reasonZh}</p>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[11px] text-white/45">路径运镜</label>
+                    <select
+                      value={factoryPathRecipeId}
+                      onChange={(e) => {
+                        setPathRecipeManual(true);
+                        setFactoryPathRecipeId(e.target.value);
+                      }}
+                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                      className="mt-1 w-full rounded-lg border border-cyan-400/25 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
+                    >
+                      <option value="">不指定</option>
+                      {listPathCameraRecipes().map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {String(e.no).padStart(2, "0")} {e.nameZh}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-white/45">动作运镜</label>
+                    <select
+                      value={factoryActionRecipeId}
+                      onChange={(e) => {
+                        setActionRecipeManual(true);
+                        setFactoryActionRecipeId(e.target.value);
+                      }}
+                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                      className="mt-1 w-full rounded-lg border border-rose-400/25 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none focus:border-rose-300/40 disabled:opacity-50"
+                    >
+                      <option value="">不指定</option>
+                      {listActionCameraRecipes().map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {String(e.no).padStart(2, "0")} {e.nameZh}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
+                <p className="text-[10px] text-white/40">
+                  {recommendedPath.reasonZh} · {recommendedAction.reasonZh}
+                  {actionRecipeManual ? " ·动作手选" : ""}
+                </p>
+
                 <ManhuaPathCameraAnnotatePanel
                   imageUrl={keyArtPreviewUrl || undefined}
                   value={factoryPathAnnotation}
@@ -1639,178 +1666,169 @@ export default function OmniCanvas() {
                     setFactoryActionRecipeId(id);
                   }}
                 />
-                <div>
-                  <label className="block text-[11px] text-white/45">动作运镜（可选 · 1 条 · 注入分镜/成片）</label>
-                  <select
-                    value={factoryActionRecipeId}
-                    onChange={(e) => {
-                      setActionRecipeManual(true);
-                      setFactoryActionRecipeId(e.target.value);
-                    }}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-rose-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-rose-300/40 disabled:opacity-50"
+
+                <div className="rounded-lg border border-white/10 bg-white/[0.02]">
+                  <button
+                    type="button"
+                    onClick={() => setFactoryAdvancedOpen((v) => !v)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-[11px] font-medium text-white/70 hover:bg-white/[0.04]"
                   >
-                    <option value="">不指定</option>
-                    {listActionCameraRecipes().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh} · {e.trackMode}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-rose-100/60">
-                    {recommendedAction.reasonZh}
-                    {actionRecipeManual ? " · 手选锁定" : ""}
-                    ；红轨人物 / 蓝轨镜头；与路径运镜可叠加。
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">叙事灯光（可选 · 1 条）</label>
-                  <select
-                    value={factoryNarrativeLightingId}
-                    onChange={(e) => {
-                      setNarrativeLightingManual(true);
-                      setFactoryNarrativeLightingId(e.target.value);
-                    }}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-amber-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-amber-300/40 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {listNarrativeLighting().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh} · {e.stageZh}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-amber-100/60">{recommendedNarrativeLighting.reasonZh}</p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">男发预设（可选 · 注入圣经）</label>
-                  <select
-                    value={factoryMaleHairstyleId}
-                    onChange={(e) => setFactoryMaleHairstyleId(e.target.value)}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {listMaleHairstylePresets().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">男生微表情（可选）</label>
-                  <select
-                    value={factoryMaleMicroId}
-                    onChange={(e) => {
-                      setMaleMicroManual(true);
-                      setFactoryMaleMicroId(e.target.value);
-                    }}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {listMaleMicroExpressions().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-white/35">{recommendedMaleMicro.reasonZh}</p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">宣发封面构图（可选 · 额外节点）</label>
-                  <select
-                    value={factoryPromoLayoutId}
-                    onChange={(e) => setFactoryPromoLayoutId(e.target.value)}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-fuchsia-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-fuchsia-300/40 disabled:opacity-50"
-                  >
-                    <option value="">不铺宣发封面</option>
-                    {listPromoCoverLayouts().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-fuchsia-100/55">人景双重曝光等构图；不改六栏分镜主路径。</p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">运镜词条（可选 · 1 条 · 注入编导）</label>
-                  <select
-                    value={factoryCineVocabId}
-                    onChange={(e) => setFactoryCineVocabId(e.target.value)}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {MANHUA_CINE_VOCAB_BANK.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.zh} · {e.en}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-white/35">景别/支撑/运镜/光感短词；无导演名。</p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">服装道具连续（可选 · 1 套 · 注入圣经）</label>
-                  <select
-                    value={factoryWardrobeId}
-                    onChange={(e) => setFactoryWardrobeId(e.target.value)}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {listWardrobePropContinuity().map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {String(e.no).padStart(2, "0")} {e.nameZh}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] text-white/35">层衣/签名道具/材质锁；跨镜连续。</p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">反推输出档</label>
-                  <select
-                    value={factoryReverseMode}
-                    onChange={(e) => setFactoryReverseMode(e.target.value as VideoReverseOutputMode)}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="zh">完整中文八维</option>
-                    <option value="compact">精简档</option>
-                    <option value="en">English</option>
-                  </select>
-                  <p className="mt-1 text-[10px] text-white/30">写入编导反推节点输出结构。</p>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">包装动效（已铺可同步）（可选 · 1 条）</label>
-                  <select
-                    value={factoryMotionId}
-                    onChange={(e) => {
-                      setMotionManual(true);
-                      setFactoryMotionId(e.target.value);
-                    }}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="">不指定</option>
-                    {motionGrouped.map((g) => (
-                      <optgroup key={g.category} label={g.label}>
-                        {g.items.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {String(e.no).padStart(2, "0")} {e.nameZh}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] leading-snug text-white/45">
-                    {recommendedMotion.reasonZh}
-                    {motionManual ? " · 手选锁定" : ""}
-                    ；注入微动成片 / 视频改写。
-                  </p>
+                    <span>进阶注入（灯光 / 造型 / 宣发 / 词条…）</span>
+                    <span className="text-white/40">{factoryAdvancedOpen ? "收起" : "展开"}</span>
+                  </button>
+                  {factoryAdvancedOpen ? (
+                    <div className="space-y-3 border-t border-white/8 px-3 py-3">
+                      <div>
+                        <label className="block text-[11px] text-white/45">叙事灯光</label>
+                        <select
+                          value={factoryNarrativeLightingId}
+                          onChange={(e) => {
+                            setNarrativeLightingManual(true);
+                            setFactoryNarrativeLightingId(e.target.value);
+                          }}
+                          disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                          className="mt-1 w-full rounded-lg border border-amber-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                        >
+                          <option value="">不指定</option>
+                          {listNarrativeLighting().map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {String(e.no).padStart(2, "0")} {e.nameZh}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[10px] text-amber-100/60">
+                          {recommendedNarrativeLighting.reasonZh}
+                        </p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] text-white/45">男发</label>
+                          <select
+                            value={factoryMaleHairstyleId}
+                            onChange={(e) => setFactoryMaleHairstyleId(e.target.value)}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {listMaleHairstylePresets().map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {String(e.no).padStart(2, "0")} {e.nameZh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-white/45">微表情</label>
+                          <select
+                            value={factoryMaleMicroId}
+                            onChange={(e) => {
+                              setMaleMicroManual(true);
+                              setFactoryMaleMicroId(e.target.value);
+                            }}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {listMaleMicroExpressions().map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {String(e.no).padStart(2, "0")} {e.nameZh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-white/45">宣发封面</label>
+                        <select
+                          value={factoryPromoLayoutId}
+                          onChange={(e) => setFactoryPromoLayoutId(e.target.value)}
+                          disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                          className="mt-1 w-full rounded-lg border border-fuchsia-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                        >
+                          <option value="">不铺宣发封面</option>
+                          {listPromoCoverLayouts().map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {String(e.no).padStart(2, "0")} {e.nameZh}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] text-white/45">运镜词条</label>
+                          <select
+                            value={factoryCineVocabId}
+                            onChange={(e) => setFactoryCineVocabId(e.target.value)}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {MANHUA_CINE_VOCAB_BANK.map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {e.zh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-white/45">服装道具连续</label>
+                          <select
+                            value={factoryWardrobeId}
+                            onChange={(e) => setFactoryWardrobeId(e.target.value)}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {listWardrobePropContinuity().map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {String(e.no).padStart(2, "0")} {e.nameZh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] text-white/45">反推档</label>
+                          <select
+                            value={factoryReverseMode}
+                            onChange={(e) =>
+                              setFactoryReverseMode(e.target.value as VideoReverseOutputMode)
+                            }
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="zh">完整中文八维</option>
+                            <option value="compact">精简档</option>
+                            <option value="en">English</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-white/45">包装动效</label>
+                          <select
+                            value={factoryMotionId}
+                            onChange={(e) => {
+                              setMotionManual(true);
+                              setFactoryMotionId(e.target.value);
+                            }}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {motionGrouped.map((g) => (
+                              <optgroup key={g.category} label={g.label}>
+                                {g.items.map((e) => (
+                                  <option key={e.id} value={e.id}>
+                                    {String(e.no).padStart(2, "0")} {e.nameZh}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 

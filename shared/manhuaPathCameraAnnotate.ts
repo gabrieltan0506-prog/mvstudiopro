@@ -213,3 +213,73 @@ export function formatPathAnnotationBrief(ann: ManhuaPathAnnotation): string {
     .filter(Boolean)
     .join("\n");
 }
+
+/**
+ * 将连续笔迹采样为锚点（保留首尾，按最小间距 + 均匀抽稀）。
+ * 用于红/蓝轨拖拽画线；上限 PATH_ANNOTATE_ANCHOR_MAX（单轨内再限半额以免双轨爆掉）。
+ */
+export function downsampleStrokeToAnchors(
+  points: Array<{ x: number; y: number }>,
+  trackRole: ManhuaPathTrackRole,
+  opts?: { maxPoints?: number; minDist?: number },
+): ManhuaPathAnchor[] {
+  const maxPoints = Math.max(
+    PATH_ANNOTATE_ANCHOR_MIN,
+    Math.min(PATH_ANNOTATE_ANCHOR_MAX, opts?.maxPoints ?? 5),
+  );
+  const minDist = opts?.minDist ?? 0.045;
+  const raw = (points || [])
+    .map((p) => ({ x: clamp01(p.x), y: clamp01(p.y) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (raw.length < 2) return [];
+
+  const spaced: Array<{ x: number; y: number }> = [raw[0]!];
+  for (let i = 1; i < raw.length; i++) {
+    const p = raw[i]!;
+    const prev = spaced[spaced.length - 1]!;
+    const d = Math.hypot(p.x - prev.x, p.y - prev.y);
+    if (d >= minDist) spaced.push(p);
+  }
+  const last = raw[raw.length - 1]!;
+  const tail = spaced[spaced.length - 1]!;
+  if (Math.hypot(last.x - tail.x, last.y - tail.y) > 0.01) spaced.push(last);
+
+  let picked = spaced;
+  if (picked.length > maxPoints) {
+    const out: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < maxPoints; i++) {
+      const t = maxPoints <= 1 ? 0 : i / (maxPoints - 1);
+      const idx = Math.round(t * (picked.length - 1));
+      out.push(picked[idx]!);
+    }
+    picked = out;
+  }
+
+  return picked.map((p, i) => ({
+    index: i + 1,
+    x: p.x,
+    y: p.y,
+    focusZh: trackRole === "camera" ? `镜${i + 1}` : `动${i + 1}`,
+    cameraEn:
+      trackRole === "camera"
+        ? "camera follows blue path"
+        : "camera holds or soft follows subject",
+    subjectActionEn:
+      trackRole === "subject"
+        ? "subject moves along red action path"
+        : "subject holds readable stance",
+    durationHintSec: 2,
+    trackRole,
+  }));
+}
+
+/** 用一轨新锚点替换同轨旧点，保留另一轨，再重编号 */
+export function mergeTrackAnchors(
+  existing: ManhuaPathAnchor[],
+  nextTrack: ManhuaPathAnchor[],
+  trackRole: ManhuaPathTrackRole,
+): ManhuaPathAnchor[] {
+  const other = existing.filter((a) => (a.trackRole || "subject") !== trackRole);
+  const merged = [...other, ...nextTrack].slice(0, PATH_ANNOTATE_ANCHOR_MAX);
+  return merged.map((a, i) => ({ ...a, index: i + 1 }));
+}
