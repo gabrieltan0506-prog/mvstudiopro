@@ -232,7 +232,11 @@ export default function ManhuaClipDock({
               }
             >
               {assembleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
-              {assembleBusy ? "合成中…" : "合成长片（含配乐）"}
+              {assembleBusy
+                ? "合成中…"
+                : canAssemble
+                  ? `合成长片（${assembleClips.length} 集·含配乐）`
+                  : "合成长片（含配乐）"}
             </button>
             {!canAssemble && !assembleBusy && onGoWorkbench ? (
               <button
