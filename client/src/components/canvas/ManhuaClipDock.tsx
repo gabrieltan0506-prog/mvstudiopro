@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Clapperboard, Download, Focus, Loader2 } from "lucide-react";
+import { Clapperboard, Download, Film, Focus, Loader2, Music2 } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   collectManhuaAssembleClipsFromDock,
@@ -23,11 +23,18 @@ type Props = {
   selectedIds: Set<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
   onFocusBlock?: (blockId: string) => void;
-  /** 合成长片（含配乐）；由父组件扣点并调 jobs */
   assembleBusy?: boolean;
   finalVideoUrl?: string | null;
   onAssembleFinal?: (clips: ReturnType<typeof collectManhuaAssembleClipsFromDock>) => void;
 };
+
+function episodeClipReady(list: ManhuaClipDockItem[]): boolean {
+  return list.some((it) => (it.stage === "clip" || it.stage === "omni_edit") && Boolean(it.outputUrl));
+}
+
+function episodeKeyartUrl(list: ManhuaClipDockItem[]): string | undefined {
+  return list.find((it) => it.stage === "keyart" && it.outputUrl)?.outputUrl;
+}
 
 export default function ManhuaClipDock({
   blocks,
@@ -57,6 +64,13 @@ export default function ManhuaClipDock({
     return collectManhuaAssembleClipsFromDock(items).filter((c) => c.clipUrl);
   }, [items, selectedIds]);
   const canAssemble = assembleClips.length > 0 && Boolean(onAssembleFinal);
+  const clipReadyEpCount = useMemo(() => {
+    const eps = new Set<number>();
+    for (const it of items) {
+      if ((it.stage === "clip" || it.stage === "omni_edit") && it.outputUrl) eps.add(it.episodeIndex);
+    }
+    return eps.size;
+  }, [items]);
 
   const byEpisode = useMemo(() => {
     const map = new Map<number, ManhuaClipDockItem[]>();
@@ -167,103 +181,202 @@ export default function ManhuaClipDock({
   };
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-3 md:p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold text-white/90">成片坞 · 多集导出</div>
-          <p className="mt-0.5 text-[11px] leading-5 text-white/45">
-            勾选可作工厂运行范围；导出含故事/角色卡/节拍/反推/静帧/成片 + README/playlist。有成片后可一键合成长片（含配乐）。
-            {summary.episodeCount ? (
-              <span className="text-white/55">
-                {" "}
-                · {summary.episodeCount} 集 · 可导出 {summary.exportableCount} · 待跑{" "}
-                {summary.pendingCount}
+    <div className="overflow-hidden rounded-2xl border border-cyan-400/20 bg-gradient-to-b from-[#0c1520] via-[#0a0e18] to-[#08070f]">
+      {/* 终局出口 · 示意 A 成片段 */}
+      <div className="border-b border-white/10 px-3 py-3 md:px-4 md:py-3.5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold tracking-wide text-white/92">
+                <Film className="h-4 w-4 text-cyan-300" />
+                成片坞
               </span>
-            ) : null}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
+              <span className="rounded-full border border-cyan-400/35 bg-cyan-500/12 px-2 py-0.5 text-[10px] font-medium text-cyan-100/90">
+                终局出口
+              </span>
+            </div>
+            <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">
+              各集微动就绪后，一键拼成长片并自动配乐。勾选集号可同时作为工厂运行范围。
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+              <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-white/60">
+                {summary.episodeCount || 0} 集
+              </span>
+              <span className="rounded-md border border-emerald-400/25 bg-emerald-500/10 px-2 py-0.5 text-emerald-100/85">
+                已有成片 {clipReadyEpCount}
+              </span>
+              <span className="rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-0.5 text-amber-100/80">
+                待跑 {summary.pendingCount}
+              </span>
+              {finalVideoUrl ? (
+                <span className="rounded-md border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-cyan-100">
+                  长片已合成
+                </span>
+              ) : null}
+            </div>
+          </div>
+
           <button
             type="button"
             disabled={assembleBusy || exportBusy || !canAssemble}
             onClick={() => onAssembleFinal?.(assembleClips)}
-            className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-500/20 px-2.5 py-1 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-40"
+            className="inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-4 py-2.5 text-[12px] font-semibold text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.12)] hover:from-cyan-400/40 hover:to-cyan-600/35 disabled:opacity-40"
             title={
               canAssemble
                 ? `将用 ${assembleClips.length} 集成片合成长片并自动配乐`
                 : "需至少一集有微动成片"
             }
           >
-            {assembleBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Clapperboard className="h-3 w-3" />}
-            合成长片（含配乐）
-          </button>
-          <button
-            type="button"
-            disabled={!items.length}
-            onClick={selectAll}
-            className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-          >
-            全选全部
-          </button>
-          <button
-            type="button"
-            disabled={!summary.exportableCount}
-            onClick={selectExportable}
-            className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-          >
-            仅选有产物
-          </button>
-          <button
-            type="button"
-            disabled={!selectedIds.size}
-            onClick={clearAll}
-            className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-          >
-            清空
-          </button>
-          <button
-            type="button"
-            disabled={exportBusy || !summary.exportableCount}
-            onClick={() => void handleExportAllReady()}
-            className="inline-flex items-center gap-1 rounded-md border border-sky-400/35 bg-sky-500/15 px-2.5 py-1 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/25 disabled:opacity-40"
-          >
-            {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-            一键导出全部有产物
-          </button>
-          <button
-            type="button"
-            disabled={exportBusy || !selectedIds.size}
-            onClick={() => void handleExport()}
-            className="inline-flex items-center gap-1 rounded-md border border-amber-400/35 bg-amber-500/15 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-40"
-          >
-            {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-            导出勾选
+            {assembleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
+            {assembleBusy ? "合成中…" : "合成长片（含配乐）"}
           </button>
         </div>
+
+        {assembleBusy ? (
+          <div className="mt-3">
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] text-cyan-100/80">
+              <Music2 className="h-3 w-3" />
+              配乐生成与多集拼接进行中，可离开本区稍候…
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/80 via-teal-300/90 to-cyan-400/80" />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {finalVideoUrl ? (
-        <div className="mt-3 overflow-hidden rounded-xl border border-emerald-400/25 bg-black/40">
-          <div className="border-b border-white/10 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-100/85">
-            长片预览（已合成）
+        <div className="border-b border-white/10 bg-black/35 px-3 py-3 md:px-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold text-cyan-100/90">长片预览</div>
+            <span className="text-[10px] text-white/40">多集拼接 · 已混配乐</span>
           </div>
-          <video src={finalVideoUrl} controls className="max-h-56 w-full object-contain" />
+          <div className="overflow-hidden rounded-xl border border-cyan-400/25 bg-black/60">
+            <video src={finalVideoUrl} controls className="max-h-64 w-full object-contain" />
+          </div>
+          {/* 示意 A 成片段：波形条装饰，非真实音频编辑 */}
+          <div className="mt-2 flex h-7 items-end gap-px px-0.5 opacity-70" aria-hidden>
+            {Array.from({ length: 48 }, (_, i) => (
+              <span
+                key={i}
+                className="flex-1 rounded-sm bg-emerald-400/55"
+                style={{ height: `${18 + ((i * 17) % 40)}%` }}
+              />
+            ))}
+          </div>
         </div>
       ) : null}
 
+      {/* 集时间线胶片条 */}
+      {byEpisode.length ? (
+        <div className="border-b border-white/10 px-3 py-2.5 md:px-4">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/35">
+            集时间线
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {byEpisode.map(([ep, list]) => {
+              const title = list.find((x) => x.episodeTitle)?.episodeTitle;
+              const ready = episodeClipReady(list);
+              const thumb = episodeKeyartUrl(list);
+              const epAllOn = list.every((it) => selectedIds.has(it.blockId));
+              return (
+                <button
+                  key={ep}
+                  type="button"
+                  onClick={() => toggleEpisode(ep)}
+                  className={`w-[7.25rem] shrink-0 overflow-hidden rounded-xl border text-left transition ${
+                    epAllOn
+                      ? "border-cyan-400/45 bg-cyan-500/12"
+                      : ready
+                        ? "border-emerald-400/30 bg-emerald-500/8"
+                        : "border-white/10 bg-white/[0.03]"
+                  }`}
+                  title={title || `第${ep}集`}
+                >
+                  <div className="relative aspect-[9/12] bg-black/50">
+                    {thumb ? (
+                      <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-[10px] text-white/30">待静帧</div>
+                    )}
+                    <span
+                      className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[9px] font-semibold ${
+                        ready ? "bg-emerald-500/85 text-white" : "bg-black/65 text-white/70"
+                      }`}
+                    >
+                      {ready ? "成片就绪" : "待成片"}
+                    </span>
+                  </div>
+                  <div className="px-1.5 py-1.5">
+                    <div className="truncate text-[11px] font-medium text-white/85">第{ep}集</div>
+                    <div className="truncate text-[9px] text-white/40">{title || "未命名"}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {/* 次要：导出 */}
+      <div className="flex flex-wrap gap-1.5 border-b border-white/8 px-3 py-2 md:px-4">
+        <button
+          type="button"
+          disabled={!items.length}
+          onClick={selectAll}
+          className="rounded-lg border border-white/12 px-2 py-1 text-[10px] text-white/55 hover:bg-white/8 disabled:opacity-40"
+        >
+          全选
+        </button>
+        <button
+          type="button"
+          disabled={!summary.exportableCount}
+          onClick={selectExportable}
+          className="rounded-lg border border-white/12 px-2 py-1 text-[10px] text-white/55 hover:bg-white/8 disabled:opacity-40"
+        >
+          仅选有产物
+        </button>
+        <button
+          type="button"
+          disabled={!selectedIds.size}
+          onClick={clearAll}
+          className="rounded-lg border border-white/12 px-2 py-1 text-[10px] text-white/55 hover:bg-white/8 disabled:opacity-40"
+        >
+          清空勾选
+        </button>
+        <button
+          type="button"
+          disabled={exportBusy || !summary.exportableCount}
+          onClick={() => void handleExportAllReady()}
+          className="inline-flex items-center gap-1 rounded-lg border border-sky-400/30 bg-sky-500/12 px-2.5 py-1 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/20 disabled:opacity-40"
+        >
+          {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+          导出全部有产物
+        </button>
+        <button
+          type="button"
+          disabled={exportBusy || !selectedIds.size}
+          onClick={() => void handleExport()}
+          className="inline-flex items-center gap-1 rounded-lg border border-white/12 px-2.5 py-1 text-[10px] font-medium text-white/65 hover:bg-white/8 disabled:opacity-40"
+        >
+          {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+          导出勾选
+        </button>
+      </div>
+
       {!items.length ? (
-        <p className="mt-3 text-[11px] text-white/40">
-          画布尚无工厂链。请先「按集铺板」或「铺节点」；铺好后即可勾选集号跑工厂。
+        <p className="px-3 py-4 text-[11px] leading-relaxed text-white/40 md:px-4">
+          画布尚无工厂链。请先在编剧确认后「按集铺板」，再回到此处勾选集号跑工厂与合成。
         </p>
       ) : (
-        <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
+        <div className="max-h-64 space-y-2 overflow-y-auto px-3 py-2.5 md:px-4">
           {byEpisode.map(([ep, list]) => {
             const title = list.find((x) => x.episodeTitle)?.episodeTitle;
             const epAllOn = list.every((it) => selectedIds.has(it.blockId));
             const epSomeOn = !epAllOn && list.some((it) => selectedIds.has(it.blockId));
             const ready = list.filter(manhuaClipDockItemHasExportableOutput).length;
             return (
-              <div key={ep} className="rounded-xl border border-white/8 bg-black/25 p-2.5">
+              <div key={ep} className="rounded-xl border border-white/8 bg-black/30 p-2.5">
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
                   <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-[11px] font-medium text-white/85">
                     <input
@@ -273,8 +386,7 @@ export default function ManhuaClipDock({
                         if (el) el.indeterminate = epSomeOn;
                       }}
                       onChange={() => toggleEpisode(ep)}
-                      className="h-3.5 w-3.5 accent-amber-400"
-                      title="勾选本集作工厂运行范围"
+                      className="h-3.5 w-3.5 accent-cyan-400"
                     />
                     <span className="truncate">
                       第{ep}集{title ? ` · ${title}` : ""}
@@ -314,7 +426,7 @@ export default function ManhuaClipDock({
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggle(it.blockId)}
-                          className="h-3.5 w-3.5 accent-amber-400"
+                          className="h-3.5 w-3.5 accent-cyan-400"
                         />
                         {it.outputUrl && (it.stage === "keyart" || it.stage === "recap_card") ? (
                           <img

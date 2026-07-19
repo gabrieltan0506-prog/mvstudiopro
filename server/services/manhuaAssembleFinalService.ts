@@ -192,7 +192,7 @@ export async function runManhuaAssembleFinal(
       episodeIndex: Math.floor(Number(row?.episodeIndex) || 0),
       episodeTitle: s(row?.episodeTitle).trim() || undefined,
       clipUrl: s(row?.clipUrl || (row as { url?: string })?.url).trim() || undefined,
-      keyartUrl: s(row?.keyartUrl || row?.stillImageUrl).trim() || undefined,
+      keyartUrl: s(row?.keyartUrl || (row as { stillImageUrl?: string })?.stillImageUrl).trim() || undefined,
       durationSec: Number(row?.durationSec) || undefined,
     }));
     const episodeIndexes = Array.isArray(raw.episodeIndexes)
