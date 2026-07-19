@@ -30,8 +30,10 @@
 - **#869 Fly Deploy success**（2026-07-19）
 - API 空 clips → `manhua_assemble_no_clips`（正常）
 - **接口冒烟（非剧本成片）**：用站点 `migrated/home/video*.mp4` 样本片打通拼接+配乐链路；**不能当作剧本工厂三集验收**
+- **入队冒烟（2026-07-20）**：`type=video` + `action=manhua_assemble_final` 空 clips → `queued` → worker `failed`「至少需要一集成片才能合成长片」（`pnpm manhua:assemble-smoke`）
 - **剧本三集验收（待做）**：成片坞里各集真实 clip 就绪后，点「合成长片（含配乐）」→ 得该剧的 `finalVideoUrl`
 - 前台：成片坞文案无供应商名；Debug On 可看 `assemble:*` 日志
+- UI 地基：#872–#874 引导路径轨 / 下一步 / 成片坞终局出口（继续叠引导空态与造型预览）
 
 ## 已知边界
 
