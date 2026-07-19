@@ -72,8 +72,8 @@ describe("resolveManhuaGuidedActiveStep", () => {
     expect(resolveManhuaGuidedNextAction(base).ctaLabel).toMatch(/题材/);
     expect(resolveManhuaGuidedNextAction({ ...base, hasTopic: true }).ctaLabel).toMatch(/扩写/);
     expect(
-      resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).title,
-    ).toMatch(/确认编剧/);
+      resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).ctaLabel,
+    ).toMatch(/确认并进入工作台/);
     expect(
       resolveManhuaGuidedNextAction({
         ...base,

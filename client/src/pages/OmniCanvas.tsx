@@ -3110,6 +3110,10 @@ export default function OmniCanvas() {
                     });
                   }, 60);
                 }}
+                onSelectEpisode={(ep) => {
+                  setWriterFocusEpisode(ep);
+                  setManhuaUiMode("workbench");
+                }}
                 onFocusBlock={(id) => {
                   setFocusBlockId(id);
                   const hit = blocks.find((b) => b.id === id);

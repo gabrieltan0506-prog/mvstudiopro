@@ -28,6 +28,8 @@ type Props = {
   onAssembleFinal?: (clips: ReturnType<typeof collectManhuaAssembleClipsFromDock>) => void;
   /** 尚无可合成成片时，引导回工作台 */
   onGoWorkbench?: () => void;
+  /** 点胶片条集卡时切换焦点集 */
+  onSelectEpisode?: (episodeIndex: number) => void;
 };
 
 function episodeClipReady(list: ManhuaClipDockItem[]): boolean {
@@ -54,6 +56,7 @@ export default function ManhuaClipDock({
   finalVideoUrl,
   onAssembleFinal,
   onGoWorkbench,
+  onSelectEpisode,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
@@ -331,7 +334,10 @@ export default function ManhuaClipDock({
                 <button
                   key={ep}
                   type="button"
-                  onClick={() => toggleEpisode(ep)}
+                  onClick={() => {
+                    onSelectEpisode?.(ep);
+                    toggleEpisode(ep);
+                  }}
                   className={`w-[7.25rem] shrink-0 overflow-hidden rounded-xl border text-left transition ${
                     epAllOn
                       ? "border-cyan-400/45 bg-cyan-500/12"
