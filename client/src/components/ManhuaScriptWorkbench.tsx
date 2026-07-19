@@ -4,7 +4,7 @@
  * 数据接工厂节点；多镜先由节拍/反推解析（按镜批量属中期）。
  */
 import { useMemo, useState } from "react";
-import { Clapperboard, Focus, Play, Sparkles } from "lucide-react";
+import { Clapperboard, Focus, Loader2, Play, Sparkles } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   getBlockEpisodeIndex,
@@ -222,6 +222,17 @@ export default function ManhuaScriptWorkbench({
       {!canRun ? (
         <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50/90 md:px-4">
           工作台出片尚未解锁 · 请先在上方编剧室扩写并点「确认并进入工作台」
+        </div>
+      ) : null}
+      {canRun && factoryBusy ? (
+        <div className="border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-2 md:px-4">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            本集工厂链路生成中…
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/80 to-teal-300/80" />
+          </div>
         </div>
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 md:px-4">
