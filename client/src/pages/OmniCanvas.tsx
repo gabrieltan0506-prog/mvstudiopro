@@ -2560,11 +2560,14 @@ export default function OmniCanvas() {
                   aria-label="关闭资产抽屉"
                   onClick={() => setManhuaAssetDrawer(null)}
                 />
-                <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-white/12 bg-[#0c0a14] shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-cyan-400/20 bg-gradient-to-b from-[#0c1520] to-[#0a0e18] shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-cyan-400/15 px-4 py-3">
                     <div>
-                      <div className="text-sm font-semibold text-white/90">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
                         {manhuaAssetDrawer === "characters" ? "角色库 · 画风" : "资产墙 · 场景道具"}
+                        <span className="rounded-full border border-cyan-400/30 bg-cyan-500/12 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100/85">
+                          步骤 3–4
+                        </span>
                       </div>
                       <p className="mt-0.5 text-[10px] text-white/40">
                         手选始终覆盖自动推荐；确认编剧后写入专案设定并绑定各集
