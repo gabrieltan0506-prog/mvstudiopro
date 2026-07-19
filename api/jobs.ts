@@ -1524,6 +1524,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    /** IA 参谋：产出 /platform 主次 UI 文案简报（Responses Pro） */
+    if (opNormalized === "platformiabrief") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const t0 = Date.now();
+      try {
+        const { invokeGpt56ResponsesText } = await import("../server/services/gpt56ResponsesClient.js");
+        const markdown = await invokeGpt56ResponsesText({
+          reasoningMode: "pro",
+          reasoningEffort: "medium",
+          store: false,
+          timeoutMs: 180_000,
+          instructions: `你是产品信息架构顾问。只输出 Markdown，不要代码围栏。面向中文创作者，语气干脆、可落地。`,
+          input: `产品：mvstudiopro /platform。Skill 墙挡住主功能；动效PPT 被打断；选题扩写难找；全案不应强迫用户翻完整 Skill 墙。
+主功能大字：趋势分析、全案创作分析、选题初选/扩写、动效PPT（Tab 直达）。
+陪衬中小号：Skill 折叠、顾问、上传。
+核心 Skill 默认开；分类折叠；智能推荐非核心。
+请输出：两区线框说明、CTA/字阶、推荐 Skill 摘要文案、动效PPT 不断档原则、ASCII 线框。`,
+        });
+        return res.status(200).json({
+          ok: Boolean(markdown && markdown.length > 80),
+          markdown,
+          ms: Date.now() - t0,
+        });
+      } catch (e: any) {
+        return res.status(502).json({
+          ok: false,
+          error: e?.message || String(e),
+          ms: Date.now() - t0,
+        });
+      }
+    }
+
     /** IA 参谋：产出 /canvas 模式选择文案简报（Responses Pro） */
     if (opNormalized === "canvasiabrief") {
       if (req.method !== "POST" && req.method !== "GET") {
