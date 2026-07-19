@@ -179,8 +179,8 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
 ];
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
-  { id: "gemini-omni-flash", label: "Gemini Omini" },
-  { id: "seedance-2.0", label: "Seedance 2.0" },
+  { id: "gemini-omni-flash", label: "默认成片引擎" },
+  { id: "seedance-2.0", label: "高画质成片（预留·完工验收）" },
 ];
 
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [

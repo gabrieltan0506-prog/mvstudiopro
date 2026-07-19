@@ -540,7 +540,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
-  clip.videoModel = "seedance-2.0";
+  /** 开发期默认 Omni（省钱可测）；Seedance 2.0 仍在 VIDEO_MODEL_OPTIONS，完工验收再手选真跑 */
+  clip.videoModel = "gemini-omni-flash";
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
   if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;
