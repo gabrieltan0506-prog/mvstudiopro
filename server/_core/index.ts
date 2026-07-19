@@ -404,14 +404,29 @@ async function startServer() {
     res.status(200).type("text/plain").send("ok");
   });
 
+  /**
+   * 运维 REST：完整系统状态。权限来自服务端 session（admin / supervisor），不信任客户端 role。
+   * 正式产品路径请走 tRPC getGrowthSystemStatus（public，供分析中健康摘要）。
+   */
   app.get("/api/getGrowthSystemStatus", async (req, res) => {
     applyApiCors(req, res);
     try {
-      const caller = appRouter.createCaller({} as any);
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      const role = ctx.user?.role;
+      if (!ctx.user || (role !== "admin" && role !== "supervisor")) {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
+      const caller = appRouter.createCaller(ctx as any);
       const result = await caller.mvAnalysis.getGrowthSystemStatus();
       res.status(200).json(result);
     } catch (error) {
       console.error("[Growth] GET /api/getGrowthSystemStatus failed:", error);
+      const code = (error as { code?: string })?.code;
+      if (code === "FORBIDDEN" || code === "UNAUTHORIZED") {
+        res.status(403).json({ error: "Forbidden" });
+        return;
+      }
       res.status(500).json({
         error: error instanceof Error ? error.message : "Failed to fetch growth status",
       });
