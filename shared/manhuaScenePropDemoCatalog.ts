@@ -560,6 +560,59 @@ export const MANHUA_SCENE_PROP_DEMO_CATALOG: ManhuaDemoAsset[] = [
     weight: "high",
   },
   {
+    id: "demo_scene_intrigue_court_empty_front",
+    kind: "scene",
+    lane: "intrigue",
+    nameZh: "朝堂空镜正对",
+    sceneGenre: "ancient",
+    overseasHintZh: "权谋朝堂空镜多角度之一",
+    promptZh:
+      "古风皇宫金銮大殿空镜正对构图：朱红金纹地毯纵深通向远端龙椅高台，两侧巨木立柱与雕花隔扇，宫灯暖光与门外天光丁达尔，殿内无人或仅极远剪影，电影级对称透视，竖屏9:16，禁止可读文字水印与现代物。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_intrigue_court_aisle_low",
+    kind: "scene",
+    lane: "intrigue",
+    nameZh: "朝堂空镜低机位",
+    sceneGenre: "ancient",
+    overseasHintZh: "同场不同角度比较图",
+    promptZh:
+      "同一古风朝堂大殿空镜·低机位沿红毯仰望：立柱金龙纹隐约、殿顶斗拱纵深、远端龙椅剪影，烟尘光柱，无人脸特写，竖屏9:16，禁止文字水印。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_intrigue_court_side_pillars",
+    kind: "scene",
+    lane: "intrigue",
+    nameZh: "朝堂空镜侧柱",
+    sceneGenre: "ancient",
+    overseasHintZh: "同场不同角度比较图",
+    promptZh:
+      "同一古风朝堂大殿空镜·侧向立柱景：深色木柱金色箍带、雕花屏风层次、红毯一角入画，低对比暖阴影，无人，竖屏9:16，禁止文字水印。",
+    weight: "medium",
+  },
+  {
+    id: "demo_scene_ancient_palace_gate_empty",
+    kind: "scene",
+    lane: "ancient",
+    nameZh: "宫城门阙空镜",
+    sceneGenre: "ancient",
+    promptZh:
+      "古风宫城门阙空镜：灰砖城墙对称拱门、门上重檐歇山顶与灯笼，阴天柔光庭院青石地，门洞远处殿脊，无人或极远卫士剪影，电影宽景感但画幅竖屏9:16，禁止文字水印与现代物。",
+    weight: "high",
+  },
+  {
+    id: "demo_prop_intrigue_hu_tablet",
+    kind: "prop",
+    lane: "intrigue",
+    nameZh: "象牙朝笏",
+    sceneGenre: "ancient",
+    promptZh:
+      "古风象牙色朝笏（笏板）道具特写，浅灰无缝棚拍，材质细纹清晰，竖屏9:16，无文字无水印无手。",
+    weight: "high",
+  },
+  {
     id: "demo_scene_business_trading_floor",
     kind: "scene",
     lane: "business",

@@ -24,6 +24,12 @@
 - `char_f_16` 沈红妆 / 顾凤仪：古装红妆凤冠新娘妆造
 - **过审口径**：真人剧照仅本地软参考反推妆造/场景/道具；库内 hero/sheet 必须 image-2 **纯文生成**新人脸（`TEXT_ONLY_IDS=char_f_16`），禁止直接入库真人演员脸
 
+## 线上实测（合成）
+
+- 合入前 Fly 探测：`manhuaAssembleFinal` → `unknown_op`（预期，未 Deploy）
+- 合入 Deploy 绿后：用 3 段公开短片作为 clips 打一次合成，记录 `finalVideoUrl` / `sceneCount`
+- 前台：成片坞「合成长片（含配乐）」文案无供应商名；工作台可预览长片
+
 ## 已知边界
 
 - 蓝红线/灯光为生成期注入，服从度取决于成片模型
