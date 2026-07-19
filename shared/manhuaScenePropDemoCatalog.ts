@@ -130,6 +130,46 @@ export const MANHUA_SCENE_PROP_DEMO_CATALOG: ManhuaDemoAsset[] = [
       "古风金色步摇发簪道具特写，珠翠垂饰，白底棚拍，金属高光真实，竖屏9:16，无文字无水印。",
     weight: "high",
   },
+  {
+    id: "demo_scene_ancient_wedding_hall",
+    kind: "scene",
+    lane: "ancient",
+    nameZh: "喜堂红幔空镜",
+    sceneGenre: "ancient",
+    promptZh:
+      "中国古风婚礼喜堂空镜，朱红幔帐与金边桌案，红烛灯笼暖光虚化，地毯纹样模糊不可读，无人脸，电影级浅景深，竖屏9:16，禁止现代物与文字水印。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_ancient_jianghu_inn",
+    kind: "scene",
+    lane: "ancient",
+    nameZh: "雨夜江湖客栈",
+    sceneGenre: "ancient",
+    promptZh:
+      "古风雨夜客栈空镜，檐下灯笼湿青石路，木门半掩酒旗剪影，冷暖对比光，无人脸特写，竖屏9:16，禁止现代物与文字水印。",
+    weight: "high",
+  },
+  {
+    id: "demo_prop_ancient_bridal_fan",
+    kind: "prop",
+    lane: "ancient",
+    nameZh: "红金团扇",
+    sceneGenre: "ancient",
+    promptZh:
+      "古风婚礼朱红团扇道具特写，金绣圆纹与金边，浅灰无缝棚拍，丝绸与金属质感清晰，竖屏9:16，无文字无水印无手。",
+    weight: "high",
+  },
+  {
+    id: "demo_prop_ancient_phoenix_crown",
+    kind: "prop",
+    lane: "ancient",
+    nameZh: "凤冠头饰",
+    sceneGenre: "ancient",
+    promptZh:
+      "古风金色凤冠道具特写，花鸟金丝与红珠珍珠流苏，白底棚拍，金属高光真实，竖屏9:16，无文字无水印、无人脸。",
+    weight: "high",
+  },
 
   // ── 仙侠 high ──
   {
