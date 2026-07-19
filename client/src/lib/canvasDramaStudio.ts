@@ -569,8 +569,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       .join("\n\n");
     promoCover.parentId = keyArt.id;
     promoCover.imageModel = "nano-banana-2";
-    promoCover.aspectRatio = promoLayout.aspectHint === "9:16" ? "9:16" : "9:16";
-    if (promoLayout.aspectHint === "16:9") promoCover.aspectRatio = "16:9";
+    promoCover.aspectRatio = "9:16";
   }
 
   const rawBlocks = [
@@ -833,12 +832,9 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("story-") && sceneBlock ? sceneBlock : "",
         b.id.startsWith("story-") && sceneDemoBlock ? sceneDemoBlock : "",
         b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
-<<<<<<< HEAD
+        b.id.startsWith("bible-") && ancientBlock ? ancientBlock : "",
         b.id.startsWith("bible-") && maleHairstyleBlock ? maleHairstyleBlock : "",
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
-=======
-        b.id.startsWith("bible-") && ancientBlock ? ancientBlock : "",
->>>>>>> origin/main
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
